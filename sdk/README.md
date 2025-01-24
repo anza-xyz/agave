@@ -6,7 +6,7 @@
 
 # Solana SDK
 
-Use the Solana SDK Crate to write client side applications in Rust.  If writing on-chain programs, use the [Solana Program Crate](https://crates.io/crates/solana-program) instead.
+Use the Solana SDK Crate to write client-side applications in Rust.  If writing on-chain programs, use the [Solana Program Crate](https://crates.io/crates/solana-program) instead.
 
 More information about Solana is available in the [Solana documentation](https://solana.com/docs).
 

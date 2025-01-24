@@ -48,7 +48,7 @@ The primordial accounts file has the following format:
 The `data` portion of the yaml file holds BASE64 encoded data about the account, which can be vote or stake account information.
 
 ### 3) Through the validator accounts file flag:
-The main goal with the validator accounts file is to:
+The main goal of the validator accounts file is to:
 - Bake validator stakes into genesis with different stake and account distributions
 - Remove the overhead of forcing the user to serialize and deserialize validator stake and vote account state, as required by a primordial accounts file.
 ```

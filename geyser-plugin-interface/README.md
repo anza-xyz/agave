@@ -17,7 +17,7 @@ function `_create_plugin()` that instantiates the implementation of the
 interface.
 
 The https://github.com/solana-labs/solana-accountsdb-plugin-postgres repository
-provides an example of how to create a plugin which saves the accounts data into
+provides an example of how to create a plugin that saves the accounts data into
 an external PostgreSQL database.
 
 More information about Solana is available in the [Solana documentation](https://solana.com/docs).
