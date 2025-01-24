@@ -591,6 +591,7 @@ pub struct Validator {
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
+    _thread_manager: ThreadManager,
 }
 
 impl Validator {
@@ -622,7 +623,7 @@ impl Validator {
 
         let start_time = Instant::now();
 
-        let _thread_manager = ThreadManager::new(&config.thread_manager_config)?;
+        let thread_manager = ThreadManager::new(&config.thread_manager_config)?;
         // Initialize the global rayon pool first to ensure the value in config
         // is honored. Otherwise, some code accessing the global pool could
         // cause it to get initialized with Rayon's default (not ours)
@@ -1663,6 +1664,7 @@ impl Validator {
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
+            _thread_manager: thread_manager,
         })
     }
 
