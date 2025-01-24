@@ -26,6 +26,21 @@ pub enum LoaderV4Instruction {
         bytes: Vec<u8>,
     },
 
+    /// Copy ELF data into an undeployed program account.
+    ///
+    /// # Account references
+    ///   0. `[writable]` The program account to write to.
+    ///   1. `[signer]` The authority of the program.
+    ///   2. `[]` The program account to copy from.
+    Copy {
+        /// Offset at which to write.
+        destination_offset: u32,
+        /// Offset at which to read.
+        source_offset: u32,
+        /// Amount of bytes to copy.
+        length: u32,
+    },
+
     /// Changes the size of an undeployed program account.
     ///
     /// A program account is automatically initialized when its size is first increased.
@@ -90,24 +105,28 @@ pub fn is_write_instruction(instruction_data: &[u8]) -> bool {
     !instruction_data.is_empty() && 0 == instruction_data[0]
 }
 
-pub fn is_truncate_instruction(instruction_data: &[u8]) -> bool {
+pub fn is_copy_instruction(instruction_data: &[u8]) -> bool {
     !instruction_data.is_empty() && 1 == instruction_data[0]
 }
 
-pub fn is_deploy_instruction(instruction_data: &[u8]) -> bool {
+pub fn is_truncate_instruction(instruction_data: &[u8]) -> bool {
     !instruction_data.is_empty() && 2 == instruction_data[0]
 }
 
-pub fn is_retract_instruction(instruction_data: &[u8]) -> bool {
+pub fn is_deploy_instruction(instruction_data: &[u8]) -> bool {
     !instruction_data.is_empty() && 3 == instruction_data[0]
 }
 
-pub fn is_transfer_authority_instruction(instruction_data: &[u8]) -> bool {
+pub fn is_retract_instruction(instruction_data: &[u8]) -> bool {
     !instruction_data.is_empty() && 4 == instruction_data[0]
 }
 
-pub fn is_finalize_instruction(instruction_data: &[u8]) -> bool {
+pub fn is_transfer_authority_instruction(instruction_data: &[u8]) -> bool {
     !instruction_data.is_empty() && 5 == instruction_data[0]
+}
+
+pub fn is_finalize_instruction(instruction_data: &[u8]) -> bool {
+    !instruction_data.is_empty() && 6 == instruction_data[0]
 }
 
 /// Returns the instructions required to initialize a program/buffer account.
@@ -186,6 +205,31 @@ pub fn write(
         vec![
             AccountMeta::new(*program_address, false),
             AccountMeta::new_readonly(*authority, true),
+        ],
+    )
+}
+
+/// Returns the instructions required to copy a chunk of program data.
+#[cfg(feature = "bincode")]
+pub fn copy(
+    program_address: &Pubkey,
+    authority: &Pubkey,
+    source_address: &Pubkey,
+    destination_offset: u32,
+    source_offset: u32,
+    length: u32,
+) -> Instruction {
+    Instruction::new_with_bincode(
+        id(),
+        &LoaderV4Instruction::Copy {
+            destination_offset,
+            source_offset,
+            length,
+        },
+        vec![
+            AccountMeta::new(*program_address, false),
+            AccountMeta::new_readonly(*authority, true),
+            AccountMeta::new_readonly(*source_address, false),
         ],
     )
 }
@@ -317,6 +361,26 @@ mod tests {
         assert_eq!(instruction.accounts[1].pubkey, authority);
         assert!(!instruction.accounts[1].is_writable);
         assert!(instruction.accounts[1].is_signer);
+    }
+
+    #[test]
+    fn test_copy_instruction() {
+        let program = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let source = Pubkey::new_unique();
+        let instruction = copy(&program, &authority, &source, 1, 2, 3);
+        assert!(is_copy_instruction(&instruction.data));
+        assert_eq!(instruction.program_id, id());
+        assert_eq!(instruction.accounts.len(), 3);
+        assert_eq!(instruction.accounts[0].pubkey, program);
+        assert!(instruction.accounts[0].is_writable);
+        assert!(!instruction.accounts[0].is_signer);
+        assert_eq!(instruction.accounts[1].pubkey, authority);
+        assert!(!instruction.accounts[1].is_writable);
+        assert!(instruction.accounts[1].is_signer);
+        assert_eq!(instruction.accounts[2].pubkey, source);
+        assert!(!instruction.accounts[2].is_writable);
+        assert!(!instruction.accounts[2].is_signer);
     }
 
     #[test]

@@ -8091,6 +8091,7 @@ dependencies = [
  "solana-clock",
  "solana-compute-budget",
  "solana-instruction",
+ "solana-loader-v3-interface",
  "solana-loader-v4-interface",
  "solana-log-collector",
  "solana-measure",
@@ -10665,6 +10666,7 @@ version = "2.2.0"
 dependencies = [
  "assert_matches",
  "bincode",
+ "criterion",
  "log",
  "num-derive",
  "num-traits",
@@ -10686,6 +10688,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey",
  "solana-rent",
+ "solana-sdk",
  "solana-sdk-ids",
  "solana-sha256-hasher",
  "solana-signer",
