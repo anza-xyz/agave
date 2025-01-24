@@ -15,6 +15,8 @@ Release channels have their own copy of this changelog:
 <a name="edge-channel"></a>
 ## [2.2.0] - Unreleased
 * Breaking:
+  * Blockstore Index column format change
+    * The Blockstore Index column format has been updated. The column format written in v2.2 is compatible with v2.1, but incompatible with v2.0 and older.
   * Snapshot format change
     * The snapshot format has been modified to implement SIMD-215. Since only adjacent versions are guaranteed to maintain snapshot compatibility, this means snapshots created with v2.2 are compatible with v2.1 and incompatible with v2.0 and older.
 * Changes
