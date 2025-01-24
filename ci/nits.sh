@@ -24,6 +24,7 @@ declare print_free_tree=(
   ':ledger/src/**.rs'
   ':metrics/src/**.rs'
   ':net-utils/src/**.rs'
+  ':platform-tools-sdk/**.rs'
   ':platform-tools-sdk/sbf/rust/rust-utils/**.rs'
   ':^platform-tools-sdk/cargo-build-sbf/**.rs'
   ':runtime/src/**.rs'

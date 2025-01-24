@@ -9,7 +9,7 @@ here="$(dirname "$0")"
 
 SBF_TOOLS_VERSION=unknown
 
-cargo_build_sbf_main="${here}/../sdk/cargo-build-sbf/src/main.rs"
+cargo_build_sbf_main="${here}/../platform-tools-sdk/cargo-build-sbf/src/main.rs"
 if [[ -f "${cargo_build_sbf_main}" ]]; then
     version=$(sed -e 's/^.*DEFAULT_PLATFORM_TOOLS_VERSION.*=\s*"\(v[0-9.]\+\)".*/\1/;t;d' "${cargo_build_sbf_main}")
     if [[ ${version} != '' ]]; then
