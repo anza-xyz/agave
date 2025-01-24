@@ -372,7 +372,7 @@ impl SendTransactionService {
         let client = ConnectionCacheClient::new(
             connection_cache.clone(),
             tpu_address,
-            config.tpu_peers,
+            config.tpu_peers.clone(),
             leader_info,
             config.leader_forward_count,
         );
@@ -382,9 +382,7 @@ impl SendTransactionService {
             client.clone(),
             retry_transactions.clone(),
             stats_report.clone(),
-            config.batch_send_rate_ms,
-            config.batch_size,
-            config.retry_pool_max_size,
+            config.clone(),
             exit.clone(),
         );
 
@@ -392,10 +390,7 @@ impl SendTransactionService {
             bank_forks.clone(),
             client,
             retry_transactions,
-            config.retry_rate_ms,
-            config.service_max_retries,
-            config.default_max_retries,
-            config.batch_size,
+            config,
             stats_report,
             exit.clone(),
         );
@@ -412,9 +407,12 @@ impl SendTransactionService {
         client: ConnectionCacheClient<T>,
         retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
         stats_report: Arc<SendTransactionServiceStatsReport>,
-        batch_send_rate_ms: u64,
-        batch_size: usize,
-        retry_pool_max_size: usize,
+        Config {
+            batch_send_rate_ms,
+            batch_size,
+            retry_pool_max_size,
+            ..
+        }: Config,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         let mut last_batch_sent = Instant::now();
@@ -511,10 +509,13 @@ impl SendTransactionService {
         bank_forks: Arc<RwLock<BankForks>>,
         client: ConnectionCacheClient<T>,
         retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
-        retry_rate_ms: u64,
-        service_max_retries: usize,
-        default_max_retries: Option<usize>,
-        batch_size: usize,
+        Config {
+            retry_rate_ms,
+            service_max_retries,
+            default_max_retries,
+            batch_size,
+            ..
+        }: Config,
         stats_report: Arc<SendTransactionServiceStatsReport>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
