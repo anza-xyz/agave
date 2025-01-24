@@ -1154,7 +1154,6 @@ lazy_static! {
         (reserve_minimal_cus_for_builtin_instructions::id(), "Reserve minimal CUs for builtin instructions SIMD-170 #2562"),
         (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
         (fix_alt_bn128_multiplication_input_length::id(), "fix alt_bn128 multiplication input length SIMD-0222 #3686"),
-        (disable_intrabatch_account_locks::id(), "Allow batched transactions to read/write and write/write the same accounts SIMD-0083"),
         (relax_intrabatch_account_locks::id(), "Allow batched transactions to read/write and write/write the same accounts SIMD-0083"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
