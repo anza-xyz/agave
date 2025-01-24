@@ -1,7 +1,6 @@
-#![feature(test)]
 #![allow(clippy::arithmetic_side_effects)]
-extern crate test;
 use {
+    criterion::{black_box, criterion_group, criterion_main, Criterion},
     rand::Rng,
     solana_entry::entry::Entry,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
@@ -10,7 +9,6 @@ use {
         transaction::Transaction,
     },
     std::iter::repeat_with,
-    test::Bencher,
 };
 
 fn make_dummy_hash<R: Rng>(rng: &mut R) -> Hash {
@@ -69,10 +67,15 @@ fn make_shreds_from_entries<R: Rng>(
         reed_solomon_cache,
         stats,
     );
-    (std::hint::black_box(data), std::hint::black_box(code))
+    (black_box(data), black_box(code))
 }
 
-fn run_make_shreds_from_entries(bencher: &mut Bencher, data_size: usize, is_last_in_slot: bool) {
+fn run_make_shreds_from_entries(
+    name: &str,
+    c: &mut Criterion,
+    num_packets: usize,
+    is_last_in_slot: bool,
+) {
     let mut rng = rand::thread_rng();
     let slot = 315_892_061 + rng.gen_range(0..=100_000);
     let parent_offset = rng.gen_range(1..=u16::MAX);
@@ -84,6 +87,7 @@ fn run_make_shreds_from_entries(bencher: &mut Bencher, data_size: usize, is_last
     )
     .unwrap();
     let keypair = Keypair::new();
+    let data_size = num_packets * PACKET_DATA_SIZE;
     let entries = make_dummy_entries(&mut rng, data_size);
     let chained_merkle_root = Some(make_dummy_hash(&mut rng));
     let reed_solomon_cache = ReedSolomonCache::default();
@@ -101,49 +105,36 @@ fn run_make_shreds_from_entries(bencher: &mut Bencher, data_size: usize, is_last
             &mut stats,
         );
     }
-    bencher.iter(|| {
-        let (data, code) = make_shreds_from_entries(
-            &mut rng,
-            &shredder,
-            &keypair,
-            &entries,
-            is_last_in_slot,
-            chained_merkle_root,
-            &reed_solomon_cache,
-            &mut stats,
-        );
-        std::hint::black_box(data);
-        std::hint::black_box(code);
+    c.bench_function(name, |b| {
+        b.iter(|| {
+            let (data, code) = make_shreds_from_entries(
+                &mut rng,
+                &shredder,
+                &keypair,
+                &entries,
+                is_last_in_slot,
+                chained_merkle_root,
+                &reed_solomon_cache,
+                &mut stats,
+            );
+            black_box(data);
+            black_box(code);
+        })
     });
 }
 
-macro_rules! make_bench {
-    ($name:ident, $size:literal, $last:literal) => {
-        #[bench]
-        fn $name(bencher: &mut Bencher) {
-            run_make_shreds_from_entries(
-                bencher,
-                $size * PACKET_DATA_SIZE, // data_size
-                $last,                    // is_last_in_slot
+fn bench_make_shreds_from_entries(c: &mut Criterion) {
+    for is_last_in_slot in [false, true] {
+        for num_packets in [16, 20, 24, 28, 32, 48, 64, 96, 128, 256] {
+            let name = format!(
+                "bench_make_shreds_from_entries_{}{}",
+                if is_last_in_slot { "last_" } else { "" },
+                num_packets
             );
+            run_make_shreds_from_entries(&name, c, num_packets, is_last_in_slot);
         }
-    };
+    }
 }
 
-make_bench!(bench_make_shreds_from_entries_016, 16, false);
-make_bench!(bench_make_shreds_from_entries_024, 24, false);
-make_bench!(bench_make_shreds_from_entries_032, 32, false);
-make_bench!(bench_make_shreds_from_entries_048, 48, false);
-make_bench!(bench_make_shreds_from_entries_064, 64, false);
-make_bench!(bench_make_shreds_from_entries_096, 96, false);
-make_bench!(bench_make_shreds_from_entries_128, 128, false);
-make_bench!(bench_make_shreds_from_entries_256, 256, false);
-
-make_bench!(bench_make_shreds_from_entries_last_016, 16, true);
-make_bench!(bench_make_shreds_from_entries_last_024, 24, true);
-make_bench!(bench_make_shreds_from_entries_last_032, 32, true);
-make_bench!(bench_make_shreds_from_entries_last_048, 48, true);
-make_bench!(bench_make_shreds_from_entries_last_064, 64, true);
-make_bench!(bench_make_shreds_from_entries_last_096, 96, true);
-make_bench!(bench_make_shreds_from_entries_last_128, 128, true);
-make_bench!(bench_make_shreds_from_entries_last_256, 256, true);
+criterion_group!(benches, bench_make_shreds_from_entries,);
+criterion_main!(benches);
