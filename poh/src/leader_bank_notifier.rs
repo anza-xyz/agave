@@ -89,6 +89,9 @@ impl LeaderBankNotifier {
         self.condvar.notify_all();
     }
 
+    /// Fetch the bank id of the bank inside the mutex wrapped state field. Due
+    /// to the usage of relaxed ordering, this is not a guarantee that the
+    /// caller thread will see the updated bank in the mutex wrapped state yet.
     pub fn get_current_bank_id(&self) -> Option<u64> {
         let current_bank_id = self.current_bank_id.load(Ordering::Relaxed);
         if current_bank_id == STAND_BY_SENTINEL_ID {
