@@ -160,7 +160,7 @@ fn test_sbfv2() {
         .parent()
         .expect("Unable to get ../.. of current working dir");
     let readelf = root
-        .join("sdk")
+        .join("platform-tools-sdk")
         .join("sbf")
         .join("dependencies")
         .join("platform-tools")
