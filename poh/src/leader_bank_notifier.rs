@@ -60,14 +60,15 @@ impl LeaderBankNotifier {
     pub(crate) fn set_in_progress(&self, bank: &Arc<Bank>) {
         let mut state = self.state.lock().unwrap();
         assert_eq!(state.status, Status::StandBy);
+
+        self.current_bank_id
+            .store(bank.bank_id(), Ordering::Relaxed);
         *state = SlotAndBankWithStatus {
             status: Status::InProgress,
             slot: Some(bank.slot()),
             bank: Arc::downgrade(bank),
         };
         drop(state);
-        self.current_bank_id
-            .store(bank.bank_id(), Ordering::Release);
 
         self.condvar.notify_all();
     }
@@ -79,10 +80,11 @@ impl LeaderBankNotifier {
         let mut state = self.state.lock().unwrap();
         assert_eq!(state.status, Status::InProgress);
         assert_eq!(state.slot, Some(slot));
+
+        self.current_bank_id
+            .store(STAND_BY_SENTINEL_ID, Ordering::Relaxed);
         state.status = Status::StandBy;
         drop(state);
-        self.current_bank_id
-            .store(STAND_BY_SENTINEL_ID, Ordering::Release);
 
         self.condvar.notify_all();
     }
