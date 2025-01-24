@@ -14,15 +14,15 @@ tools-version = "v1.43"
 program-id = "MyProgram1111111111111111111111111111111111"
 
 [dependencies]
-solana-package-metadata = { path = "../../../../package-metadata", version = "=2.2.0" }
-solana-program = { path = "../../../../program", version = "=2.2.0" }
+solana-package-metadata = { path = "../../../../../sdk/package-metadata", version = "=2.2.0" }
+solana-program = { path = "../../../../../sdk/program", version = "=2.2.0" }
 
 [lib]
 crate-type = ["cdylib"]
 
 [patch.crates-io]
-solana-decode-error = { path = "../../../../decode-error" }
-solana-instruction = { path = "../../../../instruction" }
-solana-pubkey = { path = "../../../../pubkey" }
+solana-decode-error = { path = "../../../../../sdk/decode-error" }
+solana-instruction = { path = "../../../../../sdk/instruction" }
+solana-pubkey = { path = "../../../../../sdk/pubkey" }
 
 [workspace]
