@@ -149,7 +149,7 @@ fi
 # dcou tends to newly trigger `unused_imports` and `dead_code` lints.
 # We could selectively deny (= `-D`) them here, however, deny all warnings for
 # consistency with other CI steps and for the possibility of new similar lints.
-export RUSTFLAGS="-D warnings -Z threads=0 $RUSTFLAGS"
+export RUSTFLAGS="-D warnings -Z threads=8 $RUSTFLAGS"
 
 # As this is used the rather deep crate of our dep graph (solana-varsion), this
 # could invalidate significant portion of caches when this changes just with a
