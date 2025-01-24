@@ -35,7 +35,7 @@ solana-logger = { path = "../../sdk/logger" }
 solana-perf = { path = "../../perf" }
 solana-program-runtime = { path = "../../program-runtime" }
 solana-rpc-client-api = { path = "../../rpc-client-api" }
-solana-sdk = { path = "../../sdk/" }
+solana-sdk = { path = "../../sdk/sdk" }
 solana-svm = { path = "../" }
 solana-system-program = { path = "../../programs/system" }
 solana-version = { path = "../../version" }

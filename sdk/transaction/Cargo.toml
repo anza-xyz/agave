@@ -48,7 +48,7 @@ solana-packet = { workspace = true }
 solana-presigner = { workspace = true }
 solana-program = { workspace = true, default-features = false }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-sdk = { path = ".." }
+solana-sdk = { path = "../sdk" }
 solana-sha256-hasher = { workspace = true }
 solana-transaction = { path = ".", features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }

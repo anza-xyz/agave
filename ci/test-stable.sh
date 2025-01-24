@@ -53,7 +53,7 @@ test-stable-sbf)
   "$cargo_build_sbf" --version
 
   # SBF solana-sdk legacy compile test
-  "$cargo_build_sbf" --manifest-path sdk/Cargo.toml
+  "$cargo_build_sbf" --manifest-path sdk/sdk/Cargo.toml
 
   # Ensure the minimum supported "rust-version" matches platform tools to fail
   # quickly if users try to build with an older platform tools install
@@ -110,7 +110,7 @@ test-stable-perf)
 test-wasm)
   _ node --version
   _ npm --version
-  for dir in sdk/{program,}; do
+  for dir in sdk/{program,sdk}; do
     if [[ -r "$dir"/package.json ]]; then
       pushd "$dir"
       _ npm install
