@@ -3133,7 +3133,7 @@ impl Bank {
 
     /// Attempt to take locks on the accounts in a transaction batch
     pub fn try_lock_accounts(&self, txs: &[impl SVMMessage]) -> Vec<Result<()>> {
-        self.try_lock_accounts_with_results(txs, vec![Ok(()); txs.len()].into_iter())
+        self.try_lock_accounts_with_results(txs, txs.iter().map(|_| Ok(())))
     }
 
     /// Attempt to take locks on the accounts in a transaction batch, and their cost
