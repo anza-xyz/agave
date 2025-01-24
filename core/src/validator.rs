@@ -689,6 +689,7 @@ impl Validator {
         for cluster_entrypoint in &cluster_entrypoints {
             info!("entrypoint: {:?}", cluster_entrypoint);
         }
+
         if solana_perf::perf_libs::api().is_some() {
             info!("Initializing sigverify, this could take a while...");
         } else {

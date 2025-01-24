@@ -7635,6 +7635,7 @@ impl AccountsDb {
         accounts: &impl StorableAccounts<'a>,
         reclaim: UpsertReclaim,
         update_index_thread_selection: UpdateIndexThreadSelection,
+        thread_pool: &ThreadPool,
     ) -> SlotList<AccountInfo> {
         let target_slot = accounts.target_slot();
         let len = std::cmp::min(accounts.len(), infos.len());
@@ -7669,7 +7670,7 @@ impl AccountsDb {
         {
             let chunk_size = std::cmp::max(1, len / quarter_thread_count()); // # pubkeys/thread
             let batches = 1 + len / chunk_size;
-            self.thread_pool_clean.install(|| {
+            thread_pool.install(|| {
                 (0..batches)
                     .into_par_iter()
                     .map(|batch| {
@@ -8271,6 +8272,7 @@ impl AccountsDb {
             transactions,
             reclaim,
             update_index_thread_selection,
+            &self.thread_pool,
         );
     }
 
@@ -8290,6 +8292,7 @@ impl AccountsDb {
             None,
             StoreReclaims::Ignore,
             UpdateIndexThreadSelection::PoolWithThreshold,
+            &self.thread_pool_clean,
         )
     }
 
@@ -8301,6 +8304,7 @@ impl AccountsDb {
         transactions: Option<&'a [&'a SanitizedTransaction]>,
         reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
+        thread_pool: &ThreadPool,
     ) -> StoreAccountsTiming {
         self.stats
             .store_num_accounts
@@ -8329,8 +8333,13 @@ impl AccountsDb {
         // after the account are stored by the above `store_accounts_to`
         // call and all the accounts are stored, all reads after this point
         // will know to not check the cache anymore
-        let mut reclaims =
-            self.update_index(infos, &accounts, reclaim, update_index_thread_selection);
+        let mut reclaims = self.update_index(
+            infos,
+            &accounts,
+            reclaim,
+            update_index_thread_selection,
+            thread_pool,
+        );
 
         // For each updated account, `reclaims` should only have at most one
         // item (if the account was previously updated in this slot).
