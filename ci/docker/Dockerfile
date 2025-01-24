@@ -78,7 +78,9 @@ RUN \
   rustup component add llvm-tools-preview --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup target add wasm32-unknown-unknown && \
   cargo install cargo-audit && \
-  cargo install cargo-hack && \
+  # uncomment once the dcou-parition related patch is upstreamed...
+  # cargo install cargo-hack && \
+  cargo install --git https://github.com/anza-xyz/cargo-hack.git --branch interleaved-partition cargo-hack && \
   cargo install cargo-sort && \
   cargo install mdbook && \
   cargo install mdbook-linkcheck && \
