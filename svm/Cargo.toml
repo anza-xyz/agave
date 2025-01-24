@@ -35,7 +35,7 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
 solana-loader-v4-program = { workspace = true }
-solana-log-collector = { workspace = true }
+solana-log-collector = { workspace = true, features = ["svm-internal"] }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }

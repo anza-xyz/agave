@@ -16,7 +16,7 @@ solana-bincode = { workspace = true }
 solana-bpf-loader-program = { workspace = true, features = ["svm-internal"] }
 solana-compute-budget = { workspace = true }
 solana-instruction = { workspace = true }
-solana-log-collector = { workspace = true }
+solana-log-collector = { workspace = true, features = ["svm-internal"] }
 solana-measure = { workspace = true }
 solana-packet = { workspace = true }
 solana-program = { workspace = true }

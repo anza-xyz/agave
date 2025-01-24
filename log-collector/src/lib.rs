@@ -1,15 +1,25 @@
 pub use log;
-use std::{cell::RefCell, rc::Rc};
-
+#[cfg(any(feature = "dev-context-only-utils", feature = "svm-internal"))]
+use {
+    qualifier_attr::qualifiers,
+    std::{cell::RefCell, rc::Rc},
+};
+#[cfg(any(feature = "dev-context-only-utils", feature = "svm-internal"))]
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
 
-pub struct LogCollector {
-    pub messages: Vec<String>,
-    pub bytes_written: usize,
-    pub bytes_limit: Option<usize>,
-    pub limit_warning: bool,
+#[cfg(any(feature = "dev-context-only-utils", feature = "svm-internal"))]
+#[cfg_attr(
+    any(feature = "dev-context-only-utils", feature = "svm-internal"),
+    qualifiers(pub)
+)]
+struct LogCollector {
+    messages: Vec<String>,
+    bytes_written: usize,
+    bytes_limit: Option<usize>,
+    limit_warning: bool,
 }
 
+#[cfg(any(feature = "dev-context-only-utils", feature = "svm-internal"))]
 impl Default for LogCollector {
     fn default() -> Self {
         Self {
@@ -21,8 +31,13 @@ impl Default for LogCollector {
     }
 }
 
+#[cfg(any(feature = "dev-context-only-utils", feature = "svm-internal"))]
 impl LogCollector {
-    pub fn log(&mut self, message: &str) {
+    #[cfg_attr(
+        any(feature = "dev-context-only-utils", feature = "svm-internal"),
+        qualifiers(pub)
+    )]
+    fn log(&mut self, message: &str) {
         let Some(limit) = self.bytes_limit else {
             self.messages.push(message.to_string());
             return;
@@ -40,22 +55,38 @@ impl LogCollector {
         }
     }
 
-    pub fn get_recorded_content(&self) -> &[String] {
+    #[cfg_attr(
+        any(feature = "dev-context-only-utils", feature = "svm-internal"),
+        qualifiers(pub)
+    )]
+    fn get_recorded_content(&self) -> &[String] {
         self.messages.as_slice()
     }
 
-    pub fn new_ref() -> Rc<RefCell<Self>> {
+    #[cfg_attr(
+        any(feature = "dev-context-only-utils", feature = "svm-internal"),
+        qualifiers(pub)
+    )]
+    fn new_ref() -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self::default()))
     }
 
-    pub fn new_ref_with_limit(bytes_limit: Option<usize>) -> Rc<RefCell<Self>> {
+    #[cfg_attr(
+        any(feature = "dev-context-only-utils", feature = "svm-internal"),
+        qualifiers(pub)
+    )]
+    fn new_ref_with_limit(bytes_limit: Option<usize>) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
             bytes_limit,
             ..Self::default()
         }))
     }
 
-    pub fn into_messages(self) -> Vec<String> {
+    #[cfg_attr(
+        any(feature = "dev-context-only-utils", feature = "svm-internal"),
+        qualifiers(pub)
+    )]
+    fn into_messages(self) -> Vec<String> {
         self.messages
     }
 }

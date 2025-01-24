@@ -27,7 +27,7 @@ solana-feature-set = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true }
-solana-log-collector = { workspace = true }
+solana-log-collector = { workspace = true, features = ["svm-internal"] }
 solana-measure = { workspace = true }
 solana-packet = { workspace = true }
 solana-poseidon = { workspace = true }

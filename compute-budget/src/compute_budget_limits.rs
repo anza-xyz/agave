@@ -1,3 +1,5 @@
+#[cfg(any(feature = "dev-context-only-utils", feature = "svm-internal"))]
+use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     solana_fee_structure::FeeBudgetLimits, solana_program_entrypoint::HEAP_LENGTH,
     std::num::NonZeroU32,
@@ -5,14 +7,25 @@ use {
 
 /// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
 /// default heap page cost = 0.5 * 15 ~= 8CU/page
-pub const DEFAULT_HEAP_COST: u64 = 8;
-pub const DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT: u32 = 200_000;
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+pub(crate) const DEFAULT_HEAP_COST: u64 = 8;
+
+#[cfg(feature = "svm-internal")]
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT: u32 = 200_000;
 // SIMD-170 defines max CUs to be allocated for any builtin program instructions, that
 // have not been migrated to sBPF programs.
-pub const MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT: u32 = 3_000;
-pub const MAX_COMPUTE_UNIT_LIMIT: u32 = 1_400_000;
-pub const MAX_HEAP_FRAME_BYTES: u32 = 256 * 1024;
-pub const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
+#[cfg(feature = "svm-internal")]
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT: u32 = 3_000;
+
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+pub(crate) const MAX_COMPUTE_UNIT_LIMIT: u32 = 1_400_000;
+#[cfg(feature = "svm-internal")]
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const MAX_HEAP_FRAME_BYTES: u32 = 256 * 1024;
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
 
 type MicroLamports = u128;
 
@@ -21,15 +34,26 @@ const MICRO_LAMPORTS_PER_LAMPORT: u64 = 1_000_000;
 
 /// The total accounts data a transaction can load is limited to 64MiB to not break
 /// anyone in Mainnet-beta today. It can be set by set_loaded_accounts_data_size_limit instruction
-pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: NonZeroU32 =
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: NonZeroU32 =
     unsafe { NonZeroU32::new_unchecked(64 * 1024 * 1024) };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ComputeBudgetLimits {
-    pub updated_heap_bytes: u32,
-    pub compute_unit_limit: u32,
-    pub compute_unit_price: u64,
-    pub loaded_accounts_bytes: NonZeroU32,
+#[cfg_attr(
+    any(feature = "dev-context-only-utils", feature = "svm-internal"),
+    qualifiers(pub),
+    field_qualifiers(
+        updated_heap_bytes(pub),
+        compute_unit_limit(pub),
+        compute_unit_price(pub),
+        loaded_accounts_bytes(pub)
+    )
+)]
+pub(crate) struct ComputeBudgetLimits {
+    pub(crate) updated_heap_bytes: u32,
+    pub(crate) compute_unit_limit: u32,
+    compute_unit_price: u64,
+    loaded_accounts_bytes: NonZeroU32,
 }
 
 impl Default for ComputeBudgetLimits {
