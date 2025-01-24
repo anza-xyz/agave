@@ -31,7 +31,7 @@ use {
         iter::repeat_with,
         marker::PhantomData,
         net::SocketAddr,
-        sync::{Arc, RwLock},
+        sync::{Arc, OnceLock, RwLock},
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -84,12 +84,13 @@ pub struct ClusterNodes<T> {
     _phantom: PhantomData<T>,
 }
 
-type CacheEntry<T> = Option<(/*as of:*/ Instant, Arc<ClusterNodes<T>>)>;
+// Cache entries are wrapped in Arc<OnceLock<...>>, so that, when needed, only
+// one single thread initializes the entry for the epoch without holding a lock
+// on the entire cache.
+type LruCacheOnce<K, V> = RwLock<LruCache<K, Arc<OnceLock<V>>>>;
 
 pub struct ClusterNodesCache<T> {
-    // Cache entries are wrapped in Arc<RwLock<...>>, so that, when needed, only
-    // one thread does the computations to update the entry for the epoch.
-    cache: RwLock<LruCache<Epoch, Arc<RwLock<CacheEntry<T>>>>>,
+    cache: LruCacheOnce<Epoch, (/*as of:*/ Instant, Arc<ClusterNodes<T>>)>,
     ttl: Duration, // Time to live.
 }
 
@@ -497,22 +498,6 @@ impl<T> ClusterNodesCache<T> {
 }
 
 impl<T: 'static> ClusterNodesCache<T> {
-    fn get_cache_entry(&self, epoch: Epoch) -> Arc<RwLock<CacheEntry<T>>> {
-        if let Some(entry) = self.cache.read().unwrap().get(&epoch) {
-            return Arc::clone(entry);
-        }
-        let mut cache = self.cache.write().unwrap();
-        // Have to recheck again here because the cache might have been updated
-        // by another thread in between the time this thread releases the read
-        // lock and obtains the write lock.
-        if let Some(entry) = cache.get(&epoch) {
-            return Arc::clone(entry);
-        }
-        let entry = Arc::default();
-        cache.put(epoch, Arc::clone(&entry));
-        entry
-    }
-
     pub(crate) fn get(
         &self,
         shred_slot: Slot,
@@ -520,40 +505,53 @@ impl<T: 'static> ClusterNodesCache<T> {
         working_bank: &Bank,
         cluster_info: &ClusterInfo,
     ) -> Arc<ClusterNodes<T>> {
+        // Returns the cached entry for the epoch if it is either uninitialized
+        // or not expired yet. Discards the entry if it is already initialized
+        // but also expired.
+        let get_epoch_entry = |cache: &LruCache<Epoch, _>, epoch, ttl| {
+            let entry: &Arc<OnceLock<(Instant, _)>> = cache.get(&epoch)?;
+            let Some((asof, _)) = entry.get() else {
+                return Some(entry.clone()); // not initialized yet
+            };
+            (asof.elapsed() < ttl).then(|| entry.clone())
+        };
         let epoch_schedule = root_bank.epoch_schedule();
         let epoch = epoch_schedule.get_epoch(shred_slot);
-        let entry = self.get_cache_entry(epoch);
-        if let Some((_, nodes)) = entry
-            .read()
-            .unwrap()
-            .as_ref()
-            .filter(|(asof, _)| asof.elapsed() < self.ttl)
-        {
-            return nodes.clone();
-        }
-        // Hold the lock on the entry here so that, if needed, only
-        // one thread recomputes cluster-nodes for this epoch.
-        let mut entry = entry.write().unwrap();
-        if let Some((_, nodes)) = entry.as_ref().filter(|(asof, _)| asof.elapsed() < self.ttl) {
-            return nodes.clone();
-        }
-        let epoch_staked_nodes = [root_bank, working_bank]
-            .iter()
-            .find_map(|bank| bank.epoch_staked_nodes(epoch));
-        if epoch_staked_nodes.is_none() {
-            inc_new_counter_info!("cluster_nodes-unknown_epoch_staked_nodes", 1);
-            if epoch != epoch_schedule.get_epoch(root_bank.slot()) {
-                return self.get(root_bank.slot(), root_bank, working_bank, cluster_info);
-            }
-            inc_new_counter_info!("cluster_nodes-unknown_epoch_staked_nodes_root", 1);
-        }
-        let nodes = Arc::new(new_cluster_nodes::<T>(
-            cluster_info,
-            root_bank.cluster_type(),
-            &epoch_staked_nodes.unwrap_or_default(),
-        ));
-        *entry = Some((Instant::now(), Arc::clone(&nodes)));
-        nodes
+        // Read from the cache with a shared lock.
+        let entry = {
+            let cache = self.cache.read().unwrap();
+            get_epoch_entry(&cache, epoch, self.ttl)
+        };
+        // Fall back to exclusive lock if there is a cache miss or the cached
+        // entry has already expired.
+        let entry: Arc<OnceLock<_>> = entry.unwrap_or_else(|| {
+            let mut cache = self.cache.write().unwrap();
+            get_epoch_entry(&cache, epoch, self.ttl).unwrap_or_else(|| {
+                // Either a cache miss here or the existing entry has already
+                // expired. Upsert and return an uninitialized entry.
+                let entry = Arc::<OnceLock<_>>::default();
+                cache.put(epoch, Arc::clone(&entry));
+                entry
+            })
+        });
+        // Initialize if needed by only a single thread outside locks.
+        let (_, nodes) = entry.get_or_init(|| {
+            let epoch_staked_nodes = [root_bank, working_bank]
+                .iter()
+                .find_map(|bank| bank.epoch_staked_nodes(epoch))
+                .unwrap_or_else(|| {
+                    error!(
+                        "ClusterNodesCache::get: unknown Bank::epoch_staked_nodes \
+                    for epoch: {epoch}, slot: {shred_slot}"
+                    );
+                    inc_new_counter_error!("cluster_nodes-unknown_epoch_staked_nodes", 1);
+                    Arc::<HashMap<Pubkey, /*stake:*/ u64>>::default()
+                });
+            let nodes =
+                new_cluster_nodes::<T>(cluster_info, root_bank.cluster_type(), &epoch_staked_nodes);
+            (Instant::now(), Arc::new(nodes))
+        });
+        nodes.clone()
     }
 }
 
