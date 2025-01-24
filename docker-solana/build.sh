@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -ex
 
-cd "$(dirname "$0")"/../..
+cd "$(dirname "$0")"/..
 eval "$(ci/channel-info.sh)"
 source ci/rust-version.sh
 source ci/docker/env.sh
@@ -21,10 +21,10 @@ fi
 
 cd "$(dirname "$0")"
 rm -rf usr/
-../../ci/docker-run-default-image.sh scripts/cargo-install-all.sh sdk/docker-solana/usr
+../ci/docker-run-default-image.sh scripts/cargo-install-all.sh docker-solana/usr
 
-cp -f ../../scripts/run.sh usr/bin/solana-run.sh
-cp -f ../../fetch-spl.sh usr/bin/
+cp -f ../scripts/run.sh usr/bin/solana-run.sh
+cp -f ../fetch-spl.sh usr/bin/
 (
   cd usr/bin
   ./fetch-spl.sh
