@@ -127,7 +127,7 @@ fn bench_retransmitter(bencher: &mut Bencher) {
         Arc::new(sockets),
         quic_endpoint_sender,
         shreds_receiver,
-        Arc::default(),
+        Arc::new(solana_rpc::max_slots::MaxSlots::default()),
         None,
         None,
     );

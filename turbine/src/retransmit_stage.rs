@@ -83,6 +83,55 @@ struct RetransmitStats {
     unknown_shred_slot_leader: usize,
 }
 
+impl RetransmitStats {
+    fn maybe_submit(
+        &mut self,
+        root_bank: &Bank,
+        working_bank: &Bank,
+        cluster_info: &ClusterInfo,
+        cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+    ) {
+        const SUBMIT_CADENCE: Duration = Duration::from_secs(2);
+        if self.since.elapsed() < SUBMIT_CADENCE {
+            return;
+        }
+        cluster_nodes_cache
+            .get(root_bank.slot(), root_bank, working_bank, cluster_info)
+            .submit_metrics("cluster_nodes_retransmit", timestamp());
+        datapoint_info!(
+            "retransmit-stage",
+            ("total_time", self.total_time, i64),
+            ("epoch_fetch", self.epoch_fetch, i64),
+            ("epoch_cache_update", self.epoch_cache_update, i64),
+            ("total_batches", self.total_batches, i64),
+            ("num_small_batches", self.num_small_batches, i64),
+            ("num_nodes", *self.num_nodes.get_mut(), i64),
+            ("num_addrs_failed", *self.num_addrs_failed.get_mut(), i64),
+            ("num_loopback_errs", *self.num_loopback_errs.get_mut(), i64),
+            ("num_shreds", self.num_shreds, i64),
+            (
+                "num_shreds_skipped",
+                *self.num_shreds_skipped.get_mut(),
+                i64
+            ),
+            ("retransmit_total", *self.retransmit_total.get_mut(), i64),
+            (
+                "compute_turbine",
+                *self.compute_turbine_peers_total.get_mut(),
+                i64
+            ),
+            (
+                "unknown_shred_slot_leader",
+                self.unknown_shred_slot_leader,
+                i64
+            ),
+        );
+        // slot_stats are submited at a different cadence.
+        let old = std::mem::replace(self, Self::new(Instant::now()));
+        self.slot_stats = old.slot_stats;
+    }
+}
+
 struct ShredDeduper<const K: usize = 2> {
     deduper: Deduper<K, /*shred:*/ [u8]>,
     shred_id_filter: Deduper<K, (ShredId, /*0..MAX_DUPLICATE_COUNT:*/ usize)>,
@@ -493,53 +542,6 @@ impl RetransmitStats {
                 None => break,
             }
         }
-    }
-
-    fn maybe_submit(
-        &mut self,
-        root_bank: &Bank,
-        working_bank: &Bank,
-        cluster_info: &ClusterInfo,
-        cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
-    ) {
-        const SUBMIT_CADENCE: Duration = Duration::from_secs(2);
-        if self.since.elapsed() < SUBMIT_CADENCE {
-            return;
-        }
-        cluster_nodes_cache
-            .get(root_bank.slot(), root_bank, working_bank, cluster_info)
-            .submit_metrics("cluster_nodes_retransmit", timestamp());
-        datapoint_info!(
-            "retransmit-stage",
-            ("total_time", self.total_time, i64),
-            ("epoch_fetch", self.epoch_fetch, i64),
-            ("epoch_cache_update", self.epoch_cache_update, i64),
-            ("total_batches", self.total_batches, i64),
-            ("num_small_batches", self.num_small_batches, i64),
-            ("num_nodes", *self.num_nodes.get_mut(), i64),
-            ("num_addrs_failed", *self.num_addrs_failed.get_mut(), i64),
-            ("num_loopback_errs", *self.num_loopback_errs.get_mut(), i64),
-            ("num_shreds", self.num_shreds, i64),
-            (
-                "num_shreds_skipped",
-                *self.num_shreds_skipped.get_mut(),
-                i64
-            ),
-            ("retransmit_total", *self.retransmit_total.get_mut(), i64),
-            (
-                "compute_turbine",
-                *self.compute_turbine_peers_total.get_mut(),
-                i64
-            ),
-            (
-                "unknown_shred_slot_leader",
-                self.unknown_shred_slot_leader,
-                i64
-            ),
-        );
-        // slot_stats are submited at a different cadence.
-        let old = std::mem::replace(self, Self::new(Instant::now()));
-        self.slot_stats = old.slot_stats;
     }
 }
 
