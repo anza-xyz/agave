@@ -80,7 +80,10 @@ impl ConsumeWorker {
             .fetch_add(get_bank_us, Ordering::Relaxed);
 
         for work in try_drain_iter(work, &self.consume_receiver) {
-            if bank.is_complete() {
+            if bank.is_complete() || {
+                // check if the bank got interrupted before completion
+                self.get_consume_bank_id() != Some(bank.bank_id())
+            } {
                 let (maybe_new_bank, get_bank_us) = measure_us!(self.get_consume_bank());
                 if let Some(new_bank) = maybe_new_bank {
                     self.metrics
@@ -127,6 +130,11 @@ impl ConsumeWorker {
         self.leader_bank_notifier
             .get_or_wait_for_in_progress(Duration::from_millis(50))
             .upgrade()
+    }
+
+    /// Try to get the id for the bank that should be used for consuming
+    fn get_consume_bank_id(&self) -> Option<u64> {
+        self.leader_bank_notifier.get_current_bank_id()
     }
 
     /// Retry current batch and all outstanding batches.
