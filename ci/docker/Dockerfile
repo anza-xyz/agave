@@ -80,7 +80,7 @@ RUN \
   cargo install cargo-audit && \
   # uncomment once the dcou-parition related patch is upstreamed...
   # cargo install cargo-hack && \
-  cargo install --git https://github.com/anza-xyz/cargo-hack.git --branch interleaved-partition cargo-hack && \
+  cargo install --git https://github.com/anza-xyz/cargo-hack.git --rev 5e59c3ec6c661c02601487c0d4b2a2649fe06c9f cargo-hack && \
   cargo install cargo-sort && \
   cargo install mdbook && \
   cargo install mdbook-linkcheck && \
