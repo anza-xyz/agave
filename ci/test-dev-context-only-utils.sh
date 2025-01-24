@@ -3,7 +3,7 @@
 set -eo pipefail
 source ./ci/_
 
-(unset RUSTC_WRAPPER; cargo install --force --git https://github.com/ryoqun/cargo-hack.git --branch interleaved-partition cargo-hack)
+(unset RUSTC_WRAPPER; cargo install --force --git https://github.com/anza-xyz/cargo-hack.git --rev 5e59c3ec6c661c02601487c0d4b2a2649fe06c9f cargo-hack)
 
 # Here, experimentally switch the sccache storage from GCS to local disk by
 # `unset`-ing gcs credentials so that sccache automatically falls back to the
