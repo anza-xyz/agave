@@ -21,7 +21,7 @@ export CARGO_INCREMENTAL=0
 
 rm -rf ./target ~/.cache/sccache/ || true
 _ sccache --show-stats
-export RUSTFLAGS="-Z threads=0"
+export RUSTFLAGS="-Z threads=8 -Zshare-generics=y"
 scripts/check-dev-context-only-utils.sh check-all-targets "$@" &> >(grep -vE 'Compiling|Checking')
 _ sccache --show-stats
 scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@" &> >(grep -vE 'Compiling|Checking')
@@ -43,7 +43,7 @@ _ sccache --stop-server
 
 rm -rf ./target ~/.cache/sccache/ || true
 _ sccache --show-stats
-export RUSTFLAGS="-Z threads=0"
+export RUSTFLAGS="-Z threads=8 -Zshare-generics=y"
 scripts/check-dev-context-only-utils.sh check-all-targets "$@" &> >(grep -vE 'Compiling|Checking')
 _ sccache --show-stats
 scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@" &> >(grep -vE 'Compiling|Checking')
