@@ -378,7 +378,14 @@ fn network_run_push(
                 node.gossip.purge(&node_pubkey, thread_pool, now, &timeouts);
                 (
                     node_pubkey,
-                    node.gossip.new_push_messages(&node_pubkey, now, &stakes).0,
+                    node.gossip
+                        .new_push_messages(
+                            &node_pubkey,
+                            now,
+                            &stakes,
+                            |_| true, // should_retain_crds_value
+                        )
+                        .0,
                 )
             })
             .collect();
@@ -577,6 +584,7 @@ fn network_run_pull(
                                 &filters,
                                 usize::MAX, // output_size_limit
                                 now,
+                                |_| true, // should_retain_crds_value
                                 &GossipStats::default(),
                             )
                             .into_iter()

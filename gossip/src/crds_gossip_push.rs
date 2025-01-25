@@ -169,6 +169,8 @@ impl CrdsGossipPush {
         crds: &RwLock<Crds>,
         now: u64,
         stakes: &HashMap<Pubkey, u64>,
+        // Predicate returning false if the CRDS value should be discarded.
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
     ) -> (
         HashMap<Pubkey, Vec<CrdsValue>>,
         usize, // number of values
@@ -186,7 +188,8 @@ impl CrdsGossipPush {
         let entries = crds
             .get_entries(crds_cursor.deref_mut())
             .map(|entry| &entry.value)
-            .filter(|value| wallclock_window.contains(&value.wallclock()));
+            .filter(|value| wallclock_window.contains(&value.wallclock()))
+            .filter(|value| should_retain_crds_value(value));
         'outer: for value in entries {
             num_values += 1;
             let origin = value.pubkey();
@@ -424,6 +427,7 @@ mod tests {
                 &crds,
                 0,
                 &HashMap::<Pubkey, u64>::default(), // stakes
+                |_| true,                           // should_retain_crds_value
             )
             .0,
             expected
@@ -488,6 +492,7 @@ mod tests {
                 &crds,
                 now,
                 &HashMap::<Pubkey, u64>::default(), // stakes
+                |_| true,                           // should_retain_crds_value
             )
             .0,
             expected
@@ -541,6 +546,7 @@ mod tests {
                 &crds,
                 0,
                 &HashMap::<Pubkey, u64>::default(), // stakes
+                |_| true,                           // should_retain_crds_value
             )
             .0,
             expected
@@ -583,6 +589,7 @@ mod tests {
                 &crds,
                 0,
                 &HashMap::<Pubkey, u64>::default(), // stakes
+                |_| true,                           // should_retain_crds_value
             )
             .0,
             expected

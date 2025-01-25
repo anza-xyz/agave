@@ -301,9 +301,18 @@ impl CrdsGossipPull {
         requests: &[(CrdsValue, CrdsFilter)],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
-        Self::filter_crds_values(thread_pool, crds, requests, output_size_limit, now, stats)
+        Self::filter_crds_values(
+            thread_pool,
+            crds,
+            requests,
+            output_size_limit,
+            now,
+            should_retain_crds_value,
+            stats,
+        )
     }
 
     // Checks if responses should be inserted and
@@ -448,6 +457,8 @@ impl CrdsGossipPull {
         filters: &[(CrdsValue, CrdsFilter)],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
+        // Predicate returning false if the CRDS value should be discarded.
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
@@ -478,6 +489,7 @@ impl CrdsGossipPull {
                     false
                 } else {
                     !filter.filter_contains(entry.value.hash())
+                        && should_retain_crds_value(&entry.value)
                 }
             };
             let out: Vec<_> = crds
@@ -1054,6 +1066,7 @@ pub(crate) mod tests {
             &filters,
             usize::MAX, // output_size_limit
             now,
+            |_| true, // should_retain_crds_value
             &GossipStats::default(),
         );
 
@@ -1077,6 +1090,7 @@ pub(crate) mod tests {
             &filters,
             usize::MAX, // output_size_limit
             now,
+            |_| true, // should_retain_crds_value
             &GossipStats::default(),
         );
         assert_eq!(rsp[0].len(), 0);
@@ -1097,6 +1111,7 @@ pub(crate) mod tests {
             &filters,
             usize::MAX, // output_size_limit
             now,
+            |_| true, // should_retain_crds_value
             &GossipStats::default(),
         );
         assert_eq!(rsp.len(), 2 * MIN_NUM_BLOOM_FILTERS);
@@ -1182,6 +1197,7 @@ pub(crate) mod tests {
                 &filters,
                 usize::MAX, // output_size_limit
                 0,          // now
+                |_| true,   // should_retain_crds_value
                 &GossipStats::default(),
             );
             // if there is a false positive this is empty

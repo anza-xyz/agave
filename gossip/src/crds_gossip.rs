@@ -74,12 +74,14 @@ impl CrdsGossip {
         pubkey: &Pubkey, // This node.
         now: u64,
         stakes: &HashMap<Pubkey, u64>,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
     ) -> (
         HashMap<Pubkey, Vec<CrdsValue>>,
         usize, // number of values
         usize, // number of push messages
     ) {
-        self.push.new_push_messages(pubkey, &self.crds, now, stakes)
+        self.push
+            .new_push_messages(pubkey, &self.crds, now, stakes, should_retain_crds_value)
     }
 
     pub(crate) fn push_duplicate_shred<F>(
@@ -231,6 +233,7 @@ impl CrdsGossip {
         filters: &[(CrdsValue, CrdsFilter)],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         CrdsGossipPull::generate_pull_responses(
@@ -239,6 +242,7 @@ impl CrdsGossip {
             filters,
             output_size_limit,
             now,
+            should_retain_crds_value,
             stats,
         )
     }
