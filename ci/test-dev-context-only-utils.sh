@@ -18,12 +18,39 @@ export SCCACHE_CACHE_SIZE="200G"
 # > Incrementally compiled crates cannot be cached.
 export CARGO_INCREMENTAL=0
 
-_ sccache --show-stats
 
+rm -rf ./target ~/.cache/sccache/
+_ sccache --show-stats
+export RUSTFLAGS="-Z threads=0"
 scripts/check-dev-context-only-utils.sh check-all-targets "$@"
 scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
+scripts/check-dev-context-only-utils.sh check-all-targets "$@"
+scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
+_ sccache --stop-server
 
-# This shows final stats while stopping the sccache background server as well
-# for later normal sccache use (if any). Remember that sccache is now
-# temporarily and experimtally running with the local disk storage.
+rm -rf ./target ~/.cache/sccache/
+_ sccache --show-stats
+export RUSTFLAGS="-Z threads=8"
+scripts/check-dev-context-only-utils.sh check-all-targets "$@"
+scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
+scripts/check-dev-context-only-utils.sh check-all-targets "$@"
+scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
+_ sccache --stop-server
+
+rm -rf ./target ~/.cache/sccache/
+_ sccache --show-stats
+export RUSTFLAGS="-Z threads=0"
+scripts/check-dev-context-only-utils.sh check-all-targets "$@"
+scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
+scripts/check-dev-context-only-utils.sh check-all-targets "$@"
+scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
+_ sccache --stop-server
+
+rm -rf ./target ~/.cache/sccache/
+_ sccache --show-stats
+export RUSTFLAGS="-Z threads=8"
+scripts/check-dev-context-only-utils.sh check-all-targets "$@"
+scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
+scripts/check-dev-context-only-utils.sh check-all-targets "$@"
+scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
 _ sccache --stop-server
