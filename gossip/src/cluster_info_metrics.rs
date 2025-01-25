@@ -100,7 +100,6 @@ pub struct GossipStats {
     pub(crate) filter_pull_response: Counter,
     pub(crate) generate_prune_messages: Counter,
     pub(crate) generate_pull_responses: Counter,
-    pub(crate) get_epoch_duration_no_working_bank: Counter,
     pub(crate) get_votes: Counter,
     pub(crate) get_votes_count: Counter,
     pub(crate) gossip_listen_loop_iterations_since_last_report: Counter,
@@ -513,11 +512,6 @@ pub(crate) fn submit_gossip_stats(
         (
             "window_request_loopback",
             stats.window_request_loopback.clear(),
-            i64
-        ),
-        (
-            "get_epoch_duration_no_working_bank",
-            stats.get_epoch_duration_no_working_bank.clear(),
             i64
         ),
         (
