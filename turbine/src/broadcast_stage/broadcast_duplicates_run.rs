@@ -392,13 +392,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             .flatten()
             .collect();
 
-        match batch_send(sock, &packets) {
-            Ok(()) => (),
-            Err(SendPktsError::IoError(ioerr, _)) => {
-                return Err(Error::Io(ioerr));
-            }
-        }
-        Ok(())
+        batch_send(sock, packets).map_err(|SendPktsError::IoError(err, _)| Error::Io(err))
     }
 
     fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()> {
