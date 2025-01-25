@@ -1308,7 +1308,7 @@ impl ClusterInfo {
     }
     fn new_push_requests(&self, stakes: &HashMap<Pubkey, u64>) -> Vec<(SocketAddr, Protocol)> {
         let self_id = self.id();
-        let (push_messages, num_entries, num_nodes) = {
+        let (entries, push_messages, num_pushes) = {
             let _st = ScopedTimer::from(&self.stats.new_push_requests);
             self.flush_push_queue();
             self.gossip
@@ -1320,10 +1320,10 @@ impl ClusterInfo {
         };
         self.stats
             .push_fanout_num_entries
-            .add_relaxed(num_entries as u64);
+            .add_relaxed(entries.len() as u64);
         self.stats
             .push_fanout_num_nodes
-            .add_relaxed(num_nodes as u64);
+            .add_relaxed(num_pushes as u64);
         let push_messages: Vec<_> = {
             let gossip_crds =
                 self.time_gossip_read_lock("push_req_lookup", &self.stats.new_push_requests2);
@@ -1338,6 +1338,7 @@ impl ClusterInfo {
         let messages: Vec<_> = push_messages
             .into_iter()
             .flat_map(|(peer, msgs)| {
+                let msgs = msgs.into_iter().map(|k| entries[k].clone());
                 split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, msgs)
                     .map(move |payload| (peer, Protocol::PushMessage(self_id, payload)))
             })
@@ -3474,12 +3475,19 @@ mod tests {
         );
         //check that all types of gossip messages are signed correctly
         cluster_info.flush_push_queue();
-        let (push_messages, _, _) = cluster_info.gossip.new_push_messages(
+        let (entries, push_messages, _) = cluster_info.gossip.new_push_messages(
             &cluster_info.id(),
             timestamp(),
             &stakes,
             |_| true, // should_retain_crds_value
         );
+        let push_messages = push_messages
+            .into_iter()
+            .map(|(pubkey, indices)| {
+                let values = indices.into_iter().map(|k| entries[k].clone()).collect();
+                (pubkey, values)
+            })
+            .collect::<HashMap<_, Vec<_>>>();
         // there should be some pushes ready
         assert!(!push_messages.is_empty());
         push_messages

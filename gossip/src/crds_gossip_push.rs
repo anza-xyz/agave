@@ -172,16 +172,17 @@ impl CrdsGossipPush {
         // Predicate returning false if the CRDS value should be discarded.
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
     ) -> (
-        HashMap<Pubkey, Vec<CrdsValue>>,
-        usize, // number of values
+        Vec<CrdsValue>, // unique CrdsValues pushed out to peers
+        // map of pubkeys to indices in Vec<CrdsValue> pushed to that peer
+        HashMap<Pubkey, Vec</*index:*/ usize>>,
         usize, // number of push messages
     ) {
         const MAX_NUM_PUSHES: usize = 1 << 12;
-        let active_set = self.active_set.read().unwrap();
         let mut num_pushes = 0;
-        let mut num_values = 0;
-        let mut push_messages: HashMap<Pubkey, Vec<CrdsValue>> = HashMap::new();
+        let mut values = Vec::new();
+        let mut push_messages = HashMap::<Pubkey, Vec</*index:*/ usize>>::new();
         let wallclock_window = self.wallclock_window(now);
+        let active_set = self.active_set.read().unwrap();
         let mut crds_cursor = self.crds_cursor.lock().unwrap();
         // crds should be locked last after self.{active_set,crds_cursor}.
         let crds = crds.read().unwrap();
@@ -191,16 +192,22 @@ impl CrdsGossipPush {
             .filter(|value| wallclock_window.contains(&value.wallclock()))
             .filter(|value| should_retain_crds_value(value));
         'outer: for value in entries {
-            num_values += 1;
             let origin = value.pubkey();
-            let nodes = active_set.get_nodes(
-                pubkey,
-                &origin,
-                |node| value.should_force_push(node),
-                stakes,
-            );
-            for node in nodes.take(self.push_fanout) {
-                push_messages.entry(*node).or_default().push(value.clone());
+            let mut nodes = active_set
+                .get_nodes(
+                    pubkey,
+                    &origin,
+                    |node| value.should_force_push(node),
+                    stakes,
+                )
+                .take(self.push_fanout)
+                .peekable();
+            let index = values.len();
+            if nodes.peek().is_some() {
+                values.push(value.clone())
+            }
+            for &node in nodes {
+                push_messages.entry(node).or_default().push(index);
                 num_pushes += 1;
                 if num_pushes >= MAX_NUM_PUSHES {
                     break 'outer;
@@ -211,7 +218,7 @@ impl CrdsGossipPush {
         drop(crds_cursor);
         drop(active_set);
         self.num_pushes.fetch_add(num_pushes, Ordering::Relaxed);
-        (push_messages, num_values, num_pushes)
+        (values, push_messages, num_pushes)
     }
 
     /// Add the `from` to the peer's filter of nodes.
@@ -295,6 +302,33 @@ mod tests {
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
             128,                               // capacity
         )
+    }
+
+    impl CrdsGossipPush {
+        // Wrapper for CrdsGossipPush.new_push_messages replicating old return
+        // type for legacy tests.
+        fn old_new_push_messages(
+            &self,
+            pubkey: &Pubkey,
+            crds: &RwLock<Crds>,
+            now: u64,
+            stakes: &HashMap<Pubkey, u64>,
+        ) -> HashMap<Pubkey, Vec<CrdsValue>> {
+            let (entries, messages, _) = self.new_push_messages(
+                pubkey,
+                crds,
+                now,
+                stakes,
+                |_| true, // should_retain_crds_value
+            );
+            messages
+                .into_iter()
+                .map(|(pubkey, indices)| {
+                    let values = indices.into_iter().map(|k| entries[k].clone()).collect();
+                    (pubkey, values)
+                })
+                .collect()
+        }
     }
 
     #[test]
@@ -422,14 +456,12 @@ mod tests {
             [origin].into_iter().collect()
         );
         assert_eq!(
-            push.new_push_messages(
+            push.old_new_push_messages(
                 &Pubkey::default(),
                 &crds,
                 0,
                 &HashMap::<Pubkey, u64>::default(), // stakes
-                |_| true,                           // should_retain_crds_value
-            )
-            .0,
+            ),
             expected
         );
     }
@@ -487,14 +519,12 @@ mod tests {
         .into_iter()
         .collect();
         assert_eq!(
-            push.new_push_messages(
+            push.old_new_push_messages(
                 &Pubkey::default(),
                 &crds,
                 now,
                 &HashMap::<Pubkey, u64>::default(), // stakes
-                |_| true,                           // should_retain_crds_value
-            )
-            .0,
+            ),
             expected
         );
     }
@@ -541,14 +571,12 @@ mod tests {
             &HashMap::<Pubkey, u64>::default(), // stakes
         );
         assert_eq!(
-            push.new_push_messages(
+            push.old_new_push_messages(
                 &self_id,
                 &crds,
                 0,
                 &HashMap::<Pubkey, u64>::default(), // stakes
-                |_| true,                           // should_retain_crds_value
-            )
-            .0,
+            ),
             expected
         );
     }
@@ -584,14 +612,12 @@ mod tests {
             [origin].into_iter().collect()
         );
         assert_eq!(
-            push.new_push_messages(
+            push.old_new_push_messages(
                 &Pubkey::default(),
                 &crds,
                 0,
                 &HashMap::<Pubkey, u64>::default(), // stakes
-                |_| true,                           // should_retain_crds_value
-            )
-            .0,
+            ),
             expected
         );
     }

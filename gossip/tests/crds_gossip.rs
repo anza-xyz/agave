@@ -376,17 +376,20 @@ fn network_run_push(
                     Duration::from_millis(node.gossip.pull.crds_timeout),
                 );
                 node.gossip.purge(&node_pubkey, thread_pool, now, &timeouts);
-                (
-                    node_pubkey,
-                    node.gossip
-                        .new_push_messages(
-                            &node_pubkey,
-                            now,
-                            &stakes,
-                            |_| true, // should_retain_crds_value
-                        )
-                        .0,
-                )
+                let (entries, messages, _) = node.gossip.new_push_messages(
+                    &node_pubkey,
+                    now,
+                    &stakes,
+                    |_| true, // should_retain_crds_value
+                );
+                let messages = messages
+                    .into_iter()
+                    .map(|(pubkey, indices)| {
+                        let values = indices.into_iter().map(|k| entries[k].clone()).collect();
+                        (pubkey, values)
+                    })
+                    .collect::<Vec<(_, Vec<_>)>>();
+                (node_pubkey, messages)
             })
             .collect();
         let transfered: Vec<_> = requests

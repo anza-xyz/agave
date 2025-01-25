@@ -76,8 +76,9 @@ impl CrdsGossip {
         stakes: &HashMap<Pubkey, u64>,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
     ) -> (
-        HashMap<Pubkey, Vec<CrdsValue>>,
-        usize, // number of values
+        Vec<CrdsValue>, // unique CrdsValues pushed out to peers
+        // map of pubkeys to indices in Vec<CrdsValue> pushed to that peer
+        HashMap<Pubkey, Vec</*index:*/ usize>>,
         usize, // number of push messages
     ) {
         self.push
