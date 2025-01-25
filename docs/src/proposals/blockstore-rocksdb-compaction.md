@@ -185,7 +185,7 @@ To avoid the start-up write stalls, a more efficient way to perform FIFO
 to level compaction is to do a manual compaction first, then open the DB.
 
 ## Release Plan
-As the migration in either way can not be done smoothly in place, the
+As the migration in either way cannot be done smoothly in place, the
 release will be divided into the following steps:
 
 * v0 - merge FIFO compaction implementation with visible args.
