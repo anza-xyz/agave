@@ -5,7 +5,8 @@ use {
         accounts_db::AccountsDb,
         accounts_hash::{AccountHash, AccountsHasher},
     },
-    solana_sdk::{account::AccountSharedData, hash::Hash, pubkey::Pubkey},
+    solana_pubkey::Pubkey,
+    solana_sdk::{account::AccountSharedData, hash::Hash},
 };
 
 const KB: usize = 1024;

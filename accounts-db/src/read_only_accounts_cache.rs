@@ -11,10 +11,10 @@ use {
         thread_rng, Rng,
     },
     solana_measure::{measure::Measure, measure_us},
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::Slot,
-        pubkey::Pubkey,
     },
     std::{
         mem::ManuallyDrop,

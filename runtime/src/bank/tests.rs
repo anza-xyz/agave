@@ -73,6 +73,7 @@ use {
         incinerator,
         instruction::{AccountMeta, CompiledInstruction, Instruction, InstructionError},
         loader_upgradeable_instruction::UpgradeableLoaderInstruction,
+        loader_v4::{self, LoaderV4State},
         message::{Message, MessageHeader, SanitizedMessage},
         native_loader,
         native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
@@ -7247,6 +7248,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(FeatureSet::all_enabled());
+    bank.deactivate_feature(&solana_feature_set::enable_loader_v4::id());
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
 
@@ -13281,11 +13283,15 @@ fn test_deploy_last_epoch_slot() {
 
     // Bank Setup
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+    activate_feature(
+        &mut genesis_config,
+        solana_feature_set::enable_loader_v4::id(),
+    );
     genesis_config
         .accounts
-        .remove(&feature_set::disable_fees_sysvar::id());
+        .remove(&feature_set::remove_accounts_executable_flag_checks::id());
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.activate_feature(&feature_set::disable_fees_sysvar::id());
+    bank.activate_feature(&feature_set::remove_accounts_executable_flag_checks::id());
 
     // go to the last slot in the epoch
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -13304,47 +13310,41 @@ fn test_deploy_last_epoch_slot() {
     let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so").unwrap();
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
-    let min_program_balance =
-        bank.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
-    let min_buffer_balance = bank
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(elf.len()));
-    let min_programdata_balance = bank.get_minimum_balance_for_rent_exemption(
-        UpgradeableLoaderState::size_of_programdata(elf.len()),
-    );
-    let buffer_address = Pubkey::new_unique();
-    let (programdata_address, _) = Pubkey::find_program_address(
-        &[program_keypair.pubkey().as_ref()],
-        &bpf_loader_upgradeable::id(),
+    let min_program_balance = bank.get_minimum_balance_for_rent_exemption(
+        LoaderV4State::program_data_offset().saturating_add(elf.len()),
     );
     let upgrade_authority_keypair = Keypair::new();
 
-    let buffer_account = {
-        let mut account = AccountSharedData::new(
-            min_buffer_balance,
-            UpgradeableLoaderState::size_of_buffer(elf.len()),
-            &bpf_loader_upgradeable::id(),
-        );
-        account
-            .set_state(&UpgradeableLoaderState::Buffer {
-                authority_address: Some(upgrade_authority_keypair.pubkey()),
-            })
-            .unwrap();
-        account
+    let mut program_account = AccountSharedData::new(
+        min_program_balance,
+        LoaderV4State::program_data_offset().saturating_add(elf.len()),
+        &loader_v4::id(),
+    );
+    let program_state = <&mut [u8; LoaderV4State::program_data_offset()]>::try_from(
+        program_account
             .data_as_mut_slice()
-            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
-            .unwrap()
-            .copy_from_slice(&elf);
-        account
+            .get_mut(0..LoaderV4State::program_data_offset())
+            .unwrap(),
+    )
+    .unwrap();
+    let program_state = unsafe {
+        std::mem::transmute::<&mut [u8; LoaderV4State::program_data_offset()], &mut LoaderV4State>(
+            program_state,
+        )
     };
+    program_state.authority_address_or_next_version = upgrade_authority_keypair.pubkey();
+    program_account
+        .data_as_mut_slice()
+        .get_mut(LoaderV4State::program_data_offset()..)
+        .unwrap()
+        .copy_from_slice(&elf);
 
     let payer_base_balance = LAMPORTS_PER_SOL;
     let deploy_fees = {
         let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
         3 * fee_calculator.lamports_per_signature
     };
-    let min_payer_balance = min_program_balance
-        .saturating_add(min_programdata_balance)
-        .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
+    let min_payer_balance = min_program_balance.saturating_add(deploy_fees);
     bank.store_account(
         &payer_keypair.pubkey(),
         &AccountSharedData::new(
@@ -13353,22 +13353,15 @@ fn test_deploy_last_epoch_slot() {
             &system_program::id(),
         ),
     );
-    bank.store_account(&buffer_address, &buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
+    bank.store_account(&program_keypair.pubkey(), &program_account);
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
-            &payer_keypair.pubkey(),
+        &[loader_v4::deploy(
             &program_keypair.pubkey(),
-            &buffer_address,
             &upgrade_authority_keypair.pubkey(),
-            min_program_balance,
-            elf.len(),
-        )
-        .unwrap(),
+        )],
         Some(&payer_keypair.pubkey()),
     );
-    let signers = &[&payer_keypair, &program_keypair, &upgrade_authority_keypair];
+    let signers = &[&payer_keypair, &upgrade_authority_keypair];
     let transaction = Transaction::new(signers, message.clone(), bank.last_blockhash());
     let ret = bank.process_transaction(&transaction);
     assert!(ret.is_ok(), "ret: {:?}", ret);

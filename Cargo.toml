@@ -149,6 +149,7 @@ members = [
     "sdk/keypair",
     "sdk/loader-v2-interface",
     "sdk/loader-v3-interface",
+    "sdk/loader-v4-interface",
     "sdk/logger",
     "sdk/macro",
     "sdk/message",
@@ -532,6 +533,7 @@ solana-lattice-hash = { path = "lattice-hash", version = "=2.2.0" }
 solana-ledger = { path = "ledger", version = "=2.2.0" }
 solana-loader-v2-interface = { path = "sdk/loader-v2-interface", version = "=2.2.0" }
 solana-loader-v3-interface = { path = "sdk/loader-v3-interface", version = "=2.2.0" }
+solana-loader-v4-interface = { path = "sdk/loader-v4-interface", version = "=2.2.0" }
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=2.2.0" }
 solana-local-cluster = { path = "local-cluster", version = "=2.2.0" }
 solana-log-collector = { path = "log-collector", version = "=2.2.0" }

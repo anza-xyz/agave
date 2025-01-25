@@ -16,10 +16,10 @@ use {
     assert_matches::assert_matches,
     itertools::Itertools,
     rand::{prelude::SliceRandom, thread_rng, Rng},
+    solana_pubkey::PUBKEY_BYTES,
     solana_sdk::{
         account::{accounts_equal, Account, AccountSharedData, ReadableAccount, WritableAccount},
         hash::HASH_BYTES,
-        pubkey::PUBKEY_BYTES,
     },
     std::{
         hash::DefaultHasher,

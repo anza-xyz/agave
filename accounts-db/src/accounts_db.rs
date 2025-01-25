@@ -85,6 +85,7 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
+    solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount},
@@ -92,7 +93,6 @@ use {
         epoch_schedule::EpochSchedule,
         genesis_config::GenesisConfig,
         hash::Hash,
-        pubkey::Pubkey,
         rent_collector::RentCollector,
         saturating_add_assign,
         transaction::SanitizedTransaction,

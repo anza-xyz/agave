@@ -87,7 +87,7 @@ dependencies = [
  "rayon",
  "solana-accounts-db",
  "solana-clap-utils",
- "solana-program",
+ "solana-pubkey",
  "solana-version",
 ]
 
@@ -7559,6 +7559,7 @@ dependencies = [
 name = "solana-fee"
 version = "2.2.0"
 dependencies = [
+ "qualifier_attr",
  "solana-feature-set",
  "solana-fee-structure",
  "solana-svm-transaction",
@@ -8061,6 +8062,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-loader-v4-interface"
+version = "2.2.0"
+dependencies = [
+ "memoffset 0.9.1",
+ "serde",
+ "serde_bytes",
+ "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-instruction",
+ "solana-loader-v4-interface",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-system-interface",
+]
+
+[[package]]
 name = "solana-loader-v4-program"
 version = "2.2.0"
 dependencies = [
@@ -8073,13 +8091,15 @@ dependencies = [
  "solana-clock",
  "solana-compute-budget",
  "solana-instruction",
+ "solana-loader-v3-interface",
+ "solana-loader-v4-interface",
  "solana-log-collector",
  "solana-measure",
  "solana-packet",
- "solana-program",
  "solana-program-runtime",
  "solana-pubkey",
  "solana-sbpf",
+ "solana-sdk-ids",
  "solana-sysvar",
  "solana-transaction-context",
  "solana-type-overrides",
@@ -8578,6 +8598,7 @@ dependencies = [
  "solana-last-restart-slot",
  "solana-loader-v2-interface",
  "solana-loader-v3-interface",
+ "solana-loader-v4-interface",
  "solana-logger",
  "solana-message",
  "solana-msg",
@@ -10564,6 +10585,7 @@ dependencies = [
  "smallvec",
  "socket2",
  "solana-clap-utils",
+ "solana-core",
  "solana-logger",
  "solana-measure",
  "solana-metrics",
@@ -10644,6 +10666,7 @@ version = "2.2.0"
 dependencies = [
  "assert_matches",
  "bincode",
+ "criterion",
  "log",
  "num-derive",
  "num-traits",
@@ -10665,6 +10688,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey",
  "solana-rent",
+ "solana-sdk",
  "solana-sdk-ids",
  "solana-sha256-hasher",
  "solana-signer",

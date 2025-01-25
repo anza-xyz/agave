@@ -2,20 +2,38 @@ use {
     solana_clock::Slot,
     solana_runtime::bank::Bank,
     std::{
-        sync::{Arc, Condvar, Mutex, MutexGuard, Weak},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, Condvar, Mutex, MutexGuard, Weak,
+        },
         time::{Duration, Instant},
     },
 };
 
+const STAND_BY_SENTINEL_ID: u64 = u64::MAX;
+
 /// Tracks leader status of the validator node and notifies when:
 ///     1. A leader bank initiates (=PoH-initiated)
 ///     2. A leader slot completes (=PoH-completed)
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct LeaderBankNotifier {
     /// Current state (slot, bank, and status) of the system
     state: Mutex<SlotAndBankWithStatus>,
     /// CondVar to notify status changes and waiting
     condvar: Condvar,
+    /// Lightweight atomic variable that can be used to check the id of the
+    /// latest leader bank
+    current_bank_id: AtomicU64,
+}
+
+impl Default for LeaderBankNotifier {
+    fn default() -> Self {
+        Self {
+            state: Mutex::default(),
+            condvar: Condvar::default(),
+            current_bank_id: AtomicU64::new(STAND_BY_SENTINEL_ID),
+        }
+    }
 }
 
 /// Leader status state machine for the validator.
@@ -43,6 +61,8 @@ impl LeaderBankNotifier {
         let mut state = self.state.lock().unwrap();
         assert_eq!(state.status, Status::StandBy);
 
+        self.current_bank_id
+            .store(bank.bank_id(), Ordering::Relaxed);
         *state = SlotAndBankWithStatus {
             status: Status::InProgress,
             slot: Some(bank.slot()),
@@ -61,10 +81,24 @@ impl LeaderBankNotifier {
         assert_eq!(state.status, Status::InProgress);
         assert_eq!(state.slot, Some(slot));
 
+        self.current_bank_id
+            .store(STAND_BY_SENTINEL_ID, Ordering::Relaxed);
         state.status = Status::StandBy;
         drop(state);
 
         self.condvar.notify_all();
+    }
+
+    /// Fetch the bank id of the bank inside the mutex wrapped state field. Due
+    /// to the usage of relaxed ordering, this is not a guarantee that the
+    /// caller thread will see the updated bank in the mutex wrapped state yet.
+    pub fn get_current_bank_id(&self) -> Option<u64> {
+        let current_bank_id = self.current_bank_id.load(Ordering::Relaxed);
+        if current_bank_id == STAND_BY_SENTINEL_ID {
+            None
+        } else {
+            Some(current_bank_id)
+        }
     }
 
     /// If the status is `InProgress`, immediately return a weak reference to the bank.
@@ -124,6 +158,7 @@ mod tests {
     fn test_leader_bank_notifier_default() {
         let leader_bank_notifier = LeaderBankNotifier::default();
         let state = leader_bank_notifier.state.lock().unwrap();
+        assert_eq!(leader_bank_notifier.get_current_bank_id(), None);
         assert_eq!(state.status, Status::StandBy);
         assert_eq!(state.slot, None);
         assert!(state.bank.upgrade().is_none());
@@ -145,6 +180,10 @@ mod tests {
         leader_bank_notifier.set_in_progress(&bank);
 
         let state = leader_bank_notifier.state.lock().unwrap();
+        assert_eq!(
+            leader_bank_notifier.get_current_bank_id(),
+            Some(bank.bank_id())
+        );
         assert_eq!(state.status, Status::InProgress);
         assert_eq!(state.slot, Some(bank.slot()));
         assert_eq!(state.bank.upgrade(), Some(bank));
@@ -184,6 +223,7 @@ mod tests {
         leader_bank_notifier.set_completed(bank.slot());
 
         let state = leader_bank_notifier.state.lock().unwrap();
+        assert_eq!(leader_bank_notifier.get_current_bank_id(), None);
         assert_eq!(state.status, Status::StandBy);
         assert_eq!(state.slot, Some(bank.slot()));
         assert_eq!(state.bank.upgrade(), Some(bank));

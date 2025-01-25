@@ -1,8 +1,7 @@
 use {
     crate::account_storage::meta::StoredAccountMeta,
-    solana_sdk::{
-        account::AccountSharedData, clock::Slot, pubkey::Pubkey, transaction::SanitizedTransaction,
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk::{account::AccountSharedData, clock::Slot, transaction::SanitizedTransaction},
     std::sync::Arc,
 };
 

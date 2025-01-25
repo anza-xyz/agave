@@ -69,7 +69,7 @@ use {
         signature::{Keypair, Signature, Signer, SIGNATURE_BYTES},
     },
     static_assertions::const_assert_eq,
-    std::{fmt::Debug, time::Instant, vec::Drain},
+    std::{fmt::Debug, time::Instant},
     thiserror::Error,
 };
 pub use {
@@ -1111,7 +1111,7 @@ impl TryFrom<u8> for ShredVariant {
 pub(crate) fn recover(
     shreds: impl IntoIterator<Item = Shred>,
     reed_solomon_cache: &ReedSolomonCache,
-) -> Result<Vec<Shred>, Error> {
+) -> Result<impl Iterator<Item = Result<Shred, Error>>, Error> {
     let shreds = shreds
         .into_iter()
         .map(|shred| {
@@ -1129,9 +1129,8 @@ pub(crate) fn recover(
     // The same signature also verifies for recovered shreds because when
     // reconstructing the Merkle tree for the erasure batch, we will obtain the
     // same Merkle root.
-    merkle::recover(shreds, reed_solomon_cache)?
-        .map(|shred| Ok(Shred::from(shred?)))
-        .collect()
+    let shreds = merkle::recover(shreds, reed_solomon_cache)?;
+    Ok(shreds.map(|shred| shred.map(Shred::from)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1280,28 +1279,6 @@ pub fn should_discard_shred(
     false
 }
 
-// Drains coding shreds out of the vector of shreds.
-// Note that the function does not preserve the order of either the retained or
-// the drained shreds.
-// TODO: Use Vec::extract_if instead once stable.
-pub(crate) fn drain_coding_shreds(shreds: &mut Vec<Shred>) -> Drain<'_, Shred> {
-    let (mut i, mut j) = (0, shreds.len().saturating_sub(1));
-    loop {
-        while i < j && shreds[i].is_data() {
-            i += 1;
-        }
-        while i < j && shreds[j].is_code() {
-            j -= 1;
-        }
-        if i < j {
-            shreds.swap(i, j);
-        } else {
-            let offset = usize::from(shreds.get(i).map(Shred::is_data).unwrap_or_default());
-            return shreds.drain(i + offset..);
-        }
-    }
-}
-
 pub fn max_ticks_per_n_shreds(num_shreds: u64, shred_data_size: Option<usize>) -> u64 {
     let ticks = create_ticks(1, 0, Hash::default());
     max_entries_per_n_shred(&ticks[0], num_shreds, shred_data_size)
@@ -1359,7 +1336,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         bincode::serialized_size,
-        rand::{seq::SliceRandom, Rng},
+        rand::Rng,
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
         solana_sdk::{shred_version, signature::Signer, signer::keypair::keypair_from_seed},
@@ -2279,38 +2256,6 @@ mod tests {
             );
             assert!(shred.is_shred_duplicate(&other));
             assert!(other.is_shred_duplicate(shred));
-        }
-    }
-
-    #[test]
-    fn test_drain_coding_shreds() {
-        let mut rng = rand::thread_rng();
-        let slot = 314_972_727 + rng.gen_range(0..100_000);
-        let (chained, is_last_in_slot) = rng.gen();
-        let mut shreds: Vec<_> = make_merkle_shreds_for_tests(
-            &mut rng,
-            slot,
-            20 * 1232, // data_size
-            chained,
-            is_last_in_slot,
-        )
-        .unwrap()
-        .into_iter()
-        .flatten()
-        .map(Shred::from)
-        .collect();
-        shreds.shuffle(&mut rng);
-        assert!(shreds.iter().filter(|shred| shred.is_data()).count() > 20);
-        assert!(shreds.iter().filter(|shred| shred.is_code()).count() > 20);
-        let num_shreds = shreds.len();
-        for offset in 0..num_shreds {
-            for size in 0..(num_shreds - offset) {
-                let mut shreds = Vec::from(&shreds[offset..offset + size]);
-                let coding_shreds: Vec<_> = drain_coding_shreds(&mut shreds).collect();
-                assert_eq!(shreds.len() + coding_shreds.len(), size);
-                assert!(shreds.iter().all(Shred::is_data));
-                assert!(coding_shreds.iter().all(Shred::is_code));
-            }
         }
     }
 }

@@ -57,6 +57,7 @@ solana-keccak-hasher = { workspace = true, features = ["sha3"] }
 solana-last-restart-slot = { workspace = true, features = ["serde", "sysvar"] }
 solana-loader-v2-interface = { workspace = true, features = ["bincode"] }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
+solana-loader-v4-interface = { workspace = true, features = ["bincode"] }
 solana-message = { workspace = true, features = ["bincode", "blake3"] }
 solana-msg = { workspace = true }
 solana-native-token = { workspace = true }

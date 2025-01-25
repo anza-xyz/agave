@@ -5756,6 +5756,7 @@ dependencies = [
 name = "solana-fee"
 version = "2.2.0"
 dependencies = [
+ "qualifier_attr",
  "solana-feature-set",
  "solana-fee-structure",
  "solana-svm-transaction",
@@ -6108,6 +6109,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-loader-v4-interface"
+version = "2.2.0"
+dependencies = [
+ "serde",
+ "serde_bytes",
+ "serde_derive",
+ "solana-instruction",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-system-interface",
+]
+
+[[package]]
 name = "solana-loader-v4-program"
 version = "2.2.0"
 dependencies = [
@@ -6118,13 +6132,15 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-compute-budget",
  "solana-instruction",
+ "solana-loader-v3-interface",
+ "solana-loader-v4-interface",
  "solana-log-collector",
  "solana-measure",
  "solana-packet",
- "solana-program",
  "solana-program-runtime",
  "solana-pubkey",
  "solana-sbpf",
+ "solana-sdk-ids",
  "solana-transaction-context",
  "solana-type-overrides",
 ]
@@ -6425,6 +6441,7 @@ dependencies = [
  "solana-last-restart-slot",
  "solana-loader-v2-interface",
  "solana-loader-v3-interface",
+ "solana-loader-v4-interface",
  "solana-message",
  "solana-msg",
  "solana-native-token",

@@ -114,10 +114,7 @@ mod tests {
     #[test_case(solana_stake_program::id(), None)]
     #[test_case(solana_system_program::id(), None)]
     #[test_case(solana_vote_program::id(), None)]
-    #[test_case(
-        solana_sdk::loader_v4::id(),
-        Some(feature_set::enable_program_runtime_v2_and_loader_v4::id())
-    )]
+    #[test_case(solana_sdk::loader_v4::id(), Some(feature_set::enable_loader_v4::id()))]
     #[test_case(
         solana_sdk_ids::zk_token_proof_program::id(),
         Some(feature_set::zk_token_sdk_enabled::id())

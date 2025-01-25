@@ -491,7 +491,13 @@ pub mod loader_upgradeable_instruction {
     pub use solana_loader_v3_interface::instruction::UpgradeableLoaderInstruction;
 }
 pub mod loader_v4;
-pub mod loader_v4_instruction;
+pub mod loader_v4_instruction {
+    #[deprecated(
+        since = "2.2.0",
+        note = "Use solana_loader_v4_interface::instruction instead"
+    )]
+    pub use solana_loader_v4_interface::instruction::LoaderV4Instruction;
+}
 pub mod log;
 pub mod nonce;
 pub mod program;

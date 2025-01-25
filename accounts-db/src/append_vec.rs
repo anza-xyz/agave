@@ -20,10 +20,10 @@ use {
     },
     log::*,
     memmap2::MmapMut,
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         hash::Hash,
-        pubkey::Pubkey,
         stake_history::Epoch,
         system_instruction::MAX_PERMITTED_DATA_LENGTH,
     },

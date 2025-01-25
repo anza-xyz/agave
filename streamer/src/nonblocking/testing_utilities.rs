@@ -59,6 +59,7 @@ pub struct TestServerConfig {
     pub max_unstaked_connections: usize,
     pub max_streams_per_ms: u64,
     pub max_connections_per_ipaddr_per_min: u64,
+    pub coalesce_channel_size: usize,
 }
 
 impl Default for TestServerConfig {
@@ -69,6 +70,7 @@ impl Default for TestServerConfig {
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
+            coalesce_channel_size: 100_000, // use a smaller value for test as create a huge bounded channel can take time
         }
     }
 }
@@ -122,6 +124,7 @@ pub fn setup_quic_server_with_sockets(
         max_unstaked_connections,
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min,
+        coalesce_channel_size,
     }: TestServerConfig,
 ) -> SpawnTestServerResult {
     let exit = Arc::new(AtomicBool::new(false));
@@ -137,6 +140,7 @@ pub fn setup_quic_server_with_sockets(
         max_connections_per_ipaddr_per_min,
         wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         coalesce: DEFAULT_TPU_COALESCE,
+        coalesce_channel_size,
     };
     let SpawnNonBlockingServerResult {
         endpoints: _,
