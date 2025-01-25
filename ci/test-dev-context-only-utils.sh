@@ -19,7 +19,7 @@ export SCCACHE_CACHE_SIZE="200G"
 export CARGO_INCREMENTAL=0
 
 
-rm -rf ./target ~/.cache/sccache/
+rm -rf ./target ~/.cache/sccache/ || true
 _ sccache --show-stats
 export RUSTFLAGS="-Z threads=0"
 scripts/check-dev-context-only-utils.sh check-all-targets "$@"
@@ -28,7 +28,7 @@ scripts/check-dev-context-only-utils.sh check-all-targets "$@"
 scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
 _ sccache --stop-server
 
-rm -rf ./target ~/.cache/sccache/
+rm -rf ./target ~/.cache/sccache/ || true
 _ sccache --show-stats
 export RUSTFLAGS="-Z threads=8"
 scripts/check-dev-context-only-utils.sh check-all-targets "$@"
@@ -37,7 +37,7 @@ scripts/check-dev-context-only-utils.sh check-all-targets "$@"
 scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
 _ sccache --stop-server
 
-rm -rf ./target ~/.cache/sccache/
+rm -rf ./target ~/.cache/sccache/ || true
 _ sccache --show-stats
 export RUSTFLAGS="-Z threads=0"
 scripts/check-dev-context-only-utils.sh check-all-targets "$@"
@@ -46,7 +46,7 @@ scripts/check-dev-context-only-utils.sh check-all-targets "$@"
 scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
 _ sccache --stop-server
 
-rm -rf ./target ~/.cache/sccache/
+rm -rf ./target ~/.cache/sccache/ || true
 _ sccache --show-stats
 export RUSTFLAGS="-Z threads=8"
 scripts/check-dev-context-only-utils.sh check-all-targets "$@"
