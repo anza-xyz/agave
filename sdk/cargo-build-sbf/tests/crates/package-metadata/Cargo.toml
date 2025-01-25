@@ -1,6 +1,6 @@
 [package]
 name = "package-metadata"
-version = "2.1.11"
+version = "2.1.12"
 description = "Solana SBF test program with tools version in package metadata"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/agave"
@@ -14,8 +14,8 @@ tools-version = "v1.43"
 program-id = "MyProgram1111111111111111111111111111111111"
 
 [dependencies]
-solana-package-metadata = { path = "../../../../package-metadata", version = "=2.1.11" }
-solana-program = { path = "../../../../program", version = "=2.1.11" }
+solana-package-metadata = { path = "../../../../package-metadata", version = "=2.1.12" }
+solana-program = { path = "../../../../program", version = "=2.1.12" }
 
 [lib]
 crate-type = ["cdylib"]
