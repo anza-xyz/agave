@@ -115,6 +115,7 @@ use {
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
         },
+        thread::sleep,
         time::Duration,
     },
     tokio::runtime::Runtime,
@@ -4482,6 +4483,7 @@ pub fn populate_blockstore_for_tests(
 
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let tss_exit = Arc::new(AtomicBool::new(false));
     let transaction_status_service =
         crate::transaction_status_service::TransactionStatusService::new(
             transaction_status_receiver,
@@ -4490,7 +4492,7 @@ pub fn populate_blockstore_for_tests(
             None,
             blockstore,
             false,
-            Arc::new(AtomicBool::new(false)),
+            tss_exit.clone(),
         );
 
     // Check that process_entries successfully writes can_commit transactions statuses, and
@@ -4509,6 +4511,9 @@ pub fn populate_blockstore_for_tests(
         Ok(())
     );
 
+    // Gracefully quiesce and shut down transaction status service.
+    sleep(Duration::from_secs(1));
+    tss_exit.store(true, Ordering::Relaxed);
     transaction_status_service.join().unwrap();
 }
 
