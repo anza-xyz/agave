@@ -1405,6 +1405,7 @@ fn test_snapshots_blockstore_floor() {
     assert_eq!(first_slot, slot_floor);
 }
 
+// hmmm!
 #[test]
 #[serial]
 fn test_snapshots_restart_validity() {
