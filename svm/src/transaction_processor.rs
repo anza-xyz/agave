@@ -929,6 +929,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) -> ExecutedTransaction {
         let transaction_accounts = std::mem::take(&mut loaded_transaction.accounts);
 
+        // Ensure the length of accounts matches the expected length from tx.account_keys().
+        // This is a sanity check in case that someone starts adding some additional accounts
+        // since this has been done before. See discussion in PR #4497 for details
+        debug_assert!(transaction_accounts.len() == tx.account_keys().len());
+
         fn transaction_accounts_lamports_sum(
             accounts: &[(Pubkey, AccountSharedData)],
         ) -> Option<u128> {
