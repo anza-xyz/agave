@@ -619,9 +619,7 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
             return Err(WenRestartError::Exiting.into());
         }
         let saved_bank = bank_forks.read().unwrap().get_with_scheduler(slot);
-        let bank_with_scheduler = if let Some(bank) = saved_bank {
-            bank
-        } else {
+        let bank_with_scheduler = saved_bank.unwrap_or_else(|| {
             let new_bank = Bank::new_from_parent(
                 parent_bank.clone(),
                 &leader_schedule_cache
@@ -630,7 +628,7 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
                 slot,
             );
             bank_forks.write().unwrap().insert_from_ledger(new_bank)
-        };
+        });
         let bank = if bank_with_scheduler.is_frozen() {
             bank_with_scheduler.clone_without_scheduler()
         } else {
@@ -3749,13 +3747,14 @@ mod tests {
         slot: Slot,
     ) {
         let exit = Arc::new(AtomicBool::new(false));
+        let root_bank = test_state.bank_forks.read().unwrap().root_bank();
         assert_eq!(
             find_bankhash_of_heaviest_fork(
                 slot,
                 slots.to_vec(),
                 test_state.blockstore.clone(),
                 test_state.bank_forks.clone(),
-                test_state.bank_forks.read().unwrap().root_bank(),
+                root_bank,
                 &exit,
             )
             .unwrap(),
