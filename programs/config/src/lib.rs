@@ -7,16 +7,14 @@ pub mod config_processor;
 )]
 pub mod date_instruction;
 
-pub use solana_sdk::config::program::id;
 #[allow(deprecated)]
-use solana_sdk::stake::config::Config as StakeConfig;
+use solana_program::stake::config::Config as StakeConfig;
+pub use solana_sdk_ids::config::id;
 use {
     bincode::{deserialize, serialize, serialized_size},
     serde_derive::{Deserialize, Serialize},
-    solana_sdk::{
-        account::{Account, AccountSharedData},
-        pubkey::Pubkey,
-    },
+    solana_account::{Account, AccountSharedData},
+    solana_pubkey::Pubkey,
     solana_short_vec as short_vec,
 };
 

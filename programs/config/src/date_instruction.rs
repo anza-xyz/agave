@@ -9,7 +9,8 @@ use {
         serde::ts_seconds,
     },
     serde_derive::{Deserialize, Serialize},
-    solana_sdk::{instruction::Instruction, pubkey::Pubkey},
+    solana_instruction::Instruction,
+    solana_pubkey::Pubkey,
 };
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
