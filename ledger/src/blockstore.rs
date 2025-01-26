@@ -1293,7 +1293,7 @@ impl Blockstore {
     // Blockstore::insert_shreds when inserting own shreds during leader slots.
     pub fn insert_shreds_handle_duplicate<F>(
         &self,
-        shreds: impl ExactSizeIterator<Item = (Shred, /*is_repaired:*/ bool)>,
+        shreds: impl IntoIterator<Item = (Shred, /*is_repaired:*/ bool), IntoIter: ExactSizeIterator>,
         leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
         retransmit_sender: &Sender<Vec</*shred:*/ Vec<u8>>>,
@@ -1308,7 +1308,7 @@ impl Blockstore {
             completed_data_set_infos,
             duplicate_shreds,
         } = self.do_insert_shreds(
-            shreds,
+            shreds.into_iter(),
             leader_schedule,
             is_trusted,
             Some((reed_solomon_cache, retransmit_sender)),
