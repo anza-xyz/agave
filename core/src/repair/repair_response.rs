@@ -41,15 +41,6 @@ pub fn repair_response_packet_from_bytes(
     Some(packet)
 }
 
-pub(crate) fn nonce(packet: &Packet) -> Option<Nonce> {
-    // Nonces are attached to both repair and ancestor hashes responses.
-    let data = packet.data(..)?;
-    let offset = data.len().checked_sub(SIZE_OF_NONCE)?;
-    <[u8; SIZE_OF_NONCE]>::try_from(&data[offset..])
-        .map(Nonce::from_le_bytes)
-        .ok()
-}
-
 #[cfg(test)]
 mod test {
     use {

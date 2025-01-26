@@ -653,6 +653,18 @@ pub mod layout {
     }
 
     #[inline]
+    pub fn get_shred_and_repair_nonce(packet: &Packet) -> Option<(&[u8], Option<Nonce>)> {
+        let data = packet.data(..)?;
+        if !packet.meta().repair() {
+            return Some((data, None));
+        }
+        let offset = data.len().checked_sub(4)?;
+        let (shred, nonce) = data.split_at(offset);
+        let nonce = u32::from_le_bytes(<[u8; 4]>::try_from(nonce).unwrap());
+        Some((shred, Some(nonce)))
+    }
+
+    #[inline]
     pub fn get_common_header_bytes(shred: &[u8]) -> Option<&[u8]> {
         shred.get(..SIZE_OF_COMMON_SHRED_HEADER)
     }
@@ -687,7 +699,7 @@ pub mod layout {
     }
 
     #[inline]
-    pub(crate) fn get_index(shred: &[u8]) -> Option<u32> {
+    pub fn get_index(shred: &[u8]) -> Option<u32> {
         let bytes = <[u8; 4]>::try_from(shred.get(73..73 + 4)?).unwrap();
         Some(u32::from_le_bytes(bytes))
     }
