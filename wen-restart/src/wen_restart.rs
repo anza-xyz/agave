@@ -431,7 +431,6 @@ pub(crate) fn find_heaviest_fork(
         slots,
         blockstore.clone(),
         bank_forks.clone(),
-        root_bank,
         &exit,
     )?;
     info!(
@@ -593,7 +592,6 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
     slots: Vec<Slot>,
     blockstore: Arc<Blockstore>,
     bank_forks: Arc<RwLock<BankForks>>,
-    root_bank: Arc<Bank>,
     exit: &AtomicBool,
 ) -> Result<Hash> {
     if let Some(hash) = bank_forks
@@ -604,6 +602,7 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
     {
         return Ok(hash);
     }
+    let root_bank = bank_forks.read().unwrap().root_bank();
     let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
     let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("solReplayTx{i:02}"))
@@ -825,11 +824,7 @@ pub(crate) fn verify_coordinator_heaviest_fork(
         blockstore.clone(),
         wen_restart_repair_slots.clone(),
     )?;
-    let root_bank;
-    {
-        root_bank = bank_forks.read().unwrap().root_bank();
-    }
-    let root_slot = root_bank.slot();
+    let root_slot = bank_forks.read().unwrap().root_bank().slot();
     let mut coordinator_heaviest_slot_ancestors: Vec<Slot> =
         AncestorIterator::new_inclusive(coordinator_heaviest_slot, &blockstore)
             .take_while(|slot| slot >= &root_slot)
@@ -867,7 +862,6 @@ pub(crate) fn verify_coordinator_heaviest_fork(
             coordinator_heaviest_slot_ancestors,
             blockstore.clone(),
             bank_forks.clone(),
-            root_bank,
             &exit,
         )?
     } else {
@@ -3230,7 +3224,6 @@ mod tests {
             slots,
             test_state.blockstore.clone(),
             test_state.bank_forks.clone(),
-            old_root_bank,
             &exit,
         )
         .unwrap();
@@ -3624,7 +3617,6 @@ mod tests {
         let mut pushed_hash = Hash::default();
         // The coordinator always sends its own choice.
         let coordinator_slot = last_vote;
-        let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
         let mut slots = test_state.last_voted_fork_slots.clone();
         slots.reverse();
         let coordinator_hash = find_bankhash_of_heaviest_fork(
@@ -3632,7 +3624,6 @@ mod tests {
             slots,
             test_state.blockstore.clone(),
             test_state.bank_forks.clone(),
-            old_root_bank,
             &exit,
         )
         .unwrap();
@@ -3747,14 +3738,12 @@ mod tests {
         slot: Slot,
     ) {
         let exit = Arc::new(AtomicBool::new(false));
-        let root_bank = test_state.bank_forks.read().unwrap().root_bank();
         assert_eq!(
             find_bankhash_of_heaviest_fork(
                 slot,
                 slots.to_vec(),
                 test_state.blockstore.clone(),
                 test_state.bank_forks.clone(),
-                root_bank,
                 &exit,
             )
             .unwrap(),
