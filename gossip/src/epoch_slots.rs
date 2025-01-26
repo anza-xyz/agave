@@ -94,7 +94,6 @@ impl Flate2 {
             num,
             compressed,
         };
-        let _ = rv.inflate()?;
         Ok(rv)
     }
     pub fn inflate(&self) -> Result<Uncompressed> {
