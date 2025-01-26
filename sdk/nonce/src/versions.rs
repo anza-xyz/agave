@@ -20,7 +20,9 @@ pub enum Versions {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum AuthorizeNonceError {
+    #[error("Missing required signature from account authority: {0}")]
     MissingRequiredSignature(/*account authority:*/ Pubkey),
+    #[error("Cannot authorize an uninitialized nonce account")]
     Uninitialized,
 }
 

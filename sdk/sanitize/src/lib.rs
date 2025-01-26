@@ -14,9 +14,9 @@ impl Error for SanitizeError {}
 impl fmt::Display for SanitizeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            SanitizeError::IndexOutOfBounds => f.write_str("index out of bounds"),
-            SanitizeError::ValueOutOfBounds => f.write_str("value out of bounds"),
-            SanitizeError::InvalidValue => f.write_str("invalid value"),
+            SanitizeError::IndexOutOfBounds => f.write_str("array index is out of bounds"),
+            SanitizeError::ValueOutOfBounds => f.write_str("numeric value is out of allowed bounds"),
+            SanitizeError::InvalidValue => f.write_str("value is invalid for this context"),
         }
     }
 }
