@@ -490,18 +490,16 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
 
         let region_is_account;
 
-        let mut account_index = self.account_index.unwrap_or_default();
-        self.account_index = Some(account_index);
+        let account_index = self.account_index.get_or_insert_default();
 
         loop {
-            if let Some(account) = self.accounts.get(account_index) {
+            if let Some(account) = self.accounts.get(*account_index) {
                 let account_addr = account.vm_data_addr;
                 let resize_addr = account_addr.saturating_add(account.original_data_len as u64);
 
                 if resize_addr < region.vm_addr {
                     // region is after this account, move on next one
-                    account_index = account_index.saturating_add(1);
-                    self.account_index = Some(account_index);
+                    *account_index = account_index.saturating_add(1);
                 } else {
                     region_is_account =
                         region.vm_addr == account_addr || region.vm_addr == resize_addr;
@@ -556,13 +554,12 @@ impl DoubleEndedIterator for MemoryChunkIterator<'_> {
 
         let region_is_account;
 
-        let mut account_index = self
+        let account_index = self
             .account_index
-            .unwrap_or_else(|| self.accounts.len().saturating_sub(1));
-        self.account_index = Some(account_index);
+            .get_or_insert_with(|| self.accounts.len().saturating_sub(1));
 
         loop {
-            let Some(account) = self.accounts.get(account_index) else {
+            let Some(account) = self.accounts.get(*account_index) else {
                 // address is after all the accounts
                 region_is_account = false;
                 break;
@@ -571,10 +568,8 @@ impl DoubleEndedIterator for MemoryChunkIterator<'_> {
             let account_addr = account.vm_data_addr;
             let resize_addr = account_addr.saturating_add(account.original_data_len as u64);
 
-            if account_index > 0 && account_addr > region.vm_addr {
-                account_index = account_index.saturating_sub(1);
-
-                self.account_index = Some(account_index);
+            if *account_index > 0 && account_addr > region.vm_addr {
+                *account_index = account_index.saturating_sub(1);
             } else {
                 region_is_account = region.vm_addr == account_addr || region.vm_addr == resize_addr;
                 break;
