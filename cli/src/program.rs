@@ -3064,16 +3064,38 @@ fn create_ephemeral_keypair(
     Ok((WORDS, mnemonic, new_keypair))
 }
 
+fn recover_ephemeral_keypair(
+    mnemonic: &str,
+) -> Result<Keypair, Box<dyn std::error::Error>> {
+    let mnemonic = Mnemonic::from_phrase(mnemonic, Language::English)?;
+    let seed = Seed::new(&mnemonic, "");
+    let keypair = keypair_from_seed(seed.as_bytes())?;
+    Ok(keypair)
+}
+
 fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic) {
     let phrase: &str = mnemonic.phrase();
     let divider = String::from_utf8(vec![b'='; phrase.len()]).unwrap();
-    eprintln!("{divider}\nRecover the intermediate account's ephemeral keypair file with");
-    eprintln!("`solana-keygen recover` and the following {words}-word seed phrase:");
-    eprintln!("{divider}\n{phrase}\n{divider}");
-    eprintln!("To resume a deploy, pass the recovered keypair as the");
-    eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer'.");
-    eprintln!("Or to recover the account's lamports, pass it as the");
-    eprintln!("[BUFFER_ACCOUNT_ADDRESS] argument to `solana program close`.\n{divider}");
+    match recover_ephemeral_keypair(phrase) {
+        Ok(keypair) => {
+            eprintln!("{divider}\nRecover the intermediate account's ephemeral keypair file with");
+            eprintln!("`solana-keygen recover` and the following {words}-word seed phrase:");
+            eprintln!("{divider}\n{phrase}\n{divider}");
+            eprintln!("To resume a deploy, pass the recovered keypair as the");
+            eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer`.");
+            eprintln!("Or to recover the account's lamports, use:");
+            eprintln!("{divider}\nsolana program close {}\n{divider}", keypair.pubkey().to_string());
+        },
+        Err(_) => {
+            eprintln!("{divider}\nRecover the intermediate account's ephemeral keypair file with");
+            eprintln!("`solana-keygen recover` and the following {words}-word seed phrase:");
+            eprintln!("{divider}\n{phrase}\n{divider}");
+            eprintln!("To resume a deploy, pass the recovered keypair as the");
+            eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer`.");
+            eprintln!("Or to recover the account's lamports, pass it as the");
+            eprintln!("[BUFFER_ACCOUNT_ADDRESS] argument to `solana program close`.\n{divider}");
+        }
+    }
 }
 
 fn fetch_feature_set(rpc_client: &RpcClient) -> Result<FeatureSet, Box<dyn std::error::Error>> {
