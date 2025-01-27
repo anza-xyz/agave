@@ -95,17 +95,35 @@ fn mmsghdr_for_packet(
         }
     };
 
+    #[cfg(not(target_env = "musl"))]
+    let msg_hdr = msghdr {
+        msg_name: addr as *mut _ as *mut _,
+        msg_namelen,
+        msg_iov: iov.as_mut_ptr(),
+        msg_iovlen: 1,
+        msg_control: ptr::null::<libc::c_void>() as *mut _,
+        msg_controllen: 0,
+        msg_flags: 0,
+    };
+
+    #[cfg(target_env = "musl")]
+    let msg_hdr = {
+        // Cannot construct msghdr directly on musl
+        // See https://github.com/rust-lang/libc/issues/2344 for more info
+        let mut msg_hdr: msghdr = unsafe { std::mem::zeroed() };
+        msg_hdr.msg_name = addr as *mut _ as *mut _;
+        msg_hdr.msg_namelen = msg_namelen;
+        msg_hdr.msg_iov = iov.as_mut_ptr();
+        msg_hdr.msg_iovlen = 1;
+        msg_hdr.msg_control = ptr::null::<libc::c_void>() as *mut _;
+        msg_hdr.msg_controllen = 0;
+        msg_hdr.msg_flags = 0;
+        msg_hdr
+    };
+
     hdr.write(mmsghdr {
         msg_len: 0,
-        msg_hdr: msghdr {
-            msg_name: addr as *mut _ as *mut _,
-            msg_namelen,
-            msg_iov: iov.as_mut_ptr(),
-            msg_iovlen: 1,
-            msg_control: ptr::null::<libc::c_void>() as *mut _,
-            msg_controllen: 0,
-            msg_flags: 0,
-        },
+        msg_hdr,
     });
 }
 
