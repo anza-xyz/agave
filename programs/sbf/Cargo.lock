@@ -5758,9 +5758,10 @@ name = "solana-download-utils"
 version = "2.2.0"
 dependencies = [
  "log",
+ "solana-clock",
  "solana-file-download",
+ "solana-genesis-config",
  "solana-runtime",
- "solana-sdk",
 ]
 
 [[package]]
