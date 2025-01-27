@@ -13,7 +13,7 @@ use {
     crate::{
         encryption::pedersen::{PedersenCommitment, PedersenOpening},
         sigma_proofs::percentage_with_cap::PercentageWithCapProof,
-        zk_elgamal_proof_program::errors::{ProofGenerationError, ProofVerificationError},
+        zk_elgamal_proof_program::{errors::{ProofGenerationError, ProofVerificationError}, proof_data::errors::ProofDataError},
     },
     bytemuck::bytes_of,
     merlin::Transcript,
@@ -115,6 +115,13 @@ impl PercentageWithCapProofData {
     pub fn to_bytes(&self) -> Box<[u8]> {
         bytes_of(self).into()
     }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromBytes))]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProofDataError> {
+        bytemuck::try_from_bytes(bytes)
+            .copied()
+            .map_err(|_| ProofDataError::Deserialization)
+    }
 }
 
 impl ZkProofData<PercentageWithCapProofContext> for PercentageWithCapProofData {
@@ -158,6 +165,22 @@ impl PercentageWithCapProofContext {
         transcript.append_message(b"claimed-commitment", bytes_of(&self.claimed_commitment));
         transcript.append_u64(b"max-value", self.max_value.into());
         transcript
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+impl PercentageWithCapProofContext {
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
+    pub fn to_bytes(&self) -> Box<[u8]> {
+        bytes_of(self).into()
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromBytes))]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProofDataError> {
+        bytemuck::try_from_bytes(bytes)
+            .copied()
+            .map_err(|_| ProofDataError::Deserialization)
     }
 }
 

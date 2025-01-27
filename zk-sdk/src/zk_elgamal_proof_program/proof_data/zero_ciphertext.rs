@@ -11,7 +11,9 @@ use {
     crate::{
         encryption::elgamal::{ElGamalCiphertext, ElGamalKeypair},
         sigma_proofs::zero_ciphertext::ZeroCiphertextProof,
-        zk_elgamal_proof_program::errors::{ProofGenerationError, ProofVerificationError},
+        zk_elgamal_proof_program::{errors::{ProofGenerationError, ProofVerificationError},
+            proof_data::errors::ProofDataError,
+        },
     },
     bytemuck::bytes_of,
     merlin::Transcript,
@@ -78,6 +80,13 @@ impl ZeroCiphertextProofData {
     pub fn to_bytes(&self) -> Box<[u8]> {
         bytes_of(self).into()
     }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromBytes))]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProofDataError> {
+        bytemuck::try_from_bytes(bytes)
+            .copied()
+            .map_err(|_| ProofDataError::Deserialization)
+    }
 }
 
 impl ZkProofData<ZeroCiphertextProofContext> for ZeroCiphertextProofData {
@@ -109,6 +118,22 @@ impl ZeroCiphertextProofContext {
         transcript.append_message(b"ciphertext", bytes_of(&self.ciphertext));
 
         transcript
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+impl ZeroCiphertextProofContext {
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
+    pub fn to_bytes(&self) -> Box<[u8]> {
+        bytes_of(self).into()
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromBytes))]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProofDataError> {
+        bytemuck::try_from_bytes(bytes)
+            .copied()
+            .map_err(|_| ProofDataError::Deserialization)
     }
 }
 

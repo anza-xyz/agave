@@ -12,7 +12,9 @@ use {
     crate::{
         encryption::elgamal::ElGamalKeypair,
         sigma_proofs::pubkey_validity::PubkeyValidityProof,
-        zk_elgamal_proof_program::errors::{ProofGenerationError, ProofVerificationError},
+        zk_elgamal_proof_program::{errors::{ProofGenerationError, ProofVerificationError},
+            proof_data::errors::ProofDataError,
+        },
     },
     bytemuck::bytes_of,
     merlin::Transcript,
@@ -70,6 +72,13 @@ impl PubkeyValidityProofData {
     pub fn to_bytes(&self) -> Box<[u8]> {
         bytes_of(self).into()
     }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromBytes))]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProofDataError> {
+        bytemuck::try_from_bytes(bytes)
+            .copied()
+            .map_err(|_| ProofDataError::Deserialization)
+    }
 }
 
 impl ZkProofData<PubkeyValidityProofContext> for PubkeyValidityProofData {
@@ -95,6 +104,22 @@ impl PubkeyValidityProofContext {
         let mut transcript = Transcript::new(b"pubkey-validity-instruction");
         transcript.append_message(b"pubkey", bytes_of(&self.pubkey));
         transcript
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+impl PubkeyValidityProofContext {
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
+    pub fn to_bytes(&self) -> Box<[u8]> {
+        bytes_of(self).into()
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromBytes))]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProofDataError> {
+        bytemuck::try_from_bytes(bytes)
+            .copied()
+            .map_err(|_| ProofDataError::Deserialization)
     }
 }
 
