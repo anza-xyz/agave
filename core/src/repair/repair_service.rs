@@ -56,13 +56,13 @@ use {
 };
 
 // Time to defer repair requests to allow for turbine propagation
-const DEFER_REPAIR_THRESHOLD: Duration = Duration::from_millis(200);
+const DEFER_REPAIR_THRESHOLD: Duration = Duration::from_millis(250);
 const DEFER_REPAIR_THRESHOLD_TICKS: u64 = DEFER_REPAIR_THRESHOLD.as_millis() as u64 / MS_PER_TICK;
 
 // This is the amount of time we will wait for a repair request to be fulfilled
 // before making another request. Value is based on reasonable upper bound of
 // expected network delays in requesting repairs and receiving shreds.
-const REPAIR_REQUEST_TIMEOUT_MS: u64 = 100;
+const REPAIR_REQUEST_TIMEOUT_MS: u64 = 150;
 
 // When requesting repair for a specific shred through the admin RPC, we will
 // request up to NUM_PEERS_TO_SAMPLE_FOR_REPAIRS in the event a specific, valid
