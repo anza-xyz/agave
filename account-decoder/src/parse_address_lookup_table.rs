@@ -37,7 +37,7 @@ pub struct UiLookupTable {
     pub addresses: Vec<String>,
 }
 
-impl<'a> From<AddressLookupTable<'a>> for UiLookupTable {
+impl From<AddressLookupTable<'_>> for UiLookupTable {
     fn from(address_lookup_table: AddressLookupTable) -> Self {
         Self {
             deactivation_slot: address_lookup_table.meta.deactivation_slot.to_string(),

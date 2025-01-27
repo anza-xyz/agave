@@ -238,7 +238,7 @@ impl<'a> AccountStorageIter<'a> {
     }
 }
 
-impl<'a> Iterator for AccountStorageIter<'a> {
+impl Iterator for AccountStorageIter<'_> {
     type Item = (Slot, Arc<AccountStorageEntry>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -264,7 +264,7 @@ pub struct ShrinkInProgress<'a> {
 }
 
 /// called when the shrink is no longer in progress. This means we can release the old append vec and update the map of slot -> append vec
-impl<'a> Drop for ShrinkInProgress<'a> {
+impl Drop for ShrinkInProgress<'_> {
     fn drop(&mut self) {
         assert_eq!(
             self.storage
@@ -289,7 +289,7 @@ impl<'a> Drop for ShrinkInProgress<'a> {
     }
 }
 
-impl<'a> ShrinkInProgress<'a> {
+impl ShrinkInProgress<'_> {
     pub fn new_storage(&self) -> &Arc<AccountStorageEntry> {
         &self.new_store
     }

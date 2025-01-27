@@ -1,28 +1,31 @@
 //! The `net_utils` module assists with networking
 #![allow(clippy::arithmetic_side_effects)]
+
 #[cfg(feature = "dev-context-only-utils")]
 use tokio::net::UdpSocket as TokioUdpSocket;
 use {
-    crossbeam_channel::unbounded,
     log::*,
     rand::{thread_rng, Rng},
     socket2::{Domain, SockAddr, Socket, Type},
     std::{
-        collections::{BTreeMap, HashSet},
-        io::{self, Read, Write},
-        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
-        sync::{Arc, RwLock},
-        time::{Duration, Instant},
+        io::{self},
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
     },
     url::Url,
 };
 
+mod ip_echo_client;
 mod ip_echo_server;
 pub use ip_echo_server::{
     ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
     MINIMUM_IP_ECHO_SERVER_THREADS,
 };
-use ip_echo_server::{IpEchoServerMessage, IpEchoServerResponse};
+use {
+    ip_echo_client::{
+        do_verify_reachable_ports, ip_echo_server_request, ip_echo_server_request_with_binding,
+    },
+    ip_echo_server::IpEchoServerMessage,
+};
 
 /// A data type representing a public Udp socket
 pub struct UdpSocketPair {
@@ -36,282 +39,89 @@ pub type PortRange = (u16, u16);
 pub const VALIDATOR_PORT_RANGE: PortRange = (8000, 10_000);
 pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 17; // VALIDATOR_PORT_RANGE must be at least this wide
 
-#[cfg(not(any(windows, target_os = "ios")))]
-const DEFAULT_RECV_BUFFER_SIZE: usize = 64 * 1024 * 1024; // 64 MB - Doubled to 128MB by the kernel
-#[cfg(not(any(windows, target_os = "ios")))]
-const DEFAULT_SEND_BUFFER_SIZE: usize = 64 * 1024 * 1024; // 64 MB - Doubled to 128MB by the kernel
-
 pub(crate) const HEADER_LENGTH: usize = 4;
 pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
-
-fn ip_echo_server_request(
-    ip_echo_server_addr: &SocketAddr,
-    msg: IpEchoServerMessage,
-) -> Result<IpEchoServerResponse, String> {
-    let timeout = Duration::new(5, 0);
-    TcpStream::connect_timeout(ip_echo_server_addr, timeout)
-        .and_then(|mut stream| {
-            // Start with HEADER_LENGTH null bytes to avoid looking like an HTTP GET/POST request
-            let mut bytes = vec![0; HEADER_LENGTH];
-
-            bytes.append(&mut bincode::serialize(&msg).expect("serialize IpEchoServerMessage"));
-
-            // End with '\n' to make this request look HTTP-ish and tickle an error response back
-            // from an HTTP server
-            bytes.push(b'\n');
-
-            stream.set_read_timeout(Some(Duration::new(10, 0)))?;
-            stream.write_all(&bytes)?;
-            stream.shutdown(std::net::Shutdown::Write)?;
-            let mut data = vec![0u8; IP_ECHO_SERVER_RESPONSE_LENGTH];
-            let _ = stream.read(&mut data[..])?;
-            Ok(data)
-        })
-        .and_then(|data| {
-            // It's common for users to accidentally confuse the validator's gossip port and JSON
-            // RPC port.  Attempt to detect when this occurs by looking for the standard HTTP
-            // response header and provide the user with a helpful error message
-            if data.len() < HEADER_LENGTH {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Response too short, received {} bytes", data.len()),
-                ));
-            }
-
-            let response_header: String =
-                data[0..HEADER_LENGTH].iter().map(|b| *b as char).collect();
-            if response_header != "\0\0\0\0" {
-                if response_header == "HTTP" {
-                    let http_response = data.iter().map(|b| *b as char).collect::<String>();
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!(
-                            "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port: {http_response}"
-                        ),
-                    ));
-                }
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "Invalid gossip entrypoint. {ip_echo_server_addr} provided an invalid response header: '{response_header}'"
-                    ),
-                ));
-            }
-
-            bincode::deserialize(&data[HEADER_LENGTH..]).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Failed to deserialize: {err:?}"),
-                )
-            })
-        })
-        .map_err(|err| err.to_string())
-}
 
 /// Determine the public IP address of this machine by asking an ip_echo_server at the given
 /// address
 pub fn get_public_ip_addr(ip_echo_server_addr: &SocketAddr) -> Result<IpAddr, String> {
-    let resp = ip_echo_server_request(ip_echo_server_addr, IpEchoServerMessage::default())?;
+    let fut = ip_echo_server_request(*ip_echo_server_addr, IpEchoServerMessage::default());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = rt.block_on(fut).map_err(|e| e.to_string())?;
     Ok(resp.address)
 }
 
-pub fn get_cluster_shred_version(ip_echo_server_addr: &SocketAddr) -> Result<u16, String> {
-    let resp = ip_echo_server_request(ip_echo_server_addr, IpEchoServerMessage::default())?;
-    resp.shred_version
-        .ok_or_else(|| String::from("IP echo server does not return a shred-version"))
-}
-
-// Checks if any of the provided TCP/UDP ports are not reachable by the machine at
-// `ip_echo_server_addr`
-const DEFAULT_TIMEOUT_SECS: u64 = 5;
-const DEFAULT_RETRY_COUNT: usize = 5;
-
-fn do_verify_reachable_ports(
+/// Determine the public IP address of this machine by asking an ip_echo_server at the given
+/// address. This function will bind to the provided bind_addreess.
+pub fn get_public_ip_addr_with_binding(
     ip_echo_server_addr: &SocketAddr,
-    tcp_listeners: Vec<(u16, TcpListener)>,
-    udp_sockets: &[&UdpSocket],
-    timeout: u64,
-    udp_retry_count: usize,
-) -> bool {
-    info!(
-        "Checking that tcp ports {:?} are reachable from {:?}",
-        tcp_listeners, ip_echo_server_addr
+    bind_address: IpAddr,
+) -> anyhow::Result<IpAddr> {
+    let fut = ip_echo_server_request_with_binding(
+        *ip_echo_server_addr,
+        IpEchoServerMessage::default(),
+        bind_address,
     );
-
-    let tcp_ports: Vec<_> = tcp_listeners.iter().map(|(port, _)| *port).collect();
-    let _ = ip_echo_server_request(
-        ip_echo_server_addr,
-        IpEchoServerMessage::new(&tcp_ports, &[]),
-    )
-    .map_err(|err| warn!("ip_echo_server request failed: {}", err));
-
-    let mut ok = true;
-    let timeout = Duration::from_secs(timeout);
-
-    // Wait for a connection to open on each TCP port
-    for (port, tcp_listener) in tcp_listeners {
-        let (sender, receiver) = unbounded();
-        let listening_addr = tcp_listener.local_addr().unwrap();
-        let thread_handle = std::thread::Builder::new()
-            .name(format!("solVrfyTcp{port:05}"))
-            .spawn(move || {
-                debug!("Waiting for incoming connection on tcp/{}", port);
-                match tcp_listener.incoming().next() {
-                    Some(_) => sender
-                        .send(())
-                        .unwrap_or_else(|err| warn!("send failure: {}", err)),
-                    None => warn!("tcp incoming failed"),
-                }
-            })
-            .unwrap();
-        match receiver.recv_timeout(timeout) {
-            Ok(_) => {
-                info!("tcp/{} is reachable", port);
-            }
-            Err(err) => {
-                error!(
-                    "Received no response at tcp/{}, check your port configuration: {}",
-                    port, err
-                );
-                // Ugh, std rustc doesn't provide accepting with timeout or restoring original
-                // nonblocking-status of sockets because of lack of getter, only the setter...
-                // So, to close the thread cleanly, just connect from here.
-                // ref: https://github.com/rust-lang/rust/issues/31615
-                TcpStream::connect_timeout(&listening_addr, timeout).unwrap();
-                ok = false;
-            }
-        }
-        // ensure to reap the thread
-        thread_handle.join().unwrap();
-    }
-
-    if !ok {
-        // No retries for TCP, abort on the first failure
-        return ok;
-    }
-
-    let mut udp_ports: BTreeMap<_, _> = BTreeMap::new();
-    udp_sockets.iter().for_each(|udp_socket| {
-        let port = udp_socket.local_addr().unwrap().port();
-        udp_ports
-            .entry(port)
-            .or_insert_with(Vec::new)
-            .push(udp_socket);
-    });
-    let udp_ports: Vec<_> = udp_ports.into_iter().collect();
-
-    info!(
-        "Checking that udp ports {:?} are reachable from {:?}",
-        udp_ports.iter().map(|(port, _)| port).collect::<Vec<_>>(),
-        ip_echo_server_addr
-    );
-
-    'outer: for checked_ports_and_sockets in udp_ports.chunks(MAX_PORT_COUNT_PER_MESSAGE) {
-        ok = false;
-
-        for udp_remaining_retry in (0_usize..udp_retry_count).rev() {
-            let (checked_ports, checked_socket_iter) = (
-                checked_ports_and_sockets
-                    .iter()
-                    .map(|(port, _)| *port)
-                    .collect::<Vec<_>>(),
-                checked_ports_and_sockets
-                    .iter()
-                    .flat_map(|(_, sockets)| sockets),
-            );
-
-            let _ = ip_echo_server_request(
-                ip_echo_server_addr,
-                IpEchoServerMessage::new(&[], &checked_ports),
-            )
-            .map_err(|err| warn!("ip_echo_server request failed: {}", err));
-
-            // Spawn threads at once!
-            let reachable_ports = Arc::new(RwLock::new(HashSet::new()));
-            let thread_handles: Vec<_> = checked_socket_iter
-                .map(|udp_socket| {
-                    let port = udp_socket.local_addr().unwrap().port();
-                    let udp_socket = udp_socket.try_clone().expect("Unable to clone udp socket");
-                    let reachable_ports = reachable_ports.clone();
-
-                    std::thread::Builder::new()
-                        .name(format!("solVrfyUdp{port:05}"))
-                        .spawn(move || {
-                            let start = Instant::now();
-
-                            let original_read_timeout = udp_socket.read_timeout().unwrap();
-                            udp_socket
-                                .set_read_timeout(Some(Duration::from_millis(250)))
-                                .unwrap();
-                            loop {
-                                if reachable_ports.read().unwrap().contains(&port)
-                                    || Instant::now().duration_since(start) >= timeout
-                                {
-                                    break;
-                                }
-
-                                let recv_result = udp_socket.recv(&mut [0; 1]);
-                                debug!(
-                                    "Waited for incoming datagram on udp/{}: {:?}",
-                                    port, recv_result
-                                );
-
-                                if recv_result.is_ok() {
-                                    reachable_ports.write().unwrap().insert(port);
-                                    break;
-                                }
-                            }
-                            udp_socket.set_read_timeout(original_read_timeout).unwrap();
-                        })
-                        .unwrap()
-                })
-                .collect();
-
-            // Now join threads!
-            // Separate from the above by collect()-ing as an intermediately step to make the iterator
-            // eager not lazy so that joining happens here at once after creating bunch of threads
-            // at once.
-            for thread in thread_handles {
-                thread.join().unwrap();
-            }
-
-            let reachable_ports = reachable_ports.read().unwrap().clone();
-            if reachable_ports.len() == checked_ports.len() {
-                info!(
-                    "checked udp ports: {:?}, reachable udp ports: {:?}",
-                    checked_ports, reachable_ports
-                );
-                ok = true;
-                break;
-            } else if udp_remaining_retry > 0 {
-                // Might have lost a UDP packet, retry a couple times
-                error!(
-                    "checked udp ports: {:?}, reachable udp ports: {:?}",
-                    checked_ports, reachable_ports
-                );
-                error!("There are some udp ports with no response!! Retrying...");
-            } else {
-                error!("Maximum retry count is reached....");
-                break 'outer;
-            }
-        }
-    }
-
-    ok
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let resp = rt.block_on(fut)?;
+    Ok(resp.address)
 }
 
+///Retrieves cluster shred version from Entrypoint address provided
+pub fn get_cluster_shred_version(ip_echo_server_addr: &SocketAddr) -> Result<u16, String> {
+    let fut = ip_echo_server_request(*ip_echo_server_addr, IpEchoServerMessage::default());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = rt.block_on(fut).map_err(|e| e.to_string())?;
+    resp.shred_version
+        .ok_or_else(|| "IP echo server does not return a shred-version".to_owned())
+}
+
+///Retrieves cluster shred version from Entrypoint address provided, binds client-side socket to IP provided
+pub fn get_cluster_shred_version_with_binding(
+    ip_echo_server_addr: &SocketAddr,
+    bind_address: IpAddr,
+) -> anyhow::Result<u16> {
+    let fut = ip_echo_server_request_with_binding(
+        *ip_echo_server_addr,
+        IpEchoServerMessage::default(),
+        bind_address,
+    );
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let resp = rt.block_on(fut)?;
+    resp.shred_version
+        .ok_or_else(|| anyhow::anyhow!("IP echo server does not return a shred-version"))
+}
+
+/// Checks if all of the provided TCP/UDP ports are not reachable by the machine at
+/// `ip_echo_server_addr`. Tests must complete within timeout provided.
+/// Tests will run in parallel when possible.
 pub fn verify_reachable_ports(
     ip_echo_server_addr: &SocketAddr,
     tcp_listeners: Vec<(u16, TcpListener)>,
     udp_sockets: &[&UdpSocket],
 ) -> bool {
-    do_verify_reachable_ports(
-        ip_echo_server_addr,
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Tokio builder should be able to reliably create a current thread runtime");
+    let fut = do_verify_reachable_ports(
+        *ip_echo_server_addr,
         tcp_listeners,
         udp_sockets,
-        DEFAULT_TIMEOUT_SECS,
-        DEFAULT_RETRY_COUNT,
-    )
+        ip_echo_client::TIMEOUT,
+        ip_echo_client::DEFAULT_RETRY_COUNT,
+    );
+    rt.block_on(fut)
 }
 
 pub fn parse_port_or_addr(optstr: Option<&str>, default_addr: SocketAddr) -> SocketAddr {
@@ -391,22 +201,40 @@ pub fn is_host_port(string: String) -> Result<(), String> {
     parse_host_port(&string).map(|_| ())
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct SocketConfig {
-    pub reuseport: bool,
+    reuseport: bool,
+    recv_buffer_size: Option<usize>,
+    send_buffer_size: Option<usize>,
 }
 
-impl Default for SocketConfig {
-    #[allow(clippy::derivable_impls)]
-    fn default() -> Self {
-        Self { reuseport: false }
+impl SocketConfig {
+    pub fn reuseport(mut self, reuseport: bool) -> Self {
+        self.reuseport = reuseport;
+        self
     }
-}
 
-#[cfg(any(windows, target_os = "ios"))]
-fn udp_socket(_reuseaddr: bool) -> io::Result<Socket> {
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-    Ok(sock)
+    /// Sets the receive buffer size for the socket (no effect on windows/ios).
+    ///
+    /// **Note:** On Linux the kernel will double the value you specify.
+    /// For example, if you specify `16MB`, the kernel will configure the
+    /// socket to use `32MB`.
+    /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_RCVBUF
+    pub fn recv_buffer_size(mut self, size: usize) -> Self {
+        self.recv_buffer_size = Some(size);
+        self
+    }
+
+    /// Sets the send buffer size for the socket (no effect on windows/ios)
+    ///
+    /// **Note:** On Linux the kernel will double the value you specify.
+    /// For example, if you specify `16MB`, the kernel will configure the
+    /// socket to use `32MB`.
+    /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_SNDBUF
+    pub fn send_buffer_size(mut self, size: usize) -> Self {
+        self.send_buffer_size = Some(size);
+        self
+    }
 }
 
 #[cfg(any(windows, target_os = "ios"))]
@@ -416,21 +244,24 @@ fn udp_socket_with_config(_config: SocketConfig) -> io::Result<Socket> {
 }
 
 #[cfg(not(any(windows, target_os = "ios")))]
-fn udp_socket(reuseport: bool) -> io::Result<Socket> {
-    let config = SocketConfig { reuseport };
-    udp_socket_with_config(config)
-}
-
-#[cfg(not(any(windows, target_os = "ios")))]
 fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
     use nix::sys::socket::{setsockopt, sockopt::ReusePort};
-    let SocketConfig { reuseport } = config;
+    let SocketConfig {
+        reuseport,
+        recv_buffer_size,
+        send_buffer_size,
+    } = config;
 
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
 
-    // Set recv and send buffer sizes to 128MB
-    sock.set_recv_buffer_size(DEFAULT_RECV_BUFFER_SIZE)?;
-    sock.set_send_buffer_size(DEFAULT_SEND_BUFFER_SIZE)?;
+    // Set buffer sizes
+    if let Some(recv_buffer_size) = recv_buffer_size {
+        sock.set_recv_buffer_size(recv_buffer_size)?;
+    }
+
+    if let Some(send_buffer_size) = send_buffer_size {
+        sock.set_send_buffer_size(send_buffer_size)?;
+    }
 
     if reuseport {
         setsockopt(&sock, ReusePort, &true).ok();
@@ -439,13 +270,14 @@ fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
     Ok(sock)
 }
 
-// Find a port in the given range that is available for both TCP and UDP
-pub fn bind_common_in_range(
+// Find a port in the given range with a socket config that is available for both TCP and UDP
+pub fn bind_common_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
+    config: SocketConfig,
 ) -> io::Result<(u16, (UdpSocket, TcpListener))> {
     for port in range.0..range.1 {
-        if let Ok((sock, listener)) = bind_common(ip_addr, port) {
+        if let Ok((sock, listener)) = bind_common_with_config(ip_addr, port, config) {
             return Result::Ok((sock.local_addr().unwrap().port(), (sock, listener)));
         }
     }
@@ -454,6 +286,18 @@ pub fn bind_common_in_range(
         io::ErrorKind::Other,
         format!("No available TCP/UDP ports in {range:?}"),
     ))
+}
+
+// Find a port in the given range that is available for both TCP and UDP
+#[deprecated(
+    since = "2.2.0",
+    note = "use `bind_common_in_range_with_config` instead"
+)]
+pub fn bind_common_in_range(
+    ip_addr: IpAddr,
+    range: PortRange,
+) -> io::Result<(u16, (UdpSocket, TcpListener))> {
+    bind_common_in_range_with_config(ip_addr, range, SocketConfig::default())
 }
 
 pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpSocket)> {
@@ -483,8 +327,11 @@ pub fn bind_in_range_with_config(
     ))
 }
 
-pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
-    let sock = udp_socket(false)?;
+pub fn bind_with_any_port_with_config(
+    ip_addr: IpAddr,
+    config: SocketConfig,
+) -> io::Result<UdpSocket> {
+    let sock = udp_socket_with_config(config)?;
     let addr = SocketAddr::new(ip_addr, 0);
     match sock.bind(&SockAddr::from(addr)) {
         Ok(_) => Result::Ok(sock.into()),
@@ -495,16 +342,28 @@ pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
     }
 }
 
-// binds many sockets to the same port in a range
-pub fn multi_bind_in_range(
+#[deprecated(since = "2.2.0", note = "use `bind_with_any_port_with_config` instead")]
+pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
+    bind_with_any_port_with_config(ip_addr, SocketConfig::default())
+}
+
+/// binds num sockets to the same port in a range with config
+pub fn multi_bind_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
+    config: SocketConfig,
     mut num: usize,
 ) -> io::Result<(u16, Vec<UdpSocket>)> {
+    if !config.reuseport {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "SocketConfig.reuseport must be true for multi_bind_in_range_with_config",
+        ));
+    }
     if cfg!(windows) && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
-            "multi_bind_in_range() only supports 1 socket in windows ({} requested)",
+            "multi_bind_in_range_with_config() only supports 1 socket in windows ({} requested)",
             num
         );
         num = 1;
@@ -520,9 +379,8 @@ pub fn multi_bind_in_range(
             port
         }; // drop the probe, port should be available... briefly.
 
-        let config = SocketConfig { reuseport: true };
         for _ in 0..num {
-            let sock = bind_to_with_config(ip_addr, port, config.clone());
+            let sock = bind_to_with_config(ip_addr, port, config);
             if let Ok(sock) = sock {
                 sockets.push(sock);
             } else {
@@ -542,8 +400,24 @@ pub fn multi_bind_in_range(
     Ok((port, sockets))
 }
 
+// binds many sockets to the same port in a range
+// Note: The `mut` modifier for `num` is unused but kept for compatibility with the public API.
+#[deprecated(
+    since = "2.2.0",
+    note = "use `multi_bind_in_range_with_config` instead"
+)]
+#[allow(unused_mut)]
+pub fn multi_bind_in_range(
+    ip_addr: IpAddr,
+    range: PortRange,
+    mut num: usize,
+) -> io::Result<(u16, Vec<UdpSocket>)> {
+    let config = SocketConfig::default().reuseport(true);
+    multi_bind_in_range_with_config(ip_addr, range, config, num)
+}
+
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSocket> {
-    let config = SocketConfig { reuseport };
+    let config = SocketConfig::default().reuseport(reuseport);
     bind_to_with_config(ip_addr, port, config)
 }
 
@@ -553,7 +427,7 @@ pub async fn bind_to_async(
     port: u16,
     reuseport: bool,
 ) -> io::Result<TokioUdpSocket> {
-    let config = SocketConfig { reuseport };
+    let config = SocketConfig::default().reuseport(reuseport);
     let socket = bind_to_with_config_non_blocking(ip_addr, port, config)?;
     TokioUdpSocket::from_std(socket)
 }
@@ -620,13 +494,13 @@ pub fn bind_to_with_config_non_blocking(
     Ok(sock.into())
 }
 
-// binds both a UdpSocket and a TcpListener
+/// binds both a UdpSocket and a TcpListener
 pub fn bind_common(ip_addr: IpAddr, port: u16) -> io::Result<(UdpSocket, TcpListener)> {
-    let config = SocketConfig { reuseport: false };
+    let config = SocketConfig::default();
     bind_common_with_config(ip_addr, port, config)
 }
 
-// binds both a UdpSocket and a TcpListener
+/// binds both a UdpSocket and a TcpListener on the same port
 pub fn bind_common_with_config(
     ip_addr: IpAddr,
     port: u16,
@@ -664,11 +538,9 @@ pub fn bind_two_in_range_with_offset_and_config(
         ));
     }
     for port in range.0..range.1 {
-        if let Ok(first_bind) = bind_to_with_config(ip_addr, port, sock1_config.clone()) {
+        if let Ok(first_bind) = bind_to_with_config(ip_addr, port, sock1_config) {
             if range.1.saturating_sub(port) >= offset {
-                if let Ok(second_bind) =
-                    bind_to_with_config(ip_addr, port + offset, sock2_config.clone())
-                {
+                if let Ok(second_bind) = bind_to_with_config(ip_addr, port + offset, sock2_config) {
                     return Ok((
                         (first_bind.local_addr().unwrap().port(), first_bind),
                         (second_bind.local_addr().unwrap().port(), second_bind),
@@ -685,6 +557,10 @@ pub fn bind_two_in_range_with_offset_and_config(
     ))
 }
 
+/// Searches for an open port on a given binding ip_addr in the provided range.
+///
+/// This will start at a random point in the range provided, and search sequenctially.
+/// If it can not find anything, an Error is returned.
 pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<u16> {
     let (start, end) = range;
     let mut tries_left = end - start;
@@ -717,14 +593,25 @@ pub fn bind_more_with_config(
     let ip = addr.ip();
     let port = addr.port();
     std::iter::once(Ok(socket))
-        .chain((1..num).map(|_| bind_to_with_config(ip, port, config.clone())))
+        .chain((1..num).map(|_| bind_to_with_config(ip, port, config)))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::net::Ipv4Addr};
+    use {
+        super::*,
+        ip_echo_server::IpEchoServerResponse,
+        std::{net::Ipv4Addr, time::Duration},
+        tokio::runtime::Runtime,
+    };
 
+    fn runtime() -> Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Can not create a runtime")
+    }
     #[test]
     fn test_response_length() {
         let resp = IpEchoServerResponse {
@@ -824,8 +711,8 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         assert_eq!(bind_in_range(ip_addr, (2000, 2001)).unwrap().0, 2000);
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let config = SocketConfig { reuseport: true };
-        let x = bind_to_with_config(ip_addr, 2002, config.clone()).unwrap();
+        let config = SocketConfig::default().reuseport(true);
+        let x = bind_to_with_config(ip_addr, 2002, config).unwrap();
         let y = bind_to_with_config(ip_addr, 2002, config).unwrap();
         assert_eq!(
             x.local_addr().unwrap().port(),
@@ -834,7 +721,7 @@ mod tests {
         bind_to(ip_addr, 2002, false).unwrap_err();
         bind_in_range(ip_addr, (2002, 2003)).unwrap_err();
 
-        let (port, v) = multi_bind_in_range(ip_addr, (2010, 2110), 10).unwrap();
+        let (port, v) = multi_bind_in_range_with_config(ip_addr, (2010, 2110), config, 10).unwrap();
         for sock in &v {
             assert_eq!(port, sock.local_addr().unwrap().port());
         }
@@ -843,8 +730,9 @@ mod tests {
     #[test]
     fn test_bind_with_any_port() {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let x = bind_with_any_port(ip_addr).unwrap();
-        let y = bind_with_any_port(ip_addr).unwrap();
+        let config = SocketConfig::default();
+        let x = bind_with_any_port_with_config(ip_addr, config).unwrap();
+        let y = bind_with_any_port_with_config(ip_addr, config).unwrap();
         assert_ne!(
             x.local_addr().unwrap().port(),
             y.local_addr().unwrap().port()
@@ -875,18 +763,21 @@ mod tests {
     #[test]
     fn test_bind_common_in_range() {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let (port, _sockets) = bind_common_in_range(ip_addr, (3100, 3150)).unwrap();
+        let config = SocketConfig::default();
+        let (port, _sockets) =
+            bind_common_in_range_with_config(ip_addr, (3100, 3150), config).unwrap();
         assert!((3100..3150).contains(&port));
 
-        bind_common_in_range(ip_addr, (port, port + 1)).unwrap_err();
+        bind_common_in_range_with_config(ip_addr, (port, port + 1), config).unwrap_err();
     }
 
     #[test]
     fn test_get_public_ip_addr_none() {
         solana_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, server_tcp_listener)) =
-            bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
         let _runtime = ip_echo_server(
             server_tcp_listener,
@@ -896,10 +787,10 @@ mod tests {
 
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(
-            get_public_ip_addr(&server_ip_echo_addr),
-            parse_host("127.0.0.1"),
+            get_public_ip_addr(&server_ip_echo_addr).unwrap(),
+            parse_host("127.0.0.1").unwrap(),
         );
-        assert_eq!(get_cluster_shred_version(&server_ip_echo_addr), Ok(42));
+        assert_eq!(get_cluster_shred_version(&server_ip_echo_addr).unwrap(), 42);
         assert!(verify_reachable_ports(&server_ip_echo_addr, vec![], &[],));
     }
 
@@ -907,10 +798,11 @@ mod tests {
     fn test_get_public_ip_addr_reachable() {
         solana_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, server_tcp_listener)) =
-            bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
         let (client_port, (client_udp_socket, client_tcp_listener)) =
-            bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
         let _runtime = ip_echo_server(
             server_tcp_listener,
@@ -920,10 +812,13 @@ mod tests {
 
         let ip_echo_server_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(
-            get_public_ip_addr(&ip_echo_server_addr),
-            parse_host("127.0.0.1"),
+            get_public_ip_addr(&ip_echo_server_addr).unwrap(),
+            parse_host("127.0.0.1").unwrap(),
         );
-        assert_eq!(get_cluster_shred_version(&ip_echo_server_addr), Ok(65535));
+        assert_eq!(
+            get_cluster_shred_version(&ip_echo_server_addr).unwrap(),
+            65535
+        );
         assert!(verify_reachable_ports(
             &ip_echo_server_addr,
             vec![(client_port, client_tcp_listener)],
@@ -935,46 +830,50 @@ mod tests {
     fn test_get_public_ip_addr_tcp_unreachable() {
         solana_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, _server_tcp_listener)) =
-            bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
         // make the socket unreachable by not running the ip echo server!
 
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
 
         let (correct_client_port, (_client_udp_socket, client_tcp_listener)) =
-            bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
-        assert!(!do_verify_reachable_ports(
-            &server_ip_echo_addr,
+        let rt = runtime();
+        assert!(!rt.block_on(do_verify_reachable_ports(
+            server_ip_echo_addr,
             vec![(correct_client_port, client_tcp_listener)],
             &[],
-            2,
+            Duration::from_secs(2),
             3,
-        ));
+        )));
     }
 
     #[test]
     fn test_get_public_ip_addr_udp_unreachable() {
         solana_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, _server_tcp_listener)) =
-            bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
         // make the socket unreachable by not running the ip echo server!
 
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
 
         let (_correct_client_port, (client_udp_socket, _client_tcp_listener)) =
-            bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
-        assert!(!do_verify_reachable_ports(
-            &server_ip_echo_addr,
+        let rt = runtime();
+        assert!(!rt.block_on(do_verify_reachable_ports(
+            server_ip_echo_addr,
             vec![],
             &[&client_udp_socket],
-            2,
+            Duration::from_secs(2),
             3,
-        ));
+        )));
     }
 
     #[test]
@@ -994,5 +893,18 @@ mod tests {
             assert!(port2 == port1 + offset);
         }
         assert!(bind_two_in_range_with_offset(ip_addr, (1024, 1044), offset).is_err());
+    }
+
+    #[test]
+    fn test_multi_bind_in_range_with_config_reuseport_disabled() {
+        let ip_addr: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let config = SocketConfig::default(); //reuseport is false by default
+
+        let result = multi_bind_in_range_with_config(ip_addr, (2010, 2110), config, 2);
+
+        assert!(
+            result.is_err(),
+            "Expected an error when reuseport is not set to true"
+        );
     }
 }

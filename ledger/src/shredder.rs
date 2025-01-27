@@ -3,8 +3,8 @@ use {
         self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags, DATA_SHREDS_PER_FEC_BLOCK,
     },
     itertools::Itertools,
+    lazy_lru::LruCache,
     lazy_static::lazy_static,
-    lru::LruCache,
     rayon::{prelude::*, ThreadPool},
     reed_solomon_erasure::{
         galois_8::ReedSolomon,
@@ -17,7 +17,7 @@ use {
     std::{
         borrow::Borrow,
         fmt::Debug,
-        sync::{Arc, Mutex},
+        sync::{Arc, RwLock},
     },
 };
 
@@ -39,7 +39,7 @@ pub(crate) const ERASURE_BATCH_SIZE: [usize; 33] = [
 ];
 
 pub struct ReedSolomonCache(
-    Mutex<LruCache<(/*data_shards:*/ usize, /*parity_shards:*/ usize), Arc<ReedSolomon>>>,
+    RwLock<LruCache<(/*data_shards:*/ usize, /*parity_shards:*/ usize), Arc<ReedSolomon>>>,
 );
 
 #[derive(Debug)]
@@ -136,7 +136,7 @@ impl Shredder {
         process_stats.data_buffer_residual +=
             (data_buffer_size - serialized_shreds.len() % data_buffer_size) % data_buffer_size;
         // Integer division to ensure we have enough shreds to fit all the data
-        let num_shreds = (serialized_shreds.len() + data_buffer_size - 1) / data_buffer_size;
+        let num_shreds = serialized_shreds.len().div_ceil(data_buffer_size);
         let last_shred_index = next_shred_index + num_shreds as u32 - 1;
         // 1) Generate data shreds
         let make_data_shred = |data, shred_index: u32, fec_set_index: u32| {
@@ -391,18 +391,34 @@ impl Shredder {
     }
 
     /// Combines all shreds to recreate the original buffer
-    pub fn deshred(shreds: &[Shred]) -> Result<Vec<u8>, Error> {
-        let index = shreds.first().ok_or(TooFewDataShards)?.index();
-        let aligned = shreds.iter().zip(index..).all(|(s, i)| s.index() == i);
-        let data_complete = {
-            let shred = shreds.last().unwrap();
-            shred.data_complete() || shred.last_in_slot()
-        };
-        if !data_complete || !aligned {
+    pub fn deshred<I, T: Borrow<Shred>>(shreds: I) -> Result<Vec<u8>, Error>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let (data, _, data_complete) = shreds.into_iter().try_fold(
+            <(Vec<u8>, Option<u32>, bool)>::default(),
+            |(mut data, prev, data_complete), shred| {
+                // No trailing shreds if we have already observed
+                // DATA_COMPLETE_SHRED.
+                if data_complete {
+                    return Err(Error::InvalidDeshredSet);
+                }
+                let shred = shred.borrow();
+                // Shreds' indices should be consecutive.
+                let index = Some(shred.index());
+                if let Some(prev) = prev {
+                    if prev.checked_add(1) != index {
+                        return Err(Error::from(TooFewDataShards));
+                    }
+                }
+                data.extend_from_slice(shred.data()?);
+                Ok((data, index, shred.data_complete()))
+            },
+        )?;
+        // The last shred should be DATA_COMPLETE_SHRED.
+        if !data_complete {
             return Err(Error::from(TooFewDataShards));
         }
-        let data: Vec<_> = shreds.iter().map(Shred::data).collect::<Result<_, _>>()?;
-        let data: Vec<_> = data.into_iter().flatten().copied().collect();
         if data.is_empty() {
             // For backward compatibility. This is needed when the data shred
             // payload is None, so that deserializing to Vec<Entry> results in
@@ -424,18 +440,14 @@ impl ReedSolomonCache {
         parity_shards: usize,
     ) -> Result<Arc<ReedSolomon>, reed_solomon_erasure::Error> {
         let key = (data_shards, parity_shards);
-        {
-            let mut cache = self.0.lock().unwrap();
-            if let Some(entry) = cache.get(&key) {
-                return Ok(entry.clone());
-            }
+        if let Some(entry) = self.0.read().unwrap().get(&key).cloned() {
+            return Ok(entry);
         }
         let entry = ReedSolomon::new(data_shards, parity_shards)?;
         let entry = Arc::new(entry);
         {
             let entry = entry.clone();
-            let mut cache = self.0.lock().unwrap();
-            cache.put(key, entry);
+            self.0.write().unwrap().put(key, entry);
         }
         Ok(entry)
     }
@@ -443,7 +455,7 @@ impl ReedSolomonCache {
 
 impl Default for ReedSolomonCache {
     fn default() -> Self {
-        Self(Mutex::new(LruCache::new(Self::CAPACITY)))
+        Self(RwLock::new(LruCache::new(Self::CAPACITY)))
     }
 }
 
@@ -471,7 +483,7 @@ fn get_fec_set_offsets(
             return None;
         }
         let num_chunks = (num_shreds / min_chunk_size).max(1);
-        let chunk_size = (num_shreds + num_chunks - 1) / num_chunks;
+        let chunk_size = num_shreds.div_ceil(num_chunks);
         let offsets = std::iter::repeat(offset).take(chunk_size);
         num_shreds -= chunk_size;
         offset += chunk_size;
@@ -541,7 +553,7 @@ mod tests {
         let size = serialized_size(&entries).unwrap() as usize;
         // Integer division to ensure we have enough shreds to fit all the data
         let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
-        let num_expected_data_shreds = (size + data_buffer_size - 1) / data_buffer_size;
+        let num_expected_data_shreds = size.div_ceil(data_buffer_size);
         let num_expected_data_shreds = num_expected_data_shreds.max(if is_last_in_slot {
             DATA_SHREDS_PER_FEC_BLOCK
         } else {

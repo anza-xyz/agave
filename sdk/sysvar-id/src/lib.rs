@@ -74,7 +74,7 @@ macro_rules! impl_deprecated_sysvar_id(
 macro_rules! declare_sysvar_id(
     ($name:expr, $type:ty) => (
         $crate::declare_id!($name);
-        impl_sysvar_id!($type);
+        $crate::impl_sysvar_id!($type);
     )
 );
 
@@ -83,6 +83,6 @@ macro_rules! declare_sysvar_id(
 macro_rules! declare_deprecated_sysvar_id(
     ($name:expr, $type:ty) => (
         $crate::declare_deprecated_id!($name);
-        impl_deprecated_sysvar_id!($type);
+        $crate::impl_deprecated_sysvar_id!($type);
     )
 );

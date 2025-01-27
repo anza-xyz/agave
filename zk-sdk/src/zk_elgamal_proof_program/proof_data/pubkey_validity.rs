@@ -5,6 +5,8 @@
 //! corresponding secret key). To generate the proof, a prover must provide the secret key for the
 //! public key.
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
@@ -30,6 +32,7 @@ use {
 ///
 /// It includes the cryptographic proof as well as the context data information needed to verify
 /// the proof.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct PubkeyValidityProofData {
@@ -41,6 +44,7 @@ pub struct PubkeyValidityProofData {
 }
 
 /// The context data needed to verify a pubkey validity proof.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct PubkeyValidityProofContext {
@@ -49,6 +53,7 @@ pub struct PubkeyValidityProofContext {
 }
 
 #[cfg(not(target_os = "solana"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl PubkeyValidityProofData {
     pub fn new(keypair: &ElGamalKeypair) -> Result<Self, ProofGenerationError> {
         let pod_pubkey = PodElGamalPubkey(keypair.pubkey().into());
@@ -59,6 +64,11 @@ impl PubkeyValidityProofData {
         let proof = PubkeyValidityProof::new(keypair, &mut transcript).into();
 
         Ok(PubkeyValidityProofData { context, proof })
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
+    pub fn to_bytes(&self) -> Box<[u8]> {
+        bytes_of(self).into()
     }
 }
 

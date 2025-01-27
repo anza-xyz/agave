@@ -2,7 +2,9 @@ use {
     super::Bank,
     crate::bank::CollectorFeeDetails,
     log::{debug, warn},
-    solana_feature_set::{remove_rounding_in_fee_calculation, reward_full_priority_fee},
+    solana_feature_set::reward_full_priority_fee,
+    solana_fee::FeeFeatures,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         account::{ReadableAccount, WritableAccount},
         fee::FeeBudgetLimits,
@@ -10,7 +12,6 @@ use {
         reward_info::RewardInfo,
         reward_type::RewardType,
         system_program,
-        transaction::SanitizedTransaction,
     },
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_vote::vote_account::VoteAccountsHashMap,
@@ -73,7 +74,7 @@ impl Bank {
 
     pub fn calculate_reward_for_transaction(
         &self,
-        transaction: &SanitizedTransaction,
+        transaction: &impl TransactionWithMeta,
         fee_budget_limits: &FeeBudgetLimits,
     ) -> u64 {
         let fee_details = solana_fee::calculate_fee_details(
@@ -81,8 +82,7 @@ impl Bank {
             self.get_lamports_per_signature() == 0,
             self.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
-            self.feature_set
-                .is_active(&remove_rounding_in_fee_calculation::id()),
+            FeeFeatures::from(self.feature_set.as_ref()),
         );
         let (reward, _burn) = if self.feature_set.is_active(&reward_full_priority_fee::id()) {
             self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details))

@@ -21,24 +21,16 @@ default = [
     "full",  # functionality that is not compatible or needed for on-chain programs
 ]
 full = [
-    "byteorder",
-    "chrono",
-    "memmap2",
-    "rand",
-    "rand0-7",
     "serde_json",
     "solana-signature",
     "solana-transaction-context/debug-signature",
-    "ed25519-dalek",
-    "libsecp256k1",
-    "sha3",
-    "solana-commitment-config",
-    "digest",
     "solana-pubkey/rand",
     "dep:solana-client-traits",
     "dep:solana-cluster-type",
     "dep:solana-ed25519-program",
+    "dep:solana-commitment-config",
     "dep:solana-compute-budget-interface",
+    "dep:solana-genesis-config",
     "dep:solana-hard-forks",
     "dep:solana-keypair",
     "dep:solana-offchain-message",
@@ -46,6 +38,7 @@ full = [
     "dep:solana-precompiles",
     "dep:solana-presigner",
     "dep:solana-quic-definitions",
+    "dep:solana-rent-collector",
     "dep:solana-secp256k1-program",
     "dep:solana-seed-derivable",
     "dep:solana-seed-phrase",
@@ -56,13 +49,11 @@ full = [
     "dep:solana-transaction-error",
 ]
 borsh = [
-    "dep:borsh",
     "solana-compute-budget-interface/borsh",
     "solana-program/borsh",
     "solana-secp256k1-recover/borsh",
 ]
 dev-context-only-utils = [
-    "qualifier_attr",
     "solana-account/dev-context-only-utils",
     "solana-compute-budget-interface/dev-context-only-utils",
     "solana-rent-debits/dev-context-only-utils",
@@ -70,16 +61,16 @@ dev-context-only-utils = [
     "solana-transaction-context/dev-context-only-utils",
 ]
 frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
     "solana-feature-set/frozen-abi",
     "solana-fee-structure/frozen-abi",
     "solana-account/frozen-abi",
     "solana-cluster-type/frozen-abi",
+    "solana-genesis-config/frozen-abi",
     "solana-hard-forks/frozen-abi",
     "solana-inflation/frozen-abi",
     "solana-poh-config/frozen-abi",
     "solana-program/frozen-abi",
+    "solana-rent-collector/frozen-abi",
     "solana-reward-info/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-signature/frozen-abi",
@@ -91,33 +82,9 @@ openssl-vendored = ["solana-precompiles/openssl-vendored"]
 
 [dependencies]
 bincode = { workspace = true }
-bitflags = { workspace = true, features = ["serde"] }
-borsh = { workspace = true, optional = true }
 bs58 = { workspace = true }
-bytemuck = { workspace = true }
-bytemuck_derive = { workspace = true }
-byteorder = { workspace = true, optional = true }
-chrono = { workspace = true, features = ["alloc"], optional = true }
-curve25519-dalek = { workspace = true, optional = true }
-digest = { workspace = true, optional = true }
-ed25519-dalek = { workspace = true, optional = true }
-itertools = { workspace = true }
-lazy_static = { workspace = true }
-libsecp256k1 = { workspace = true, optional = true, features = ["hmac"] }
-log = { workspace = true }
-memmap2 = { workspace = true, optional = true }
-num-derive = { workspace = true }
-num-traits = { workspace = true }
-qualifier_attr = { workspace = true, optional = true }
-rand = { workspace = true, optional = true }
-rand0-7 = { workspace = true, optional = true }
 serde = { workspace = true }
-serde_bytes = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true, optional = true }
-serde_with = { workspace = true, features = ["macros"] }
-sha2 = { workspace = true }
-sha3 = { workspace = true, optional = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bn254 = { workspace = true }
 solana-client-traits = { workspace = true, optional = true }
@@ -137,12 +104,9 @@ solana-epoch-info = { workspace = true, features = ["serde"] }
 solana-epoch-rewards-hasher = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true, features = ["serde"] }
-solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
+solana-genesis-config = { workspace = true, features = [
+    "serde"
+], optional = true }
 solana-hard-forks = { workspace = true, features = [
     "serde",
 ], optional = true }
@@ -151,6 +115,7 @@ solana-instruction = { workspace = true }
 solana-keypair = { workspace = true, optional = true, features = [
     "seed-derivable",
 ] }
+solana-message = { workspace = true, features = ["serde"] }
 solana-native-token = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-offchain-message = { workspace = true, optional = true, features = ["verify"] }
@@ -165,6 +130,9 @@ solana-pubkey = { workspace = true, default-features = false, features = [
     "std",
 ] }
 solana-quic-definitions = { workspace = true, optional = true }
+solana-rent-collector = { workspace = true, features = [
+    "serde"
+], optional = true }
 solana-rent-debits = { workspace = true }
 solana-reserved-account-keys = { workspace = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
@@ -210,17 +178,16 @@ js-sys = { workspace = true }
 wasm-bindgen = { workspace = true }
 
 [dev-dependencies]
-anyhow = { workspace = true }
-assert_matches = { workspace = true }
 curve25519-dalek = { workspace = true }
-hex = { workspace = true }
+ed25519-dalek = { workspace = true }
+libsecp256k1 = { workspace = true, features = ["hmac"] }
 openssl = { workspace = true }
+rand0-7 = { workspace = true }
+serde_derive = { workspace = true }
+serde_with = { workspace = true, features = ["macros"] }
 solana-instructions-sysvar = { workspace = true, features = ["dev-context-only-utils"] }
-solana-logger = { workspace = true }
 solana-program = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { path = ".", features = ["dev-context-only-utils"] }
-static_assertions = { workspace = true }
-tiny-bip39 = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]

@@ -29,8 +29,6 @@
 //! [json]: https://solana.com/docs/rpc
 //! [`clap`]: https://docs.rs/clap
 
-#![allow(incomplete_features)]
-#![cfg_attr(feature = "frozen-abi", feature(specialization))]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 // Allows macro expansion of `use ::solana_sdk::*` to work within this crate
@@ -66,19 +64,22 @@ pub mod entrypoint;
 pub mod entrypoint_deprecated;
 pub mod example_mocks;
 pub mod feature;
-pub mod genesis_config;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-genesis-config` crate instead")]
+pub use solana_genesis_config as genesis_config;
 #[cfg(feature = "full")]
 #[deprecated(since = "2.2.0", note = "Use `solana-hard-forks` crate instead")]
 pub use solana_hard_forks as hard_forks;
 pub mod hash;
-pub mod inner_instruction;
 pub mod log;
 pub mod native_loader;
 pub mod net;
 pub mod precompiles;
 pub mod program_utils;
 pub mod pubkey;
-pub mod rent_collector;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana_rent_collector` crate instead")]
+pub use solana_rent_collector as rent_collector;
 #[deprecated(since = "2.2.0", note = "Use `solana-reward-info` crate instead")]
 pub mod reward_info {
     pub use solana_reward_info::RewardInfo;
@@ -135,6 +136,11 @@ pub use solana_feature_set as feature_set;
 pub use solana_fee_structure as fee;
 #[deprecated(since = "2.1.0", note = "Use `solana-inflation` crate instead")]
 pub use solana_inflation as inflation;
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana_message::inner_instruction` instead"
+)]
+pub use solana_message::inner_instruction;
 #[deprecated(since = "2.2.0", note = "Use `solana-nonce-account` crate instead")]
 pub use solana_nonce_account as nonce_account;
 #[cfg(feature = "full")]
@@ -245,13 +251,6 @@ macro_rules! saturating_add_assign {
 }
 
 pub extern crate bs58;
-extern crate log as logger;
-#[cfg_attr(not(target_os = "solana"), macro_use)]
-extern crate serde_derive;
-
-#[cfg_attr(feature = "frozen-abi", macro_use)]
-#[cfg(feature = "frozen-abi")]
-extern crate solana_frozen_abi_macro;
 
 #[cfg(test)]
 mod tests {

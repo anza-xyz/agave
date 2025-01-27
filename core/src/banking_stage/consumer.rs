@@ -13,6 +13,7 @@ use {
     },
     itertools::Itertools,
     solana_feature_set as feature_set,
+    solana_fee::FeeFeatures,
     solana_ledger::token_balances::collect_token_balances,
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::{
@@ -679,7 +680,9 @@ impl Consumer {
             starting_transaction_index,
         } = record_transactions_summary;
         execute_and_commit_timings.record_transactions_timings = RecordTransactionsTimings {
-            processing_results_to_transactions_us,
+            processing_results_to_transactions_us: Saturating(
+                processing_results_to_transactions_us,
+            ),
             ..record_transactions_timings
         };
 
@@ -765,8 +768,7 @@ impl Consumer {
             bank.get_lamports_per_signature() == 0,
             bank.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
-            bank.feature_set
-                .is_active(&feature_set::remove_rounding_in_fee_calculation::id()),
+            FeeFeatures::from(bank.feature_set.as_ref()),
         );
         let (mut fee_payer_account, _slot) = bank
             .rc
@@ -2581,43 +2583,22 @@ mod tests {
             Consumer::filter_valid_transaction_indexes(&[
                 Err(TransactionError::BlockhashNotFound),
                 Err(TransactionError::BlockhashNotFound),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0
-                }),
+                Ok(CheckedTransactionDetails::default()),
                 Err(TransactionError::BlockhashNotFound),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0
-                }),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0
-                }),
+                Ok(CheckedTransactionDetails::default()),
+                Ok(CheckedTransactionDetails::default()),
             ]),
             [2, 4, 5]
         );
 
         assert_eq!(
             Consumer::filter_valid_transaction_indexes(&[
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0,
-                }),
+                Ok(CheckedTransactionDetails::default()),
                 Err(TransactionError::BlockhashNotFound),
                 Err(TransactionError::BlockhashNotFound),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0,
-                }),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0,
-                }),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0,
-                }),
+                Ok(CheckedTransactionDetails::default()),
+                Ok(CheckedTransactionDetails::default()),
+                Ok(CheckedTransactionDetails::default()),
             ]),
             [0, 3, 4, 5]
         );

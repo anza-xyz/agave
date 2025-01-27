@@ -97,7 +97,7 @@ impl<'a, 'b, Tx: SVMMessage> TransactionBatch<'a, 'b, Tx> {
 }
 
 // Unlock all locked accounts in destructor.
-impl<'a, 'b, Tx: SVMMessage> Drop for TransactionBatch<'a, 'b, Tx> {
+impl<Tx: SVMMessage> Drop for TransactionBatch<'_, '_, Tx> {
     fn drop(&mut self) {
         if self.needs_unlock() {
             self.set_needs_unlock(false);

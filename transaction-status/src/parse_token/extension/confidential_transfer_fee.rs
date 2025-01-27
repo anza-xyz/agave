@@ -209,10 +209,8 @@ mod test {
     use {
         super::*,
         bytemuck::Zeroable,
-        solana_sdk::{
-            instruction::{AccountMeta, Instruction},
-            pubkey::Pubkey,
-        },
+        solana_instruction::{AccountMeta, Instruction},
+        solana_pubkey::Pubkey,
         spl_token_2022::{
             extension::confidential_transfer_fee::instruction::{
                 inner_withdraw_withheld_tokens_from_accounts,

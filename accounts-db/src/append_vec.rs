@@ -20,10 +20,10 @@ use {
     },
     log::*,
     memmap2::MmapMut,
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         hash::Hash,
-        pubkey::Pubkey,
         stake_history::Epoch,
         system_instruction::MAX_PERMITTED_DATA_LENGTH,
     },
@@ -417,15 +417,17 @@ impl AppendVec {
         match &self.backing {
             AppendVecFileBacking::Mmap(mmap_only) => {
                 // Check to see if the mmap is actually dirty before flushing.
-                if mmap_only.is_dirty.load(Ordering::Acquire) {
+                let should_flush = mmap_only.is_dirty.swap(false, Ordering::AcqRel);
+                if should_flush {
                     mmap_only.mmap.flush()?;
-                    mmap_only.is_dirty.store(false, Ordering::Release);
                     APPEND_VEC_MMAPPED_FILES_DIRTY.fetch_sub(1, Ordering::Relaxed);
                 }
                 Ok(())
             }
-            // File also means read only, so nothing to flush.
-            AppendVecFileBacking::File(_file) => Ok(()),
+            AppendVecFileBacking::File(_file) => {
+                // File also means read only, so nothing to flush.
+                Ok(())
+            }
         }
     }
 

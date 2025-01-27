@@ -11,9 +11,9 @@ use {
     rayon::prelude::*,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_us},
+    solana_pubkey::Pubkey,
     solana_sdk::{
         hash::{Hash, Hasher, HASH_BYTES},
-        pubkey::Pubkey,
         rent_collector::RentCollector,
         slot_history::Slot,
         sysvar::epoch_schedule::EpochSchedule,
@@ -519,7 +519,7 @@ struct ItemLocation<'a> {
     pointer: SlotGroupPointer,
 }
 
-impl<'a> AccountsHasher<'a> {
+impl AccountsHasher<'_> {
     pub fn calculate_hash(hashes: Vec<Vec<Hash>>) -> (Hash, usize) {
         let cumulative_offsets = CumulativeOffsets::from_raw(&hashes);
 
@@ -1384,7 +1384,7 @@ mod tests {
         static ref ACTIVE_STATS: ActiveStats = ActiveStats::default();
     }
 
-    impl<'a> AccountsHasher<'a> {
+    impl AccountsHasher<'_> {
         fn new(dir_for_temp_cache_files: PathBuf) -> Self {
             Self {
                 zero_lamport_accounts: ZeroLamportAccounts::Excluded,

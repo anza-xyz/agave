@@ -423,10 +423,7 @@ impl JsonRpcRequestProcessor {
         _error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionCheckResult {
         /* for now just return defaults */
-        Ok(CheckedTransactionDetails {
-            nonce: None,
-            lamports_per_signature: u64::default(),
-        })
+        Ok(CheckedTransactionDetails::new(None, u64::default()))
     }
 
     fn clock(&self) -> sysvar::clock::Clock {

@@ -262,10 +262,8 @@ mod test {
     use {
         super::*,
         bytemuck::Zeroable,
-        solana_sdk::{
-            instruction::{AccountMeta, Instruction},
-            pubkey::Pubkey,
-        },
+        solana_instruction::{AccountMeta, Instruction},
+        solana_pubkey::Pubkey,
         spl_token_2022::{
             extension::confidential_mint_burn::instruction::{
                 confidential_burn_with_split_proofs, confidential_mint_with_split_proofs,

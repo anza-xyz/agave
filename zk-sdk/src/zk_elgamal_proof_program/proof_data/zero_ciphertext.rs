@@ -4,6 +4,8 @@
 //! certifies that a given ciphertext encrypts the message 0 in the field (`Scalar::zero()`). To
 //! generate the proof, a prover must provide the decryption key for the ciphertext.
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
@@ -28,6 +30,7 @@ use {
 ///
 /// It includes the cryptographic proof as well as the context data information needed to verify
 /// the proof.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct ZeroCiphertextProofData {
@@ -39,6 +42,7 @@ pub struct ZeroCiphertextProofData {
 }
 
 /// The context data needed to verify a zero-ciphertext proof.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct ZeroCiphertextProofContext {
@@ -50,6 +54,7 @@ pub struct ZeroCiphertextProofContext {
 }
 
 #[cfg(not(target_os = "solana"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl ZeroCiphertextProofData {
     pub fn new(
         keypair: &ElGamalKeypair,
@@ -67,6 +72,11 @@ impl ZeroCiphertextProofData {
         let proof = ZeroCiphertextProof::new(keypair, ciphertext, &mut transcript).into();
 
         Ok(ZeroCiphertextProofData { context, proof })
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
+    pub fn to_bytes(&self) -> Box<[u8]> {
+        bytes_of(self).into()
     }
 }
 

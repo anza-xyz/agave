@@ -21,7 +21,7 @@ use {
         transaction_meta::StaticMeta, transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk_ids::{compute_budget, system_program},
-    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
+    solana_svm_transaction::instruction::SVMInstruction,
     solana_system_interface::{
         instruction::SystemInstruction, MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         MAX_PERMITTED_DATA_LENGTH,
@@ -46,7 +46,6 @@ impl CostModel {
         if transaction.is_simple_vote_transaction() {
             TransactionCost::SimpleVote { transaction }
         } else {
-            let num_write_locks = Self::num_write_locks(transaction, feature_set);
             let (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost) =
                 Self::get_transaction_cost(
                     transaction,
@@ -56,7 +55,7 @@ impl CostModel {
             Self::calculate_non_vote_transaction_cost(
                 transaction,
                 transaction.program_instructions_iter(),
-                num_write_locks,
+                transaction.num_write_locks(),
                 programs_execution_cost,
                 loaded_accounts_data_size_cost,
                 data_bytes_cost,
@@ -76,7 +75,6 @@ impl CostModel {
         if transaction.is_simple_vote_transaction() {
             TransactionCost::SimpleVote { transaction }
         } else {
-            let num_write_locks = Self::num_write_locks(transaction, feature_set);
             let loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
                 actual_loaded_accounts_data_size_bytes,
                 feature_set,
@@ -87,7 +85,7 @@ impl CostModel {
             Self::calculate_non_vote_transaction_cost(
                 transaction,
                 transaction.program_instructions_iter(),
-                num_write_locks,
+                transaction.num_write_locks(),
                 actual_programs_execution_cost,
                 loaded_accounts_data_size_cost,
                 instructions_data_cost,
@@ -186,23 +184,6 @@ impl CostModel {
                     .num_secp256r1_instruction_signatures()
                     .saturating_mul(secp256r1_verify_cost),
             )
-    }
-
-    fn get_writable_accounts(message: &impl SVMMessage) -> impl Iterator<Item = &Pubkey> {
-        message
-            .account_keys()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, k)| message.is_writable(i).then_some(k))
-    }
-
-    /// Return the number of write-locks for a transaction.
-    fn num_write_locks(transaction: &impl SVMMessage, feature_set: &FeatureSet) -> u64 {
-        if feature_set.is_active(&feature_set::cost_model_requested_write_lock_cost::id()) {
-            transaction.num_write_locks()
-        } else {
-            Self::get_writable_accounts(transaction).count() as u64
-        }
     }
 
     /// Returns the total write-lock cost.
@@ -423,10 +404,10 @@ mod tests {
         super::*,
         itertools::Itertools,
         solana_compute_budget::{
+            self,
             compute_budget_limits::{
                 DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
             },
-            {self},
         },
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE,
@@ -437,6 +418,7 @@ mod tests {
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
+        solana_svm_transaction::svm_message::SVMMessage,
         solana_system_interface::instruction::{self as system_instruction},
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
@@ -704,20 +686,10 @@ mod tests {
             system_transaction::transfer(&mint_keypair, &system_program::id(), 2, start_hash),
         );
 
-        // Feature not enabled - write lock is demoted and does not count towards cost
-        {
-            let tx_cost = CostModel::calculate_cost(&simple_transaction, &FeatureSet::default());
-            assert_eq!(WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
-            assert_eq!(1, tx_cost.writable_accounts().count());
-        }
-
-        // Feature enabled - write lock is demoted but still counts towards cost
-        {
-            let tx_cost =
-                CostModel::calculate_cost(&simple_transaction, &FeatureSet::all_enabled());
-            assert_eq!(2 * WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
-            assert_eq!(1, tx_cost.writable_accounts().count());
-        }
+        // write-lock counts towards cost, even if it is demoted.
+        let tx_cost = CostModel::calculate_cost(&simple_transaction, &FeatureSet::default());
+        assert_eq!(2 * WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
+        assert_eq!(1, tx_cost.writable_accounts().count());
     }
 
     #[test]

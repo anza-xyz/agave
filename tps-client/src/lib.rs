@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use {
     log::debug,
     solana_account::Account,
@@ -140,6 +141,7 @@ pub trait TpsClient {
     ) -> TpsClientResult<UiConfirmedBlock>;
 }
 
+#[cfg(feature = "bank-client")]
 mod bank_client;
 mod rpc_client;
 mod tpu_client;

@@ -239,10 +239,8 @@ fn svm_concurrent() {
             let local_bank = mock_bank.clone();
             let th_txs = std::mem::take(&mut transactions[idx]);
             let check_results = vec![
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 20
-                }) as TransactionCheckResult;
+                Ok(CheckedTransactionDetails::new(None, 20))
+                    as TransactionCheckResult;
                 TRANSACTIONS_PER_THREAD
             ];
             let processing_config = TransactionProcessingConfig {

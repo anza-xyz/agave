@@ -7,11 +7,11 @@ use {
         test_utils::check_ready,
     },
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
+    solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_nonce_utils::blockhash_query::{self, BlockhashQuery},
     solana_sdk::{
-        commitment_config::CommitmentConfig,
         hash::Hash,
         native_token::sol_to_lamports,
         pubkey::Pubkey,

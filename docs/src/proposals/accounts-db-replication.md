@@ -64,7 +64,7 @@ The `ReplicaSlotConfirmationServer`: this service is responsible for serving the
 `ReplicaSlotConfirmationRequest` and sends the `ReplicaSlotConfirmationResponse` back to the requestor.
 The response consists of a vector of new slots the validator knows of which is later than the
 specified last_replicated_slot. This service also runs in the main validator. This service
-gets the slots for replication from the BankForks, BlockCommitmentCache and OptimiscallyConfirmBank.
+gets the slots for replication from the BankForks, BlockCommitmentCache and OptimisticallyConfirmedBank.
 
 The `ReplicaAccountsRequestor`: this service is responsible for sending the request
 `ReplicaAccountsRequest` to its peer validator or replica for the `ReplicaAccountInfo` for a
@@ -131,7 +131,7 @@ Following are the client RPC APIs supported by the replica node in JsonRpcAccoun
 - getMultipleAccounts
 - getProgramAccounts
 - getMinimumBalanceForRentExemption
-- getInflationGovenor
+- getInflationGovernor
 - getInflationRate
 - getEpochSchedule
 - getRecentBlockhash
@@ -153,7 +153,7 @@ Following APIs are not included:
 - getClusterNodes
 - getRecentPerformanceSamples
 - getGenesisHash
-- getSignatueStatuses
+- getSignatureStatuses
 - getMaxRetransmitSlot
 - getMaxShredInsertSlot
 - sendTransaction

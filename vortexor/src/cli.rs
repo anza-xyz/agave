@@ -3,11 +3,9 @@ use {
     solana_clap_utils::input_validators::{is_keypair_or_ask_keyword, is_parsable},
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_sdk::quic::QUIC_PORT_OFFSET,
-    solana_streamer::{
-        nonblocking::quic::{
-            DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STREAMS_PER_MS,
-        },
-        quic::{MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
+    solana_streamer::quic::{
+        DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
+        DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
     },
 };
 
@@ -33,10 +31,10 @@ impl Default for DefaultArgs {
             bind_address: "0.0.0.0".to_string(),
             dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
             max_connections_per_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER.to_string(),
-            max_tpu_staked_connections: MAX_STAKED_CONNECTIONS.to_string(),
-            max_tpu_unstaked_connections: MAX_UNSTAKED_CONNECTIONS.to_string(),
-            max_fwd_staked_connections: MAX_STAKED_CONNECTIONS
-                .saturating_add(MAX_UNSTAKED_CONNECTIONS)
+            max_tpu_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS.to_string(),
+            max_tpu_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS.to_string(),
+            max_fwd_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS
+                .saturating_add(DEFAULT_MAX_UNSTAKED_CONNECTIONS)
                 .to_string(),
             max_fwd_unstaked_connections: 0.to_string(),
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
@@ -66,7 +64,7 @@ fn port_range_validator(port_range: String) -> Result<(), String> {
 }
 
 pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
-    return App::new(crate_name!())
+    App::new(crate_name!())
         .about(crate_description!())
         .version(version)
         .global_setting(AppSettings::ColoredHelp)
@@ -173,5 +171,5 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .validator(is_parsable::<u64>)
                 .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-        );
+        )
 }

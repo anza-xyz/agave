@@ -11,7 +11,8 @@ use {
     },
     rayon::prelude::*,
     solana_measure::{measure::Measure, measure_us},
-    solana_sdk::{account::ReadableAccount as _, clock::Slot, hash::Hash, pubkey::Pubkey},
+    solana_pubkey::Pubkey,
+    solana_sdk::{account::ReadableAccount as _, clock::Slot, hash::Hash},
     std::{
         hash::{DefaultHasher, Hash as _, Hasher as _},
         ops::Range,
@@ -55,7 +56,7 @@ struct ScanState<'a> {
     stats_num_zero_lamport_accounts_ancient: Arc<AtomicU64>,
 }
 
-impl<'a> AppendVecScan for ScanState<'a> {
+impl AppendVecScan for ScanState<'_> {
     fn set_slot(&mut self, slot: Slot, is_ancient: bool) {
         self.current_slot = slot;
         self.is_ancient = is_ancient;

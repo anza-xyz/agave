@@ -14,6 +14,7 @@ use {
         spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
     },
     clap::{value_t, App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand},
+    solana_account::{from_account, state_traits::StateMut, Account},
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -31,6 +32,18 @@ use {
         CliEpochReward, CliStakeHistory, CliStakeHistoryEntry, CliStakeState, CliStakeType,
         OutputFormat, ReturnSignersConfig,
     },
+    solana_clock::{Clock, Epoch, UnixTimestamp, SECONDS_PER_DAY},
+    solana_commitment_config::CommitmentConfig,
+    solana_epoch_schedule::EpochSchedule,
+    solana_message::Message,
+    solana_native_token::Sol,
+    solana_program::stake::{
+        self,
+        instruction::{self as stake_instruction, LockupArgs, StakeError},
+        state::{Authorized, Lockup, Meta, StakeActivationStatus, StakeAuthorize, StakeStateV2},
+        tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
+    },
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
@@ -39,29 +52,13 @@ use {
         response::{RpcInflationReward, RpcVoteAccountStatus},
     },
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
-    solana_sdk::{
-        account::{from_account, Account},
-        account_utils::StateMut,
-        clock::{Clock, UnixTimestamp, SECONDS_PER_DAY},
-        commitment_config::CommitmentConfig,
-        epoch_schedule::EpochSchedule,
-        message::Message,
-        native_token::Sol,
-        pubkey::Pubkey,
-        stake::{
-            self,
-            instruction::{self as stake_instruction, LockupArgs, StakeError},
-            state::{
-                Authorized, Lockup, Meta, StakeActivationStatus, StakeAuthorize, StakeStateV2,
-            },
-            tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
-        },
-        stake_history::{Epoch, StakeHistory},
-        system_instruction::{self, SystemError},
+    solana_sdk_ids::{
         system_program,
         sysvar::{clock, stake_history},
-        transaction::Transaction,
     },
+    solana_system_interface::{error::SystemError, instruction as system_instruction},
+    solana_sysvar::stake_history::StakeHistory,
+    solana_transaction::Transaction,
     std::{ops::Deref, rc::Rc},
 };
 
@@ -2544,6 +2541,7 @@ pub fn get_epoch_boundary_timestamps(
 
 pub fn make_cli_reward(
     reward: &RpcInflationReward,
+    block_time: UnixTimestamp,
     epoch_start_time: UnixTimestamp,
     epoch_end_time: UnixTimestamp,
 ) -> Option<CliEpochReward> {
@@ -2564,7 +2562,7 @@ pub fn make_cli_reward(
             percent_change: rate_change * 100.0,
             apr: Some(apr * 100.0),
             commission: reward.commission,
-            block_time: epoch_end_time,
+            block_time,
         })
     } else {
         None
@@ -2593,7 +2591,9 @@ pub(crate) fn fetch_epoch_rewards(
             if let Some(reward) = reward {
                 let (epoch_start_time, epoch_end_time) =
                     get_epoch_boundary_timestamps(rpc_client, reward, &epoch_schedule)?;
-                if let Some(cli_reward) = make_cli_reward(reward, epoch_start_time, epoch_end_time)
+                let block_time = rpc_client.get_block_time(reward.effective_slot)?;
+                if let Some(cli_reward) =
+                    make_cli_reward(reward, block_time, epoch_start_time, epoch_end_time)
                 {
                     all_epoch_rewards.push(cli_reward);
                 }
@@ -2880,13 +2880,11 @@ mod tests {
     use {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
+        solana_hash::Hash,
+        solana_keypair::{keypair_from_seed, read_keypair_file, write_keypair, Keypair},
+        solana_presigner::Presigner,
         solana_rpc_client_nonce_utils::blockhash_query,
-        solana_sdk::{
-            hash::Hash,
-            signature::{
-                keypair_from_seed, read_keypair_file, write_keypair, Keypair, Presigner, Signer,
-            },
-        },
+        solana_signer::Signer,
         tempfile::NamedTempFile,
     };
 

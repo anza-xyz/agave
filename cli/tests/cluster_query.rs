@@ -4,10 +4,10 @@ use {
         cli::{process_command, request_and_confirm_airdrop, CliCommand, CliConfig},
         test_utils::check_ready,
     },
+    solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet,
     solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{
-        commitment_config::CommitmentConfig,
         fee::FeeStructure,
         native_token::sol_to_lamports,
         signature::{Keypair, Signer},

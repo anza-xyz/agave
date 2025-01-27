@@ -70,7 +70,7 @@ mod test {
                     "account": account_pubkey.to_string(),
                     "payer": payer_pubkey.to_string(),
                     "owner": owner_pubkey.to_string(),
-                    "systemProgram": solana_sdk::system_program::id().to_string(),
+                    "systemProgram": solana_sdk_ids::system_program::id().to_string(),
                     "extensionTypes": ["transferFeeAmount", "memoTransfer"],
                 })
             }
@@ -107,7 +107,7 @@ mod test {
                         multisig_signer0.to_string(),
                         multisig_signer1.to_string(),
                     ],
-                    "systemProgram": solana_sdk::system_program::id().to_string(),
+                    "systemProgram": solana_sdk_ids::system_program::id().to_string(),
                     "extensionTypes": ["transferFeeAmount", "memoTransfer"],
                 })
             }

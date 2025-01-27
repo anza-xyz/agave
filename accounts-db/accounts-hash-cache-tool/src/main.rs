@@ -14,7 +14,7 @@ use {
         ParsedCacheHashDataFilename,
     },
     solana_clap_utils::input_parsers::values_of,
-    solana_program::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     std::{
         cmp::{self, Ordering},
         fs::{self, File, Metadata},

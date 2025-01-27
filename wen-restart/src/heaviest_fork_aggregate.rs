@@ -2,9 +2,11 @@ use {
     crate::solana::wen_restart_proto::HeaviestForkRecord,
     anyhow::Result,
     log::*,
+    solana_clock::Slot,
     solana_gossip::restart_crds_values::RestartHeaviestFork,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
     solana_runtime::epoch_stakes::EpochStakes,
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
     std::{
         collections::{HashMap, HashSet},
         str::FromStr,
@@ -183,6 +185,7 @@ mod tests {
             solana::wen_restart_proto::HeaviestForkRecord,
         },
         solana_gossip::restart_crds_values::RestartHeaviestFork,
+        solana_hash::Hash,
         solana_program::{clock::Slot, pubkey::Pubkey},
         solana_runtime::{
             bank::Bank,
@@ -190,7 +193,8 @@ mod tests {
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
         },
-        solana_sdk::{hash::Hash, signature::Signer, timing::timestamp},
+        solana_signer::Signer,
+        solana_time_utils::timestamp,
     };
 
     const TOTAL_VALIDATOR_COUNT: u16 = 20;

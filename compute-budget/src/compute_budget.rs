@@ -1,4 +1,6 @@
 use crate::compute_budget_limits::{self, ComputeBudgetLimits, DEFAULT_HEAP_COST};
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 
 #[cfg(feature = "frozen-abi")]
 impl ::solana_frozen_abi::abi_example::AbiExample for ComputeBudget {
@@ -146,7 +148,8 @@ impl From<ComputeBudgetLimits> for ComputeBudget {
 }
 
 impl ComputeBudget {
-    pub fn new(compute_unit_limit: u64) -> Self {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn new(compute_unit_limit: u64) -> Self {
         ComputeBudget {
             compute_unit_limit,
             log_64_units: 100,

@@ -1,6 +1,6 @@
-/// These are syscall codes specified in SIMD-0178.
-/// If a new syscall is to be included, add a new number constant
-/// for correct registration.
+//! These are syscall codes specified in SIMD-0178.
+//! If a new syscall is to be included, add a new number constant
+//! for correct registration.
 
 macro_rules! define_code {
     ($name:ident, $code:literal) => {

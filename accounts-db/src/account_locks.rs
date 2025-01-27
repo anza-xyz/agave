@@ -2,9 +2,9 @@
 use qualifier_attr::qualifiers;
 use {
     ahash::{AHashMap, AHashSet},
+    solana_pubkey::Pubkey,
     solana_sdk::{
         message::AccountKeys,
-        pubkey::Pubkey,
         transaction::{TransactionError, MAX_TX_ACCOUNT_LOCKS},
     },
     std::{cell::RefCell, collections::hash_map},
@@ -62,9 +62,7 @@ impl AccountLocks {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn is_locked_readonly(&self, key: &Pubkey) -> bool {
-        self.readonly_locks
-            .get(key)
-            .map_or(false, |count| *count > 0)
+        self.readonly_locks.get(key).is_some_and(|count| *count > 0)
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]

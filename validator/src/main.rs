@@ -35,8 +35,9 @@ use {
         system_monitor_service::SystemMonitorService,
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
-            is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod, Validator,
-            ValidatorConfig, ValidatorError, ValidatorStartProgress, ValidatorTpuConfig,
+            is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
+            TransactionStructure, Validator, ValidatorConfig, ValidatorError,
+            ValidatorStartProgress, ValidatorTpuConfig,
         },
     },
     solana_gossip::{
@@ -66,14 +67,14 @@ use {
         snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
     },
     solana_sdk::{
-        clock::{Slot, DEFAULT_S_PER_SLOT},
+        clock::{Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_S_PER_SLOT},
         commitment_config::CommitmentConfig,
         hash::Hash,
         pubkey::Pubkey,
         signature::{read_keypair, Keypair, Signer},
     },
     solana_send_transaction_service::send_transaction_service,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{
         collections::{HashSet, VecDeque},
@@ -412,14 +413,14 @@ fn validators_set(
     }
 }
 
-fn get_cluster_shred_version(entrypoints: &[SocketAddr]) -> Option<u16> {
+fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -> Option<u16> {
     let entrypoints = {
         let mut index: Vec<_> = (0..entrypoints.len()).collect();
         index.shuffle(&mut rand::thread_rng());
         index.into_iter().map(|i| &entrypoints[i])
     };
     for entrypoint in entrypoints {
-        match solana_net_utils::get_cluster_shred_version(entrypoint) {
+        match solana_net_utils::get_cluster_shred_version_with_binding(entrypoint, bind_address) {
             Err(err) => eprintln!("get_cluster_shred_version failed: {entrypoint}, {err}"),
             Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
             Ok(shred_version) => {
@@ -1139,8 +1140,6 @@ pub fn main() {
     };
 
     let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
-    let tpu_max_connections_per_ipaddr_per_minute =
-        value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
 
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
     if !(0.0..=1.0).contains(&shrink_ratio) {
@@ -1180,7 +1179,7 @@ pub fn main() {
     // version can then be deleted from gossip and get_rpc_node above.
     let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
         .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs));
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_address));
 
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         match value_t_or_exit!(matches, "tower_storage", String).as_str() {
@@ -1731,8 +1730,13 @@ pub fn main() {
 
     let archive_format = {
         let archive_format_str = value_t_or_exit!(matches, "snapshot_archive_format", String);
-        ArchiveFormat::from_cli_arg(&archive_format_str)
-            .unwrap_or_else(|| panic!("Archive format not recognized: {archive_format_str}"))
+        let mut archive_format = ArchiveFormat::from_cli_arg(&archive_format_str)
+            .unwrap_or_else(|| panic!("Archive format not recognized: {archive_format_str}"));
+        if let ArchiveFormat::TarZstd { config } = &mut archive_format {
+            config.compression_level =
+                value_t_or_exit!(matches, "snapshot_zstd_compression_level", i32);
+        }
+        archive_format
     };
 
     let snapshot_version =
@@ -1821,6 +1825,18 @@ pub fn main() {
         },
     );
 
+    // It is unlikely that a full snapshot interval greater than an epoch is a good idea.
+    // Minimally we should warn the user in case this was a mistake.
+    if full_snapshot_archive_interval_slots > DEFAULT_SLOTS_PER_EPOCH
+        && full_snapshot_archive_interval_slots != DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
+    {
+        warn!(
+            "The full snapshot interval is excessively large: {}! This will negatively \
+            impact the background cleanup tasks in accounts-db. Consider a smaller value.",
+            full_snapshot_archive_interval_slots,
+        );
+    }
+
     if !is_snapshot_config_valid(
         &validator_config.snapshot_config,
         validator_config.accounts_hash_interval_slots,
@@ -1846,6 +1862,12 @@ pub fn main() {
         matches, // comment to align formatting...
         "block_production_method",
         BlockProductionMethod
+    )
+    .unwrap_or_default();
+    validator_config.transaction_struct = value_t!(
+        matches, // comment to align formatting...
+        "transaction_struct",
+        TransactionStructure
     )
     .unwrap_or_default();
     validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
@@ -1914,15 +1936,16 @@ pub fn main() {
                         "Contacting {} to determine the validator's public IP address",
                         entrypoint_addr
                     );
-                    solana_net_utils::get_public_ip_addr(entrypoint_addr).map_or_else(
-                        |err| {
-                            eprintln!(
-                                "Failed to contact cluster entrypoint {entrypoint_addr}: {err}"
-                            );
-                            None
-                        },
-                        Some,
-                    )
+                    solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_address)
+                        .map_or_else(
+                            |err| {
+                                eprintln!(
+                                    "Failed to contact cluster entrypoint {entrypoint_addr}: {err}"
+                                );
+                                None
+                            },
+                            Some,
+                        )
                 });
 
                 gossip_host.unwrap_or_else(|| {
@@ -1964,6 +1987,22 @@ pub fn main() {
             });
 
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
+
+    let tpu_max_connections_per_peer =
+        value_t_or_exit!(matches, "tpu_max_connections_per_peer", u64);
+    let tpu_max_staked_connections = value_t_or_exit!(matches, "tpu_max_staked_connections", u64);
+    let tpu_max_unstaked_connections =
+        value_t_or_exit!(matches, "tpu_max_unstaked_connections", u64);
+
+    let tpu_max_fwd_staked_connections =
+        value_t_or_exit!(matches, "tpu_max_fwd_staked_connections", u64);
+    let tpu_max_fwd_unstaked_connections =
+        value_t_or_exit!(matches, "tpu_max_fwd_unstaked_connections", u64);
+
+    let tpu_max_connections_per_ipaddr_per_minute: u64 =
+        value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
+    let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
+
     let node_config = NodeConfig {
         gossip_addr,
         port_range: dynamic_port_range,
@@ -2067,6 +2106,32 @@ pub fn main() {
     // the one pushed by bootstrap.
     node.info.hot_swap_pubkey(identity_keypair.pubkey());
 
+    let tpu_quic_server_config = QuicServerParams {
+        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+        max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
+        max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+        coalesce: tpu_coalesce,
+        ..Default::default()
+    };
+
+    let tpu_fwd_quic_server_config = QuicServerParams {
+        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+        max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
+        max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+        coalesce: tpu_coalesce,
+        ..Default::default()
+    };
+
+    // Vote shares TPU forward's characteristics, except that we accept 1 connection
+    // per peer and no unstaked connections are accepted.
+    let mut vote_quic_server_config = tpu_fwd_quic_server_config.clone();
+    vote_quic_server_config.max_connections_per_peer = 1;
+    vote_quic_server_config.max_unstaked_connections = 0;
+
     let validator = match Validator::new(
         node,
         identity_keypair,
@@ -2084,7 +2149,9 @@ pub fn main() {
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
-            tpu_max_connections_per_ipaddr_per_minute,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
         },
         admin_service_post_init,
     ) {

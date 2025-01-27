@@ -36,10 +36,7 @@ use {
         exit::Exit, genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH, hash::Hash,
         native_token::lamports_to_sol,
     },
-    solana_send_transaction_service::{
-        send_transaction_service::{self, SendTransactionService},
-        transaction_client::ConnectionCacheClient,
-    },
+    solana_send_transaction_service::send_transaction_service::{self, SendTransactionService},
     solana_storage_bigtable::CredentialType,
     std::{
         net::SocketAddr,
@@ -380,7 +377,12 @@ impl JsonRpcService {
         let tpu_address = cluster_info
             .my_contact_info()
             .tpu(connection_cache.protocol())
-            .map_err(|err| format!("{err}"))?;
+            .ok_or_else(|| {
+                format!(
+                    "Invalid {:?} socket address for TPU",
+                    connection_cache.protocol()
+                )
+            })?;
 
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
 
@@ -465,20 +467,15 @@ impl JsonRpcService {
 
         let leader_info =
             poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
-        let client = ConnectionCacheClient::new(
-            connection_cache,
+        let _send_transaction_service = Arc::new(SendTransactionService::new_with_config(
             tpu_address,
-            send_transaction_service_config.tpu_peers.clone(),
-            leader_info,
-            send_transaction_service_config.leader_forward_count,
-        );
-        let _send_transaction_service = SendTransactionService::new_with_config(
             &bank_forks,
+            leader_info,
             receiver,
-            client,
+            &connection_cache,
             send_transaction_service_config,
             exit,
-        );
+        ));
 
         #[cfg(test)]
         let test_request_processor = request_processor.clone();

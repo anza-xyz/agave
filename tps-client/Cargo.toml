@@ -12,7 +12,7 @@ edition = { workspace = true }
 log = { workspace = true }
 solana-account = { workspace = true }
 solana-client = { workspace = true }
-solana-client-traits = { workspace = true }
+solana-client-traits = { workspace = true, optional = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-connection-cache = { workspace = true }
@@ -24,7 +24,7 @@ solana-pubkey = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
-solana-runtime = { workspace = true }
+solana-runtime = { workspace = true, optional = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
@@ -42,3 +42,8 @@ tempfile = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+bank-client = ["dep:solana-client-traits", "dep:solana-runtime"]

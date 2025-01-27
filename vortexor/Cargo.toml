@@ -35,6 +35,7 @@ rustls = { workspace = true }
 smallvec = { workspace = true }
 socket2 = { workspace = true }
 solana-clap-utils = { workspace = true }
+solana-core = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }

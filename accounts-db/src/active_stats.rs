@@ -46,7 +46,7 @@ pub struct ActiveStatGuard<'a> {
     item: ActiveStatItem,
 }
 
-impl<'a> Drop for ActiveStatGuard<'a> {
+impl Drop for ActiveStatGuard<'_> {
     fn drop(&mut self) {
         self.stats.update_and_log(self.item, |stat| {
             stat.fetch_sub(1, Ordering::Relaxed).wrapping_sub(1)

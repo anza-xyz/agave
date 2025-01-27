@@ -59,7 +59,6 @@ use {
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
     ahash::AHashSet,
-    byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
     log::*,
     rayon::{
@@ -95,10 +94,8 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_cost_model::{block_cost_limits::simd_0207_block_limits, cost_tracker::CostTracker},
-    solana_feature_set::{
-        self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,
-        FeatureSet,
-    },
+    solana_feature_set::{self as feature_set, reward_full_priority_fee, FeatureSet},
+    solana_fee::FeeFeatures,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_time, measure_us},
     solana_program_runtime::{
@@ -249,7 +246,7 @@ struct RentMetrics {
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "BHg4qpwegtaJypLUqAdjQYzYeLfEGf6tA4U5cREbHMHi")
+    frozen_abi(digest = "4e7a7AAsQrM5Lp5bhREdVZ5QGZfyETbBthhWjYMYb6zS")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
@@ -343,7 +340,7 @@ pub struct TransactionSimulationResult {
     pub inner_instructions: Option<Vec<InnerInstructions>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TransactionBalancesSet {
     pub pre_balances: TransactionBalances,
     pub post_balances: TransactionBalances,
@@ -359,6 +356,8 @@ impl TransactionBalancesSet {
     }
 }
 pub type TransactionBalances = Vec<Vec<u64>>;
+
+pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TransactionLogCollectorFilter {
@@ -2918,8 +2917,7 @@ impl Bank {
             lamports_per_signature == 0,
             self.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
-            self.feature_set
-                .is_active(&remove_rounding_in_fee_calculation::id()),
+            FeeFeatures::from(self.feature_set.as_ref()),
         )
     }
 
@@ -3787,52 +3785,56 @@ impl Bank {
     ) -> Vec<TransactionCommitResult> {
         processing_results
             .into_iter()
-            .map(|processing_result| match processing_result? {
-                ProcessedTransaction::Executed(executed_tx) => {
-                    let execution_details = executed_tx.execution_details;
-                    let LoadedTransaction {
-                        rent_debits,
-                        accounts: loaded_accounts,
-                        loaded_accounts_data_size,
-                        fee_details,
-                        ..
-                    } = executed_tx.loaded_transaction;
+            .map(|processing_result| {
+                let processing_result = processing_result?;
+                let executed_units = processing_result.executed_units();
+                let loaded_accounts_data_size = processing_result.loaded_accounts_data_size();
 
-                    // Rent is only collected for successfully executed transactions
-                    let rent_debits = if execution_details.was_successful() {
-                        rent_debits
-                    } else {
-                        RentDebits::default()
-                    };
+                match processing_result {
+                    ProcessedTransaction::Executed(executed_tx) => {
+                        let execution_details = executed_tx.execution_details;
+                        let LoadedTransaction {
+                            rent_debits,
+                            accounts: loaded_accounts,
+                            fee_details,
+                            ..
+                        } = executed_tx.loaded_transaction;
 
-                    Ok(CommittedTransaction {
-                        status: execution_details.status,
-                        log_messages: execution_details.log_messages,
-                        inner_instructions: execution_details.inner_instructions,
-                        return_data: execution_details.return_data,
-                        executed_units: execution_details.executed_units,
-                        fee_details,
-                        rent_debits,
+                        // Rent is only collected for successfully executed transactions
+                        let rent_debits = if execution_details.was_successful() {
+                            rent_debits
+                        } else {
+                            RentDebits::default()
+                        };
+
+                        Ok(CommittedTransaction {
+                            status: execution_details.status,
+                            log_messages: execution_details.log_messages,
+                            inner_instructions: execution_details.inner_instructions,
+                            return_data: execution_details.return_data,
+                            executed_units,
+                            fee_details,
+                            rent_debits,
+                            loaded_account_stats: TransactionLoadedAccountsStats {
+                                loaded_accounts_count: loaded_accounts.len(),
+                                loaded_accounts_data_size,
+                            },
+                        })
+                    }
+                    ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
+                        status: Err(fees_only_tx.load_error),
+                        log_messages: None,
+                        inner_instructions: None,
+                        return_data: None,
+                        executed_units,
+                        rent_debits: RentDebits::default(),
+                        fee_details: fees_only_tx.fee_details,
                         loaded_account_stats: TransactionLoadedAccountsStats {
-                            loaded_accounts_count: loaded_accounts.len(),
+                            loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
                             loaded_accounts_data_size,
                         },
-                    })
+                    }),
                 }
-                ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
-                    status: Err(fees_only_tx.load_error),
-                    log_messages: None,
-                    inner_instructions: None,
-                    return_data: None,
-                    executed_units: 0,
-                    rent_debits: RentDebits::default(),
-                    fee_details: fees_only_tx.fee_details,
-                    loaded_account_stats: TransactionLoadedAccountsStats {
-                        loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
-                        loaded_accounts_data_size: fees_only_tx.rollback_accounts.data_size()
-                            as u32,
-                    },
-                }),
             })
             .collect()
     }
@@ -4520,6 +4522,54 @@ impl Bank {
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
     ) -> (Vec<TransactionCommitResult>, TransactionBalancesSet) {
+        self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
+            batch,
+            max_age,
+            collect_balances,
+            recording_config,
+            timings,
+            log_messages_bytes_limit,
+            None::<fn(&mut _, &_) -> _>,
+        )
+        .unwrap()
+    }
+
+    pub fn load_execute_and_commit_transactions_with_pre_commit_callback<'a>(
+        &'a self,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
+        max_age: usize,
+        collect_balances: bool,
+        recording_config: ExecutionRecordingConfig,
+        timings: &mut ExecuteTimings,
+        log_messages_bytes_limit: Option<usize>,
+        pre_commit_callback: impl FnOnce(
+            &mut ExecuteTimings,
+            &[TransactionProcessingResult],
+        ) -> PreCommitResult<'a>,
+    ) -> Result<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
+        self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
+            batch,
+            max_age,
+            collect_balances,
+            recording_config,
+            timings,
+            log_messages_bytes_limit,
+            Some(pre_commit_callback),
+        )
+    }
+
+    fn do_load_execute_and_commit_transactions_with_pre_commit_callback<'a>(
+        &'a self,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
+        max_age: usize,
+        collect_balances: bool,
+        recording_config: ExecutionRecordingConfig,
+        timings: &mut ExecuteTimings,
+        log_messages_bytes_limit: Option<usize>,
+        pre_commit_callback: Option<
+            impl FnOnce(&mut ExecuteTimings, &[TransactionProcessingResult]) -> PreCommitResult<'a>,
+        >,
+    ) -> Result<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
@@ -4545,21 +4595,31 @@ impl Bank {
             },
         );
 
+        // pre_commit_callback could initiate an atomic operation (i.e. poh recording with block
+        // producing unified scheduler). in that case, it returns Some(freeze_lock), which should
+        // unlocked only after calling commit_transactions() immediately after calling the
+        // callback.
+        let freeze_lock = if let Some(pre_commit_callback) = pre_commit_callback {
+            pre_commit_callback(timings, &processing_results)?
+        } else {
+            None
+        };
         let commit_results = self.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
             &processed_counts,
             timings,
         );
+        drop(freeze_lock);
         let post_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
             vec![]
         };
-        (
+        Ok((
             commit_results,
             TransactionBalancesSet::new(pre_balances, post_balances),
-        )
+        ))
     }
 
     /// Process a Transaction. This is used for unit tests and simply calls the vector
@@ -5173,13 +5233,10 @@ impl Bank {
                 )
         });
 
-        let mut signature_count_buf = [0u8; 8];
-        LittleEndian::write_u64(&mut signature_count_buf[..], self.signature_count());
-
         let mut hash = hashv(&[
             self.parent_hash.as_ref(),
             accounts_delta_hash.0.as_ref(),
-            &signature_count_buf,
+            &self.signature_count().to_le_bytes(),
             self.last_blockhash().as_ref(),
         ]);
 
@@ -5765,7 +5822,7 @@ impl Bank {
     pub fn get_lattice_snapshot_hash(&self) -> SnapshotHash {
         SnapshotHash::new(
             &MerkleOrLatticeAccountsHash::Lattice,
-            self.get_epoch_accounts_hash_to_serialize().as_ref(),
+            None,
             Some(self.accounts_lt_hash.lock().unwrap().0.checksum()),
         )
     }

@@ -1,6 +1,10 @@
 //! `Vec`, with a stable memory layout
 
-use std::{marker::PhantomData, mem::ManuallyDrop, ptr::NonNull};
+use std::{
+    marker::PhantomData,
+    mem::ManuallyDrop,
+    ops::{Deref, DerefMut},
+};
 
 /// `Vec`, with a stable memory layout
 ///
@@ -24,9 +28,9 @@ use std::{marker::PhantomData, mem::ManuallyDrop, ptr::NonNull};
 /// ```
 #[repr(C)]
 pub struct StableVec<T> {
-    pub ptr: NonNull<T>,
-    pub cap: usize,
-    pub len: usize,
+    pub addr: u64,
+    pub cap: u64,
+    pub len: u64,
     _marker: PhantomData<T>,
 }
 
@@ -34,17 +38,12 @@ pub struct StableVec<T> {
 // `deref`, which creates an intermediate reference.
 impl<T> StableVec<T> {
     #[inline]
-    pub fn as_ptr(&self) -> *const T {
-        self.ptr.as_ptr()
+    pub fn as_vaddr(&self) -> u64 {
+        self.addr
     }
 
     #[inline]
-    pub fn as_mut_ptr(&mut self) -> *mut T {
-        self.ptr.as_ptr()
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> u64 {
         self.len
     }
 
@@ -56,13 +55,13 @@ impl<T> StableVec<T> {
 
 impl<T> AsRef<[T]> for StableVec<T> {
     fn as_ref(&self) -> &[T] {
-        self
+        self.deref()
     }
 }
 
 impl<T> AsMut<[T]> for StableVec<T> {
     fn as_mut(&mut self) -> &mut [T] {
-        self
+        self.deref_mut()
     }
 }
 
@@ -71,14 +70,14 @@ impl<T> std::ops::Deref for StableVec<T> {
 
     #[inline]
     fn deref(&self) -> &[T] {
-        unsafe { core::slice::from_raw_parts(self.as_ptr(), self.len) }
+        unsafe { core::slice::from_raw_parts(self.addr as usize as *mut T, self.len as usize) }
     }
 }
 
 impl<T> std::ops::DerefMut for StableVec<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut [T] {
-        unsafe { core::slice::from_raw_parts_mut(self.as_mut_ptr(), self.len) }
+        unsafe { core::slice::from_raw_parts_mut(self.addr as usize as *mut T, self.len as usize) }
     }
 }
 
@@ -121,9 +120,9 @@ impl<T> From<Vec<T>> for StableVec<T> {
         let mut other = ManuallyDrop::new(other);
         Self {
             // SAFETY: We have a valid Vec, so its ptr is non-null.
-            ptr: unsafe { NonNull::new_unchecked(other.as_mut_ptr()) },
-            cap: other.capacity(),
-            len: other.len(),
+            addr: other.as_mut_ptr() as u64, // Problematic if other is in 32-bit physical address space
+            cap: other.capacity() as u64,
+            len: other.len() as u64,
             _marker: PhantomData,
         }
     }
@@ -135,8 +134,16 @@ impl<T> From<StableVec<T>> for Vec<T> {
         // out of scope.
         let other = ManuallyDrop::new(other);
         // SAFETY: We have a valid StableVec, which we can only get from a Vec.  Therefore it is
-        // safe to convert back to Vec.
-        unsafe { Vec::from_raw_parts(other.ptr.as_ptr(), other.len, other.cap) }
+        // safe to convert back to Vec. Assuming we're not starting with a vector in 64-bit virtual
+        // address space while building the app in 32-bit, and this vector is in that 32-bit physical
+        // space.
+        unsafe {
+            Vec::from_raw_parts(
+                other.addr as usize as *mut T,
+                other.len as usize,
+                other.cap as usize,
+            )
+        }
     }
 }
 
@@ -147,7 +154,13 @@ impl<T> Drop for StableVec<T> {
         //
         // SAFETY: We have a valid StableVec, which we can only get from a Vec.  Therefore it is
         // safe to convert back to Vec.
-        let _vec = unsafe { Vec::from_raw_parts(self.ptr.as_ptr(), self.len, self.cap) };
+        let _vec = unsafe {
+            Vec::from_raw_parts(
+                self.addr as usize as *mut T,
+                self.len as usize,
+                self.cap as usize,
+            )
+        };
     }
 }
 
@@ -161,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_memory_layout() {
-        assert_eq!(offset_of!(StableVec<i32>, ptr), 0);
+        assert_eq!(offset_of!(StableVec<i32>, addr), 0);
         assert_eq!(offset_of!(StableVec<i32>, cap), 8);
         assert_eq!(offset_of!(StableVec<i32>, len), 16);
         assert_eq!(align_of::<StableVec<i32>>(), 8);

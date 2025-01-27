@@ -33,7 +33,7 @@ use {
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
-        validator::{BlockProductionMethod, BlockVerificationMethod},
+        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
     solana_feature_set::{self as feature_set, FeatureSet},
@@ -1449,6 +1449,20 @@ fn main() {
                         .conflicts_with("no_snapshot"),
                 )
                 .arg(
+                    Arg::with_name("snapshot_zstd_compression_level")
+                        .long("snapshot-zstd-compression-level")
+                        .default_value("0")
+                        .value_name("LEVEL")
+                        .takes_value(true)
+                        .help("The compression level to use when archiving with zstd")
+                        .long_help(
+                            "The compression level to use when archiving with zstd. \
+                             Higher compression levels generally produce higher \
+                             compression ratio at the expense of speed and memory. \
+                             See the zstd manpage for more information."
+                        ),
+                )
+                .arg(
                     Arg::with_name("enable_capitalization_change")
                         .long("enable-capitalization-change")
                         .takes_value(false)
@@ -1970,9 +1984,18 @@ fn main() {
                     let snapshot_archive_format = {
                         let archive_format_str =
                             value_t_or_exit!(arg_matches, "snapshot_archive_format", String);
-                        ArchiveFormat::from_cli_arg(&archive_format_str).unwrap_or_else(|| {
-                            panic!("Archive format not recognized: {archive_format_str}")
-                        })
+                        let mut archive_format = ArchiveFormat::from_cli_arg(&archive_format_str)
+                            .unwrap_or_else(|| {
+                                panic!("Archive format not recognized: {archive_format_str}")
+                            });
+                        if let ArchiveFormat::TarZstd { config } = &mut archive_format {
+                            config.compression_level = value_t_or_exit!(
+                                arg_matches,
+                                "snapshot_zstd_compression_level",
+                                i32
+                            );
+                        }
+                        archive_format
                     };
 
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
@@ -2107,6 +2130,36 @@ fn main() {
                                 _ => Some(value_t_or_exit!(arg_matches, "hashes_per_tick", u64)),
                             });
                         }
+
+                        for address in feature_gates_to_deactivate {
+                            let mut account =
+                                child_bank.get_account(&address).unwrap_or_else(|| {
+                                    eprintln!(
+                                        "Error: Feature-gate account does not exist, unable to \
+                                         deactivate it: {address}"
+                                    );
+                                    exit(1);
+                                });
+
+                            match feature::from_account(&account) {
+                                Some(feature) => {
+                                    if feature.activated_at.is_none() {
+                                        warn!("Feature gate is not yet activated: {address}");
+                                    } else {
+                                        child_bank.deactivate_feature(&address);
+                                    }
+                                }
+                                None => {
+                                    eprintln!("Error: Account is not a `Feature`: {address}");
+                                    exit(1);
+                                }
+                            }
+
+                            account.set_lamports(0);
+                            child_bank.store_account(&address, &account);
+                            debug!("Feature gate deactivated: {address}");
+                        }
+
                         bank = Arc::new(child_bank);
                     }
 
@@ -2139,32 +2192,6 @@ fn main() {
                         account.set_lamports(0);
                         bank.store_account(&address, &account);
                         debug!("Account removed: {address}");
-                    }
-
-                    for address in feature_gates_to_deactivate {
-                        let mut account = bank.get_account(&address).unwrap_or_else(|| {
-                            eprintln!(
-                                "Error: Feature-gate account does not exist, unable to \
-                                     deactivate it: {address}"
-                            );
-                            exit(1);
-                        });
-
-                        match feature::from_account(&account) {
-                            Some(feature) => {
-                                if feature.activated_at.is_none() {
-                                    warn!("Feature gate is not yet activated: {address}");
-                                }
-                            }
-                            None => {
-                                eprintln!("Error: Account is not a `Feature`: {address}");
-                                exit(1);
-                            }
-                        }
-
-                        account.set_lamports(0);
-                        bank.store_account(&address, &account);
-                        debug!("Feature gate deactivated: {address}");
                     }
 
                     if !vote_accounts_to_destake.is_empty() {
@@ -2492,14 +2519,18 @@ fn main() {
                         BlockProductionMethod
                     )
                     .unwrap_or_default();
+                    let transaction_struct =
+                        value_t!(arg_matches, "transaction_struct", TransactionStructure)
+                            .unwrap_or_default();
 
-                    info!("Using: block-production-method: {block_production_method}");
+                    info!("Using: block-production-method: {block_production_method} transaction-structure: {transaction_struct}");
 
                     match simulator.start(
                         genesis_config,
                         bank_forks,
                         blockstore,
                         block_production_method,
+                        transaction_struct,
                     ) {
                         Ok(()) => println!("Ok"),
                         Err(error) => {

@@ -6,17 +6,14 @@ use {
         calculate_stake_points_and_credits, CalculatedStakePoints, InflationPointCalculationEvent,
         PointValue, SkippedReason,
     },
-    solana_sdk::{
-        account::{AccountSharedData, WritableAccount},
-        account_utils::StateMut,
-        clock::Epoch,
-        instruction::InstructionError,
-        stake::{
-            instruction::StakeError,
-            state::{Stake, StakeStateV2},
-        },
-        stake_history::StakeHistory,
+    solana_account::{state_traits::StateMut, AccountSharedData, WritableAccount},
+    solana_clock::Epoch,
+    solana_instruction::error::InstructionError,
+    solana_program::stake::{
+        instruction::StakeError,
+        state::{Stake, StakeStateV2},
     },
+    solana_sysvar::stake_history::StakeHistory,
     solana_vote_program::vote_state::VoteState,
 };
 
@@ -231,7 +228,8 @@ mod tests {
     use {
         super::*,
         crate::{points::null_tracer, stake_state::new_stake},
-        solana_sdk::{native_token, pubkey::Pubkey},
+        solana_native_token::sol_to_lamports,
+        solana_pubkey::Pubkey,
         test_case::test_case,
     };
 
@@ -639,7 +637,7 @@ mod tests {
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasaonable stake
         let stake = new_stake(
-            native_token::sol_to_lamports(10_000_000f64),
+            sol_to_lamports(10_000_000f64),
             &Pubkey::default(),
             &vote_state,
             u64::MAX,

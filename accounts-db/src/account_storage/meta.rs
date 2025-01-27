@@ -5,7 +5,8 @@ use {
         append_vec::AppendVecStoredAccountMeta,
         tiered_storage::hot::{HotAccount, HotAccountMeta},
     },
-    solana_sdk::{account::ReadableAccount, hash::Hash, pubkey::Pubkey, stake_history::Epoch},
+    solana_pubkey::Pubkey,
+    solana_sdk::{account::ReadableAccount, hash::Hash, stake_history::Epoch},
 };
 
 pub type StoredMetaWriteVersion = u64;
@@ -84,7 +85,7 @@ impl<'storage> StoredAccountMeta<'storage> {
     }
 }
 
-impl<'storage> ReadableAccount for StoredAccountMeta<'storage> {
+impl ReadableAccount for StoredAccountMeta<'_> {
     fn lamports(&self) -> u64 {
         match self {
             Self::AppendVec(av) => av.lamports(),

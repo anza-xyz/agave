@@ -66,15 +66,26 @@ pull_request_rules:
         - or:
           - -files~=(\.rs|Cargo\.toml|Cargo\.lock|cargo-build-sbf|cargo-test-sbf|ci/downstream-projects/run-spl\.sh|\.github/workflows/downstream-project-spl\.yml)$
           - and:
-            - status-success=cargo-test-sbf (token/program)
-            - status-success=cargo-test-sbf (instruction-padding/program, token/program-2022, token/program-2022-test)
-            - status-success=cargo-test-sbf (associated-token-account/program, associated-token-account/program-test)
-            - status-success=cargo-test-sbf (token-upgrade/program)
-            - status-success=cargo-test-sbf (feature-proposal/program)
-            - status-success=cargo-test-sbf (governance/addin-mock/program, governance/program)
-            - status-success=cargo-test-sbf (name-service/program)
-            - status-success=cargo-test-sbf (stake-pool/program)
-            - status-success=cargo-test-sbf (single-pool/program)
+            - status-success=check (associated-token-account)
+            - status-success=check (feature-proposal)
+            - status-success=check (instruction-padding)
+            - status-success=check (memo)
+            - status-success=check (record)
+            - status-success=check (single-pool)
+            - status-success=check (slashing)
+            - status-success=check (stake-pool)
+            - status-success=check (token-2022)
+            - status-success=test_cli (single-pool)
+            - status-success=test_cli (token-2022)
+            - status-success=cargo-test-sbf (associated-token-account)
+            - status-success=cargo-test-sbf (feature-proposal)
+            - status-success=cargo-test-sbf (instruction-padding)
+            - status-success=cargo-test-sbf (memo)
+            - status-success=cargo-test-sbf (record)
+            - status-success=cargo-test-sbf (single-pool)
+            - status-success=cargo-test-sbf (slashing)
+            - status-success=cargo-test-sbf (stake-pool)
+            - status-success=cargo-test-sbf (token-2022)
         - or:
           - -files~=(Cargo\.toml|.github/workflows/crate-check\.yml|ci/check-crates\.sh)$
           - check-success=crate check

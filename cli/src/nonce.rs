@@ -12,6 +12,7 @@ use {
         spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
     },
     clap::{App, Arg, ArgMatches, SubCommand},
+    solana_account::Account,
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         input_parsers::*,
@@ -21,23 +22,22 @@ use {
         nonce::*,
     },
     solana_cli_output::CliNonceAccount,
+    solana_hash::Hash,
+    solana_message::Message,
+    solana_nonce::{self as nonce, state::State},
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_nonce_utils::*,
-    solana_sdk::{
-        account::Account,
-        hash::Hash,
-        message::Message,
-        nonce::{self, State},
-        pubkey::Pubkey,
-        system_instruction::{
+    solana_sdk_ids::system_program,
+    solana_system_interface::{
+        error::SystemError,
+        instruction::{
             advance_nonce_account, authorize_nonce_account, create_nonce_account,
             create_nonce_account_with_seed, upgrade_nonce_account, withdraw_nonce_account,
-            SystemError,
         },
-        system_program,
-        transaction::Transaction,
     },
+    solana_transaction::Transaction,
     std::rc::Rc,
 };
 
@@ -726,19 +726,17 @@ mod tests {
     use {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
-        solana_sdk::{
-            account::Account,
-            account_utils::StateMut,
-            hash::hash,
-            nonce::{
-                self,
-                state::{DurableNonce, Versions},
-                State,
-            },
-            nonce_account,
-            signature::{read_keypair_file, write_keypair, Keypair, Signer},
-            system_program,
+        solana_account::{state_traits::StateMut, Account},
+        solana_keypair::{read_keypair_file, write_keypair, Keypair},
+        solana_nonce::{
+            self as nonce,
+            state::{DurableNonce, State},
+            versions::Versions,
         },
+        solana_nonce_account as nonce_account,
+        solana_sdk_ids::system_program,
+        solana_sha256_hasher::hash,
+        solana_signer::Signer,
         tempfile::NamedTempFile,
     };
 

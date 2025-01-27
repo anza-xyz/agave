@@ -41,6 +41,7 @@
 
 pub mod compiled_instruction;
 mod compiled_keys;
+pub mod inner_instruction;
 pub mod legacy;
 #[cfg(feature = "serde")]
 use serde_derive::{Deserialize, Serialize};

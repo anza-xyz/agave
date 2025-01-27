@@ -11,41 +11,81 @@ edition = { workspace = true }
 
 [dependencies]
 bincode = { workspace = true }
-byteorder = { workspace = true }
 libsecp256k1 = { workspace = true }
+qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
+solana-account = { workspace = true }
+solana-account-info = { workspace = true }
+solana-bincode = { workspace = true }
 solana-bn254 = { workspace = true }
+solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
 solana-define-syscall = { workspace = true }
 solana-feature-set = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keccak-hasher = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
+solana-packet = { workspace = true }
 solana-poseidon = { workspace = true }
+solana-precompiles = { workspace = true }
+solana-program = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 solana-program-memory = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true }
-solana-sdk = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-secp256k1-recover = { workspace = true }
+solana-sha256-hasher = { workspace = true }
+solana-stable-layout = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-sysvar = { workspace = true }
+solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-type-overrides = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+criterion = { workspace = true }
 rand = { workspace = true }
-solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
+solana-bpf-loader-program = { path = ".", features = ["svm-internal"] }
+solana-epoch-rewards = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-fee-calculator = { workspace = true }
+solana-last-restart-slot = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-rent = { workspace = true }
+solana-slot-hashes = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [lib]
 crate-type = ["lib"]
 name = "solana_bpf_loader_program"
 
+[[bench]]
+name = "serialization"
+harness = false
+
+[[bench]]
+name = "bpf_loader_upgradeable"
+harness = false
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
+default = ["metrics"]
+metrics = ["solana-program-runtime/metrics"]
 shuttle-test = [
     "solana-type-overrides/shuttle-test",
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test"
 ]
+svm-internal = []

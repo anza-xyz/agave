@@ -36,7 +36,7 @@ pub struct LegacyMessage<'a> {
     pub is_writable_account_cache: Vec<bool>,
 }
 
-impl<'a> LegacyMessage<'a> {
+impl LegacyMessage<'_> {
     pub fn new(message: legacy::Message, reserved_account_keys: &HashSet<Pubkey>) -> Self {
         let is_writable_account_cache = message
             .account_keys
@@ -473,7 +473,7 @@ impl TransactionSignatureDetails {
         self.num_ed25519_instruction_signatures
     }
 
-    /// return the number of secp256k1 instruction signatures
+    /// return the number of secp256r1 instruction signatures
     pub fn num_secp256r1_instruction_signatures(&self) -> u64 {
         self.num_secp256r1_instruction_signatures
     }

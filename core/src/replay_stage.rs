@@ -2,6 +2,7 @@
 
 use {
     crate::{
+        banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank,
         banking_trace::BankingTracer,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
@@ -2217,11 +2218,12 @@ impl ReplayStage {
             // new()-ing of its child bank
             banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
 
-            let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
-            poh_recorder
-                .write()
-                .unwrap()
-                .set_bank(tpu_bank, track_transaction_indexes);
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+                bank_forks,
+                poh_recorder,
+                tpu_bank,
+                track_transaction_indexes,
+            );
             true
         } else {
             error!("{} No next leader found", my_pubkey);
@@ -2426,7 +2428,7 @@ impl ReplayStage {
             // The following differs from  rooted_slots by including the parent slot of the oldest parent bank.
             let rooted_slots_with_parents = bank_notification_sender
                 .as_ref()
-                .map_or(false, |sender| sender.should_send_parents)
+                .is_some_and(|sender| sender.should_send_parents)
                 .then(|| {
                     let mut new_chain = rooted_slots.clone();
                     new_chain.push(oldest_parent.unwrap_or_else(|| bank.parent_slot()));
@@ -3215,6 +3217,7 @@ impl ReplayStage {
                     (bank.slot(), bank.hash()),
                     Some((bank.parent_slot(), bank.parent_hash())),
                 );
+                heaviest_subtree_fork_choice.maybe_print_state();
                 bank_progress.fork_stats.bank_hash = Some(bank.hash());
                 let bank_frozen_state = BankFrozenState::new_from_state(
                     bank.slot(),

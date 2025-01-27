@@ -1,9 +1,6 @@
 use {
     crate::{
-        nonblocking::quic::{
-            ALPN_TPU_PROTOCOL_ID, DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        },
+        nonblocking::quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
         streamer::StakedNodes,
     },
     crossbeam_channel::Sender,
@@ -32,8 +29,32 @@ use {
     tokio::runtime::Runtime,
 };
 
+// allow multiple connections for NAT and any open/close overlap
+pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
+
+#[deprecated(
+    since = "2.2.0",
+    note = "Use solana_streamer::quic::DEFAULT_MAX_STAKED_CONNECTIONS"
+)]
 pub const MAX_STAKED_CONNECTIONS: usize = 2000;
+
+pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
+
+#[deprecated(
+    since = "2.2.0",
+    note = "Use solana_streamer::quic::DEFAULT_MAX_UNSTAKED_CONNECTIONS"
+)]
 pub const MAX_UNSTAKED_CONNECTIONS: usize = 500;
+
+pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 500;
+
+/// Limit to 250K PPS
+pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 250;
+
+/// The new connections per minute from a particular IP address.
+/// Heuristically set to the default maximum concurrent connections
+/// per IP address. Might be adjusted later.
+pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 8;
 
 // This will be adjusted and parameterized in follow-on PRs.
 pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
@@ -45,6 +66,9 @@ pub struct SpawnServerResult {
     pub thread: thread::JoinHandle<()>,
     pub key_updater: Arc<EndpointKeyUpdater>,
 }
+
+/// Controls the the channel size for the PacketBatch coalesce
+pub(crate) const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 1_000_000;
 
 /// Returns default server configuration along with its PEM certificate chain.
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
@@ -573,18 +597,20 @@ pub struct QuicServerParams {
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub coalesce: Duration,
+    pub coalesce_channel_size: usize,
 }
 
 impl Default for QuicServerParams {
     fn default() -> Self {
         QuicServerParams {
             max_connections_per_peer: 1,
-            max_staked_connections: MAX_STAKED_CONNECTIONS,
-            max_unstaked_connections: MAX_UNSTAKED_CONNECTIONS,
+            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
+            max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             coalesce: DEFAULT_TPU_COALESCE,
+            coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
         }
     }
 }
@@ -664,7 +690,10 @@ mod test {
             sender,
             exit.clone(),
             staked_nodes,
-            QuicServerParams::default(),
+            QuicServerParams {
+                coalesce_channel_size: 100_000, // smaller channel size for faster test
+                ..Default::default()
+            },
         )
         .unwrap();
         (t, exit, receiver, server_address)
@@ -721,6 +750,7 @@ mod test {
             staked_nodes,
             QuicServerParams {
                 max_connections_per_peer: 2,
+                coalesce_channel_size: 100_000, // smaller channel size for faster test
                 ..QuicServerParams::default()
             },
         )
@@ -766,6 +796,7 @@ mod test {
             staked_nodes,
             QuicServerParams {
                 max_unstaked_connections: 0,
+                coalesce_channel_size: 100_000, // smaller channel size for faster test
                 ..QuicServerParams::default()
             },
         )

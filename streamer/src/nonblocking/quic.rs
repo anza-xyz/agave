@@ -10,9 +10,7 @@ use {
         quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
         streamer::StakedNodes,
     },
-    async_channel::{
-        unbounded as async_unbounded, Receiver as AsyncReceiver, Sender as AsyncSender,
-    },
+    async_channel::{bounded as async_bounded, Receiver as AsyncReceiver, Sender as AsyncSender},
     bytes::Bytes,
     crossbeam_channel::Sender,
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
@@ -25,7 +23,7 @@ use {
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{PacketBatch, PACKETS_PER_BATCH},
+    solana_perf::packet::{PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
     solana_quic_definitions::{
         QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_MAX_STAKED_CONCURRENT_STREAMS,
@@ -87,13 +85,20 @@ const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 const CONNECTION_CLOSE_CODE_INVALID_STREAM: u32 = 5;
 const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
 
-/// Limit to 250K PPS
-pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 250;
-
 /// The new connections per minute from a particular IP address.
 /// Heuristically set to the default maximum concurrent connections
 /// per IP address. Might be adjusted later.
-pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 8;
+#[deprecated(
+    since = "2.2.0",
+    note = "Use solana_streamer::quic::DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE"
+)]
+pub use crate::quic::DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE;
+/// Limit to 250K PPS
+#[deprecated(
+    since = "2.2.0",
+    note = "Use solana_streamer::quic::DEFAULT_MAX_STREAMS_PER_MS"
+)]
+pub use crate::quic::DEFAULT_MAX_STREAMS_PER_MS;
 
 /// Total new connection counts per second. Heuristically taken from
 /// the default staked and unstaked connection limits. Might be adjusted
@@ -184,6 +189,7 @@ pub fn spawn_server_multi(
         max_connections_per_ipaddr_per_min,
         wait_for_chunk_timeout,
         coalesce,
+        coalesce_channel_size,
     } = quic_server_params;
     let concurrent_connections = max_staked_connections + max_unstaked_connections;
     let max_concurrent_connections = concurrent_connections + concurrent_connections / 4;
@@ -216,6 +222,7 @@ pub fn spawn_server_multi(
         stats.clone(),
         wait_for_chunk_timeout,
         coalesce,
+        coalesce_channel_size,
         max_concurrent_connections,
     ));
     Ok(SpawnNonBlockingServerResult {
@@ -230,7 +237,6 @@ pub fn spawn_server_multi(
 /// litter the code with open connection tracking. This is added into the
 /// connection table as part of the ConnectionEntry. The reference is auto
 /// reduced when it is dropped.
-
 struct ClientConnectionTracker {
     stats: Arc<StreamerStats>,
 }
@@ -287,6 +293,7 @@ async fn run_server(
     stats: Arc<StreamerStats>,
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
+    coalesce_channel_size: usize,
     max_concurrent_connections: usize,
 ) {
     let rate_limiter = ConnectionRateLimiter::new(max_connections_per_ipaddr_per_min);
@@ -308,7 +315,7 @@ async fn run_server(
         .store(endpoints.len(), Ordering::Relaxed);
     let staked_connection_table: Arc<Mutex<ConnectionTable>> =
         Arc::new(Mutex::new(ConnectionTable::new()));
-    let (sender, receiver) = async_unbounded();
+    let (sender, receiver) = async_bounded(coalesce_channel_size);
     tokio::spawn(packet_batch_sender(
         packet_sender,
         receiver,
@@ -361,19 +368,7 @@ async fn run_server(
 
             let remote_address = incoming.remote_address();
 
-            // first check overall connection rate limit:
-            if !overall_connection_rate_limiter.is_allowed() {
-                debug!(
-                    "Reject connection from {:?} -- total rate limiting exceeded",
-                    remote_address.ip()
-                );
-                stats
-                    .connection_rate_limited_across_all
-                    .fetch_add(1, Ordering::Relaxed);
-                incoming.ignore();
-                continue;
-            }
-
+            // first do per IpAddr rate limiting
             if rate_limiter.len() > CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD {
                 rate_limiter.retain_recent();
             }
@@ -388,6 +383,19 @@ async fn run_server(
                 );
                 stats
                     .connection_rate_limited_per_ipaddr
+                    .fetch_add(1, Ordering::Relaxed);
+                incoming.ignore();
+                continue;
+            }
+
+            // then check overall connection rate limit:
+            if !overall_connection_rate_limiter.is_allowed() {
+                debug!(
+                    "Reject connection from {:?} -- total rate limiting exceeded",
+                    remote_address.ip()
+                );
+                stats
+                    .connection_rate_limited_across_all
                     .fetch_add(1, Ordering::Relaxed);
                 incoming.ignore();
                 continue;
@@ -889,10 +897,12 @@ async fn packet_batch_sender(
     coalesce: Duration,
 ) {
     trace!("enter packet_batch_sender");
+    let recycler = PacketBatchRecycler::default();
     let mut batch_start_time = Instant::now();
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
-        let mut packet_batch = PacketBatch::with_capacity(PACKETS_PER_BATCH);
+        let mut packet_batch =
+            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "quic_packet_coalescer");
         let mut total_bytes: usize = 0;
 
         stats
@@ -1166,6 +1176,8 @@ async fn handle_connection(
                         CONNECTION_CLOSE_CODE_INVALID_STREAM.into(),
                         CONNECTION_CLOSE_REASON_INVALID_STREAM,
                     );
+                    stats.total_streams.fetch_sub(1, Ordering::Relaxed);
+                    stream_load_ema.update_ema_if_needed();
                     break 'conn;
                 }
             }
@@ -1503,7 +1515,7 @@ struct EndpointAccept<'a> {
     accept: Accept<'a>,
 }
 
-impl<'a> Future for EndpointAccept<'a> {
+impl Future for EndpointAccept<'_> {
     type Output = (Option<quinn::Incoming>, usize);
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> Poll<Self::Output> {
@@ -1969,6 +1981,7 @@ pub mod test {
             staked_nodes,
             QuicServerParams {
                 max_unstaked_connections: 0, // Do not allow any connection from unstaked clients/nodes
+                coalesce_channel_size: 100_000, // smaller channel size for faster test
                 ..QuicServerParams::default()
             },
         )
@@ -2002,6 +2015,7 @@ pub mod test {
             staked_nodes,
             QuicServerParams {
                 max_connections_per_peer: 2,
+                coalesce_channel_size: 100_000, // smaller channel size for faster test
                 ..QuicServerParams::default()
             },
         )

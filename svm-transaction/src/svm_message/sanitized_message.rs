@@ -10,8 +10,8 @@ use {
 
 // Implement for the "reference" `SanitizedMessage` type.
 impl SVMMessage for SanitizedMessage {
-    fn num_total_signatures(&self) -> u64 {
-        SanitizedMessage::num_total_signatures(self)
+    fn num_transaction_signatures(&self) -> u64 {
+        u64::from(self.header().num_required_signatures)
     }
 
     fn num_write_locks(&self) -> u64 {

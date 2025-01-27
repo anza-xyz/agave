@@ -15,6 +15,8 @@ use crate::sigma_proofs::{
     pubkey_validity::PubkeyValidityProof,
     zero_ciphertext::ZeroCiphertextProof,
 };
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 use {
     crate::{
         pod::{impl_from_bytes, impl_from_str},
@@ -26,6 +28,7 @@ use {
 };
 
 /// The `CiphertextCommitmentEqualityProof` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PodCiphertextCommitmentEqualityProof(
@@ -68,6 +71,7 @@ impl_from_bytes!(
 );
 
 /// The `CiphertextCiphertextEqualityProof` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PodCiphertextCiphertextEqualityProof(
@@ -110,6 +114,7 @@ impl_from_bytes!(
 );
 
 /// The `GroupedCiphertext2HandlesValidityProof` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PodGroupedCiphertext2HandlesValidityProof(
@@ -122,8 +127,8 @@ impl From<GroupedCiphertext2HandlesValidityProof> for PodGroupedCiphertext2Handl
         Self(decoded_proof.to_bytes())
     }
 }
-#[cfg(not(target_os = "solana"))]
 
+#[cfg(not(target_os = "solana"))]
 impl TryFrom<PodGroupedCiphertext2HandlesValidityProof> for GroupedCiphertext2HandlesValidityProof {
     type Error = ValidityProofVerificationError;
 
@@ -152,6 +157,7 @@ impl_from_bytes!(
 );
 
 /// The `GroupedCiphertext3HandlesValidityProof` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PodGroupedCiphertext3HandlesValidityProof(
@@ -194,6 +200,7 @@ impl_from_bytes!(
 );
 
 /// The `BatchedGroupedCiphertext2HandlesValidityProof` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PodBatchedGroupedCiphertext2HandlesValidityProof(
@@ -242,6 +249,7 @@ impl_from_bytes!(
 );
 
 /// The `BatchedGroupedCiphertext3HandlesValidityProof` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PodBatchedGroupedCiphertext3HandlesValidityProof(
@@ -290,6 +298,7 @@ impl_from_bytes!(
 );
 
 /// The `ZeroCiphertextProof` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PodZeroCiphertextProof(pub(crate) [u8; ZERO_CIPHERTEXT_PROOF_LEN]);
@@ -330,6 +339,7 @@ impl_from_bytes!(
 );
 
 /// The `PercentageWithCapProof` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, bytemuck_derive::Pod, bytemuck_derive::Zeroable)]
 #[repr(transparent)]
 pub struct PodPercentageWithCapProof(pub(crate) [u8; PERCENTAGE_WITH_CAP_PROOF_LEN]);
@@ -370,6 +380,7 @@ impl_from_bytes!(
 );
 
 /// The `PubkeyValidityProof` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, bytemuck_derive::Pod, bytemuck_derive::Zeroable)]
 #[repr(transparent)]
 pub struct PodPubkeyValidityProof(pub(crate) [u8; PUBKEY_VALIDITY_PROOF_LEN]);

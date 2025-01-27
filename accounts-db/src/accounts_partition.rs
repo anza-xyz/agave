@@ -2,9 +2,9 @@
 use {
     itertools::Itertools,
     log::trace,
+    solana_pubkey::Pubkey,
     solana_sdk::{
         clock::{Slot, SlotCount, SlotIndex},
-        pubkey::Pubkey,
         stake_history::Epoch,
         sysvar::epoch_schedule::EpochSchedule,
     },

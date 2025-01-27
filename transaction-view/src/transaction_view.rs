@@ -209,6 +209,19 @@ impl<D: TransactionData> TransactionView<true, D> {
             .wrapping_add(self.total_writable_lookup_accounts())
             .wrapping_add(self.total_readonly_lookup_accounts())
     }
+
+    /// Return the number of requested writable keys.
+    #[inline]
+    pub fn num_requested_write_locks(&self) -> u64 {
+        u64::from(
+            u16::from(
+                (self.num_static_account_keys())
+                    .wrapping_sub(self.num_readonly_signed_static_accounts())
+                    .wrapping_sub(self.num_readonly_unsigned_static_accounts()),
+            )
+            .wrapping_add(self.total_writable_lookup_accounts()),
+        )
+    }
 }
 
 // Manual implementation of `Debug` - avoids bound on `D`.

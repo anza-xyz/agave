@@ -694,7 +694,7 @@ struct SerializableBankAndStorage<'a> {
 }
 
 #[cfg(test)]
-impl<'a> Serialize for SerializableBankAndStorage<'a> {
+impl Serialize for SerializableBankAndStorage<'_> {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::ser::Serializer,
@@ -738,7 +738,7 @@ struct SerializableBankAndStorageNoExtra<'a> {
 }
 
 #[cfg(test)]
-impl<'a> Serialize for SerializableBankAndStorageNoExtra<'a> {
+impl Serialize for SerializableBankAndStorageNoExtra<'_> {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::ser::Serializer,
@@ -788,7 +788,7 @@ struct SerializableAccountsDb<'a> {
     write_version: StoredMetaWriteVersion,
 }
 
-impl<'a> Serialize for SerializableAccountsDb<'a> {
+impl Serialize for SerializableAccountsDb<'_> {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::ser::Serializer,
@@ -835,7 +835,7 @@ impl<'a> Serialize for SerializableAccountsDb<'a> {
 }
 
 #[cfg(feature = "frozen-abi")]
-impl<'a> solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountsDb<'a> {}
+impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountsDb<'_> {}
 
 /// This struct contains side-info while reconstructing the bank from fields
 #[derive(Debug)]

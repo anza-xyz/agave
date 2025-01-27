@@ -33,9 +33,7 @@ pub trait SnapshotArchiveInfoGetter {
         self.snapshot_archive_info()
             .path
             .parent()
-            .map_or(false, |p| {
-                p.ends_with(snapshot_utils::SNAPSHOT_ARCHIVE_DOWNLOAD_DIR)
-            })
+            .is_some_and(|p| p.ends_with(snapshot_utils::SNAPSHOT_ARCHIVE_DOWNLOAD_DIR))
     }
 }
 

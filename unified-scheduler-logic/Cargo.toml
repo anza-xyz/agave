@@ -11,11 +11,14 @@ edition = { workspace = true }
 
 [dependencies]
 assert_matches = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
-solana-sdk = { workspace = true }
+solana-transaction = { workspace = true }
 static_assertions = { workspace = true }
 
 [dev-dependencies]
+solana-instruction = { workspace = true }
+solana-message = { workspace = true }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }

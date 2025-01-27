@@ -124,7 +124,10 @@ use {
         timing::timestamp,
     },
     solana_send_transaction_service::send_transaction_service,
-    solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_tpu_client::tpu_client::{
+        DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
+    },
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::vote_state,
@@ -207,6 +210,31 @@ impl BlockProductionMethod {
     }
 }
 
+#[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
+#[strum(serialize_all = "kebab-case")]
+pub enum TransactionStructure {
+    #[default]
+    Sdk,
+    View,
+}
+
+impl TransactionStructure {
+    pub const fn cli_names() -> &'static [&'static str] {
+        Self::VARIANTS
+    }
+
+    pub fn cli_message() -> &'static str {
+        lazy_static! {
+            static ref MESSAGE: String = format!(
+                "Switch internal transaction structure/representation [default: {}]",
+                TransactionStructure::default()
+            );
+        };
+
+        &MESSAGE
+    }
+}
+
 /// Configuration for the block generator invalidator for replay.
 #[derive(Clone, Debug)]
 pub struct GeneratorConfig {
@@ -273,6 +301,7 @@ pub struct ValidatorConfig {
     pub banking_trace_dir_byte_limit: banking_trace::DirByteLimit,
     pub block_verification_method: BlockVerificationMethod,
     pub block_production_method: BlockProductionMethod,
+    pub transaction_struct: TransactionStructure,
     pub enable_block_production_forwarding: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
@@ -345,6 +374,7 @@ impl Default for ValidatorConfig {
             banking_trace_dir_byte_limit: 0,
             block_verification_method: BlockVerificationMethod::default(),
             block_production_method: BlockProductionMethod::default(),
+            transaction_struct: TransactionStructure::default(),
             enable_block_production_forwarding: false,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
@@ -483,8 +513,44 @@ pub struct ValidatorTpuConfig {
     pub tpu_connection_pool_size: usize,
     /// Controls if to enable UDP for TPU tansactions.
     pub tpu_enable_udp: bool,
-    /// Controls the new maximum connections per IpAddr per minute
-    pub tpu_max_connections_per_ipaddr_per_minute: u64,
+    /// QUIC server config for regular TPU
+    pub tpu_quic_server_config: QuicServerParams,
+    /// QUIC server config for TPU forward
+    pub tpu_fwd_quic_server_config: QuicServerParams,
+    /// QUIC server config for Vote
+    pub vote_quic_server_config: QuicServerParams,
+}
+
+impl ValidatorTpuConfig {
+    /// A convenient function to build a ValidatorTpuConfig for testing with good
+    /// default.
+    pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
+        let tpu_quic_server_config = QuicServerParams {
+            max_connections_per_ipaddr_per_min: 32,
+            coalesce_channel_size: 100_000, // smaller channel size for faster test
+            ..Default::default()
+        };
+
+        let tpu_fwd_quic_server_config = QuicServerParams {
+            max_connections_per_ipaddr_per_min: 32,
+            max_unstaked_connections: 0,
+            coalesce_channel_size: 100_000, // smaller channel size for faster test
+            ..Default::default()
+        };
+
+        // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
+        let vote_quic_server_config = tpu_fwd_quic_server_config.clone();
+
+        ValidatorTpuConfig {
+            use_quic: DEFAULT_TPU_USE_QUIC,
+            vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            tpu_enable_udp,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
+        }
+    }
 }
 
 pub struct Validator {
@@ -546,7 +612,9 @@ impl Validator {
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
-            tpu_max_connections_per_ipaddr_per_minute,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
         } = tpu_config;
 
         let start_time = Instant::now();
@@ -869,8 +937,8 @@ impl Validator {
             config.accounts_db_test_hash_calculation,
         );
         info!(
-            "Using: block-verification-method: {}, block-production-method: {}",
-            config.block_verification_method, config.block_production_method
+            "Using: block-verification-method: {}, block-production-method: {}, transaction-structure: {}",
+            config.block_verification_method, config.block_production_method, config.transaction_struct
         );
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
@@ -878,6 +946,44 @@ impl Validator {
         // block min prioritization fee cache should be readable by RPC, and writable by validator
         // (by both replay stage and banking stage)
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::default());
+
+        let leader_schedule_cache = Arc::new(leader_schedule_cache);
+        let startup_verification_complete;
+        let (poh_recorder, entry_receiver, record_receiver) = {
+            let bank = &bank_forks.read().unwrap().working_bank();
+            startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
+            PohRecorder::new_with_clear_signal(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                None,
+                bank.ticks_per_slot(),
+                config.delay_leader_block_for_pending_fork,
+                blockstore.clone(),
+                blockstore.get_new_shred_signal(0),
+                &leader_schedule_cache,
+                &genesis_config.poh_config,
+                Some(poh_timing_point_sender),
+                exit.clone(),
+            )
+        };
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+
+        let (banking_tracer, tracer_thread) =
+            BankingTracer::new((config.banking_trace_dir_byte_limit > 0).then_some((
+                &blockstore.banking_trace_path(),
+                exit.clone(),
+                config.banking_trace_dir_byte_limit,
+            )))?;
+        if banking_tracer.is_enabled() {
+            info!(
+                "Enabled banking trace (dir_byte_limit: {})",
+                config.banking_trace_dir_byte_limit
+            );
+        } else {
+            info!("Disabled banking trace");
+        }
+        let banking_tracer_channels = banking_tracer.create_channels(false);
 
         match &config.block_verification_method {
             BlockVerificationMethod::BlockstoreProcessor => {
@@ -904,7 +1010,6 @@ impl Validator {
             }
         }
 
-        let leader_schedule_cache = Arc::new(leader_schedule_cache);
         let entry_notification_sender = entry_notifier_service
             .as_ref()
             .map(|service| service.sender());
@@ -979,27 +1084,6 @@ impl Validator {
 
         let max_slots = Arc::new(MaxSlots::default());
 
-        let startup_verification_complete;
-        let (poh_recorder, entry_receiver, record_receiver) = {
-            let bank = &bank_forks.read().unwrap().working_bank();
-            startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
-            PohRecorder::new_with_clear_signal(
-                bank.tick_height(),
-                bank.last_blockhash(),
-                bank.clone(),
-                None,
-                bank.ticks_per_slot(),
-                config.delay_leader_block_for_pending_fork,
-                blockstore.clone(),
-                blockstore.get_new_shred_signal(0),
-                &leader_schedule_cache,
-                &genesis_config.poh_config,
-                Some(poh_timing_point_sender),
-                exit.clone(),
-            )
-        };
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
         let connection_cache = if use_quic {
@@ -1011,8 +1095,8 @@ impl Validator {
                     &identity_keypair,
                     node.info
                         .tpu(Protocol::UDP)
-                        .map_err(|err| {
-                            ValidatorError::Other(format!("Invalid TPU address: {err:?}"))
+                        .ok_or_else(|| {
+                            ValidatorError::Other(String::from("Invalid UDP address for TPU"))
                         })?
                         .ip(),
                 )),
@@ -1035,8 +1119,8 @@ impl Validator {
                     &identity_keypair,
                     node.info
                         .tpu_vote(Protocol::QUIC)
-                        .map_err(|err| {
-                            ValidatorError::Other(format!("Invalid TPU Vote address: {err:?}"))
+                        .ok_or_else(|| {
+                            ValidatorError::Other(String::from("Invalid QUIC address for TPU Vote"))
                         })?
                         .ip(),
                 )),
@@ -1062,14 +1146,10 @@ impl Validator {
             bank_notification_sender,
         ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
             assert_eq!(
-                node.info
-                    .rpc()
-                    .map(|addr| socket_addr_space.check(&addr))
-                    .ok(),
+                node.info.rpc().map(|addr| socket_addr_space.check(&addr)),
                 node.info
                     .rpc_pubsub()
                     .map(|addr| socket_addr_space.check(&addr))
-                    .ok()
             );
             let (bank_notification_sender, bank_notification_receiver) = unbounded();
             let confirmed_bank_subscribers = if !bank_notification_senders.is_empty() {
@@ -1265,21 +1345,6 @@ impl Validator {
         let (verified_vote_sender, verified_vote_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (duplicate_confirmed_slot_sender, duplicate_confirmed_slots_receiver) = unbounded();
-
-        let (banking_tracer, tracer_thread) =
-            BankingTracer::new((config.banking_trace_dir_byte_limit > 0).then_some((
-                &blockstore.banking_trace_path(),
-                exit.clone(),
-                config.banking_trace_dir_byte_limit,
-            )))?;
-        if banking_tracer.is_enabled() {
-            info!(
-                "Enabled banking trace (dir_byte_limit: {})",
-                config.banking_trace_dir_byte_limit
-            );
-        } else {
-            info!("Disabled banking trace");
-        }
 
         let entry_notification_sender = entry_notifier_service
             .as_ref()
@@ -1522,12 +1587,15 @@ impl Validator {
             config.runtime_config.log_messages_bytes_limit,
             &staked_nodes,
             config.staked_nodes_overrides.clone(),
-            banking_tracer,
+            banking_tracer_channels,
             tracer_thread,
             tpu_enable_udp,
-            tpu_max_connections_per_ipaddr_per_minute,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
             &prioritization_fee_cache,
             config.block_production_method.clone(),
+            config.transaction_struct.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
         );
@@ -1896,7 +1964,7 @@ fn load_genesis(
     // grows too large
     let leader_schedule_slot_offset = genesis_config.epoch_schedule.leader_schedule_slot_offset;
     let slots_per_epoch = genesis_config.epoch_schedule.slots_per_epoch;
-    let leader_epoch_offset = (leader_schedule_slot_offset + slots_per_epoch - 1) / slots_per_epoch;
+    let leader_epoch_offset = leader_schedule_slot_offset.div_ceil(slots_per_epoch);
     assert!(leader_epoch_offset <= MAX_LEADER_SCHEDULE_EPOCH_OFFSET);
 
     let genesis_hash = genesis_config.hash();
@@ -2727,10 +2795,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
         },
         solana_sdk::{genesis_config::create_genesis_config, poh_config::PohConfig},
-        solana_tpu_client::tpu_client::{
-            DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
-            DEFAULT_VOTE_USE_QUIC,
-        },
+        solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         std::{fs::remove_dir_all, thread, time::Duration},
     };
 
@@ -2768,13 +2833,7 @@ mod tests {
             None, // rpc_to_plugin_manager_receiver
             start_progress.clone(),
             SocketAddrSpace::Unspecified,
-            ValidatorTpuConfig {
-                use_quic: DEFAULT_TPU_USE_QUIC,
-                vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-                tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
-                tpu_max_connections_per_ipaddr_per_minute: 32, // max connections per IpAddr per minute for test
-            },
+            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -2990,13 +3049,7 @@ mod tests {
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     SocketAddrSpace::Unspecified,
-                    ValidatorTpuConfig {
-                        use_quic: DEFAULT_TPU_USE_QUIC,
-                        vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-                        tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                        tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
-                        tpu_max_connections_per_ipaddr_per_minute: 32, // max connections per IpAddr per minute for test
-                    },
+                    ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
                     Arc::new(RwLock::new(None)),
                 )
                 .expect("assume successful validator start")

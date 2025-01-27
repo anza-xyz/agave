@@ -1,5 +1,9 @@
 use {
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Receiver, Sender},
+    solana_core::{
+        banking_trace::TracedSender, sigverify::TransactionSigVerifier,
+        sigverify_stage::SigVerifyStage,
+    },
     solana_net_utils::{bind_in_range_with_config, bind_more_with_config, SocketConfig},
     solana_perf::packet::PacketBatch,
     solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
@@ -54,24 +58,24 @@ impl Vortexor {
         dynamic_port_range: (u16, u16),
         num_quic_endpoints: u64,
     ) -> TpuSockets {
-        let quic_config = SocketConfig { reuseport: true };
+        let quic_config = SocketConfig::default().reuseport(true);
 
         let (_, tpu_quic) =
-            bind_in_range_with_config(bind_address, dynamic_port_range, quic_config.clone())
+            bind_in_range_with_config(bind_address, dynamic_port_range, quic_config)
                 .expect("expected bind to succeed");
 
         let tpu_quic_port = tpu_quic.local_addr().unwrap().port();
         let tpu_quic = bind_more_with_config(
             tpu_quic,
             num_quic_endpoints.try_into().unwrap(),
-            quic_config.clone(),
+            quic_config,
         )
         .unwrap();
 
         let (_, tpu_quic_fwd) = bind_in_range_with_config(
             bind_address,
             (tpu_quic_port.saturating_add(1), dynamic_port_range.1),
-            quic_config.clone(),
+            quic_config,
         )
         .expect("expected bind to succeed");
 
@@ -86,6 +90,19 @@ impl Vortexor {
             tpu_quic,
             tpu_quic_fwd,
         }
+    }
+
+    pub fn create_sigverify_stage(
+        tpu_receiver: Receiver<solana_perf::packet::PacketBatch>,
+        non_vote_sender: TracedSender,
+    ) -> SigVerifyStage {
+        let verifier = TransactionSigVerifier::new(non_vote_sender);
+        SigVerifyStage::new(
+            tpu_receiver,
+            verifier,
+            "solSigVtxTpu",
+            "tpu-vortexor-verifier",
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -113,6 +130,7 @@ impl Vortexor {
             max_connections_per_ipaddr_per_min,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             coalesce: tpu_coalesce,
+            ..Default::default()
         };
 
         let TpuSockets {

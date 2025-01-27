@@ -1,13 +1,12 @@
 use {
-    solana_program::vote::{
-        self,
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_signer::Signer,
+    solana_transaction::Transaction,
+    solana_vote_interface::{
+        self as vote,
         state::{TowerSync, Vote, VoteStateUpdate},
-    },
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        signature::{Keypair, Signer},
-        transaction::Transaction,
     },
 };
 

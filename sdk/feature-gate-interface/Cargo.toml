@@ -13,6 +13,7 @@ edition = { workspace = true }
 bincode = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_derive = { workspace = true, optional = true }
+solana-account = { workspace = true, optional = true }
 solana-account-info = { workspace = true, optional = true }
 solana-instruction = { workspace = true, optional = true }
 solana-program-error = { workspace = true, optional = true }
@@ -29,12 +30,13 @@ solana-feature-gate-interface = { path = ".", features = ["dev-context-only-util
 [features]
 bincode = [
     "dep:bincode",
+    "dep:solana-account",
     "dep:solana-account-info",
     "dep:solana-instruction",
     "dep:solana-program-error",
     "dep:solana-rent",
     "dep:solana-system-interface",
-    "serde",
+    "serde"
 ]
 dev-context-only-utils = ["bincode"]
 serde = ["dep:serde", "dep:serde_derive"]

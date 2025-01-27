@@ -803,7 +803,12 @@ pub mod tests {
         assert_eq!(status_entry_iterator.next(), None);
     }
 
-    fn get_index_bounds(blockstore: &Blockstore) -> (Box<[u8]>, Box<[u8]>) {
+    fn get_index_bounds(
+        blockstore: &Blockstore,
+    ) -> (
+        <cf::TransactionStatus as Column>::Key,
+        <cf::TransactionStatus as Column>::Key,
+    ) {
         let (first_index, _value) = blockstore
             .transaction_status_cf
             .iterator_cf_raw_key(IteratorMode::Start)

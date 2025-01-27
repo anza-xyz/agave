@@ -1,9 +1,9 @@
 use {
+    agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     bincode::serialize_into,
     chrono::{DateTime, Local},
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TryRecvError},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
-    solana_perf::packet::PacketBatch,
     solana_sdk::{hash::Hash, slot_history::Slot},
     std::{
         fs::{create_dir_all, remove_dir_all},
@@ -19,9 +19,7 @@ use {
     thiserror::Error,
 };
 
-pub type BankingPacketBatch = Arc<Vec<PacketBatch>>;
 pub type BankingPacketSender = TracedSender;
-pub type BankingPacketReceiver = Receiver<BankingPacketBatch>;
 pub type TracerThreadResult = Result<(), TraceError>;
 pub type TracerThread = Option<JoinHandle<TracerThreadResult>>;
 pub type DirByteLimit = u64;
@@ -61,6 +59,11 @@ pub struct BankingTracer {
     active_tracer: Option<ActiveTracer>,
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "DAdZnX6ijBWaxKAyksq4nJa6PAZqT4RShZqLWTtNvyAM")
+)]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
 
@@ -137,7 +140,7 @@ impl RollingCondition for RollingConditionGrouped {
     }
 }
 
-impl<'a> Write for GroupedWriter<'a> {
+impl Write for GroupedWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> std::result::Result<usize, io::Error> {
         self.underlying.write_with_datetime(buf, &self.now)
     }
@@ -264,7 +267,7 @@ impl BankingTracer {
         Self::channel(label, self.active_tracer.as_ref().cloned())
     }
 
-    fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+    pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         self.create_channel(ChannelLabel::NonVote)
     }
 

@@ -22,8 +22,7 @@ pub type IpEchoServer = Runtime;
 // Enforce a minimum of two threads:
 // - One thread to monitor the TcpListener and spawn async tasks
 // - One thread to service the spawned tasks
-// The unsafe is safe because we're using a fixed, known non-zero value
-pub const MINIMUM_IP_ECHO_SERVER_THREADS: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(2) };
+pub const MINIMUM_IP_ECHO_SERVER_THREADS: NonZeroUsize = NonZeroUsize::new(2).unwrap();
 // IP echo requests require little computation and come in fairly infrequently,
 // so keep the number of server workers small to avoid overhead
 pub const DEFAULT_IP_ECHO_SERVER_THREADS: NonZeroUsize = MINIMUM_IP_ECHO_SERVER_THREADS;
@@ -173,8 +172,8 @@ async fn run_echo_server(tcp_listener: std::net::TcpListener, shred_version: Opt
     }
 }
 
-/// Starts a simple TCP server on the given port that echos the IP address of any peer that
-/// connects.  Used by |get_public_ip_addr|
+/// Starts a simple TCP server that echos the IP address of any peer that connects
+/// Used by functions like |get_public_ip_addr| and |get_cluster_shred_version|
 pub fn ip_echo_server(
     tcp_listener: std::net::TcpListener,
     num_server_threads: NonZeroUsize,

@@ -18,24 +18,22 @@ use {
         bounded, unbounded, Receiver, RecvTimeoutError, SendError, Sender, TrySendError,
     },
     log::*,
+    solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_entry::{
         entry::{hash_transactions, Entry},
         poh::Poh,
     },
+    solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_measure::measure_us,
     solana_metrics::poh_timing_point::{send_poh_timing_point, PohTimingSender, SlotPohTimingInfo},
+    solana_poh_config::PohConfig,
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
-    solana_sdk::{
-        clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
-        hash::Hash,
-        poh_config::PohConfig,
-        pubkey::Pubkey,
-        saturating_add_assign,
-        transaction::VersionedTransaction,
-    },
+    solana_transaction::versioned::VersionedTransaction,
     std::{
         cmp,
+        num::Saturating,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
@@ -115,19 +113,16 @@ impl Record {
 
 #[derive(Default, Debug)]
 pub struct RecordTransactionsTimings {
-    pub processing_results_to_transactions_us: u64,
-    pub hash_us: u64,
-    pub poh_record_us: u64,
+    pub processing_results_to_transactions_us: Saturating<u64>,
+    pub hash_us: Saturating<u64>,
+    pub poh_record_us: Saturating<u64>,
 }
 
 impl RecordTransactionsTimings {
     pub fn accumulate(&mut self, other: &RecordTransactionsTimings) {
-        saturating_add_assign!(
-            self.processing_results_to_transactions_us,
-            other.processing_results_to_transactions_us
-        );
-        saturating_add_assign!(self.hash_us, other.hash_us);
-        saturating_add_assign!(self.poh_record_us, other.poh_record_us);
+        self.processing_results_to_transactions_us += other.processing_results_to_transactions_us;
+        self.hash_us += other.hash_us;
+        self.poh_record_us += other.poh_record_us;
     }
 }
 
@@ -140,7 +135,7 @@ pub struct RecordTransactionsSummary {
     pub starting_transaction_index: Option<usize>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TransactionRecorder {
     // shared by all users of PohRecorder
     pub record_sender: Sender<Record>,
@@ -167,10 +162,10 @@ impl TransactionRecorder {
 
         if !transactions.is_empty() {
             let (hash, hash_us) = measure_us!(hash_transactions(&transactions));
-            record_transactions_timings.hash_us = hash_us;
+            record_transactions_timings.hash_us = Saturating(hash_us);
 
             let (res, poh_record_us) = measure_us!(self.record(bank_slot, hash, transactions));
-            record_transactions_timings.poh_record_us = poh_record_us;
+            record_transactions_timings.poh_record_us = Saturating(poh_record_us);
 
             match res {
                 Ok(starting_index) => {
@@ -287,7 +282,7 @@ pub struct PohRecorder {
     start_tick_height: u64, // first tick_height this recorder will observe
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
     working_bank: Option<WorkingBank>,
-    sender: Sender<WorkingBankEntry>,
+    working_bank_sender: Sender<WorkingBankEntry>,
     poh_timing_point_sender: Option<PohTimingSender>,
     leader_first_tick_height_including_grace_ticks: Option<u64>,
     leader_last_tick_height: u64, // zero if none
@@ -357,15 +352,14 @@ impl PohRecorder {
 
     pub fn would_be_leader(&self, within_next_n_ticks: u64) -> bool {
         self.has_bank()
-            || self.leader_first_tick_height_including_grace_ticks.map_or(
-                false,
-                |leader_first_tick_height_including_grace_ticks| {
+            || self
+                .leader_first_tick_height_including_grace_ticks
+                .is_some_and(|leader_first_tick_height_including_grace_ticks| {
                     let ideal_leader_tick_height = leader_first_tick_height_including_grace_ticks
                         .saturating_sub(self.grace_ticks);
                     self.tick_height + within_next_n_ticks >= ideal_leader_tick_height
                         && self.tick_height <= self.leader_last_tick_height
-                },
-            )
+                })
     }
 
     // Return the slot for a given tick height
@@ -672,7 +666,7 @@ impl PohRecorder {
                 SlotPohTimingInfo::new_slot_start_poh_time_point(
                     self.start_slot() + 1,
                     None,
-                    solana_sdk::timing::timestamp(),
+                    solana_time_utils::timestamp(),
                 ),
             );
         }
@@ -720,7 +714,7 @@ impl PohRecorder {
                     SlotPohTimingInfo::new_slot_start_poh_time_point(
                         slot,
                         None,
-                        solana_sdk::timing::timestamp(),
+                        solana_time_utils::timestamp(),
                     ),
                 );
             }
@@ -782,7 +776,9 @@ impl PohRecorder {
 
             for tick in &self.tick_cache[..entry_count] {
                 working_bank.bank.register_tick(&tick.0.hash);
-                send_result = self.sender.send((working_bank.bank.clone(), tick.clone()));
+                send_result = self
+                    .working_bank_sender
+                    .send((working_bank.bank.clone(), tick.clone()));
                 if send_result.is_err() {
                     break;
                 }
@@ -821,7 +817,7 @@ impl PohRecorder {
                         SlotPohTimingInfo::new_slot_end_poh_time_point(
                             self.slot_for_tick_height(self.tick_height),
                             None,
-                            solana_sdk::timing::timestamp(),
+                            solana_time_utils::timestamp(),
                         ),
                     );
                 }
@@ -834,7 +830,7 @@ impl PohRecorder {
                         SlotPohTimingInfo::new_slot_start_poh_time_point(
                             self.slot_for_tick_height(self.tick_height),
                             None,
-                            solana_sdk::timing::timestamp(),
+                            solana_time_utils::timestamp(),
                         ),
                     );
                 }
@@ -850,7 +846,7 @@ impl PohRecorder {
                 SlotPohTimingInfo::new_slot_end_poh_time_point(
                     slot,
                     None,
-                    solana_sdk::timing::timestamp(),
+                    solana_time_utils::timestamp(),
                 ),
             );
         }
@@ -994,7 +990,8 @@ impl PohRecorder {
                         transactions,
                     };
                     let bank_clone = working_bank.bank.clone();
-                    self.sender.send((bank_clone, (entry, self.tick_height)))
+                    self.working_bank_sender
+                        .send((bank_clone, (entry, self.tick_height)))
                 });
                 self.send_entry_us += send_entry_us;
                 send_entry_res?;
@@ -1040,7 +1037,7 @@ impl PohRecorder {
             ticks_per_slot,
             poh_config.target_tick_duration.as_nanos() as u64,
         );
-        let (sender, receiver) = unbounded();
+        let (working_bank_sender, working_bank_receiver) = unbounded();
         let (record_sender, record_receiver) = unbounded();
         let (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
@@ -1050,7 +1047,7 @@ impl PohRecorder {
                 tick_height,
                 tick_cache: vec![],
                 working_bank: None,
-                sender,
+                working_bank_sender,
                 poh_timing_point_sender,
                 clear_bank_signal,
                 start_bank,
@@ -1079,7 +1076,7 @@ impl PohRecorder {
                 last_reported_slot_for_pending_fork: Arc::default(),
                 is_exited,
             },
-            receiver,
+            working_bank_receiver,
             record_receiver,
         )
     }
@@ -1144,11 +1141,12 @@ impl PohRecorder {
     }
 }
 
-pub fn create_test_recorder(
+fn do_create_test_recorder(
     bank: Arc<Bank>,
     blockstore: Arc<Blockstore>,
     poh_config: Option<PohConfig>,
     leader_schedule_cache: Option<Arc<LeaderScheduleCache>>,
+    track_transaction_indexes: bool,
 ) -> (
     Arc<AtomicBool>,
     Arc<RwLock<PohRecorder>>,
@@ -1174,7 +1172,10 @@ pub fn create_test_recorder(
     );
     let ticks_per_slot = bank.ticks_per_slot();
 
-    poh_recorder.set_bank(BankWithScheduler::new_without_scheduler(bank), false);
+    poh_recorder.set_bank(
+        BankWithScheduler::new_without_scheduler(bank),
+        track_transaction_indexes,
+    );
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
     let poh_service = PohService::new(
         poh_recorder.clone(),
@@ -1189,17 +1190,46 @@ pub fn create_test_recorder(
     (exit, poh_recorder, poh_service, entry_receiver)
 }
 
+pub fn create_test_recorder(
+    bank: Arc<Bank>,
+    blockstore: Arc<Blockstore>,
+    poh_config: Option<PohConfig>,
+    leader_schedule_cache: Option<Arc<LeaderScheduleCache>>,
+) -> (
+    Arc<AtomicBool>,
+    Arc<RwLock<PohRecorder>>,
+    PohService,
+    Receiver<WorkingBankEntry>,
+) {
+    do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, false)
+}
+
+pub fn create_test_recorder_with_index_tracking(
+    bank: Arc<Bank>,
+    blockstore: Arc<Blockstore>,
+    poh_config: Option<PohConfig>,
+    leader_schedule_cache: Option<Arc<LeaderScheduleCache>>,
+) -> (
+    Arc<AtomicBool>,
+    Arc<RwLock<PohRecorder>>,
+    PohService,
+    Receiver<WorkingBankEntry>,
+) {
+    do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, true)
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
         bincode::serialize,
         crossbeam_channel::bounded,
+        solana_clock::DEFAULT_TICKS_PER_SLOT,
         solana_ledger::{
             blockstore::Blockstore, blockstore_meta::SlotMeta, get_tmp_ledger_path_auto_delete,
         },
         solana_perf::test_tx::test_tx,
-        solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
+        solana_sha256_hasher::hash,
     };
 
     #[test]
