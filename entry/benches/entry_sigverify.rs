@@ -45,6 +45,7 @@ fn bench_gpusigverify(bencher: &mut Bencher) {
                     None,
                     SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),
+                    true,
                 )
             }?;
 
@@ -89,6 +90,7 @@ fn bench_cpusigverify(bencher: &mut Bencher) {
                     None,
                     SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),
+                    true,
                 )
             }?;
 

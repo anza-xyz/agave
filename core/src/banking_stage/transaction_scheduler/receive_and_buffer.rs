@@ -24,6 +24,7 @@ use {
     crossbeam_channel::{RecvTimeoutError, TryRecvError},
     solana_accounts_db::account_locks::validate_account_locks,
     solana_cost_model::cost_model::CostModel,
+    solana_feature_set::enable_loader_v4,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
@@ -507,6 +508,7 @@ impl TransactionViewReceiveAndBuffer {
             view,
             loaded_addresses,
             root_bank.get_reserved_account_keys(),
+            root_bank.feature_set.is_active(&enable_loader_v4::id()),
         ) else {
             return Err(());
         };

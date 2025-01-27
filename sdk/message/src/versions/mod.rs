@@ -90,10 +90,15 @@ impl VersionedMessage {
         &self,
         index: usize,
         reserved_account_keys: Option<&HashSet<Pubkey>>,
+        enable_loader_v4: bool,
     ) -> bool {
         match self {
-            Self::Legacy(message) => message.is_maybe_writable(index, reserved_account_keys),
-            Self::V0(message) => message.is_maybe_writable(index, reserved_account_keys),
+            Self::Legacy(message) => {
+                message.is_maybe_writable(index, reserved_account_keys, enable_loader_v4)
+            }
+            Self::V0(message) => {
+                message.is_maybe_writable(index, reserved_account_keys, enable_loader_v4)
+            }
         }
     }
 

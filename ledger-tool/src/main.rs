@@ -479,6 +479,7 @@ fn compute_slot_cost(
                     None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
+                    true,
                 )
                 .map_err(|err| {
                     warn!("Failed to compute cost of transaction: {:?}", err);

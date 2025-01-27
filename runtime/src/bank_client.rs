@@ -6,6 +6,7 @@ use {
         client::{AsyncClient, Client, SyncClient},
         commitment_config::CommitmentConfig,
         epoch_info::EpochInfo,
+        feature_set,
         hash::Hash,
         instruction::Instruction,
         message::{Message, SanitizedMessage},
@@ -233,9 +234,14 @@ impl SyncClient for BankClient {
     }
 
     fn get_fee_for_message(&self, message: &Message) -> Result<u64> {
+        let enable_loader_v4 = self
+            .bank
+            .feature_set
+            .is_active(&feature_set::enable_loader_v4::id());
         SanitizedMessage::try_from_legacy_message(
             message.clone(),
             self.bank.get_reserved_account_keys(),
+            enable_loader_v4,
         )
         .ok()
         .and_then(|sanitized_message| self.bank.get_fee_for_message(&sanitized_message))

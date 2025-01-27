@@ -559,6 +559,7 @@ impl VersionedTransactionWithStatusMeta {
                     message,
                     &self.meta.loaded_addresses,
                     &reserved_account_keys.active,
+                    true,
                 );
                 parse_v0_message_accounts(&loaded_message)
             }
@@ -768,7 +769,7 @@ impl Encodable for v0::Message {
             let account_keys = AccountKeys::new(&self.account_keys, None);
             let loaded_addresses = LoadedAddresses::default();
             let loaded_message =
-                LoadedMessage::new_borrowed(self, &loaded_addresses, &HashSet::new());
+                LoadedMessage::new_borrowed(self, &loaded_addresses, &HashSet::new(), true);
             UiMessage::Parsed(UiParsedMessage {
                 account_keys: parse_v0_message_accounts(&loaded_message),
                 recent_blockhash: self.recent_blockhash.to_string(),
@@ -809,6 +810,7 @@ impl EncodableWithMeta for v0::Message {
                 self,
                 &meta.loaded_addresses,
                 &reserved_account_keys.active,
+                true,
             );
             UiMessage::Parsed(UiParsedMessage {
                 account_keys: parse_v0_message_accounts(&loaded_message),

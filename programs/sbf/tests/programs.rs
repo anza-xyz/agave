@@ -3443,6 +3443,7 @@ fn test_program_fees() {
     let sanitized_message = SanitizedMessage::try_from_legacy_message(
         message.clone(),
         &ReservedAccountKeys::empty_key_set(),
+        true,
     )
     .unwrap();
     let fee_budget_limits = FeeBudgetLimits::from(
@@ -3476,6 +3477,7 @@ fn test_program_fees() {
     let sanitized_message = SanitizedMessage::try_from_legacy_message(
         message.clone(),
         &ReservedAccountKeys::empty_key_set(),
+        true,
     )
     .unwrap();
     let fee_budget_limits = FeeBudgetLimits::from(

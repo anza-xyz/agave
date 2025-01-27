@@ -340,6 +340,7 @@ pub(crate) mod tests {
             None,
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
+            true,
         )
         .unwrap();
 
@@ -469,6 +470,7 @@ pub(crate) mod tests {
             None,
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
+            true,
         )
         .unwrap();
 
@@ -480,6 +482,7 @@ pub(crate) mod tests {
             None,
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
+            true,
         )
         .unwrap();
 

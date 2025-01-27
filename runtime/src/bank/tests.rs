@@ -200,7 +200,7 @@ pub(in crate::bank) fn create_genesis_config(lamports: u64) -> (GenesisConfig, K
 }
 
 pub(in crate::bank) fn new_sanitized_message(message: Message) -> SanitizedMessage {
-    SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+    SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set(), true)
         .unwrap()
 }
 

@@ -146,8 +146,12 @@ mod tests {
     };
 
     fn new_sanitized_message(message: Message) -> SanitizedMessage {
-        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
-            .unwrap()
+        SanitizedMessage::try_from_legacy_message(
+            message,
+            &ReservedAccountKeys::empty_key_set(),
+            true,
+        )
+        .unwrap()
     }
 
     #[test]

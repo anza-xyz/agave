@@ -8,7 +8,7 @@ use {
     solana_sanitize::SanitizeError,
     solana_sdk::{
         clock::Slot,
-        feature_set::FeatureSet,
+        feature_set::{self, FeatureSet},
         hash::Hash,
         message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
         pubkey::Pubkey,
@@ -148,6 +148,8 @@ impl ImmutableDeserializedPacket {
                 tx,
                 address_loader,
                 reserved_account_keys,
+                bank.feature_set
+                    .is_active(&feature_set::enable_loader_v4::id()),
             )
         })
         .ok()?;

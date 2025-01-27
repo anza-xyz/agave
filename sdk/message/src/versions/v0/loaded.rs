@@ -3,7 +3,7 @@ use serde_derive::{Deserialize, Serialize};
 use {
     crate::{v0, AccountKeys},
     solana_pubkey::Pubkey,
-    solana_sdk_ids::bpf_loader_upgradeable,
+    solana_sdk_ids::{bpf_loader_upgradeable, loader_v4},
     std::{borrow::Cow, collections::HashSet},
 };
 
@@ -60,13 +60,14 @@ impl<'a> LoadedMessage<'a> {
         message: v0::Message,
         loaded_addresses: LoadedAddresses,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
     ) -> Self {
         let mut loaded_message = Self {
             message: Cow::Owned(message),
             loaded_addresses: Cow::Owned(loaded_addresses),
             is_writable_account_cache: Vec::default(),
         };
-        loaded_message.set_is_writable_account_cache(reserved_account_keys);
+        loaded_message.set_is_writable_account_cache(reserved_account_keys, enable_loader_v4);
         loaded_message
     }
 
@@ -74,22 +75,27 @@ impl<'a> LoadedMessage<'a> {
         message: &'a v0::Message,
         loaded_addresses: &'a LoadedAddresses,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
     ) -> Self {
         let mut loaded_message = Self {
             message: Cow::Borrowed(message),
             loaded_addresses: Cow::Borrowed(loaded_addresses),
             is_writable_account_cache: Vec::default(),
         };
-        loaded_message.set_is_writable_account_cache(reserved_account_keys);
+        loaded_message.set_is_writable_account_cache(reserved_account_keys, enable_loader_v4);
         loaded_message
     }
 
-    fn set_is_writable_account_cache(&mut self, reserved_account_keys: &HashSet<Pubkey>) {
+    fn set_is_writable_account_cache(
+        &mut self,
+        reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
+    ) {
         let is_writable_account_cache = self
             .account_keys()
             .iter()
             .enumerate()
-            .map(|(i, _key)| self.is_writable_internal(i, reserved_account_keys))
+            .map(|(i, _key)| self.is_writable_internal(i, reserved_account_keys, enable_loader_v4))
             .collect::<Vec<_>>();
         let _ = std::mem::replace(
             &mut self.is_writable_account_cache,
@@ -140,10 +146,12 @@ impl<'a> LoadedMessage<'a> {
         &self,
         key_index: usize,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
     ) -> bool {
         if self.is_writable_index(key_index) {
             if let Some(key) = self.account_keys().get(key_index) {
-                return !(reserved_account_keys.contains(key) || self.demote_program_id(key_index));
+                return !(reserved_account_keys.contains(key)
+                    || self.demote_program_id(key_index, enable_loader_v4));
             }
         }
         false
@@ -160,8 +168,8 @@ impl<'a> LoadedMessage<'a> {
         i < self.message.header.num_required_signatures as usize
     }
 
-    pub fn demote_program_id(&self, i: usize) -> bool {
-        self.is_key_called_as_program(i) && !self.is_upgradeable_loader_present()
+    pub fn demote_program_id(&self, i: usize, enable_loader_v4: bool) -> bool {
+        self.is_key_called_as_program(i) && !self.is_upgradeable_loader_present(enable_loader_v4)
     }
 
     /// Returns true if the account at the specified index is called as a program by an instruction
@@ -176,11 +184,11 @@ impl<'a> LoadedMessage<'a> {
         }
     }
 
-    /// Returns true if any account is the bpf upgradeable loader
-    pub fn is_upgradeable_loader_present(&self) -> bool {
-        self.account_keys()
-            .iter()
-            .any(|&key| key == bpf_loader_upgradeable::id())
+    /// Inspect all message keys for loader v3 or v4
+    pub fn is_upgradeable_loader_present(&self, enable_loader_v4: bool) -> bool {
+        self.account_keys().iter().any(|key| {
+            bpf_loader_upgradeable::check_id(key) || (enable_loader_v4 && loader_v4::check_id(key))
+        })
     }
 }
 
@@ -216,6 +224,7 @@ mod tests {
                 readonly: vec![key5],
             },
             &HashSet::default(),
+            true,
         );
 
         (message, [key0, key1, key2, key3, key4, key5])
@@ -241,6 +250,7 @@ mod tests {
                     readonly: keys,
                 },
                 &HashSet::default(),
+                true,
             )
         };
 
@@ -289,6 +299,7 @@ mod tests {
                     readonly: keys[3..].to_vec(),
                 },
                 &reserved_account_keys,
+                true,
             )
         };
 
@@ -339,6 +350,7 @@ mod tests {
                 readonly: vec![],
             },
             &HashSet::default(),
+            true,
         );
 
         assert!(message.is_writable_index(2));

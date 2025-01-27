@@ -63,6 +63,7 @@ fn test_get_durable_nonce() {
             SanitizedVersionedMessage::try_new(versioned_message).unwrap(),
             loader,
             &HashSet::new(),
+            true,
         )
         .unwrap()
     }
@@ -268,6 +269,7 @@ fn test_get_ix_signers() {
             instructions,
         ),
         &HashSet::default(),
+        true,
     )
     .unwrap();
 

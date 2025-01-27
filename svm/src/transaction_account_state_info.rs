@@ -115,6 +115,7 @@ mod test {
         let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(
             message,
             &ReservedAccountKeys::empty_key_set(),
+            true,
         ));
 
         let transaction_accounts = vec![
@@ -175,6 +176,7 @@ mod test {
         let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(
             message,
             &ReservedAccountKeys::empty_key_set(),
+            true,
         ));
 
         let transaction_accounts = vec![
