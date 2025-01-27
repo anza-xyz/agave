@@ -492,13 +492,19 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
 
         let account_index = self.account_index.get_or_insert_default();
 
+        // Do not allow iteration over account/non-account boundary.
+
+        // First check whether the region is an account or not
         loop {
             if let Some(account) = self.accounts.get(*account_index) {
+                // region is either account data or 10k resize region
                 let account_addr = account.vm_data_addr;
                 let resize_addr = account_addr.saturating_add(account.original_data_len as u64);
 
                 if resize_addr < region.vm_addr {
-                    // region is after this account, move on next one
+                    // region is not this account, move onto the next account
+
+                    // note that we iterate in the same linear direction as regions
                     *account_index = account_index.saturating_add(1);
                 } else {
                     region_is_account =
@@ -558,6 +564,9 @@ impl DoubleEndedIterator for MemoryChunkIterator<'_> {
             .account_index
             .get_or_insert_with(|| self.accounts.len().saturating_sub(1));
 
+        // Do not allow iteration over account/non-account boundary.
+
+        // First check whether the region is an account or not
         loop {
             let Some(account) = self.accounts.get(*account_index) else {
                 // address is after all the accounts
@@ -565,10 +574,14 @@ impl DoubleEndedIterator for MemoryChunkIterator<'_> {
                 break;
             };
 
+            // region is either account data or 10k resize region
             let account_addr = account.vm_data_addr;
             let resize_addr = account_addr.saturating_add(account.original_data_len as u64);
 
             if *account_index > 0 && account_addr > region.vm_addr {
+                // region is not this account, move onto the previous account
+
+                // note that we iterate in the same linear direction as regions
                 *account_index = account_index.saturating_sub(1);
             } else {
                 region_is_account = region.vm_addr == account_addr || region.vm_addr == resize_addr;
