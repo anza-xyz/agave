@@ -268,7 +268,11 @@ impl StandardBroadcastRun {
 
         // 2) Convert entries to shreds and coding shreds
         let is_last_in_slot = last_tick_height == bank.max_tick_height();
-        let reference_tick = bank.tick_height() % bank.ticks_per_slot();
+        // Calculate how many ticks have already occurred in this slot, the
+        // possible range of values is [0, bank.ticks_per_slot()]
+        let reference_tick = last_tick_height
+            .saturating_add(bank.ticks_per_slot())
+            .saturating_sub(bank.max_tick_height());
         let (data_shreds, coding_shreds) = self
             .entries_to_shreds(
                 keypair,
