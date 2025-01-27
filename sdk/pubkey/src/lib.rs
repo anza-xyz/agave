@@ -771,6 +771,12 @@ impl Pubkey {
         self.0
     }
 
+    /// Return a reference to the `Pubkey`'s byte array.
+    #[inline(always)]
+    pub const fn as_array(&self) -> &[u8; 32] {
+        &self.0
+    }
+
     // If target_os = "solana", then this panics so there are no dependencies.
     // When target_os != "solana", this should be opt-in so users
     // don't need the curve25519 dependency.
@@ -1399,5 +1405,15 @@ mod tests {
             Pubkey::from_str("9h1HyLCW5dZnBVap8C5egQ9Z6pHyjsh5MNy83iPqqRuq").unwrap(),
             PK
         );
+    }
+
+    #[test]
+    fn test_as_array() {
+        let bytes = [1u8; 32];
+        let key = Pubkey::from(bytes);
+        assert_eq!(key.as_array(), &bytes);
+        assert_eq!(key.as_array(), &key.to_bytes());
+        // Sanity check: ensure the pointer is the same.
+        assert_eq!(key.as_array().as_ptr(), key.0.as_ptr());
     }
 }
