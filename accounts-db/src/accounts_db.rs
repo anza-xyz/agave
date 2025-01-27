@@ -677,7 +677,7 @@ pub struct AccountsDbConfig {
     pub enable_experimental_accumulator_hash: bool,
     pub verify_experimental_accumulator_hash: bool,
     pub snapshots_use_experimental_accumulator_hash: bool,
-    /// Number of threads for background and cleaning operations (`thread_pool_clean')
+    /// Number of threads for background cleaning operations (`thread_pool_clean')
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
     pub num_foreground_threads: Option<NonZeroUsize>,
@@ -2693,69 +2693,68 @@ impl AccountsDb {
 
     /// called with cli argument to verify refcounts are correct on all accounts
     /// this is very slow
+    /// this function will call Rayon par_iter, so you will want to have thread pool installed if
+    /// you want to call this without consuming all the cores on the CPU.
     fn exhaustively_verify_refcounts(&self, max_slot_inclusive: Option<Slot>) {
         let max_slot_inclusive =
             max_slot_inclusive.unwrap_or_else(|| self.accounts_index.max_root_inclusive());
         info!("exhaustively verifying refcounts as of slot: {max_slot_inclusive}");
         let pubkey_refcount = DashMap::<Pubkey, Vec<Slot>>::default();
         let slots = self.storage.all_slots();
-        let failed = AtomicBool::default();
         // populate
-        self.thread_pool_clean.install(|| {
-            slots.into_par_iter().for_each(|slot| {
-                if slot > max_slot_inclusive {
-                    return;
-                }
-                if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-                    storage.accounts.scan_accounts(|account| {
-                        let pk = account.pubkey();
-                        match pubkey_refcount.entry(*pk) {
-                            dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
-                                if !occupied_entry.get().iter().any(|s| s == &slot) {
-                                    occupied_entry.get_mut().push(slot);
-                                }
-                            }
-                            dashmap::mapref::entry::Entry::Vacant(vacant_entry) => {
-                                vacant_entry.insert(vec![slot]);
+        slots.into_par_iter().for_each(|slot| {
+            if slot > max_slot_inclusive {
+                return;
+            }
+            if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
+                storage.accounts.scan_accounts(|account| {
+                    let pk = account.pubkey();
+                    match pubkey_refcount.entry(*pk) {
+                        dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
+                            if !occupied_entry.get().iter().any(|s| s == &slot) {
+                                occupied_entry.get_mut().push(slot);
                             }
                         }
-                    });
-                }
-            });
-            let total = pubkey_refcount.len();
-            let threads = quarter_thread_count();
-            let per_batch = total / threads;
-            (0..=threads).into_par_iter().for_each(|attempt| {
-                pubkey_refcount
-                    .iter()
-                    .skip(attempt * per_batch)
-                    .take(per_batch)
-                    .for_each(|entry| {
-                        if failed.load(Ordering::Relaxed) {
-                            return;
+                        dashmap::mapref::entry::Entry::Vacant(vacant_entry) => {
+                            vacant_entry.insert(vec![slot]);
                         }
+                    }
+                });
+            }
+        });
+        let total = pubkey_refcount.len();
+        let failed = AtomicBool::default();
+        let threads = quarter_thread_count();
+        let per_batch = total / threads;
+        (0..=threads).into_par_iter().for_each(|attempt| {
+            pubkey_refcount
+                .iter()
+                .skip(attempt * per_batch)
+                .take(per_batch)
+                .for_each(|entry| {
+                    if failed.load(Ordering::Relaxed) {
+                        return;
+                    }
 
-                        self.accounts_index
-                            .get_and_then(entry.key(), |index_entry| {
-                                if let Some(index_entry) = index_entry {
-                                    match (index_entry.ref_count() as usize)
-                                        .cmp(&entry.value().len())
-                                    {
-                                        std::cmp::Ordering::Equal => {
-                                            // ref counts match, nothing to do here
-                                        }
-                                        std::cmp::Ordering::Greater => {
-                                            let slot_list = index_entry.slot_list.read().unwrap();
-                                            let num_too_new = slot_list
-                                                .iter()
-                                                .filter(|(slot, _)| slot > &max_slot_inclusive)
-                                                .count();
+                    self.accounts_index
+                        .get_and_then(entry.key(), |index_entry| {
+                            if let Some(index_entry) = index_entry {
+                                match (index_entry.ref_count() as usize).cmp(&entry.value().len()) {
+                                    std::cmp::Ordering::Equal => {
+                                        // ref counts match, nothing to do here
+                                    }
+                                    std::cmp::Ordering::Greater => {
+                                        let slot_list = index_entry.slot_list.read().unwrap();
+                                        let num_too_new = slot_list
+                                            .iter()
+                                            .filter(|(slot, _)| slot > &max_slot_inclusive)
+                                            .count();
 
-                                            if ((index_entry.ref_count() as usize) - num_too_new)
-                                                > entry.value().len()
-                                            {
-                                                failed.store(true, Ordering::Relaxed);
-                                                error!(
+                                        if ((index_entry.ref_count() as usize) - num_too_new)
+                                            > entry.value().len()
+                                        {
+                                            failed.store(true, Ordering::Relaxed);
+                                            error!(
                                                 "exhaustively_verify_refcounts: {} refcount too \
                                                  large: {}, should be: {}, {:?}, {:?}, too_new: \
                                                  {num_too_new}",
@@ -2765,25 +2764,24 @@ impl AccountsDb {
                                                 *entry.value(),
                                                 slot_list
                                             );
-                                            }
-                                        }
-                                        std::cmp::Ordering::Less => {
-                                            error!(
-                                                "exhaustively_verify_refcounts: {} refcount too \
-                                             small: {}, should be: {}, {:?}, {:?}",
-                                                entry.key(),
-                                                index_entry.ref_count(),
-                                                entry.value().len(),
-                                                *entry.value(),
-                                                index_entry.slot_list.read().unwrap()
-                                            );
                                         }
                                     }
-                                };
-                                (false, ())
-                            });
-                    });
-            });
+                                    std::cmp::Ordering::Less => {
+                                        error!(
+                                            "exhaustively_verify_refcounts: {} refcount too \
+                                             small: {}, should be: {}, {:?}, {:?}",
+                                            entry.key(),
+                                            index_entry.ref_count(),
+                                            entry.value().len(),
+                                            *entry.value(),
+                                            index_entry.slot_list.read().unwrap()
+                                        );
+                                    }
+                                }
+                            };
+                            (false, ())
+                        });
+                });
         });
         if failed.load(Ordering::Relaxed) {
             panic!("exhaustively_verify_refcounts failed");
@@ -2802,7 +2800,14 @@ impl AccountsDb {
         old_storages_policy: OldStoragesPolicy,
     ) {
         if self.exhaustively_verify_refcounts {
-            self.exhaustively_verify_refcounts(max_clean_root_inclusive);
+            //at startup use all cores to verify refcounts
+            if is_startup {
+                self.exhaustively_verify_refcounts(max_clean_root_inclusive);
+            } else {
+                // otherwise, use the cleaning thread pool
+                self.thread_pool_clean
+                    .install(|| self.exhaustively_verify_refcounts(max_clean_root_inclusive));
+            }
         }
 
         let _guard = self.active_stats.activate(ActiveStatItem::Clean);
