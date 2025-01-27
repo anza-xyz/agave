@@ -291,7 +291,6 @@ backoff = "0.4.0"
 base64 = "0.22.1"
 bincode = "1.3.3"
 bitflags = { version = "2.8.0" }
-bitvec = "1.0.1"
 blake3 = "1.5.5"
 borsh = { version = "1.5.5", features = ["derive", "unstable__schema"] }
 borsh0-10 = { package = "borsh", version = "0.10.3" }

@@ -4,7 +4,7 @@ use {
         protocol::MAX_CRDS_OBJECT_SIZE,
     },
     bincode::serialized_size,
-    bitvec::prelude::BitVec,
+    bv::BitVec,
     flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress},
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{clock::Slot, pubkey::Pubkey},
@@ -82,13 +82,19 @@ impl std::convert::From<flate2::DecompressError> for Error {
 
 impl Flate2 {
     fn deflate(unc: Uncompressed) -> Result<Self> {
-        // View into the slots array as raw bytes
-        let bits = unc.slots.as_raw_slice();
-        // Assume compressed version will be smaller than the original
-        let mut compressed = Vec::with_capacity(bits.len());
+        // Next operation loses the number of occupied bytes so we save it
+        let num_bytes = unc.slots.block_len();
+        // Extract the slots array as raw bytes
+        let slots_array = unc.slots.into_boxed_slice();
+        // Assume compressed version will be smaller than the original allocation
+        let mut compressed = Vec::with_capacity(slots_array.len());
         // Perform compression and check status to make sure everything fits
         let mut compressor = Compress::new(Compression::best(), false);
-        let status = compressor.compress_vec(bits, &mut compressed, FlushCompress::Finish)?;
+        let status = compressor.compress_vec(
+            &slots_array[0..num_bytes],
+            &mut compressed,
+            FlushCompress::Finish,
+        )?;
         if status != flate2::Status::StreamEnd {
             return Err(Error::CompressError);
         }
@@ -118,7 +124,7 @@ impl Flate2 {
         Ok(Uncompressed {
             first_slot: self.first_slot,
             num: self.num,
-            slots: BitVec::from_vec(uncompressed),
+            slots: BitVec::from_bits(uncompressed),
         })
     }
 }
@@ -128,7 +134,7 @@ impl Uncompressed {
         Self {
             num: 0,
             first_slot: 0,
-            slots: BitVec::repeat(false, 8 * max_size),
+            slots: BitVec::new_fill(false, 8 * max_size as u64),
         }
     }
     pub fn to_slots(&self, min_slot: Slot) -> Vec<Slot> {
@@ -136,13 +142,13 @@ impl Uncompressed {
         let start = if min_slot < self.first_slot {
             0
         } else {
-            (min_slot - self.first_slot) as usize
+            min_slot - self.first_slot
         };
-        for i in start..self.num {
+        for i in start..self.num as u64 {
             if i >= self.slots.len() {
                 break;
             }
-            if *self.slots.get(i).expect("slot index should be in bounds") {
+            if self.slots.get(i) {
                 rv.push(self.first_slot + i as Slot);
             }
         }
@@ -159,12 +165,12 @@ impl Uncompressed {
             if *s < self.first_slot {
                 return i;
             }
-            let offset = (*s - self.first_slot) as usize;
+            let offset = *s - self.first_slot;
             if offset >= self.slots.len() {
                 return i;
             }
             self.slots.set(offset, true);
-            self.num = std::cmp::max(self.num, 1 + offset);
+            self.num = std::cmp::max(self.num, 1 + offset as usize);
         }
         slots.len()
     }
@@ -437,7 +443,7 @@ mod tests {
         assert_eq!(o.sanitize(), Err(SanitizeError::ValueOutOfBounds));
 
         let mut o = slots.clone();
-        o.slots = BitVec::repeat(false, 7); // Length not a multiple of 8
+        o.slots = BitVec::new_fill(false, 7); // Length not a multiple of 8
         assert_eq!(o.sanitize(), Err(SanitizeError::ValueOutOfBounds));
 
         let mut o = slots.clone();
