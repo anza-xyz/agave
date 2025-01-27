@@ -11,10 +11,12 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
+    agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     assert_matches::assert_matches,
     crossbeam_channel::{self, never, select_biased, Receiver, RecvError, SendError, Sender},
     dashmap::DashMap,
     derive_where::derive_where,
+    dyn_clone::{clone_trait_object, DynClone},
     log::*,
     scopeguard::defer,
     solana_ledger::blockstore_processor::{
@@ -37,7 +39,7 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
-        SchedulingMode::{BlockProduction, BlockVerification},
+        SchedulingMode::{self, BlockProduction, BlockVerification},
         SchedulingStateMachine, Task, UsageQueue,
     },
     static_assertions::const_assert_eq,
@@ -46,12 +48,13 @@ use {
         marker::PhantomData,
         mem,
         sync::{
-            atomic::{AtomicU64, Ordering::Relaxed},
+            atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
             Arc, Mutex, OnceLock, Weak,
         },
         thread::{self, sleep, JoinHandle},
         time::{Duration, Instant},
     },
+    trait_set::trait_set,
     vec_extract_if_polyfill::MakeExtractIf,
 };
 
@@ -81,7 +84,8 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     handler_count: usize,
-    handler_context: HandlerContext,
+    common_handler_context: CommonHandlerContext,
+    banking_stage_handler_context: Mutex<Option<BankingStageHandlerContext>>,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
     // almost always. But, this would cause wasted and noisy Arc::clone()'s at every call sites.
@@ -98,13 +102,105 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     _phantom: PhantomData<TH>,
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug, Clone)]
 pub struct HandlerContext {
     log_messages_bytes_limit: Option<usize>,
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    banking_packet_receiver: BankingPacketReceiver,
+    #[debug("{banking_packet_handler:p}")]
+    banking_packet_handler: Box<dyn BankingPacketHandler>,
+    banking_stage_helper: Option<Arc<BankingStageHelper>>,
     transaction_recorder: Option<TransactionRecorder>,
+}
+
+#[derive(Debug, Clone)]
+struct CommonHandlerContext {
+    log_messages_bytes_limit: Option<usize>,
+    transaction_status_sender: Option<TransactionStatusSender>,
+    replay_vote_sender: Option<ReplayVoteSender>,
+    prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+}
+
+impl CommonHandlerContext {
+    fn into_handler_context(
+        self,
+        banking_packet_receiver: BankingPacketReceiver,
+        banking_packet_handler: Box<dyn BankingPacketHandler>,
+        banking_stage_helper: Option<Arc<BankingStageHelper>>,
+        transaction_recorder: Option<TransactionRecorder>,
+    ) -> HandlerContext {
+        let Self {
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+        } = self;
+
+        HandlerContext {
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+            banking_packet_receiver,
+            banking_packet_handler,
+            banking_stage_helper,
+            transaction_recorder,
+        }
+    }
+}
+
+#[derive(derive_more::Debug)]
+struct BankingStageHandlerContext {
+    banking_packet_receiver: BankingPacketReceiver,
+    #[debug("{banking_packet_handler:p}")]
+    banking_packet_handler: Box<dyn BankingPacketHandler>,
+    transaction_recorder: TransactionRecorder,
+}
+
+trait_set! {
+    pub trait BankingPacketHandler =
+        DynClone + FnMut(&BankingStageHelper, BankingPacketBatch) + Send + 'static;
+}
+// Make this `Clone`-able so that it can easily propagated to all the handler threads.
+clone_trait_object!(BankingPacketHandler);
+
+#[derive(Debug)]
+pub struct BankingStageHelper {
+    usage_queue_loader: UsageQueueLoader,
+    next_task_id: AtomicUsize,
+    new_task_sender: Sender<NewTaskPayload>,
+}
+
+impl BankingStageHelper {
+    fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
+        Self {
+            usage_queue_loader: UsageQueueLoader::default(),
+            next_task_id: AtomicUsize::default(),
+            new_task_sender,
+        }
+    }
+
+    pub fn generate_task_ids(&self, count: usize) -> usize {
+        self.next_task_id.fetch_add(count, Relaxed)
+    }
+
+    pub fn create_new_task(
+        &self,
+        transaction: RuntimeTransaction<SanitizedTransaction>,
+        index: usize,
+    ) -> Task {
+        SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
+            self.usage_queue_loader.load(pubkey)
+        })
+    }
+
+    pub fn send_new_task(&self, task: Task) {
+        self.new_task_sender
+            .send(NewTaskPayload::Payload(task))
+            .unwrap();
+    }
 }
 
 pub type DefaultSchedulerPool =
@@ -176,14 +272,13 @@ where
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
             handler_count,
-            handler_context: HandlerContext {
+            common_handler_context: CommonHandlerContext {
                 log_messages_bytes_limit,
                 transaction_status_sender,
                 replay_vote_sender,
                 prioritization_fee_cache,
-                // will be configurable later
-                transaction_recorder: None,
             },
+            banking_stage_handler_context: Mutex::default(),
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
@@ -360,6 +455,59 @@ where
     #[cfg(feature = "dev-context-only-utils")]
     pub fn pooled_scheduler_count(&self) -> usize {
         self.scheduler_inners.lock().expect("not poisoned").len()
+    }
+
+    pub fn register_banking_stage(
+        &self,
+        banking_packet_receiver: BankingPacketReceiver,
+        banking_packet_handler: Box<dyn BankingPacketHandler>,
+        transaction_recorder: TransactionRecorder,
+    ) {
+        *self.banking_stage_handler_context.lock().unwrap() = Some(BankingStageHandlerContext {
+            banking_packet_receiver,
+            banking_packet_handler,
+            transaction_recorder,
+        });
+    }
+
+    fn create_handler_context(
+        &self,
+        mode: SchedulingMode,
+        new_task_sender: &Sender<NewTaskPayload>,
+    ) -> HandlerContext {
+        let (
+            banking_packet_receiver,
+            banking_packet_handler,
+            banking_stage_helper,
+            transaction_recorder,
+        ): (
+            _,
+            Box<dyn BankingPacketHandler>, /* to aid type inference */
+            _,
+            _,
+        ) = match mode {
+            BlockVerification => {
+                // Return various type-specific no-op values.
+                (never(), Box::new(|_, _| {}), None, None)
+            }
+            BlockProduction => {
+                let handler_context = self.banking_stage_handler_context.lock().unwrap();
+                let handler_context = handler_context.as_ref().unwrap();
+
+                (
+                    handler_context.banking_packet_receiver.clone(),
+                    handler_context.banking_packet_handler.clone(),
+                    Some(Arc::new(BankingStageHelper::new(new_task_sender.clone()))),
+                    Some(handler_context.transaction_recorder.clone()),
+                )
+            }
+        };
+        self.common_handler_context.clone().into_handler_context(
+            banking_packet_receiver,
+            banking_packet_handler,
+            banking_stage_helper,
+            transaction_recorder,
+        )
     }
 
     pub fn default_handler_count() -> usize {
@@ -880,6 +1028,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         &mut self,
         context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
+        handler_context: HandlerContext,
     ) {
         // Firstly, setup bi-directional messaging between the scheduler and handlers to pass
         // around tasks, by creating 2 channels (one for to-be-handled tasks from the scheduler to
@@ -1181,7 +1330,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         };
 
         let handler_main_loop = || {
-            let pool = self.pool.clone();
+            let mut handler_context = handler_context.clone();
             let mut runnable_task_receiver = runnable_task_receiver.clone();
             let finished_blocked_task_sender = finished_blocked_task_sender.clone();
             let finished_idle_task_sender = finished_idle_task_sender.clone();
@@ -1215,6 +1364,19 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 continue;
                             }
                         },
+                        recv(handler_context.banking_packet_receiver) -> banking_packet => {
+                            // See solana_core::banking_stage::unified_scheduler module doc as to
+                            // justification of this additional work in the handler thread.
+                            let Ok(banking_packet) = banking_packet else {
+                                info!("disconnected banking_packet_receiver");
+                                break;
+                            };
+                            (handler_context.banking_packet_handler)(
+                                handler_context.banking_stage_helper.as_ref().unwrap(),
+                                banking_packet
+                            );
+                            continue;
+                        },
                     };
                     defer! {
                         if !thread::panicking() {
@@ -1237,7 +1399,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     Self::execute_task_with_handler(
                         runnable_task_receiver.context(),
                         &mut task,
-                        &pool.handler_context,
+                        &handler_context,
                     );
                     if sender.send(Ok(task)).is_err() {
                         warn!("handler_thread: scheduler thread aborted...");
@@ -1439,12 +1601,14 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         result_with_timings: ResultWithTimings,
     ) -> Self {
         let mut inner = Self::Inner {
-            thread_manager: ThreadManager::new(pool),
+            thread_manager: ThreadManager::new(pool.clone()),
             usage_queue_loader: UsageQueueLoader::default(),
         };
-        inner
-            .thread_manager
-            .start_threads(context.clone(), result_with_timings);
+        inner.thread_manager.start_threads(
+            context.clone(),
+            result_with_timings,
+            pool.create_handler_context(context.mode(), &inner.thread_manager.new_task_sender),
+        );
         Self { inner, context }
     }
 }
@@ -2787,7 +2951,10 @@ mod tests {
                     &mut timings,
                     &context,
                     &task,
-                    &pool.handler_context,
+                    &pool.create_handler_context(
+                        BlockVerification,
+                        &crossbeam_channel::unbounded().0,
+                    ),
                 );
                 (result, timings)
             }));
@@ -2992,6 +3159,9 @@ mod tests {
             transaction_status_sender: None,
             replay_vote_sender: None,
             prioritization_fee_cache,
+            banking_packet_receiver: never(),
+            banking_packet_handler: Box::new(|_, _| {}),
+            banking_stage_helper: None,
             transaction_recorder: None,
         };
 
@@ -3073,6 +3243,9 @@ mod tests {
             transaction_status_sender: Some(TransactionStatusSender { sender }),
             replay_vote_sender: None,
             prioritization_fee_cache,
+            banking_packet_receiver: never(),
+            banking_packet_handler: Box::new(|_, _| {}),
+            banking_stage_helper: None,
             transaction_recorder: Some(poh_recorder.read().unwrap().new_recorder()),
         };
 
