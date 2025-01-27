@@ -102,6 +102,7 @@ const MAX_REPAIR_RETRY_LOOP_ATTEMPTS: usize = 10;
 
 #[cfg(test)]
 static_assertions::const_assert!(REFRESH_VOTE_BLOCKHEIGHT < solana_sdk::clock::MAX_PROCESSING_AGE);
+// Give at least 4 leaders the chance to pack our vote
 const REFRESH_VOTE_BLOCKHEIGHT: usize = 16;
 #[derive(PartialEq, Eq, Debug)]
 pub enum HeaviestForkFailures {
@@ -2631,7 +2632,7 @@ impl ReplayStage {
     /// - Our latest vote attempt for `last_vote_slot` has not been cleared from the progress map
     /// - `latest_landed_vote_slot` < `last_vote_slot`
     /// - The difference in block height of `heaviest_bank_on_same_fork` and `last_vote_slot`
-    ///   is at least `REFRESH_VOTE_BLOCKHEIGHT`
+    ///   is at least `REFRESH_VOTE_BLOCKHEIGHT` as indicated by the blockhash queue
     /// - It has been at least `MAX_VOTE_REFRESH_INTERVAL_MILLIS` ms since our last refresh
     ///
     /// If the conditions are met, we update the timestamp and blockhash of our original vote
@@ -2653,20 +2654,17 @@ impl ReplayStage {
         wait_to_vote_slot: Option<Slot>,
     ) -> bool {
         let Some(heaviest_bank_on_same_fork) = heaviest_bank_on_same_fork.as_ref() else {
+            // Only refresh if blocks have been built on our last vote
             return false;
         };
         let Some(latest_landed_vote_slot) =
             progress.my_latest_landed_vote(heaviest_bank_on_same_fork.slot())
         else {
+            // Need to land at least one vote in order to refresh
             return false;
         };
         let Some(last_voted_slot) = tower.last_voted_slot() else {
-            return false;
-        };
-        let Some(last_vote_block_height) = progress
-            .get_fork_stats(latest_landed_vote_slot)
-            .map(|fs| fs.block_height)
-        else {
+            // Need to have voted in order to refresh
             return false;
         };
 
@@ -2700,12 +2698,28 @@ impl ReplayStage {
             // Our vote or a subsequent vote landed do not refresh
             return false;
         }
-        if last_vote_block_height.saturating_add(REFRESH_VOTE_BLOCKHEIGHT as u64)
-            > heaviest_bank_on_same_fork.block_height()
+
+        // If we are a non voting validator or have an incorrect setup preventing us from
+        // generating vote txs, no need to refresh
+        let last_vote_tx_blockhash = match tower.last_vote_tx_blockhash() {
+            // Since the checks in vote generation are deterministic, if we were non voting or hot spare
+            // on the original vote, the refresh will also fail. No reason to refresh.
+            // On the fly adjustments via the cli will be picked up for the next vote.
+            BlockhashStatus::NonVoting | BlockhashStatus::HotSpare => return false,
+            // In this case we have not voted since restart, our setup is unclear.
+            // We have a vote from our previous restart that is eligble for refresh, we must refresh.
+            BlockhashStatus::Uninitialized => None,
+            BlockhashStatus::Blockhash(blockhash) => Some(blockhash),
+        };
+
+        if last_vote_tx_blockhash.is_some()
+            && heaviest_bank_on_same_fork
+                .is_hash_valid_for_age(&last_vote_tx_blockhash.unwrap(), REFRESH_VOTE_BLOCKHEIGHT)
         {
-            // Give at least 4 leaders the chance to pack our vote
+            // Check the blockhash queue to see if enough blocks have been built on our last voted fork
             return false;
         }
+
         if last_vote_refresh_time
             .last_refresh_time
             .elapsed()
@@ -2717,19 +2731,6 @@ impl ReplayStage {
             // than MAX_VOTE_REFRESH_INTERVAL_MILLIS
             return false;
         }
-
-        // If we are a non voting validator or have an incorrect setup preventing us from
-        // generating vote txs, no need to refresh
-        match tower.last_vote_tx_blockhash() {
-            // Since the checks in vote generation are deterministic, if we were non voting or hot spare
-            // on the original vote, the refresh will also fail. No reason to refresh.
-            // On the fly adjustments via the cli will be picked up for the next vote.
-            BlockhashStatus::NonVoting | BlockhashStatus::HotSpare => return false,
-            // In this case we have not voted since restart, our setup is unclear.
-            // We have a vote from our previous restart that is eligble for refresh, we must refresh.
-            BlockhashStatus::Uninitialized => (),
-            BlockhashStatus::Blockhash(_) => (),
-        };
 
         // All criteria are met, refresh the last vote using the blockhash of `heaviest_bank_on_same_fork`
         Self::refresh_last_vote(
