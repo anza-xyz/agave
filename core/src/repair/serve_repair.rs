@@ -1274,7 +1274,8 @@ impl ServeRepair {
                 .iter()
                 .filter_map(|key| {
                     if *key != self.my_id() {
-                        self.cluster_info.lookup_contact_info(key, |ci| ci.clone())
+                        self.cluster_info
+                            .lookup_contact_info(key, |node| ContactInfo::from(node))
                     } else {
                         None
                     }

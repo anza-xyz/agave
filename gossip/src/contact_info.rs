@@ -13,6 +13,7 @@ use {
     solana_streamer::socket::SocketAddrSpace,
     static_assertions::const_assert_eq,
     std::{
+        borrow::Borrow,
         cmp::Ordering,
         collections::HashSet,
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -42,10 +43,12 @@ const SOCKET_TAG_TVU_QUIC: u8 = 11;
 const_assert_eq!(SOCKET_CACHE_SIZE, 13);
 const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_TPU_VOTE_QUIC as usize + 1usize;
 
+pub(crate) type SocketAddrCache = [SocketAddr; SOCKET_CACHE_SIZE];
+
 // An alias for a function that reads data from a ContactInfo entry stored in
 // the gossip CRDS table.
-pub trait ContactInfoQuery<R>: Fn(&ContactInfo) -> R {}
-impl<R, F: Fn(&ContactInfo) -> R> ContactInfoQuery<R> for F {}
+pub trait ContactInfoQuery<R>: Fn(&ContactInfo<Box<SocketAddrCache>>) -> R {}
+impl<R, F: Fn(&ContactInfo<Box<SocketAddrCache>>) -> R> ContactInfoQuery<R> for F {}
 
 #[derive(Copy, Clone, Debug, Eq, Error, PartialEq)]
 pub enum Error {
@@ -74,7 +77,7 @@ pub enum Error {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ContactInfo {
+pub struct ContactInfo<T = SocketAddrCache> {
     pubkey: Pubkey,
     #[serde(with = "serde_varint")]
     wallclock: u64,
@@ -93,7 +96,7 @@ pub struct ContactInfo {
     extensions: Vec<Extension>,
     // Only sanitized socket-addrs can be cached!
     #[serde(skip_serializing)]
-    cache: [SocketAddr; SOCKET_CACHE_SIZE],
+    cache: T,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -132,7 +135,7 @@ macro_rules! get_socket {
     ($name:ident, $key:ident) => {
         #[inline]
         pub fn $name(&self) -> Option<SocketAddr> {
-            let socket = &self.cache[usize::from($key)];
+            let socket = &self.cache.borrow()[usize::from($key)];
             (socket != &SOCKET_ADDR_UNSPECIFIED)
                 .then_some(socket)
                 .copied()
@@ -145,7 +148,7 @@ macro_rules! get_socket {
                 Protocol::QUIC => $quic,
                 Protocol::UDP => $udp,
             };
-            let socket = &self.cache[usize::from(key)];
+            let socket = &self.cache.borrow()[usize::from(key)];
             (socket != &SOCKET_ADDR_UNSPECIFIED)
                 .then_some(socket)
                 .copied()
@@ -202,7 +205,7 @@ macro_rules! remove_socket {
     };
 }
 
-impl ContactInfo {
+impl ContactInfo<SocketAddrCache> {
     pub fn new(pubkey: Pubkey, wallclock: u64, shred_version: u16) -> Self {
         Self {
             pubkey,
@@ -216,7 +219,9 @@ impl ContactInfo {
             cache: EMPTY_SOCKET_ADDR_CACHE,
         }
     }
+}
 
+impl<T> ContactInfo<T> {
     #[inline]
     pub fn pubkey(&self) -> &Pubkey {
         &self.pubkey
@@ -251,7 +256,9 @@ impl ContactInfo {
     pub fn set_shred_version(&mut self, shred_version: u16) {
         self.shred_version = shred_version
     }
+}
 
+impl<T: Borrow<SocketAddrCache>> ContactInfo<T> {
     get_socket!(gossip, SOCKET_TAG_GOSSIP);
     get_socket!(rpc, SOCKET_TAG_RPC);
     get_socket!(rpc_pubsub, SOCKET_TAG_RPC_PUBSUB);
@@ -268,7 +275,9 @@ impl ContactInfo {
     );
     get_socket!(tpu_vote, SOCKET_TAG_TPU_VOTE, SOCKET_TAG_TPU_VOTE_QUIC);
     get_socket!(tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
+}
 
+impl ContactInfo<SocketAddrCache> {
     set_socket!(set_gossip, SOCKET_TAG_GOSSIP);
     set_socket!(set_rpc, SOCKET_TAG_RPC);
     set_socket!(set_rpc_pubsub, SOCKET_TAG_RPC_PUBSUB);
@@ -399,7 +408,7 @@ impl ContactInfo {
         let delay = 10 * 60 * 1000; // 10 minutes
         let now = solana_sdk::timing::timestamp() - delay + rng.gen_range(0..2 * delay);
         let pubkey = pubkey.unwrap_or_else(solana_pubkey::new_rand);
-        let mut node = ContactInfo::new_localhost(&pubkey, now);
+        let mut node = Self::new_localhost(&pubkey, now);
         let _ = node.set_gossip((Ipv4Addr::LOCALHOST, rng.gen_range(1024..u16::MAX)));
         node
     }
@@ -464,12 +473,14 @@ impl ContactInfo {
         node.set_serve_repair(QUIC, (addr, port + 4)).unwrap();
         node
     }
+}
 
+impl<T> ContactInfo<T> {
     // Returns true if the other contact-info is a duplicate instance of this
     // node, with a more recent `outset` timestamp.
     #[inline]
     #[must_use]
-    pub(crate) fn check_duplicate(&self, other: &ContactInfo) -> bool {
+    pub(crate) fn check_duplicate<S>(&self, other: &ContactInfo<S>) -> bool {
         self.pubkey == other.pubkey && self.outset < other.outset
     }
 
@@ -479,7 +490,7 @@ impl ContactInfo {
     // If the tuples are equal it returns None.
     #[inline]
     #[must_use]
-    pub(crate) fn overrides(&self, other: &ContactInfo) -> Option<bool> {
+    pub(crate) fn overrides<S>(&self, other: &ContactInfo<S>) -> Option<bool> {
         if self.pubkey != other.pubkey {
             return None;
         }
@@ -498,7 +509,7 @@ fn get_node_outset() -> u64 {
     u64::try_from(elapsed.as_micros()).unwrap()
 }
 
-impl Default for ContactInfo {
+impl Default for ContactInfo<SocketAddrCache> {
     fn default() -> Self {
         Self::new(
             Pubkey::default(),
@@ -508,17 +519,17 @@ impl Default for ContactInfo {
     }
 }
 
-impl<'de> Deserialize<'de> for ContactInfo {
+impl<'de> Deserialize<'de> for ContactInfo<Box<SocketAddrCache>> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let node = ContactInfoLite::deserialize(deserializer)?;
-        ContactInfo::try_from(node).map_err(serde::de::Error::custom)
+        Self::try_from(node).map_err(serde::de::Error::custom)
     }
 }
 
-impl TryFrom<ContactInfoLite> for ContactInfo {
+impl TryFrom<ContactInfoLite> for ContactInfo<Box<SocketAddrCache>> {
     type Error = Error;
 
     fn try_from(node: ContactInfoLite) -> Result<Self, Self::Error> {
@@ -533,7 +544,7 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
             extensions,
         } = node;
         sanitize_entries(&addrs, &sockets)?;
-        let mut node = ContactInfo {
+        let mut node = Self {
             pubkey,
             wallclock,
             outset,
@@ -542,7 +553,7 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
             addrs,
             sockets,
             extensions,
-            cache: EMPTY_SOCKET_ADDR_CACHE,
+            cache: Box::new(EMPTY_SOCKET_ADDR_CACHE),
         };
         // Populate node.cache.
         // Only sanitized socket-addrs can be cached!
@@ -564,7 +575,42 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
     }
 }
 
-impl Sanitize for ContactInfo {
+macro_rules! impl_convert_from {
+    ($a:ty, $b:ty, $f:ident, $g:tt) => {
+        impl From<$a> for ContactInfo<$b> {
+            #[inline]
+            fn from(node: $a) -> Self {
+                Self {
+                    pubkey: node.pubkey,
+                    wallclock: node.wallclock,
+                    outset: node.outset,
+                    shred_version: node.shred_version,
+                    version: node.version.$f(),
+                    addrs: node.addrs.$f(),
+                    sockets: node.sockets.$f(),
+                    extensions: node.extensions.$f(),
+                    cache: $g(node.cache),
+                }
+            }
+        }
+    };
+}
+
+impl_convert_from!(
+    ContactInfo<SocketAddrCache>,
+    Box<SocketAddrCache>,
+    into,
+    (Box::new)
+);
+impl_convert_from!(
+    &ContactInfo<SocketAddrCache>,
+    Box<SocketAddrCache>,
+    clone,
+    (Box::new)
+);
+impl_convert_from!(&ContactInfo<Box<SocketAddrCache>>, SocketAddrCache, clone, *);
+
+impl Sanitize for ContactInfo<Box<SocketAddrCache>> {
     fn sanitize(&self) -> Result<(), SanitizeError> {
         if self.wallclock >= MAX_WALLCLOCK {
             return Err(SanitizeError::ValueOutOfBounds);
@@ -658,7 +704,7 @@ fn get_quic_socket(socket: &SocketAddr) -> Result<SocketAddr, Error> {
 }
 
 #[cfg(all(test, feature = "frozen-abi"))]
-impl solana_frozen_abi::abi_example::AbiExample for ContactInfo {
+impl solana_frozen_abi::abi_example::AbiExample for ContactInfo<SocketAddrCache> {
     fn example() -> Self {
         Self {
             pubkey: Pubkey::example(),
@@ -946,8 +992,8 @@ mod tests {
             .is_ok());
             // Assert that serde round trips.
             let bytes = bincode::serialize(&node).unwrap();
-            let other: ContactInfo = bincode::deserialize(&bytes).unwrap();
-            assert_eq!(node, other);
+            let other: ContactInfo<_> = bincode::deserialize(&bytes).unwrap();
+            assert_eq!(node, ContactInfo::from(&other));
         }
     }
 

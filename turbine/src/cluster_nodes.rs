@@ -142,7 +142,7 @@ impl ContactInfo {
     // Removes respective TVU address from the ContactInfo so that no more
     // shreds are sent to that socket address.
     #[inline]
-    fn remove_tvu_addr(&mut self, protocol: Protocol) {
+    fn remove_tvu(&mut self, protocol: Protocol) {
         match protocol {
             Protocol::QUIC => {
                 self.tvu_quic = None;
@@ -310,6 +310,23 @@ pub fn new_cluster_nodes<T: 'static>(
     }
 }
 
+// Defines a closure which converts from &GossipContactInfo<_> to ContactInfo.
+// Same can be achieved with
+//   impl<T: Borrow<SocketAddrCache>> From<&GossipContactInfo<T>> for ContactInfo
+// but SocketAddrCache type is private to gossip.
+macro_rules! from_gossip_node {
+    () => {
+        |node: &GossipContactInfo<_>| -> ContactInfo {
+            ContactInfo {
+                pubkey: *node.pubkey(),
+                wallclock: node.wallclock(),
+                tvu_quic: node.tvu(Protocol::QUIC),
+                tvu_udp: node.tvu(Protocol::UDP),
+            }
+        }
+    };
+}
+
 // All staked nodes + other known tvu-peers + the node itself;
 // sorted by (stake, pubkey) in descending order.
 fn get_nodes(
@@ -325,14 +342,14 @@ fn get_nodes(
     let mut nodes: Vec<Node> = std::iter::once({
         // The local node itself.
         let stake = stakes.get(&self_pubkey).copied().unwrap_or_default();
-        let node = ContactInfo::from(&cluster_info.my_contact_info());
+        let node = from_gossip_node!()(&cluster_info.my_contact_info());
         let node = NodeId::from(node);
         Node { node, stake }
     })
     // All known tvu-peers from gossip.
     .chain(
         cluster_info
-            .tvu_peers(|node| ContactInfo::from(node))
+            .tvu_peers(from_gossip_node!())
             .into_iter()
             .map(|node| {
                 let stake = stakes.get(node.pubkey()).copied().unwrap_or_default();
@@ -412,7 +429,7 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
             if !addrs.insert((protocol, addr)) || count > MAX_NUM_NODES_PER_IP_ADDRESS {
                 // Remove the respective TVU address so that no more shreds are
                 // sent to this socket address.
-                node.remove_tvu_addr(protocol);
+                node.remove_tvu(protocol);
             }
         }
         // Always keep staked nodes for deterministic shuffle,
@@ -566,18 +583,6 @@ impl From<Pubkey> for NodeId {
     #[inline]
     fn from(pubkey: Pubkey) -> Self {
         NodeId::Pubkey(pubkey)
-    }
-}
-
-impl From<&GossipContactInfo> for ContactInfo {
-    #[inline]
-    fn from(node: &GossipContactInfo) -> Self {
-        Self {
-            pubkey: *node.pubkey(),
-            wallclock: node.wallclock(),
-            tvu_quic: node.tvu(Protocol::QUIC),
-            tvu_udp: node.tvu(Protocol::UDP),
-        }
     }
 }
 
@@ -989,7 +994,7 @@ mod tests {
             let node = GossipContactInfo::new_localhost(&pubkey, /*wallclock:*/ timestamp());
             [
                 Node {
-                    node: NodeId::from(ContactInfo::from(&node)),
+                    node: NodeId::from(from_gossip_node!()(&node)),
                     stake,
                 },
                 Node {

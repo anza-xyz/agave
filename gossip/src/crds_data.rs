@@ -1,6 +1,6 @@
 use {
     crate::{
-        contact_info::ContactInfo,
+        contact_info::{ContactInfo, SocketAddrCache},
         deprecated,
         duplicate_shred::{DuplicateShred, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         epoch_slots::EpochSlots,
@@ -44,7 +44,7 @@ pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CrdsData {
     #[allow(private_interfaces)]
-    LegacyContactInfo(LegacyContactInfo),
+    LegacyContactInfo(Box<LegacyContactInfo>),
     Vote(VoteIndex, Vote),
     LowestSlot(/*DEPRECATED:*/ u8, LowestSlot),
     #[allow(private_interfaces)]
@@ -60,7 +60,7 @@ pub enum CrdsData {
     NodeInstance(NodeInstance),
     DuplicateShred(DuplicateShredIndex, DuplicateShred),
     SnapshotHashes(SnapshotHashes),
-    ContactInfo(ContactInfo),
+    ContactInfo(ContactInfo<Box<SocketAddrCache>>),
     RestartLastVotedForkSlots(RestartLastVotedForkSlots),
     RestartHeaviestFork(RestartHeaviestFork),
 }
@@ -203,14 +203,21 @@ impl CrdsData {
 impl From<ContactInfo> for CrdsData {
     #[inline]
     fn from(node: ContactInfo) -> Self {
-        Self::ContactInfo(node)
+        Self::ContactInfo(ContactInfo::from(node))
     }
 }
 
 impl From<&ContactInfo> for CrdsData {
     #[inline]
     fn from(node: &ContactInfo) -> Self {
-        Self::ContactInfo(node.clone())
+        Self::ContactInfo(ContactInfo::from(node))
+    }
+}
+
+impl From<ContactInfo<Box<SocketAddrCache>>> for CrdsData {
+    #[inline]
+    fn from(node: ContactInfo<Box<SocketAddrCache>>) -> Self {
+        Self::ContactInfo(node)
     }
 }
 
@@ -544,6 +551,13 @@ mod test {
         },
         solana_vote_program::{vote_instruction, vote_state},
     };
+
+    #[test]
+    fn test_crds_data_size() {
+        // This is just so that we can keep an eye on std::mem::size_of
+        // CrdsData and if a change unknowingly increases it by too much.
+        assert_eq!(std::mem::size_of::<CrdsData>(), 176);
+    }
 
     #[test]
     fn test_lowest_slot_sanitize() {

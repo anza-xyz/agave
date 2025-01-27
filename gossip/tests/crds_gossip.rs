@@ -313,7 +313,10 @@ fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_conver
             let node_pubkey = node.keypair.pubkey();
             let mut m = {
                 let node_crds = node.gossip.crds.read().unwrap();
-                node_crds.get::<&ContactInfo>(node_pubkey).cloned().unwrap()
+                node_crds
+                    .get::<&ContactInfo<_>>(node_pubkey)
+                    .cloned()
+                    .unwrap()
             };
             m.set_wallclock(now);
             node.gossip.process_push_message(
