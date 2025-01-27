@@ -14,7 +14,7 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_receiver::PacketReceiver,
         qos_service::QosService,
-        unprocessed_transaction_storage::UnprocessedTransactionStorage,
+        unprocessed_transaction_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -477,10 +477,7 @@ impl BankingStage {
                     connection_cache.clone(),
                     data_budget.clone(),
                 ),
-                UnprocessedTransactionStorage::new_vote_storage(
-                    latest_unprocessed_votes.clone(),
-                    vote_source,
-                ),
+                VoteStorage::new(latest_unprocessed_votes.clone(), vote_source),
             ));
         }
 
@@ -639,7 +636,7 @@ impl BankingStage {
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
         mut forwarder: Forwarder<T>,
-        unprocessed_transaction_storage: UnprocessedTransactionStorage,
+        unprocessed_transaction_storage: VoteStorage,
     ) -> JoinHandle<()> {
         let mut packet_receiver = PacketReceiver::new(id, packet_receiver);
         let consumer = Consumer::new(
@@ -669,7 +666,7 @@ impl BankingStage {
         decision_maker: &DecisionMaker,
         forwarder: &mut Forwarder<T>,
         consumer: &Consumer,
-        unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
+        unprocessed_transaction_storage: &mut VoteStorage,
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
@@ -734,7 +731,7 @@ impl BankingStage {
         forwarder: &mut Forwarder<T>,
         consumer: &Consumer,
         id: u32,
-        mut unprocessed_transaction_storage: UnprocessedTransactionStorage,
+        mut unprocessed_transaction_storage: VoteStorage,
     ) {
         let mut banking_stage_stats = BankingStageStats::new(id);
 
