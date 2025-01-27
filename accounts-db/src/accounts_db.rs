@@ -1532,9 +1532,9 @@ pub struct AccountsDb {
 
     /// Foreground thread pool used for par_iter
     pub thread_pool: ThreadPool,
-    /// Background operations
+    /// Thread pool for AccountsBackgroundServices
     pub thread_pool_clean: ThreadPool,
-    /// Background hashing thread pool
+    /// Thread pool for AccountsHashVerifier
     pub thread_pool_hash: ThreadPool,
 
     accounts_delta_hashes: Mutex<HashMap<Slot, AccountsDeltaHash>>,
