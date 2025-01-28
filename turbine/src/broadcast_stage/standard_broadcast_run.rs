@@ -9,7 +9,7 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::{
         blockstore,
-        shred::{shred_code, ProcessShredsStats, ReedSolomonCache, Shred, ShredFlags, Shredder},
+        shred::{shred_code, ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_sdk::{
         genesis_config::ClusterType, hash::Hash, signature::Keypair, timing::AtomicInterval,
@@ -79,11 +79,11 @@ impl StandardBroadcastRun {
         cluster_type: ClusterType,
         stats: &mut ProcessShredsStats,
     ) -> Vec<Shred> {
-        const SHRED_TICK_REFERENCE_MASK: u8 = ShredFlags::SHRED_TICK_REFERENCE_MASK.bits();
         if self.completed {
             return vec![];
         }
-        let reference_tick = max_ticks_in_slot & SHRED_TICK_REFERENCE_MASK;
+        // Set the reference_tick as if the PoH completed for this slot
+        let reference_tick = max_ticks_in_slot;
         let (mut shreds, coding_shreds) =
             Shredder::new(self.slot, self.parent, reference_tick, self.shred_version)
                 .unwrap()
