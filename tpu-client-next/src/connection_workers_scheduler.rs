@@ -92,7 +92,7 @@ pub struct ConnectionWorkersSchedulerConfig {
 }
 
 #[async_trait]
-pub trait WorkersBroadcast {
+pub trait WorkersBroadcaster {
     async fn send_to_workers(
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
@@ -100,9 +100,10 @@ pub trait WorkersBroadcast {
     ) -> Result<(), ConnectionWorkersSchedulerError>;
 }
 
-struct WorkersBroadcasterWithoutBackpressure;
+struct NonblockingBroadcaster;
 
-impl WorkersBroadcast for WorkersBroadcasterWithoutBackpressure {
+#[async_trait]
+impl WorkersBroadcaster for NonblockingBroadcaster {
     async fn send_to_workers(
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
