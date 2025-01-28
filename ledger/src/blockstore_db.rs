@@ -84,8 +84,6 @@ const BLOCK_HEIGHT_CF: &str = "block_height";
 const PROGRAM_COSTS_CF: &str = "program_costs";
 /// Column family for optimistic slots
 const OPTIMISTIC_SLOTS_CF: &str = "optimistic_slots";
-/// Column family for merkle roots
-const MERKLE_ROOT_META_CF: &str = "merkle_root_meta";
 
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
@@ -1378,7 +1376,7 @@ impl Column for columns::MerkleRootMeta {
 }
 
 impl ColumnName for columns::MerkleRootMeta {
-    const NAME: &'static str = MERKLE_ROOT_META_CF;
+    const NAME: &'static str = "merkle_root_meta";
 }
 impl TypedColumn for columns::MerkleRootMeta {
     type Type = MerkleRootMeta;
