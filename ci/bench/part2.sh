@@ -7,7 +7,7 @@ here="$(dirname "$0")"
 source "$here"/common.sh
 
 # Run sdk benches
-_ cargo +"$rust_nightly" bench --manifest-path sdk/Cargo.toml ${V:+--verbose} \
+_ cargo +"$rust_nightly" bench --manifest-path sdk/sdk/Cargo.toml ${V:+--verbose} \
   --features openssl-vendored -- -Z unstable-options --format=json | tee -a "$BENCH_FILE"
 
 # Run runtime benches

@@ -41,7 +41,7 @@ _ $cargoNightly build --release
 rm -f "$BENCH_FILE"
 
 # Run sdk benches
-_ $cargoNightly bench --manifest-path sdk/Cargo.toml ${V:+--verbose} \
+_ $cargoNightly bench --manifest-path sdk/sdk/Cargo.toml ${V:+--verbose} \
   --features openssl-vendored -- -Z unstable-options --format=json | tee -a "$BENCH_FILE"
 
 # Run runtime benches

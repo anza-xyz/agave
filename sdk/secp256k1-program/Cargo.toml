@@ -33,7 +33,7 @@ solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-msg = { workspace = true }
 solana-program-error = { workspace = true }
-solana-sdk = { path = ".." }
+solana-sdk = { path = "../sdk" }
 solana-secp256k1-program = { path = ".", features = ["dev-context-only-utils"] }
 solana-signer = { workspace = true }
 

@@ -109,7 +109,6 @@ members = [
     "rpc-test",
     "runtime",
     "runtime-transaction",
-    "sdk",
     "sdk/account",
     "sdk/account-info",
     "sdk/address-lookup-table-interface",
@@ -180,6 +179,7 @@ members = [
     "sdk/reserved-account-keys",
     "sdk/reward-info",
     "sdk/sanitize",
+    "sdk/sdk",
     "sdk/sdk-ids",
     "sdk/secp256k1-program",
     "sdk/secp256r1-program",
@@ -604,7 +604,7 @@ solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2
 solana-runtime = { path = "runtime", version = "=2.2.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=2.2.0" }
 solana-sbpf = "=0.9.0"
-solana-sdk = { path = "sdk", version = "=2.2.0" }
+solana-sdk = { path = "sdk/sdk", version = "=2.2.0" }
 solana-sdk-ids = { path = "sdk/sdk-ids", version = "=2.2.0" }
 solana-sdk-macro = { path = "sdk/macro", version = "=2.2.0" }
 solana-secp256k1-program = { path = "sdk/secp256k1-program", version = "=2.2.0" }
