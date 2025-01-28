@@ -6,7 +6,7 @@ ARG \
   RUST_NIGHTLY_VERSION= \
   GOLANG_VERSION=1.21.3 \
   NODE_MAJOR=18 \
-  SCCACHE_VERSION=v0.8.1 \
+  SCCACHE_VERSION=v0.9.1 \
   GRCOV_VERSION=v0.8.18
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -78,7 +78,9 @@ RUN \
   rustup component add llvm-tools-preview --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup target add wasm32-unknown-unknown && \
   cargo install cargo-audit && \
-  cargo install cargo-hack && \
+  # uncomment once the dcou-parition related patch is upstreamed...
+  # cargo install cargo-hack && \
+  cargo install --git https://github.com/anza-xyz/cargo-hack.git --rev 5e59c3ec6c661c02601487c0d4b2a2649fe06c9f cargo-hack && \
   cargo install cargo-sort && \
   cargo install mdbook && \
   cargo install mdbook-linkcheck && \
