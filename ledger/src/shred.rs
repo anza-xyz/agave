@@ -1459,7 +1459,7 @@ mod tests {
         const MAX_REFERENCE_TICK: u8 = ShredFlags::SHRED_TICK_REFERENCE_MASK.bits();
         for tick in 0..=u8::MAX {
             let flags = ShredFlags::from_reference_tick(tick);
-            assert!(flags.bits() == tick || flags.bits() == MAX_REFERENCE_TICK);
+            assert_eq!(flags.bits(), tick.min(MAX_REFERENCE_TICK));
         }
     }
 
