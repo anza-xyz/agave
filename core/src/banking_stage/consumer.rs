@@ -905,7 +905,7 @@ mod tests {
                 atomic::{AtomicBool, AtomicU64},
                 RwLock,
             },
-            thread::{sleep, Builder, JoinHandle},
+            thread::{Builder, JoinHandle},
             time::Duration,
         },
         transaction::MessageHash,
@@ -1973,7 +1973,6 @@ mod tests {
             blockstore.set_roots(std::iter::once(&bank.slot())).unwrap();
 
             let (transaction_status_sender, transaction_status_receiver) = unbounded();
-            let tss_exit = Arc::new(AtomicBool::new(false));
             let transaction_status_service = TransactionStatusService::new(
                 transaction_status_receiver,
                 Arc::new(AtomicU64::default()),
@@ -1981,7 +1980,7 @@ mod tests {
                 None,
                 blockstore.clone(),
                 false,
-                tss_exit.clone(),
+                Arc::new(AtomicBool::new(false)),
             );
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -1997,10 +1996,6 @@ mod tests {
             let _ = consumer.process_and_record_transactions(&bank, &transactions, 0);
 
             drop(consumer); // drop/disconnect transaction_status_sender
-
-            // Gracefully quiesce and shut down transaction status service.
-            sleep(Duration::from_secs(1));
-            tss_exit.store(true, Ordering::Relaxed);
             transaction_status_service.join().unwrap();
 
             let confirmed_block = blockstore.get_rooted_block(bank.slot(), false).unwrap();
@@ -2123,7 +2118,6 @@ mod tests {
             blockstore.set_roots(std::iter::once(&bank.slot())).unwrap();
 
             let (transaction_status_sender, transaction_status_receiver) = unbounded();
-            let tss_exit = Arc::new(AtomicBool::new(false));
             let transaction_status_service = TransactionStatusService::new(
                 transaction_status_receiver,
                 Arc::new(AtomicU64::default()),
@@ -2131,7 +2125,7 @@ mod tests {
                 None,
                 blockstore.clone(),
                 false,
-                tss_exit.clone(),
+                Arc::new(AtomicBool::new(false)),
             );
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -2147,10 +2141,6 @@ mod tests {
             let _ = consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()], 0);
 
             drop(consumer); // drop/disconnect transaction_status_sender
-
-            // Gracefully quiesce and shut down transaction status service.
-            sleep(Duration::from_secs(1));
-            tss_exit.store(true, Ordering::Relaxed);
             transaction_status_service.join().unwrap();
 
             let mut confirmed_block = blockstore.get_rooted_block(bank.slot(), false).unwrap();

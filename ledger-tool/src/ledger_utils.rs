@@ -51,8 +51,6 @@ use {
             atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
         },
-        thread::sleep,
-        time::Duration,
     },
     thiserror::Error,
 };
@@ -442,7 +440,6 @@ pub fn load_and_process_ledger(
     })
     .map_err(LoadAndProcessLedgerError::ProcessBlockstoreFromRoot);
 
-    sleep(Duration::from_secs(1));
     exit.store(true, Ordering::Relaxed);
     accounts_hash_verifier.join().unwrap();
     if let Some(service) = transaction_status_service {
