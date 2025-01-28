@@ -74,8 +74,6 @@ const BLOCKTIME_CF: &str = "blocktime";
 const PERF_SAMPLES_CF: &str = "perf_samples";
 /// Column family for BlockHeight
 const BLOCK_HEIGHT_CF: &str = "block_height";
-/// Column family for ProgramCosts
-const PROGRAM_COSTS_CF: &str = "program_costs";
 
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
@@ -1135,7 +1133,7 @@ impl TypedColumn for columns::BlockHeight {
 }
 
 impl ColumnName for columns::ProgramCosts {
-    const NAME: &'static str = PROGRAM_COSTS_CF;
+    const NAME: &'static str = "program_costs";
 }
 impl TypedColumn for columns::ProgramCosts {
     type Type = blockstore_meta::ProgramCost;
