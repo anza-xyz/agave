@@ -129,7 +129,15 @@ impl WorkersCache {
         None
     }
 
-    /// Try sending a batch of transactions to the worker for a given peer.
+    /// Attempts to send immediately a batch of transactions to the worker for a
+    /// given peer.
+    ///
+    /// This method returns immediately if the channel of worker corresponding
+    /// to this peer is full returning error [`WorkersCacheError::FullChannel`].
+    /// If it happens that the peer's worker is stopped, it returns
+    /// [`WorkersCacheError::ShutdownError`]. In case if the worker is not
+    /// stopped but it's channel is unexpectedly dropped, it returns
+    /// [`WorkersCacheError::ReceiverDropped`].
     pub fn try_send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
@@ -149,10 +157,14 @@ impl WorkersCache {
         let send_res = current_worker.try_send_transactions(txs_batch);
 
         if let Err(WorkersCacheError::ReceiverDropped) = send_res {
-            warn!(
+            debug!(
                 "Failed to deliver transaction batch for leader {}, drop batch.",
                 peer.ip()
             );
+            maybe_shutdown_worker(workers.pop(peer).map(|current_worker| ShutdownWorker {
+                leader: *peer,
+                worker: current_worker,
+            }));
         }
 
         send_res
@@ -166,7 +178,7 @@ impl WorkersCache {
         dead_code,
         reason = "This method will be used in the upcoming changes to implement optional backpressure on the sender."
     )]
-    pub(crate) async fn send_transactions_to_address(
+    pub async fn send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
         txs_batch: TransactionBatch,
@@ -183,14 +195,10 @@ impl WorkersCache {
             let send_res = current_worker.send_transactions(txs_batch).await;
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
                 // Remove the worker from the cache, if the peer has disconnected.
-                if let Some(current_worker) = workers.pop(peer) {
-                    // To avoid obscuring the error from send, ignore a possible
-                    // `TaskJoinFailure`.
-                    let close_result = current_worker.shutdown().await;
-                    if let Err(error) = close_result {
-                        error!("Error while closing worker: {error}.");
-                    }
-                }
+                maybe_shutdown_worker(workers.pop(peer).map(|current_worker| ShutdownWorker {
+                    leader: *peer,
+                    worker: current_worker,
+                }));
             }
 
             send_res

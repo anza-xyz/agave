@@ -91,8 +91,19 @@ pub struct ConnectionWorkersSchedulerConfig {
     pub leaders_fanout: Fanout,
 }
 
+/// The [`WorkersBroadcaster`] trait defines a customizable mechanism for
+/// sending transaction batches to workers corresponding to the provided list of
+/// addresses. Implementations of this trait are used by the
+/// [`ConnectionWorkersScheduler`] to distribute transactions to workers
+/// accordingly.
 #[async_trait]
 pub trait WorkersBroadcaster {
+    /// Sends a `transaction_batch` to workers associated with the given
+    /// `leaders` addresses.
+    ///
+    /// Returns error if a critical issue occurs, e.g. the implementation
+    /// encounters an unrecoverable error. In this case, it will trigger
+    /// stopping the scheduler and cleaning all the data.
     async fn send_to_workers(
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
@@ -100,6 +111,9 @@ pub trait WorkersBroadcaster {
     ) -> Result<(), ConnectionWorkersSchedulerError>;
 }
 
+/// [`NonblockingBroadcaster`] attempts to immediately send transactions to all
+/// the workers. If worker cannot accept transactions because it's channel is
+/// full, the transactions will not be sent to this worker.
 struct NonblockingBroadcaster;
 
 #[async_trait]
@@ -188,6 +202,8 @@ impl ConnectionWorkersScheduler {
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
         let mut send_stats_per_addr = SendTransactionStatsPerAddr::new();
 
+        let mut last_error = None;
+
         loop {
             let transaction_batch: TransactionBatch = tokio::select! {
                 recv_res = transaction_receiver.recv() => match recv_res {
@@ -224,13 +240,21 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            Broadcaster::send_to_workers(&mut workers, fanout_leaders, transaction_batch).await?;
+            if let Err(error) =
+                Broadcaster::send_to_workers(&mut workers, fanout_leaders, transaction_batch).await
+            {
+                last_error = Some(error);
+                break;
+            }
         }
 
         workers.shutdown().await;
 
         endpoint.close(0u32.into(), b"Closing connection");
         leader_updater.stop().await;
+        if let Some(error) = last_error {
+            return Err(error);
+        }
         Ok((send_stats_per_addr, transaction_receiver))
     }
 
