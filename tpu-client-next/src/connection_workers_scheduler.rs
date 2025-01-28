@@ -159,15 +159,13 @@ impl ConnectionWorkersScheduler {
     /// Starts the scheduler, which manages the distribution of transactions to
     /// the network's upcoming leaders.
     ///
-    /// Runs the main loop that handles worker scheduling and management for
-    /// connections. Returns the error quic statistics per connection address or
-    /// an error along with receiver for transactions. The receiver returned
-    /// back to the user because in some cases we need to re-utilize the same
-    /// receiver for the new scheduler. For example, this happens when the
-    /// identity for the validator is updated.
+    /// This method is a shorthand for
+    /// [`ConnectionWorkersScheduler::run_with_broadcaster`] using
+    /// [`NonblockingBroadcaster`] strategy.
     ///
-    /// Importantly, if some transactions were not delivered due to network
-    /// problems, they will not be retried when the problem is resolved.
+    /// Transactions that fail to be delivered to workers due to full channels
+    /// will be dropped. The same for transactions that failed to be delivered
+    /// over the network.
     pub async fn run(
         config: ConnectionWorkersSchedulerConfig,
         leader_updater: Box<dyn LeaderUpdater>,
@@ -183,6 +181,19 @@ impl ConnectionWorkersScheduler {
         .await
     }
 
+    /// Starts the scheduler, which manages the distribution of transactions to
+    /// the network's upcoming leaders. `Broadcaster` allows to customize the
+    /// way transactions are send to the leaders, see [`WorkersBroadcaster`].
+    ///
+    /// Runs the main loop that handles worker scheduling and management for
+    /// connections. Returns the error quic statistics per connection address or
+    /// an error along with receiver for transactions. The receiver returned
+    /// back to the user because in some cases we need to re-utilize the same
+    /// receiver for the new scheduler. For example, this happens when the
+    /// identity for the validator is updated.
+    ///
+    /// Importantly, if some transactions were not delivered due to network
+    /// problems, they will not be retried when the problem is resolved.
     pub async fn run_with_broadcaster<Broadcaster: WorkersBroadcaster>(
         ConnectionWorkersSchedulerConfig {
             bind,
