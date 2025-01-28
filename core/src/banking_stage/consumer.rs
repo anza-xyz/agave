@@ -1973,6 +1973,7 @@ mod tests {
             blockstore.set_roots(std::iter::once(&bank.slot())).unwrap();
 
             let (transaction_status_sender, transaction_status_receiver) = unbounded();
+            let tss_exit = Arc::new(AtomicBool::new(false));
             let transaction_status_service = TransactionStatusService::new(
                 transaction_status_receiver,
                 Arc::new(AtomicU64::default()),
@@ -1980,7 +1981,7 @@ mod tests {
                 None,
                 blockstore.clone(),
                 false,
-                Arc::new(AtomicBool::new(false)),
+                tss_exit.clone(),
             );
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -1996,7 +1997,8 @@ mod tests {
             let _ = consumer.process_and_record_transactions(&bank, &transactions, 0);
 
             drop(consumer); // drop/disconnect transaction_status_sender
-            transaction_status_service.join().unwrap();
+
+            transaction_status_service.quiesce_and_join_for_tests(tss_exit);
 
             let confirmed_block = blockstore.get_rooted_block(bank.slot(), false).unwrap();
             let actual_tx_results: Vec<_> = confirmed_block
@@ -2118,6 +2120,7 @@ mod tests {
             blockstore.set_roots(std::iter::once(&bank.slot())).unwrap();
 
             let (transaction_status_sender, transaction_status_receiver) = unbounded();
+            let tss_exit = Arc::new(AtomicBool::new(false));
             let transaction_status_service = TransactionStatusService::new(
                 transaction_status_receiver,
                 Arc::new(AtomicU64::default()),
@@ -2125,7 +2128,7 @@ mod tests {
                 None,
                 blockstore.clone(),
                 false,
-                Arc::new(AtomicBool::new(false)),
+                tss_exit.clone(),
             );
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -2141,7 +2144,8 @@ mod tests {
             let _ = consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()], 0);
 
             drop(consumer); // drop/disconnect transaction_status_sender
-            transaction_status_service.join().unwrap();
+
+            transaction_status_service.quiesce_and_join_for_tests(tss_exit);
 
             let mut confirmed_block = blockstore.get_rooted_block(bank.slot(), false).unwrap();
             assert_eq!(confirmed_block.transactions.len(), 1);
