@@ -82,8 +82,6 @@ const PERF_SAMPLES_CF: &str = "perf_samples";
 const BLOCK_HEIGHT_CF: &str = "block_height";
 /// Column family for ProgramCosts
 const PROGRAM_COSTS_CF: &str = "program_costs";
-/// Column family for optimistic slots
-const OPTIMISTIC_SLOTS_CF: &str = "optimistic_slots";
 
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
@@ -1341,7 +1339,7 @@ impl TypedColumn for columns::ErasureMeta {
 
 impl SlotColumn for columns::OptimisticSlots {}
 impl ColumnName for columns::OptimisticSlots {
-    const NAME: &'static str = OPTIMISTIC_SLOTS_CF;
+    const NAME: &'static str = "optimistic_slots";
 }
 impl TypedColumn for columns::OptimisticSlots {
     type Type = blockstore_meta::OptimisticSlotMetaVersioned;
