@@ -133,7 +133,7 @@ impl ShredFlags {
     /// SHRED_TICK_REFERENCE_MASK is comprised of only six bits whereas the
     /// reference_tick has 8 bits (u8). The reference_tick bits will saturate
     /// in the event that reference_tick > SHRED_TICK_REFERENCE_MASK
-    pub(crate) fn new_from_reference_tick(reference_tick: u8) -> Self {
+    pub(crate) fn from_reference_tick(reference_tick: u8) -> Self {
         Self::from_bits_retain(Self::SHRED_TICK_REFERENCE_MASK.bits().min(reference_tick))
     }
 }
@@ -1458,7 +1458,7 @@ mod tests {
     fn test_shred_flags_reference_tick_saturates() {
         const MAX_REFERENCE_TICK: u8 = ShredFlags::SHRED_TICK_REFERENCE_MASK.bits();
         for tick in 0..=u8::MAX {
-            let flags = ShredFlags::new_from_reference_tick(tick);
+            let flags = ShredFlags::from_reference_tick(tick);
             assert!(flags.bits() == tick || flags.bits() == MAX_REFERENCE_TICK);
         }
     }

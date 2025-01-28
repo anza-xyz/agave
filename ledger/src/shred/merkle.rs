@@ -1096,7 +1096,7 @@ pub(super) fn make_shreds_from_data(
             .checked_sub(parent_slot)
             .and_then(|offset| u16::try_from(offset).ok())
             .ok_or(Error::InvalidParentSlot { slot, parent_slot })?;
-        let flags = ShredFlags::new_from_reference_tick(reference_tick);
+        let flags = ShredFlags::from_reference_tick(reference_tick);
         DataShredHeader {
             parent_offset,
             flags,
