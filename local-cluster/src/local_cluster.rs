@@ -26,7 +26,9 @@ use {
             create_genesis_config_with_vote_accounts_and_cluster_type, GenesisConfigInfo,
             ValidatorVoteKeypairs,
         },
-        snapshot_config::SnapshotConfig,
+        snapshot_mode::{
+            SnapshotLoadConfig, SnapshotLoadOnlyModeConfig, SnapshotMode, SnapshotStorageConfig,
+        },
     },
     solana_sdk::{
         account::{Account, AccountSharedData},
@@ -70,7 +72,8 @@ use {
 };
 
 pub const DEFAULT_MINT_LAMPORTS: u64 = 10_000_000 * LAMPORTS_PER_SOL;
-const DUMMY_SNAPSHOT_CONFIG_PATH_MARKER: &str = "dummy";
+const DUMMY_SNAPSHOT_MODE_PATH_MARKER: &str = "dummy";
+
 
 pub struct ClusterConfig {
     /// The validator config that should be applied to every node in the cluster
@@ -178,14 +181,18 @@ impl LocalCluster {
         ];
         config.tower_storage = Arc::new(FileTowerStorage::new(ledger_path.to_path_buf()));
 
-        let snapshot_config = &mut config.snapshot_config;
-        let dummy: PathBuf = DUMMY_SNAPSHOT_CONFIG_PATH_MARKER.into();
-        if snapshot_config.full_snapshot_archives_dir == dummy {
-            snapshot_config.full_snapshot_archives_dir = ledger_path.to_path_buf();
+        let snapshot_mode = &mut config.snapshot_mode;
+        let mut snapshot_load_config = snapshot_mode.get_snapshot_load_config();
+
+        let dummy: PathBuf = DUMMY_SNAPSHOT_MODE_PATH_MARKER.into();
+        if snapshot_load_config.full_snapshot_config.archives_dir == dummy {
+            snapshot_load_config.full_snapshot_config.archives_dir = ledger_path.to_path_buf();
         }
-        if snapshot_config.bank_snapshots_dir == dummy {
-            snapshot_config.bank_snapshots_dir = ledger_path.join("snapshot");
+        if snapshot_load_config.bank_snapshots_dir == dummy {
+            snapshot_load_config.bank_snapshots_dir = ledger_path.join("snapshot");
         }
+
+        config.snapshot_mode = snapshot_mode.replacing(snapshot_load_config);
     }
 
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
@@ -929,15 +936,20 @@ impl LocalCluster {
         }
     }
 
-    pub fn create_dummy_load_only_snapshot_config() -> SnapshotConfig {
-        // DUMMY_SNAPSHOT_CONFIG_PATH_MARKER will be replaced with real value as part of cluster
+    pub fn create_dummy_load_only_snapshot_mode() -> SnapshotMode {
+        // DUMMY_SNAPSHOT_MODE_PATH_MARKER will be replaced with real value as part of cluster
         // node lifecycle.
         // There must be some place holder for now...
-        SnapshotConfig {
-            full_snapshot_archives_dir: DUMMY_SNAPSHOT_CONFIG_PATH_MARKER.into(),
-            bank_snapshots_dir: DUMMY_SNAPSHOT_CONFIG_PATH_MARKER.into(),
-            ..SnapshotConfig::new_load_only()
-        }
+        SnapshotMode::LoadOnly(SnapshotLoadOnlyModeConfig {
+            load_config: SnapshotLoadConfig {
+                full_snapshot_config: SnapshotStorageConfig {
+                    archives_dir: DUMMY_SNAPSHOT_MODE_PATH_MARKER.into(),
+                    ..SnapshotStorageConfig::default_full_snapshot_config()
+                },
+                bank_snapshots_dir: DUMMY_SNAPSHOT_MODE_PATH_MARKER.into(),
+                ..SnapshotLoadConfig::default_load_and_genarate()
+            },
+        })
     }
 
     fn build_tpu_client(

@@ -1,6 +1,7 @@
 //! The `validator` module hosts all the validator microservices.
 
 pub use solana_perf::report_target_features;
+use solana_runtime::snapshot_mode::SnapshotMode;
 use {
     crate::{
         accounts_hash_verifier::AccountsHashVerifier,
@@ -107,7 +108,6 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
-        snapshot_config::SnapshotConfig,
         snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
@@ -256,7 +256,7 @@ pub struct ValidatorConfig {
     pub geyser_plugin_always_enabled: bool,
     pub rpc_addrs: Option<(SocketAddr, SocketAddr)>, // (JsonRpc, JsonRpcPubSub)
     pub pubsub_config: PubSubConfig,
-    pub snapshot_config: SnapshotConfig,
+    pub snapshot_mode: SnapshotMode,
     pub max_ledger_shreds: Option<u64>,
     pub blockstore_options: BlockstoreOptions,
     pub broadcast_stage_type: BroadcastStageType,
@@ -333,7 +333,7 @@ impl Default for ValidatorConfig {
             geyser_plugin_always_enabled: false,
             rpc_addrs: None,
             pubsub_config: PubSubConfig::default(),
-            snapshot_config: SnapshotConfig::new_load_only(),
+            snapshot_mode: SnapshotMode::new_load_only(),
             broadcast_stage_type: BroadcastStageType::Standard,
             turbine_disabled: Arc::<AtomicBool>::default(),
             fixed_leader_schedule: None,
@@ -713,15 +713,26 @@ impl Validator {
         timer.stop();
         info!("Cleaning accounts paths done. {timer}");
 
-        snapshot_utils::purge_incomplete_bank_snapshots(&config.snapshot_config.bank_snapshots_dir);
+        snapshot_utils::purge_incomplete_bank_snapshots(
+            &config
+                .snapshot_mode
+                .get_snapshot_load_config()
+                .bank_snapshots_dir,
+        );
         snapshot_utils::purge_old_bank_snapshots_at_startup(
-            &config.snapshot_config.bank_snapshots_dir,
+            &config
+                .snapshot_mode
+                .get_snapshot_load_config()
+                .bank_snapshots_dir,
         );
 
         info!("Cleaning orphaned account snapshot directories..");
         let mut timer = Measure::start("clean_orphaned_account_snapshot_dirs");
         clean_orphaned_account_snapshot_dirs(
-            &config.snapshot_config.bank_snapshots_dir,
+            &config
+                .snapshot_mode
+                .get_snapshot_load_config()
+                .bank_snapshots_dir,
             &config.account_snapshot_paths,
         )
         .context("failed to clean orphaned account snapshot directories")?;
@@ -885,20 +896,20 @@ impl Validator {
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         let cluster_info = Arc::new(cluster_info);
 
-        assert!(is_snapshot_config_valid(
-            &config.snapshot_config,
+        assert!(is_snapshot_mode_valid(
+            &config.snapshot_mode,
             config.accounts_hash_interval_slots,
         ));
 
         let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-        let snapshot_packager_service = if config.snapshot_config.should_generate_snapshots() {
+        let snapshot_packager_service = if config.snapshot_mode.should_generate_snapshots() {
             let enable_gossip_push = true;
             let snapshot_packager_service = SnapshotPackagerService::new(
                 pending_snapshot_packages.clone(),
                 starting_snapshot_hashes,
                 exit.clone(),
                 cluster_info.clone(),
-                config.snapshot_config.clone(),
+                config.snapshot_mode.clone(),
                 enable_gossip_push,
             );
             Some(snapshot_packager_service)
@@ -912,14 +923,14 @@ impl Validator {
             accounts_package_receiver,
             pending_snapshot_packages,
             exit.clone(),
-            config.snapshot_config.clone(),
+            config.snapshot_mode.clone(),
         );
 
         let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
         let accounts_background_request_sender =
             AbsRequestSender::new(snapshot_request_sender.clone());
         let snapshot_request_handler = SnapshotRequestHandler {
-            snapshot_config: config.snapshot_config.clone(),
+            snapshot_mode: config.snapshot_mode.clone(),
             snapshot_request_sender,
             snapshot_request_receiver,
             accounts_package_sender,
@@ -1161,7 +1172,7 @@ impl Validator {
             let json_rpc_service = JsonRpcService::new(
                 rpc_addr,
                 config.rpc_config.clone(),
-                Some(config.snapshot_config.clone()),
+                Some(config.snapshot_mode.clone()),
                 bank_forks.clone(),
                 block_commitment_cache.clone(),
                 blockstore.clone(),
@@ -1543,7 +1554,7 @@ impl Validator {
                 wen_restart_repair_slots: wen_restart_repair_slots.clone(),
                 wait_for_supermajority_threshold_percent:
                     WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT,
-                snapshot_config: config.snapshot_config.clone(),
+                snapshot_mode: config.snapshot_mode.clone(),
                 accounts_background_request_sender: accounts_background_request_sender.clone(),
                 genesis_config_hash: genesis_config.hash(),
                 exit: exit.clone(),
@@ -2068,7 +2079,7 @@ fn load_blockstore(
             genesis_config,
             &blockstore,
             config.account_paths.clone(),
-            Some(&config.snapshot_config),
+            Some(&config.snapshot_mode),
             &process_options,
             transaction_history_services
                 .cache_block_meta_sender
@@ -2092,7 +2103,7 @@ fn load_blockstore(
     leader_schedule_cache.set_fixed_leader_schedule(config.fixed_leader_schedule.clone());
     {
         let mut bank_forks = bank_forks.write().unwrap();
-        bank_forks.set_snapshot_config(Some(config.snapshot_config.clone()));
+        bank_forks.set_snapshot_mode(Some(config.snapshot_mode.clone()));
         bank_forks.set_accounts_hash_interval_slots(config.accounts_hash_interval_slots);
     }
 
@@ -2300,13 +2311,18 @@ fn maybe_warp_slot(
             .map_err(|err| err.to_string())?;
         leader_schedule_cache.set_root(&bank_forks.root_bank());
 
+        let snapshot_load_config = &config.snapshot_mode.get_snapshot_load_config();
         let full_snapshot_archive_info = match snapshot_bank_utils::bank_to_full_snapshot_archive(
             ledger_path,
             &bank_forks.root_bank(),
             None,
-            &config.snapshot_config.full_snapshot_archives_dir,
-            &config.snapshot_config.incremental_snapshot_archives_dir,
-            config.snapshot_config.archive_format,
+            &snapshot_load_config.full_snapshot_config.archives_dir,
+            &snapshot_load_config
+                .incremental_snapshot_config
+                .clone()
+                .unwrap()
+                .archives_dir,
+            snapshot_load_config.archive_format,
         ) {
             Ok(archive_info) => archive_info,
             Err(e) => return Err(format!("Unable to create snapshot: {e}")),
@@ -2756,18 +2772,23 @@ fn cleanup_accounts_paths(config: &ValidatorConfig) {
     }
 }
 
-pub fn is_snapshot_config_valid(
-    snapshot_config: &SnapshotConfig,
+pub fn is_snapshot_mode_valid(
+    snapshot_mode: &SnapshotMode,
     accounts_hash_interval_slots: Slot,
 ) -> bool {
     // if the snapshot config is configured to *not* take snapshots, then it is valid
-    if !snapshot_config.should_generate_snapshots() {
+    if !snapshot_mode.should_generate_snapshots() {
         return true;
     }
+    let snapshot_generate_config = snapshot_mode.get_snapshot_generate_config().unwrap();
 
-    let full_snapshot_interval_slots = snapshot_config.full_snapshot_archive_interval_slots;
-    let incremental_snapshot_interval_slots =
-        snapshot_config.incremental_snapshot_archive_interval_slots;
+    let full_snapshot_interval_slots = snapshot_generate_config
+        .full_snapshot_archive_interval_slots
+        .get() as u64;
+    let incremental_snapshot_interval_slots = snapshot_generate_config
+        .incremental_snapshot_archive_interval_slots
+        .unwrap()
+        .get() as u64;
 
     let is_incremental_config_valid =
         if incremental_snapshot_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
@@ -2794,9 +2815,12 @@ mod tests {
             blockstore, create_new_tmp_ledger, genesis_utils::create_genesis_config_with_leader,
             get_tmp_ledger_path_auto_delete,
         },
+        solana_runtime::snapshot_mode::{
+            SnapshotGenerateConfig, SnapshotLoadAndGenerateModeConfig, SnapshotLoadConfig,
+        },
         solana_sdk::{genesis_config::create_genesis_config, poh_config::PohConfig},
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
-        std::{fs::remove_dir_all, thread, time::Duration},
+        std::{fs::remove_dir_all, num::NonZero, thread, time::Duration},
     };
 
     #[test]
@@ -3154,98 +3178,93 @@ mod tests {
 
     #[test]
     fn test_interval_check() {
-        fn new_snapshot_config(
+        fn new_snapshot_mode(
             full_snapshot_archive_interval_slots: Slot,
             incremental_snapshot_archive_interval_slots: Slot,
-        ) -> SnapshotConfig {
-            SnapshotConfig {
-                full_snapshot_archive_interval_slots,
-                incremental_snapshot_archive_interval_slots,
-                ..SnapshotConfig::default()
-            }
+        ) -> SnapshotMode {
+            SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+                load_config: SnapshotLoadConfig::default_load_and_genarate(),
+                generate_config: SnapshotGenerateConfig {
+                    full_snapshot_archive_interval_slots: NonZero::new(
+                        full_snapshot_archive_interval_slots as usize,
+                    )
+                    .unwrap(),
+                    incremental_snapshot_archive_interval_slots: NonZero::new(
+                        incremental_snapshot_archive_interval_slots as usize,
+                    ),
+                    ..SnapshotGenerateConfig::default_generate_config()
+                },
+            })
         }
 
-        assert!(is_snapshot_config_valid(
-            &new_snapshot_config(300, 200),
-            100
-        ));
+        assert!(is_snapshot_mode_valid(&new_snapshot_mode(300, 200), 100));
 
         let default_accounts_hash_interval =
             snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS;
-        assert!(is_snapshot_config_valid(
-            &new_snapshot_config(
+        assert!(is_snapshot_mode_valid(
+            &new_snapshot_mode(
                 snapshot_bank_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
                 snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS
             ),
             default_accounts_hash_interval,
         ));
-        assert!(is_snapshot_config_valid(
-            &new_snapshot_config(
+        assert!(is_snapshot_mode_valid(
+            &new_snapshot_mode(
                 snapshot_bank_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
                 DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
             ),
             default_accounts_hash_interval
         ));
-        assert!(is_snapshot_config_valid(
-            &new_snapshot_config(
+        assert!(is_snapshot_mode_valid(
+            &new_snapshot_mode(
                 snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
                 DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
             ),
             default_accounts_hash_interval
         ));
-        assert!(is_snapshot_config_valid(
-            &new_snapshot_config(
+        assert!(is_snapshot_mode_valid(
+            &new_snapshot_mode(
                 DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
                 DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
             ),
             Slot::MAX
         ));
 
-        assert!(!is_snapshot_config_valid(&new_snapshot_config(0, 100), 100));
-        assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 0), 100));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(42, 100),
-            100
-        ));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(100, 42),
-            100
-        ));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(100, 100),
-            100
-        ));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(100, 200),
-            100
-        ));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(444, 200),
-            100
-        ));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(400, 222),
-            100
-        ));
+        assert!(!is_snapshot_mode_valid(&new_snapshot_mode(0, 100), 100));
+        assert!(!is_snapshot_mode_valid(&new_snapshot_mode(100, 0), 100));
+        assert!(!is_snapshot_mode_valid(&new_snapshot_mode(42, 100), 100));
+        assert!(!is_snapshot_mode_valid(&new_snapshot_mode(100, 42), 100));
+        assert!(!is_snapshot_mode_valid(&new_snapshot_mode(100, 100), 100));
+        assert!(!is_snapshot_mode_valid(&new_snapshot_mode(100, 200), 100));
+        assert!(!is_snapshot_mode_valid(&new_snapshot_mode(444, 200), 100));
+        assert!(!is_snapshot_mode_valid(&new_snapshot_mode(400, 222), 100));
 
-        assert!(is_snapshot_config_valid(
-            &SnapshotConfig::new_load_only(),
+        assert!(is_snapshot_mode_valid(&SnapshotMode::new_load_only(), 100));
+        assert!(is_snapshot_mode_valid(
+            &SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+                load_config: SnapshotLoadConfig::default_load_and_genarate(),
+                generate_config: SnapshotGenerateConfig {
+                    full_snapshot_archive_interval_slots: NonZero::new(41 as usize).unwrap(),
+                    incremental_snapshot_archive_interval_slots: NonZero::new(37 as usize),
+                    ..SnapshotGenerateConfig::default_generate_config()
+                }
+            }),
             100
         ));
-        assert!(is_snapshot_config_valid(
-            &SnapshotConfig {
-                full_snapshot_archive_interval_slots: 41,
-                incremental_snapshot_archive_interval_slots: 37,
-                ..SnapshotConfig::new_load_only()
-            },
-            100
-        ));
-        assert!(is_snapshot_config_valid(
-            &SnapshotConfig {
-                full_snapshot_archive_interval_slots: DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-                incremental_snapshot_archive_interval_slots: DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-                ..SnapshotConfig::new_load_only()
-            },
+        assert!(is_snapshot_mode_valid(
+            &SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+                load_config: SnapshotLoadConfig::default_load_and_genarate(),
+                generate_config: SnapshotGenerateConfig {
+                    full_snapshot_archive_interval_slots: NonZero::new(
+                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL as usize
+                    )
+                    .unwrap(),
+                    incremental_snapshot_archive_interval_slots: NonZero::new(
+                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL as usize
+                    ),
+                    ..SnapshotGenerateConfig::default_generate_config()
+                }
+            }),
             100
         ));
     }

@@ -37,7 +37,10 @@ use {
         bank_forks::BankForks,
         genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
         runtime_config::RuntimeConfig,
-        snapshot_config::SnapshotConfig,
+        snapshot_mode::{
+            SnapshotGenerateConfig, SnapshotLoadAndGenerateModeConfig, SnapshotLoadConfig,
+            SnapshotMode, SnapshotStorageConfig,
+        },
     },
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
@@ -64,6 +67,7 @@ use {
         fs::{self, remove_dir_all, File},
         io::Read,
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        num::NonZero,
         path::{Path, PathBuf},
         str::FromStr,
         sync::{Arc, RwLock},
@@ -1010,14 +1014,25 @@ impl TestValidator {
                     .0,
             ],
             run_verification: false, // Skip PoH verification of ledger on startup for speed
-            snapshot_config: SnapshotConfig {
-                full_snapshot_archive_interval_slots: 100,
-                incremental_snapshot_archive_interval_slots: Slot::MAX,
-                bank_snapshots_dir: ledger_path.join("snapshot"),
-                full_snapshot_archives_dir: ledger_path.to_path_buf(),
-                incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
-                ..SnapshotConfig::default()
-            },
+            snapshot_mode: SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+                load_config: SnapshotLoadConfig {
+                    full_snapshot_config: SnapshotStorageConfig {
+                        archives_dir: ledger_path.to_path_buf(),
+                        ..SnapshotStorageConfig::default_full_snapshot_config()
+                    },
+                    incremental_snapshot_config: Some(SnapshotStorageConfig {
+                        archives_dir: ledger_path.to_path_buf(),
+                        ..SnapshotStorageConfig::default_incremental_snapshot_config()
+                    }),
+                    bank_snapshots_dir: ledger_path.join("snapshot"),
+                    ..SnapshotLoadConfig::default_load_and_genarate()
+                },
+                generate_config: SnapshotGenerateConfig {
+                    full_snapshot_archive_interval_slots: NonZero::new(100 as usize).unwrap(),
+                    incremental_snapshot_archive_interval_slots: NonZero::new(Slot::MAX as usize),
+                    ..SnapshotGenerateConfig::default_generate_config()
+                },
+            }),
             warp_slot: config.warp_slot,
             validator_exit: config.validator_exit.clone(),
             max_ledger_shreds: config.max_ledger_shreds,

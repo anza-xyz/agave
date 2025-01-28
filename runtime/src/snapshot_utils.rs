@@ -9,8 +9,8 @@ use {
             SnapshotArchiveInfoGetter,
         },
         snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
+        snapshot_mode::SnapshotMode,
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::snapshot_storage_rebuilder::{
             RebuiltSnapshotStorage, SnapshotStorageRebuilder,
@@ -693,21 +693,23 @@ pub fn read_full_snapshot_slot_file(bank_snapshot_dir: impl AsRef<Path>) -> IoRe
 /// And if we're generating snapshots (e.g. running a normal validator), then
 /// the full snapshot file's slot must match the highest full snapshot archive's.
 pub fn get_highest_loadable_bank_snapshot(
-    snapshot_config: &SnapshotConfig,
+    snapshot_mode: &SnapshotMode,
 ) -> Option<BankSnapshotInfo> {
+    let snapshot_load_config = snapshot_mode.get_snapshot_load_config();
     let highest_bank_snapshot =
-        get_highest_bank_snapshot_post(&snapshot_config.bank_snapshots_dir)?;
+        get_highest_bank_snapshot_post(&snapshot_load_config.bank_snapshots_dir)?;
 
     // If we're *not* generating snapshots, e.g. running ledger-tool, then we *can* load
     // this bank snapshot, and we do not need to check for anything else.
-    if !snapshot_config.should_generate_snapshots() {
+    if !snapshot_mode.should_generate_snapshots() {
         return Some(highest_bank_snapshot);
     }
 
     // Otherwise, the bank snapshot's full snapshot slot *must* be the same as
     // the highest full snapshot archive's slot.
-    let highest_full_snapshot_archive_slot =
-        get_highest_full_snapshot_archive_slot(&snapshot_config.full_snapshot_archives_dir)?;
+    let highest_full_snapshot_archive_slot = get_highest_full_snapshot_archive_slot(
+        &snapshot_load_config.full_snapshot_config.archives_dir,
+    )?;
     let full_snapshot_file_slot =
         read_full_snapshot_slot_file(&highest_bank_snapshot.snapshot_dir).ok()?;
     (full_snapshot_file_slot == highest_full_snapshot_archive_slot).then_some(highest_bank_snapshot)
@@ -744,7 +746,7 @@ pub fn remove_tmp_snapshot_archives(snapshot_archives_dir: impl AsRef<Path>) {
 /// Serializes and archives a snapshot package
 pub fn serialize_and_archive_snapshot_package(
     snapshot_package: SnapshotPackage,
-    snapshot_config: &SnapshotConfig,
+    snapshot_mode: &SnapshotMode,
 ) -> Result<SnapshotArchiveInfo> {
     let SnapshotPackage {
         snapshot_kind,
@@ -763,9 +765,10 @@ pub fn serialize_and_archive_snapshot_package(
         enqueued: _,
     } = snapshot_package;
 
+    let snapshot_load_config = snapshot_mode.get_snapshot_load_config();
     let bank_snapshot_info = serialize_snapshot(
-        &snapshot_config.bank_snapshots_dir,
-        snapshot_config.snapshot_version,
+        &snapshot_load_config.bank_snapshots_dir,
+        snapshot_load_config.snapshot_version,
         snapshot_storages.as_slice(),
         status_cache_slot_deltas.as_slice(),
         bank_fields_to_serialize,
@@ -791,21 +794,24 @@ pub fn serialize_and_archive_snapshot_package(
 
     let snapshot_archive_path = match snapshot_package.snapshot_kind {
         SnapshotKind::FullSnapshot => build_full_snapshot_archive_path(
-            &snapshot_config.full_snapshot_archives_dir,
+            &snapshot_load_config.full_snapshot_config.archives_dir,
             snapshot_package.slot,
             &snapshot_package.hash,
-            snapshot_config.archive_format,
+            snapshot_load_config.archive_format,
         ),
         SnapshotKind::IncrementalSnapshot(incremental_snapshot_base_slot) => {
             // After the snapshot has been serialized, it is now safe (and required) to prune all
             // the storages that are *not* to be archived for this incremental snapshot.
             snapshot_storages.retain(|storage| storage.slot() > incremental_snapshot_base_slot);
             build_incremental_snapshot_archive_path(
-                &snapshot_config.incremental_snapshot_archives_dir,
+                &snapshot_load_config
+                    .incremental_snapshot_config
+                    .unwrap()
+                    .archives_dir, // FIXME: Should this be unwrapped?
                 incremental_snapshot_base_slot,
                 snapshot_package.slot,
                 &snapshot_package.hash,
-                snapshot_config.archive_format,
+                snapshot_load_config.archive_format,
             )
         }
     };
@@ -817,7 +823,7 @@ pub fn serialize_and_archive_snapshot_package(
         snapshot_storages.as_slice(),
         &bank_snapshot_info.snapshot_dir,
         snapshot_archive_path,
-        snapshot_config.archive_format,
+        snapshot_load_config.archive_format,
     )?;
 
     Ok(snapshot_archive_info)

@@ -41,7 +41,7 @@ use {
         snapshot_bank_utils::{
             bank_to_full_snapshot_archive, bank_to_incremental_snapshot_archive,
         },
-        snapshot_config::SnapshotConfig,
+        snapshot_mode::SnapshotMode,
         snapshot_utils::{
             get_highest_full_snapshot_archive_slot, get_highest_incremental_snapshot_archive_slot,
             purge_all_bank_snapshots,
@@ -473,7 +473,7 @@ fn check_slot_smaller_than_intended_snapshot_slot(
 // when we restart from the snapshot bank on my_heaviest_fork_slot will become root.
 pub(crate) fn generate_snapshot(
     bank_forks: Arc<RwLock<BankForks>>,
-    snapshot_config: &SnapshotConfig,
+    snapshot_mode: &SnapshotMode,
     accounts_background_request_sender: &AbsRequestSender,
     genesis_config_hash: Hash,
     my_heaviest_fork_slot: Slot,
@@ -512,12 +512,15 @@ pub(crate) fn generate_snapshot(
     // EAH calculation to finish. So if we trigger another EAH when generating snapshots
     // we won't hit a panic.
     let _ = new_root_bank.get_epoch_accounts_hash_to_serialize();
-    let mut directory = &snapshot_config.full_snapshot_archives_dir;
+    let mut directory = &snapshot_mode
+        .get_snapshot_load_config()
+        .full_snapshot_config
+        .archives_dir;
     // Calculate the full_snapshot_slot an incremental snapshot should depend on. If the
     // validator is configured not the generate snapshot, it will only have the initial
     // snapshot on disk, which might be too old to generate an incremental snapshot from.
     // In this case we also set full_snapshot_slot to None.
-    let full_snapshot_slot = if snapshot_config.should_generate_snapshots() {
+    let full_snapshot_slot = if snapshot_mode.should_generate_snapshots() {
         get_highest_full_snapshot_archive_slot(directory)
     } else {
         None
@@ -536,7 +539,14 @@ pub(crate) fn generate_snapshot(
             my_heaviest_fork_slot,
             directory,
         )?;
-        directory = &snapshot_config.incremental_snapshot_archives_dir;
+
+        let snapshot_incremental_archives_dir = &snapshot_mode
+            .get_snapshot_load_config()
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_dir;
+
+        directory = snapshot_incremental_archives_dir;
         if let Some(incremental_snapshot_slot) =
             get_highest_incremental_snapshot_archive_slot(directory, full_snapshot_slot)
         {
@@ -546,14 +556,15 @@ pub(crate) fn generate_snapshot(
                 directory,
             )?;
         }
+        let snapshot_load_config = &snapshot_mode.get_snapshot_load_config();
         bank_to_incremental_snapshot_archive(
-            &snapshot_config.bank_snapshots_dir,
+            &snapshot_mode.get_snapshot_load_config().bank_snapshots_dir,
             &new_root_bank,
             full_snapshot_slot,
-            Some(snapshot_config.snapshot_version),
-            &snapshot_config.full_snapshot_archives_dir,
-            &snapshot_config.incremental_snapshot_archives_dir,
-            snapshot_config.archive_format,
+            Some(snapshot_mode.get_snapshot_load_config().snapshot_version),
+            &snapshot_load_config.full_snapshot_config.archives_dir,
+            snapshot_incremental_archives_dir,
+            snapshot_load_config.archive_format,
         )?
         .path()
         .display()
@@ -562,13 +573,19 @@ pub(crate) fn generate_snapshot(
         info!(
             "Can't find full snapshot, generating full snapshot for slot: {my_heaviest_fork_slot}"
         );
+
+        let snapshot_load_config = &snapshot_mode.get_snapshot_load_config();
         bank_to_full_snapshot_archive(
-            &snapshot_config.bank_snapshots_dir,
+            &snapshot_load_config.bank_snapshots_dir,
             &new_root_bank,
-            Some(snapshot_config.snapshot_version),
-            &snapshot_config.full_snapshot_archives_dir,
-            &snapshot_config.incremental_snapshot_archives_dir,
-            snapshot_config.archive_format,
+            Some(snapshot_load_config.snapshot_version),
+            &snapshot_load_config.full_snapshot_config.archives_dir,
+            &snapshot_load_config
+                .incremental_snapshot_config
+                .clone()
+                .unwrap()
+                .archives_dir,
+            snapshot_load_config.archive_format,
         )?
         .path()
         .display()
@@ -578,7 +595,7 @@ pub(crate) fn generate_snapshot(
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
     info!("wen_restart snapshot generated on {new_snapshot_path} base slot {full_snapshot_slot:?}");
     // We might have bank snapshots past the my_heaviest_fork_slot, we need to purge them.
-    purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
+    purge_all_bank_snapshots(&snapshot_mode.get_snapshot_load_config().bank_snapshots_dir);
     Ok(GenerateSnapshotRecord {
         path: new_snapshot_path,
         slot: my_heaviest_fork_slot,
@@ -989,7 +1006,7 @@ pub struct WenRestartConfig {
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
     pub wait_for_supermajority_threshold_percent: u64,
-    pub snapshot_config: SnapshotConfig,
+    pub snapshot_mode: SnapshotMode,
     pub accounts_background_request_sender: AbsRequestSender,
     pub genesis_config_hash: Hash,
     pub exit: Arc<AtomicBool>,
@@ -1100,7 +1117,7 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                     Some(record) => record,
                     None => generate_snapshot(
                         config.bank_forks.clone(),
-                        &config.snapshot_config,
+                        &config.snapshot_mode,
                         &config.accounts_background_request_sender,
                         config.genesis_config_hash,
                         my_heaviest_fork_slot,
@@ -1448,8 +1465,11 @@ mod tests {
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
             snapshot_bank_utils::bank_to_full_snapshot_archive,
-            snapshot_config::SnapshotUsage,
             snapshot_hash::SnapshotHash,
+            snapshot_mode::{
+                SnapshotGenerateConfig, SnapshotLoadAndGenerateModeConfig, SnapshotLoadConfig,
+                SnapshotMode, SnapshotStorageConfig,
+            },
             snapshot_utils::build_incremental_snapshot_archive_path,
         },
         solana_signer::Signer,
@@ -1702,7 +1722,7 @@ mod tests {
             bank_forks: test_state.bank_forks.clone(),
             wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
             wait_for_supermajority_threshold_percent: 80,
-            snapshot_config: SnapshotConfig::default(),
+            snapshot_mode: SnapshotMode::default(),
             accounts_background_request_sender: AbsRequestSender::default(),
             genesis_config_hash: test_state.genesis_config_hash,
             exit: exit.clone(),
@@ -1738,28 +1758,44 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_config = SnapshotConfig {
-            bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
-            full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
-            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
-                .as_ref()
-                .to_path_buf(),
-            ..Default::default()
-        };
+
+        let snapshot_mode = SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+            load_config: SnapshotLoadConfig {
+                full_snapshot_config: SnapshotStorageConfig {
+                    archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
+                    ..SnapshotStorageConfig::default_full_snapshot_config()
+                },
+                incremental_snapshot_config: Some(SnapshotStorageConfig {
+                    archives_dir: incremental_snapshot_archives_dir.as_ref().to_path_buf(),
+                    ..SnapshotStorageConfig::default_incremental_snapshot_config()
+                }),
+                bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
+                ..SnapshotLoadConfig::default_load_and_genarate()
+            },
+            generate_config: SnapshotGenerateConfig::default_generate_config(),
+        });
+
+        let load_config = snapshot_mode.get_snapshot_load_config();
+
         test_state
             .bank_forks
             .write()
             .unwrap()
-            .set_snapshot_config(Some(snapshot_config.clone()));
+            .set_snapshot_mode(Some(snapshot_mode.clone()));
         let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
         // Trigger full snapshot generation on the old root bank.
         assert!(bank_to_full_snapshot_archive(
-            snapshot_config.bank_snapshots_dir.clone(),
+            load_config.bank_snapshots_dir.clone(),
             &old_root_bank,
-            Some(snapshot_config.snapshot_version),
-            snapshot_config.full_snapshot_archives_dir.clone(),
-            snapshot_config.incremental_snapshot_archives_dir.clone(),
-            snapshot_config.archive_format,
+            Some(load_config.snapshot_version),
+            load_config.full_snapshot_config.archives_dir.clone(),
+            load_config
+                .incremental_snapshot_config
+                .clone()
+                .unwrap()
+                .archives_dir
+                .clone(),
+            load_config.archive_format,
         )
         .is_ok());
 
@@ -1773,7 +1809,7 @@ mod tests {
             bank_forks: test_state.bank_forks.clone(),
             wen_restart_repair_slots: wen_restart_repair_slots.clone(),
             wait_for_supermajority_threshold_percent: 80,
-            snapshot_config,
+            snapshot_mode,
             accounts_background_request_sender: AbsRequestSender::default(),
             genesis_config_hash: test_state.genesis_config_hash,
             exit: exit.clone(),
@@ -2127,7 +2163,7 @@ mod tests {
                 bank_forks: test_state.bank_forks,
                 wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
                 wait_for_supermajority_threshold_percent: 80,
-                snapshot_config: SnapshotConfig::default(),
+                snapshot_mode: SnapshotMode::default(),
                 accounts_background_request_sender: AbsRequestSender::default(),
                 genesis_config_hash: test_state.genesis_config_hash,
                 exit: Arc::new(AtomicBool::new(false)),
@@ -3222,15 +3258,21 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_config = SnapshotConfig {
-            bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
-            full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
-            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
-                .as_ref()
-                .to_path_buf(),
-            usage: SnapshotUsage::LoadAndGenerate,
-            ..Default::default()
-        };
+        let snapshot_mode = SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+            load_config: SnapshotLoadConfig {
+                full_snapshot_config: SnapshotStorageConfig {
+                    archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
+                    ..SnapshotStorageConfig::default_full_snapshot_config()
+                },
+                incremental_snapshot_config: Some(SnapshotStorageConfig {
+                    archives_dir: incremental_snapshot_archives_dir.as_ref().to_path_buf(),
+                    ..SnapshotStorageConfig::default_incremental_snapshot_config()
+                }),
+                bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
+                ..SnapshotLoadConfig::default_load_and_genarate()
+            },
+            generate_config: SnapshotGenerateConfig::default_generate_config(),
+        });
         let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
         let old_root_slot = old_root_bank.slot();
         let new_root_slot = test_state.last_voted_fork_slots[1];
@@ -3250,12 +3292,12 @@ mod tests {
             .bank_forks
             .write()
             .unwrap()
-            .set_snapshot_config(Some(snapshot_config.clone()));
+            .set_snapshot_mode(Some(snapshot_mode.clone()));
         // We don't have any full snapshot, so if we call generate_snapshot() on the old
         // root bank now, it should generate a full snapshot.
         let generated_record = generate_snapshot(
             test_state.bank_forks.clone(),
-            &snapshot_config,
+            &snapshot_mode,
             &AbsRequestSender::default(),
             test_state.genesis_config_hash,
             old_root_slot,
@@ -3263,14 +3305,16 @@ mod tests {
         .unwrap();
         assert!(Path::new(&generated_record.path).exists());
         assert!(generated_record.path.starts_with(
-            snapshot_config
-                .full_snapshot_archives_dir
+            snapshot_mode
+                .get_snapshot_load_config()
+                .full_snapshot_config
+                .archives_dir
                 .to_string_lossy()
                 .as_ref()
         ));
         let generated_record = generate_snapshot(
             test_state.bank_forks.clone(),
-            &snapshot_config,
+            &snapshot_mode,
             &AbsRequestSender::default(),
             test_state.genesis_config_hash,
             new_root_slot,
@@ -3304,11 +3348,15 @@ mod tests {
                 bankhash: new_root_bankhash.to_string(),
                 shred_version: new_shred_version,
                 path: build_incremental_snapshot_archive_path(
-                    &snapshot_config.incremental_snapshot_archives_dir,
+                    &snapshot_mode
+                        .get_snapshot_load_config()
+                        .incremental_snapshot_config
+                        .unwrap()
+                        .archives_dir,
                     old_root_slot,
                     new_root_slot,
                     &SnapshotHash(snapshot_hash),
-                    snapshot_config.archive_format,
+                    snapshot_mode.get_snapshot_load_config().archive_format,
                 )
                 .display()
                 .to_string(),
@@ -3319,7 +3367,7 @@ mod tests {
         assert_eq!(
             generate_snapshot(
                 test_state.bank_forks.clone(),
-                &snapshot_config,
+                &snapshot_mode,
                 &AbsRequestSender::default(),
                 test_state.genesis_config_hash,
                 old_root_slot,
@@ -3329,8 +3377,10 @@ mod tests {
             .unwrap(),
             WenRestartError::GenerateSnapshotWhenOneExists(
                 old_root_slot,
-                snapshot_config
-                    .full_snapshot_archives_dir
+                snapshot_mode
+                    .get_snapshot_load_config()
+                    .full_snapshot_config
+                    .archives_dir
                     .to_string_lossy()
                     .to_string()
             ),
@@ -3340,7 +3390,7 @@ mod tests {
         assert_eq!(
             generate_snapshot(
                 test_state.bank_forks.clone(),
-                &snapshot_config,
+                &snapshot_mode,
                 &AbsRequestSender::default(),
                 test_state.genesis_config_hash,
                 older_slot,
@@ -3351,8 +3401,11 @@ mod tests {
             WenRestartError::FutureSnapshotExists(
                 older_slot,
                 new_root_slot,
-                snapshot_config
-                    .incremental_snapshot_archives_dir
+                snapshot_mode
+                    .get_snapshot_load_config()
+                    .incremental_snapshot_config
+                    .unwrap()
+                    .archives_dir
                     .to_string_lossy()
                     .to_string()
             ),
@@ -3362,7 +3415,7 @@ mod tests {
         assert_eq!(
             generate_snapshot(
                 test_state.bank_forks.clone(),
-                &snapshot_config,
+                &snapshot_mode,
                 &AbsRequestSender::default(),
                 test_state.genesis_config_hash,
                 empty_slot,
@@ -3373,18 +3426,22 @@ mod tests {
             WenRestartError::BlockNotFound(empty_slot),
         );
         // Now turn off snapshot generation, we should generate a full snapshot.
-        let snapshot_config = SnapshotConfig {
-            bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
-            full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
-            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
-                .as_ref()
-                .to_path_buf(),
-            usage: SnapshotUsage::LoadOnly,
-            ..Default::default()
-        };
+        let snapshot_mode = SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+            load_config: SnapshotLoadConfig {
+                full_snapshot_config: SnapshotStorageConfig {
+                    archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
+                    ..SnapshotStorageConfig::default_full_snapshot_config()
+                },
+                incremental_snapshot_config: None,
+                bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
+                ..SnapshotLoadConfig::default_load_and_genarate()
+            },
+            generate_config: SnapshotGenerateConfig::default_generate_config(),
+        });
+
         let generated_record = generate_snapshot(
             test_state.bank_forks.clone(),
-            &snapshot_config,
+            &snapshot_mode,
             &AbsRequestSender::default(),
             test_state.genesis_config_hash,
             test_state.last_voted_fork_slots[0],
@@ -3392,8 +3449,10 @@ mod tests {
         .unwrap();
         assert!(Path::new(&generated_record.path).exists());
         assert!(generated_record.path.starts_with(
-            snapshot_config
-                .full_snapshot_archives_dir
+            snapshot_mode
+                .get_snapshot_load_config()
+                .full_snapshot_config
+                .archives_dir
                 .to_string_lossy()
                 .as_ref()
         ));
@@ -3414,7 +3473,7 @@ mod tests {
             bank_forks: test_state.bank_forks.clone(),
             wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
             wait_for_supermajority_threshold_percent: 80,
-            snapshot_config: SnapshotConfig::default(),
+            snapshot_mode: SnapshotMode::default(),
             accounts_background_request_sender: AbsRequestSender::default(),
             genesis_config_hash: test_state.genesis_config_hash,
             exit: Arc::new(AtomicBool::new(false)),
@@ -3662,7 +3721,7 @@ mod tests {
             bank_forks: test_state.bank_forks.clone(),
             wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
             wait_for_supermajority_threshold_percent: 80,
-            snapshot_config: SnapshotConfig::default(),
+            snapshot_mode: SnapshotMode::default(),
             accounts_background_request_sender: AbsRequestSender::default(),
             genesis_config_hash: test_state.genesis_config_hash,
             exit: exit.clone(),

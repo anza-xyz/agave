@@ -35,8 +35,10 @@ use {
         },
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_config::SnapshotConfig,
         snapshot_hash::StartingSnapshotHashes,
+        snapshot_mode::{
+            SnapshotLoadConfig, SnapshotLoadOnlyModeConfig, SnapshotMode, SnapshotStorageConfig,
+        },
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
     solana_sdk::{
@@ -144,7 +146,7 @@ pub fn load_and_process_ledger(
     };
 
     let mut starting_slot = 0; // default start check with genesis
-    let snapshot_config = if arg_matches.is_present("no_snapshot") {
+    let snapshot_mode = if arg_matches.is_present("no_snapshot") {
         None
     } else {
         let full_snapshot_archives_dir = value_t!(arg_matches, "snapshots", String)
@@ -168,12 +170,22 @@ pub fn load_and_process_ledger(
             starting_slot = std::cmp::max(full_snapshot_slot, incremental_snapshot_slot);
         }
 
-        Some(SnapshotConfig {
-            full_snapshot_archives_dir,
-            incremental_snapshot_archives_dir,
+        let load_config = SnapshotLoadConfig {
+            full_snapshot_config: SnapshotStorageConfig {
+                archives_dir: full_snapshot_archives_dir,
+                ..SnapshotStorageConfig::default_full_snapshot_config()
+            },
+            incremental_snapshot_config: Some(SnapshotStorageConfig {
+                archives_dir: incremental_snapshot_archives_dir,
+                ..SnapshotStorageConfig::default_incremental_snapshot_config()
+            }),
             bank_snapshots_dir: bank_snapshots_dir.clone(),
-            ..SnapshotConfig::new_load_only()
-        })
+            ..SnapshotLoadConfig::default_load_and_genarate()
+        };
+
+        Some(SnapshotMode::LoadOnly(SnapshotLoadOnlyModeConfig {
+            load_config,
+        }))
     };
 
     match process_options.halt_at_slot {
@@ -344,7 +356,7 @@ pub fn load_and_process_ledger(
             genesis_config,
             blockstore.as_ref(),
             account_paths,
-            snapshot_config.as_ref(),
+            snapshot_mode.as_ref(),
             &process_options,
             cache_block_meta_sender.as_ref(),
             None, // Maybe support this later, though
@@ -397,12 +409,12 @@ pub fn load_and_process_ledger(
         accounts_package_receiver,
         pending_snapshot_packages,
         exit.clone(),
-        SnapshotConfig::new_load_only(),
+        SnapshotMode::new_load_only(),
     );
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
     let accounts_background_request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
     let snapshot_request_handler = SnapshotRequestHandler {
-        snapshot_config: SnapshotConfig::new_load_only(),
+        snapshot_mode: SnapshotMode::new_load_only(),
         snapshot_request_sender,
         snapshot_request_receiver,
         accounts_package_sender,

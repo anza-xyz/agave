@@ -10,7 +10,7 @@ use {
         bank::{Bank, BankSlotDelta, DropCallback},
         bank_forks::BankForks,
         snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
+        snapshot_mode::SnapshotMode,
         snapshot_package::{self, AccountsPackage, AccountsPackageKind, SnapshotKind},
         snapshot_utils::{self, SnapshotError},
     },
@@ -134,7 +134,7 @@ pub enum SnapshotRequestKind {
 }
 
 pub struct SnapshotRequestHandler {
-    pub snapshot_config: SnapshotConfig,
+    pub snapshot_mode: SnapshotMode,
     pub snapshot_request_sender: SnapshotRequestSender,
     pub snapshot_request_receiver: SnapshotRequestReceiver,
     pub accounts_package_sender: Sender<AccountsPackage>,
@@ -198,7 +198,7 @@ impl SnapshotRequestHandler {
             .try_iter()
             .map(|request| {
                 let accounts_package_kind =
-                    new_accounts_package_kind(&request, &self.snapshot_config);
+                    new_accounts_package_kind(&request, &self.snapshot_mode);
                 (request, accounts_package_kind)
             })
             .collect();
@@ -730,9 +730,10 @@ impl AccountsBackgroundService {
 #[must_use]
 fn new_accounts_package_kind(
     snapshot_request: &SnapshotRequest,
-    snapshot_config: &SnapshotConfig,
+    snapshot_mode: &SnapshotMode,
 ) -> AccountsPackageKind {
     let block_height = snapshot_request.snapshot_root_bank.block_height();
+    let snapshot_generate_config = snapshot_mode.get_snapshot_generate_config().unwrap();
     let latest_full_snapshot_slot = snapshot_request
         .snapshot_root_bank
         .rc
@@ -744,12 +745,17 @@ fn new_accounts_package_kind(
         SnapshotRequestKind::Snapshot => {
             if snapshot_utils::should_take_full_snapshot(
                 block_height,
-                snapshot_config.full_snapshot_archive_interval_slots,
+                snapshot_generate_config
+                    .full_snapshot_archive_interval_slots
+                    .get() as u64,
             ) {
                 AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)
             } else if snapshot_utils::should_take_incremental_snapshot(
                 block_height,
-                snapshot_config.incremental_snapshot_archive_interval_slots,
+                snapshot_generate_config
+                    .incremental_snapshot_archive_interval_slots
+                    .unwrap()
+                    .get() as u64,
                 latest_full_snapshot_slot,
             ) {
                 AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(
@@ -791,12 +797,18 @@ fn cmp_requests_by_priority(
 mod test {
     use {
         super::*,
-        crate::{bank::epoch_accounts_hash_utils, genesis_utils::create_genesis_config},
+        crate::{
+            bank::epoch_accounts_hash_utils, genesis_utils::create_genesis_config, snapshot_mode,
+        },
         crossbeam_channel::unbounded,
+        snapshot_mode::{
+            SnapshotGenerateConfig, SnapshotLoadAndGenerateModeConfig, SnapshotLoadConfig,
+        },
         solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
         solana_sdk::{
             account::AccountSharedData, epoch_schedule::EpochSchedule, hash::Hash, pubkey::Pubkey,
         },
+        std::num::NonZero,
     };
 
     #[test]
@@ -842,16 +854,23 @@ mod test {
         const FULL_SNAPSHOT_INTERVAL: Slot = 80;
         const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 30;
 
-        let snapshot_config = SnapshotConfig {
-            full_snapshot_archive_interval_slots: FULL_SNAPSHOT_INTERVAL,
-            incremental_snapshot_archive_interval_slots: INCREMENTAL_SNAPSHOT_INTERVAL,
-            ..SnapshotConfig::default()
-        };
-
+        let snapshot_mode = SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+            load_config: SnapshotLoadConfig::default_load_and_genarate(),
+            generate_config: SnapshotGenerateConfig {
+                full_snapshot_archive_interval_slots: NonZero::<usize>::new(
+                    FULL_SNAPSHOT_INTERVAL as usize,
+                )
+                .unwrap(),
+                incremental_snapshot_archive_interval_slots: NonZero::<usize>::new(
+                    INCREMENTAL_SNAPSHOT_INTERVAL as usize,
+                ),
+                ..SnapshotGenerateConfig::default_generate_config()
+            },
+        });
         let (accounts_package_sender, _accounts_package_receiver) = crossbeam_channel::unbounded();
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
         let snapshot_request_handler = SnapshotRequestHandler {
-            snapshot_config,
+            snapshot_mode,
             snapshot_request_sender: snapshot_request_sender.clone(),
             snapshot_request_receiver,
             accounts_package_sender,

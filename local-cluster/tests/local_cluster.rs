@@ -56,8 +56,14 @@ use {
         response::RpcSignatureResult,
     },
     solana_runtime::{
-        commitment::VOTE_THRESHOLD_SIZE, snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils, snapshot_config::SnapshotConfig, snapshot_package::SnapshotKind,
+        commitment::VOTE_THRESHOLD_SIZE,
+        snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_bank_utils,
+        snapshot_mode::{
+            SnapshotGenerateConfig, SnapshotLoadAndGenerateModeConfig, SnapshotLoadConfig,
+            SnapshotMode, SnapshotStorageConfig,
+        },
+        snapshot_package::SnapshotKind,
         snapshot_utils,
     },
     solana_sdk::{
@@ -502,8 +508,10 @@ fn test_snapshot_download() {
 
     let full_snapshot_archives_dir = &leader_snapshot_test_config
         .validator_config
-        .snapshot_config
-        .full_snapshot_archives_dir;
+        .snapshot_mode
+        .get_snapshot_load_config()
+        .full_snapshot_config
+        .archives_dir;
 
     trace!("Waiting for snapshot");
     let full_snapshot_archive_info = cluster.wait_for_next_full_snapshot(
@@ -517,12 +525,17 @@ fn test_snapshot_download() {
         &cluster.entry_point_info.rpc().unwrap(),
         &validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .full_snapshot_archives_dir,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .full_snapshot_config
+            .archives_dir,
         &validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .incremental_snapshot_archives_dir,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_dir,
         (
             full_snapshot_archive_info.slot(),
             *full_snapshot_archive_info.hash(),
@@ -530,12 +543,17 @@ fn test_snapshot_download() {
         SnapshotKind::FullSnapshot,
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .maximum_full_snapshot_archives_to_retain,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .full_snapshot_config
+            .archives_to_retain,
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .maximum_incremental_snapshot_archives_to_retain,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_to_retain,
         false,
         &mut None,
     )
@@ -587,12 +605,17 @@ fn test_incremental_snapshot_download() {
 
     let full_snapshot_archives_dir = &leader_snapshot_test_config
         .validator_config
-        .snapshot_config
-        .full_snapshot_archives_dir;
+        .snapshot_mode
+        .get_snapshot_load_config()
+        .full_snapshot_config
+        .archives_dir;
     let incremental_snapshot_archives_dir = &leader_snapshot_test_config
         .validator_config
-        .snapshot_config
-        .incremental_snapshot_archives_dir;
+        .snapshot_mode
+        .get_snapshot_load_config()
+        .incremental_snapshot_config
+        .unwrap()
+        .archives_dir;
 
     debug!("snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}\n\taccounts hash interval: {}",
            full_snapshot_interval,
@@ -647,12 +670,17 @@ fn test_incremental_snapshot_download() {
         &cluster.entry_point_info.rpc().unwrap(),
         &validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .full_snapshot_archives_dir,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .full_snapshot_config
+            .archives_dir,
         &validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .incremental_snapshot_archives_dir,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_dir,
         (
             full_snapshot_archive_info.slot(),
             *full_snapshot_archive_info.hash(),
@@ -660,12 +688,17 @@ fn test_incremental_snapshot_download() {
         SnapshotKind::FullSnapshot,
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .maximum_full_snapshot_archives_to_retain,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .full_snapshot_config
+            .archives_to_retain,
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .maximum_incremental_snapshot_archives_to_retain,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_to_retain,
         false,
         &mut None,
     )
@@ -675,12 +708,17 @@ fn test_incremental_snapshot_download() {
         &cluster.entry_point_info.rpc().unwrap(),
         &validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .full_snapshot_archives_dir,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .full_snapshot_config
+            .archives_dir,
         &validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .incremental_snapshot_archives_dir,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_dir,
         (
             incremental_snapshot_archive_info.slot(),
             *incremental_snapshot_archive_info.hash(),
@@ -688,12 +726,17 @@ fn test_incremental_snapshot_download() {
         SnapshotKind::IncrementalSnapshot(incremental_snapshot_archive_info.base_slot()),
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .maximum_full_snapshot_archives_to_retain,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .full_snapshot_config
+            .archives_to_retain,
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .maximum_incremental_snapshot_archives_to_retain,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_to_retain,
         false,
         &mut None,
     )
@@ -834,12 +877,16 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         SnapshotKind::FullSnapshot,
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .maximum_full_snapshot_archives_to_retain,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .full_snapshot_config
+            .archives_to_retain,
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .maximum_incremental_snapshot_archives_to_retain,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .full_snapshot_config
+            .archives_to_retain,
         false,
         &mut None,
     )
@@ -871,12 +918,17 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         SnapshotKind::IncrementalSnapshot(incremental_snapshot_archive.base_slot()),
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .maximum_full_snapshot_archives_to_retain,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .full_snapshot_config
+            .archives_to_retain,
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
-            .maximum_incremental_snapshot_archives_to_retain,
+            .snapshot_mode
+            .get_snapshot_load_config()
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_to_retain,
         false,
         &mut None,
     )
@@ -1256,8 +1308,10 @@ fn test_snapshot_restart_tower() {
     // Get slot after which this was generated
     let full_snapshot_archives_dir = &leader_snapshot_test_config
         .validator_config
-        .snapshot_config
-        .full_snapshot_archives_dir;
+        .snapshot_mode
+        .get_snapshot_load_config()
+        .full_snapshot_config
+        .archives_dir;
 
     let full_snapshot_archive_info = cluster.wait_for_next_full_snapshot(
         full_snapshot_archives_dir,
@@ -1308,8 +1362,10 @@ fn test_snapshots_blockstore_floor() {
 
     let full_snapshot_archives_dir = &leader_snapshot_test_config
         .validator_config
-        .snapshot_config
-        .full_snapshot_archives_dir;
+        .snapshot_mode
+        .get_snapshot_load_config()
+        .full_snapshot_config
+        .archives_dir;
 
     let mut config = ClusterConfig {
         node_stakes: vec![DEFAULT_NODE_STAKE],
@@ -1343,7 +1399,8 @@ fn test_snapshots_blockstore_floor() {
         archive_info.hash(),
         validator_snapshot_test_config
             .validator_config
-            .snapshot_config
+            .snapshot_mode
+            .get_snapshot_load_config()
             .archive_format,
     );
     fs::hard_link(archive_info.path(), validator_archive_path).unwrap();
@@ -1415,8 +1472,10 @@ fn test_snapshots_restart_validity() {
         setup_snapshot_validator_config(snapshot_interval_slots, num_account_paths);
     let full_snapshot_archives_dir = &snapshot_test_config
         .validator_config
-        .snapshot_config
-        .full_snapshot_archives_dir;
+        .snapshot_mode
+        .get_snapshot_load_config()
+        .full_snapshot_config
+        .archives_dir;
 
     // Set up the cluster with 1 snapshotting validator
     let mut all_account_storage_dirs = vec![std::mem::take(
@@ -2300,12 +2359,18 @@ fn test_run_test_load_program_accounts_root() {
     run_test_load_program_accounts(CommitmentConfig::finalized());
 }
 
-fn create_simple_snapshot_config(ledger_path: &Path) -> SnapshotConfig {
-    SnapshotConfig {
-        full_snapshot_archives_dir: ledger_path.to_path_buf(),
-        bank_snapshots_dir: ledger_path.join("snapshot"),
-        ..SnapshotConfig::default()
-    }
+fn create_simple_snapshot_mode(ledger_path: &Path) -> SnapshotMode {
+    SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+        load_config: SnapshotLoadConfig {
+            full_snapshot_config: SnapshotStorageConfig {
+                archives_dir: ledger_path.to_path_buf(),
+                ..SnapshotStorageConfig::default_full_snapshot_config()
+            },
+            bank_snapshots_dir: ledger_path.join("snapshot"),
+            ..SnapshotLoadConfig::default_load_and_genarate()
+        },
+        generate_config: SnapshotGenerateConfig::default_generate_config(),
+    })
 }
 
 fn create_snapshot_to_hard_fork(
@@ -2321,7 +2386,7 @@ fn create_snapshot_to_hard_fork(
     };
     let ledger_path = blockstore.ledger_path();
     let genesis_config = open_genesis_config(ledger_path, u64::MAX).unwrap();
-    let snapshot_config = create_simple_snapshot_config(ledger_path);
+    let snapshot_mode = create_simple_snapshot_mode(ledger_path);
     let (bank_forks, ..) = bank_forks_utils::load(
         &genesis_config,
         blockstore,
@@ -2330,7 +2395,7 @@ fn create_snapshot_to_hard_fork(
                 .unwrap()
                 .0,
         ],
-        Some(&snapshot_config),
+        Some(&snapshot_mode),
         process_options,
         None,
         None,
@@ -2340,13 +2405,14 @@ fn create_snapshot_to_hard_fork(
     )
     .unwrap();
     let bank = bank_forks.read().unwrap().get(snapshot_slot).unwrap();
+    let snapshot_load_config = snapshot_mode.get_snapshot_load_config();
     let full_snapshot_archive_info = snapshot_bank_utils::bank_to_full_snapshot_archive(
         ledger_path,
         &bank,
-        Some(snapshot_config.snapshot_version),
+        Some(snapshot_load_config.snapshot_version),
         ledger_path,
         ledger_path,
-        snapshot_config.archive_format,
+        snapshot_load_config.archive_format,
     )
     .unwrap();
     info!(
@@ -2384,7 +2450,7 @@ fn test_hard_fork_with_gap_in_roots() {
     let validator_b_pubkey = validators[1];
 
     let validator_config = ValidatorConfig {
-        snapshot_config: LocalCluster::create_dummy_load_only_snapshot_config(),
+        snapshot_mode: LocalCluster::create_dummy_load_only_snapshot_mode(),
         ..ValidatorConfig::default_for_test()
     };
     let mut config = ClusterConfig {

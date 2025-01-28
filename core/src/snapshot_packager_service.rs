@@ -7,7 +7,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
-        snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
+        snapshot_hash::StartingSnapshotHashes, snapshot_mode::SnapshotMode,
         snapshot_package::SnapshotPackage, snapshot_utils,
     },
     std::{
@@ -33,14 +33,20 @@ impl SnapshotPackagerService {
         starting_snapshot_hashes: Option<StartingSnapshotHashes>,
         exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
-        snapshot_config: SnapshotConfig,
+        snapshot_mode: SnapshotMode,
         enable_gossip_push: bool,
     ) -> Self {
         let t_snapshot_packager = Builder::new()
             .name("solSnapshotPkgr".to_string())
             .spawn(move || {
                 info!("SnapshotPackagerService has started");
-                renice_this_thread(snapshot_config.packager_thread_niceness_adj).unwrap();
+                renice_this_thread(
+                    snapshot_mode
+                        .get_snapshot_generate_config()
+                        .unwrap()
+                        .packager_thread_niceness_adj,
+                )
+                .unwrap();
                 let mut snapshot_gossip_manager = enable_gossip_push
                     .then(|| SnapshotGossipManager::new(cluster_info, starting_snapshot_hashes));
 
@@ -69,7 +75,7 @@ impl SnapshotPackagerService {
                     let (archive_result, archive_time_us) =
                         measure_us!(snapshot_utils::serialize_and_archive_snapshot_package(
                             snapshot_package,
-                            &snapshot_config,
+                            &snapshot_mode,
                         ));
                     if let Err(err) = archive_result {
                         error!(
@@ -85,12 +91,16 @@ impl SnapshotPackagerService {
                             .push_snapshot_hash(snapshot_kind, (snapshot_slot, snapshot_hash));
                     }
 
+                    let snapshot_load_config = snapshot_mode.get_snapshot_load_config().clone();
+                    let incremental_snapshot_config =
+                        snapshot_load_config.incremental_snapshot_config.unwrap();
+
                     let (_, purge_archives_time_us) =
                         measure_us!(snapshot_utils::purge_old_snapshot_archives(
-                            &snapshot_config.full_snapshot_archives_dir,
-                            &snapshot_config.incremental_snapshot_archives_dir,
-                            snapshot_config.maximum_full_snapshot_archives_to_retain,
-                            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
+                            &snapshot_load_config.full_snapshot_config.archives_dir,
+                            &incremental_snapshot_config.archives_dir, // FIXME: Should this param be optional too?
+                            snapshot_load_config.full_snapshot_config.archives_to_retain,
+                            incremental_snapshot_config.archives_to_retain,
                         ));
 
                     // Now that this snapshot package has been archived, it is safe to remove
@@ -99,7 +109,7 @@ impl SnapshotPackagerService {
                     // booting from local state.
                     let (_, purge_bank_snapshots_time_us) =
                         measure_us!(snapshot_utils::purge_bank_snapshots_older_than_slot(
-                            &snapshot_config.bank_snapshots_dir,
+                            &snapshot_load_config.bank_snapshots_dir,
                             snapshot_slot,
                         ));
 
