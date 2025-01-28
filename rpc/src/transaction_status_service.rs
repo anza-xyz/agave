@@ -21,17 +21,20 @@ use {
 };
 
 // Used when draining and shutting down TSS in unit tests.
+#[cfg(feature = "dev-context-only-utils")]
 const TSS_TEST_QUIESCE_NUM_RETRIES: usize = 100;
+#[cfg(feature = "dev-context-only-utils")]
 const TSS_TEST_QUIESCE_SLEEP_TIME_MS: u64 = 50;
 
 pub struct TransactionStatusService {
     thread_hdl: JoinHandle<()>,
+    #[cfg(feature = "dev-context-only-utils")]
     transaction_status_receiver: Arc<Receiver<TransactionStatusMessage>>,
 }
 
 impl TransactionStatusService {
     pub fn new(
-        write_transaction_status_receiver: Receiver<TransactionStatusMessage>,
+        writetransaction_status_receiver: Receiver<TransactionStatusMessage>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         enable_rpc_transaction_history: bool,
         transaction_notifier: Option<TransactionNotifierArc>,
@@ -39,7 +42,7 @@ impl TransactionStatusService {
         enable_extended_tx_metadata_storage: bool,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let transaction_status_receiver = Arc::new(write_transaction_status_receiver);
+        let transaction_status_receiver = Arc::new(writetransaction_status_receiver);
         let transaction_status_receiver_handle = Arc::clone(&transaction_status_receiver);
 
         let thread_hdl = Builder::new()
@@ -84,6 +87,7 @@ impl TransactionStatusService {
             .unwrap();
         Self {
             thread_hdl,
+            #[cfg(feature = "dev-context-only-utils")]
             transaction_status_receiver,
         }
     }
@@ -233,6 +237,7 @@ impl TransactionStatusService {
         self.thread_hdl.join()
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn quiesce_and_join_for_tests(self, exit: Arc<AtomicBool>) {
         for _ in 0..TSS_TEST_QUIESCE_NUM_RETRIES {
             if self.transaction_status_receiver.is_empty() {

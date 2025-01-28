@@ -58,7 +58,6 @@ use {
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
-        installed_scheduler_pool::BankWithScheduler,
         non_circulating_supply::{calculate_non_circulating_supply, NonCirculatingSupply},
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_config::SnapshotConfig,
@@ -4446,6 +4445,7 @@ pub fn create_test_transaction_entries(
     (vec![entry_1, entry_2], signatures)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn populate_blockstore_for_tests(
     entries: Vec<Entry>,
     bank: Arc<Bank>,
@@ -4483,7 +4483,9 @@ pub fn populate_blockstore_for_tests(
     // that they are matched properly by get_rooted_block
     assert_eq!(
         solana_ledger::blockstore_processor::process_entries_for_tests(
-            &BankWithScheduler::new_without_scheduler(bank),
+            &solana_runtime::installed_scheduler_pool::BankWithScheduler::new_without_scheduler(
+                bank
+            ),
             entries,
             Some(
                 &solana_ledger::blockstore_processor::TransactionStatusSender {
