@@ -2194,7 +2194,7 @@ mod tests {
                     fee_payer_rent_epoch
                 ),
                 compute_budget_limits,
-                fee_details: FeeDetails::new(transaction_fee, priority_fee, false),
+                fee_details: FeeDetails::new(transaction_fee, priority_fee),
                 loaded_fee_payer_account: LoadedTransactionAccount {
                     loaded_size: fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
@@ -2271,7 +2271,7 @@ mod tests {
                     0, // rent epoch
                 ),
                 compute_budget_limits,
-                fee_details: FeeDetails::new(transaction_fee, 0, false),
+                fee_details: FeeDetails::new(transaction_fee, 0),
                 loaded_fee_payer_account: LoadedTransactionAccount {
                     loaded_size: fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
@@ -2520,7 +2520,7 @@ mod tests {
                         0, // fee_payer_rent_epoch
                     ),
                     compute_budget_limits,
-                    fee_details: FeeDetails::new(transaction_fee, priority_fee, false),
+                    fee_details: FeeDetails::new(transaction_fee, priority_fee),
                     loaded_fee_payer_account: LoadedTransactionAccount {
                         loaded_size: fee_payer_account.data().len(),
                         account: post_validation_fee_payer_account,

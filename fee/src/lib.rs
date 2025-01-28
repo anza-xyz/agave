@@ -1,7 +1,5 @@
 use {
-    solana_feature_set::{
-        enable_secp256r1_precompile, remove_rounding_in_fee_calculation, FeatureSet,
-    },
+    solana_feature_set::{enable_secp256r1_precompile, FeatureSet},
     solana_fee_structure::FeeDetails,
     solana_svm_transaction::svm_message::SVMMessage,
 };
@@ -14,15 +12,12 @@ use {
 // in the future. Keeping this struct will help keep things organized.
 #[derive(Copy, Clone)]
 pub struct FeeFeatures {
-    pub remove_rounding_in_fee_calculation: bool,
     pub enable_secp256r1_precompile: bool,
 }
 
 impl From<&FeatureSet> for FeeFeatures {
     fn from(feature_set: &FeatureSet) -> Self {
         Self {
-            remove_rounding_in_fee_calculation: feature_set
-                .is_active(&remove_rounding_in_fee_calculation::ID),
             enable_secp256r1_precompile: feature_set.is_active(&enable_secp256r1_precompile::ID),
         }
     }
@@ -64,7 +59,6 @@ pub fn calculate_fee_details(
             fee_features.enable_secp256r1_precompile,
         ),
         prioritization_fee,
-        fee_features.remove_rounding_in_fee_calculation,
     )
 }
 

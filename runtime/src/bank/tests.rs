@@ -3044,7 +3044,7 @@ fn test_filter_program_errors_and_collect_fee() {
     bank.deactivate_feature(&feature_set::reward_full_priority_fee::id());
 
     let tx_fee = 42;
-    let fee_details = FeeDetails::new(tx_fee, 0, false);
+    let fee_details = FeeDetails::new(tx_fee, 0);
     let processing_results = vec![
         Err(TransactionError::AccountNotFound),
         new_executed_processing_result(Ok(()), fee_details),
@@ -3083,7 +3083,7 @@ fn test_filter_program_errors_and_collect_priority_fee() {
     bank.deactivate_feature(&feature_set::reward_full_priority_fee::id());
 
     let priority_fee = 42;
-    let fee_details: FeeDetails = FeeDetails::new(0, priority_fee, false);
+    let fee_details: FeeDetails = FeeDetails::new(0, priority_fee);
     let processing_results = vec![
         Err(TransactionError::AccountNotFound),
         new_executed_processing_result(Ok(()), fee_details),
@@ -3344,7 +3344,7 @@ fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: boo
                 inner_instructions: None,
                 return_data: None,
                 executed_units: 0,
-                fee_details: FeeDetails::new(5000, 0, true),
+                fee_details: FeeDetails::new(5000, 0),
                 rent_debits: RentDebits::default(),
                 loaded_account_stats: TransactionLoadedAccountsStats {
                     loaded_accounts_count: 2,
@@ -10391,7 +10391,6 @@ fn calculate_test_fee(
         fee_structure.lamports_per_signature,
         fee_budget_limits.prioritization_fee,
         FeeFeatures {
-            remove_rounding_in_fee_calculation: true,
             enable_secp256r1_precompile: true,
         },
     )
@@ -13233,7 +13232,7 @@ fn test_filter_program_errors_and_collect_fee_details() {
     let initial_payer_balance = 7_000;
     let tx_fee = 5000;
     let priority_fee = 1000;
-    let fee_details = FeeDetails::new(tx_fee, priority_fee, false);
+    let fee_details = FeeDetails::new(tx_fee, priority_fee);
     let expected_collected_fee_details = CollectorFeeDetails {
         transaction_fee: 3 * tx_fee,
         priority_fee: 3 * priority_fee,
