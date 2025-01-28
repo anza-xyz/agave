@@ -68,8 +68,6 @@ const TRANSACTION_MEMOS_CF: &str = "transaction_memos";
 const TRANSACTION_STATUS_INDEX_CF: &str = "transaction_status_index";
 /// Column family for Rewards
 const REWARDS_CF: &str = "rewards";
-/// Column family for Blocktime
-const BLOCKTIME_CF: &str = "blocktime";
 
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
@@ -1109,7 +1107,7 @@ impl ProtobufColumn for columns::Rewards {
 
 impl SlotColumn for columns::Blocktime {}
 impl ColumnName for columns::Blocktime {
-    const NAME: &'static str = BLOCKTIME_CF;
+    const NAME: &'static str = "blocktime";
 }
 impl TypedColumn for columns::Blocktime {
     type Type = UnixTimestamp;
