@@ -56,8 +56,6 @@ const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 //   include/rocksdb/advanced_options.h#L908C30-L908C30
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
-/// Column family for Code Shreds
-const CODE_SHRED_CF: &str = "code_shred";
 /// Column family for Transaction Status
 const TRANSACTION_STATUS_CF: &str = "transaction_status";
 /// Column family for Address Signatures
@@ -1187,7 +1185,7 @@ impl Column for columns::ShredCode {
     }
 }
 impl ColumnName for columns::ShredCode {
-    const NAME: &'static str = CODE_SHRED_CF;
+    const NAME: &'static str = "code_shred";
 }
 
 impl Column for columns::ShredData {
