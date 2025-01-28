@@ -27,7 +27,10 @@ use {
             pedersen::PedersenOpening,
         },
         sigma_proofs::grouped_ciphertext_validity::GroupedCiphertext2HandlesValidityProof,
-        zk_elgamal_proof_program::errors::{ProofGenerationError, ProofVerificationError},
+        zk_elgamal_proof_program::{
+            errors::{ProofGenerationError, ProofVerificationError},
+            proof_data::errors::ProofDataError,
+        },
     },
     bytemuck::bytes_of,
     merlin::Transcript,
@@ -134,6 +137,13 @@ impl GroupedCiphertext2HandlesValidityProofData {
     pub fn to_bytes(&self) -> Box<[u8]> {
         bytes_of(self).into()
     }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromBytes))]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProofDataError> {
+        bytemuck::try_from_bytes(bytes)
+            .copied()
+            .map_err(|_| ProofDataError::Deserialization)
+    }
 }
 
 impl ZkProofData<GroupedCiphertext2HandlesValidityProofContext>
@@ -182,6 +192,22 @@ impl GroupedCiphertext2HandlesValidityProofContext {
         transcript.append_message(b"grouped-ciphertext", bytes_of(&self.grouped_ciphertext));
 
         transcript
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+impl GroupedCiphertext2HandlesValidityProofContext {
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
+    pub fn to_bytes(&self) -> Box<[u8]> {
+        bytes_of(self).into()
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromBytes))]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProofDataError> {
+        bytemuck::try_from_bytes(bytes)
+            .copied()
+            .map_err(|_| ProofDataError::Deserialization)
     }
 }
 
