@@ -1,9 +1,11 @@
 use {
     super::{
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
+        transaction_priority_id::TransactionPriorityId,
         transaction_state::TransactionState,
         transaction_state_container::{
             SharedBytes, StateContainer, TransactionViewState, TransactionViewStateContainer,
+            EXTRA_CAPACITY,
         },
     },
     crate::banking_stage::{
@@ -402,8 +404,57 @@ impl TransactionViewReceiveAndBuffer {
 
         let mut num_received = 0usize;
         let mut num_buffered = 0usize;
+        let mut num_dropped_on_status_age_checks = 0usize;
         let mut num_dropped_on_capacity = 0usize;
         let mut num_dropped_on_receive = 0usize;
+
+        // Create temporary batches of transactions to be age-checked.
+        let mut transaction_ids = ArrayVec::<_, EXTRA_CAPACITY>::new();
+        let lock_results: [_; EXTRA_CAPACITY] = core::array::from_fn(|_| Ok(()));
+        let mut error_counters = TransactionErrorMetrics::default();
+
+        let mut run_status_age_checks =
+            |container: &mut TransactionViewStateContainer,
+             transaction_ids: &mut ArrayVec<usize, 64>| {
+                // Temporary scope so that transaction references are immediately
+                // dropped and transactions not passing
+                let check_results = {
+                    let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
+                    transactions.extend(transaction_ids.iter().map(|id| {
+                        &container
+                            .get_transaction_ttl(*id)
+                            .expect("transaction must exist")
+                            .transaction
+                    }));
+                    working_bank.check_transactions::<RuntimeTransaction<_>>(
+                        &transactions,
+                        &lock_results,
+                        MAX_PROCESSING_AGE,
+                        &mut error_counters,
+                    )
+                };
+
+                // Remove all invalid transactions from the map; insert passing
+                // ids into the priority queue.
+                for (transaction_id, check_result) in transaction_ids.drain(..).zip(check_results) {
+                    if check_result.is_ok() {
+                        let priority = container
+                            .get_mut_transaction_state(transaction_id)
+                            .expect("transaction must exist")
+                            .priority();
+                        if container.push_id_into_queue(TransactionPriorityId::new(
+                            priority,
+                            transaction_id,
+                        )) {
+                            num_dropped_on_capacity += 1;
+                        }
+                    } else {
+                        num_dropped_on_status_age_checks += 1;
+                        container.remove_by_id(transaction_id);
+                    }
+                }
+            };
+
         for packet_batch in packet_batch_message.iter() {
             for packet in packet_batch.iter() {
                 let Some(packet_data) = packet.data(..) else {
@@ -413,9 +464,8 @@ impl TransactionViewReceiveAndBuffer {
                 num_received += 1;
 
                 // Reserve free-space to copy packet into, run sanitization checks, and insert.
-                if container.try_insert_with_data(
-                    packet_data,
-                    |bytes| match Self::try_handle_packet(
+                if let Some(transaction_id) = container.try_insert_with_data(packet_data, |bytes| {
+                    match Self::try_handle_packet(
                         bytes,
                         root_bank,
                         working_bank,
@@ -431,12 +481,20 @@ impl TransactionViewReceiveAndBuffer {
                             num_dropped_on_receive += 1;
                             Err(())
                         }
-                    },
-                ) {
-                    num_dropped_on_capacity += 1;
-                };
+                    }
+                }) {
+                    transaction_ids.push(transaction_id);
+
+                    // If at capacity, run checks and remove invalid transactions.
+                    if transaction_ids.len() == EXTRA_CAPACITY {
+                        run_status_age_checks(container, &mut transaction_ids);
+                    }
+                }
             }
         }
+
+        // Any remaining packets undergo status/age checks
+        run_status_age_checks(container, &mut transaction_ids);
 
         let buffer_time_us = start.elapsed().as_micros() as u64;
         timing_metrics.update(|timing_metrics| {
@@ -445,6 +503,10 @@ impl TransactionViewReceiveAndBuffer {
         count_metrics.update(|count_metrics| {
             saturating_add_assign!(count_metrics.num_received, num_received);
             saturating_add_assign!(count_metrics.num_buffered, num_buffered);
+            saturating_add_assign!(
+                count_metrics.num_dropped_on_age_and_status,
+                num_dropped_on_status_age_checks
+            );
             saturating_add_assign!(
                 count_metrics.num_dropped_on_capacity,
                 num_dropped_on_capacity

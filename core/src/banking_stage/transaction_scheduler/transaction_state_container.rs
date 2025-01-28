@@ -95,11 +95,12 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     fn get_min_max_priority(&self) -> MinMaxResult<u64>;
 }
 
+// Extra capacity is added because some additional space is needed when
+// pushing a new transaction into the container to avoid reallocation.
+pub(crate) const EXTRA_CAPACITY: usize = 64;
+
 impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
     fn with_capacity(capacity: usize) -> Self {
-        // Extra capacity is added because some additional space is needed when
-        // pushing a new transaction into the container to avoid reallocation.
-        const EXTRA_CAPACITY: usize = 64;
         Self {
             priority_queue: MinMaxHeap::with_capacity(capacity),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
@@ -214,15 +215,13 @@ pub struct TransactionViewStateContainer {
 }
 
 impl TransactionViewStateContainer {
-    /// Returns true if packet was dropped due to capacity limits.
+    // Insert into the map, but NOT into the priority queue.
+    // Returns the id of the transaction if it was inserted.
     pub(crate) fn try_insert_with_data(
         &mut self,
         data: &[u8],
         f: impl FnOnce(SharedBytes) -> Result<TransactionState<RuntimeTransactionView>, ()>,
-    ) -> bool {
-        // Get remaining capacity before inserting.
-        let remaining_capacity = self.remaining_capacity();
-
+    ) -> Option<usize> {
         // Get a vacant entry in the slab.
         let vacant_entry = self.inner.get_vacant_map_entry();
         let transaction_id = vacant_entry.key();
@@ -248,16 +247,11 @@ impl TransactionViewStateContainer {
         }
 
         // Attempt to insert the transaction.
-        match f(Arc::clone(bytes_entry)) {
-            Ok(state) => {
-                let priority_id = TransactionPriorityId::new(state.priority(), transaction_id);
-                vacant_entry.insert(state);
-
-                // Push the transaction into the queue.
-                self.inner
-                    .push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
-            }
-            Err(_) => false,
+        if let Ok(state) = f(Arc::clone(bytes_entry)) {
+            vacant_entry.insert(state);
+            Some(transaction_id)
+        } else {
+            None
         }
     }
 }
