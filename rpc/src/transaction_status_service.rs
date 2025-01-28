@@ -37,12 +37,14 @@ impl TransactionStatusService {
         let thread_hdl = Builder::new()
             .name("solTxStatusWrtr".to_string())
             .spawn(move || {
-                let inflight_count = Arc::new(AtomicUsize::new(0));
+                info!("TransactionStatusService has started");
+
+                let outstanding_thread_count = Arc::new(AtomicUsize::new(0));
                 loop {
                     if exit.load(Ordering::Relaxed) {
-                        // Some tests expect that in-flight TX status and memo updates are completed
-                        // when the service is shut down before performing verifications.
-                        while inflight_count.load(Ordering::Relaxed) > 0 {
+                        // Wait for the outstanding worker threads to complete before
+                        // joining the main thread and shutting down the service.
+                        while outstanding_thread_count.load(Ordering::SeqCst) > 0 {
                             sleep(Duration::from_millis(1));
                         }
                         break;
@@ -69,9 +71,9 @@ impl TransactionStatusService {
                     let blockstore = Arc::clone(&blockstore);
                     let transaction_notifier = transaction_notifier.clone();
                     let exit_clone = Arc::clone(&exit);
-                    let inflight_clone = inflight_count.clone();
+                    let outstanding_thread_count_handle = Arc::clone(&outstanding_thread_count);
 
-                    inflight_count.fetch_add(1, Ordering::Relaxed);
+                    outstanding_thread_count.fetch_add(1, Ordering::Relaxed);
 
                     rayon::spawn(move || {
                         match Self::write_transaction_status_batch(
@@ -88,7 +90,7 @@ impl TransactionStatusService {
                                 exit_clone.store(true, Ordering::Relaxed);
                             }
                         }
-                        inflight_clone.fetch_sub(1, Ordering::Relaxed);
+                        outstanding_thread_count_handle.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
                 info!("TransactionStatusService has stopped");
