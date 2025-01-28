@@ -5179,7 +5179,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
         let account = AccountSharedData::new(42, 1024, &program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
 
-        for instr in 0..=15 {
+        for instr in 0..=19 {
             println!("Testing direct_mapping:{direct_mapping} instruction:{instr}");
             let instruction =
                 Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
@@ -5195,5 +5195,15 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 assert!(!logs.last().unwrap().ends_with(" failed: InvalidLength"));
             }
         }
+
+        // test success
+        println!("Testing direct_mapping:{direct_mapping} success");
+        let instruction = Instruction::new_with_bytes(program_id, &[199], account_metas.clone());
+
+        let message = Message::new(&[instruction], Some(&mint_pubkey));
+        let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+        let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+
+        assert!(result.is_ok(), "{logs:?}");
     }
 }

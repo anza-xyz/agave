@@ -105,7 +105,7 @@ pub fn process_instruction(
             sol_memcpy(too_early(3), &buf, 10);
         }
         13 => {
-            // memmov dst overlaps begin of account
+            // memmove dst overlaps begin of account
             unsafe { sol_memmove(too_early(3).as_mut_ptr(), buf.as_ptr(), 10) };
         }
         14 => {
@@ -119,6 +119,55 @@ pub fn process_instruction(
                     data[data_len..].as_mut_ptr(),
                     data[data_len.saturating_sub(3)..].as_mut_ptr(),
                     10,
+                )
+            };
+        }
+        16 => {
+            // memmove at the lower boundary fails (by 1) - reverse
+            unsafe { sol_memmove(data.as_mut_ptr(), data.as_ptr().wrapping_sub(1), 100) };
+        }
+        17 => {
+            // memmove at the lower boundary fails (by 1) - forward
+            unsafe { sol_memmove(data.as_mut_ptr().wrapping_sub(1), data.as_ptr(), 100) };
+        }
+        18 => {
+            // memmove at the higher account boundary fails (by 1) - forward
+            unsafe {
+                sol_memmove(
+                    data.as_mut_ptr().wrapping_add(data_len.wrapping_sub(100)),
+                    data.as_ptr().wrapping_add(data_len.wrapping_sub(99)),
+                    100,
+                )
+            };
+        }
+        19 => {
+            // memmove at the higher account boundary fails (by 1) - reverse
+            unsafe {
+                sol_memmove(
+                    data.as_mut_ptr().wrapping_add(data_len.wrapping_sub(99)),
+                    data.as_ptr().wrapping_add(data_len.wrapping_sub(100)),
+                    100,
+                )
+            };
+        }
+        100 => {
+            // memmove at the lower boundary succeeds
+            unsafe { sol_memmove(data.as_mut_ptr().wrapping_add(50), data.as_ptr(), 100) };
+
+            // memmove at the higher boundary succeeds
+            unsafe {
+                sol_memmove(
+                    data.as_mut_ptr().wrapping_add(data_len.wrapping_sub(101)),
+                    data.as_ptr().wrapping_sub(data_len.wrapping_sub(100)),
+                    100,
+                )
+            };
+
+            unsafe {
+                sol_memmove(
+                    data.as_mut_ptr().wrapping_add(data_len.wrapping_sub(100)),
+                    data.as_ptr().wrapping_sub(data_len.wrapping_sub(101)),
+                    100,
                 )
             };
         }
