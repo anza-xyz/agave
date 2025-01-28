@@ -11,6 +11,7 @@ use {
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
+        bpf_loader_upgradeable,
         clock::Slot,
         compute_budget::ComputeBudgetInstruction,
         entrypoint::MAX_PERMITTED_DATA_INCREASE,
@@ -215,7 +216,7 @@ impl SvmTestEnvironment<'_> {
         }
 
         // first assert all transaction states together, it makes test-driven development much less of a headache
-        let (expected_statuses, actual_statuses): (Vec<_>, Vec<_>) = batch_output
+        let (actual_statuses, expected_statuses): (Vec<_>, Vec<_>) = batch_output
             .processing_results
             .iter()
             .zip(self.test_entry.asserts())
@@ -226,7 +227,27 @@ impl SvmTestEnvironment<'_> {
                 )
             })
             .unzip();
-        assert_eq!(expected_statuses, actual_statuses);
+        assert_eq!(
+            expected_statuses,
+            actual_statuses,
+            "mismatch between expected and actual statuses. execution details:\n{}",
+            batch_output
+                .processing_results
+                .iter()
+                .enumerate()
+                .map(|(i, tx)| {
+                    let details = match tx {
+                        Ok(ProcessedTransaction::Executed(executed)) => {
+                            format!("{:#?}", executed.execution_details)
+                        }
+                        Ok(ProcessedTransaction::FeesOnly(_)) => "(fee-only)".to_string(),
+                        Err(_) => "(not executed)".to_string(),
+                    };
+                    format!("{}: {}", i, details)
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
 
         // check that all the account states we care about are present and correct
         for (pubkey, expected_account_data) in self.test_entry.final_accounts.iter() {
@@ -2286,6 +2307,55 @@ fn simd83_account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestE
     test_entries
 }
 
+fn simd83_program_update_tombstone() -> Vec<SvmTestEntry> {
+    let mut test_entry = SvmTestEntry::default();
+
+    let program_name = "hello-solana";
+    let program_id = program_address(program_name);
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+
+    let mut fee_payer_data = AccountSharedData::default();
+    fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+    test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    test_entry
+        .initial_programs
+        .push((program_name.to_string(), DEPLOYMENT_SLOT, Some(fee_payer)));
+
+    // 0: close a deployed program
+    let instruction = bpf_loader_upgradeable::close_any(
+        &bpf_loader_upgradeable::get_program_data_address(&program_id),
+        &Pubkey::new_unique(),
+        Some(&fee_payer),
+        Some(&program_id),
+    );
+    test_entry.push_transaction(Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&fee_payer),
+        &[&fee_payer_keypair],
+        Hash::default(),
+    ));
+
+    // 1: attempt to invoke it, which must fail
+    // this ensures the local program cache reflects the change of state
+    let instruction = Instruction::new_with_bytes(program_id, &[], vec![]);
+    test_entry.push_transaction_with_status(
+        Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        ),
+        ExecutionStatus::ExecutedFailed,
+    );
+
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+    vec![test_entry]
+}
+
 #[test_case(program_medley())]
 #[test_case(simple_transfer(false))]
 #[test_case(simple_transfer(true))]
@@ -2304,6 +2374,7 @@ fn simd83_account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestE
 #[test_case(simd83_fee_payer_deallocate(true))]
 #[test_case(simd83_account_reallocate(false))]
 #[test_case(simd83_account_reallocate(true))]
+#[test_case(simd83_program_update_tombstone())]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         let env = SvmTestEnvironment::create(test_entry);

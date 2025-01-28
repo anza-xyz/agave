@@ -237,7 +237,7 @@ pub fn deploy_program_with_upgrade_authority(
     let mut account_data = AccountSharedData::default();
     let state = UpgradeableLoaderState::ProgramData {
         slot: deployment_slot,
-        upgrade_authority_address: None,
+        upgrade_authority_address,
     };
     let mut header = bincode::serialize(&state).unwrap();
     let mut complement = vec![
