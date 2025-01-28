@@ -34,7 +34,7 @@ pub struct TransactionStatusService {
 
 impl TransactionStatusService {
     pub fn new(
-        writetransaction_status_receiver: Receiver<TransactionStatusMessage>,
+        write_transaction_status_receiver: Receiver<TransactionStatusMessage>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         enable_rpc_transaction_history: bool,
         transaction_notifier: Option<TransactionNotifierArc>,
@@ -42,7 +42,7 @@ impl TransactionStatusService {
         enable_extended_tx_metadata_storage: bool,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let transaction_status_receiver = Arc::new(writetransaction_status_receiver);
+        let transaction_status_receiver = Arc::new(write_transaction_status_receiver);
         let transaction_status_receiver_handle = Arc::clone(&transaction_status_receiver);
 
         let thread_hdl = Builder::new()
@@ -237,6 +237,8 @@ impl TransactionStatusService {
         self.thread_hdl.join()
     }
 
+    // Many tests expect all messages to be handled. Wait for the message
+    // queue to drain out before signaling the service to exit.
     #[cfg(feature = "dev-context-only-utils")]
     pub fn quiesce_and_join_for_tests(self, exit: Arc<AtomicBool>) {
         for _ in 0..TSS_TEST_QUIESCE_NUM_RETRIES {
@@ -247,7 +249,7 @@ impl TransactionStatusService {
         }
         assert!(
             self.transaction_status_receiver.is_empty(),
-            "TransactionStatusService timed out before processing all queued up transactions"
+            "TransactionStatusService timed out before processing all queued up messages."
         );
         exit.store(true, Ordering::Relaxed);
         self.join().unwrap();
