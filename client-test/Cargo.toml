@@ -21,7 +21,7 @@ solana-merkle-tree = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
-solana-rpc = { workspace = true }
+solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
