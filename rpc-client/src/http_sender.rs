@@ -1,7 +1,6 @@
 //! Nonblocking [`RpcSender`] over HTTP.
 
 use {
-    crate::rpc_sender::*,
     async_trait::async_trait,
     log::*,
     reqwest::{
@@ -16,6 +15,7 @@ use {
         request::{RpcError, RpcRequest, RpcResponseErrorData},
         response::RpcSimulateTransactionResult,
     },
+    solana_rpc_sender::*,
     std::{
         sync::{
             atomic::{AtomicU64, Ordering},
