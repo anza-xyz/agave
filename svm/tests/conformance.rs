@@ -216,10 +216,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
 
     let transactions = vec![transaction];
 
-    let compute_budget = ComputeBudget {
-        compute_unit_limit: input.cu_avail,
-        ..ComputeBudget::default()
-    };
+    let compute_budget = ComputeBudget::new(input.cu_avail);
 
     let v1_environment =
         create_program_runtime_environment_v1(&feature_set, &compute_budget, false, false).unwrap();

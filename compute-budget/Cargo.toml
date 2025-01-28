@@ -20,6 +20,7 @@ solana-program-entrypoint = { workspace = true }
 [features]
 dev-context-only-utils = ["dep:qualifier_attr"]
 frozen-abi = ["dep:solana-frozen-abi", "solana-fee-structure/frozen-abi"]
+svm-internal = ["dep:qualifier_attr"]
 
 [lints]
 workspace = true

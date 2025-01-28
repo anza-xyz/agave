@@ -10030,16 +10030,11 @@ fn test_compute_budget_program_noop() {
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let compute_budget = invoke_context.get_compute_budget();
-        assert_eq!(
-            *compute_budget,
-            ComputeBudget {
-                compute_unit_limit: u64::from(
-                    compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                ),
-                heap_size: 48 * 1024,
-                ..ComputeBudget::default()
-            }
-        );
+        let mut expected_compute_budget = ComputeBudget::new(u64::from(
+            compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+        ));
+        expected_compute_budget.heap_size = 48 * 1024;
+        assert_eq!(*compute_budget, expected_compute_budget);
         Ok(())
     });
 
@@ -10075,16 +10070,11 @@ fn test_compute_request_instruction() {
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let compute_budget = invoke_context.get_compute_budget();
-        assert_eq!(
-            *compute_budget,
-            ComputeBudget {
-                compute_unit_limit: u64::from(
-                    compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                ),
-                heap_size: 48 * 1024,
-                ..ComputeBudget::default()
-            }
-        );
+        let mut expected_compute_budget = ComputeBudget::new(u64::from(
+            compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+        ));
+        expected_compute_budget.heap_size = 48 * 1024;
+        assert_eq!(*compute_budget, expected_compute_budget);
         Ok(())
     });
 
@@ -10128,16 +10118,11 @@ fn test_failed_compute_request_instruction() {
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let compute_budget = invoke_context.get_compute_budget();
-        assert_eq!(
-            *compute_budget,
-            ComputeBudget {
-                compute_unit_limit: u64::from(
-                    compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                ),
-                heap_size: 48 * 1024,
-                ..ComputeBudget::default()
-            }
-        );
+        let mut expected_compute_budget = ComputeBudget::new(u64::from(
+            compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+        ));
+        expected_compute_budget.heap_size = 48 * 1024;
+        assert_eq!(*compute_budget, expected_compute_budget);
         Ok(())
     });
 
