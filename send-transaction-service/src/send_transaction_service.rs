@@ -554,7 +554,7 @@ impl SendTransactionService {
         root_bank: &Bank,
         transactions: &mut HashMap<Signature, TransactionInfo>,
         client: &ConnectionCacheClient<T>,
-        Config {
+        &Config {
             retry_rate_ms,
             service_max_retries,
             default_max_retries,
@@ -566,7 +566,7 @@ impl SendTransactionService {
         let mut result = ProcessTransactionsResult::default();
 
         let mut batched_transactions = HashSet::new();
-        let retry_rate = Duration::from_millis(*retry_rate_ms);
+        let retry_rate = Duration::from_millis(retry_rate_ms);
 
         transactions.retain(|signature, transaction_info| {
             if transaction_info.durable_nonce_info.is_some() {
@@ -604,8 +604,8 @@ impl SendTransactionService {
 
             let max_retries = transaction_info
                 .max_retries
-                .or(*default_max_retries)
-                .map(|max_retries| max_retries.min(*service_max_retries));
+                .or(default_max_retries)
+                .map(|max_retries| max_retries.min(service_max_retries));
 
             if let Some(max_retries) = max_retries {
                 if transaction_info.retries >= max_retries {
@@ -662,7 +662,7 @@ impl SendTransactionService {
                 .filter(|(signature, _)| batched_transactions.contains(signature))
                 .map(|(_, transaction_info)| transaction_info.wire_transaction.clone());
 
-            let iter = wire_transactions.chunks(*batch_size);
+            let iter = wire_transactions.chunks(batch_size);
             for chunk in &iter {
                 let chunk = chunk.collect();
                 client.send_transactions_in_batch(chunk, stats);
