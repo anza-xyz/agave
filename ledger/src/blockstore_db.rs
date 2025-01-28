@@ -66,8 +66,6 @@ const TRANSACTION_MEMOS_CF: &str = "transaction_memos";
 /// This column family is used for tracking the active primary index for columns that for
 /// query performance reasons should not be indexed by Slot.
 const TRANSACTION_STATUS_INDEX_CF: &str = "transaction_status_index";
-/// Column family for Rewards
-const REWARDS_CF: &str = "rewards";
 
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
@@ -1099,7 +1097,7 @@ impl ColumnName for columns::TransactionStatusIndex {
 
 impl SlotColumn for columns::Rewards {}
 impl ColumnName for columns::Rewards {
-    const NAME: &'static str = REWARDS_CF;
+    const NAME: &'static str = "rewards";
 }
 impl ProtobufColumn for columns::Rewards {
     type Type = generated::Rewards;
