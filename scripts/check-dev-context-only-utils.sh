@@ -149,7 +149,16 @@ fi
 # dcou tends to newly trigger `unused_imports` and `dead_code` lints.
 # We could selectively deny (= `-D`) them here, however, deny all warnings for
 # consistency with other CI steps and for the possibility of new similar lints.
-export RUSTFLAGS="-D warnings -Z threads=8 $RUSTFLAGS"
+export RUSTFLAGS="-D warnings $RUSTFLAGS"
+
+# As this environment value is used by the rather deep crate of our dep graph
+# (solana-varsion), this could invalidate significant portion of caches when
+# this changes just with a new tiny commit. Technically, it's possible for
+# CI_COMMIT to affect the outcome of compilation via build.rs, but it's
+# extremely unrealistic for such diverting compilation behaviors to be desired
+# as a sane use-case. So, just unset CI_COMMIT unconditionally to increase
+# cache efficiency.
+unset CI_COMMIT
 
 if [[ $mode = "check-bins-and-lib" || $mode = "full" ]]; then
   _ cargo "+${rust_nightly}" hack "$@" check
