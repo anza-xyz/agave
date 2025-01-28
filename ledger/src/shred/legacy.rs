@@ -1,5 +1,6 @@
 use {
     crate::shred::{
+        self,
         common::impl_shred_common,
         shred_code, shred_data,
         traits::{Shred, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait},
@@ -7,6 +8,7 @@ use {
         SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_COMMON_SHRED_HEADER, SIZE_OF_DATA_SHRED_HEADERS,
         SIZE_OF_SIGNATURE,
     },
+    assert_matches::debug_assert_matches,
     solana_perf::packet::deserialize_from_with_limit,
     solana_sdk::{clock::Slot, signature::Signature},
     static_assertions::const_assert_eq,
@@ -187,19 +189,9 @@ impl ShredDataTrait for ShredData {
         &self.data_header
     }
 
+    #[inline]
     fn data(&self) -> Result<&[u8], Error> {
-        let size = usize::from(self.data_header.size);
-        #[allow(clippy::manual_range_contains)]
-        if size > self.payload.len()
-            || size < Self::SIZE_OF_HEADERS
-            || size > Self::SIZE_OF_HEADERS + Self::CAPACITY
-        {
-            return Err(Error::InvalidDataSize {
-                size: self.data_header.size,
-                payload: self.payload.len(),
-            });
-        }
-        Ok(&self.payload[Self::SIZE_OF_HEADERS..size])
+        Self::get_data(&self.payload, self.data_header.size)
     }
 }
 
@@ -258,6 +250,24 @@ impl ShredData {
             data_header,
             payload,
         }
+    }
+
+    // Given shred payload and DataShredHeader.size, returns the slice storing
+    // ledger entries in the shred.
+    pub(super) fn get_data(shred: &[u8], size: u16) -> Result<&[u8], Error> {
+        debug_assert_matches!(
+            shred::layout::get_shred_variant(shred),
+            Ok(ShredVariant::LegacyData)
+        );
+        let size = usize::from(size);
+        (Self::SIZE_OF_HEADERS..=Self::SIZE_OF_HEADERS + Self::CAPACITY)
+            .contains(&size)
+            .then(|| shred.get(Self::SIZE_OF_HEADERS..size))
+            .flatten()
+            .ok_or_else(|| Error::InvalidDataSize {
+                size: size as u16,
+                payload: shred.len(),
+            })
     }
 
     pub(super) fn bytes_to_store(&self) -> &[u8] {

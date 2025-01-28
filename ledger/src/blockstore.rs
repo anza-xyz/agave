@@ -3736,14 +3736,9 @@ impl Blockstore {
                 .multi_get_bytes(&keys)
                 .zip(indices)
                 .map(|(shred, index)| {
-                    let Some(shred) = shred? else {
+                    shred?.ok_or_else(|| {
                         maybe_panic(index);
-                        return Err(BlockstoreError::MissingShred(slot, index));
-                    };
-                    Shred::new_from_serialized_shred(shred).map_err(|err| {
-                        BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                            format!("Could not reconstruct shred from shred payload: {err:?}"),
-                        )))
+                        BlockstoreError::MissingShred(slot, index)
                     })
                 });
         completed_ranges

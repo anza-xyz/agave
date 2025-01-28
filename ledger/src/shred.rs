@@ -99,12 +99,8 @@ const SIZE_OF_COMMON_SHRED_HEADER: usize = 83;
 const SIZE_OF_DATA_SHRED_HEADERS: usize = 88;
 const SIZE_OF_CODING_SHRED_HEADERS: usize = 89;
 const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
-const SIZE_OF_SHRED_VARIANT: usize = 1;
-const SIZE_OF_SHRED_SLOT: usize = 8;
 
 const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
-const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
-const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
 
 // Shreds are uniformly split into erasure batches with a "target" number of
 // data shreds per each batch as below. The actual number of data shreds in
@@ -464,13 +460,6 @@ impl Shred {
         self.common_header().index
     }
 
-    pub(crate) fn data(&self) -> Result<&[u8], Error> {
-        match self {
-            Self::ShredCode(_) => Err(Error::InvalidShredType),
-            Self::ShredData(shred) => shred.data(),
-        }
-    }
-
     // Possibly trimmed payload;
     // Should only be used when storing shreds to blockstore.
     pub(crate) fn bytes_to_store(&self) -> &[u8] {
@@ -651,17 +640,17 @@ pub mod layout {
         shred.get(..SIZE_OF_COMMON_SHRED_HEADER)
     }
 
+    #[inline]
     pub(crate) fn get_signature(shred: &[u8]) -> Option<Signature> {
-        shred
-            .get(..SIZE_OF_SIGNATURE)
-            .map(Signature::try_from)?
-            .ok()
+        let bytes = <[u8; 64]>::try_from(shred.get(..64)?).unwrap();
+        Some(Signature::from(bytes))
     }
 
     pub(crate) const fn get_signature_range() -> Range<usize> {
         0..SIZE_OF_SIGNATURE
     }
 
+    #[inline]
     pub(super) fn get_shred_variant(shred: &[u8]) -> Result<ShredVariant, Error> {
         let Some(&shred_variant) = shred.get(OFFSET_OF_SHRED_VARIANT) else {
             return Err(Error::InvalidPayloadSize(shred.len()));
@@ -671,36 +660,79 @@ pub mod layout {
 
     #[inline]
     pub(super) fn get_shred_type(shred: &[u8]) -> Result<ShredType, Error> {
-        let shred_variant = get_shred_variant(shred)?;
-        Ok(ShredType::from(shred_variant))
+        get_shred_variant(shred).map(ShredType::from)
     }
 
     #[inline]
     pub fn get_slot(shred: &[u8]) -> Option<Slot> {
-        <[u8; 8]>::try_from(shred.get(OFFSET_OF_SHRED_SLOT..)?.get(..8)?)
-            .map(Slot::from_le_bytes)
-            .ok()
+        let bytes = <[u8; 8]>::try_from(shred.get(65..65 + 8)?).unwrap();
+        Some(Slot::from_le_bytes(bytes))
     }
 
     #[inline]
-    pub(super) fn get_index(shred: &[u8]) -> Option<u32> {
-        <[u8; 4]>::try_from(shred.get(OFFSET_OF_SHRED_INDEX..)?.get(..4)?)
-            .map(u32::from_le_bytes)
-            .ok()
+    pub(crate) fn get_index(shred: &[u8]) -> Option<u32> {
+        let bytes = <[u8; 4]>::try_from(shred.get(73..73 + 4)?).unwrap();
+        Some(u32::from_le_bytes(bytes))
     }
 
+    #[inline]
     pub fn get_version(shred: &[u8]) -> Option<u16> {
-        <[u8; 2]>::try_from(shred.get(77..79)?)
-            .map(u16::from_le_bytes)
-            .ok()
+        let bytes = <[u8; 2]>::try_from(shred.get(77..77 + 2)?).unwrap();
+        Some(u16::from_le_bytes(bytes))
     }
 
     // The caller should verify first that the shred is data and not code!
+    #[inline]
     pub(super) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
         debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
-        <[u8; 2]>::try_from(shred.get(83..85)?)
-            .map(u16::from_le_bytes)
-            .ok()
+        let bytes = <[u8; 2]>::try_from(shred.get(83..83 + 2)?).unwrap();
+        Some(u16::from_le_bytes(bytes))
+    }
+
+    // Returns DataShredHeader.flags.
+    #[inline]
+    pub(crate) fn get_flags(shred: &[u8]) -> Result<ShredFlags, Error> {
+        match get_shred_type(shred)? {
+            ShredType::Code => Err(Error::InvalidShredType),
+            ShredType::Data => {
+                let Some(flags) = shred.get(85).copied() else {
+                    return Err(Error::InvalidPayloadSize(shred.len()));
+                };
+                ShredFlags::from_bits(flags).ok_or(Error::InvalidShredFlags(flags))
+            }
+        }
+    }
+
+    // Returns DataShredHeader.size for data shreds.
+    // The caller should verify first that the shred is data and not code!
+    #[inline]
+    fn get_data_size(shred: &[u8]) -> Result<u16, Error> {
+        debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
+        let Some(bytes) = shred.get(86..86 + 2) else {
+            return Err(Error::InvalidPayloadSize(shred.len()));
+        };
+        let bytes = <[u8; 2]>::try_from(bytes).unwrap();
+        Ok(u16::from_le_bytes(bytes))
+    }
+
+    #[inline]
+    pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
+        match get_shred_variant(shred)? {
+            ShredVariant::LegacyCode => Err(Error::InvalidShredType),
+            ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
+            ShredVariant::LegacyData => legacy::ShredData::get_data(shred, get_data_size(shred)?),
+            ShredVariant::MerkleData {
+                proof_size,
+                chained,
+                resigned,
+            } => merkle::ShredData::get_data(
+                shred,
+                proof_size,
+                chained,
+                resigned,
+                get_data_size(shred)?,
+            ),
+        }
     }
 
     #[inline]
@@ -1345,6 +1377,11 @@ mod tests {
     };
 
     const SIZE_OF_SHRED_INDEX: usize = 4;
+    const SIZE_OF_SHRED_SLOT: usize = 8;
+    const SIZE_OF_SHRED_VARIANT: usize = 1;
+
+    const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
+    const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
 
     fn bs58_decode<T: AsRef<[u8]>>(data: T) -> Vec<u8> {
         bs58::decode(data).into_vec().unwrap()

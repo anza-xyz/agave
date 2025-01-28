@@ -398,7 +398,7 @@ impl Shredder {
     }
 
     /// Combines all shreds to recreate the original buffer
-    pub fn deshred<I, T: Borrow<Shred>>(shreds: I) -> Result<Vec<u8>, Error>
+    pub fn deshred<I, T: AsRef<[u8]>>(shreds: I) -> Result<Vec<u8>, Error>
     where
         I: IntoIterator<Item = T>,
     {
@@ -410,16 +410,21 @@ impl Shredder {
                 if data_complete {
                     return Err(Error::InvalidDeshredSet);
                 }
-                let shred = shred.borrow();
+                let shred = shred.as_ref();
                 // Shreds' indices should be consecutive.
-                let index = Some(shred.index());
+                let index = Some(
+                    shred::layout::get_index(shred)
+                        .ok_or_else(|| Error::InvalidPayloadSize(shred.len()))?,
+                );
                 if let Some(prev) = prev {
                     if prev.checked_add(1) != index {
                         return Err(Error::from(TooFewDataShards));
                     }
                 }
-                data.extend_from_slice(shred.data()?);
-                Ok((data, index, shred.data_complete()))
+                data.extend_from_slice(shred::layout::get_data(shred)?);
+                let flags = shred::layout::get_flags(shred)?;
+                let data_complete = flags.contains(ShredFlags::DATA_COMPLETE_SHRED);
+                Ok((data, index, data_complete))
             },
         )?;
         // The last shred should be DATA_COMPLETE_SHRED.
@@ -630,7 +635,10 @@ mod tests {
         assert_eq!(coding_shred_indexes.len(), num_expected_coding_shreds);
 
         // Test reassembly
-        let deshred_payload = Shredder::deshred(&data_shreds).unwrap();
+        let deshred_payload = {
+            let shreds = data_shreds.iter().map(Shred::payload);
+            Shredder::deshred(shreds).unwrap()
+        };
         let deshred_entries: Vec<Entry> = bincode::deserialize(&deshred_payload).unwrap();
         assert_eq!(entries, deshred_entries);
     }
@@ -933,7 +941,10 @@ mod tests {
         );
         shred_info.insert(3, recovered_shred);
 
-        let result = Shredder::deshred(&shred_info[..num_data_shreds]).unwrap();
+        let result = {
+            let shreds = shred_info[..num_data_shreds].iter().map(Shred::payload);
+            Shredder::deshred(shreds).unwrap()
+        };
         assert!(result.len() >= serialized_entries.len());
         assert_eq!(serialized_entries[..], result[..serialized_entries.len()]);
 
@@ -965,7 +976,10 @@ mod tests {
             shred_info.insert(i * 2, recovered_shred);
         }
 
-        let result = Shredder::deshred(&shred_info[..num_data_shreds]).unwrap();
+        let result = {
+            let shreds = shred_info[..num_data_shreds].iter().map(Shred::payload);
+            Shredder::deshred(shreds).unwrap()
+        };
         assert!(result.len() >= serialized_entries.len());
         assert_eq!(serialized_entries[..], result[..serialized_entries.len()]);
 
@@ -986,7 +1000,7 @@ mod tests {
 
         assert_eq!(shreds.len(), 3);
         assert_matches!(
-            Shredder::deshred(&shreds),
+            Shredder::deshred(shreds.iter().map(Shred::payload)),
             Err(Error::ErasureError(TooFewDataShards))
         );
 
@@ -1039,7 +1053,10 @@ mod tests {
             shred_info.insert(i * 2, recovered_shred);
         }
 
-        let result = Shredder::deshred(&shred_info[..num_data_shreds]).unwrap();
+        let result = {
+            let shreds = shred_info[..num_data_shreds].iter().map(Shred::payload);
+            Shredder::deshred(shreds).unwrap()
+        };
         assert!(result.len() >= serialized_entries.len());
         assert_eq!(serialized_entries[..], result[..serialized_entries.len()]);
 

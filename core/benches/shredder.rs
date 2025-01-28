@@ -132,7 +132,8 @@ fn bench_deshredder(bencher: &mut Bencher) {
         &mut ProcessShredsStats::default(),
     );
     bencher.iter(|| {
-        let raw = &mut Shredder::deshred(&data_shreds).unwrap();
+        let data_shreds = data_shreds.iter().map(Shred::payload);
+        let raw = &mut Shredder::deshred(data_shreds).unwrap();
         assert_ne!(raw.len(), 0);
     })
 }
