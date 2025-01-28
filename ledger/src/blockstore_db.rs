@@ -56,8 +56,6 @@ const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 //   include/rocksdb/advanced_options.h#L908C30-L908C30
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
-// Column family storing erasure metadata for a slot
-const ERASURE_META_CF: &str = "erasure_meta";
 // Column family for orphans data
 const ORPHANS_CF: &str = "orphans";
 /// Column family for bank hashes
@@ -1343,7 +1341,7 @@ impl Column for columns::ErasureMeta {
     }
 }
 impl ColumnName for columns::ErasureMeta {
-    const NAME: &'static str = ERASURE_META_CF;
+    const NAME: &'static str = "erasure_meta";
 }
 impl TypedColumn for columns::ErasureMeta {
     type Type = blockstore_meta::ErasureMeta;
