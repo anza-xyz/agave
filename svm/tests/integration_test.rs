@@ -7,6 +7,7 @@ use {
         register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH, EXECUTION_SLOT,
         WALLCLOCK_TIME,
     },
+    solana_account::PROGRAM_OWNERS,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
@@ -18,7 +19,7 @@ use {
         feature_set::{self, FeatureSet},
         hash::Hash,
         instruction::{AccountMeta, Instruction},
-        native_loader,
+        loader_v4, native_loader,
         native_token::LAMPORTS_PER_SOL,
         nonce::{self, state::DurableNonce},
         pubkey::Pubkey,
@@ -43,7 +44,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_type_overrides::sync::{Arc, RwLock},
     std::collections::HashMap,
-    test_case::test_case,
+    test_case::{test_case, test_matrix},
 };
 
 // This module contains the implementation of TransactionProcessingCallback
@@ -238,12 +239,14 @@ impl SvmTestEnvironment<'_> {
                 .map(|(i, tx)| {
                     let details = match tx {
                         Ok(ProcessedTransaction::Executed(executed)) => {
-                            format!("{:#?}", executed.execution_details)
+                            format!("(executed): {:#?}", executed.execution_details)
                         }
-                        Ok(ProcessedTransaction::FeesOnly(_)) => "(fee-only)".to_string(),
-                        Err(_) => "(not executed)".to_string(),
+                        Ok(ProcessedTransaction::FeesOnly(fee_only)) => {
+                            format!("(fee-only): {:?}", fee_only.load_error)
+                        }
+                        Err(e) => format!("(discarded): {:?}", e),
                     };
-                    format!("{}: {}", i, details)
+                    format!("{} {}", i, details)
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
@@ -2307,7 +2310,7 @@ fn simd83_account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestE
     test_entries
 }
 
-fn simd83_program_update_tombstone() -> Vec<SvmTestEntry> {
+fn program_cache_update_tombstone() -> Vec<SvmTestEntry> {
     let mut test_entry = SvmTestEntry::default();
 
     let program_name = "hello-solana";
@@ -2374,10 +2377,105 @@ fn simd83_program_update_tombstone() -> Vec<SvmTestEntry> {
 #[test_case(simd83_fee_payer_deallocate(true))]
 #[test_case(simd83_account_reallocate(false))]
 #[test_case(simd83_account_reallocate(true))]
-#[test_case(simd83_program_update_tombstone())]
+#[test_case(program_cache_update_tombstone())]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         let env = SvmTestEnvironment::create(test_entry);
+        env.execute();
+    }
+}
+
+#[test_matrix([false, true], [false, true])]
+fn program_cache_create_account(enable_fee_only_transactions: bool, disable_executable_flag: bool) {
+    for loader_id in PROGRAM_OWNERS {
+        let mut test_entry = SvmTestEntry::default();
+        if enable_fee_only_transactions {
+            test_entry
+                .enabled_features
+                .push(feature_set::enable_transaction_loading_failure_fees::id());
+        }
+        if disable_executable_flag {
+            test_entry
+                .enabled_features
+                .push(feature_set::remove_accounts_executable_flag_checks::id());
+        }
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL * 10);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let new_account_keypair = Keypair::new();
+        let program_id = new_account_keypair.pubkey();
+
+        let create_transaction = system_transaction::create_account(
+            &fee_payer_keypair,
+            &new_account_keypair,
+            Hash::default(),
+            LAMPORTS_PER_SOL,
+            0,
+            loader_id,
+        );
+
+        test_entry.push_transaction(create_transaction);
+
+        test_entry
+            .decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SOL + LAMPORTS_PER_SIGNATURE * 2);
+
+        let invoke_transaction = Transaction::new_signed_with_payer(
+            &[Instruction::new_with_bytes(program_id, &[], vec![])],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        );
+
+        let expected_status = match (enable_fee_only_transactions, disable_executable_flag) {
+            (_, true) => ExecutionStatus::ExecutedFailed,
+            (true, false) => ExecutionStatus::ProcessedFailed,
+            (false, false) => ExecutionStatus::Discarded,
+        };
+
+        test_entry.push_transaction_with_status(invoke_transaction.clone(), expected_status);
+
+        if expected_status != ExecutionStatus::Discarded {
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+        }
+
+        let mut env = SvmTestEnvironment::create(test_entry);
+
+        // NOTE this ensures we dont fail with the missing loader
+        // once LoaderV4 is ready for testing, adding it to mock_bank.rs means the test runs
+        // and this branch will always be false and can be removed
+        if *loader_id == loader_v4::id()
+            && !env
+                .batch_processor
+                .builtin_program_ids
+                .read()
+                .unwrap()
+                .contains(loader_id)
+        {
+            continue;
+        }
+
+        // test in same entry as account creation
+        env.execute();
+
+        let mut test_entry = SvmTestEntry {
+            initial_accounts: env.test_entry.final_accounts.clone(),
+            final_accounts: env.test_entry.final_accounts.clone(),
+            ..SvmTestEntry::default()
+        };
+
+        test_entry.push_transaction_with_status(invoke_transaction, expected_status);
+
+        if expected_status != ExecutionStatus::Discarded {
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+        }
+
+        // test in different entry same slot
+        env.test_entry = test_entry;
         env.execute();
     }
 }

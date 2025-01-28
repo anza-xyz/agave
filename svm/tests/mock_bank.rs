@@ -19,6 +19,7 @@ use {
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
+        bpf_loader, bpf_loader_deprecated,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::{Clock, UnixTimestamp},
         compute_budget, native_loader,
@@ -267,16 +268,40 @@ pub fn register_builtins(
     batch_processor: &TransactionBatchProcessor<MockForkGraph>,
 ) {
     const DEPLOYMENT_SLOT: u64 = 0;
-    // We must register the bpf loader account as a loadable account, otherwise programs
-    // won't execute.
-    let bpf_loader_name = "solana_bpf_loader_upgradeable_program";
+    // We must register LoaderV3 as a loadable account, otherwise programs won't execute.
+    let loader_v3_name = "solana_bpf_loader_upgradeable_program";
     batch_processor.add_builtin(
         mock_bank,
         bpf_loader_upgradeable::id(),
-        bpf_loader_name,
+        loader_v3_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            bpf_loader_name.len(),
+            loader_v3_name.len(),
+            solana_bpf_loader_program::Entrypoint::vm,
+        ),
+    );
+
+    // Other loaders are needed for testing program cache behavior.
+    // NOTE when LoaderV4 is ready for testing, it must be added here.
+    let loader_v1_name = "solana_bpf_loader_deprecated_program";
+    batch_processor.add_builtin(
+        mock_bank,
+        bpf_loader_deprecated::id(),
+        loader_v1_name,
+        ProgramCacheEntry::new_builtin(
+            DEPLOYMENT_SLOT,
+            loader_v1_name.len(),
+            solana_bpf_loader_program::Entrypoint::vm,
+        ),
+    );
+    let loader_v2_name = "solana_bpf_loader_program";
+    batch_processor.add_builtin(
+        mock_bank,
+        bpf_loader::id(),
+        loader_v2_name,
+        ProgramCacheEntry::new_builtin(
+            DEPLOYMENT_SLOT,
+            loader_v2_name.len(),
             solana_bpf_loader_program::Entrypoint::vm,
         ),
     );
