@@ -50,6 +50,7 @@ main() {
     need_cmd rm
     need_cmd sed
     need_cmd grep
+    need_cmd rustup
 
     for arg in "$@"; do
       case "$arg" in
