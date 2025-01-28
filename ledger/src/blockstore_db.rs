@@ -70,8 +70,6 @@ const TRANSACTION_STATUS_INDEX_CF: &str = "transaction_status_index";
 const REWARDS_CF: &str = "rewards";
 /// Column family for Blocktime
 const BLOCKTIME_CF: &str = "blocktime";
-/// Column family for Performance Samples
-const PERF_SAMPLES_CF: &str = "perf_samples";
 
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
@@ -1119,7 +1117,7 @@ impl TypedColumn for columns::Blocktime {
 
 impl SlotColumn for columns::PerfSamples {}
 impl ColumnName for columns::PerfSamples {
-    const NAME: &'static str = PERF_SAMPLES_CF;
+    const NAME: &'static str = "perf_samples";
 }
 
 impl SlotColumn for columns::BlockHeight {}
