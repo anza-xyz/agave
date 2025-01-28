@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
         std::fs::File::open(conf_file)?.read_to_string(&mut buf)?;
         let cfg: ThreadManagerConfig = toml::from_str(&buf)?;
 
-        let manager = ThreadManager::new(cfg).unwrap();
+        let manager = ThreadManager::new(&cfg).unwrap();
         let tokio1 = manager.get_tokio("axum1");
         tokio1.start_metrics_sampling(Duration::from_secs(1));
         let tokio2 = manager.get_tokio("axum2");

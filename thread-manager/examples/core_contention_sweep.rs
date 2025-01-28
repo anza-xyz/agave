@@ -76,15 +76,15 @@ fn main() -> anyhow::Result<()> {
             info!("Running {core_count} cores under {regime:?}");
             let (tokio1, tokio2) = match regime {
                 Regime::Shared => {
-                    manager = ThreadManager::new(make_config_shared(core_count)).unwrap();
+                    manager = ThreadManager::new(&make_config_shared(core_count)).unwrap();
                     (manager.get_tokio("axum1"), manager.get_tokio("axum2"))
                 }
                 Regime::Dedicated => {
-                    manager = ThreadManager::new(make_config_dedicated(core_count)).unwrap();
+                    manager = ThreadManager::new(&make_config_dedicated(core_count)).unwrap();
                     (manager.get_tokio("axum1"), manager.get_tokio("axum2"))
                 }
                 Regime::Single => {
-                    manager = ThreadManager::new(make_config_shared(core_count)).unwrap();
+                    manager = ThreadManager::new(&make_config_shared(core_count)).unwrap();
                     (manager.get_tokio("axum1"), manager.get_tokio("axum2"))
                 }
             };

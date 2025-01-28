@@ -30,6 +30,7 @@ use {
         tpu::{Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
+    agave_thread_manager::{ThreadManager, ThreadManagerConfig},
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
     lazy_static::lazy_static,
@@ -313,6 +314,7 @@ pub struct ValidatorConfig {
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
     pub tvu_shred_sigverify_threads: NonZeroUsize,
+    pub thread_manager_config: ThreadManagerConfig,
     pub delay_leader_block_for_pending_fork: bool,
 }
 
@@ -385,6 +387,7 @@ impl Default for ValidatorConfig {
             rayon_global_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+            thread_manager_config: ThreadManagerConfig::default_for_agave(),
             tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
         }
@@ -588,6 +591,7 @@ pub struct Validator {
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
+    thread_manager: ThreadManager,
 }
 
 impl Validator {
@@ -619,6 +623,7 @@ impl Validator {
 
         let start_time = Instant::now();
 
+        let thread_manager = ThreadManager::new(&config.thread_manager_config)?;
         // Initialize the global rayon pool first to ensure the value in config
         // is honored. Otherwise, some code accessing the global pool could
         // cause it to get initialized with Rayon's default (not ours)
@@ -1659,6 +1664,7 @@ impl Validator {
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
+            thread_manager,
         })
     }
 
@@ -1816,6 +1822,7 @@ impl Validator {
         self.poh_timing_report_service
             .join()
             .expect("poh_timing_report_service");
+        self.thread_manager.destroy();
     }
 }
 

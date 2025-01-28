@@ -103,7 +103,7 @@ impl<T> Drop for JoinHandle<T> {
 
 impl NativeThreadRuntime {
     pub fn new(name: String, cfg: NativeConfig) -> Self {
-        debug_assert!(name.len() < MAX_THREAD_NAME_CHARS, "Thread name too long");
+        debug_assert!(name.len() <= MAX_THREAD_NAME_CHARS, "Thread name too long");
         Self {
             inner: Arc::new(NativeThreadRuntimeInner {
                 id_count: AtomicUsize::new(0),
