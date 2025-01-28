@@ -56,9 +56,6 @@ const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 //   include/rocksdb/advanced_options.h#L908C30-L908C30
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
-// Column family for storing proof that there were multiple
-// versions of a slot
-const DUPLICATE_SLOTS_CF: &str = "duplicate_slots";
 // Column family storing erasure metadata for a slot
 const ERASURE_META_CF: &str = "erasure_meta";
 // Column family for orphans data
@@ -1280,7 +1277,7 @@ impl TypedColumn for columns::DeadSlots {
 
 impl SlotColumn for columns::DuplicateSlots {}
 impl ColumnName for columns::DuplicateSlots {
-    const NAME: &'static str = DUPLICATE_SLOTS_CF;
+    const NAME: &'static str = "duplicate_slots";
 }
 impl TypedColumn for columns::DuplicateSlots {
     type Type = blockstore_meta::DuplicateSlotProof;
