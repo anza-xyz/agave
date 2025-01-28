@@ -56,8 +56,6 @@ const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 //   include/rocksdb/advanced_options.h#L908C30-L908C30
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
-/// Column family for indexes
-const INDEX_CF: &str = "index";
 /// Column family for Data Shreds
 pub const DATA_SHRED_CF: &str = "data_shred";
 /// Column family for Code Shreds
@@ -1227,7 +1225,7 @@ impl ColumnName for columns::ShredData {
 
 impl SlotColumn for columns::Index {}
 impl ColumnName for columns::Index {
-    const NAME: &'static str = INDEX_CF;
+    const NAME: &'static str = "index";
 }
 impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
