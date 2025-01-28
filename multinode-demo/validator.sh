@@ -275,11 +275,7 @@ if [[ $maybeRequireTower = true ]]; then
   default_arg --require-tower
 fi
 
-if [[ -n $SOLANA_CUDA ]]; then
-  program=$agave_validator_cuda
-else
-  program=$agave_validator
-fi
+program=$agave_validator
 
 set -e
 PS4="$(basename "$0"): "

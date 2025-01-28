@@ -26,6 +26,7 @@ Release channels have their own copy of this changelog:
   * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool and change default to `file`
   * Remove tracer stats from banking-trace. `banking-trace` directory should be cleared when restarting on v2.2 for first time. It will not break if not cleared, but the file will be a mix of new/old format. (#4043)
   * Add `--snapshot-zstd-compression-level` to set the compression level when archiving snapshots with zstd.
+  * Remove support for `--cuda` from `agave-validator`
 
 ## [2.1.0]
 * Breaking:
