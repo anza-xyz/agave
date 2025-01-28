@@ -72,8 +72,6 @@ const REWARDS_CF: &str = "rewards";
 const BLOCKTIME_CF: &str = "blocktime";
 /// Column family for Performance Samples
 const PERF_SAMPLES_CF: &str = "perf_samples";
-/// Column family for BlockHeight
-const BLOCK_HEIGHT_CF: &str = "block_height";
 
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
@@ -1126,7 +1124,7 @@ impl ColumnName for columns::PerfSamples {
 
 impl SlotColumn for columns::BlockHeight {}
 impl ColumnName for columns::BlockHeight {
-    const NAME: &'static str = BLOCK_HEIGHT_CF;
+    const NAME: &'static str = "block_height";
 }
 impl TypedColumn for columns::BlockHeight {
     type Type = u64;
