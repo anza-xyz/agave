@@ -56,8 +56,6 @@ const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 //   include/rocksdb/advanced_options.h#L908C30-L908C30
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
-/// Column family for bank hashes
-const BANK_HASH_CF: &str = "bank_hashes";
 // Column family for root data
 const ROOT_CF: &str = "root";
 /// Column family for indexes
@@ -1289,7 +1287,7 @@ impl TypedColumn for columns::Orphans {
 
 impl SlotColumn for columns::BankHash {}
 impl ColumnName for columns::BankHash {
-    const NAME: &'static str = BANK_HASH_CF;
+    const NAME: &'static str = "bank_hashes";
 }
 impl TypedColumn for columns::BankHash {
     type Type = blockstore_meta::FrozenHashVersioned;
