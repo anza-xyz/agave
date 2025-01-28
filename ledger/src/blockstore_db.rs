@@ -58,8 +58,6 @@ const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
 /// Column family for Transaction Status
 const TRANSACTION_STATUS_CF: &str = "transaction_status";
-/// Column family for Address Signatures
-const ADDRESS_SIGNATURES_CF: &str = "address_signatures";
 
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
@@ -959,7 +957,7 @@ impl Column for columns::AddressSignatures {
     }
 }
 impl ColumnName for columns::AddressSignatures {
-    const NAME: &'static str = ADDRESS_SIGNATURES_CF;
+    const NAME: &'static str = "address_signatures";
 }
 
 impl ColumnIndexDeprecation for columns::AddressSignatures {
