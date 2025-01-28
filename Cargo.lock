@@ -6516,7 +6516,6 @@ dependencies = [
  "solana-compute-budget",
  "solana-cpi",
  "solana-curve25519",
- "solana-define-syscall",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
  "solana-feature-set",

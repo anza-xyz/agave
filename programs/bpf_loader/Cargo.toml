@@ -22,7 +22,6 @@ solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
-solana-define-syscall = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }

@@ -1,5 +1,3 @@
-#[allow(unused)]
-use solana_define_syscall::codes::SOL_GET_PROCESSED_SIBLING_INSTRUCTION;
 pub use solana_define_syscall::definitions::sol_get_stack_height;
 use {
     crate::{AccountMeta, ProcessedSiblingInstruction},
@@ -7,4 +5,4 @@ use {
     solana_pubkey::Pubkey,
 };
 
-define_syscall!(fn sol_get_processed_sibling_instruction(index: u64, meta: *mut ProcessedSiblingInstruction, program_id: *mut Pubkey, data: *mut u8, accounts: *mut AccountMeta) -> u64, SOL_GET_PROCESSED_SIBLING_INSTRUCTION);
+define_syscall!(fn sol_get_processed_sibling_instruction(index: u64, meta: *mut ProcessedSiblingInstruction, program_id: *mut Pubkey, data: *mut u8, accounts: *mut AccountMeta) -> u64);
