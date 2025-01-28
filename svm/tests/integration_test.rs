@@ -236,17 +236,14 @@ impl SvmTestEnvironment<'_> {
                 .processing_results
                 .iter()
                 .enumerate()
-                .map(|(i, tx)| {
-                    let details = match tx {
-                        Ok(ProcessedTransaction::Executed(executed)) => {
-                            format!("(executed): {:#?}", executed.execution_details)
-                        }
-                        Ok(ProcessedTransaction::FeesOnly(fee_only)) => {
-                            format!("(fee-only): {:?}", fee_only.load_error)
-                        }
-                        Err(e) => format!("(discarded): {:?}", e),
-                    };
-                    format!("{} {}", i, details)
+                .map(|(i, tx)| match tx {
+                    Ok(ProcessedTransaction::Executed(executed)) => {
+                        format!("{} (executed): {:#?}", i, executed.execution_details)
+                    }
+                    Ok(ProcessedTransaction::FeesOnly(fee_only)) => {
+                        format!("{} (fee-only): {:?}", i, fee_only.load_error)
+                    }
+                    Err(e) => format!("{} (discarded): {:?}", i, e),
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
