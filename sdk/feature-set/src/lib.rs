@@ -696,6 +696,10 @@ pub mod enable_loader_v4 {
     solana_pubkey::declare_id!("8Cb77yHjPWe9wuWUfXeh6iszFGCDGNCoFk3tprViYHNm");
 }
 
+pub mod disable_new_loader_v3_deployments {
+    solana_pubkey::declare_id!("EmhbpdVtZ2hWRGFWBDjn2i3SJD8Z36z4mpMcZJEnebnP");
+}
+
 pub mod require_rent_exempt_split_destination {
     solana_pubkey::declare_id!("D2aip4BBr8NPWtU9vLrwrBvbuaQ8w1zV38zFLxx4pfBV");
 }
@@ -1089,6 +1093,7 @@ lazy_static! {
         (timely_vote_credits::id(), "use timeliness of votes in determining credits to award"),
         (remaining_compute_units_syscall_enabled::id(), "enable the remaining_compute_units syscall"),
         (enable_loader_v4::id(), "Enable Loader-v4 SIMD-0167"),
+        (disable_new_loader_v3_deployments::id(), "Disable new loader-v3 deployments SIMD-0167"),
         (require_rent_exempt_split_destination::id(), "Require stake split destination account to be rent exempt"),
         (better_error_codes_for_tx_lamport_check::id(), "better error codes for tx lamport check #33353"),
         (enable_alt_bn128_compression_syscall::id(), "add alt_bn128 compression syscalls"),
