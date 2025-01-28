@@ -13,6 +13,94 @@ on your preferred workflow:
 - [Build from Source](#build-from-source)
 - [Use Homebrew](#use-homebrew)
 
+
+## Prerequisites
+
+Before installing the Solana CLI tools (either the prebuilt binaries or building from source), make sure to install the following prerequisites:
+
+### For Debian and Other Linux Distributions:
+
+Rust Programming Language: Check "Install Rust" at
+[https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install),
+which recommends the following command.
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Install build dependencies:
+
+- Build essential
+- Package config
+- Udev & LLM & libclang
+- Protocol buffers
+
+```bash
+apt-get install \
+    build-essential \
+    pkg-config \
+    libudev-dev llvm libclang-dev \
+    protobuf-compiler
+```
+
+### For Other Linux Distributions:
+
+Replace `apt` with your distribution's package manager (e.g., `yum`, `dnf`,
+`pacman`) and adjust package names as needed.
+
+### For macOS:
+
+Install Homebrew (if not already installed), check "Install Homebrew" at
+[https://brew.sh/](https://brew.sh/), which recommends the following command:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Install the necessary tools and libraries using Homebrew:
+
+```bash
+brew install rust pkg-config libudev protobuf llvm coreutils rustup
+```
+
+Follow the instructions given at the end of the brew install command about
+`PATH` configurations.
+
+### For Windows:
+
+Rust Programming Language: Check "Install Rust" at
+[https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install),
+which recommends the following command.
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+- Download and install the Build Tools for Visual Studio (2019 or later) from
+  the
+  [Visual Studio downloads page](https://visualstudio.microsoft.com/downloads/).
+  Make sure to include the C++ build tools in the installation.
+- Install LLVM: Download and install LLVM from the
+  [official LLVM download page](https://releases.llvm.org/download.html).
+- Install Protocol Buffers Compiler (protoc): Download `protoc` from the
+  [GitHub releases page of Protocol Buffers](https://github.com/protocolbuffers/protobuf/releases),
+  and add it to your `PATH`.
+
+:::info
+
+Users on Windows 10 or 11 may need to install
+[Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install)
+(WSL) in order to be able to build from source. WSL provides a Linux environment
+that runs inside your existing Windows installation. You can then run regular
+Linux software, including the Linux versions of Solana CLI.
+
+After installed, run `wsl` from your Windows terminal, then continue through the
+[Debian and Other Linux Distributions](#for-debian-and-other-linux-distributions)
+above.
+
+:::
+
+
 ## Use The Solana Install Tool
 
 ### MacOS & Linux
@@ -151,92 +239,6 @@ set PATH=%cd%/bin;%PATH%
 If you are unable to use the prebuilt binaries or prefer to build it yourself
 from source, follow these steps, ensuring you have the necessary prerequisites
 installed on your system.
-
-### Prerequisites
-
-Before building from source, make sure to install the following prerequisites:
-
-#### For Debian and Other Linux Distributions:
-
-Rust Programming Language: Check "Install Rust" at
-[https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install),
-which recommends the following command.
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-Install build dependencies:
-
-- Build essential
-- Package config
-- Udev & LLM & libclang
-- Protocol buffers
-
-```bash
-apt-get install \
-    build-essential \
-    pkg-config \
-    libudev-dev llvm libclang-dev \
-    protobuf-compiler
-```
-
-#### For Other Linux Distributions:
-
-Replace `apt` with your distribution's package manager (e.g., `yum`, `dnf`,
-`pacman`) and adjust package names as needed.
-
-#### For macOS:
-
-Install Homebrew (if not already installed), check "Install Homebrew" at
-[https://brew.sh/](https://brew.sh/), which recommends the following command:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-Install the necessary tools and libraries using Homebrew:
-
-```bash
-brew install rust pkg-config libudev protobuf llvm coreutils
-```
-
-Follow the instructions given at the end of the brew install command about
-`PATH` configurations.
-
-#### For Windows:
-
-Rust Programming Language: Check "Install Rust" at
-[https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install),
-which recommends the following command.
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-- Download and install the Build Tools for Visual Studio (2019 or later) from
-  the
-  [Visual Studio downloads page](https://visualstudio.microsoft.com/downloads/).
-  Make sure to include the C++ build tools in the installation.
-- Install LLVM: Download and install LLVM from the
-  [official LLVM download page](https://releases.llvm.org/download.html).
-- Install Protocol Buffers Compiler (protoc): Download `protoc` from the
-  [GitHub releases page of Protocol Buffers](https://github.com/protocolbuffers/protobuf/releases),
-  and add it to your `PATH`.
-
-:::info
-
-Users on Windows 10 or 11 may need to install
-[Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install)
-(WSL) in order to be able to build from source. WSL provides a Linux environment
-that runs inside your existing Windows installation. You can then run regular
-Linux software, including the Linux versions of Solana CLI.
-
-After installed, run `wsl` from your Windows terminal, then continue through the
-[Debian and Other Linux Distributions](#for-debian-and-other-linux-distributions)
-above.
-
-:::
 
 ### Building from Source
 
