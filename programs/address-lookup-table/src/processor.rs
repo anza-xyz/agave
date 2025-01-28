@@ -1,9 +1,5 @@
 use {
-    solana_bincode::limited_deserialize,
-    solana_clock::Slot,
-    solana_instruction::error::InstructionError,
-    solana_log_collector::ic_msg,
-    solana_program::address_lookup_table::{
+    solana_address_lookup_table_interface::{
         instruction::ProgramInstruction,
         program::{check_id, id},
         state::{
@@ -11,6 +7,10 @@ use {
             LOOKUP_TABLE_MAX_ADDRESSES, LOOKUP_TABLE_META_SIZE,
         },
     },
+    solana_bincode::limited_deserialize,
+    solana_clock::Slot,
+    solana_instruction::error::InstructionError,
+    solana_log_collector::ic_msg,
     solana_program_runtime::{declare_process_instruction, invoke_context::InvokeContext},
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_system_interface::instruction as system_instruction,

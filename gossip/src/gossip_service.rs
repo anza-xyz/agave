@@ -66,6 +66,7 @@ impl GossipService {
         );
         let (consume_sender, listen_receiver) = unbounded();
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
+            bank_forks.clone(),
             request_receiver,
             consume_sender,
             exit.clone(),

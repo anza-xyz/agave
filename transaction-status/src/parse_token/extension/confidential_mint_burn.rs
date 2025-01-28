@@ -271,10 +271,9 @@ mod test {
             },
             solana_program::message::Message,
             solana_zk_sdk::{
-                encryption::{
-                    auth_encryption::AeCiphertext,
-                    elgamal::ElGamalPubkey,
-                    pod::{auth_encryption::PodAeCiphertext, elgamal::PodElGamalPubkey},
+                encryption::pod::{
+                    auth_encryption::PodAeCiphertext,
+                    elgamal::{PodElGamalCiphertext, PodElGamalPubkey},
                 },
                 zk_elgamal_proof_program::proof_data::{
                     BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU128Data,
@@ -304,8 +303,8 @@ mod test {
         let instruction = initialize_mint(
             &spl_token_2022::id(),
             &Pubkey::new_unique(),
-            PodElGamalPubkey::default(),
-            PodAeCiphertext::default(),
+            &PodElGamalPubkey::default(),
+            &PodAeCiphertext::default(),
         )
         .unwrap();
         check_no_panic(instruction);
@@ -318,7 +317,7 @@ mod test {
             &Pubkey::new_unique(),
             &Pubkey::new_unique(),
             &[],
-            AeCiphertext::default(),
+            &PodAeCiphertext::default(),
         )
         .unwrap();
         check_no_panic(instruction);
@@ -342,7 +341,7 @@ mod test {
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &[],
-                ElGamalPubkey::default(),
+                &PodElGamalPubkey::default(),
                 location,
             )
             .unwrap();
@@ -394,12 +393,14 @@ mod test {
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 None,
+                &PodElGamalCiphertext::default(),
+                &PodElGamalCiphertext::default(),
                 &Pubkey::new_unique(),
                 &[],
                 equality_proof_location,
                 ciphertext_validity_proof_location,
                 range_proof_location,
-                AeCiphertext::default(),
+                &PodAeCiphertext::default(),
             )
             .unwrap();
             check_no_panic(instructions[0].clone());
@@ -450,7 +451,9 @@ mod test {
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 None,
-                PodAeCiphertext::default(),
+                &PodAeCiphertext::default(),
+                &PodElGamalCiphertext::default(),
+                &PodElGamalCiphertext::default(),
                 &Pubkey::new_unique(),
                 &[],
                 equality_proof_location,

@@ -10,6 +10,7 @@ use {
     },
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
+    solana_account::Account,
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
         input_parsers::{pubkey_of, pubkey_of_signer, signer_of},
@@ -25,7 +26,15 @@ use {
         tpu_client::{TpuClient, TpuClientConfig},
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_feature_set::{FeatureSet, FEATURE_NAMES},
+    solana_instruction::Instruction,
+    solana_message::Message,
+    solana_program::loader_v4::{
+        self, LoaderV4State,
+        LoaderV4Status::{self, Retracted},
+    },
     solana_program_runtime::invoke_context::InvokeContext,
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
@@ -34,20 +43,11 @@ use {
         request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
-    solana_sdk::{
-        account::Account,
-        feature_set::{FeatureSet, FEATURE_NAMES},
-        instruction::Instruction,
-        loader_v4::{
-            self, LoaderV4State,
-            LoaderV4Status::{self, Retracted},
-        },
-        message::Message,
-        pubkey::Pubkey,
-        signature::Signer,
-        system_instruction::{self, SystemError, MAX_PERMITTED_DATA_LENGTH},
-        transaction::Transaction,
+    solana_signer::Signer,
+    solana_system_interface::{
+        error::SystemError, instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH,
     },
+    solana_transaction::Transaction,
     std::{
         cmp::Ordering,
         fs::File,
@@ -1362,17 +1362,15 @@ mod tests {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
         serde_json::json,
+        solana_keypair::{keypair_from_seed, read_keypair_file, write_keypair_file, Keypair},
         solana_rpc_client_api::{
             request::RpcRequest,
             response::{Response, RpcResponseContext},
         },
-        solana_sdk::signature::{
-            keypair_from_seed, read_keypair_file, write_keypair_file, Keypair,
-        },
         std::collections::HashMap,
     };
 
-    fn program_authority() -> solana_sdk::signature::Keypair {
+    fn program_authority() -> solana_keypair::Keypair {
         keypair_from_seed(&[3u8; 32]).unwrap()
     }
 

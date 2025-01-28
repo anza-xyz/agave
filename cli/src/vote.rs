@@ -14,6 +14,7 @@ use {
         stake::check_current_authority,
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
+    solana_account::Account,
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -29,14 +30,15 @@ use {
         ReturnSignersConfig,
     },
     solana_commitment_config::CommitmentConfig,
+    solana_message::Message,
+    solana_native_token::lamports_to_sol,
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcGetVoteAccountsConfig,
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
-    solana_sdk::{
-        account::Account, message::Message, native_token::lamports_to_sol, pubkey::Pubkey,
-        system_instruction::SystemError, transaction::Transaction,
-    },
+    solana_system_interface::error::SystemError,
+    solana_transaction::Transaction,
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
@@ -1549,12 +1551,11 @@ mod tests {
     use {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
+        solana_hash::Hash,
+        solana_keypair::{read_keypair_file, write_keypair, Keypair},
+        solana_presigner::Presigner,
         solana_rpc_client_nonce_utils::blockhash_query,
-        solana_sdk::{
-            hash::Hash,
-            signature::{read_keypair_file, write_keypair, Keypair, Signer},
-            signer::presigner::Presigner,
-        },
+        solana_signer::Signer,
         tempfile::NamedTempFile,
     };
 

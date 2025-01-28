@@ -9,10 +9,10 @@ use {
             hot::{HotStorageReader, HotStorageWriter},
         },
     },
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::Slot,
-        pubkey::Pubkey,
         rent_collector::RENT_EXEMPT_RENT_EPOCH,
         system_instruction::MAX_PERMITTED_DATA_LENGTH,
     },

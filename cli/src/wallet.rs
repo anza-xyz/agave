@@ -29,20 +29,17 @@ use {
         ReturnSignersConfig,
     },
     solana_commitment_config::CommitmentConfig,
+    solana_message::Message,
+    solana_offchain_message::OffchainMessage,
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcTransactionConfig,
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
-    solana_sdk::{
-        message::Message,
-        offchain_message::OffchainMessage,
-        pubkey::Pubkey,
-        signature::Signature,
-        stake,
-        system_instruction::{self, SystemError},
-        system_program,
-        transaction::{Transaction, VersionedTransaction},
-    },
+    solana_sdk_ids::{stake, system_program},
+    solana_signature::Signature,
+    solana_system_interface::{error::SystemError, instruction as system_instruction},
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
         TransactionBinaryEncoding, UiTransactionEncoding,
@@ -393,7 +390,7 @@ fn resolve_derived_address_program_id(matches: &ArgMatches<'_>, arg_name: &str) 
         let upper = v.to_ascii_uppercase();
         match upper.as_str() {
             "NONCE" | "SYSTEM" => Some(system_program::id()),
-            "STAKE" => Some(stake::program::id()),
+            "STAKE" => Some(stake::id()),
             "VOTE" => Some(solana_vote_program::id()),
             _ => pubkey_of(matches, arg_name),
         }

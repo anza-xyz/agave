@@ -1,4 +1,4 @@
-SBF_SDK_PATH := ../../sdk/sbf
+SBF_SDK_PATH := ../../platform-tools-sdk/sbf
 SRC_DIR := c/src
 OUT_DIR := target/sbf-solana-solana/release
 

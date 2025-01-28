@@ -301,9 +301,18 @@ impl CrdsGossipPull {
         requests: &[(CrdsValue, CrdsFilter)],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
-        Self::filter_crds_values(thread_pool, crds, requests, output_size_limit, now, stats)
+        Self::filter_crds_values(
+            thread_pool,
+            crds,
+            requests,
+            output_size_limit,
+            now,
+            should_retain_crds_value,
+            stats,
+        )
     }
 
     // Checks if responses should be inserted and
@@ -448,6 +457,8 @@ impl CrdsGossipPull {
         filters: &[(CrdsValue, CrdsFilter)],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
+        // Predicate returning false if the CRDS value should be discarded.
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
@@ -478,6 +489,7 @@ impl CrdsGossipPull {
                     false
                 } else {
                     !filter.filter_contains(entry.value.hash())
+                        && should_retain_crds_value(&entry.value)
                 }
             };
             let out: Vec<_> = crds
@@ -1054,6 +1066,7 @@ pub(crate) mod tests {
             &filters,
             usize::MAX, // output_size_limit
             now,
+            |_| true, // should_retain_crds_value
             &GossipStats::default(),
         );
 
@@ -1077,6 +1090,7 @@ pub(crate) mod tests {
             &filters,
             usize::MAX, // output_size_limit
             now,
+            |_| true, // should_retain_crds_value
             &GossipStats::default(),
         );
         assert_eq!(rsp[0].len(), 0);
@@ -1097,6 +1111,7 @@ pub(crate) mod tests {
             &filters,
             usize::MAX, // output_size_limit
             now,
+            |_| true, // should_retain_crds_value
             &GossipStats::default(),
         );
         assert_eq!(rsp.len(), 2 * MIN_NUM_BLOOM_FILTERS);
@@ -1182,6 +1197,7 @@ pub(crate) mod tests {
                 &filters,
                 usize::MAX, // output_size_limit
                 0,          // now
+                |_| true,   // should_retain_crds_value
                 &GossipStats::default(),
             );
             // if there is a false positive this is empty
@@ -1441,7 +1457,7 @@ pub(crate) mod tests {
         caller: &CrdsValue,
         num_items: usize,
     ) {
-        let packet_data_size_range = (PACKET_DATA_SIZE - 5)..=PACKET_DATA_SIZE;
+        let packet_data_size_range = (PACKET_DATA_SIZE - 7)..=PACKET_DATA_SIZE;
         let max_bytes = get_max_bloom_filter_bytes(caller);
         let filters = CrdsFilterSet::new(rng, num_items, max_bytes);
         let request_bytes = caller.bincode_serialized_size() as u64;
@@ -1467,7 +1483,7 @@ pub(crate) mod tests {
         let keypair = Keypair::new();
         let node = {
             let mut node =
-                ContactInfo::new_localhost(&keypair.pubkey(), /*wallclock:*/ rng.gen());
+                ContactInfo::new_localhost(&keypair.pubkey(), /*wallclock:*/ timestamp());
             node.set_shred_version(rng.gen());
             node
         };
@@ -1491,7 +1507,7 @@ pub(crate) mod tests {
         };
         {
             let caller = CrdsValue::new(CrdsData::from(&node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 1165);
+            assert_eq!(get_max_bloom_filter_bytes(&caller), 1155);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
         let node = LegacyContactInfo::try_from(&node).unwrap();

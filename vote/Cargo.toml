@@ -27,12 +27,12 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-packet = { workspace = true }
-solana-program = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true }
+solana-vote-interface = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
 
 [lib]

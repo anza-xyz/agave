@@ -1,8 +1,5 @@
 #[cfg(test)]
-use crate::contact_info::{
-    get_quic_socket, sanitize_quic_offset, sanitize_socket, ContactInfo, Error, Protocol,
-    SOCKET_ADDR_UNSPECIFIED,
-};
+use crate::contact_info::{sanitize_socket, ContactInfo, Error, Protocol, SOCKET_ADDR_UNSPECIFIED};
 use {
     crate::crds_data::MAX_WALLCLOCK,
     solana_pubkey::Pubkey,
@@ -71,17 +68,6 @@ macro_rules! get_socket {
             Some(socket)
         }
     };
-    (@quic $name:ident) => {
-        #[cfg(test)]
-        pub(crate) fn $name(&self, protocol: Protocol) -> Option<SocketAddr> {
-            let socket = self.$name;
-            sanitize_socket(&socket).ok()?;
-            match protocol {
-                Protocol::QUIC => get_quic_socket(&socket).ok(),
-                Protocol::UDP => Some(socket),
-            }
-        }
-    };
 }
 
 #[macro_export]
@@ -145,8 +131,8 @@ impl LegacyContactInfo {
     }
 
     get_socket!(tvu, tvu_quic);
-    get_socket!(@quic tpu);
-    get_socket!(@quic tpu_forwards);
+    get_socket!(tpu);
+    get_socket!(tpu_forwards);
     get_socket!(tpu_vote);
     get_socket!(rpc);
     get_socket!(rpc_pubsub);
@@ -180,11 +166,6 @@ impl TryFrom<&ContactInfo> for LegacyContactInfo {
                 node.$name($protocol).unwrap_or(SOCKET_ADDR_UNSPECIFIED)
             };
         }
-        sanitize_quic_offset(&node.tpu(Protocol::UDP), &node.tpu(Protocol::QUIC))?;
-        sanitize_quic_offset(
-            &node.tpu_forwards(Protocol::UDP),
-            &node.tpu_forwards(Protocol::QUIC),
-        )?;
         Ok(Self {
             id: *node.pubkey(),
             gossip: unwrap_socket!(gossip),

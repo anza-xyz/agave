@@ -5,10 +5,10 @@ use {
         accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
         accounts_index::ZeroLamport,
     },
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::{Epoch, Slot},
-        pubkey::Pubkey,
     },
     std::sync::{Arc, RwLock},
 };

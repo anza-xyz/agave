@@ -14,8 +14,12 @@
 pub use solana_sdk_ids::feature::{check_id, id, ID};
 #[cfg(feature = "bincode")]
 use {
-    solana_account_info::AccountInfo, solana_instruction::Instruction,
-    solana_program_error::ProgramError, solana_pubkey::Pubkey, solana_rent::Rent,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account_info::AccountInfo,
+    solana_instruction::Instruction,
+    solana_program_error::ProgramError,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_system_interface::instruction as system_instruction,
 };
 
@@ -66,6 +70,28 @@ pub fn activate_with_lamports(
     ]
 }
 
+#[cfg(feature = "bincode")]
+pub fn from_account<T: ReadableAccount>(account: &T) -> Option<Feature> {
+    if account.owner() != &id() {
+        None
+    } else {
+        bincode::deserialize(account.data()).ok()
+    }
+}
+
+#[cfg(feature = "bincode")]
+pub fn to_account(feature: &Feature, account: &mut AccountSharedData) -> Option<()> {
+    bincode::serialize_into(account.data_as_mut_slice(), feature).ok()
+}
+
+#[cfg(feature = "bincode")]
+pub fn create_account(feature: &Feature, lamports: u64) -> AccountSharedData {
+    let data_len = Feature::size_of().max(bincode::serialized_size(feature).unwrap() as usize);
+    let mut account = AccountSharedData::new(lamports, data_len, &id());
+    to_account(feature, &mut account).unwrap();
+    account
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -97,5 +123,14 @@ mod test {
                 bincode::serialized_size(feature).unwrap() as usize
             );
         }
+    }
+
+    #[test]
+    fn feature_deserialize_none() {
+        let just_initialized = AccountSharedData::new(42, Feature::size_of(), &id());
+        assert_eq!(
+            from_account(&just_initialized),
+            Some(Feature { activated_at: None })
+        );
     }
 }

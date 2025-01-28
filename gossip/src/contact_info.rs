@@ -173,6 +173,19 @@ macro_rules! set_socket {
             self.set_socket($quic, get_quic_socket(&socket)?)
         }
     };
+    (@multi $name:ident, $udp:ident, $quic:ident) => {
+        pub fn $name<T>(&mut self, protocol: Protocol, socket: T) -> Result<(), Error>
+        where
+            SocketAddr: From<T>,
+        {
+            let socket = SocketAddr::from(socket);
+            let key = match protocol {
+                Protocol::UDP => $udp,
+                Protocol::QUIC => $quic,
+            };
+            self.set_socket(key, socket)
+        }
+    };
 }
 
 macro_rules! remove_socket {
@@ -259,18 +272,15 @@ impl ContactInfo {
     set_socket!(set_gossip, SOCKET_TAG_GOSSIP);
     set_socket!(set_rpc, SOCKET_TAG_RPC);
     set_socket!(set_rpc_pubsub, SOCKET_TAG_RPC_PUBSUB);
-    set_socket!(set_serve_repair, SOCKET_TAG_SERVE_REPAIR);
-    set_socket!(set_serve_repair_quic, SOCKET_TAG_SERVE_REPAIR_QUIC);
     set_socket!(set_tpu, SOCKET_TAG_TPU, SOCKET_TAG_TPU_QUIC);
     set_socket!(
         set_tpu_forwards,
         SOCKET_TAG_TPU_FORWARDS,
         SOCKET_TAG_TPU_FORWARDS_QUIC
     );
-    set_socket!(set_tpu_vote, SOCKET_TAG_TPU_VOTE);
-    set_socket!(set_tpu_vote_quic, SOCKET_TAG_TPU_VOTE_QUIC);
-    set_socket!(set_tvu, SOCKET_TAG_TVU);
-    set_socket!(set_tvu_quic, SOCKET_TAG_TVU_QUIC);
+    set_socket!(@multi set_serve_repair, SOCKET_TAG_SERVE_REPAIR, SOCKET_TAG_SERVE_REPAIR_QUIC);
+    set_socket!(@multi set_tpu_vote, SOCKET_TAG_TPU_VOTE, SOCKET_TAG_TPU_VOTE_QUIC);
+    set_socket!(@multi set_tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
 
     remove_socket!(
         remove_serve_repair,
@@ -409,25 +419,30 @@ impl ContactInfo {
 
     // Only for tests and simulations.
     pub fn new_localhost(pubkey: &Pubkey, wallclock: u64) -> Self {
+        use Protocol::{QUIC, UDP};
         let mut node = Self::new(*pubkey, wallclock, /*shred_version:*/ 0u16);
         node.set_gossip((Ipv4Addr::LOCALHOST, 8000)).unwrap();
-        node.set_tvu((Ipv4Addr::LOCALHOST, 8001)).unwrap();
-        node.set_tvu_quic((Ipv4Addr::LOCALHOST, 8002)).unwrap();
+        node.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 8001)).unwrap();
+        node.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 8002)).unwrap();
         node.set_tpu((Ipv4Addr::LOCALHOST, 8003)).unwrap(); // quic: 8009
         node.set_tpu_forwards((Ipv4Addr::LOCALHOST, 8004)).unwrap(); // quic: 8010
-        node.set_tpu_vote((Ipv4Addr::LOCALHOST, 8005)).unwrap();
+        node.set_tpu_vote(UDP, (Ipv4Addr::LOCALHOST, 8005)).unwrap();
+        node.set_tpu_vote(QUIC, (Ipv4Addr::LOCALHOST, 8007))
+            .unwrap();
         node.set_rpc((Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT))
             .unwrap();
         node.set_rpc_pubsub((Ipv4Addr::LOCALHOST, DEFAULT_RPC_PUBSUB_PORT))
             .unwrap();
-        node.set_serve_repair((Ipv4Addr::LOCALHOST, 8008)).unwrap();
-        node.set_serve_repair_quic((Ipv4Addr::LOCALHOST, 8006))
+        node.set_serve_repair(UDP, (Ipv4Addr::LOCALHOST, 8008))
+            .unwrap();
+        node.set_serve_repair(QUIC, (Ipv4Addr::LOCALHOST, 8006))
             .unwrap();
         node
     }
 
     // Only for tests and simulations.
     pub fn new_with_socketaddr(pubkey: &Pubkey, socket: &SocketAddr) -> Self {
+        use Protocol::{QUIC, UDP};
         assert_matches!(sanitize_socket(socket), Ok(()));
         let mut node = Self::new(
             *pubkey,
@@ -436,16 +451,17 @@ impl ContactInfo {
         );
         let (addr, port) = (socket.ip(), socket.port());
         node.set_gossip((addr, port + 1)).unwrap();
-        node.set_tvu((addr, port + 2)).unwrap();
-        node.set_tvu_quic((addr, port + 3)).unwrap();
+        node.set_tvu(UDP, (addr, port + 2)).unwrap();
+        node.set_tvu(QUIC, (addr, port + 3)).unwrap();
         node.set_tpu((addr, port)).unwrap(); // quic: port + 6
         node.set_tpu_forwards((addr, port + 5)).unwrap(); // quic: port + 11
-        node.set_tpu_vote((addr, port + 7)).unwrap();
+        node.set_tpu_vote(UDP, (addr, port + 7)).unwrap();
+        node.set_tpu_vote(QUIC, (addr, port + 9)).unwrap();
         node.set_rpc((addr, DEFAULT_RPC_PORT)).unwrap();
         node.set_rpc_pubsub((addr, DEFAULT_RPC_PUBSUB_PORT))
             .unwrap();
-        node.set_serve_repair((addr, port + 8)).unwrap();
-        node.set_serve_repair_quic((addr, port + 4)).unwrap();
+        node.set_serve_repair(UDP, (addr, port + 8)).unwrap();
+        node.set_serve_repair(QUIC, (addr, port + 4)).unwrap();
         node
     }
 
@@ -621,7 +637,7 @@ fn sanitize_entries(addrs: &[IpAddr], sockets: &[SocketEntry]) -> Result<(), Err
 
 // Verifies that the other socket is at QUIC_PORT_OFFSET from the first one.
 #[cfg(test)]
-pub(crate) fn sanitize_quic_offset(
+fn sanitize_quic_offset(
     socket: &Option<SocketAddr>, // udp
     other: &Option<SocketAddr>,  // quic: udp + QUIC_PORT_OFFSET
 ) -> Result<(), Error> {
@@ -631,7 +647,7 @@ pub(crate) fn sanitize_quic_offset(
 }
 
 // Returns the socket at QUIC_PORT_OFFSET from the given one.
-pub(crate) fn get_quic_socket(socket: &SocketAddr) -> Result<SocketAddr, Error> {
+fn get_quic_socket(socket: &SocketAddr) -> Result<SocketAddr, Error> {
     Ok(SocketAddr::new(
         socket.ip(),
         socket
@@ -948,34 +964,23 @@ mod tests {
             old.serve_repair(Protocol::UDP).unwrap(),
             node.serve_repair(Protocol::UDP).unwrap()
         );
+        assert_eq!(old.tpu().unwrap(), node.tpu(Protocol::UDP).unwrap());
         assert_eq!(
-            old.tpu(Protocol::QUIC).unwrap(),
-            node.tpu(Protocol::QUIC).unwrap()
+            node.tpu(Protocol::QUIC).unwrap(),
+            SocketAddr::new(
+                old.tpu().unwrap().ip(),
+                old.tpu().unwrap().port() + QUIC_PORT_OFFSET
+            )
         );
         assert_eq!(
-            old.tpu(Protocol::UDP).unwrap(),
-            node.tpu(Protocol::UDP).unwrap()
-        );
-        assert_eq!(
-            old.tpu_forwards(Protocol::QUIC).unwrap(),
-            node.tpu_forwards(Protocol::QUIC).unwrap()
-        );
-        assert_eq!(
-            old.tpu_forwards(Protocol::UDP).unwrap(),
+            old.tpu_forwards().unwrap(),
             node.tpu_forwards(Protocol::UDP).unwrap()
         );
         assert_eq!(
             node.tpu_forwards(Protocol::QUIC).unwrap(),
             SocketAddr::new(
-                old.tpu_forwards(Protocol::UDP).unwrap().ip(),
-                old.tpu_forwards(Protocol::UDP).unwrap().port() + QUIC_PORT_OFFSET
-            )
-        );
-        assert_eq!(
-            node.tpu(Protocol::QUIC).unwrap(),
-            SocketAddr::new(
-                old.tpu(Protocol::UDP).unwrap().ip(),
-                old.tpu(Protocol::UDP).unwrap().port() + QUIC_PORT_OFFSET
+                old.tpu_forwards().unwrap().ip(),
+                old.tpu_forwards().unwrap().port() + QUIC_PORT_OFFSET
             )
         );
         assert_eq!(
@@ -1093,7 +1098,10 @@ mod tests {
         {
             let mut other = node.clone();
             while other.set_gossip(new_rand_socket(&mut rng)).is_err() {}
-            while other.set_serve_repair(new_rand_socket(&mut rng)).is_err() {}
+            while other
+                .set_serve_repair(Protocol::UDP, new_rand_socket(&mut rng))
+                .is_err()
+            {}
             assert!(!node.check_duplicate(&other));
             assert!(!other.check_duplicate(&node));
             assert_eq!(node.overrides(&other), None);

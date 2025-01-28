@@ -14,12 +14,18 @@ Release channels have their own copy of this changelog:
 
 <a name="edge-channel"></a>
 ## [2.2.0] - Unreleased
+* Breaking:
+  * Blockstore Index column format change
+    * The Blockstore Index column format has been updated. The column format written in v2.2 is compatible with v2.1, but incompatible with v2.0 and older.
+  * Snapshot format change
+    * The snapshot format has been modified to implement SIMD-215. Since only adjacent versions are guaranteed to maintain snapshot compatibility, this means snapshots created with v2.2 are compatible with v2.1 and incompatible with v2.0 and older.
 * Changes
   * CLI:
     * Add global `--skip-preflight` option for skipping preflight checks on all transactions sent through RPC. This flag, along with `--use-rpc`, can improve success rate with program deployments using the public RPC nodes.
     * Add new command `solana feature revoke` for revoking pending feature activations. When a feature is activated, `solana feature revoke <feature-keypair> <cluster>` can be used to deallocate and reassign the account to the System program, undoing the operation. This can only be done before the feature becomes active.
   * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool and change default to `file`
   * Remove tracer stats from banking-trace. `banking-trace` directory should be cleared when restarting on v2.2 for first time. It will not break if not cleared, but the file will be a mix of new/old format. (#4043)
+  * Add `--snapshot-zstd-compression-level` to set the compression level when archiving snapshots with zstd.
   * SDK:
     * `cargo-build-sbf`: add `--skip-tools-install` flag to avoid downloading platform tools and `--no-rustup-override` flag to not use rustup when invoking `cargo`. Useful for immutable environments like Nix.
 

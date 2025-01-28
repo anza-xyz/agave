@@ -1,7 +1,7 @@
 use {
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
-    solana_program::vote::state::{TowerSync, Vote, VoteStateUpdate},
+    solana_vote_interface::state::{TowerSync, Vote, VoteStateUpdate},
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]

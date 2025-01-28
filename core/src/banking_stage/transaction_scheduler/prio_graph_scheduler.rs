@@ -43,7 +43,7 @@ type SchedulerPrioGraph = PrioGraph<
 
 pub(crate) struct PrioGraphSchedulerConfig {
     pub max_scheduled_cus: u64,
-    pub max_transactions_per_scheduling_pass: usize,
+    pub max_scanned_transactions_per_scheduling_pass: usize,
     pub look_ahead_window_size: usize,
     pub target_transactions_per_batch: usize,
 }
@@ -52,8 +52,8 @@ impl Default for PrioGraphSchedulerConfig {
     fn default() -> Self {
         Self {
             max_scheduled_cus: MAX_BLOCK_UNITS,
-            max_transactions_per_scheduling_pass: 100_000,
-            look_ahead_window_size: 2048,
+            max_scanned_transactions_per_scheduling_pass: 1000,
+            look_ahead_window_size: 256,
             target_transactions_per_batch: TARGET_NUM_TRANSACTIONS_PER_BATCH,
         }
     }
@@ -192,16 +192,18 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
         let mut unblock_this_batch = Vec::with_capacity(
             self.consume_work_senders.len() * self.config.target_transactions_per_batch,
         );
+        let mut num_scanned: usize = 0;
         let mut num_scheduled: usize = 0;
         let mut num_sent: usize = 0;
         let mut num_unschedulable: usize = 0;
-        while num_scheduled < self.config.max_transactions_per_scheduling_pass {
+        while num_scanned < self.config.max_scanned_transactions_per_scheduling_pass {
             // If nothing is in the main-queue of the `PrioGraph` then there's nothing left to schedule.
             if self.prio_graph.is_empty() {
                 break;
             }
 
             while let Some(id) = self.prio_graph.pop() {
+                num_scanned += 1;
                 unblock_this_batch.push(id);
 
                 // Should always be in the container, during initial testing phase panic.
@@ -267,11 +269,11 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
                                 break;
                             }
                         }
-
-                        if num_scheduled >= self.config.max_transactions_per_scheduling_pass {
-                            break;
-                        }
                     }
+                }
+
+                if num_scanned >= self.config.max_scanned_transactions_per_scheduling_pass {
+                    break;
                 }
             }
 

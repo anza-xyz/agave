@@ -15,7 +15,7 @@ use {
  */
 fn main() {
     let syscalls_rs_path = PathBuf::from("../src/syscalls/mod.rs");
-    let syscalls_txt_path = PathBuf::from("../../../sdk/sbf/syscalls.txt");
+    let syscalls_txt_path = PathBuf::from("../../../platform-tools-sdk/sbf/syscalls.txt");
     println!(
         "cargo:warning=(not a warning) Generating {1} from {0}",
         syscalls_rs_path.display(),

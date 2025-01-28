@@ -445,7 +445,7 @@ Test that your `validator.sh` file is running properly by executing the
 ```
 
 The script should execute the `agave-validator` process. In a new terminal
-window, shh into your server, then verify that the process is running:
+window, ssh into your server, then verify that the process is running:
 
 ```
 ps aux | grep agave-validator

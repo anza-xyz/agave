@@ -23,14 +23,10 @@ pub fn version_from_hash(hash: &Hash) -> u16 {
 }
 
 pub fn compute_shred_version(genesis_hash: &Hash, hard_forks: Option<&HardForks>) -> u16 {
-    use byteorder::{ByteOrder, LittleEndian};
-
     let mut hash = *genesis_hash;
     if let Some(hard_forks) = hard_forks {
-        for (slot, count) in hard_forks.iter() {
-            let mut buf = [0u8; 16];
-            LittleEndian::write_u64(&mut buf[..8], *slot);
-            LittleEndian::write_u64(&mut buf[8..], *count as u64);
+        for &(slot, count) in hard_forks.iter() {
+            let buf = [slot.to_le_bytes(), (count as u64).to_le_bytes()].concat();
             hash = extend_and_hash(&hash, &buf);
         }
     }

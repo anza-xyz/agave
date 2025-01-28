@@ -6,13 +6,13 @@ use {
     solana_bincode::limited_deserialize,
     solana_feature_set as feature_set,
     solana_instruction::error::InstructionError,
-    solana_program::vote::{instruction::VoteInstruction, program::id, state::VoteAuthorize},
     solana_program_runtime::{
         declare_process_instruction, invoke_context::InvokeContext,
         sysvar_cache::get_sysvar_with_account_check,
     },
     solana_pubkey::Pubkey,
     solana_transaction_context::{BorrowedAccount, InstructionContext, TransactionContext},
+    solana_vote_interface::{instruction::VoteInstruction, program::id, state::VoteAuthorize},
     std::collections::HashSet,
 };
 
@@ -276,12 +276,12 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
-        solana_program::vote::instruction::{tower_sync, tower_sync_switch},
         solana_program_runtime::invoke_context::mock_process_instruction,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::sysvar,
         solana_slot_hashes::SlotHashes,
+        solana_vote_interface::instruction::{tower_sync, tower_sync_switch},
         std::{collections::HashSet, str::FromStr},
     };
 

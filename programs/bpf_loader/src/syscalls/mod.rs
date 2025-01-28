@@ -14,9 +14,10 @@ pub use self::{
 use {
     solana_account_info::AccountInfo,
     solana_bn254::prelude::{
-        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing, AltBn128Error,
-        ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
-        ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
+        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_multiplication_128,
+        alt_bn128_pairing, AltBn128Error, ALT_BN128_ADDITION_OUTPUT_LEN,
+        ALT_BN128_MULTIPLICATION_OUTPUT_LEN, ALT_BN128_PAIRING_ELEMENT_LEN,
+        ALT_BN128_PAIRING_OUTPUT_LEN,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_cpi::MAX_RETURN_DATA,
@@ -1728,7 +1729,16 @@ declare_builtin_function!(
 
         let calculation = match group_op {
             ALT_BN128_ADD => alt_bn128_addition,
-            ALT_BN128_MUL => alt_bn128_multiplication,
+            ALT_BN128_MUL => {
+                let fix_alt_bn128_multiplication_input_length = invoke_context
+                    .get_feature_set()
+                    .is_active(&feature_set::fix_alt_bn128_multiplication_input_length::id());
+                if fix_alt_bn128_multiplication_input_length {
+                    alt_bn128_multiplication
+                } else {
+                    alt_bn128_multiplication_128
+                }
+            }
             ALT_BN128_PAIRING => alt_bn128_pairing,
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());

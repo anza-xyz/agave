@@ -2,9 +2,9 @@ use {
     criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
     itertools::iproduct,
     solana_accounts_db::{accounts::Accounts, accounts_db::AccountsDb},
+    solana_pubkey::Pubkey,
     solana_sdk::{
         instruction::{AccountMeta, Instruction},
-        pubkey::Pubkey,
         system_program,
         transaction::{SanitizedTransaction, Transaction, MAX_TX_ACCOUNT_LOCKS},
     },

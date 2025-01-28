@@ -18,6 +18,7 @@ pub mod duplicate_shred;
 pub mod duplicate_shred_handler;
 pub mod duplicate_shred_listener;
 pub mod epoch_slots;
+mod epoch_specs;
 pub mod gossip_error;
 pub mod gossip_service;
 #[macro_use]

@@ -22,7 +22,7 @@ pub mod tests {
 
     #[test]
     fn test_limited_deserialize() {
-        #[derive(Deserialize, Serialize)]
+        #[derive(serde_derive::Deserialize, serde_derive::Serialize)]
         enum Foo {
             Bar(Vec<u8>),
         }

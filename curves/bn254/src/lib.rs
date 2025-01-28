@@ -14,7 +14,7 @@ mod consts {
     pub const ALT_BN128_ADDITION_INPUT_LEN: usize = 128;
 
     /// Input length for the multiplication operation.
-    pub const ALT_BN128_MULTIPLICATION_INPUT_LEN: usize = 128;
+    pub const ALT_BN128_MULTIPLICATION_INPUT_LEN: usize = 96;
 
     /// Pair element length.
     pub const ALT_BN128_PAIRING_ELEMENT_LEN: usize = 192;
@@ -275,12 +275,23 @@ mod target_arch {
     }
 
     pub fn alt_bn128_multiplication(input: &[u8]) -> Result<Vec<u8>, AltBn128Error> {
-        if input.len() > ALT_BN128_MULTIPLICATION_INPUT_LEN {
+        alt_bn128_apply_multiplication(input, ALT_BN128_MULTIPLICATION_INPUT_LEN)
+    }
+
+    pub fn alt_bn128_multiplication_128(input: &[u8]) -> Result<Vec<u8>, AltBn128Error> {
+        alt_bn128_apply_multiplication(input, 128) // hard-code length; we will remove this function in the future
+    }
+
+    fn alt_bn128_apply_multiplication(
+        input: &[u8],
+        expected_length: usize,
+    ) -> Result<Vec<u8>, AltBn128Error> {
+        if input.len() > expected_length {
             return Err(AltBn128Error::InvalidInputData);
         }
 
         let mut input = input.to_vec();
-        input.resize(ALT_BN128_MULTIPLICATION_INPUT_LEN, 0);
+        input.resize(expected_length, 0);
 
         let p: G1 = PodG1::from_be_bytes(&input[..64])?.try_into()?;
         let mut fr_bytes = [0u8; 32];

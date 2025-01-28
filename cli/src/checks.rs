@@ -1,9 +1,11 @@
 use {
     crate::cli::CliError,
     solana_commitment_config::CommitmentConfig,
+    solana_message::Message,
+    solana_native_token::lamports_to_sol,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::client_error::{Error as ClientError, Result as ClientResult},
-    solana_sdk::{message::Message, native_token::lamports_to_sol, pubkey::Pubkey},
 };
 
 pub fn check_account_for_fee(
@@ -176,7 +178,7 @@ mod tests {
             request::RpcRequest,
             response::{Response, RpcResponseContext},
         },
-        solana_sdk::system_instruction,
+        solana_system_interface::instruction as system_instruction,
         std::collections::HashMap,
     };
 

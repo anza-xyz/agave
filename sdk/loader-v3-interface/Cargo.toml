@@ -1,0 +1,43 @@
+[package]
+name = "solana-loader-v3-interface"
+description = "Solana loader V3 interface."
+documentation = "https://docs.rs/solana-loader-v3-interface"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+serde = { workspace = true, optional = true }
+serde_bytes = { workspace = true, optional = true }
+serde_derive = { workspace = true, optional = true }
+solana-frozen-abi = { workspace = true, features = [
+    "frozen-abi",
+], optional = true }
+solana-frozen-abi-macro = { workspace = true, features = [
+    "frozen-abi",
+], optional = true }
+solana-instruction = { workspace = true, features = ["std"] }
+solana-pubkey = { workspace = true, features = ["curve25519"] }
+solana-sdk-ids = { workspace = true }
+solana-system-interface = { workspace = true, features = ["bincode"], optional = true }
+
+[dev-dependencies]
+bincode = { workspace = true }
+solana-loader-v3-interface = { path = ".", features = ["dev-context-only-utils"] }
+
+[features]
+bincode = ["dep:solana-system-interface", "serde", "solana-instruction/bincode"]
+dev-context-only-utils = ["bincode"]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro", "serde"]
+serde = ["dep:serde", "dep:serde_bytes", "dep:serde_derive", "solana-pubkey/serde"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lints]
+workspace = true

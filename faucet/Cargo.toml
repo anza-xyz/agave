@@ -11,7 +11,6 @@ edition = { workspace = true }
 
 [dependencies]
 bincode = { workspace = true }
-byteorder = { workspace = true }
 clap = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }

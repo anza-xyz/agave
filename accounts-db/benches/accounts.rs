@@ -17,10 +17,10 @@ use {
         accounts_index::ScanConfig,
         ancestors::Ancestors,
     },
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount},
         hash::Hash,
-        pubkey::Pubkey,
         rent_collector::RentCollector,
         sysvar::epoch_schedule::EpochSchedule,
     },

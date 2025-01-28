@@ -5,11 +5,9 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::deserialize,
     serde_json::json,
+    solana_loader_v2_interface::LoaderInstruction,
     solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
-    solana_program::{
-        loader_instruction::LoaderInstruction,
-        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-    },
+    solana_program::loader_upgradeable_instruction::UpgradeableLoaderInstruction,
 };
 
 pub fn parse_bpf_loader(
@@ -224,12 +222,8 @@ mod test {
         let account_keys = vec![fee_payer, account_pubkey];
         let missing_account_keys = vec![account_pubkey];
 
-        let instruction = solana_program::loader_instruction::write(
-            &account_pubkey,
-            &program_id,
-            offset,
-            bytes.clone(),
-        );
+        let instruction =
+            solana_loader_v2_interface::write(&account_pubkey, &program_id, offset, bytes.clone());
         let mut message = Message::new(&[instruction], Some(&fee_payer));
         assert_eq!(
             parse_bpf_loader(
@@ -258,8 +252,7 @@ mod test {
         )
         .is_err());
 
-        let instruction =
-            solana_program::loader_instruction::finalize(&account_pubkey, &program_id);
+        let instruction = solana_loader_v2_interface::finalize(&account_pubkey, &program_id);
         let mut message = Message::new(&[instruction], Some(&fee_payer));
         assert_eq!(
             parse_bpf_loader(

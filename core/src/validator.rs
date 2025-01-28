@@ -527,12 +527,14 @@ impl ValidatorTpuConfig {
     pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
         let tpu_quic_server_config = QuicServerParams {
             max_connections_per_ipaddr_per_min: 32,
+            coalesce_channel_size: 100_000, // smaller channel size for faster test
             ..Default::default()
         };
 
         let tpu_fwd_quic_server_config = QuicServerParams {
             max_connections_per_ipaddr_per_min: 32,
             max_unstaked_connections: 0,
+            coalesce_channel_size: 100_000, // smaller channel size for faster test
             ..Default::default()
         };
 

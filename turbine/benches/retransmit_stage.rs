@@ -28,7 +28,7 @@ use {
         timing::timestamp,
     },
     solana_streamer::socket::SocketAddrSpace,
-    solana_turbine::retransmit_stage::retransmitter,
+    solana_turbine::retransmit_stage::RetransmitStage,
     std::{
         iter::repeat_with,
         net::Ipv4Addr,
@@ -63,7 +63,9 @@ fn bench_retransmitter(bencher: &mut Bencher) {
         let socket = bind_to_unspecified().unwrap();
         let mut contact_info = ContactInfo::new_localhost(&id, timestamp());
         let port = socket.local_addr().unwrap().port();
-        contact_info.set_tvu((Ipv4Addr::LOCALHOST, port)).unwrap();
+        contact_info
+            .set_tvu(Protocol::UDP, (Ipv4Addr::LOCALHOST, port))
+            .unwrap();
         info!("local: {:?}", contact_info.tvu(Protocol::UDP).unwrap());
         cluster_info.insert_info(contact_info);
         socket.set_nonblocking(true).unwrap();
@@ -118,14 +120,14 @@ fn bench_retransmitter(bencher: &mut Bencher) {
 
     let num_packets = data_shreds.len();
 
-    let retransmitter_handles = retransmitter(
-        Arc::new(sockets),
-        quic_endpoint_sender,
+    let retransmit_stage = RetransmitStage::new(
         bank_forks,
         leader_schedule_cache,
         cluster_info,
+        Arc::new(sockets),
+        quic_endpoint_sender,
         shreds_receiver,
-        Arc::default(), // solana_rpc::max_slots::MaxSlots
+        Arc::new(solana_rpc::max_slots::MaxSlots::default()),
         None,
         None,
     );
@@ -181,5 +183,5 @@ fn bench_retransmitter(bencher: &mut Bencher) {
         total.store(0, Ordering::Relaxed);
     });
 
-    retransmitter_handles.join().unwrap();
+    retransmit_stage.join().unwrap();
 }

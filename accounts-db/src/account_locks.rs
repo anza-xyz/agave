@@ -2,9 +2,9 @@
 use qualifier_attr::qualifiers;
 use {
     ahash::{AHashMap, AHashSet},
+    solana_pubkey::Pubkey,
     solana_sdk::{
         message::AccountKeys,
-        pubkey::Pubkey,
         transaction::{TransactionError, MAX_TX_ACCOUNT_LOCKS},
     },
     std::{cell::RefCell, collections::hash_map},
