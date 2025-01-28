@@ -58,7 +58,7 @@ use {
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         rent_collector::RentCollector,
     },
-    solana_sdk_ids::{native_loader, system_program},
+    solana_sdk_ids::system_program,
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
@@ -352,42 +352,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut execute_timings = ExecuteTimings::default();
         let mut processing_results = Vec::with_capacity(sanitized_txs.len());
 
-        let native_loader = native_loader::id();
-        let (program_accounts_map, filter_executable_us) = measure_us!({
-            let mut program_accounts_map = Self::filter_executable_program_accounts(
-                callbacks,
-                sanitized_txs,
-                &check_results,
-                PROGRAM_OWNERS,
-            );
-            for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
-                program_accounts_map.insert(*builtin_program, (&native_loader, 0));
-            }
-            program_accounts_map
-        });
-
-        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
-            let program_cache_for_tx_batch = self.replenish_program_cache(
-                callbacks,
-                &program_accounts_map,
-                &mut execute_timings,
-                config.check_program_modification_slot,
-                config.limit_to_load_programs,
-            );
-
-            if program_cache_for_tx_batch.hit_max_limit {
-                return LoadAndExecuteSanitizedTransactionsOutput {
-                    error_metrics,
-                    execute_timings,
-                    processing_results: (0..sanitized_txs.len())
-                        .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                        .collect(),
-                };
-            }
-
-            program_cache_for_tx_batch
-        });
-
         // Determine a capacity for the internal account cache. This
         // over-allocates but avoids ever reallocating, and spares us from
         // deduplicating the account keys lists.
@@ -405,7 +369,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .feature_set
             .is_active(&enable_transaction_loading_failure_fees::id());
 
-        let (mut validate_fees_us, mut load_us, mut execution_us): (u64, u64, u64) = (0, 0, 0);
+        let mut evict_from_global_cache = false;
+        let (mut validate_fees_us, mut load_us, mut program_cache_us, mut execution_us): (
+            u64,
+            u64,
+            u64,
+            u64,
+        ) = (0, 0, 0, 0);
 
         // Validate, execute, and collect results from each transaction in order.
         // With SIMD83, transactions must be executed in order, because transactions
@@ -439,6 +409,28 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
+            let program_accounts_map =
+                self.filter_executable_program_accounts(&mut account_loader, tx, PROGRAM_OWNERS);
+
+            let (mut program_cache_for_tx, single_program_cache_us) = measure_us!(self
+                .replenish_program_cache(
+                    callbacks,
+                    &program_accounts_map,
+                    &mut execute_timings,
+                    config.check_program_modification_slot,
+                    config.limit_to_load_programs,
+                ));
+            if program_cache_for_tx.hit_max_limit {
+                return LoadAndExecuteSanitizedTransactionsOutput {
+                    error_metrics,
+                    execute_timings,
+                    processing_results: (0..sanitized_txs.len())
+                        .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                        .collect(),
+                };
+            }
+            program_cache_us = program_cache_us.saturating_add(single_program_cache_us);
+
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
@@ -459,17 +451,19 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         loaded_transaction,
                         &mut execute_timings,
                         &mut error_metrics,
-                        &mut program_cache_for_tx_batch,
+                        &mut program_cache_for_tx,
                         environment,
                         config,
                     );
 
                     // Update loaded accounts cache with account states which might have changed.
-                    // Also update local program cache with modifications made by the transaction,
-                    // if it executed successfully.
                     account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
-                    if executed_tx.was_successful() {
-                        program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+
+                    if program_cache_for_tx.loaded_missing
+                        || (executed_tx.was_successful()
+                            && !executed_tx.programs_modified_by_tx.is_empty())
+                    {
+                        evict_from_global_cache = true;
                     }
 
                     Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
@@ -484,7 +478,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
-        if program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified {
+        if evict_from_global_cache {
             const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: u8 = 90;
             self.program_cache
                 .write()
@@ -504,8 +498,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         execute_timings
             .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::FilterExecutableUs, filter_executable_us);
         execute_timings
             .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_us);
@@ -695,34 +687,35 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Returns a map from executable program accounts (all accounts owned by any loader)
     /// to their usage counters, for the transactions with a valid blockhash or nonce.
-    fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
-        callbacks: &CB,
-        txs: &[impl SVMMessage],
-        check_results: &[TransactionCheckResult],
-        program_owners: &'a [Pubkey],
-    ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
-        let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> = HashMap::new();
-        check_results.iter().zip(txs).for_each(|etx| {
-            if let (Ok(_), tx) = etx {
-                tx.account_keys()
-                    .iter()
-                    .for_each(|key| match result.entry(*key) {
-                        Entry::Occupied(mut entry) => {
-                            let (_, count) = entry.get_mut();
-                            *count = count.saturating_add(1);
+    fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
+        &self,
+        account_loader: &mut AccountLoader<CB>,
+        tx: &impl SVMMessage,
+        program_owners: &[Pubkey],
+    ) -> HashMap<Pubkey, u64> {
+        let mut result: HashMap<Pubkey, u64> = self
+            .builtin_program_ids
+            .read()
+            .unwrap()
+            .iter()
+            .map(|pubkey| (*pubkey, 0))
+            .collect();
+
+        tx.account_keys()
+            .iter()
+            .for_each(|key| match result.entry(*key) {
+                Entry::Occupied(mut entry) => {
+                    entry.insert(1);
+                }
+                Entry::Vacant(entry) => {
+                    if let Some(ref loaded_account) = account_loader.load_account(key, false) {
+                        let owner = loaded_account.account.owner();
+                        if program_owners.contains(owner) {
+                            entry.insert(1);
                         }
-                        Entry::Vacant(entry) => {
-                            if let Some(index) =
-                                callbacks.account_matches_owners(key, program_owners)
-                            {
-                                if let Some(owner) = program_owners.get(index) {
-                                    entry.insert((owner, 1));
-                                }
-                            }
-                        }
-                    });
-            }
-        });
+                    }
+                }
+            });
         result
     }
 
@@ -730,7 +723,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         callback: &CB,
-        program_accounts_map: &HashMap<Pubkey, (&Pubkey, u64)>,
+        program_accounts_map: &HashMap<Pubkey, u64>,
         execute_timings: &mut ExecuteTimings,
         check_program_modification_slot: bool,
         limit_to_load_programs: bool,
@@ -738,7 +731,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut missing_programs: Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> =
             program_accounts_map
                 .iter()
-                .map(|(pubkey, (_, count))| {
+                .map(|(pubkey, count)| {
                     let match_criteria = if check_program_modification_slot {
                         get_program_modification_slot(callback, pubkey)
                             .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
@@ -1568,10 +1561,9 @@ mod tests {
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
         let key = Pubkey::new_unique();
-        let owner = Pubkey::new_unique();
 
-        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
-        account_maps.insert(key, (&owner, 4));
+        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
+        account_maps.insert(key, 4);
 
         batch_processor.replenish_program_cache(
             &mock_bank,
@@ -1589,7 +1581,6 @@ mod tests {
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
         let key = Pubkey::new_unique();
-        let owner = Pubkey::new_unique();
 
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
@@ -1599,8 +1590,8 @@ mod tests {
             .unwrap()
             .insert(key, account_data);
 
-        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
-        account_maps.insert(key, (&owner, 4));
+        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
+        account_maps.insert(key, 4);
         let mut loaded_missing = 0;
 
         for limit_to_load_programs in [false, true] {
@@ -1630,46 +1621,27 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let key1 = Pubkey::new_unique();
         let owner1 = Pubkey::new_unique();
-
-        let mut data = AccountSharedData::default();
-        data.set_owner(owner1);
-        data.set_lamports(93);
-        mock_bank
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(key1, data);
-
-        let message = Message {
-            account_keys: vec![key1],
-            header: MessageHeader::default(),
-            instructions: vec![CompiledInstruction {
-                program_id_index: 0,
-                accounts: vec![],
-                data: vec![],
-            }],
-            recent_blockhash: Hash::default(),
-        };
-
-        let sanitized_message = new_unchecked_sanitized_message(message);
-
-        let sanitized_transaction_1 = SanitizedTransaction::new_for_tests(
-            sanitized_message,
-            vec![Signature::new_unique()],
-            false,
-        );
-
         let key2 = Pubkey::new_unique();
         let owner2 = Pubkey::new_unique();
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_owner(owner2);
-        account_data.set_lamports(90);
+        let mut data1 = AccountSharedData::default();
+        data1.set_owner(owner1);
+        data1.set_lamports(93);
         mock_bank
             .account_shared_data
             .write()
             .unwrap()
-            .insert(key2, account_data);
+            .insert(key1, data1);
+
+        let mut data2 = AccountSharedData::default();
+        data2.set_owner(owner2);
+        data2.set_lamports(90);
+        mock_bank
+            .account_shared_data
+            .write()
+            .unwrap()
+            .insert(key2, data2);
+        let mut account_loader = (&mock_bank).into();
 
         let message = Message {
             account_keys: vec![key1, key2],
@@ -1684,34 +1656,24 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
 
-        let sanitized_transaction_2 = SanitizedTransaction::new_for_tests(
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
             false,
         );
 
-        let transactions = vec![
-            sanitized_transaction_1.clone(),
-            sanitized_transaction_2.clone(),
-            sanitized_transaction_1,
-        ];
-        let check_results = vec![
-            Ok(CheckedTransactionDetails::default()),
-            Ok(CheckedTransactionDetails::default()),
-            Err(TransactionError::ProgramAccountNotFound),
-        ];
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let owners = vec![owner1, owner2];
 
-        let result = TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
-            &mock_bank,
-            &transactions,
-            &check_results,
+        let result = batch_processor.filter_executable_program_accounts(
+            &mut account_loader,
+            &sanitized_transaction,
             &owners,
         );
 
         assert_eq!(result.len(), 2);
-        assert_eq!(result[&key1], (&owner1, 2));
-        assert_eq!(result[&key2], (&owner2, 1));
+        assert_eq!(result[&key1], 1);
+        assert_eq!(result[&key2], 1);
     }
 
     #[test]
@@ -1763,6 +1725,7 @@ mod tests {
             account4_pubkey,
             AccountSharedData::new(40, 1, &program2_pubkey),
         );
+        let mut account_loader = (&bank).into();
 
         let tx1 = Transaction::new_with_compiled_instructions(
             &[&keypair1],
@@ -1782,123 +1745,41 @@ mod tests {
         );
         let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
 
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let owners = &[program1_pubkey, program2_pubkey];
-        let programs =
-            TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
-                &bank,
-                &[sanitized_tx1, sanitized_tx2],
-                &[
-                    Ok(CheckedTransactionDetails::default()),
-                    Ok(CheckedTransactionDetails::default()),
-                ],
-                owners,
-            );
 
-        // The result should contain only account3_pubkey, and account4_pubkey as the program accounts
-        assert_eq!(programs.len(), 2);
+        let tx1_programs = batch_processor.filter_executable_program_accounts(
+            &mut account_loader,
+            &sanitized_tx1,
+            owners,
+        );
+
+        assert_eq!(tx1_programs.len(), 1);
         assert_eq!(
-            programs
+            tx1_programs
                 .get(&account3_pubkey)
                 .expect("failed to find the program account"),
-            &(&program1_pubkey, 2)
+            &1,
+        );
+
+        let tx2_programs = batch_processor.filter_executable_program_accounts(
+            &mut account_loader,
+            &sanitized_tx2,
+            owners,
+        );
+
+        assert_eq!(tx2_programs.len(), 2);
+        assert_eq!(
+            tx2_programs
+                .get(&account3_pubkey)
+                .expect("failed to find the program account"),
+            &1,
         );
         assert_eq!(
-            programs
+            tx2_programs
                 .get(&account4_pubkey)
                 .expect("failed to find the program account"),
-            &(&program2_pubkey, 1)
-        );
-    }
-
-    #[test]
-    fn test_filter_executable_program_accounts_invalid_blockhash() {
-        let keypair1 = Keypair::new();
-        let keypair2 = Keypair::new();
-
-        let non_program_pubkey1 = Pubkey::new_unique();
-        let non_program_pubkey2 = Pubkey::new_unique();
-        let program1_pubkey = Pubkey::new_unique();
-        let program2_pubkey = Pubkey::new_unique();
-        let account1_pubkey = Pubkey::new_unique();
-        let account2_pubkey = Pubkey::new_unique();
-        let account3_pubkey = Pubkey::new_unique();
-        let account4_pubkey = Pubkey::new_unique();
-
-        let account5_pubkey = Pubkey::new_unique();
-
-        let bank = MockBankCallback::default();
-        bank.account_shared_data.write().unwrap().insert(
-            non_program_pubkey1,
-            AccountSharedData::new(1, 10, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            non_program_pubkey2,
-            AccountSharedData::new(1, 10, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            program1_pubkey,
-            AccountSharedData::new(40, 1, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            program2_pubkey,
-            AccountSharedData::new(40, 1, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account1_pubkey,
-            AccountSharedData::new(1, 10, &non_program_pubkey1),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account2_pubkey,
-            AccountSharedData::new(1, 10, &non_program_pubkey2),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account3_pubkey,
-            AccountSharedData::new(40, 1, &program1_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account4_pubkey,
-            AccountSharedData::new(40, 1, &program2_pubkey),
-        );
-
-        let tx1 = Transaction::new_with_compiled_instructions(
-            &[&keypair1],
-            &[non_program_pubkey1],
-            Hash::new_unique(),
-            vec![account1_pubkey, account2_pubkey, account3_pubkey],
-            vec![CompiledInstruction::new(1, &(), vec![0])],
-        );
-        let sanitized_tx1 = SanitizedTransaction::from_transaction_for_tests(tx1);
-
-        let tx2 = Transaction::new_with_compiled_instructions(
-            &[&keypair2],
-            &[non_program_pubkey2],
-            Hash::new_unique(),
-            vec![account4_pubkey, account3_pubkey, account2_pubkey],
-            vec![CompiledInstruction::new(1, &(), vec![0])],
-        );
-        // Let's not register blockhash from tx2. This should cause the tx2 to fail
-        let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
-
-        let owners = &[program1_pubkey, program2_pubkey];
-        let check_results = vec![
-            Ok(CheckedTransactionDetails::default()),
-            Err(TransactionError::BlockhashNotFound),
-        ];
-        let programs =
-            TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
-                &bank,
-                &[sanitized_tx1, sanitized_tx2],
-                &check_results,
-                owners,
-            );
-
-        // The result should contain only account3_pubkey as the program accounts
-        assert_eq!(programs.len(), 1);
-        assert_eq!(
-            programs
-                .get(&account3_pubkey)
-                .expect("failed to find the program account"),
-            &(&program1_pubkey, 1)
+            &1,
         );
     }
 
