@@ -56,8 +56,6 @@ const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 //   include/rocksdb/advanced_options.h#L908C30-L908C30
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
-// Column family for orphans data
-const ORPHANS_CF: &str = "orphans";
 /// Column family for bank hashes
 const BANK_HASH_CF: &str = "bank_hashes";
 // Column family for root data
@@ -1283,7 +1281,7 @@ impl TypedColumn for columns::DuplicateSlots {
 
 impl SlotColumn for columns::Orphans {}
 impl ColumnName for columns::Orphans {
-    const NAME: &'static str = ORPHANS_CF;
+    const NAME: &'static str = "orphans";
 }
 impl TypedColumn for columns::Orphans {
     type Type = bool;
