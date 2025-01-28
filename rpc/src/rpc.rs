@@ -4467,6 +4467,7 @@ pub fn populate_blockstore_for_tests(
 
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let tss_exit = Arc::new(AtomicBool::new(false));
     let transaction_status_service =
         crate::transaction_status_service::TransactionStatusService::new(
             transaction_status_receiver,
@@ -4475,7 +4476,7 @@ pub fn populate_blockstore_for_tests(
             None,
             blockstore,
             false,
-            Arc::new(AtomicBool::new(false)),
+            tss_exit.clone(),
         );
 
     // Check that process_entries successfully writes can_commit transactions statuses, and
@@ -4494,7 +4495,7 @@ pub fn populate_blockstore_for_tests(
         Ok(())
     );
 
-    transaction_status_service.join().unwrap();
+    transaction_status_service.quiesce_and_join_for_tests(tss_exit);
 }
 
 #[cfg(test)]
