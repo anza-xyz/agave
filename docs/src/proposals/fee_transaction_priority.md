@@ -202,7 +202,7 @@ for account_key in unlocked_accounts {
 if let Some(blocked_transaction_queue) = self.blocked_transactions.get(completed_transaction.signature) {
     // Now push the rest of the queue to the head of `all_transaction_queues`, since we know
     // everything in this blocked queue must be of higher priority, (since they were
-    // added to this queue earlier, this means they must have been peopped off the main
+    // added to this queue earlier, this means they must have been popped off the main
     // `transaction_accounts` queue earlier, hence higher priority)
     self.all_transaction_queues.push_front(blocked_transaction_queue.other_blocked_transactions);
     self.blocked_transactions.remove(completed_transaction.signature);
