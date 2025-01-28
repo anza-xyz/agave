@@ -56,9 +56,6 @@ const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 //   include/rocksdb/advanced_options.h#L908C30-L908C30
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
-/// Column family for Transaction Status
-const TRANSACTION_STATUS_CF: &str = "transaction_status";
-
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
         let mut key = [0u8; std::mem::size_of::<Self::$key>()];
@@ -879,7 +876,7 @@ impl Column for columns::TransactionStatus {
     }
 }
 impl ColumnName for columns::TransactionStatus {
-    const NAME: &'static str = TRANSACTION_STATUS_CF;
+    const NAME: &'static str = "transaction_status";
 }
 impl ProtobufColumn for columns::TransactionStatus {
     type Type = generated::TransactionStatusMeta;
