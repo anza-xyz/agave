@@ -62,10 +62,6 @@ const TRANSACTION_STATUS_CF: &str = "transaction_status";
 const ADDRESS_SIGNATURES_CF: &str = "address_signatures";
 /// Column family for TransactionMemos
 const TRANSACTION_MEMOS_CF: &str = "transaction_memos";
-/// Column family for the Transaction Status Index.
-/// This column family is used for tracking the active primary index for columns that for
-/// query performance reasons should not be indexed by Slot.
-const TRANSACTION_STATUS_INDEX_CF: &str = "transaction_status_index";
 
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
@@ -1092,7 +1088,7 @@ impl Column for columns::TransactionStatusIndex {
     }
 }
 impl ColumnName for columns::TransactionStatusIndex {
-    const NAME: &'static str = TRANSACTION_STATUS_INDEX_CF;
+    const NAME: &'static str = "transaction_status_index";
 }
 
 impl SlotColumn for columns::Rewards {}
