@@ -56,8 +56,6 @@ const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 //   include/rocksdb/advanced_options.h#L908C30-L908C30
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
-// Column family for metadata about a leader slot
-const META_CF: &str = "meta";
 // Column family for slots that have been marked as dead
 const DEAD_SLOTS_CF: &str = "dead_slots";
 // Column family for storing proof that there were multiple
@@ -1316,7 +1314,7 @@ impl TypedColumn for columns::Root {
 
 impl SlotColumn for columns::SlotMeta {}
 impl ColumnName for columns::SlotMeta {
-    const NAME: &'static str = META_CF;
+    const NAME: &'static str = "meta";
 }
 impl TypedColumn for columns::SlotMeta {
     type Type = blockstore_meta::SlotMeta;
