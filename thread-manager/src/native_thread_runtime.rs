@@ -66,7 +66,7 @@ pub struct JoinHandle<T> {
 }
 
 impl<T> JoinHandle<T> {
-    fn join_inner(&mut self) -> std::thread::Result<T> {
+    pub fn join(mut self) -> std::thread::Result<T> {
         match self.std_handle.take() {
             Some(jh) => {
                 let result = jh.join();
@@ -80,10 +80,6 @@ impl<T> JoinHandle<T> {
         }
     }
 
-    pub fn join(mut self) -> std::thread::Result<T> {
-        self.join_inner()
-    }
-
     pub fn is_finished(&self) -> bool {
         match self.std_handle {
             Some(ref jh) => jh.is_finished(),
@@ -94,9 +90,8 @@ impl<T> JoinHandle<T> {
 
 impl<T> Drop for JoinHandle<T> {
     fn drop(&mut self) {
-        if self.std_handle.is_some() {
-            warn!("Attempting to drop a Join Handle of a running thread will leak thread IDs, please join your  threads!");
-            self.join_inner().expect("Child thread panicked");
+        if let Some(h) = self.std_handle.take() {
+            warn!("Attempting to drop a Join Handle of a running thread {:?} will leak thread IDs, please join your  threads!", h.thread().name());
         }
     }
 }

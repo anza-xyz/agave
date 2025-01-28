@@ -169,40 +169,152 @@ impl ThreadManager {
         })
     }
 
-    pub fn destroy(self) {
-        let Ok(mut inner) = Arc::try_unwrap(self.inner) else {
-            error!(
-                      "References to Thread Manager are still active, clean shutdown may not be possible!"
+    /// Explicitly shut down the thread manager and all its runtimes.
+    /// This may be useful if you want to ensure that everything has exited cleanly.
+    ///
+    /// This is reliable for native threads spawned from the runtimes.
+    ///
+    /// Keep in mind that Tokio may keep workers spun-up even if there is no work for them
+    /// due to the way its parking logic works, so this may not be 100% reliable. Also
+    /// we do not track Tokio's blocking tasks
+    ///
+    /// Rayon leakage checks are superficial, and may be easily bypassed by accident through
+    /// use of spawn and similar methods that transfer ownership of thread handles to the pool
+    ///
+    /// It is possible to bypass much of the checks here, their purpose is primarily
+    /// to catch silly bugs related to resource leaks
+    ///
+    /// Just dropping ThreadManager from a normal function is also ok, but dropping it from
+    /// async context will cause panic!
+    pub fn shutdown(self) -> std::result::Result<(), ShutdownError> {
+        let mut inner = match Arc::try_unwrap(self.inner) {
+            Ok(inner) => inner,
+            Err(inner) => {
+                let cnt = Arc::strong_count(&inner).saturating_sub(1);
+                error!(
+                      "{cnt} strong references to Thread Manager are still active, clean shutdown may not be possible!"
                   );
-            return;
+                return Err(ShutdownError::OtherOwnersExist);
+            }
         };
 
+        let mut native_orphans: usize = 0;
+        let mut tokio_orphans: usize = 0;
+        let mut rayon_orphans: usize = 0;
+        // We can not command Tokio runtime to exit immediately, but we can signal shutdown
+        // so it does not run any more futures. Normally, you would prefer to ensure nothing is running
+        // on the runtime before ThreadManager is terminated.
         for (name, runtime) in inner.tokio_runtimes.drain() {
             let active_cnt = runtime.counters.active_threads_cnt.load(Ordering::SeqCst);
             match active_cnt {
                 0 => debug!("Shutting down Tokio runtime {name}"),
-                _ => warn!("Tokio runtime {name} has active workers during shutdown!"),
+                _ => {
+                    warn!("Tokio runtime {name} has {active_cnt} active workers during shutdown!");
+                    tokio_orphans = tokio_orphans.saturating_add(active_cnt as usize);
+                }
             }
             runtime.tokio.shutdown_background();
         }
+
+        // Can not shutdown rayon runtimes as such, but we can ensure noone is holding on to one
+        // this is by no means foolproof, as you can call spawn on rayon runtimes and those
+        // threads are effectively untraceable. But at least it works for par_iter and such.
+        for (name, runtime) in inner.rayon_runtimes.drain() {
+            let count = Arc::strong_count(&runtime.inner);
+            if Arc::into_inner(runtime.inner).is_none() {
+                warn!("Rayon pool {name} has {count} live references during shutdown");
+                rayon_orphans = rayon_orphans.saturating_add(1);
+            }
+        }
+
+        // Similar to other, we can not command native threads to "just exit". However, we can
+        // warn if some of them were not joined at thread manager shutdown.
         for (name, runtime) in inner.native_thread_runtimes.drain() {
             let active_cnt = runtime.running_count.load(Ordering::SeqCst);
             match active_cnt {
                 0 => debug!("Shutting down Native thread pool {name}"),
-                _ => warn!("Native pool {name} has active threads during shutdown!"),
+                _ => {
+                    warn!("Native pool {name} has {active_cnt} active threads during shutdown!");
+                    native_orphans = native_orphans.saturating_add(active_cnt);
+                }
             }
         }
+        if native_orphans > 0 || tokio_orphans > 0 || rayon_orphans > 0 {
+            return Err(ShutdownError::OrphanResources {
+                native: native_orphans,
+                tokio: tokio_orphans,
+                rayon: rayon_orphans,
+            });
+        }
+        Ok(())
     }
+}
+
+#[derive(Debug)]
+pub enum ShutdownError {
+    /// Other owners of the ThreadManager instance exist, can not perform validation
+    OtherOwnersExist,
+
+    /// Orphan resources found. This may not be critical, this is mostly a sanity check
+    OrphanResources {
+        /// Native threads spawned but not joined
+        native: usize,
+        /// Tokio workers active at exit
+        tokio: usize,
+        /// Rayon runtimes leaked
+        rayon: usize,
+    },
 }
 
 #[cfg(test)]
 mod tests {
-    use {crate::ThreadManagerConfig, std::io::Read};
+    use {
+        crate::ThreadManagerConfig,
+        std::{io::Read, time::Duration},
+    };
     #[cfg(target_os = "linux")]
     use {
         crate::{CoreAllocation, NativeConfig, RayonConfig, ThreadManager},
         std::collections::HashMap,
     };
+
+    #[test]
+    fn test_orphans() {
+        let manager = ThreadManager::new(&ThreadManagerConfig::default()).unwrap();
+        let native = manager.get_native("leaker");
+        let tokio = manager.get_tokio("leaker");
+        let rayon_rt = manager.get_rayon("leaker").clone();
+        tokio.spawn(async {
+            // blocking this is REALLY BAD but ok for the test
+            std::thread::sleep(Duration::from_millis(200));
+        });
+
+        //retain jh so we do not end up dropping in on the floor
+        let jh = native
+            .spawn(|| {
+                std::thread::sleep(Duration::from_millis(200));
+            })
+            .unwrap();
+        if let Err(res) = manager.shutdown() {
+            match res {
+                crate::ShutdownError::OtherOwnersExist => panic!("Should not have other owners"),
+                crate::ShutdownError::OrphanResources {
+                    native,
+                    tokio,
+                    rayon,
+                } => {
+                    assert_eq!(native, 1, "exactly one native thread should have leaked");
+                    assert!(tokio >= 1, "at least one tokio thread should have leaked");
+                    assert_eq!(rayon, 1, "exactly one rayon runtime should have leaked");
+                }
+            }
+        } else {
+            panic!("Leaked threads not detected!");
+        }
+        // this is late on purpose
+        jh.join().unwrap();
+        drop(rayon_rt);
+    }
 
     #[test]
     fn test_config_files() {
@@ -305,6 +417,9 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+        manager
+            .shutdown()
+            .expect("Should not have leaked any resources");
     }
 
     #[cfg(target_os = "linux")]
@@ -346,6 +461,9 @@ mod tests {
         });
         thread1.join().unwrap();
         thread2.join().unwrap();
+        manager
+            .shutdown()
+            .expect("Should not have leaked any resources");
     }
 
     #[cfg(target_os = "linux")]
