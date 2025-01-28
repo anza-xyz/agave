@@ -1,7 +1,7 @@
 use {
     solana_account_decoder::{
-        parse_account_data::SplTokenAdditionalData,
-        parse_token::{is_known_spl_token_id, token_amount_to_ui_amount_v2, UiTokenAmount},
+        parse_account_data::SplTokenAdditionalDataV2,
+        parse_token::{is_known_spl_token_id, token_amount_to_ui_amount_v3, UiTokenAmount},
     },
     solana_measure::measure::Measure,
     solana_metrics::datapoint_debug,
@@ -113,12 +113,12 @@ fn collect_token_balance_from_account(
     Some(TokenBalanceData {
         mint: token_account.base.mint.to_string(),
         owner: token_account.base.owner.to_string(),
-        ui_token_amount: token_amount_to_ui_amount_v2(
+        ui_token_amount: token_amount_to_ui_amount_v3(
             token_account.base.amount,
             // NOTE: Same as parsed instruction data, ledger data always uses
             // the raw token amount, and does not calculate the UI amount with
             // any consideration for interest.
-            &SplTokenAdditionalData::with_decimals(decimals),
+            &SplTokenAdditionalDataV2::with_decimals(decimals),
         ),
         program_id: account.owner().to_string(),
     })
