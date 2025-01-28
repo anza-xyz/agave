@@ -56,8 +56,6 @@ const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 //   include/rocksdb/advanced_options.h#L908C30-L908C30
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
-// Column family for slots that have been marked as dead
-const DEAD_SLOTS_CF: &str = "dead_slots";
 // Column family for storing proof that there were multiple
 // versions of a slot
 const DUPLICATE_SLOTS_CF: &str = "duplicate_slots";
@@ -1274,7 +1272,7 @@ impl TypedColumn for columns::Index {
 
 impl SlotColumn for columns::DeadSlots {}
 impl ColumnName for columns::DeadSlots {
-    const NAME: &'static str = DEAD_SLOTS_CF;
+    const NAME: &'static str = "dead_slots";
 }
 impl TypedColumn for columns::DeadSlots {
     type Type = bool;
