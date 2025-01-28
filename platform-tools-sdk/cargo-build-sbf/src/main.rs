@@ -165,9 +165,9 @@ fn home_dir() -> PathBuf {
 fn find_installed_platform_tools() -> Vec<String> {
     let solana = home_dir().join(".cache").join("solana");
     let package = "platform-tools";
-    std::fs::read_dir(solana)
-        .unwrap()
-        .filter_map(|e| match e {
+
+    if let Ok(dir) = std::fs::read_dir(solana) {
+        dir.filter_map(|e| match e {
             Err(_) => None,
             Ok(e) => {
                 if e.path().join(package).is_dir() {
@@ -178,6 +178,9 @@ fn find_installed_platform_tools() -> Vec<String> {
             }
         })
         .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    }
 }
 
 fn get_latest_platform_tools_version() -> Result<String, String> {
