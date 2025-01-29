@@ -26,13 +26,13 @@ impl TransactionBatch {
     where
         T: AsRef<[u8]> + Send + 'static,
     {
-        let txs = wired_transactions
+        let wired_transactions = wired_transactions
             .into_iter()
             .map(|v| Bytes::from_owner(v))
             .collect();
 
         Self {
-            wired_transactions: txs,
+            wired_transactions,
             timestamp: timestamp(),
         }
     }
