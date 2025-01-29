@@ -138,9 +138,8 @@ pub struct FeesOnlyTransaction {
     pub fee_details: FeeDetails,
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
-    account_cache: Arc<RwLock<AHashMap<Pubkey, AccountSharedData>>>,
+    account_cache: RwLock<AHashMap<Pubkey, AccountSharedData>>,
     callbacks: &'a CB,
     pub(crate) feature_set: Arc<FeatureSet>,
 }
@@ -162,7 +161,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
 
         Self {
-            account_cache: Arc::new(RwLock::new(account_cache)),
+            account_cache: RwLock::new(account_cache),
             callbacks,
             feature_set,
         }
