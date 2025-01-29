@@ -767,7 +767,7 @@ mod tests {
         let mut account_loader: AccountLoader<TestCallbacks> = (&callbacks).into();
         account_loader.feature_set = Arc::new(feature_set.clone());
         load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_tx,
             Ok(ValidatedTransactionDetails {
                 loaded_fee_payer_account: LoadedTransactionAccount {
@@ -1058,14 +1058,14 @@ mod tests {
             accounts_map,
             ..Default::default()
         };
-        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+        let account_loader = AccountLoader::new_with_account_cache_capacity(
             account_overrides,
             &callbacks,
             Arc::new(FeatureSet::all_enabled()),
             0,
         );
         load_transaction(
-            &mut account_loader,
+            &account_loader,
             &tx,
             Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
@@ -1339,7 +1339,7 @@ mod tests {
         mock_bank
             .accounts_map
             .insert(fee_payer_address, fee_payer_account.clone());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
         let fee_payer_rent_debit = 42;
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1350,7 +1350,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 loaded_size: fee_payer_account.data().len(),
@@ -1403,7 +1403,7 @@ mod tests {
         mock_bank
             .accounts_map
             .insert(key1.pubkey(), fee_payer_account.clone());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1413,7 +1413,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1463,7 +1463,7 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1473,7 +1473,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
@@ -1505,7 +1505,7 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1515,7 +1515,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
@@ -1558,7 +1558,7 @@ mod tests {
         mock_bank
             .accounts_map
             .insert(key2.pubkey(), fee_payer_account.clone());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1568,7 +1568,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1622,7 +1622,7 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
         mock_bank.accounts_map.insert(key2.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1632,7 +1632,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
@@ -1674,7 +1674,7 @@ mod tests {
         mock_bank
             .accounts_map
             .insert(key3.pubkey(), AccountSharedData::default());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1684,7 +1684,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
@@ -1734,7 +1734,7 @@ mod tests {
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1744,7 +1744,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1817,7 +1817,7 @@ mod tests {
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1827,7 +1827,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1878,7 +1878,7 @@ mod tests {
         bank.accounts_map.insert(mint_keypair.pubkey(), mint_data);
         bank.accounts_map
             .insert(recipient, AccountSharedData::default());
-        let mut account_loader = (&bank).into();
+        let account_loader = (&bank).into();
 
         let tx = transfer(
             &mint_keypair,
@@ -1890,7 +1890,7 @@ mod tests {
         let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
         let mut error_metrics = TransactionErrorMetrics::default();
         let load_result = load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_tx.clone(),
             Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
@@ -1967,7 +1967,7 @@ mod tests {
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1985,7 +1985,7 @@ mod tests {
         });
 
         let load_result = load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_transaction,
             validation_result,
             &mut error_metrics,
@@ -2026,7 +2026,7 @@ mod tests {
     #[test]
     fn test_load_accounts_error() {
         let mock_bank = TestCallbacks::default();
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
         let rent_collector = RentCollector::default();
 
         let message = Message {
@@ -2049,7 +2049,7 @@ mod tests {
 
         let validation_result = Ok(ValidatedTransactionDetails::default());
         let load_result = load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_transaction,
             validation_result.clone(),
             &mut TransactionErrorMetrics::default(),
@@ -2067,7 +2067,7 @@ mod tests {
         let validation_result = Err(TransactionError::InvalidWritableAccount);
 
         let load_result = load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_transaction,
             validation_result,
             &mut TransactionErrorMetrics::default(),
@@ -2177,7 +2177,7 @@ mod tests {
         account3.set_executable(true);
         account3.set_owner(bpf_loader::id());
         mock_bank.accounts_map.insert(address3, account3.clone());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let message = Message {
             account_keys: vec![address0, address1, address2, address3],
@@ -2215,7 +2215,7 @@ mod tests {
             ..ValidatedTransactionDetails::default()
         });
         let _load_results = load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_transaction,
             validation_result,
             &mut TransactionErrorMetrics::default(),
@@ -2332,7 +2332,7 @@ mod tests {
         program_accounts.insert(program2, (&loader_v3, 0));
 
         let test_transaction_data_size = |transaction, expected_size| {
-            let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+            let account_loader = AccountLoader::new_with_account_cache_capacity(
                 None,
                 &mock_bank,
                 Arc::<FeatureSet>::default(),
@@ -2340,7 +2340,7 @@ mod tests {
             );
 
             let loaded_transaction_accounts = load_transaction_accounts(
-                &mut account_loader,
+                &account_loader,
                 &transaction,
                 LoadedTransactionAccount {
                     account: fee_payer_account.clone(),
