@@ -20,10 +20,7 @@ use {
         },
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
         crds::{Crds, Cursor, GossipRoute},
-        crds_data::{
-            self, CrdsData, EpochSlotsIndex, LowestSlot, NodeInstance, SnapshotHashes, Version,
-            Vote,
-        },
+        crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, SnapshotHashes, Vote},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
@@ -48,7 +45,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     itertools::Itertools,
-    rand::{seq::SliceRandom, thread_rng, CryptoRng, Rng},
+    rand::{seq::SliceRandom, CryptoRng, Rng},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     solana_ledger::shred::Shred,
     solana_measure::measure::Measure,
@@ -157,7 +154,6 @@ pub struct ClusterInfo {
     local_message_pending_push_queue: Mutex<Vec<CrdsValue>>,
     contact_debug_interval: u64, // milliseconds, 0 = disabled
     contact_save_interval: u64,  // milliseconds, 0 = disabled
-    instance: RwLock<NodeInstance>,
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
 }
@@ -211,7 +207,6 @@ impl ClusterInfo {
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
         assert_eq!(contact_info.pubkey(), &keypair.pubkey());
-        let id = *contact_info.pubkey();
         let me = Self {
             gossip: CrdsGossip::default(),
             keypair: RwLock::new(keypair),
@@ -228,7 +223,6 @@ impl ClusterInfo {
             stats: GossipStats::default(),
             local_message_pending_push_queue: Mutex::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
-            instance: RwLock::new(NodeInstance::new(&mut thread_rng(), id, timestamp())),
             contact_info_path: PathBuf::default(),
             contact_save_interval: 0, // disabled
             socket_addr_space,
@@ -431,18 +425,10 @@ impl ClusterInfo {
 
     pub fn set_keypair(&self, new_keypair: Arc<Keypair>) {
         let id = new_keypair.pubkey();
-        {
-            let mut instance = self.instance.write().unwrap();
-            *instance = NodeInstance::new(&mut thread_rng(), id, timestamp());
-        }
         *self.keypair.write().unwrap() = new_keypair;
         self.my_contact_info.write().unwrap().hot_swap_pubkey(id);
 
         self.refresh_my_gossip_contact_info();
-        self.push_message(CrdsValue::new(
-            CrdsData::Version(Version::new(self.id())),
-            &self.keypair(),
-        ));
     }
 
     pub fn set_tpu(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
@@ -1174,24 +1160,17 @@ impl ClusterInfo {
 
     fn refresh_my_gossip_contact_info(&self) {
         let keypair: Arc<Keypair> = self.keypair().clone();
-        let instance = self.instance.read().unwrap().with_wallclock(timestamp());
         let node = {
             let mut node = self.my_contact_info.write().unwrap();
             node.set_wallclock(timestamp());
             node.clone()
         };
-        let entries: Vec<_> = [
-            CrdsData::ContactInfo(node),
-            CrdsData::NodeInstance(instance),
-        ]
-        .into_iter()
-        .map(|entry| CrdsValue::new(entry, &keypair))
-        .collect();
-        let mut gossip_crds = self.gossip.crds.write().unwrap();
-        for entry in entries {
-            if let Err(err) = gossip_crds.insert(entry, timestamp(), GossipRoute::LocalMessage) {
-                error!("Insert self failed: {err:?}");
-            }
+        let node = CrdsValue::new(CrdsData::ContactInfo(node), &keypair);
+        if let Err(err) = {
+            let mut gossip_crds = self.gossip.crds.write().unwrap();
+            gossip_crds.insert(node, timestamp(), GossipRoute::LocalMessage)
+        } {
+            error!("refresh_my_gossip_contact_info failed: {err:?}");
         }
     }
 
@@ -1528,16 +1507,6 @@ impl ClusterInfo {
                 let mut last_contact_info_save = timestamp();
                 let mut entrypoints_processed = false;
                 let recycler = PacketBatchRecycler::default();
-                let crds_data = vec![
-                    CrdsData::Version(Version::new(self.id())),
-                    CrdsData::NodeInstance(
-                        self.instance.read().unwrap().with_wallclock(timestamp()),
-                    ),
-                ];
-                for value in crds_data {
-                    let value = CrdsValue::new(value, &self.keypair());
-                    self.push_message(value);
-                }
                 let mut generate_pull_requests = true;
                 while !exit.load(Ordering::Relaxed) {
                     let start = timestamp();
@@ -2137,19 +2106,14 @@ impl ClusterInfo {
         // Check if there is a duplicate instance of
         // this node with more recent timestamp.
         let check_duplicate_instance = {
-            let instance = self.instance.read().unwrap();
             let my_contact_info = self.my_contact_info();
             move |values: &[CrdsValue]| {
-                if should_check_duplicate_instance
-                    && values.iter().any(|value| match value.data() {
-                        CrdsData::ContactInfo(other) => my_contact_info.check_duplicate(other),
-                        CrdsData::NodeInstance(other) => instance.check_duplicate(other),
-                        _ => false,
-                    })
-                {
-                    return Err(GossipError::DuplicateNodeInstance);
+                let mut nodes = values.iter().filter_map(CrdsValue::contact_info);
+                if nodes.any(|other| my_contact_info.check_duplicate(other)) {
+                    Err(GossipError::DuplicateNodeInstance)
+                } else {
+                    Ok(())
                 }
-                Ok(())
             }
         };
         let mut pings = Vec::new();
@@ -2186,14 +2150,18 @@ impl ClusterInfo {
                     }
                 }
                 Protocol::PullResponse(_, mut data) => {
-                    check_duplicate_instance(&data)?;
+                    if should_check_duplicate_instance {
+                        check_duplicate_instance(&data)?;
+                    }
                     data.retain(&mut verify_gossip_addr);
                     if !data.is_empty() {
                         pull_responses.append(&mut data);
                     }
                 }
                 Protocol::PushMessage(from, mut data) => {
-                    check_duplicate_instance(&data)?;
+                    if should_check_duplicate_instance {
+                        check_duplicate_instance(&data)?;
+                    }
                     data.retain(&mut verify_gossip_addr);
                     if !data.is_empty() {
                         push_messages.push((from, data));
