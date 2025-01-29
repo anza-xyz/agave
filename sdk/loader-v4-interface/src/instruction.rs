@@ -44,18 +44,17 @@ pub enum LoaderV4Instruction {
     /// Changes the size of an undeployed program account.
     ///
     /// A program account is automatically initialized when its size is first increased.
-    /// In this initial truncate, the program account needs to be a signer and
-    /// it also sets the authority needed for subsequent operations.
-    /// Decreasing to size zero closes the program account and resets it
-    /// into an uninitialized state.
+    /// In this initial truncate, this sets the authority needed for subsequent operations.
+    /// Decreasing to size zero closes the program account and resets it into an uninitialized state.
+    /// Closing the program requires a recipient account.
     /// Providing additional lamports upfront might be necessary to reach rent exemption.
-    /// Superflous funds are transferred to the recipient account.
+    /// Superflous funds are transferred to the recipient account if provided.
     ///
     /// # Account references
-    ///   0. `[(signer), writable]` The program account to change the size of.
+    ///   0. `[writable]` The program account to change the size of.
     ///   1. `[signer]` The authority of the program.
     ///   2. `[writable]` Optional, the recipient account.
-    Truncate {
+    SetProgramLength {
         /// The new size after the operation.
         new_size: u32,
     },
@@ -109,7 +108,7 @@ pub fn is_copy_instruction(instruction_data: &[u8]) -> bool {
     !instruction_data.is_empty() && 1 == instruction_data[0]
 }
 
-pub fn is_truncate_instruction(instruction_data: &[u8]) -> bool {
+pub fn is_set_program_length_instruction(instruction_data: &[u8]) -> bool {
     !instruction_data.is_empty() && 2 == instruction_data[0]
 }
 
@@ -147,33 +146,13 @@ pub fn create_buffer(
             0,
             &id(),
         ),
-        truncate_uninitialized(buffer_address, authority, new_size, recipient_address),
+        set_program_length(buffer_address, authority, new_size, recipient_address),
     ]
-}
-
-/// Returns the instructions required to set the length of an uninitialized program account.
-/// This instruction will require the program account to also sign the transaction.
-#[cfg(feature = "bincode")]
-pub fn truncate_uninitialized(
-    program_address: &Pubkey,
-    authority: &Pubkey,
-    new_size: u32,
-    recipient_address: &Pubkey,
-) -> Instruction {
-    Instruction::new_with_bincode(
-        id(),
-        &LoaderV4Instruction::Truncate { new_size },
-        vec![
-            AccountMeta::new(*program_address, true),
-            AccountMeta::new_readonly(*authority, true),
-            AccountMeta::new(*recipient_address, false),
-        ],
-    )
 }
 
 /// Returns the instructions required to set the length of the program account.
 #[cfg(feature = "bincode")]
-pub fn truncate(
+pub fn set_program_length(
     program_address: &Pubkey,
     authority: &Pubkey,
     new_size: u32,
@@ -181,7 +160,7 @@ pub fn truncate(
 ) -> Instruction {
     Instruction::new_with_bincode(
         id(),
-        &LoaderV4Instruction::Truncate { new_size },
+        &LoaderV4Instruction::SetProgramLength { new_size },
         vec![
             AccountMeta::new(*program_address, false),
             AccountMeta::new_readonly(*authority, true),
@@ -333,12 +312,12 @@ mod tests {
         assert!(instruction0.accounts[1].is_signer);
 
         let instruction1 = &instructions[1];
-        assert!(is_truncate_instruction(&instruction1.data));
+        assert!(is_set_program_length_instruction(&instruction1.data));
         assert_eq!(instruction1.program_id, id());
         assert_eq!(instruction1.accounts.len(), 3);
         assert_eq!(instruction1.accounts[0].pubkey, program);
         assert!(instruction1.accounts[0].is_writable);
-        assert!(instruction1.accounts[0].is_signer);
+        assert!(!instruction1.accounts[0].is_signer);
         assert_eq!(instruction1.accounts[1].pubkey, authority);
         assert!(!instruction1.accounts[1].is_writable);
         assert!(instruction1.accounts[1].is_signer);
@@ -384,12 +363,12 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_instruction() {
+    fn test_set_program_length_instruction() {
         let program = Pubkey::new_unique();
         let authority = Pubkey::new_unique();
         let recipient = Pubkey::new_unique();
-        let instruction = truncate(&program, &authority, 10, &recipient);
-        assert!(is_truncate_instruction(&instruction.data));
+        let instruction = set_program_length(&program, &authority, 10, &recipient);
+        assert!(is_set_program_length_instruction(&instruction.data));
         assert_eq!(instruction.program_id, id());
         assert_eq!(instruction.accounts.len(), 3);
         assert_eq!(instruction.accounts[0].pubkey, program);

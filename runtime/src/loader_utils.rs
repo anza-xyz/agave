@@ -282,7 +282,7 @@ pub fn instructions_to_load_program_of_loader_v4<T: Client>(
         ));
         program_keypair
     });
-    instructions.push(loader_v4::truncate_uninitialized(
+    instructions.push(loader_v4::set_program_length(
         &program_keypair.pubkey(),
         &authority_keypair.pubkey(),
         program.len() as u32,
@@ -328,12 +328,9 @@ pub fn load_program_of_loader_v4(
     );
     let signers: &[&[&Keypair]] = &[
         &[payer_keypair, &program_keypair],
-        &[payer_keypair, &program_keypair, authority_keypair],
         &[payer_keypair, authority_keypair],
     ];
-    let signers = std::iter::once(signers[0])
-        .chain(std::iter::once(signers[1]))
-        .chain(std::iter::repeat(signers[2]));
+    let signers = std::iter::once(signers[0]).chain(std::iter::repeat(signers[1]));
     for (instruction, signers) in instructions.into_iter().zip(signers) {
         let message = Message::new(&[instruction], Some(&payer_keypair.pubkey()));
         bank_client

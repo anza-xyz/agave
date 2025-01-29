@@ -1738,12 +1738,9 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
     let deployment_instruction = deployment_instructions.pop().unwrap();
     let signers: &[&[&Keypair]] = &[
         &[&mint_keypair, &source_program_keypair],
-        &[&mint_keypair, &source_program_keypair, &authority_keypair],
         &[&mint_keypair, &authority_keypair],
     ];
-    let signers = std::iter::once(signers[0])
-        .chain(std::iter::once(signers[1]))
-        .chain(std::iter::repeat(signers[2]));
+    let signers = std::iter::once(signers[0]).chain(std::iter::repeat(signers[1]));
     for (instruction, signers) in deployment_instructions.into_iter().zip(signers) {
         let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
         bank_client
@@ -2065,16 +2062,9 @@ fn test_program_sbf_upgrade() {
     );
     let signers: &[&[&Keypair]] = &[
         &[&mint_keypair, &source_program_keypair],
-        &[
-            &mint_keypair,
-            &source_program_keypair,
-            &new_authority_keypair,
-        ],
         &[&mint_keypair, &new_authority_keypair],
     ];
-    let signers = std::iter::once(signers[0])
-        .chain(std::iter::once(signers[1]))
-        .chain(std::iter::repeat(signers[2]));
+    let signers = std::iter::once(signers[0]).chain(std::iter::repeat(signers[1]));
     for (instruction, signers) in deployment_instructions.into_iter().zip(signers) {
         let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
         bank_client
@@ -2179,16 +2169,9 @@ fn test_program_sbf_upgrade_via_cpi() {
     let mut upgrade_instruction = deployment_instructions.pop().unwrap();
     let signers: &[&[&Keypair]] = &[
         &[&mint_keypair, &source_program_keypair],
-        &[
-            &mint_keypair,
-            &source_program_keypair,
-            &new_authority_keypair,
-        ],
         &[&mint_keypair, &new_authority_keypair],
     ];
-    let signers = std::iter::once(signers[0])
-        .chain(std::iter::once(signers[1]))
-        .chain(std::iter::repeat(signers[2]));
+    let signers = std::iter::once(signers[0]).chain(std::iter::repeat(signers[1]));
     for (instruction, signers) in deployment_instructions.into_iter().zip(signers) {
         let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
         bank_client
