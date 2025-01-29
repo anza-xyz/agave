@@ -101,7 +101,7 @@ impl WorkersCache {
         }
     }
 
-    pub(crate) fn contains(&self, peer: &SocketAddr) -> bool {
+    pub fn contains(&self, peer: &SocketAddr) -> bool {
         self.workers.contains(peer)
     }
 
@@ -119,7 +119,7 @@ impl WorkersCache {
         None
     }
 
-    pub(crate) fn pop(&mut self, leader: SocketAddr) -> Option<ShutdownWorker> {
+    pub fn pop(&mut self, leader: SocketAddr) -> Option<ShutdownWorker> {
         if let Some(popped_worker) = self.workers.pop(&leader) {
             return Some(ShutdownWorker {
                 leader,
@@ -228,7 +228,7 @@ impl WorkersCache {
 /// [`ShutdownWorker`] takes care of stopping the worker. It's method
 /// `shutdown()` should be executed in a separate task to hide the latency of
 /// finishing worker gracefully.
-pub(crate) struct ShutdownWorker {
+pub struct ShutdownWorker {
     leader: SocketAddr,
     worker: WorkerInfo,
 }
@@ -243,7 +243,7 @@ impl ShutdownWorker {
     }
 }
 
-pub(crate) fn maybe_shutdown_worker(worker: Option<ShutdownWorker>) {
+pub fn maybe_shutdown_worker(worker: Option<ShutdownWorker>) {
     let Some(worker) = worker else {
         return;
     };
