@@ -169,7 +169,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     }
 
     pub(crate) fn load_account(
-        &mut self,
+        &self,
         account_key: &Pubkey,
         is_writable: bool,
     ) -> Option<LoadedTransactionAccount> {
@@ -215,7 +215,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     }
 
     pub(crate) fn update_accounts_for_executed_tx(
-        &mut self,
+        &self,
         message: &impl SVMMessage,
         executed_transaction: &ExecutedTransaction,
     ) {
@@ -233,7 +233,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     }
 
     pub(crate) fn update_accounts_for_failed_tx(
-        &mut self,
+        &self,
         message: &impl SVMMessage,
         rollback_accounts: &RollbackAccounts,
     ) {
@@ -257,7 +257,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     }
 
     fn update_accounts_for_successful_tx(
-        &mut self,
+        &self,
         message: &impl SVMMessage,
         transaction_accounts: &[TransactionAccount],
     ) {
@@ -369,7 +369,7 @@ pub fn validate_fee_payer(
 }
 
 pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
-    account_loader: &mut AccountLoader<CB>,
+    account_loader: &AccountLoader<CB>,
     message: &impl SVMMessage,
     validation_result: TransactionValidationResult,
     error_metrics: &mut TransactionErrorMetrics,
@@ -418,7 +418,7 @@ struct LoadedTransactionAccounts {
 }
 
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
-    account_loader: &mut AccountLoader<CB>,
+    account_loader: &AccountLoader<CB>,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
     compute_budget_limits: &ComputeBudgetLimits,
@@ -561,7 +561,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
 }
 
 fn load_transaction_account<CB: TransactionProcessingCallback>(
-    account_loader: &mut AccountLoader<CB>,
+    account_loader: &AccountLoader<CB>,
     message: &impl SVMMessage,
     account_key: &Pubkey,
     account_index: usize,

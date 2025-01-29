@@ -384,7 +384,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let account_keys_in_batch = sanitized_txs.iter().map(|tx| tx.account_keys().len()).sum();
 
         // Create the account loader, which wraps all external account fetching.
-        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+        let account_loader = AccountLoader::new_with_account_cache_capacity(
             config.account_overrides,
             callbacks,
             environment.feature_set.clone(),
@@ -405,7 +405,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             let (validate_result, single_validate_fees_us) =
                 measure_us!(check_result.and_then(|tx_details| {
                     Self::validate_transaction_nonce_and_fee_payer(
-                        &mut account_loader,
+                        &account_loader,
                         tx,
                         tx_details,
                         &environment.blockhash,
@@ -420,7 +420,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             validate_fees_us = validate_fees_us.saturating_add(single_validate_fees_us);
 
             let (load_result, single_load_us) = measure_us!(load_transaction(
-                &mut account_loader,
+                &account_loader,
                 tx,
                 validate_result,
                 &mut error_metrics,
@@ -510,7 +510,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     fn validate_transaction_nonce_and_fee_payer<CB: TransactionProcessingCallback>(
-        account_loader: &mut AccountLoader<CB>,
+        account_loader: &AccountLoader<CB>,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         environment_blockhash: &Hash,
@@ -555,7 +555,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     // transaction fees, and deducts them from the fee payer balance. If the
     // account is not found or has insufficient funds, an error is returned.
     fn validate_transaction_fee_payer<CB: TransactionProcessingCallback>(
-        account_loader: &mut AccountLoader<CB>,
+        account_loader: &AccountLoader<CB>,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         fee_lamports_per_signature: u64,
@@ -631,7 +631,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     fn validate_transaction_nonce<CB: TransactionProcessingCallback>(
-        account_loader: &mut AccountLoader<CB>,
+        account_loader: &AccountLoader<CB>,
         message: &impl SVMMessage,
         nonce_info: &NonceInfo,
         next_durable_nonce: &DurableNonce,
