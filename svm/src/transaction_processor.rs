@@ -46,7 +46,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent_collector::RentCollector,
-    solana_sdk_ids::{native_loader, system_program},
+    solana_sdk_ids::system_program,
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
@@ -328,42 +328,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut execute_timings = ExecuteTimings::default();
         let mut processing_results = Vec::with_capacity(sanitized_txs.len());
 
-        let native_loader = native_loader::id();
-        let (program_accounts_map, filter_executable_us) = measure_us!({
-            let mut program_accounts_map = Self::filter_executable_program_accounts(
-                callbacks,
-                sanitized_txs,
-                &check_results,
-                PROGRAM_OWNERS,
-            );
-            for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
-                program_accounts_map.insert(*builtin_program, (&native_loader, 0));
-            }
-            program_accounts_map
-        });
-
-        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
-            let program_cache_for_tx_batch = self.replenish_program_cache(
-                callbacks,
-                &program_accounts_map,
-                &mut execute_timings,
-                config.check_program_modification_slot,
-                config.limit_to_load_programs,
-            );
-
-            if program_cache_for_tx_batch.hit_max_limit {
-                return LoadAndExecuteSanitizedTransactionsOutput {
-                    error_metrics,
-                    execute_timings,
-                    processing_results: (0..sanitized_txs.len())
-                        .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                        .collect(),
-                };
-            }
-
-            program_cache_for_tx_batch
-        });
-
         // Determine a capacity for the internal account cache. This
         // over-allocates but avoids ever reallocating, and spares us from
         // deduplicating the account keys lists.
@@ -378,6 +342,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         let (mut validate_fees_us, mut load_us, mut execution_us): (u64, u64, u64) = (0, 0, 0);
+
+        let mut filter_executable_us: u64 = 0;
+        let mut program_cache_us: u64 = 0;
+        let mut evict_from_global_cache = false; // HANA maybe can obviate
+        let mut programs_modified_by_batch: HashMap<Pubkey, Arc<ProgramCacheEntry>> =
+            HashMap::new();
 
         // Validate, execute, and collect results from each transaction in order.
         // With SIMD83, transactions must be executed in order, because transactions
@@ -410,6 +380,40 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
+            let (mut program_accounts_map, single_filter_executable_us) = measure_us!(
+                self.filter_executable_program_accounts(&account_loader, tx, PROGRAM_OWNERS)
+            );
+            // HANA TODO do this in the fn i just dont want to break test interfaces again before im done
+            for key in programs_modified_by_batch.keys() {
+                program_accounts_map.remove(key);
+            }
+            filter_executable_us = filter_executable_us.saturating_add(single_filter_executable_us);
+
+            let (mut program_cache_for_tx, single_program_cache_us) = measure_us!(self
+                .replenish_program_cache(
+                    &account_loader,
+                    &program_accounts_map,
+                    &mut execute_timings,
+                    config.check_program_modification_slot,
+                    config.limit_to_load_programs,
+                ));
+
+            // HANA TODO do this nicer somehwere
+            println!("HANA merging: {:#?}", programs_modified_by_batch);
+            program_cache_for_tx.merge(&programs_modified_by_batch);
+            program_cache_for_tx.merged_modified = false;
+
+            if program_cache_for_tx.hit_max_limit {
+                return LoadAndExecuteSanitizedTransactionsOutput {
+                    error_metrics,
+                    execute_timings,
+                    processing_results: (0..sanitized_txs.len())
+                        .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                        .collect(),
+                };
+            }
+            program_cache_us = program_cache_us.saturating_add(single_program_cache_us);
+
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
@@ -426,17 +430,27 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         loaded_transaction,
                         &mut execute_timings,
                         &mut error_metrics,
-                        &mut program_cache_for_tx_batch,
+                        &mut program_cache_for_tx,
                         environment,
                         config,
                     );
 
                     // Update loaded accounts cache with account states which might have changed.
-                    // Also update local program cache with modifications made by the transaction,
-                    // if it executed successfully.
                     account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
-                    if executed_tx.was_successful() {
-                        program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+
+                    if program_cache_for_tx.loaded_missing {
+                        evict_from_global_cache = true;
+                    }
+
+                    if executed_tx.was_successful()
+                        && !executed_tx.programs_modified_by_tx.is_empty()
+                    {
+                        for (key, entry) in &executed_tx.programs_modified_by_tx {
+                            programs_modified_by_batch
+                                .entry(*key)
+                                .or_insert(entry.clone());
+                        }
+                        evict_from_global_cache = true;
                     }
 
                     Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
@@ -451,7 +465,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
-        if program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified {
+        if evict_from_global_cache {
             const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: u8 = 90;
             self.program_cache
                 .write()
@@ -650,42 +664,45 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Returns a map from executable program accounts (all accounts owned by any loader)
     /// to their usage counters, for the transactions with a valid blockhash or nonce.
-    fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
-        callbacks: &CB,
-        txs: &[impl SVMMessage],
-        check_results: &[TransactionCheckResult],
-        program_owners: &'a [Pubkey],
-    ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
-        let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> = HashMap::new();
-        check_results.iter().zip(txs).for_each(|etx| {
-            if let (Ok(_), tx) = etx {
-                tx.account_keys()
-                    .iter()
-                    .for_each(|key| match result.entry(*key) {
-                        Entry::Occupied(mut entry) => {
-                            let (_, count) = entry.get_mut();
-                            *count = count.saturating_add(1);
-                        }
-                        Entry::Vacant(entry) => {
-                            if let Some(index) =
-                                callbacks.account_matches_owners(key, program_owners)
-                            {
-                                if let Some(owner) = program_owners.get(index) {
-                                    entry.insert((owner, 1));
-                                }
-                            }
-                        }
-                    });
-            }
-        });
+    fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
+        &self,
+        account_loader: &AccountLoader<CB>,
+        tx: &impl SVMMessage,
+        program_owners: &[Pubkey],
+    ) -> HashMap<Pubkey, u64> {
+        let mut result: HashMap<Pubkey, u64> = self
+            .builtin_program_ids
+            .read()
+            .unwrap()
+            .iter()
+            .map(|pubkey| (*pubkey, 0))
+            .collect();
+
+        tx.account_keys()
+            .iter()
+            .for_each(|key| match result.entry(*key) {
+                Entry::Occupied(mut entry) => {
+                    let count = entry.get_mut();
+                    *count = count.saturating_add(1);
+                }
+                Entry::Vacant(entry) => {
+                    if account_loader
+                        .account_matches_owners(key, program_owners)
+                        .is_some()
+                    {
+                        entry.insert(1);
+                    }
+                }
+            });
+
         result
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
-        callback: &CB,
-        program_accounts_map: &HashMap<Pubkey, (&Pubkey, u64)>,
+        account_loader: &AccountLoader<CB>,
+        program_accounts_map: &HashMap<Pubkey, u64>,
         execute_timings: &mut ExecuteTimings,
         check_program_modification_slot: bool,
         limit_to_load_programs: bool,
@@ -693,9 +710,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut missing_programs: Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> =
             program_accounts_map
                 .iter()
-                .map(|(pubkey, (_, count))| {
+                .map(|(pubkey, count)| {
                     let match_criteria = if check_program_modification_slot {
-                        get_program_modification_slot(callback, pubkey)
+                        get_program_modification_slot(account_loader, pubkey)
                             .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
                                 ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
                             })
@@ -705,6 +722,93 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     (*pubkey, (match_criteria, *count))
                 })
                 .collect();
+
+        // HANA TODO i believe, to not have to worry about cache hell, we should parse and filter here
+        // remind me again why i cant just... filter and leave replenish alone...
+        // maybe i just need to write a new replenish. idk man
+        // ok. yea. i think... uh... ok
+        // * call `new_from_cache` outside the loop, let `is_first_round` be a bool
+        // * before the loop, figure out wtf in `missing_programs` is from our batch
+        //   i believe what i want is... v1/v2, exclude (invalid) if callbacks result is None
+        //   v3/v4 parse and check the slot. however i could also... ignore v1/v2 since theyll never be valid
+        //   and v3/v4 i believe i can rely on logic similar to the local cache update...
+        //   this gets fucked up with the `is_first_round` bool
+        //
+        // what i *really* want is just... a way to give global a bunch of program ids
+        // and it gives me bytecode... ugh no that doesnt work. because it need to compile the misses
+        // which it relies on us to supply the accounts for
+        //
+        // another thing im not sure about is if buffers showing up in global cache is a bug or a feature
+        //
+        // ok. modified entries is actually... good
+        // i think what i want is... load accounts for tx. filter by program owner
+        // then also filter anything that was modified in previous caches
+        // carrying over `modified_entries` and possibly the internal bools from cache to cache...
+        //
+        // i think i need to draw this up as an issue and just tag a bunch of people
+        // well. step back. what are my options here
+        //
+        // filter with AccountLoader. load with callback. track modified programs to mask with tombstones
+        // we could exclude these programs from the missing_programs list so theyre never loaded
+        // or just... ok actually i think. keeping modified and just adding it to every program cache
+        // is probably the best approach here. since it overrides whatever is in it
+        // then we can... well, no, idk. we 64x accounts-db calls if we keep callback here
+        // we could use AccountLoader. carry over modified. exclude modified from missing
+        // this doesnt work for hand-created accounts. is that a problem? only if it poisons global
+        //
+        // wait a second. the cache entries for our local cache are always created anew
+        // i think extract... jesus extract is difficult. first of all the match criteria doesnt work for us
+        // even aside from alexanders point about forking. it just skips instead of puttin the tombstone
+        // whereas a global tombstone inserts a local tombstone
+        //
+        // fucking hell. why do we even need all the information on a closed or delayed tombstone?
+        // ok well it isnt checked until we are deep in rbpf-land so we cant change that
+        //
+        // so that means our options are:
+        // * per-tx cache. filter with loader. replenish with callback. eat the cost of accounts-db lookups
+        //   ie hope that its just account_checks_owners is slow and get_account_shared_data is fast (im... skeptical)
+        //   carry over modified hashmap between caches and rely on it to preempt
+        // * per-tx cache. filter with loader. replenish with loader
+        //   we could try to exclude modified from the loads entirely to mitigate poisoning
+        //   but we would also need to exclude creations i believe
+        // * per-batch cache, incrementally add new programs as needed
+        //   this is a step backwards though. we dont want to do this unless necessary
+        //
+        // i think after reviewing this all, what i want is a shared modified hashmap
+        // starts empty. passed to filter and stuff in it is excluded
+        // replenish doesnt need to be changed further. we either store or merge modified into the cache
+        // then we execute. if execution was successful we drain its modified and merge with the shared one
+        // and repeat with filter. this assumes it doesnt matter if
+        //
+        // HANA thinking through this fresh, i asked pankaj some questions but am not sure about global still
+        // ideally we shouldnt have to care. the idea here is roughly a laod/filter/replenish/merge where:
+        // * first batch gets fresh accounts from load. filter and replenish dont matter
+        // * some program is changed. merge takes its entry from the local cache and holds onto it
+        // * loop, second batch loads and calls filter. filter EXCLUDES the modified accounts
+        //   i understand this perfectly wrt loaderv3 and believe it works for loaderv4
+        //   loaderv1/v2 dont matter since deployments are disabled
+        //   this list does not contain new system-created accounts, and that is the current question
+        //   these would be tombstoned if sent back up to global, but the forking implications are ???
+        // * replenish sees a load list excluding modified programs. therefore all accounts match accounts-db
+        //   the global cache is exposed to no new uncommitted data except system-created accounts
+        // * merge adds any new modified programs to the monotonically increasing modified list
+        // from there the loop behaves the same until the end
+        // we can probably get whether to evict from the modified list we accumulate
+        //
+        // if the system accounts are a problem we need to change the cache logic to not load them
+        // hiding them from global is fine... for v3/v4 we only care if they dont parse
+        // for v1/v2... hard. we fundamentally have no way at this level to distinguish valid from invalid
+        //
+        // its possible forking doesnt matter. the global claims to be fork-aware. but i still dont understand that one thing
+        //
+        // pankaj says the cache should *not* contain buffers
+        // so first maybe in a fresh branch see if buffer entries do go local to global, they 100% exist in local
+        // we can save a lot of pain if we reject v3/v4 "program" accounts that fail to parse
+        // then our foundation prs underneath this one are:
+        // * add cache tests
+        // * rwlock accounts cache and impl callback
+        // * reduce upwards flow of bad data from local to global
+        // and we can impl the plan detailed above
 
         let mut loaded_programs_for_txs: Option<ProgramCacheForTxBatch> = None;
         loop {
@@ -727,10 +831,24 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     is_first_round,
                 );
 
+                // HANA TODO fix unit tests, fix concurrency test, rebase with my new tests, and see what my tombstone story is
+
+                // HANA TODO i need to like double rebase but i think i need to set tombstones manually
+                // for loaderv3 this is simple, we have the modified slot on the result
+                // also loaderv1/v2 no issues, no programs can be deployed
+                // so it doesnt matter what goes in the cache, we fail at runtime
+                //
+                // HANA TODO i may be able to do something with the last bool (reload)?
+                // im going to need to read a lot of global cache code to understand this
+                // my one concern is we might fight for global cache locks too much
+                // actually theyre probably all rwlock right? if so its 100% fine, no contention
+                //
+                // HANA ok change this to and_then, exclude tombstones
+                // the task waiter is fine... i think, this is all rather confusing
                 let program_to_store = program_to_load.map(|(key, count)| {
                     // Load, verify and compile one program.
                     let program = load_program_with_pubkey(
-                        callback,
+                        account_loader,
                         &program_cache.get_environments_for_epoch(self.epoch),
                         &key,
                         self.slot,
@@ -749,6 +867,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             if let Some((key, program)) = program_to_store {
                 loaded_programs_for_txs.as_mut().unwrap().loaded_missing = true;
+                // HANA TODO in a per-tx world this almost certainly poisons the global cache
+                // we would be writing uncommitted state back up to it if we dont exclude tombstones
+                // this adds a confusing and scary condition however re: new v1/v2 accounts
+                // but... maybe it doesnt matter... since they can never execute...
                 let mut program_cache = self.program_cache.write().unwrap();
                 // Submit our last completed loading task.
                 if program_cache.finish_cooperative_loading_task(self.slot, key, program)
@@ -1454,17 +1576,17 @@ mod tests {
     #[should_panic = "called load_program_with_pubkey() with nonexistent account"]
     fn test_replenish_program_cache_with_nonexistent_accounts() {
         let mock_bank = MockBankCallback::default();
+        let account_loader = (&mock_bank).into();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
         let key = Pubkey::new_unique();
-        let owner = Pubkey::new_unique();
 
-        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
-        account_maps.insert(key, (&owner, 4));
+        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
+        account_maps.insert(key, 4);
 
         batch_processor.replenish_program_cache(
-            &mock_bank,
+            &account_loader,
             &account_maps,
             &mut ExecuteTimings::default(),
             false,
@@ -1479,7 +1601,6 @@ mod tests {
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
         let key = Pubkey::new_unique();
-        let owner = Pubkey::new_unique();
 
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
@@ -1488,14 +1609,15 @@ mod tests {
             .write()
             .unwrap()
             .insert(key, account_data);
+        let account_loader = (&mock_bank).into();
 
-        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
-        account_maps.insert(key, (&owner, 4));
+        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
+        account_maps.insert(key, 4);
         let mut loaded_missing = 0;
 
         for limit_to_load_programs in [false, true] {
             let result = batch_processor.replenish_program_cache(
-                &mock_bank,
+                &account_loader,
                 &account_maps,
                 &mut ExecuteTimings::default(),
                 false,
@@ -1520,46 +1642,27 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let key1 = Pubkey::new_unique();
         let owner1 = Pubkey::new_unique();
-
-        let mut data = AccountSharedData::default();
-        data.set_owner(owner1);
-        data.set_lamports(93);
-        mock_bank
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(key1, data);
-
-        let message = Message {
-            account_keys: vec![key1],
-            header: MessageHeader::default(),
-            instructions: vec![CompiledInstruction {
-                program_id_index: 0,
-                accounts: vec![],
-                data: vec![],
-            }],
-            recent_blockhash: Hash::default(),
-        };
-
-        let sanitized_message = new_unchecked_sanitized_message(message);
-
-        let sanitized_transaction_1 = SanitizedTransaction::new_for_tests(
-            sanitized_message,
-            vec![Signature::new_unique()],
-            false,
-        );
-
         let key2 = Pubkey::new_unique();
         let owner2 = Pubkey::new_unique();
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_owner(owner2);
-        account_data.set_lamports(90);
+        let mut data1 = AccountSharedData::default();
+        data1.set_owner(owner1);
+        data1.set_lamports(93);
         mock_bank
             .account_shared_data
             .write()
             .unwrap()
-            .insert(key2, account_data);
+            .insert(key1, data1);
+
+        let mut data2 = AccountSharedData::default();
+        data2.set_owner(owner2);
+        data2.set_lamports(90);
+        mock_bank
+            .account_shared_data
+            .write()
+            .unwrap()
+            .insert(key2, data2);
+        let account_loader = (&mock_bank).into();
 
         let message = Message {
             account_keys: vec![key1, key2],
@@ -1574,34 +1677,24 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
 
-        let sanitized_transaction_2 = SanitizedTransaction::new_for_tests(
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
             false,
         );
 
-        let transactions = vec![
-            sanitized_transaction_1.clone(),
-            sanitized_transaction_2.clone(),
-            sanitized_transaction_1,
-        ];
-        let check_results = vec![
-            Ok(CheckedTransactionDetails::default()),
-            Ok(CheckedTransactionDetails::default()),
-            Err(TransactionError::ProgramAccountNotFound),
-        ];
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let owners = vec![owner1, owner2];
 
-        let result = TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
-            &mock_bank,
-            &transactions,
-            &check_results,
+        let result = batch_processor.filter_executable_program_accounts(
+            &account_loader,
+            &sanitized_transaction,
             &owners,
         );
 
         assert_eq!(result.len(), 2);
-        assert_eq!(result[&key1], (&owner1, 2));
-        assert_eq!(result[&key2], (&owner2, 1));
+        assert_eq!(result[&key1], 1);
+        assert_eq!(result[&key2], 1);
     }
 
     #[test]
@@ -1653,6 +1746,7 @@ mod tests {
             account4_pubkey,
             AccountSharedData::new(40, 1, &program2_pubkey),
         );
+        let account_loader = (&bank).into();
 
         let tx1 = Transaction::new_with_compiled_instructions(
             &[&keypair1],
@@ -1672,123 +1766,41 @@ mod tests {
         );
         let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
 
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let owners = &[program1_pubkey, program2_pubkey];
-        let programs =
-            TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
-                &bank,
-                &[sanitized_tx1, sanitized_tx2],
-                &[
-                    Ok(CheckedTransactionDetails::default()),
-                    Ok(CheckedTransactionDetails::default()),
-                ],
-                owners,
-            );
 
-        // The result should contain only account3_pubkey, and account4_pubkey as the program accounts
-        assert_eq!(programs.len(), 2);
+        let tx1_programs = batch_processor.filter_executable_program_accounts(
+            &account_loader,
+            &sanitized_tx1,
+            owners,
+        );
+
+        assert_eq!(tx1_programs.len(), 1);
         assert_eq!(
-            programs
+            tx1_programs
                 .get(&account3_pubkey)
                 .expect("failed to find the program account"),
-            &(&program1_pubkey, 2)
+            &1,
+        );
+
+        let tx2_programs = batch_processor.filter_executable_program_accounts(
+            &account_loader,
+            &sanitized_tx2,
+            owners,
+        );
+
+        assert_eq!(tx2_programs.len(), 2);
+        assert_eq!(
+            tx2_programs
+                .get(&account3_pubkey)
+                .expect("failed to find the program account"),
+            &1,
         );
         assert_eq!(
-            programs
+            tx2_programs
                 .get(&account4_pubkey)
                 .expect("failed to find the program account"),
-            &(&program2_pubkey, 1)
-        );
-    }
-
-    #[test]
-    fn test_filter_executable_program_accounts_invalid_blockhash() {
-        let keypair1 = Keypair::new();
-        let keypair2 = Keypair::new();
-
-        let non_program_pubkey1 = Pubkey::new_unique();
-        let non_program_pubkey2 = Pubkey::new_unique();
-        let program1_pubkey = Pubkey::new_unique();
-        let program2_pubkey = Pubkey::new_unique();
-        let account1_pubkey = Pubkey::new_unique();
-        let account2_pubkey = Pubkey::new_unique();
-        let account3_pubkey = Pubkey::new_unique();
-        let account4_pubkey = Pubkey::new_unique();
-
-        let account5_pubkey = Pubkey::new_unique();
-
-        let bank = MockBankCallback::default();
-        bank.account_shared_data.write().unwrap().insert(
-            non_program_pubkey1,
-            AccountSharedData::new(1, 10, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            non_program_pubkey2,
-            AccountSharedData::new(1, 10, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            program1_pubkey,
-            AccountSharedData::new(40, 1, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            program2_pubkey,
-            AccountSharedData::new(40, 1, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account1_pubkey,
-            AccountSharedData::new(1, 10, &non_program_pubkey1),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account2_pubkey,
-            AccountSharedData::new(1, 10, &non_program_pubkey2),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account3_pubkey,
-            AccountSharedData::new(40, 1, &program1_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account4_pubkey,
-            AccountSharedData::new(40, 1, &program2_pubkey),
-        );
-
-        let tx1 = Transaction::new_with_compiled_instructions(
-            &[&keypair1],
-            &[non_program_pubkey1],
-            Hash::new_unique(),
-            vec![account1_pubkey, account2_pubkey, account3_pubkey],
-            vec![CompiledInstruction::new(1, &(), vec![0])],
-        );
-        let sanitized_tx1 = SanitizedTransaction::from_transaction_for_tests(tx1);
-
-        let tx2 = Transaction::new_with_compiled_instructions(
-            &[&keypair2],
-            &[non_program_pubkey2],
-            Hash::new_unique(),
-            vec![account4_pubkey, account3_pubkey, account2_pubkey],
-            vec![CompiledInstruction::new(1, &(), vec![0])],
-        );
-        // Let's not register blockhash from tx2. This should cause the tx2 to fail
-        let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
-
-        let owners = &[program1_pubkey, program2_pubkey];
-        let check_results = vec![
-            Ok(CheckedTransactionDetails::default()),
-            Err(TransactionError::BlockhashNotFound),
-        ];
-        let programs =
-            TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
-                &bank,
-                &[sanitized_tx1, sanitized_tx2],
-                &check_results,
-                owners,
-            );
-
-        // The result should contain only account3_pubkey as the program accounts
-        assert_eq!(programs.len(), 1);
-        assert_eq!(
-            programs
-                .get(&account3_pubkey)
-                .expect("failed to find the program account"),
-            &(&program1_pubkey, 1)
+            &1,
         );
     }
 
