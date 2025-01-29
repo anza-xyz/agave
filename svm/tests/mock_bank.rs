@@ -22,7 +22,7 @@ use {
         bpf_loader, bpf_loader_deprecated,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::{Clock, UnixTimestamp},
-        compute_budget, native_loader,
+        compute_budget, loader_v4, native_loader,
         pubkey::Pubkey,
         rent::Rent,
         slot_hashes::Slot,
@@ -266,6 +266,7 @@ pub fn deploy_program_with_upgrade_authority(
 pub fn register_builtins(
     mock_bank: &MockBankCallback,
     batch_processor: &TransactionBatchProcessor<MockForkGraph>,
+    with_loader_v4: bool,
 ) {
     const DEPLOYMENT_SLOT: u64 = 0;
     // We must register LoaderV3 as a loadable account, otherwise programs won't execute.
@@ -282,7 +283,6 @@ pub fn register_builtins(
     );
 
     // Other loaders are needed for testing program cache behavior.
-    // NOTE when LoaderV4 is ready for testing, it must be added here.
     let loader_v1_name = "solana_bpf_loader_deprecated_program";
     batch_processor.add_builtin(
         mock_bank,
@@ -294,6 +294,7 @@ pub fn register_builtins(
             solana_bpf_loader_program::Entrypoint::vm,
         ),
     );
+
     let loader_v2_name = "solana_bpf_loader_program";
     batch_processor.add_builtin(
         mock_bank,
@@ -305,6 +306,20 @@ pub fn register_builtins(
             solana_bpf_loader_program::Entrypoint::vm,
         ),
     );
+
+    if with_loader_v4 {
+        let loader_v4_name = "solana_loader_v4_program";
+        batch_processor.add_builtin(
+            mock_bank,
+            loader_v4::id(),
+            loader_v4_name,
+            ProgramCacheEntry::new_builtin(
+                DEPLOYMENT_SLOT,
+                loader_v4_name.len(),
+                solana_loader_v4_program::Entrypoint::vm,
+            ),
+        );
+    }
 
     // In order to perform a transference of native tokens using the system instruction,
     // the system program builtin must be registered.

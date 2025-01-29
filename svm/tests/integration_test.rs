@@ -19,7 +19,7 @@ use {
         feature_set::{self, FeatureSet},
         hash::Hash,
         instruction::{AccountMeta, Instruction},
-        loader_v4, native_loader,
+        native_loader,
         native_token::LAMPORTS_PER_SOL,
         nonce::{self, state::DurableNonce},
         pubkey::Pubkey,
@@ -96,7 +96,7 @@ impl SvmTestEnvironment<'_> {
         // The sysvars must be put in the cache
         mock_bank.configure_sysvars();
         batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
-        register_builtins(&mock_bank, &batch_processor);
+        register_builtins(&mock_bank, &batch_processor, test_entry.with_loader_v4);
 
         let processing_config = TransactionProcessingConfig {
             recording_config: ExecutionRecordingConfig {
@@ -289,6 +289,9 @@ pub struct SvmTestEntry {
     // features are disabled by default; these will be enabled
     pub enabled_features: Vec<Pubkey>,
 
+    // until LoaderV4 is live on mainnet, we default to omitting it, but can also test it
+    pub with_loader_v4: bool,
+
     // programs to deploy to the new svm
     pub initial_programs: Vec<(String, Slot, Option<Pubkey>)>,
 
@@ -303,6 +306,13 @@ pub struct SvmTestEntry {
 }
 
 impl SvmTestEntry {
+    pub fn with_loader_v4() -> Self {
+        Self {
+            with_loader_v4: true,
+            ..Self::default()
+        }
+    }
+
     // add a new a rent-exempt account that exists before the batch
     // inserts it into both account maps, assuming it lives unchanged (except for svm fixing rent epoch)
     // rent-paying accounts must be added by hand because svm will not set rent epoch to u64::MAX
@@ -2388,7 +2398,7 @@ fn program_cache_create_account(
     remove_accounts_executable_flag_checks: bool,
 ) {
     for loader_id in PROGRAM_OWNERS {
-        let mut test_entry = SvmTestEntry::default();
+        let mut test_entry = SvmTestEntry::with_loader_v4();
         if enable_fee_only_transactions {
             test_entry
                 .enabled_features
@@ -2447,20 +2457,6 @@ fn program_cache_create_account(
         }
 
         let mut env = SvmTestEnvironment::create(test_entry);
-
-        // NOTE this ensures we dont fail with the missing loader
-        // once LoaderV4 is ready for testing, adding it to mock_bank.rs means the test runs
-        // and this branch will always be false and can be removed
-        if *loader_id == loader_v4::id()
-            && !env
-                .batch_processor
-                .builtin_program_ids
-                .read()
-                .unwrap()
-                .contains(loader_id)
-        {
-            continue;
-        }
 
         // test in same entry as account creation
         env.execute();
