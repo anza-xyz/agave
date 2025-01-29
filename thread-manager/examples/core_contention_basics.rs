@@ -54,11 +54,11 @@ fn main() -> anyhow::Result<()> {
             rx2.blocking_recv().unwrap();
 
             let join_handle =
-                scope.spawn(|| workload_runtime.block_on(workload_main(&[8888, 8889], 1000)));
+                scope.spawn(|| workload_runtime.block_on(workload_main(&[8888, 8889], 200)));
             join_handle.join().expect("Load generator crashed!")
         });
         //print out the results of the bench run
-        info!("Results are: {:?}", results);
+        info!("Results for {exp} are: {:?}", results);
     }
     Ok(())
 }

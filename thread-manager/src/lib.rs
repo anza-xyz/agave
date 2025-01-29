@@ -268,14 +268,14 @@ pub enum ShutdownError {
 
 #[cfg(test)]
 mod tests {
-    use {
-        crate::ThreadManagerConfig,
-        std::{io::Read, time::Duration},
-    };
     #[cfg(target_os = "linux")]
     use {
-        crate::{CoreAllocation, NativeConfig, RayonConfig, ThreadManager},
+        crate::{CoreAllocation, NativeConfig, RayonConfig},
         std::collections::HashMap,
+    };
+    use {
+        crate::{ThreadManager, ThreadManagerConfig},
+        std::{io::Read, time::Duration},
     };
 
     #[test]

@@ -1,7 +1,7 @@
 use {
     axum::{routing::get, Router},
     hyper::{Body, Request},
-    log::info,
+    log::{error, info},
     std::{
         future::IntoFuture,
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -36,7 +36,7 @@ pub async fn axum_main(port: u16, ready: Sender<()>) {
     info!("Server on port {port} ready");
     ready.send(()).unwrap();
     let timeout = tokio::time::timeout(
-        Duration::from_secs(TEST_SECONDS + 1),
+        Duration::from_secs(TEST_SECONDS + 2),
         axum::serve(listener, app).into_future(),
     )
     .await;
@@ -71,7 +71,8 @@ pub async fn workload_main(ports: &[u16], tasks: usize) -> anyhow::Result<Stats>
         requests: AtomicUsize::new(0),
         cumulative_latency_us: AtomicUsize::new(0),
     });
-
+    // some amount of spurious errors are to be expected here, so we tolerate up to 100 of them.
+    const MAX_ERRORS: usize = 100;
     async fn connection(port: u16, control_block: Arc<ControlBlock>) -> anyhow::Result<()> {
         let sa = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
         let stream = TcpStream::connect(sa).await?;
@@ -84,17 +85,41 @@ pub async fn workload_main(ports: &[u16], tasks: usize) -> anyhow::Result<Stats>
         });
 
         let path = "/";
-        while control_block.start_time.elapsed() < Duration::from_secs(TEST_SECONDS) {
+        let mut error_tokens = (0..MAX_ERRORS).peekable();
+        // run load generation for the given time or until error budget is exhausted
+        while (control_block.start_time.elapsed() < Duration::from_secs(TEST_SECONDS))
+            && error_tokens.peek().is_some()
+        {
             let req = Request::builder()
                 .uri(path)
                 .method("GET")
                 .body(Body::from(""))?;
+
+            // To send via the same connection again,
+            // we have to wait until the request_sender becomes ready.
+            let ready_sender = match request_sender.ready().await {
+                Ok(rs) => rs,
+                Err(e) => {
+                    error!("Server disconnected {e}");
+                    break;
+                }
+            };
+
             let start = Instant::now();
-            let res = timeout(Duration::from_millis(100), request_sender.send_request(req)).await;
+            let res = timeout(Duration::from_millis(100), ready_sender.send_request(req)).await;
             let res = match res {
-                Ok(res) => res?,
+                Ok(Ok(res)) => res,
+                Ok(Err(e)) => {
+                    error!("Error in response {e:?}");
+                    error_tokens.next();
+                    tokio::task::yield_now().await;
+                    continue;
+                }
                 Err(_) => {
-                    anyhow::bail!("Timeout on request!")
+                    error!("Timeout on request!");
+                    error_tokens.next();
+                    tokio::task::yield_now().await;
+                    continue;
                 }
             };
             let _ = res.body();
@@ -106,9 +131,9 @@ pub async fn workload_main(ports: &[u16], tasks: usize) -> anyhow::Result<Stats>
                 .cumulative_latency_us
                 .fetch_add(start.elapsed().as_micros() as usize, Ordering::Relaxed);
             control_block.requests.fetch_add(1, Ordering::Relaxed);
-            // To send via the same connection again, it may not work as it may not be ready,
-            // so we have to wait until the request_sender becomes ready.
-            request_sender.ready().await?;
+        }
+        if error_tokens.peek().is_none() {
+            anyhow::bail!("Too many errors, test results are invalid!");
         }
         Ok(())
     }
