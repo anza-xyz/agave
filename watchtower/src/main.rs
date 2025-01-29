@@ -2,7 +2,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg},
+    clap::{crate_description, crate_name, value_t_or_exit, values_t, App, Arg},
     log::*,
     solana_clap_utils::{
         hidden_unless_forced,
@@ -29,7 +29,7 @@ struct Config {
     address_labels: HashMap<String, String>,
     ignore_http_bad_gateway: bool,
     interval: Duration,
-    json_rpc_url: String,
+    json_rpc_urls: Vec<String>,
     rpc_timeout: Duration,
     minimum_validator_identity_balance: u64,
     monitor_active_stake: bool,
@@ -79,12 +79,13 @@ fn get_config() -> Config {
             }
         })
         .arg(
-            Arg::with_name("json_rpc_url")
+            Arg::with_name("json_rpc_urls")
                 .long("url")
                 .value_name("URL")
                 .takes_value(true)
                 .validator(is_url)
-                .help("JSON RPC URL for the cluster"),
+                .multiple(true)
+                .help("JSON RPC URLs for the cluster"),
         )
         .arg(
             Arg::with_name("rpc_timeout")
@@ -181,8 +182,8 @@ fn get_config() -> Config {
         "minimum_validator_identity_balance",
         f64
     ));
-    let json_rpc_url =
-        value_t!(matches, "json_rpc_url", String).unwrap_or_else(|_| config.json_rpc_url.clone());
+    let json_rpc_urls =
+        values_t!(matches, "json_rpc_urls", String).unwrap_or_else(|_| vec![config.json_rpc_url]);
     let rpc_timeout = value_t_or_exit!(matches, "rpc_timeout", u64);
     let rpc_timeout = Duration::from_secs(rpc_timeout);
     let validator_identity_pubkeys: Vec<_> = pubkeys_of(&matches, "validator_identities")
@@ -201,7 +202,7 @@ fn get_config() -> Config {
         address_labels: config.address_labels,
         ignore_http_bad_gateway,
         interval,
-        json_rpc_url,
+        json_rpc_urls,
         rpc_timeout,
         minimum_validator_identity_balance,
         monitor_active_stake,
@@ -211,7 +212,7 @@ fn get_config() -> Config {
         name_suffix,
     };
 
-    info!("RPC URL: {}", config.json_rpc_url);
+    info!("RPC URLs: {:?}", config.json_rpc_urls);
     info!(
         "Monitored validators: {:?}",
         config.validator_identity_pubkeys
@@ -249,7 +250,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let config = get_config();
 
-    let rpc_client = RpcClient::new_with_timeout(config.json_rpc_url.clone(), config.rpc_timeout);
+    let rpc_client =
+        RpcClient::new_with_timeout(config.json_rpc_urls[0].clone(), config.rpc_timeout); // TODO: Using only the fist URL
     let notifier = Notifier::default();
     let mut last_transaction_count = 0;
     let mut last_recent_blockhash = Hash::default();
