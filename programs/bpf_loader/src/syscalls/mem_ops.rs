@@ -494,7 +494,9 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
 
         // Do not allow iteration over account/non-account boundary.
 
-        // First check whether the region is an account or not
+        // First check whether the region is account data or not
+        // Note: that if an account has empty account data, it still has a resize area
+        // Note: for deprecated unaligned programs, there is no resize area an empty data accounts do NOT count as accounts
         loop {
             if let Some(account) = self.accounts.get(*account_index) {
                 // region is either account data or 10k resize region
@@ -566,7 +568,9 @@ impl DoubleEndedIterator for MemoryChunkIterator<'_> {
 
         // Do not allow iteration over account/non-account boundary.
 
-        // First check whether the region is an account or not
+        // First check whether the region is account data or not
+        // Note: that if an account has empty account data, it still has a resize area
+        // Note: for deprecated unaligned programs, there is no resize area an empty data accounts do NOT count as accounts
         loop {
             let Some(account) = self.accounts.get(*account_index) else {
                 // address is after all the accounts
