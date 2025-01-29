@@ -2383,7 +2383,10 @@ fn svm_integration(test_entries: Vec<SvmTestEntry>) {
 }
 
 #[test_matrix([false, true], [false, true])]
-fn program_cache_create_account(enable_fee_only_transactions: bool, disable_executable_flag: bool) {
+fn program_cache_create_account(
+    enable_fee_only_transactions: bool,
+    remove_accounts_executable_flag_checks: bool,
+) {
     for loader_id in PROGRAM_OWNERS {
         let mut test_entry = SvmTestEntry::default();
         if enable_fee_only_transactions {
@@ -2391,7 +2394,7 @@ fn program_cache_create_account(enable_fee_only_transactions: bool, disable_exec
                 .enabled_features
                 .push(feature_set::enable_transaction_loading_failure_fees::id());
         }
-        if disable_executable_flag {
+        if remove_accounts_executable_flag_checks {
             test_entry
                 .enabled_features
                 .push(feature_set::remove_accounts_executable_flag_checks::id());
@@ -2428,7 +2431,10 @@ fn program_cache_create_account(enable_fee_only_transactions: bool, disable_exec
             Hash::default(),
         );
 
-        let expected_status = match (enable_fee_only_transactions, disable_executable_flag) {
+        let expected_status = match (
+            enable_fee_only_transactions,
+            remove_accounts_executable_flag_checks,
+        ) {
             (_, true) => ExecutionStatus::ExecutedFailed,
             (true, false) => ExecutionStatus::ProcessedFailed,
             (false, false) => ExecutionStatus::Discarded,
