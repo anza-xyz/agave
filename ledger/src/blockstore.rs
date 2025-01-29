@@ -139,10 +139,26 @@ enum InsertDataShredError {
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum PossibleDuplicateShred {
     Exists(Shred), // Blockstore has another shred in its spot
-    LastIndexConflict(/* original */ Shred, /* conflict */ Vec<u8>), // The index of this shred conflicts with `slot_meta.last_index`
-    ErasureConflict(/* original */ Shred, /* conflict */ Vec<u8>), // The coding shred has a conflict in the erasure_meta
-    MerkleRootConflict(/* original */ Shred, /* conflict */ Vec<u8>), // Merkle root conflict in the same fec set
-    ChainedMerkleRootConflict(/* original */ Shred, /* conflict */ Vec<u8>), // Merkle root chaining conflict with previous fec set
+    // The index of this shred conflicts with `slot_meta.last_index`
+    LastIndexConflict(
+        Shred,          // original
+        shred::Payload, // conflict
+    ),
+    // The coding shred has a conflict in the erasure_meta
+    ErasureConflict(
+        Shred,          // original
+        shred::Payload, // conflict
+    ),
+    // Merkle root conflict in the same fec set
+    MerkleRootConflict(
+        Shred,          // original
+        shred::Payload, // conflict
+    ),
+    // Merkle root chaining conflict with previous fec set
+    ChainedMerkleRootConflict(
+        Shred,          // original
+        shred::Payload, // conflict
+    ),
 }
 
 impl PossibleDuplicateShred {
@@ -976,7 +992,7 @@ impl Blockstore {
         leader_schedule: Option<&LeaderScheduleCache>,
         reed_solomon_cache: &ReedSolomonCache,
         shred_insertion_tracker: &mut ShredInsertionTracker,
-        retransmit_sender: &Sender<Vec</*shred:*/ Vec<u8>>>,
+        retransmit_sender: &Sender<Vec<shred::Payload>>,
         is_trusted: bool,
         metrics: &mut BlockstoreInsertionMetrics,
     ) {
@@ -1219,7 +1235,7 @@ impl Blockstore {
         // recovered shreds.
         should_recover_shreds: Option<(
             &ReedSolomonCache,
-            &Sender<Vec</*shred:*/ Vec<u8>>>, // retransmit_sender
+            &Sender<Vec<shred::Payload>>, // retransmit_sender
         )>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
@@ -1296,7 +1312,7 @@ impl Blockstore {
         shreds: impl ExactSizeIterator<Item = (Shred, /*is_repaired:*/ bool)>,
         leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
-        retransmit_sender: &Sender<Vec</*shred:*/ Vec<u8>>>,
+        retransmit_sender: &Sender<Vec<shred::Payload>>,
         handle_duplicate: &F,
         reed_solomon_cache: &ReedSolomonCache,
         metrics: &mut BlockstoreInsertionMetrics,
@@ -1559,7 +1575,7 @@ impl Blockstore {
         slot: Slot,
         erasure_meta: &ErasureMeta,
         just_received_shreds: &'a HashMap<ShredId, Shred>,
-    ) -> Option<Cow<'a, Vec<u8>>> {
+    ) -> Option<Cow<'a, shred::Payload>> {
         // Search for the shred which set the initial erasure config, either inserted,
         // or in the current batch in just_received_shreds.
         let index = erasure_meta.first_received_coding_shred_index()?;
@@ -1784,7 +1800,7 @@ impl Blockstore {
         &'a self,
         just_inserted_shreds: &'a HashMap<ShredId, Shred>,
         shred_id: ShredId,
-    ) -> Option<Cow<'a, Vec<u8>>> {
+    ) -> Option<Cow<'a, shred::Payload>> {
         let (slot, index, shred_type) = shred_id.unpack();
         match (just_inserted_shreds.get(&shred_id), shred_type) {
             (Some(shred), _) => Some(Cow::Borrowed(shred.payload())),
@@ -1793,10 +1809,12 @@ impl Blockstore {
             (_, ShredType::Data) => self
                 .get_data_shred(slot, u64::from(index))
                 .unwrap()
+                .map(shred::Payload::from)
                 .map(Cow::Owned),
             (_, ShredType::Code) => self
                 .get_coding_shred(slot, u64::from(index))
                 .unwrap()
+                .map(shred::Payload::from)
                 .map(Cow::Owned),
         }
     }
@@ -4057,7 +4075,10 @@ impl Blockstore {
             .map(|(slot, proof_bytes)| (slot, deserialize(&proof_bytes).unwrap()))
     }
 
-    pub fn store_duplicate_slot(&self, slot: Slot, shred1: Vec<u8>, shred2: Vec<u8>) -> Result<()> {
+    pub fn store_duplicate_slot<S, T>(&self, slot: Slot, shred1: S, shred2: T) -> Result<()>
+    where
+        shred::Payload: From<S> + From<T>,
+    {
         let duplicate_slot_proof = DuplicateSlotProof::new(shred1, shred2);
         self.duplicate_slots_cf.put(slot, &duplicate_slot_proof)
     }
@@ -4086,7 +4107,7 @@ impl Blockstore {
                 error!("set retransmitter signature failed: {err:?}");
             }
         }
-        (&other != shred.payload()).then_some(other)
+        (other != **shred.payload()).then_some(other)
     }
 
     pub fn has_duplicate_shreds_in_slot(&self, slot: Slot) -> bool {
@@ -10251,7 +10272,7 @@ pub mod tests {
                     .get_data_shred(s.slot(), s.index() as u64)
                     .unwrap()
                     .unwrap(),
-                buf
+                buf.as_ref(),
             );
         }
 
@@ -10551,8 +10572,8 @@ pub mod tests {
 
         // Check if shreds are duplicated
         assert_eq!(
-            blockstore.is_shred_duplicate(&duplicate_shred),
-            Some(shred.payload().clone())
+            blockstore.is_shred_duplicate(&duplicate_shred).as_deref(),
+            Some(shred.payload().as_ref())
         );
         assert!(blockstore
             .is_shred_duplicate(&non_duplicate_shred)
@@ -11036,7 +11057,7 @@ pub mod tests {
             if i <= smaller_last_shred_index as u64 {
                 assert_eq!(
                     blockstore.get_data_shred(slot, i).unwrap().unwrap(),
-                    *shreds[i as usize].payload()
+                    shreds[i as usize].payload().as_ref(),
                 );
             } else {
                 assert!(blockstore.get_data_shred(slot, i).unwrap().is_none());
@@ -11068,7 +11089,7 @@ pub mod tests {
             if i <= smaller_last_shred_index as u64 {
                 assert_eq!(
                     blockstore.get_data_shred(slot, i).unwrap().unwrap(),
-                    *shreds[i as usize].payload()
+                    shreds[i as usize].payload().as_ref(),
                 );
             } else {
                 assert!(blockstore.get_data_shred(slot, i).unwrap().is_none());
@@ -11104,7 +11125,7 @@ pub mod tests {
                         .get_data_shred(slot, shred_index)
                         .unwrap()
                         .unwrap(),
-                    *shred_to_check.payload()
+                    shred_to_check.payload().as_ref(),
                 );
             } else {
                 assert!(blockstore
@@ -11135,7 +11156,7 @@ pub mod tests {
                         .get_data_shred(slot, shred_index)
                         .unwrap()
                         .unwrap(),
-                    *shred_to_check.payload()
+                    shred_to_check.payload().as_ref(),
                 );
             } else {
                 assert!(blockstore

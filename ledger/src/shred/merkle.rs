@@ -5,7 +5,9 @@ use {
         shred::{
             self,
             common::impl_shred_common,
-            dispatch, shred_code, shred_data,
+            dispatch,
+            payload::Payload,
+            shred_code, shred_data,
             traits::{
                 Shred as ShredTrait, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait,
             },
@@ -63,7 +65,7 @@ type MerkleProofEntry = [u8; 20];
 pub struct ShredData {
     common_header: ShredCommonHeader,
     data_header: DataShredHeader,
-    payload: Vec<u8>,
+    payload: Payload,
 }
 
 // Layout: {common, coding} headers | erasure coded shard
@@ -76,7 +78,7 @@ pub struct ShredData {
 pub struct ShredCode {
     common_header: ShredCommonHeader,
     coding_header: CodingShredHeader,
-    payload: Vec<u8>,
+    payload: Payload,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,7 +92,7 @@ impl Shred {
     dispatch!(fn erasure_shard_as_slice_mut(&mut self) -> Result<&mut [u8], Error>);
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
     dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
-    dispatch!(fn payload(&self) -> &Vec<u8>);
+    dispatch!(fn payload(&self) -> &Payload);
     dispatch!(fn sanitize(&self) -> Result<(), Error>);
     dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
     dispatch!(fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
@@ -129,8 +131,11 @@ impl Shred {
         &self.common_header().signature
     }
 
-    fn from_payload(shred: Vec<u8>) -> Result<Self, Error> {
-        match shred::layout::get_shred_variant(&shred)? {
+    fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>
+    where
+        Payload: From<T>,
+    {
+        match shred::layout::get_shred_variant(shred.as_ref())? {
             ShredVariant::LegacyCode | ShredVariant::LegacyData => Err(Error::InvalidShredVariant),
             ShredVariant::MerkleCode { .. } => Ok(Self::ShredCode(ShredCode::from_payload(shred)?)),
             ShredVariant::MerkleData { .. } => Ok(Self::ShredData(ShredData::from_payload(shred)?)),
@@ -461,7 +466,7 @@ macro_rules! impl_merkle_shred {
         // Returns the erasure coded slice as an owned Vec<u8>.
         fn erasure_shard(self) -> Result<Vec<u8>, Error> {
             let Range { start, end } = self.erausre_shard_offsets()?;
-            let mut shard = self.payload;
+            let mut shard = Payload::unwrap_or_clone(self.payload);
             shard.truncate(end);
             shard.drain(..start);
             Ok(shard)
@@ -502,12 +507,18 @@ impl<'a> ShredTrait<'a> for ShredData {
         ShredCode::SIZE_OF_PAYLOAD - ShredCode::SIZE_OF_HEADERS + SIZE_OF_SIGNATURE;
     const SIZE_OF_HEADERS: usize = SIZE_OF_DATA_SHRED_HEADERS;
 
-    fn from_payload(mut payload: Vec<u8>) -> Result<Self, Error> {
+    fn from_payload<T>(payload: T) -> Result<Self, Error>
+    where
+        Payload: From<T>,
+    {
+        let mut payload = Payload::from(payload);
         // see: https://github.com/solana-labs/solana/pull/10109
         if payload.len() < Self::SIZE_OF_PAYLOAD {
             return Err(Error::InvalidPayloadSize(payload.len()));
         }
-        payload.truncate(Self::SIZE_OF_PAYLOAD);
+        if payload.len() > Self::SIZE_OF_PAYLOAD {
+            Payload::make_mut(&mut payload).truncate(Self::SIZE_OF_PAYLOAD);
+        }
         let (common_header, data_header): (ShredCommonHeader, _) =
             deserialize_from_with_limit(&payload[..])?;
         if !matches!(common_header.shred_variant, ShredVariant::MerkleData { .. }) {
@@ -558,7 +569,11 @@ impl<'a> ShredTrait<'a> for ShredCode {
     const SIZE_OF_PAYLOAD: usize = shred_code::ShredCode::SIZE_OF_PAYLOAD;
     const SIZE_OF_HEADERS: usize = SIZE_OF_CODING_SHRED_HEADERS;
 
-    fn from_payload(mut payload: Vec<u8>) -> Result<Self, Error> {
+    fn from_payload<T>(payload: T) -> Result<Self, Error>
+    where
+        Payload: From<T>,
+    {
+        let mut payload = Payload::from(payload);
         let (common_header, coding_header): (ShredCommonHeader, _) =
             deserialize_from_with_limit(&payload[..])?;
         if !matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. }) {
@@ -568,7 +583,9 @@ impl<'a> ShredTrait<'a> for ShredCode {
         if payload.len() < Self::SIZE_OF_PAYLOAD {
             return Err(Error::InvalidPayloadSize(payload.len()));
         }
-        payload.truncate(Self::SIZE_OF_PAYLOAD);
+        if payload.len() > Self::SIZE_OF_PAYLOAD {
+            Payload::make_mut(&mut payload).truncate(Self::SIZE_OF_PAYLOAD);
+        }
         let shred = Self {
             common_header,
             coding_header,
@@ -1002,7 +1019,7 @@ fn make_stub_shred(
         Shred::ShredCode(ShredCode {
             common_header,
             coding_header,
-            payload,
+            payload: Payload::from(payload),
         })
     } else {
         let ShredVariant::MerkleCode { proof_size, .. } = common_header.shred_variant else {
@@ -1033,7 +1050,7 @@ fn make_stub_shred(
         Shred::ShredData(ShredData {
             common_header,
             data_header,
-            payload,
+            payload: Payload::from(payload),
         })
     };
     if let Some(chained_merkle_root) = chained_merkle_root {
@@ -1085,7 +1102,7 @@ pub(super) fn make_shreds_from_data(
         ShredData {
             common_header,
             data_header,
-            payload,
+            payload: Payload::from(payload),
         }
     }
     let now = Instant::now();
@@ -1363,7 +1380,7 @@ fn make_erasure_batch(
         let shred = ShredCode {
             common_header,
             coding_header,
-            payload,
+            payload: Payload::from(payload),
         };
         shreds.push(Shred::ShredCode(shred));
         common_header.index += 1;
@@ -1626,7 +1643,7 @@ mod test {
             let shred = ShredData {
                 common_header,
                 data_header,
-                payload,
+                payload: Payload::from(payload),
             };
             shreds.push(Shred::ShredData(shred));
         }
@@ -1662,7 +1679,7 @@ mod test {
             let shred = ShredCode {
                 common_header,
                 coding_header,
-                payload,
+                payload: Payload::from(payload),
             };
             shreds.push(Shred::ShredCode(shred));
         }

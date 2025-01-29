@@ -185,7 +185,7 @@ fn retransmit(
     bank_forks: &RwLock<BankForks>,
     leader_schedule_cache: &LeaderScheduleCache,
     cluster_info: &ClusterInfo,
-    retransmit_receiver: &Receiver<Vec</*shred:*/ Vec<u8>>>,
+    retransmit_receiver: &Receiver<Vec<shred::Payload>>,
     retransmit_sockets: &[UdpSocket],
     quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     stats: &mut RetransmitStats,
@@ -304,7 +304,7 @@ fn retransmit(
 
 // Retransmit a single shred to all downstream nodes
 fn retransmit_shred(
-    shred: Vec<u8>,
+    shred: shred::Payload,
     root_bank: &Bank,
     shred_deduper: &ShredDeduper,
     cache: &HashMap<Slot, (/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
@@ -317,9 +317,9 @@ fn retransmit_shred(
     usize, // This node's distance from the turbine root.
     usize, // Number of nodes the shred was retransmitted to.
 )> {
-    let key = shred::layout::get_shred_id(&shred)?;
+    let key = shred::layout::get_shred_id(shred.as_ref())?;
     let (slot_leader, cluster_nodes) = cache.get(&key.slot())?;
-    if shred_deduper.dedup(key, &shred, MAX_DUPLICATE_COUNT) {
+    if shred_deduper.dedup(key, shred.as_ref(), MAX_DUPLICATE_COUNT) {
         stats.num_shreds_skipped.fetch_add(1, Ordering::Relaxed);
         return None;
     }
@@ -343,7 +343,7 @@ fn retransmit_shred(
     let num_addrs = addrs.len();
     let num_nodes = match cluster_nodes::get_broadcast_protocol(&key) {
         Protocol::QUIC => {
-            let shred = Bytes::from(shred);
+            let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred));
             addrs
                 .into_iter()
                 .filter_map(|addr| quic_endpoint_sender.try_send((addr, shred.clone())).ok())
@@ -392,7 +392,7 @@ impl RetransmitStage {
         cluster_info: Arc<ClusterInfo>,
         retransmit_sockets: Arc<Vec<UdpSocket>>,
         quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
-        retransmit_receiver: Receiver<Vec</*shred:*/ Vec<u8>>>,
+        retransmit_receiver: Receiver<Vec<shred::Payload>>,
         max_slots: Arc<MaxSlots>,
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,

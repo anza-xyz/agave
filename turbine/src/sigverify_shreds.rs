@@ -64,7 +64,7 @@ pub fn spawn_shred_sigverify(
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     shred_fetch_receiver: Receiver<PacketBatch>,
-    retransmit_sender: Sender<Vec</*shred:*/ Vec<u8>>>,
+    retransmit_sender: Sender<Vec<shred::Payload>>,
     verified_sender: Sender<Vec<PacketBatch>>,
     num_sigverify_threads: NonZeroUsize,
 ) -> JoinHandle<()> {
@@ -129,7 +129,7 @@ fn run_shred_sigverify<const K: usize>(
     recycler_cache: &RecyclerCache,
     deduper: &Deduper<K, [u8]>,
     shred_fetch_receiver: &Receiver<PacketBatch>,
-    retransmit_sender: &Sender<Vec</*shred:*/ Vec<u8>>>,
+    retransmit_sender: &Sender<Vec<shred::Payload>>,
     verified_sender: &Sender<Vec<PacketBatch>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     cache: &RwLock<LruCache>,
@@ -236,6 +236,7 @@ fn run_shred_sigverify<const K: usize>(
         .filter(|packet| !packet.meta().discard() && !packet.meta().repair())
         .filter_map(shred::layout::get_shred)
         .map(<[u8]>::to_vec)
+        .map(shred::Payload::from)
         .collect();
     stats.num_retransmit_shreds += shreds.len();
     retransmit_sender.send(shreds)?;

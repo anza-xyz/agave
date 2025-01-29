@@ -1,7 +1,7 @@
 use {
     crate::{
         blockstore::MAX_DATA_SHREDS_PER_SLOT,
-        shred::{Shred, ShredType},
+        shred::{self, Shred, ShredType},
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
@@ -224,10 +224,10 @@ pub struct MerkleRootMeta {
 
 #[derive(Deserialize, Serialize)]
 pub struct DuplicateSlotProof {
-    #[serde(with = "serde_bytes")]
-    pub shred1: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    pub shred2: Vec<u8>,
+    #[serde(with = "shred::serde_bytes_payload")]
+    pub shred1: shred::Payload,
+    #[serde(with = "shred::serde_bytes_payload")]
+    pub shred2: shred::Payload,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
@@ -774,8 +774,14 @@ impl MerkleRootMeta {
 }
 
 impl DuplicateSlotProof {
-    pub(crate) fn new(shred1: Vec<u8>, shred2: Vec<u8>) -> Self {
-        DuplicateSlotProof { shred1, shred2 }
+    pub(crate) fn new<S, T>(shred1: S, shred2: T) -> Self
+    where
+        shred::Payload: From<S> + From<T>,
+    {
+        DuplicateSlotProof {
+            shred1: shred::Payload::from(shred1),
+            shred2: shred::Payload::from(shred2),
+        }
     }
 }
 

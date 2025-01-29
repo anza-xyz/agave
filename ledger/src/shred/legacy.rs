@@ -2,6 +2,7 @@ use {
     crate::shred::{
         self,
         common::impl_shred_common,
+        payload::Payload,
         shred_code, shred_data,
         traits::{Shred, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait},
         CodingShredHeader, DataShredHeader, Error, ShredCommonHeader, ShredFlags, ShredVariant,
@@ -38,7 +39,7 @@ pub(super) const SIZE_OF_ERASURE_ENCODED_SLICE: usize =
 pub struct ShredData {
     common_header: ShredCommonHeader,
     data_header: DataShredHeader,
-    payload: Vec<u8>,
+    payload: Payload,
 }
 
 // Layout: {common, coding} headers | erasure coded shard
@@ -47,7 +48,7 @@ pub struct ShredData {
 pub struct ShredCode {
     common_header: ShredCommonHeader,
     coding_header: CodingShredHeader,
-    payload: Vec<u8>,
+    payload: Payload,
 }
 
 impl<'a> Shred<'a> for ShredData {
@@ -59,7 +60,11 @@ impl<'a> Shred<'a> for ShredData {
     const SIZE_OF_PAYLOAD: usize = shred_code::ShredCode::SIZE_OF_PAYLOAD;
     const SIZE_OF_HEADERS: usize = SIZE_OF_DATA_SHRED_HEADERS;
 
-    fn from_payload(mut payload: Vec<u8>) -> Result<Self, Error> {
+    fn from_payload<T>(payload: T) -> Result<Self, Error>
+    where
+        Payload: From<T>,
+    {
+        let mut payload = Payload::from(payload);
         let mut cursor = Cursor::new(&payload[..]);
         let common_header: ShredCommonHeader = deserialize_from_with_limit(&mut cursor)?;
         if common_header.shred_variant != ShredVariant::LegacyData {
@@ -73,7 +78,9 @@ impl<'a> Shred<'a> for ShredData {
         if payload.len() < Self::SIZE_OF_HEADERS {
             return Err(Error::InvalidPayloadSize(payload.len()));
         }
-        payload.resize(Self::SIZE_OF_PAYLOAD, 0u8);
+        if payload.len() != Self::SIZE_OF_PAYLOAD {
+            Payload::make_mut(&mut payload).resize(Self::SIZE_OF_PAYLOAD, 0u8);
+        }
         let shred = Self {
             common_header,
             data_header,
@@ -93,7 +100,7 @@ impl<'a> Shred<'a> for ShredData {
         if self.payload.len() != Self::SIZE_OF_PAYLOAD {
             return Err(Error::InvalidPayloadSize(self.payload.len()));
         }
-        let mut shard = self.payload;
+        let mut shard = Payload::unwrap_or_clone(self.payload);
         shard.truncate(SIZE_OF_ERASURE_ENCODED_SLICE);
         Ok(shard)
     }
@@ -126,7 +133,11 @@ impl<'a> Shred<'a> for ShredCode {
     const SIZE_OF_PAYLOAD: usize = shred_code::ShredCode::SIZE_OF_PAYLOAD;
     const SIZE_OF_HEADERS: usize = SIZE_OF_CODING_SHRED_HEADERS;
 
-    fn from_payload(mut payload: Vec<u8>) -> Result<Self, Error> {
+    fn from_payload<T>(payload: T) -> Result<Self, Error>
+    where
+        Payload: From<T>,
+    {
+        let mut payload = Payload::from(payload);
         let mut cursor = Cursor::new(&payload[..]);
         let common_header: ShredCommonHeader = deserialize_from_with_limit(&mut cursor)?;
         if common_header.shred_variant != ShredVariant::LegacyCode {
@@ -135,7 +146,9 @@ impl<'a> Shred<'a> for ShredCode {
         let coding_header = deserialize_from_with_limit(&mut cursor)?;
         // Repair packets have nonce at the end of packet payload:
         // https://github.com/solana-labs/solana/pull/10109
-        payload.truncate(Self::SIZE_OF_PAYLOAD);
+        if payload.len() > Self::SIZE_OF_PAYLOAD {
+            Payload::make_mut(&mut payload).truncate(Self::SIZE_OF_PAYLOAD);
+        }
         let shred = Self {
             common_header,
             coding_header,
@@ -155,7 +168,7 @@ impl<'a> Shred<'a> for ShredCode {
         if self.payload.len() != Self::SIZE_OF_PAYLOAD {
             return Err(Error::InvalidPayloadSize(self.payload.len()));
         }
-        let mut shard = self.payload;
+        let mut shard = Payload::unwrap_or_clone(self.payload);
         // ShredCode::SIZE_OF_HEADERS bytes at the beginning of the coding
         // shreds contains the header and is not part of erasure coding.
         shard.drain(..Self::SIZE_OF_HEADERS);
@@ -243,7 +256,7 @@ impl ShredData {
         Self {
             common_header,
             data_header,
-            payload,
+            payload: Payload::from(payload),
         }
     }
 
@@ -325,7 +338,7 @@ impl ShredCode {
         Self {
             common_header,
             coding_header,
-            payload,
+            payload: Payload::from(payload),
         }
     }
 }
@@ -355,7 +368,7 @@ mod test {
         // Corrupt shred by making it too large
         {
             let mut shred = shred.clone();
-            shred.payload.push(10u8);
+            Payload::make_mut(&mut shred.payload).push(10u8);
             assert_matches!(shred.sanitize(), Err(Error::InvalidPayloadSize(1229)));
         }
         {

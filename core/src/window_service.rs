@@ -50,7 +50,6 @@ use {
     tokio::sync::mpsc::Sender as AsyncSender,
 };
 
-type ShredPayload = Vec<u8>;
 type DuplicateSlotSender = Sender<Slot>;
 pub(crate) type DuplicateSlotReceiver = Receiver<Slot>;
 
@@ -202,7 +201,7 @@ fn run_check_duplicate(
                     existing_shred_payload.clone(),
                     shred.clone().into_payload(),
                 )?;
-                (shred, existing_shred_payload)
+                (shred, shred::Payload::from(existing_shred_payload))
             }
         };
 
@@ -261,7 +260,7 @@ fn run_insert<F>(
     metrics: &mut BlockstoreInsertionMetrics,
     ws_metrics: &mut WindowServiceMetrics,
     completed_data_sets_sender: Option<&CompletedDataSetsSender>,
-    retransmit_sender: &Sender<Vec<ShredPayload>>,
+    retransmit_sender: &Sender<Vec<shred::Payload>>,
     outstanding_requests: &RwLock<OutstandingShredRepairs>,
     reed_solomon_cache: &ReedSolomonCache,
     accept_repairs_only: bool,
@@ -354,7 +353,7 @@ impl WindowService {
     pub(crate) fn new(
         blockstore: Arc<Blockstore>,
         verified_receiver: Receiver<Vec<PacketBatch>>,
-        retransmit_sender: Sender<Vec<ShredPayload>>,
+        retransmit_sender: Sender<Vec<shred::Payload>>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
         repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -462,7 +461,7 @@ impl WindowService {
         verified_receiver: Receiver<Vec<PacketBatch>>,
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
-        retransmit_sender: Sender<Vec<ShredPayload>>,
+        retransmit_sender: Sender<Vec<shred::Payload>>,
         outstanding_requests: Arc<RwLock<OutstandingShredRepairs>>,
         accept_repairs_only: bool,
     ) -> JoinHandle<()> {
