@@ -1,9 +1,19 @@
 //! The `net_utils` module assists with networking
-#![allow(clippy::arithmetic_side_effects)]
+mod ip_echo_client;
+mod ip_echo_server;
 
+pub use ip_echo_server::{
+    ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
+    MINIMUM_IP_ECHO_SERVER_THREADS,
+};
 #[cfg(feature = "dev-context-only-utils")]
 use tokio::net::UdpSocket as TokioUdpSocket;
 use {
+    ip_echo_client::{
+        ip_echo_server_request, ip_echo_server_request_with_binding, verify_all_reachable_tcp,
+        verify_all_reachable_udp,
+    },
+    ip_echo_server::IpEchoServerMessage,
     log::*,
     rand::{thread_rng, Rng},
     socket2::{Domain, SockAddr, Socket, Type},
@@ -12,19 +22,6 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
     },
     url::Url,
-};
-
-mod ip_echo_client;
-mod ip_echo_server;
-pub use ip_echo_server::{
-    ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
-    MINIMUM_IP_ECHO_SERVER_THREADS,
-};
-use {
-    ip_echo_client::{
-        do_verify_reachable_ports, ip_echo_server_request, ip_echo_server_request_with_binding,
-    },
-    ip_echo_server::IpEchoServerMessage,
 };
 
 /// A data type representing a public Udp socket
@@ -102,9 +99,13 @@ pub fn get_cluster_shred_version_with_binding(
         .ok_or_else(|| anyhow::anyhow!("IP echo server does not return a shred-version"))
 }
 
+// Limit the maximum number of port verify threads to something reasonable
+// in case the port ranges provided are very large.
+const MAX_PORT_VERIFY_THREADS: usize = 64;
+
 /// Checks if all of the provided TCP/UDP ports are not reachable by the machine at
 /// `ip_echo_server_addr`. Tests must complete within timeout provided.
-/// Tests will run in parallel when possible.
+/// Tests will run concurrently when possible, using up to 64 threads for IO.
 pub fn verify_reachable_ports(
     ip_echo_server_addr: &SocketAddr,
     tcp_listeners: Vec<(u16, TcpListener)>,
@@ -112,15 +113,21 @@ pub fn verify_reachable_ports(
 ) -> bool {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .max_blocking_threads(MAX_PORT_VERIFY_THREADS)
         .build()
         .expect("Tokio builder should be able to reliably create a current thread runtime");
-    let fut = do_verify_reachable_ports(
-        *ip_echo_server_addr,
-        tcp_listeners,
-        udp_sockets,
-        ip_echo_client::TIMEOUT,
-        ip_echo_client::DEFAULT_RETRY_COUNT,
-    );
+    let fut = async {
+        let udp = verify_all_reachable_udp(
+            *ip_echo_server_addr,
+            udp_sockets,
+            ip_echo_client::TIMEOUT,
+            ip_echo_client::DEFAULT_RETRY_COUNT,
+        );
+        let tcp =
+            verify_all_reachable_tcp(*ip_echo_server_addr, tcp_listeners, ip_echo_client::TIMEOUT);
+        let (udp, tcp) = tokio::join!(udp, tcp);
+        udp && tcp
+    };
     rt.block_on(fut)
 }
 
@@ -540,7 +547,9 @@ pub fn bind_two_in_range_with_offset_and_config(
     for port in range.0..range.1 {
         if let Ok(first_bind) = bind_to_with_config(ip_addr, port, sock1_config) {
             if range.1.saturating_sub(port) >= offset {
-                if let Ok(second_bind) = bind_to_with_config(ip_addr, port + offset, sock2_config) {
+                if let Ok(second_bind) =
+                    bind_to_with_config(ip_addr, port.saturating_add(offset), sock2_config)
+                {
                     return Ok((
                         (first_bind.local_addr().unwrap().port(), first_bind),
                         (second_bind.local_addr().unwrap().port(), second_bind),
@@ -562,25 +571,25 @@ pub fn bind_two_in_range_with_offset_and_config(
 /// This will start at a random point in the range provided, and search sequenctially.
 /// If it can not find anything, an Error is returned.
 pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<u16> {
-    let (start, end) = range;
-    let mut tries_left = end - start;
-    let mut rand_port = thread_rng().gen_range(start..end);
+    let range = range.0..range.1;
+    let mut next_port_to_try = range
+        .clone()
+        .cycle() // loop over the end of the range
+        .skip(thread_rng().gen_range(range.clone()) as usize) // skip to random position
+        .take(range.len()) // never take the same value twice
+        .peekable();
     loop {
-        match bind_common(ip_addr, rand_port) {
+        let port_to_try = next_port_to_try.next().unwrap(); // this unwrap never fails since we exit earlier
+        match bind_common(ip_addr, port_to_try) {
             Ok(_) => {
-                break Ok(rand_port);
+                return Ok(port_to_try);
             }
             Err(err) => {
-                if tries_left == 0 {
+                if next_port_to_try.peek().is_none() {
                     return Err(err);
                 }
             }
         }
-        rand_port += 1;
-        if rand_port == end {
-            rand_port = start;
-        }
-        tries_left -= 1;
     }
 }
 
@@ -602,6 +611,7 @@ mod tests {
     use {
         super::*,
         ip_echo_server::IpEchoServerResponse,
+        itertools::Itertools,
         std::{net::Ipv4Addr, time::Duration},
         tokio::runtime::Runtime,
     };
@@ -842,12 +852,10 @@ mod tests {
             bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
         let rt = runtime();
-        assert!(!rt.block_on(do_verify_reachable_ports(
+        assert!(!rt.block_on(verify_all_reachable_tcp(
             server_ip_echo_addr,
             vec![(correct_client_port, client_tcp_listener)],
-            &[],
             Duration::from_secs(2),
-            3,
         )));
     }
 
@@ -867,13 +875,55 @@ mod tests {
             bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
         let rt = runtime();
-        assert!(!rt.block_on(do_verify_reachable_ports(
+        assert!(!rt.block_on(verify_all_reachable_udp(
             server_ip_echo_addr,
-            vec![],
             &[&client_udp_socket],
             Duration::from_secs(2),
             3,
         )));
+    }
+
+    #[test]
+    fn test_verify_many_ports_reachable() {
+        solana_logger::setup();
+        let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let config = SocketConfig::default();
+        let mut tcp_listeners = vec![];
+        let mut udp_sockets = vec![];
+
+        let (_server_port, (_, server_tcp_listener)) =
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
+        for _ in 0..MAX_PORT_VERIFY_THREADS * 2 {
+            let (client_port, (client_udp_socket, client_tcp_listener)) =
+                bind_common_in_range_with_config(
+                    ip_addr,
+                    (3200, 3200 + (MAX_PORT_VERIFY_THREADS * 3) as u16),
+                    config,
+                )
+                .unwrap();
+            tcp_listeners.push((client_port, client_tcp_listener));
+            udp_sockets.push(client_udp_socket);
+        }
+
+        let ip_echo_server_addr = server_tcp_listener.local_addr().unwrap();
+
+        let _runtime = ip_echo_server(
+            server_tcp_listener,
+            DEFAULT_IP_ECHO_SERVER_THREADS,
+            Some(65535),
+        );
+
+        assert_eq!(
+            get_public_ip_addr(&ip_echo_server_addr).unwrap(),
+            parse_host("127.0.0.1").unwrap(),
+        );
+
+        let socket_refs = udp_sockets.iter().collect_vec();
+        assert!(verify_reachable_ports(
+            &ip_echo_server_addr,
+            tcp_listeners,
+            &socket_refs
+        ));
     }
 
     #[test]

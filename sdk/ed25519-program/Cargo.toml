@@ -24,7 +24,7 @@ rand0-7 = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
-solana-sdk = { path = ".." }
+solana-sdk = { path = "../sdk" }
 solana-signer = { workspace = true }
 
 [package.metadata.docs.rs]

@@ -81,7 +81,7 @@ additional write amplification.
 As all the above issues are compaction related, it can be solved with a proper
 compaction style and deletion policy.  Fortunately, shred data column families,
 ShredData and ShredCode, which contribute to 99% of the storage size in shred
-insertion, have an unique write workload where write-keys are mostly
+insertion, have a unique write workload where write-keys are mostly
 monotonically increasing over time.  This allows data to be persisted in sorted
 order naturally without compaction, and the deletion policy can be as simple as
 deleting the oldest file when the storage size reaches the cleanup trigger.
@@ -92,7 +92,7 @@ amplification with no write stalls.
 
 ### Use FIFO Compaction for Shred Data Column Families
 As mentioned above, shred data column families, ShredData and ShredCode, which
-contribute to 99% of the storage size in shred insertion, have an unique write
+contribute to 99% of the storage size in shred insertion, have a unique write
 workload where write-keys are mostly monotonically increasing over time.  As a
 result, after entries are flushed from memory into SST files, the keys are
 naturally sorted across multiple SST files where each SST file might have
@@ -185,7 +185,7 @@ To avoid the start-up write stalls, a more efficient way to perform FIFO
 to level compaction is to do a manual compaction first, then open the DB.
 
 ## Release Plan
-As the migration in either way cannot not be done smoothly in place, the
+As the migration in either way cannot be done smoothly in place, the
 release will be divided into the following steps:
 
 * v0 - merge FIFO compaction implementation with visible args.

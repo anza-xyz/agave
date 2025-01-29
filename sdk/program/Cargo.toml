@@ -99,6 +99,7 @@ solana-define-syscall = { workspace = true }
 [target.'cfg(not(target_os = "solana"))'.dependencies]
 num-bigint = { workspace = true }
 rand = { workspace = true }
+solana-example-mocks = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dev-dependencies]
 arbitrary = { workspace = true, features = ["derive"] }

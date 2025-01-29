@@ -1,4 +1,6 @@
 //! The `rpc` module implements the Solana RPC interface.
+#[cfg(feature = "dev-context-only-utils")]
+use solana_runtime::installed_scheduler_pool::BankWithScheduler;
 use {
     crate::{
         filter::filter_allows, max_slots::MaxSlots,
@@ -58,7 +60,6 @@ use {
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
-        installed_scheduler_pool::BankWithScheduler,
         non_circulating_supply::{calculate_non_circulating_supply, NonCirculatingSupply},
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_config::SnapshotConfig,
@@ -4446,6 +4447,7 @@ pub fn create_test_transaction_entries(
     (vec![entry_1, entry_2], signatures)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn populate_blockstore_for_tests(
     entries: Vec<Entry>,
     bank: Arc<Bank>,
@@ -4467,6 +4469,7 @@ pub fn populate_blockstore_for_tests(
 
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+    let tss_exit = Arc::new(AtomicBool::new(false));
     let transaction_status_service =
         crate::transaction_status_service::TransactionStatusService::new(
             transaction_status_receiver,
@@ -4475,7 +4478,7 @@ pub fn populate_blockstore_for_tests(
             None,
             blockstore,
             false,
-            Arc::new(AtomicBool::new(false)),
+            tss_exit.clone(),
         );
 
     // Check that process_entries successfully writes can_commit transactions statuses, and
@@ -4494,7 +4497,7 @@ pub fn populate_blockstore_for_tests(
         Ok(())
     );
 
-    transaction_status_service.join().unwrap();
+    transaction_status_service.quiesce_and_join_for_tests(tss_exit);
 }
 
 #[cfg(test)]

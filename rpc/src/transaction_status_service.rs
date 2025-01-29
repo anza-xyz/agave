@@ -20,8 +20,16 @@ use {
     },
 };
 
+// Used when draining and shutting down TSS in unit tests.
+#[cfg(feature = "dev-context-only-utils")]
+const TSS_TEST_QUIESCE_NUM_RETRIES: usize = 100;
+#[cfg(feature = "dev-context-only-utils")]
+const TSS_TEST_QUIESCE_SLEEP_TIME_MS: u64 = 50;
+
 pub struct TransactionStatusService {
     thread_hdl: JoinHandle<()>,
+    #[cfg(feature = "dev-context-only-utils")]
+    transaction_status_receiver: Arc<Receiver<TransactionStatusMessage>>,
 }
 
 impl TransactionStatusService {
@@ -34,6 +42,9 @@ impl TransactionStatusService {
         enable_extended_tx_metadata_storage: bool,
         exit: Arc<AtomicBool>,
     ) -> Self {
+        let transaction_status_receiver = Arc::new(write_transaction_status_receiver);
+        let transaction_status_receiver_handle = Arc::clone(&transaction_status_receiver);
+
         let thread_hdl = Builder::new()
             .name("solTxStatusWrtr".to_string())
             .spawn(move || {
@@ -50,7 +61,7 @@ impl TransactionStatusService {
                         break;
                     }
 
-                    let message = match write_transaction_status_receiver.try_recv() {
+                    let message = match transaction_status_receiver_handle.try_recv() {
                         Ok(message) => message,
                         Err(TryRecvError::Disconnected) => {
                             break;
@@ -96,7 +107,11 @@ impl TransactionStatusService {
                 info!("TransactionStatusService has stopped");
             })
             .unwrap();
-        Self { thread_hdl }
+        Self {
+            thread_hdl,
+            #[cfg(feature = "dev-context-only-utils")]
+            transaction_status_receiver,
+        }
     }
 
     fn write_transaction_status_batch(
@@ -243,6 +258,24 @@ impl TransactionStatusService {
     pub fn join(self) -> thread::Result<()> {
         self.thread_hdl.join()
     }
+
+    // Many tests expect all messages to be handled. Wait for the message
+    // queue to drain out before signaling the service to exit.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn quiesce_and_join_for_tests(self, exit: Arc<AtomicBool>) {
+        for _ in 0..TSS_TEST_QUIESCE_NUM_RETRIES {
+            if self.transaction_status_receiver.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(TSS_TEST_QUIESCE_SLEEP_TIME_MS));
+        }
+        assert!(
+            self.transaction_status_receiver.is_empty(),
+            "TransactionStatusService timed out before processing all queued up messages."
+        );
+        exit.store(true, Ordering::Relaxed);
+        self.join().unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -279,14 +312,7 @@ pub(crate) mod tests {
             token_balances::TransactionTokenBalancesSet, TransactionStatusMeta,
             TransactionTokenBalance,
         },
-        std::{
-            sync::{
-                atomic::{AtomicBool, Ordering},
-                Arc,
-            },
-            thread::sleep,
-            time::Duration,
-        },
+        std::sync::{atomic::AtomicBool, Arc},
     };
 
     #[derive(Eq, Hash, PartialEq)]
@@ -453,10 +479,8 @@ pub(crate) mod tests {
         transaction_status_sender
             .send(TransactionStatusMessage::Batch(transaction_status_batch))
             .unwrap();
-        sleep(Duration::from_millis(500));
 
-        exit.store(true, Ordering::Relaxed);
-        transaction_status_service.join().unwrap();
+        transaction_status_service.quiesce_and_join_for_tests(exit);
         assert_eq!(test_notifier.notifications.len(), 1);
         let key = TestNotifierKey {
             slot,
@@ -558,10 +582,7 @@ pub(crate) mod tests {
         transaction_status_sender
             .send(TransactionStatusMessage::Batch(transaction_status_batch))
             .unwrap();
-        sleep(Duration::from_millis(5000));
-
-        exit.store(true, Ordering::Relaxed);
-        transaction_status_service.join().unwrap();
+        transaction_status_service.quiesce_and_join_for_tests(exit);
         assert_eq!(test_notifier.notifications.len(), 2);
 
         let key1 = TestNotifierKey {

@@ -180,6 +180,7 @@ all_test_steps() {
              ^ci/test-local-cluster.sh \
              ^core/build.rs \
              ^fetch-perf-libs.sh \
+             ^platform-tools-sdk/ \
              ^programs/ \
              ^sdk/ \
       ; then
@@ -207,6 +208,7 @@ EOF
              ^ci/test-local-cluster.sh \
              ^core/build.rs \
              ^fetch-perf-libs.sh \
+             ^platform-tools-sdk/ \
              ^programs/ \
              ^sdk/ \
              ^scripts/build-downstream-projects.sh \

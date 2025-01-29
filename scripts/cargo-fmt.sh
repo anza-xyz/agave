@@ -13,8 +13,8 @@ fi
 fmt_dirs=(
   .
   programs/sbf
-  sdk/cargo-build-sbf/tests/crates/fail
-  sdk/cargo-build-sbf/tests/crates/noop
+  platform-tools-sdk/cargo-build-sbf/tests/crates/fail
+  platform-tools-sdk/cargo-build-sbf/tests/crates/noop
   storage-bigtable/build-proto
 )
 

@@ -375,7 +375,7 @@ dependencies = [
  "solana-unified-scheduler-pool",
  "solana-version",
  "solana-vote-program",
- "spl-token-2022",
+ "spl-token-2022 7.0.0",
  "symlink",
  "tempfile",
  "thiserror 2.0.11",
@@ -4281,9 +4281,9 @@ checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 
 [[package]]
 name = "openssl"
-version = "0.10.68"
+version = "0.10.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6174bc48f102d208783c2c84bf931bb75927a617866870de8a4ea85597f871f5"
+checksum = "f5e534d133a060a3c19daec1eb3e98ec6f4685978834f2dbadfe2ec215bab64e"
 dependencies = [
  "bitflags 2.8.0",
  "cfg-if 1.0.0",
@@ -4296,13 +4296,13 @@ dependencies = [
 
 [[package]]
 name = "openssl-macros"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b501e44f11665960c7e7fcf062c7d96a14ade4aa98116c004b2e37b5be7d736c"
+checksum = "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.96",
 ]
 
 [[package]]
@@ -6051,7 +6051,7 @@ dependencies = [
  "solana-sysvar",
  "spl-pod",
  "spl-token",
- "spl-token-2022",
+ "spl-token-2022 7.0.0",
  "spl-token-group-interface",
  "spl-token-metadata-interface",
  "thiserror 2.0.11",
@@ -7123,6 +7123,7 @@ name = "solana-core"
 version = "2.2.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-thread-manager",
  "agave-transaction-view",
  "ahash 0.8.11",
  "anyhow",
@@ -7477,6 +7478,25 @@ dependencies = [
  "solana-sdk-macro",
  "solana-sysvar-id",
  "static_assertions",
+]
+
+[[package]]
+name = "solana-example-mocks"
+version = "2.2.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-address-lookup-table-interface",
+ "solana-clock",
+ "solana-hash",
+ "solana-instruction",
+ "solana-keccak-hasher",
+ "solana-message",
+ "solana-nonce",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-system-interface",
+ "thiserror 2.0.11",
 ]
 
 [[package]]
@@ -7964,6 +7984,7 @@ dependencies = [
  "bzip2",
  "chrono",
  "chrono-humanize",
+ "criterion",
  "crossbeam-channel",
  "dashmap",
  "eager",
@@ -8019,7 +8040,7 @@ dependencies = [
  "solana-vote-program",
  "spl-pod",
  "spl-token",
- "spl-token-2022",
+ "spl-token-2022 7.0.0",
  "static_assertions",
  "strum",
  "strum_macros",
@@ -8294,6 +8315,7 @@ dependencies = [
  "bytes",
  "clap 3.2.23",
  "crossbeam-channel",
+ "itertools 0.12.1",
  "log",
  "nix",
  "rand 0.8.5",
@@ -8587,6 +8609,7 @@ dependencies = [
  "solana-define-syscall",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
+ "solana-example-mocks",
  "solana-feature-gate-interface",
  "solana-fee-calculator",
  "solana-frozen-abi",
@@ -8991,6 +9014,7 @@ dependencies = [
  "solana-poh",
  "solana-pubkey",
  "solana-rayon-threadlimit",
+ "solana-rpc",
  "solana-rpc-client-api",
  "solana-runtime",
  "solana-runtime-transaction",
@@ -9007,7 +9031,7 @@ dependencies = [
  "solana-vote-program",
  "spl-pod",
  "spl-token",
- "spl-token-2022",
+ "spl-token-2022 7.0.0",
  "stream-cancel",
  "symlink",
  "thiserror 2.0.11",
@@ -9489,6 +9513,7 @@ name = "solana-send-transaction-service"
 version = "2.2.0"
 dependencies = [
  "crossbeam-channel",
+ "itertools 0.12.1",
  "log",
  "solana-client",
  "solana-connection-cache",
@@ -10389,7 +10414,7 @@ dependencies = [
  "spl-associated-token-account",
  "spl-memo",
  "spl-token",
- "spl-token-2022",
+ "spl-token-2022 7.0.0",
  "spl-token-confidential-transfer-proof-extraction",
  "spl-token-group-interface",
  "spl-token-metadata-interface",
@@ -10911,7 +10936,7 @@ dependencies = [
  "solana-program",
  "spl-associated-token-account-client",
  "spl-token",
- "spl-token-2022",
+ "spl-token-2022 6.0.0",
  "thiserror 1.0.69",
 ]
 
@@ -10963,9 +10988,9 @@ dependencies = [
 
 [[package]]
 name = "spl-elgamal-registry"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a157622a63a4d12fbd8b347fd75ee442cb913137fa98647824c992fb049a15b"
+checksum = "ce0f668975d2b0536e8a8fd60e56a05c467f06021dae037f1d0cfed0de2e231d"
 dependencies = [
  "bytemuck",
  "solana-program",
@@ -11105,7 +11130,7 @@ dependencies = [
  "spl-token",
  "spl-token-confidential-transfer-ciphertext-arithmetic",
  "spl-token-confidential-transfer-proof-extraction",
- "spl-token-confidential-transfer-proof-generation",
+ "spl-token-confidential-transfer-proof-generation 0.2.0",
  "spl-token-group-interface",
  "spl-token-metadata-interface",
  "spl-transfer-hook-interface",
@@ -11114,10 +11139,38 @@ dependencies = [
 ]
 
 [[package]]
-name = "spl-token-confidential-transfer-ciphertext-arithmetic"
-version = "0.2.0"
+name = "spl-token-2022"
+version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1f1bf731fc65546330a7929a9735679add70f828dd076a4e69b59d3afb5423c"
+checksum = "9048b26b0df0290f929ff91317c83db28b3ef99af2b3493dd35baa146774924c"
+dependencies = [
+ "arrayref",
+ "bytemuck",
+ "num-derive",
+ "num-traits",
+ "num_enum",
+ "solana-program",
+ "solana-security-txt",
+ "solana-zk-sdk",
+ "spl-elgamal-registry",
+ "spl-memo",
+ "spl-pod",
+ "spl-token",
+ "spl-token-confidential-transfer-ciphertext-arithmetic",
+ "spl-token-confidential-transfer-proof-extraction",
+ "spl-token-confidential-transfer-proof-generation 0.3.0",
+ "spl-token-group-interface",
+ "spl-token-metadata-interface",
+ "spl-transfer-hook-interface",
+ "spl-type-length-value",
+ "thiserror 2.0.11",
+]
+
+[[package]]
+name = "spl-token-confidential-transfer-ciphertext-arithmetic"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "170378693c5516090f6d37ae9bad2b9b6125069be68d9acd4865bbe9fc8499fd"
 dependencies = [
  "base64 0.22.1",
  "bytemuck",
@@ -11148,6 +11201,17 @@ dependencies = [
  "curve25519-dalek 4.1.3",
  "solana-zk-sdk",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "spl-token-confidential-transfer-proof-generation"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e3597628b0d2fe94e7900fd17cdb4cfbb31ee35c66f82809d27d86e44b2848b"
+dependencies = [
+ "curve25519-dalek 4.1.3",
+ "solana-zk-sdk",
+ "thiserror 2.0.11",
 ]
 
 [[package]]

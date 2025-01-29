@@ -196,7 +196,7 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-rpc-client-nonce-utils rpc-client-nonce-utils")
   crates_map+=("solana-runtime runtime")
   crates_map+=("solana-runtime-transaction runtime-transaction")
-  crates_map+=("solana-sdk sdk")
+  crates_map+=("solana-sdk sdk/sdk")
   crates_map+=("solana-sdk-macro sdk/macro")
   crates_map+=("solana-program sdk/program")
   crates_map+=("solana-send-transaction-service send-transaction-service")

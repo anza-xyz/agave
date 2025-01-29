@@ -1,0 +1,28 @@
+[package]
+name = "solana-example-mocks"
+description = "Solana mock types for use in examples"
+documentation = "https://docs.rs/solana-example-mocks"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+serde = { workspace = true }
+serde_derive = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true }
+solana-clock = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keccak-hasher = { workspace = true }
+solana-message = { workspace = true, features = ["serde"] }
+solana-nonce = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-system-interface = { workspace = true }
+thiserror = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

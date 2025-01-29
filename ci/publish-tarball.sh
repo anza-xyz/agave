@@ -102,7 +102,7 @@ MAYBE_TARBALLS=
 if [[ "$CI_OS_NAME" = linux ]]; then
   (
     set -x
-    sdk/sbf/scripts/package.sh
+    platform-tools-sdk/sbf/scripts/package.sh
     [[ -f sbf-sdk.tar.bz2 ]]
   )
   MAYBE_TARBALLS="sbf-sdk.tar.bz2"

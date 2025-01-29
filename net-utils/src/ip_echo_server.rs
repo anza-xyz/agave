@@ -59,9 +59,8 @@ impl IpEchoServerMessage {
 
 pub(crate) fn ip_echo_server_request_length() -> usize {
     const REQUEST_TERMINUS_LENGTH: usize = 1;
-    HEADER_LENGTH
-        + bincode::serialized_size(&IpEchoServerMessage::default()).unwrap() as usize
-        + REQUEST_TERMINUS_LENGTH
+    (HEADER_LENGTH + REQUEST_TERMINUS_LENGTH)
+        .wrapping_add(bincode::serialized_size(&IpEchoServerMessage::default()).unwrap() as usize)
 }
 
 async fn process_connection(

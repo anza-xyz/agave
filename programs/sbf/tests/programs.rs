@@ -1464,7 +1464,7 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
     } = get_stable_genesis_config();
     genesis_config
         .accounts
-        .remove(&feature_set::enable_loader_v4::id());
+        .remove(&feature_set::disable_new_loader_v3_deployments::id());
     let bank = Bank::new_for_tests(&genesis_config);
     let bank = Arc::new(bank);
     let bank_client = BankClient::new_shared(bank.clone());

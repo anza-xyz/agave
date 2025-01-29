@@ -92,6 +92,7 @@ features = ["lz4"]
 
 [dev-dependencies]
 bs58 = { workspace = true }
+criterion = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
@@ -115,6 +116,10 @@ name = "sigverify_shreds"
 
 [[bench]]
 name = "blockstore"
+
+[[bench]]
+name = "make_shreds_from_entries"
+harness = false
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

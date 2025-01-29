@@ -56,52 +56,6 @@ const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 //   include/rocksdb/advanced_options.h#L908C30-L908C30
 const PERIODIC_COMPACTION_SECONDS: u64 = 60 * 60 * 24;
 
-// Column family for metadata about a leader slot
-const META_CF: &str = "meta";
-// Column family for slots that have been marked as dead
-const DEAD_SLOTS_CF: &str = "dead_slots";
-// Column family for storing proof that there were multiple
-// versions of a slot
-const DUPLICATE_SLOTS_CF: &str = "duplicate_slots";
-// Column family storing erasure metadata for a slot
-const ERASURE_META_CF: &str = "erasure_meta";
-// Column family for orphans data
-const ORPHANS_CF: &str = "orphans";
-/// Column family for bank hashes
-const BANK_HASH_CF: &str = "bank_hashes";
-// Column family for root data
-const ROOT_CF: &str = "root";
-/// Column family for indexes
-const INDEX_CF: &str = "index";
-/// Column family for Data Shreds
-pub const DATA_SHRED_CF: &str = "data_shred";
-/// Column family for Code Shreds
-const CODE_SHRED_CF: &str = "code_shred";
-/// Column family for Transaction Status
-const TRANSACTION_STATUS_CF: &str = "transaction_status";
-/// Column family for Address Signatures
-const ADDRESS_SIGNATURES_CF: &str = "address_signatures";
-/// Column family for TransactionMemos
-const TRANSACTION_MEMOS_CF: &str = "transaction_memos";
-/// Column family for the Transaction Status Index.
-/// This column family is used for tracking the active primary index for columns that for
-/// query performance reasons should not be indexed by Slot.
-const TRANSACTION_STATUS_INDEX_CF: &str = "transaction_status_index";
-/// Column family for Rewards
-const REWARDS_CF: &str = "rewards";
-/// Column family for Blocktime
-const BLOCKTIME_CF: &str = "blocktime";
-/// Column family for Performance Samples
-const PERF_SAMPLES_CF: &str = "perf_samples";
-/// Column family for BlockHeight
-const BLOCK_HEIGHT_CF: &str = "block_height";
-/// Column family for ProgramCosts
-const PROGRAM_COSTS_CF: &str = "program_costs";
-/// Column family for optimistic slots
-const OPTIMISTIC_SLOTS_CF: &str = "optimistic_slots";
-/// Column family for merkle roots
-const MERKLE_ROOT_META_CF: &str = "merkle_root_meta";
-
 macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
         let mut key = [0u8; std::mem::size_of::<Self::$key>()];
@@ -922,7 +876,7 @@ impl Column for columns::TransactionStatus {
     }
 }
 impl ColumnName for columns::TransactionStatus {
-    const NAME: &'static str = TRANSACTION_STATUS_CF;
+    const NAME: &'static str = "transaction_status";
 }
 impl ProtobufColumn for columns::TransactionStatus {
     type Type = generated::TransactionStatusMeta;
@@ -1000,7 +954,7 @@ impl Column for columns::AddressSignatures {
     }
 }
 impl ColumnName for columns::AddressSignatures {
-    const NAME: &'static str = ADDRESS_SIGNATURES_CF;
+    const NAME: &'static str = "address_signatures";
 }
 
 impl ColumnIndexDeprecation for columns::AddressSignatures {
@@ -1074,7 +1028,7 @@ impl Column for columns::TransactionMemos {
     }
 }
 impl ColumnName for columns::TransactionMemos {
-    const NAME: &'static str = TRANSACTION_MEMOS_CF;
+    const NAME: &'static str = "transaction_memos";
 }
 
 impl ColumnIndexDeprecation for columns::TransactionMemos {
@@ -1127,12 +1081,12 @@ impl Column for columns::TransactionStatusIndex {
     }
 }
 impl ColumnName for columns::TransactionStatusIndex {
-    const NAME: &'static str = TRANSACTION_STATUS_INDEX_CF;
+    const NAME: &'static str = "transaction_status_index";
 }
 
 impl SlotColumn for columns::Rewards {}
 impl ColumnName for columns::Rewards {
-    const NAME: &'static str = REWARDS_CF;
+    const NAME: &'static str = "rewards";
 }
 impl ProtobufColumn for columns::Rewards {
     type Type = generated::Rewards;
@@ -1140,7 +1094,7 @@ impl ProtobufColumn for columns::Rewards {
 
 impl SlotColumn for columns::Blocktime {}
 impl ColumnName for columns::Blocktime {
-    const NAME: &'static str = BLOCKTIME_CF;
+    const NAME: &'static str = "blocktime";
 }
 impl TypedColumn for columns::Blocktime {
     type Type = UnixTimestamp;
@@ -1148,19 +1102,19 @@ impl TypedColumn for columns::Blocktime {
 
 impl SlotColumn for columns::PerfSamples {}
 impl ColumnName for columns::PerfSamples {
-    const NAME: &'static str = PERF_SAMPLES_CF;
+    const NAME: &'static str = "perf_samples";
 }
 
 impl SlotColumn for columns::BlockHeight {}
 impl ColumnName for columns::BlockHeight {
-    const NAME: &'static str = BLOCK_HEIGHT_CF;
+    const NAME: &'static str = "block_height";
 }
 impl TypedColumn for columns::BlockHeight {
     type Type = u64;
 }
 
 impl ColumnName for columns::ProgramCosts {
-    const NAME: &'static str = PROGRAM_COSTS_CF;
+    const NAME: &'static str = "program_costs";
 }
 impl TypedColumn for columns::ProgramCosts {
     type Type = blockstore_meta::ProgramCost;
@@ -1210,7 +1164,7 @@ impl Column for columns::ShredCode {
     }
 }
 impl ColumnName for columns::ShredCode {
-    const NAME: &'static str = CODE_SHRED_CF;
+    const NAME: &'static str = "code_shred";
 }
 
 impl Column for columns::ShredData {
@@ -1241,12 +1195,12 @@ impl Column for columns::ShredData {
     }
 }
 impl ColumnName for columns::ShredData {
-    const NAME: &'static str = DATA_SHRED_CF;
+    const NAME: &'static str = "data_shred";
 }
 
 impl SlotColumn for columns::Index {}
 impl ColumnName for columns::Index {
-    const NAME: &'static str = INDEX_CF;
+    const NAME: &'static str = "index";
 }
 impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
@@ -1276,7 +1230,7 @@ impl TypedColumn for columns::Index {
 
 impl SlotColumn for columns::DeadSlots {}
 impl ColumnName for columns::DeadSlots {
-    const NAME: &'static str = DEAD_SLOTS_CF;
+    const NAME: &'static str = "dead_slots";
 }
 impl TypedColumn for columns::DeadSlots {
     type Type = bool;
@@ -1284,7 +1238,7 @@ impl TypedColumn for columns::DeadSlots {
 
 impl SlotColumn for columns::DuplicateSlots {}
 impl ColumnName for columns::DuplicateSlots {
-    const NAME: &'static str = DUPLICATE_SLOTS_CF;
+    const NAME: &'static str = "duplicate_slots";
 }
 impl TypedColumn for columns::DuplicateSlots {
     type Type = blockstore_meta::DuplicateSlotProof;
@@ -1292,7 +1246,7 @@ impl TypedColumn for columns::DuplicateSlots {
 
 impl SlotColumn for columns::Orphans {}
 impl ColumnName for columns::Orphans {
-    const NAME: &'static str = ORPHANS_CF;
+    const NAME: &'static str = "orphans";
 }
 impl TypedColumn for columns::Orphans {
     type Type = bool;
@@ -1300,7 +1254,7 @@ impl TypedColumn for columns::Orphans {
 
 impl SlotColumn for columns::BankHash {}
 impl ColumnName for columns::BankHash {
-    const NAME: &'static str = BANK_HASH_CF;
+    const NAME: &'static str = "bank_hashes";
 }
 impl TypedColumn for columns::BankHash {
     type Type = blockstore_meta::FrozenHashVersioned;
@@ -1308,7 +1262,7 @@ impl TypedColumn for columns::BankHash {
 
 impl SlotColumn for columns::Root {}
 impl ColumnName for columns::Root {
-    const NAME: &'static str = ROOT_CF;
+    const NAME: &'static str = "root";
 }
 impl TypedColumn for columns::Root {
     type Type = bool;
@@ -1316,7 +1270,7 @@ impl TypedColumn for columns::Root {
 
 impl SlotColumn for columns::SlotMeta {}
 impl ColumnName for columns::SlotMeta {
-    const NAME: &'static str = META_CF;
+    const NAME: &'static str = "meta";
 }
 impl TypedColumn for columns::SlotMeta {
     type Type = blockstore_meta::SlotMeta;
@@ -1350,7 +1304,7 @@ impl Column for columns::ErasureMeta {
     }
 }
 impl ColumnName for columns::ErasureMeta {
-    const NAME: &'static str = ERASURE_META_CF;
+    const NAME: &'static str = "erasure_meta";
 }
 impl TypedColumn for columns::ErasureMeta {
     type Type = blockstore_meta::ErasureMeta;
@@ -1358,7 +1312,7 @@ impl TypedColumn for columns::ErasureMeta {
 
 impl SlotColumn for columns::OptimisticSlots {}
 impl ColumnName for columns::OptimisticSlots {
-    const NAME: &'static str = OPTIMISTIC_SLOTS_CF;
+    const NAME: &'static str = "optimistic_slots";
 }
 impl TypedColumn for columns::OptimisticSlots {
     type Type = blockstore_meta::OptimisticSlotMetaVersioned;
@@ -1393,7 +1347,7 @@ impl Column for columns::MerkleRootMeta {
 }
 
 impl ColumnName for columns::MerkleRootMeta {
-    const NAME: &'static str = MERKLE_ROOT_META_CF;
+    const NAME: &'static str = "merkle_root_meta";
 }
 impl TypedColumn for columns::MerkleRootMeta {
     type Type = MerkleRootMeta;

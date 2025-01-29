@@ -7,7 +7,7 @@
 use {
     crate::{
         blockstore::{Blockstore, PurgeType},
-        blockstore_db::{Result as BlockstoreResult, DATA_SHRED_CF},
+        blockstore_db::{columns, ColumnName, Result as BlockstoreResult},
     },
     solana_measure::measure::Measure,
     solana_sdk::clock::{Slot, DEFAULT_MS_PER_SLOT},
@@ -105,14 +105,12 @@ impl BlockstoreCleanupService {
         root: Slot,
         max_ledger_shreds: u64,
     ) -> (bool, Slot, u64) {
-        let data_shred_cf_name = DATA_SHRED_CF.to_string();
-
         let live_files = blockstore
             .live_files_metadata()
             .expect("Blockstore::live_files_metadata()");
         let num_shreds = live_files
             .iter()
-            .filter(|live_file| live_file.column_family_name == data_shred_cf_name)
+            .filter(|live_file| live_file.column_family_name == columns::ShredData::NAME)
             .map(|file_meta| file_meta.num_entries)
             .sum();
 

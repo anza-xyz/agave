@@ -31,7 +31,7 @@ impl SavedTowerVersions {
                 if !t.signature.verify(node_pubkey.as_ref(), &t.data) {
                     return Err(TowerError::InvalidSignature);
                 }
-                bincode::deserialize(&t.data).map(TowerVersions::V1_17_14)
+                bincode::deserialize(&t.data).map(TowerVersions::V1_7_14)
             }
             SavedTowerVersions::Current(t) => {
                 if !t.signature.verify(node_pubkey.as_ref(), &t.data) {

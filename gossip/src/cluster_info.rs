@@ -33,6 +33,7 @@ use {
         crds_value::{CrdsValue, CrdsValueLabel},
         duplicate_shred::DuplicateShred,
         epoch_slots::EpochSlots,
+        epoch_specs::EpochSpecs,
         gossip_error::GossipError,
         ping_pong::Pong,
         protocol::{
@@ -49,7 +50,6 @@ use {
     itertools::Itertools,
     rand::{seq::SliceRandom, thread_rng, CryptoRng, Rng},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
-    solana_feature_set::FeatureSet,
     solana_ledger::shred::Shred,
     solana_measure::measure::Measure,
     solana_net_utils::{
@@ -103,6 +103,8 @@ use {
     thiserror::Error,
 };
 
+const DEFAULT_EPOCH_DURATION: Duration =
+    Duration::from_millis(DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT);
 /// milliseconds we sleep for between gossip requests
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
 /// A hard limit on incoming gossip messages
@@ -166,39 +168,40 @@ struct PullData {
     filter: CrdsFilter,
 }
 
-// Retains only CRDS values associated with nodes with enough stake.
-// (some crds types are exempted)
-fn retain_staked(
-    values: &mut Vec<CrdsValue>,
+// Returns false if the CRDS value should be discarded.
+#[inline]
+#[must_use]
+fn should_retain_crds_value(
+    value: &CrdsValue,
     stakes: &HashMap<Pubkey, u64>,
     drop_unstaked_node_instance: bool,
-) {
-    values.retain(|value| {
-        match value.data() {
-            CrdsData::ContactInfo(_) => true,
-            CrdsData::LegacyContactInfo(_) => true,
-            // May Impact new validators starting up without any stake yet.
-            CrdsData::Vote(_, _) => true,
-            // Unstaked nodes can still help repair.
-            CrdsData::EpochSlots(_, _) => true,
-            // Unstaked nodes can still serve snapshots.
-            CrdsData::LegacySnapshotHashes(_) | CrdsData::SnapshotHashes(_) => true,
-            // Otherwise unstaked voting nodes will show up with no version in
-            // the various dashboards.
-            CrdsData::Version(_) => true,
-            CrdsData::AccountsHashes(_) => true,
-            CrdsData::NodeInstance(_) if !drop_unstaked_node_instance => true,
-            CrdsData::LowestSlot(_, _)
-            | CrdsData::LegacyVersion(_)
-            | CrdsData::DuplicateShred(_, _)
-            | CrdsData::RestartHeaviestFork(_)
-            | CrdsData::RestartLastVotedForkSlots(_)
-            | CrdsData::NodeInstance(_) => {
+) -> bool {
+    match value.data() {
+        CrdsData::ContactInfo(_) => true,
+        CrdsData::LegacyContactInfo(_) => true,
+        // May Impact new validators starting up without any stake yet.
+        CrdsData::Vote(_, _) => true,
+        // Unstaked nodes can still help repair.
+        CrdsData::EpochSlots(_, _) => true,
+        // Unstaked nodes can still serve snapshots.
+        CrdsData::LegacySnapshotHashes(_) | CrdsData::SnapshotHashes(_) => true,
+        // Otherwise unstaked voting nodes will show up with no version in
+        // the various dashboards.
+        CrdsData::Version(_) => true,
+        CrdsData::AccountsHashes(_) => true,
+        CrdsData::NodeInstance(_) if !drop_unstaked_node_instance => true,
+        CrdsData::LowestSlot(_, _)
+        | CrdsData::LegacyVersion(_)
+        | CrdsData::DuplicateShred(_, _)
+        | CrdsData::RestartHeaviestFork(_)
+        | CrdsData::RestartLastVotedForkSlots(_)
+        | CrdsData::NodeInstance(_) => {
+            stakes.len() < MIN_NUM_STAKED_NODES || {
                 let stake = stakes.get(&value.pubkey()).copied();
                 stake.unwrap_or_default() >= MIN_STAKE_FOR_GOSSIP
             }
         }
-    })
+    }
 }
 
 impl ClusterInfo {
@@ -1305,23 +1308,22 @@ impl ClusterInfo {
     }
     fn new_push_requests(&self, stakes: &HashMap<Pubkey, u64>) -> Vec<(SocketAddr, Protocol)> {
         let self_id = self.id();
-        let (mut push_messages, num_entries, num_nodes) = {
+        let (entries, push_messages, num_pushes) = {
             let _st = ScopedTimer::from(&self.stats.new_push_requests);
             self.flush_push_queue();
-            self.gossip.new_push_messages(&self_id, timestamp(), stakes)
+            self.gossip
+                .new_push_messages(&self_id, timestamp(), stakes, |value| {
+                    should_retain_crds_value(
+                        value, stakes, /*drop_unstaked_node_instance:*/ false,
+                    )
+                })
         };
         self.stats
             .push_fanout_num_entries
-            .add_relaxed(num_entries as u64);
+            .add_relaxed(entries.len() as u64);
         self.stats
             .push_fanout_num_nodes
-            .add_relaxed(num_nodes as u64);
-        if self.require_stake_for_gossip(stakes) {
-            push_messages.retain(|_, data| {
-                retain_staked(data, stakes, /* drop_unstaked_node_instance */ false);
-                !data.is_empty()
-            })
-        }
+            .add_relaxed(num_pushes as u64);
         let push_messages: Vec<_> = {
             let gossip_crds =
                 self.time_gossip_read_lock("push_req_lookup", &self.stats.new_push_requests2);
@@ -1336,6 +1338,7 @@ impl ClusterInfo {
         let messages: Vec<_> = push_messages
             .into_iter()
             .flat_map(|(peer, msgs)| {
+                let msgs = msgs.into_iter().map(|k| entries[k].clone());
                 split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, msgs)
                     .map(move |payload| (peer, Protocol::PushMessage(self_id, payload)))
             })
@@ -1456,11 +1459,10 @@ impl ClusterInfo {
     fn handle_purge(
         &self,
         thread_pool: &ThreadPool,
-        bank_forks: Option<&RwLock<BankForks>>,
+        epoch_duration: Duration,
         stakes: &HashMap<Pubkey, u64>,
     ) {
         let self_pubkey = self.id();
-        let epoch_duration = get_epoch_duration(bank_forks, &self.stats);
         let timeouts = self
             .gossip
             .make_timeouts(self_pubkey, stakes, epoch_duration);
@@ -1517,6 +1519,7 @@ impl ClusterInfo {
             .thread_name(|i| format!("solRunGossip{i:02}"))
             .build()
             .unwrap();
+        let mut epoch_specs = bank_forks.map(EpochSpecs::from);
         Builder::new()
             .name("solGossip".to_string())
             .spawn(move || {
@@ -1536,7 +1539,7 @@ impl ClusterInfo {
                     self.push_message(value);
                 }
                 let mut generate_pull_requests = true;
-                loop {
+                while !exit.load(Ordering::Relaxed) {
                     let start = timestamp();
                     if self.contact_debug_interval != 0
                         && start - last_contact_info_trace > self.contact_debug_interval
@@ -1556,17 +1559,11 @@ impl ClusterInfo {
                         self.save_contact_info();
                         last_contact_info_save = start;
                     }
-
-                    let (stakes, _feature_set) = match bank_forks {
-                        Some(ref bank_forks) => {
-                            let root_bank = bank_forks.read().unwrap().root_bank();
-                            (
-                                root_bank.current_epoch_staked_nodes(),
-                                Some(root_bank.feature_set.clone()),
-                            )
-                        }
-                        None => (Arc::default(), None),
-                    };
+                    let stakes = epoch_specs
+                        .as_mut()
+                        .map(EpochSpecs::current_epoch_staked_nodes)
+                        .cloned()
+                        .unwrap_or_default();
                     let _ = self.run_gossip(
                         &thread_pool,
                         gossip_validators.as_ref(),
@@ -1575,10 +1572,11 @@ impl ClusterInfo {
                         &sender,
                         generate_pull_requests,
                     );
-                    if exit.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    self.handle_purge(&thread_pool, bank_forks.as_deref(), &stakes);
+                    let epoch_duration = epoch_specs
+                        .as_mut()
+                        .map(EpochSpecs::epoch_duration)
+                        .unwrap_or(DEFAULT_EPOCH_DURATION);
+                    self.handle_purge(&thread_pool, epoch_duration, &stakes);
                     entrypoints_processed = entrypoints_processed || self.process_entrypoints();
                     //TODO: possibly tune this parameter
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
@@ -1786,21 +1784,21 @@ impl ClusterInfo {
         };
         let now = timestamp();
         let self_id = self.id();
-        let mut pull_responses = {
+        let pull_responses = {
             let _st = ScopedTimer::from(&self.stats.generate_pull_responses);
             self.gossip.generate_pull_responses(
                 thread_pool,
                 &caller_and_filters,
                 output_size_limit,
                 now,
+                |value| {
+                    should_retain_crds_value(
+                        value, stakes, /*drop_unstaked_node_instance:*/ true,
+                    )
+                },
                 &self.stats,
             )
         };
-        if self.require_stake_for_gossip(stakes) {
-            for resp in &mut pull_responses {
-                retain_staked(resp, stakes, /* drop_unstaked_node_instance */ true);
-            }
-        }
         let (responses, scores): (Vec<_>, Vec<_>) = addrs
             .iter()
             .zip(pull_responses)
@@ -2102,17 +2100,6 @@ impl ClusterInfo {
         })
     }
 
-    fn require_stake_for_gossip(&self, stakes: &HashMap<Pubkey, u64>) -> bool {
-        if stakes.len() < MIN_NUM_STAKED_NODES {
-            self.stats
-                .require_stake_for_gossip_unknown_stakes
-                .add_relaxed(1);
-            false
-        } else {
-            true
-        }
-    }
-
     fn process_packets(
         &self,
         packets: VecDeque<(/*from:*/ SocketAddr, Protocol)>,
@@ -2120,7 +2107,6 @@ impl ClusterInfo {
         recycler: &PacketBatchRecycler,
         response_sender: &PacketBatchSender,
         stakes: &HashMap<Pubkey, u64>,
-        _feature_set: Option<&FeatureSet>,
         epoch_duration: Duration,
         should_check_duplicate_instance: bool,
     ) -> Result<(), GossipError> {
@@ -2218,17 +2204,6 @@ impl ClusterInfo {
                 Protocol::PongMessage(pong) => pong_messages.push((from_addr, pong)),
             }
         }
-        if self.require_stake_for_gossip(stakes) {
-            retain_staked(
-                &mut pull_responses,
-                stakes,
-                /* drop_unstaked_node_instance */ false,
-            );
-            for (_, data) in &mut push_messages {
-                retain_staked(data, stakes, /* drop_unstaked_node_instance */ false);
-            }
-            push_messages.retain(|(_, data)| !data.is_empty());
-        }
         if !pings.is_empty() {
             self.stats
                 .packets_sent_gossip_requests_count
@@ -2267,9 +2242,10 @@ impl ClusterInfo {
     // handling of requests/messages.
     fn run_socket_consume(
         &self,
+        thread_pool: &ThreadPool,
+        epoch_specs: Option<&mut EpochSpecs>,
         receiver: &PacketBatchReceiver,
         sender: &Sender<Vec<(/*from:*/ SocketAddr, Protocol)>>,
-        thread_pool: &ThreadPool,
     ) -> Result<(), GossipError> {
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
         fn count_dropped_packets(packets: &PacketBatch, dropped_packets_counts: &mut [u64; 7]) {
@@ -2306,28 +2282,48 @@ impl ClusterInfo {
         self.stats
             .packets_received_count
             .add_relaxed(num_packets as u64 + num_packets_dropped);
-        fn verify_packet(packet: &Packet, stats: &GossipStats) -> Option<(SocketAddr, Protocol)> {
-            let protocol: Protocol =
+        fn verify_packet(
+            packet: &Packet,
+            stakes: &HashMap<Pubkey, u64>,
+            stats: &GossipStats,
+        ) -> Option<(SocketAddr, Protocol)> {
+            let mut protocol: Protocol =
                 stats.record_received_packet(packet.deserialize_slice::<Protocol, _>(..))?;
             protocol.sanitize().ok()?;
+            if let Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values) =
+                &mut protocol
+            {
+                values.retain(|value| {
+                    should_retain_crds_value(
+                        value, stakes, /*drop_unstaked_node_instance:*/ false,
+                    )
+                });
+                if values.is_empty() {
+                    return None;
+                }
+            }
             protocol.par_verify().then(|| {
                 stats.packets_received_verified_count.add_relaxed(1);
                 (packet.meta().socket_addr(), protocol)
             })
         }
+        let stakes = epoch_specs
+            .map(EpochSpecs::current_epoch_staked_nodes)
+            .cloned()
+            .unwrap_or_default();
         let packets: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
             thread_pool.install(|| {
                 if packets.len() == 1 {
                     packets[0]
                         .par_iter()
-                        .filter_map(|packet| verify_packet(packet, &self.stats))
+                        .filter_map(|packet| verify_packet(packet, &stakes, &self.stats))
                         .collect()
                 } else {
                     packets
                         .par_iter()
                         .flatten()
-                        .filter_map(|packet| verify_packet(packet, &self.stats))
+                        .filter_map(|packet| verify_packet(packet, &stakes, &self.stats))
                         .collect()
                 }
             })
@@ -2339,7 +2335,7 @@ impl ClusterInfo {
     fn run_listen(
         &self,
         recycler: &PacketBatchRecycler,
-        bank_forks: Option<&RwLock<BankForks>>,
+        mut epoch_specs: Option<&mut EpochSpecs>,
         receiver: &Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         response_sender: &PacketBatchSender,
         thread_pool: &ThreadPool,
@@ -2360,25 +2356,21 @@ impl ClusterInfo {
                     .add_relaxed(excess_count as u64);
             }
         }
-        // Using root_bank instead of working_bank here so that an enbaled
-        // feature does not roll back (if the feature happens to get enabled in
-        // a minority fork).
-        let (feature_set, stakes) = match bank_forks {
-            None => (None, Arc::default()),
-            Some(bank_forks) => {
-                let bank = bank_forks.read().unwrap().root_bank();
-                let feature_set = bank.feature_set.clone();
-                (Some(feature_set), bank.current_epoch_staked_nodes())
-            }
-        };
+        let stakes = epoch_specs
+            .as_mut()
+            .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
+            .cloned()
+            .unwrap_or_default();
+        let epoch_duration = epoch_specs
+            .map(EpochSpecs::epoch_duration)
+            .unwrap_or(DEFAULT_EPOCH_DURATION);
         self.process_packets(
             packets,
             thread_pool,
             recycler,
             response_sender,
             &stakes,
-            feature_set.as_deref(),
-            get_epoch_duration(bank_forks, &self.stats),
+            epoch_duration,
             should_check_duplicate_instance,
         )?;
         if last_print.elapsed() > SUBMIT_GOSSIP_STATS_INTERVAL {
@@ -2393,6 +2385,7 @@ impl ClusterInfo {
 
     pub(crate) fn start_socket_consume_thread(
         self: Arc<Self>,
+        bank_forks: Option<Arc<RwLock<BankForks>>>,
         receiver: PacketBatchReceiver,
         sender: Sender<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         exit: Arc<AtomicBool>,
@@ -2402,9 +2395,15 @@ impl ClusterInfo {
             .thread_name(|i| format!("solGossipCons{i:02}"))
             .build()
             .unwrap();
+        let mut epoch_specs = bank_forks.map(EpochSpecs::from);
         let run_consume = move || {
             while !exit.load(Ordering::Relaxed) {
-                match self.run_socket_consume(&receiver, &sender, &thread_pool) {
+                match self.run_socket_consume(
+                    &thread_pool,
+                    epoch_specs.as_mut(),
+                    &receiver,
+                    &sender,
+                ) {
                     Err(GossipError::RecvTimeoutError(RecvTimeoutError::Disconnected)) => break,
                     Err(GossipError::RecvTimeoutError(RecvTimeoutError::Timeout)) => (),
                     // A send operation can only fail if the receiving end of a
@@ -2434,13 +2433,14 @@ impl ClusterInfo {
             .thread_name(|i| format!("solGossipWork{i:02}"))
             .build()
             .unwrap();
+        let mut epoch_specs = bank_forks.map(EpochSpecs::from);
         Builder::new()
             .name("solGossipListen".to_string())
             .spawn(move || {
                 while !exit.load(Ordering::Relaxed) {
                     if let Err(err) = self.run_listen(
                         &recycler,
-                        bank_forks.as_deref(),
+                        epoch_specs.as_mut(),
                         &requests_receiver,
                         &response_sender,
                         &thread_pool,
@@ -2510,23 +2510,6 @@ impl ClusterInfo {
         );
         (contact_info, gossip_socket, None)
     }
-}
-
-// Returns root bank's epoch duration. Falls back on
-//     DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT
-// if there are no working banks.
-fn get_epoch_duration(bank_forks: Option<&RwLock<BankForks>>, stats: &GossipStats) -> Duration {
-    let num_slots = match bank_forks {
-        None => {
-            stats.get_epoch_duration_no_working_bank.add_relaxed(1);
-            DEFAULT_SLOTS_PER_EPOCH
-        }
-        Some(bank_forks) => {
-            let bank = bank_forks.read().unwrap().root_bank();
-            bank.get_slots_in_epoch(bank.epoch())
-        }
-    };
-    Duration::from_millis(num_slots * DEFAULT_MS_PER_SLOT)
 }
 
 #[derive(Debug)]
@@ -3492,10 +3475,19 @@ mod tests {
         );
         //check that all types of gossip messages are signed correctly
         cluster_info.flush_push_queue();
-        let (push_messages, _, _) =
-            cluster_info
-                .gossip
-                .new_push_messages(&cluster_info.id(), timestamp(), &stakes);
+        let (entries, push_messages, _) = cluster_info.gossip.new_push_messages(
+            &cluster_info.id(),
+            timestamp(),
+            &stakes,
+            |_| true, // should_retain_crds_value
+        );
+        let push_messages = push_messages
+            .into_iter()
+            .map(|(pubkey, indices)| {
+                let values = indices.into_iter().map(|k| entries[k].clone()).collect();
+                (pubkey, values)
+            })
+            .collect::<HashMap<_, Vec<_>>>();
         // there should be some pushes ready
         assert!(!push_messages.is_empty());
         push_messages
@@ -4183,15 +4175,6 @@ mod tests {
         assert_eq!(
             (0, 0, NO_ENTRIES),
             cluster_info.handle_pull_response(data, &timeouts)
-        );
-    }
-
-    #[test]
-    fn test_get_epoch_millis_no_bank() {
-        let epoch_duration = get_epoch_duration(/*bank_forks:*/ None, &GossipStats::default());
-        assert_eq!(
-            epoch_duration.as_millis() as u64,
-            DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT // 48 hours
         );
     }
 

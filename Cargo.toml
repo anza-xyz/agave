@@ -72,6 +72,9 @@ members = [
     "net-utils",
     "notifier",
     "perf",
+    "platform-tools-sdk/cargo-build-sbf",
+    "platform-tools-sdk/cargo-test-sbf",
+    "platform-tools-sdk/gen-headers",
     "poh",
     "poh-bench",
     "poseidon",
@@ -106,7 +109,6 @@ members = [
     "rpc-test",
     "runtime",
     "runtime-transaction",
-    "sdk",
     "sdk/account",
     "sdk/account-info",
     "sdk/address-lookup-table-interface",
@@ -115,8 +117,6 @@ members = [
     "sdk/bincode",
     "sdk/blake3-hasher",
     "sdk/borsh",
-    "sdk/cargo-build-sbf",
-    "sdk/cargo-test-sbf",
     "sdk/client-traits",
     "sdk/clock",
     "sdk/cluster-type",
@@ -131,6 +131,7 @@ members = [
     "sdk/epoch-rewards",
     "sdk/epoch-rewards-hasher",
     "sdk/epoch-schedule",
+    "sdk/example-mocks",
     "sdk/feature-gate-interface",
     "sdk/feature-set",
     "sdk/fee-calculator",
@@ -138,7 +139,6 @@ members = [
     "sdk/file-download",
     "sdk/frozen-abi",
     "sdk/frozen-abi/macro",
-    "sdk/gen-headers",
     "sdk/genesis-config",
     "sdk/hard-forks",
     "sdk/hash",
@@ -179,6 +179,7 @@ members = [
     "sdk/reserved-account-keys",
     "sdk/reward-info",
     "sdk/sanitize",
+    "sdk/sdk",
     "sdk/sdk-ids",
     "sdk/secp256k1-program",
     "sdk/secp256r1-program",
@@ -503,6 +504,7 @@ solana-epoch-info = { path = "sdk/epoch-info", version = "=2.2.0" }
 solana-epoch-rewards = { path = "sdk/epoch-rewards", version = "=2.2.0" }
 solana-epoch-rewards-hasher = { path = "sdk/epoch-rewards-hasher", version = "=2.2.0" }
 solana-epoch-schedule = { path = "sdk/epoch-schedule", version = "=2.2.0" }
+solana-example-mocks = { path = "sdk/example-mocks", version = "=2.2.0" }
 solana-faucet = { path = "faucet", version = "=2.2.0" }
 solana-feature-gate-client = "0.0.2"
 solana-feature-gate-interface = { path = "sdk/feature-gate-interface", version = "=2.2.0" }
@@ -602,7 +604,7 @@ solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2
 solana-runtime = { path = "runtime", version = "=2.2.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=2.2.0" }
 solana-sbpf = "=0.9.0"
-solana-sdk = { path = "sdk", version = "=2.2.0" }
+solana-sdk = { path = "sdk/sdk", version = "=2.2.0" }
 solana-sdk-ids = { path = "sdk/sdk-ids", version = "=2.2.0" }
 solana-sdk-macro = { path = "sdk/macro", version = "=2.2.0" }
 solana-secp256k1-program = { path = "sdk/secp256k1-program", version = "=2.2.0" }
@@ -653,7 +655,7 @@ spl-instruction-padding = "0.3"
 spl-memo = "=6.0.0"
 spl-pod = "=0.5.0"
 spl-token = "=7.0.0"
-spl-token-2022 = "=6.0.0"
+spl-token-2022 = "=7.0.0"
 spl-token-confidential-transfer-proof-extraction = "0.2.1"
 spl-token-group-interface = "=0.5.0"
 spl-token-metadata-interface = "=0.6.0"

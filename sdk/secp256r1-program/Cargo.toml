@@ -21,7 +21,7 @@ openssl = { workspace = true }
 
 [dev-dependencies]
 solana-logger = { workspace = true }
-solana-sdk = { path = "../" }
+solana-sdk = { path = "../sdk" }
 
 [features]
 default = []

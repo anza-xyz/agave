@@ -6,8 +6,8 @@ use {
         confidential_mint_burn::*, confidential_transfer::*, confidential_transfer_fee::*,
         cpi_guard::*, default_account_state::*, group_member_pointer::*, group_pointer::*,
         interest_bearing_mint::*, memo_transfer::*, metadata_pointer::*, mint_close_authority::*,
-        permanent_delegate::*, reallocate::*, token_group::*, token_metadata::*, transfer_fee::*,
-        transfer_hook::*,
+        pausable::*, permanent_delegate::*, reallocate::*, scaled_ui_amount::*, token_group::*,
+        token_metadata::*, transfer_fee::*, transfer_hook::*,
     },
     serde_json::{json, Map, Value},
     solana_account_decoder::{
@@ -233,7 +233,9 @@ pub fn parse_token(
                     | AuthorityType::ConfidentialTransferFeeConfig
                     | AuthorityType::MetadataPointer
                     | AuthorityType::GroupPointer
-                    | AuthorityType::GroupMemberPointer => "mint",
+                    | AuthorityType::GroupMemberPointer
+                    | AuthorityType::ScaledUiAmount
+                    | AuthorityType::Pause => "mint",
                     AuthorityType::AccountOwner | AuthorityType::CloseAccount => "account",
                 };
                 let mut value = json!({
@@ -689,6 +691,16 @@ pub fn parse_token(
                     account_keys,
                 )
             }
+            TokenInstruction::ScaledUiAmountExtension => parse_scaled_ui_amount_instruction(
+                &instruction.data[1..],
+                &instruction.accounts,
+                account_keys,
+            ),
+            TokenInstruction::PausableExtension => parse_pausable_instruction(
+                &instruction.data[1..],
+                &instruction.accounts,
+                account_keys,
+            ),
         }
     } else if let Ok(token_group_instruction) = TokenGroupInstruction::unpack(&instruction.data) {
         parse_token_group_instruction(
@@ -729,6 +741,8 @@ pub enum UiAuthorityType {
     MetadataPointer,
     GroupPointer,
     GroupMemberPointer,
+    ScaledUiAmount,
+    Pause,
 }
 
 impl From<AuthorityType> for UiAuthorityType {
@@ -751,6 +765,8 @@ impl From<AuthorityType> for UiAuthorityType {
             AuthorityType::MetadataPointer => UiAuthorityType::MetadataPointer,
             AuthorityType::GroupPointer => UiAuthorityType::GroupPointer,
             AuthorityType::GroupMemberPointer => UiAuthorityType::GroupMemberPointer,
+            AuthorityType::ScaledUiAmount => UiAuthorityType::ScaledUiAmount,
+            AuthorityType::Pause => UiAuthorityType::Pause,
         }
     }
 }
@@ -783,6 +799,9 @@ pub enum UiExtensionType {
     TokenGroup,
     TokenGroupMember,
     ConfidentialMintBurn,
+    ScaledUiAmount,
+    Pausable,
+    PausableAccount,
 }
 
 impl From<ExtensionType> for UiExtensionType {
@@ -819,6 +838,9 @@ impl From<ExtensionType> for UiExtensionType {
             ExtensionType::TokenGroup => UiExtensionType::TokenGroup,
             ExtensionType::TokenGroupMember => UiExtensionType::TokenGroupMember,
             ExtensionType::ConfidentialMintBurn => UiExtensionType::ConfidentialMintBurn,
+            ExtensionType::ScaledUiAmount => UiExtensionType::ScaledUiAmount,
+            ExtensionType::Pausable => UiExtensionType::Pausable,
+            ExtensionType::PausableAccount => UiExtensionType::PausableAccount,
         }
     }
 }

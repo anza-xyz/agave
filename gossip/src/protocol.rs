@@ -208,47 +208,32 @@ impl Signable for PruneData {
 /// max_chunk_size.
 /// Note: some messages cannot be contained within that size so in the worst case this returns
 /// N nested Vecs with 1 item each.
-pub(crate) fn split_gossip_messages<I, T>(
+pub(crate) fn split_gossip_messages<T: Serialize + Debug>(
     max_chunk_size: usize,
-    data_feed: I,
-) -> impl Iterator<Item = Vec<T>>
-where
-    T: Serialize + Debug,
-    I: IntoIterator<Item = T>,
-{
+    data_feed: impl IntoIterator<Item = T>,
+) -> impl Iterator<Item = Vec<T>> {
     let mut data_feed = data_feed.into_iter().fuse();
     let mut buffer = vec![];
     let mut buffer_size = 0; // Serialized size of buffered values.
     std::iter::from_fn(move || loop {
-        match data_feed.next() {
-            None => {
-                return if buffer.is_empty() {
-                    None
-                } else {
-                    Some(std::mem::take(&mut buffer))
-                };
+        let Some(data) = data_feed.next() else {
+            return (!buffer.is_empty()).then(|| std::mem::take(&mut buffer));
+        };
+        let data_size = match bincode::serialized_size(&data) {
+            Ok(size) => size as usize,
+            Err(err) => {
+                error!("serialized_size failed: {err:?}");
+                continue;
             }
-            Some(data) => {
-                let data_size = match bincode::serialized_size(&data) {
-                    Ok(size) => size as usize,
-                    Err(err) => {
-                        error!("serialized_size failed: {}", err);
-                        continue;
-                    }
-                };
-                if buffer_size + data_size <= max_chunk_size {
-                    buffer_size += data_size;
-                    buffer.push(data);
-                } else if data_size <= max_chunk_size {
-                    buffer_size = data_size;
-                    return Some(std::mem::replace(&mut buffer, vec![data]));
-                } else {
-                    error!(
-                        "dropping data larger than the maximum chunk size {:?}",
-                        data
-                    );
-                }
-            }
+        };
+        if buffer_size + data_size <= max_chunk_size {
+            buffer_size += data_size;
+            buffer.push(data);
+        } else if data_size <= max_chunk_size {
+            buffer_size = data_size;
+            return Some(std::mem::replace(&mut buffer, vec![data]));
+        } else {
+            error!("dropping data larger than the maximum chunk size {data:?}",);
         }
     })
 }

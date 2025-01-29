@@ -2,7 +2,7 @@ This is an example application using SVM to implement a tiny subset of
 Solana RPC protocol for the purpose of simulating transaction
 execution without having to use the entire Solana Runtime.
 
-The exmample consists of two host applications
+The example consists of two host applications
 - json-rpc-server -- the RPC server that accepts incoming RPC requests
   and performs transaction simulation sending back the results,
 - json-rpc-client -- the RPC client program that sends transactions to

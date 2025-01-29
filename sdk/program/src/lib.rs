@@ -762,14 +762,15 @@ macro_rules! unchecked_div_by_const {
     }};
 }
 
-// This module is purposefully listed after all other exports: because of an
+// This re-export is purposefully listed after all other exports: because of an
 // interaction within rustdoc between the reexports inside this module of
 // `solana_program`'s top-level modules, and `solana_sdk`'s glob re-export of
-// `solana_program`'s top-level modules, if this module is not lexically last
+// `solana_program`'s top-level modules, if this re-export is not lexically last
 // rustdoc fails to generate documentation for the re-exports within
 // `solana_sdk`.
+#[deprecated(since = "2.2.0", note = "Use solana-example-mocks instead")]
 #[cfg(not(target_os = "solana"))]
-pub mod example_mocks;
+pub use solana_example_mocks as example_mocks;
 
 #[cfg(test)]
 mod tests {
