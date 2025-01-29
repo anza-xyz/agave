@@ -5962,7 +5962,6 @@ dependencies = [
 name = "solana-fee"
 version = "2.2.0"
 dependencies = [
- "qualifier_attr",
  "solana-feature-set",
  "solana-fee-structure",
  "solana-svm-transaction",

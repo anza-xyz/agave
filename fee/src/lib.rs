@@ -1,5 +1,3 @@
-#[cfg(feature = "svm-internal")]
-use qualifier_attr::field_qualifiers;
 use {
     solana_feature_set::{
         enable_secp256r1_precompile, remove_rounding_in_fee_calculation, FeatureSet,
@@ -15,16 +13,9 @@ use {
 // instead of removing, since fees will naturally be changed via feature-gates
 // in the future. Keeping this struct will help keep things organized.
 #[derive(Copy, Clone)]
-#[cfg_attr(
-    feature = "svm-internal",
-    field_qualifiers(
-        remove_rounding_in_fee_calculation(pub),
-        enable_secp256r1_precompile(pub)
-    )
-)]
 pub struct FeeFeatures {
-    remove_rounding_in_fee_calculation: bool,
-    enable_secp256r1_precompile: bool,
+    pub remove_rounding_in_fee_calculation: bool,
+    pub enable_secp256r1_precompile: bool,
 }
 
 impl From<&FeatureSet> for FeeFeatures {
@@ -98,10 +89,10 @@ fn calculate_signature_fee(
 }
 
 struct SignatureCounts {
-    num_transaction_signatures: u64,
-    num_ed25519_signatures: u64,
-    num_secp256k1_signatures: u64,
-    num_secp256r1_signatures: u64,
+    pub num_transaction_signatures: u64,
+    pub num_ed25519_signatures: u64,
+    pub num_secp256k1_signatures: u64,
+    pub num_secp256r1_signatures: u64,
 }
 
 impl<Tx: SVMMessage> From<&Tx> for SignatureCounts {
