@@ -281,6 +281,20 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 }
+impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for AccountLoader<'_, CB> {
+    fn account_matches_owners(&self, pubkey: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
+        self.load_account(pubkey, false).and_then(|loaded| {
+            owners
+                .iter()
+                .position(|entry| entry == loaded.account.owner())
+        })
+    }
+
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        self.load_account(pubkey, false)
+            .map(|loaded| loaded.account)
+    }
+}
 
 /// Collect rent from an account if rent is still enabled and regardless of
 /// whether rent is enabled, set the rent epoch to u64::MAX if the account is
