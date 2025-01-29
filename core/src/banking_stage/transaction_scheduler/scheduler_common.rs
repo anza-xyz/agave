@@ -6,8 +6,11 @@ use {
         transaction_state::SanitizedTransactionTTL,
         transaction_state_container::StateContainer,
     },
-    crate::banking_stage::scheduler_messages::{
-        ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
+    crate::banking_stage::{
+        scheduler_messages::{
+            ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
+        },
+        transaction_scheduler::thread_aware_account_locks::MAX_THREADS,
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     itertools::izip,
@@ -106,10 +109,10 @@ pub fn select_thread<Tx>(
 
 /// Common scheduler communication structure.
 pub(crate) struct SchedulingCommon<Tx> {
-    consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
-    finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
-    in_flight_tracker: InFlightTracker,
-    account_locks: ThreadAwareAccountLocks,
+    pub(crate) consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
+    pub(crate) finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
+    pub(crate) in_flight_tracker: InFlightTracker,
+    pub(crate) account_locks: ThreadAwareAccountLocks,
 }
 
 impl<Tx> SchedulingCommon<Tx> {
@@ -118,6 +121,11 @@ impl<Tx> SchedulingCommon<Tx> {
         finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
     ) -> Self {
         let num_threads = consume_work_senders.len();
+        assert!(num_threads > 0, "must have at least one worker");
+        assert!(
+            num_threads <= MAX_THREADS,
+            "cannot have more than {MAX_THREADS} workers"
+        );
         Self {
             consume_work_senders,
             finished_consume_work_receiver,

@@ -1,9 +1,10 @@
 use {
     super::{
-        scheduler_error::SchedulerError, transaction_state::TransactionState,
-        transaction_state_container::StateContainer,
+        scheduler_common::SchedulingCommon, scheduler_error::SchedulerError,
+        transaction_state::TransactionState, transaction_state_container::StateContainer,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_sdk::saturating_add_assign,
 };
 
 pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
@@ -22,7 +23,25 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     fn receive_completed(
         &mut self,
         container: &mut impl StateContainer<Tx>,
-    ) -> Result<(usize, usize), SchedulerError>;
+    ) -> Result<(usize, usize), SchedulerError> {
+        let mut total_num_transactions: usize = 0;
+        let mut total_num_retryable: usize = 0;
+        loop {
+            let (num_transactions, num_retryable) = self
+                .scheduling_common_mut()
+                .try_receive_completed(container)?;
+            if num_transactions == 0 {
+                break;
+            }
+            saturating_add_assign!(total_num_transactions, num_transactions);
+            saturating_add_assign!(total_num_retryable, num_retryable);
+        }
+        Ok((total_num_transactions, total_num_retryable))
+    }
+
+    /// All schedulers should have access to the common context for shared
+    /// implementation.
+    fn scheduling_common_mut(&mut self) -> &mut SchedulingCommon<Tx>;
 }
 
 /// Action to be taken by pre-lock filter.
