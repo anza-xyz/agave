@@ -516,9 +516,7 @@ impl<'a> ShredTrait<'a> for ShredData {
         if payload.len() < Self::SIZE_OF_PAYLOAD {
             return Err(Error::InvalidPayloadSize(payload.len()));
         }
-        if payload.len() > Self::SIZE_OF_PAYLOAD {
-            Payload::make_mut(&mut payload).truncate(Self::SIZE_OF_PAYLOAD);
-        }
+        payload.truncate(Self::SIZE_OF_PAYLOAD);
         let (common_header, data_header): (ShredCommonHeader, _) =
             deserialize_from_with_limit(&payload[..])?;
         if !matches!(common_header.shred_variant, ShredVariant::MerkleData { .. }) {
@@ -583,9 +581,7 @@ impl<'a> ShredTrait<'a> for ShredCode {
         if payload.len() < Self::SIZE_OF_PAYLOAD {
             return Err(Error::InvalidPayloadSize(payload.len()));
         }
-        if payload.len() > Self::SIZE_OF_PAYLOAD {
-            Payload::make_mut(&mut payload).truncate(Self::SIZE_OF_PAYLOAD);
-        }
+        payload.truncate(Self::SIZE_OF_PAYLOAD);
         let shred = Self {
             common_header,
             coding_header,
