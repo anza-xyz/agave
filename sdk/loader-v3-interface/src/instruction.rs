@@ -220,6 +220,7 @@ pub fn write(
     )
 }
 
+#[deprecated(since = "2.2.0", note = "Use loader-v4 instead")]
 #[cfg(feature = "bincode")]
 /// Returns the instructions required to deploy a program with a specified
 /// maximum program length.  The maximum length must be large enough to

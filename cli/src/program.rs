@@ -2472,6 +2472,7 @@ fn do_process_program_deploy(
 
     // Create and add final message
     let final_message = {
+        #[allow(deprecated)]
         let instructions = bpf_loader_upgradeable::deploy_with_max_program_len(
             &fee_payer_signer.pubkey(),
             &program_signers[0].pubkey(),

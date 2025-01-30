@@ -7243,6 +7243,7 @@ fn test_bank_load_program() {
     }
 }
 
+#[allow(deprecated)]
 #[test]
 fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);

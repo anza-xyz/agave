@@ -23,7 +23,7 @@ use {
         },
         loader_utils::{
             create_program, instructions_to_load_program_of_loader_v4, load_program_from_file,
-            load_program_of_loader_v4, load_upgradeable_buffer, load_upgradeable_program,
+            load_program_of_loader_v4, load_upgradeable_buffer,
         },
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -1491,7 +1491,8 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
         TransactionError::ProgramAccountNotFound
     );
 
-    load_upgradeable_program(
+    #[allow(deprecated)]
+    solana_runtime::loader_utils::load_upgradeable_program(
         &bank_client,
         &mint_keypair,
         &buffer_keypair,
@@ -1504,7 +1505,8 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
     let indirect_program_keypair = Keypair::from_base58_string(
         "2BgE4gD5wUCwiAVPYbmWd2xzXSsD9W2fWgNjwmVkm8WL7i51vK9XAXNnX1VB6oKQZmjaUPRd5RzE6RggB9DeKbZC",
     );
-    load_upgradeable_program(
+    #[allow(deprecated)]
+    solana_runtime::loader_utils::load_upgradeable_program(
         &bank_client,
         &mint_keypair,
         &buffer_keypair,
