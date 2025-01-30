@@ -23,7 +23,7 @@ use {
         },
         loader_utils::{
             create_program, instructions_to_load_program_of_loader_v4, load_program_from_file,
-            load_program_of_loader_v4, load_upgradeable_buffer, load_upgradeable_program,
+            load_program_of_loader_v4, load_upgradeable_buffer,
         },
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -1491,7 +1491,8 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
         TransactionError::ProgramAccountNotFound
     );
 
-    load_upgradeable_program(
+    #[allow(deprecated)]
+    solana_runtime::loader_utils::load_upgradeable_program(
         &bank_client,
         &mint_keypair,
         &buffer_keypair,
@@ -1504,7 +1505,8 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
     let indirect_program_keypair = Keypair::from_base58_string(
         "2BgE4gD5wUCwiAVPYbmWd2xzXSsD9W2fWgNjwmVkm8WL7i51vK9XAXNnX1VB6oKQZmjaUPRd5RzE6RggB9DeKbZC",
     );
-    load_upgradeable_program(
+    #[allow(deprecated)]
+    solana_runtime::loader_utils::load_upgradeable_program(
         &bank_client,
         &mint_keypair,
         &buffer_keypair,
@@ -1738,12 +1740,9 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
     let deployment_instruction = deployment_instructions.pop().unwrap();
     let signers: &[&[&Keypair]] = &[
         &[&mint_keypair, &source_program_keypair],
-        &[&mint_keypair, &source_program_keypair, &authority_keypair],
         &[&mint_keypair, &authority_keypair],
     ];
-    let signers = std::iter::once(signers[0])
-        .chain(std::iter::once(signers[1]))
-        .chain(std::iter::repeat(signers[2]));
+    let signers = std::iter::once(signers[0]).chain(std::iter::repeat(signers[1]));
     for (instruction, signers) in deployment_instructions.into_iter().zip(signers) {
         let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
         bank_client
@@ -2065,16 +2064,9 @@ fn test_program_sbf_upgrade() {
     );
     let signers: &[&[&Keypair]] = &[
         &[&mint_keypair, &source_program_keypair],
-        &[
-            &mint_keypair,
-            &source_program_keypair,
-            &new_authority_keypair,
-        ],
         &[&mint_keypair, &new_authority_keypair],
     ];
-    let signers = std::iter::once(signers[0])
-        .chain(std::iter::once(signers[1]))
-        .chain(std::iter::repeat(signers[2]));
+    let signers = std::iter::once(signers[0]).chain(std::iter::repeat(signers[1]));
     for (instruction, signers) in deployment_instructions.into_iter().zip(signers) {
         let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
         bank_client
@@ -2179,16 +2171,9 @@ fn test_program_sbf_upgrade_via_cpi() {
     let mut upgrade_instruction = deployment_instructions.pop().unwrap();
     let signers: &[&[&Keypair]] = &[
         &[&mint_keypair, &source_program_keypair],
-        &[
-            &mint_keypair,
-            &source_program_keypair,
-            &new_authority_keypair,
-        ],
         &[&mint_keypair, &new_authority_keypair],
     ];
-    let signers = std::iter::once(signers[0])
-        .chain(std::iter::once(signers[1]))
-        .chain(std::iter::repeat(signers[2]));
+    let signers = std::iter::once(signers[0]).chain(std::iter::repeat(signers[1]));
     for (instruction, signers) in deployment_instructions.into_iter().zip(signers) {
         let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
         bank_client

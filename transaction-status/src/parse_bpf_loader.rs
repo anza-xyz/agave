@@ -222,6 +222,7 @@ mod test {
         let account_keys = vec![fee_payer, account_pubkey];
         let missing_account_keys = vec![account_pubkey];
 
+        #[allow(deprecated)]
         let instruction =
             solana_loader_v2_interface::write(&account_pubkey, &program_id, offset, bytes.clone());
         let mut message = Message::new(&[instruction], Some(&fee_payer));
@@ -252,6 +253,7 @@ mod test {
         )
         .is_err());
 
+        #[allow(deprecated)]
         let instruction = solana_loader_v2_interface::finalize(&account_pubkey, &program_id);
         let mut message = Message::new(&[instruction], Some(&fee_payer));
         assert_eq!(
@@ -404,6 +406,7 @@ mod test {
             &bpf_loader_upgradeable::id(),
         )
         .0;
+        #[allow(deprecated)]
         let instructions = bpf_loader_upgradeable::deploy_with_max_program_len(
             &payer_address,
             &program_address,

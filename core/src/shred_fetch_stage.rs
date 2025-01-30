@@ -1,14 +1,16 @@
 //! The `shred_fetch_stage` pulls shreds from UDP sockets and sends it to a channel.
 
 use {
-    crate::repair::serve_repair::ServeRepair,
+    crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     itertools::Itertools,
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_gossip::cluster_info::ClusterInfo,
-    solana_ledger::shred::{should_discard_shred, ShredFetchStats},
-    solana_perf::packet::{PacketBatch, PacketBatchRecycler, PacketFlags, PACKETS_PER_BATCH},
+    solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
+    solana_perf::packet::{
+        Packet, PacketBatch, PacketBatchRecycler, PacketFlags, PACKETS_PER_BATCH,
+    },
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT},
@@ -16,6 +18,7 @@ use {
         genesis_config::ClusterType,
         packet::{Meta, PACKET_DATA_SIZE},
         pubkey::Pubkey,
+        signature::Keypair,
     },
     solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
     std::{
@@ -41,6 +44,13 @@ pub(crate) struct ShredFetchStage {
     thread_hdls: Vec<JoinHandle<()>>,
 }
 
+#[derive(Clone)]
+struct RepairContext {
+    repair_socket: Arc<UdpSocket>,
+    cluster_info: Arc<ClusterInfo>,
+    outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+}
+
 impl ShredFetchStage {
     // updates packets received on a channel and sends them on another channel
     fn modify_packets(
@@ -50,15 +60,17 @@ impl ShredFetchStage {
         shred_version: u16,
         name: &'static str,
         flags: PacketFlags,
-        repair_context: Option<(&UdpSocket, &ClusterInfo)>,
+        repair_context: Option<&RepairContext>,
         turbine_disabled: Arc<AtomicBool>,
     ) {
+        // Only repair shreds need repair context.
+        debug_assert_eq!(
+            flags.contains(PacketFlags::REPAIR),
+            repair_context.is_some()
+        );
         const STATS_SUBMIT_CADENCE: Duration = Duration::from_secs(1);
         let mut last_updated = Instant::now();
-        let mut keypair = repair_context
-            .as_ref()
-            .map(|(_, cluster_info)| cluster_info.keypair().clone());
-
+        let mut keypair = repair_context.as_ref().copied().map(RepairContext::keypair);
         let (
             mut last_root,
             mut slots_per_epoch,
@@ -94,23 +106,36 @@ impl ShredFetchStage {
                 epoch_schedule = root_bank.epoch_schedule().clone();
                 last_root = root_bank.slot();
                 slots_per_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
-                keypair = repair_context
-                    .as_ref()
-                    .map(|(_, cluster_info)| cluster_info.keypair().clone());
+                keypair = repair_context.as_ref().copied().map(RepairContext::keypair);
             }
             stats.shred_count += packet_batch.len();
 
-            if let Some((udp_socket, _)) = repair_context {
+            if let Some(repair_context) = repair_context {
                 debug_assert_eq!(flags, PacketFlags::REPAIR);
                 debug_assert!(keypair.is_some());
                 if let Some(ref keypair) = keypair {
                     ServeRepair::handle_repair_response_pings(
-                        udp_socket,
+                        &repair_context.repair_socket,
                         keypair,
                         &mut packet_batch,
                         &mut stats,
                     );
                 }
+                // Discard packets if repair nonce does not verify.
+                let now = solana_sdk::timing::timestamp();
+                let mut outstanding_repair_requests =
+                    repair_context.outstanding_repair_requests.write().unwrap();
+                packet_batch
+                    .iter_mut()
+                    .filter(|packet| !packet.meta().discard())
+                    .for_each(|packet| {
+                        // Have to set repair flag here so that the nonce is
+                        // taken off the shred's payload.
+                        packet.meta_mut().flags |= PacketFlags::REPAIR;
+                        if !verify_repair_nonce(packet, now, &mut outstanding_repair_requests) {
+                            packet.meta_mut().set_discard(true);
+                        }
+                    });
             }
 
             // Filter out shreds that are way too far in the future to avoid the
@@ -161,7 +186,7 @@ impl ShredFetchStage {
         shred_version: u16,
         name: &'static str,
         flags: PacketFlags,
-        repair_context: Option<(Arc<UdpSocket>, Arc<ClusterInfo>)>,
+        repair_context: Option<RepairContext>,
         turbine_disabled: Arc<AtomicBool>,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
         let (packet_sender, packet_receiver) = unbounded();
@@ -186,9 +211,6 @@ impl ShredFetchStage {
         let modifier_hdl = Builder::new()
             .name(modifier_thread_name.to_string())
             .spawn(move || {
-                let repair_context = repair_context
-                    .as_ref()
-                    .map(|(socket, cluster_info)| (socket.as_ref(), cluster_info.as_ref()));
                 Self::modify_packets(
                     packet_receiver,
                     sender,
@@ -196,7 +218,7 @@ impl ShredFetchStage {
                     shred_version,
                     name,
                     flags,
-                    repair_context,
+                    repair_context.as_ref(),
                     turbine_disabled,
                 )
             })
@@ -214,10 +236,16 @@ impl ShredFetchStage {
         shred_version: u16,
         bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: Arc<ClusterInfo>,
+        outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         turbine_disabled: Arc<AtomicBool>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let recycler = PacketBatchRecycler::warmed(100, 1024);
+        let repair_context = RepairContext {
+            repair_socket: repair_socket.clone(),
+            cluster_info,
+            outstanding_repair_requests,
+        };
 
         let (mut tvu_threads, tvu_filter) = Self::packet_modifier(
             "solRcvrShred",
@@ -237,7 +265,7 @@ impl ShredFetchStage {
         let (repair_receiver, repair_handler) = Self::packet_modifier(
             "solRcvrShredRep",
             "solTvuRepPktMod",
-            vec![repair_socket.clone()],
+            vec![repair_socket],
             exit.clone(),
             sender.clone(),
             recycler.clone(),
@@ -245,7 +273,7 @@ impl ShredFetchStage {
             shred_version,
             "shred_fetch_repair",
             PacketFlags::REPAIR,
-            Some((repair_socket, cluster_info)),
+            Some(repair_context.clone()),
             turbine_disabled.clone(),
         );
 
@@ -283,7 +311,8 @@ impl ShredFetchStage {
                             shred_version,
                             "shred_fetch_repair_quic",
                             PacketFlags::REPAIR,
-                            None, // repair_context; no ping packets!
+                            // No ping packets but need to verify repair nonce.
+                            Some(&repair_context),
                             turbine_disabled,
                         )
                     })
@@ -332,6 +361,28 @@ impl ShredFetchStage {
         }
         Ok(())
     }
+}
+
+impl RepairContext {
+    fn keypair(&self) -> Arc<Keypair> {
+        self.cluster_info.keypair().clone()
+    }
+}
+
+// Returns false if repair nonce is invalid and packet should be discarded.
+#[must_use]
+fn verify_repair_nonce(
+    packet: &Packet,
+    now: u64, // solana_sdk::timing::timestamp()
+    outstanding_repair_requests: &mut OutstandingShredRepairs,
+) -> bool {
+    debug_assert!(packet.meta().flags.contains(PacketFlags::REPAIR));
+    let Some((shred, Some(nonce))) = shred::layout::get_shred_and_repair_nonce(packet) else {
+        return false;
+    };
+    outstanding_repair_requests
+        .register_response(nonce, shred, now, |_| ())
+        .is_some()
 }
 
 pub(crate) fn receive_quic_datagrams(

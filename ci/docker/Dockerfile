@@ -4,10 +4,10 @@ FROM ${BASE_IMAGE}
 ARG \
   RUST_VERSION= \
   RUST_NIGHTLY_VERSION= \
-  GOLANG_VERSION=1.21.3 \
-  NODE_MAJOR=18 \
-  SCCACHE_VERSION=v0.9.1 \
-  GRCOV_VERSION=v0.8.18
+  GOLANG_VERSION= \
+  NODE_MAJOR= \
+  SCCACHE_VERSION= \
+  GRCOV_VERSION=
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -27,6 +27,10 @@ ENV \
 RUN \
   if [ -z "$RUST_VERSION" ]; then echo "ERROR: The RUST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$RUST_NIGHTLY_VERSION" ]; then echo "ERROR: The RUST_NIGHTLY_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$GOLANG_VERSION" ]; then echo "ERROR: The GOLANG_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$NODE_MAJOR" ]; then echo "ERROR: The NODE_MAJOR argument is required!" && exit 1; fi && \
+  if [ -z "$SCCACHE_VERSION" ]; then echo "ERROR: The SCCACHE_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$GRCOV_VERSION" ]; then echo "ERROR: The GRCOV_VERSION argument is required!" && exit 1; fi && \
   apt-get update && \
   apt-get install --no-install-recommends -y \
   # basic

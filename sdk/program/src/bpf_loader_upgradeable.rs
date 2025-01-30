@@ -1,4 +1,5 @@
 #[deprecated(since = "2.2.0", note = "Use solana-loader-v3-interface instead")]
+#[allow(deprecated)]
 pub use solana_loader_v3_interface::{
     get_program_data_address,
     instruction::{

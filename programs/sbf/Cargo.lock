@@ -7430,13 +7430,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-sbf-rust-finalize"
-version = "2.2.0"
-dependencies = [
- "solana-program",
-]
-
-[[package]]
 name = "solana-sbf-rust-get-minimum-delegation"
 version = "2.2.0"
 dependencies = [

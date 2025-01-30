@@ -78,9 +78,7 @@ impl<'a> Shred<'a> for ShredData {
         if payload.len() < Self::SIZE_OF_HEADERS {
             return Err(Error::InvalidPayloadSize(payload.len()));
         }
-        if payload.len() != Self::SIZE_OF_PAYLOAD {
-            Payload::make_mut(&mut payload).resize(Self::SIZE_OF_PAYLOAD, 0u8);
-        }
+        payload.resize(Self::SIZE_OF_PAYLOAD, 0u8);
         let shred = Self {
             common_header,
             data_header,
@@ -146,9 +144,7 @@ impl<'a> Shred<'a> for ShredCode {
         let coding_header = deserialize_from_with_limit(&mut cursor)?;
         // Repair packets have nonce at the end of packet payload:
         // https://github.com/solana-labs/solana/pull/10109
-        if payload.len() > Self::SIZE_OF_PAYLOAD {
-            Payload::make_mut(&mut payload).truncate(Self::SIZE_OF_PAYLOAD);
-        }
+        payload.truncate(Self::SIZE_OF_PAYLOAD);
         let shred = Self {
             common_header,
             coding_header,
@@ -368,7 +364,7 @@ mod test {
         // Corrupt shred by making it too large
         {
             let mut shred = shred.clone();
-            Payload::make_mut(&mut shred.payload).push(10u8);
+            shred.payload.push(10u8);
             assert_matches!(shred.sanitize(), Err(Error::InvalidPayloadSize(1229)));
         }
         {
