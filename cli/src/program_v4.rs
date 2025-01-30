@@ -28,11 +28,14 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_instruction::Instruction,
-    solana_message::Message,
-    solana_program::loader_v4::{
-        self, LoaderV4State,
-        LoaderV4Status::{self, Retracted},
+    solana_loader_v4_interface::{
+        instruction,
+        state::{
+            LoaderV4State,
+            LoaderV4Status::{self, Retracted},
+        },
     },
+    solana_message::Message,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -43,7 +46,7 @@ use {
         request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
-    solana_sdk_ids::system_program,
+    solana_sdk_ids::{loader_v4, system_program},
     solana_signer::Signer,
     solana_system_interface::{
         error::SystemError, instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH,
@@ -655,7 +658,7 @@ pub fn process_deploy_program(
         if buffer_account.is_none() {
             // Create and add create_buffer message
             initial_messages.push(Message::new_with_blockhash(
-                &loader_v4::create_buffer(
+                &instruction::create_buffer(
                     &payer_pubkey,
                     &buffer_address,
                     lamports_required,
@@ -708,7 +711,7 @@ pub fn process_deploy_program(
     // Create and add write messages
     let mut write_messages = vec![];
     let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let instruction = loader_v4::write(&buffer_address, &authority_pubkey, offset, bytes);
+        let instruction = instruction::write(&buffer_address, &authority_pubkey, offset, bytes);
         Message::new_with_blockhash(&[instruction], Some(&payer_pubkey), &blockhash)
     };
     let chunk_size = calculate_max_chunk_size(&create_msg);
@@ -729,7 +732,7 @@ pub fn process_deploy_program(
         if let Some(retract_instruction) = retract_instruction {
             instructions.push(retract_instruction);
         }
-        instructions.push(loader_v4::deploy_from_source(
+        instructions.push(instruction::deploy_from_source(
             program_address,
             &authority_pubkey,
             &buffer_address,
@@ -748,7 +751,7 @@ pub fn process_deploy_program(
             );
         }
         Message::new_with_blockhash(
-            &[loader_v4::deploy(program_address, &authority_pubkey)],
+            &[instruction::deploy(program_address, &authority_pubkey)],
             Some(&payer_pubkey),
             &blockhash,
         )
@@ -812,7 +815,7 @@ fn process_undeploy_program(
     };
 
     let set_program_length_instruction =
-        loader_v4::set_program_length(program_address, &authority_pubkey, 0, &payer_pubkey);
+        instruction::set_program_length(program_address, &authority_pubkey, 0, &payer_pubkey);
 
     initial_messages.push(Message::new_with_blockhash(
         &[set_program_length_instruction],
@@ -852,7 +855,7 @@ fn process_transfer_authority_of_program(
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
 
     let message = [Message::new_with_blockhash(
-        &[loader_v4::transfer_authority(
+        &[instruction::transfer_authority(
             program_address,
             &authority_pubkey,
             &new_authority.pubkey(),
@@ -892,7 +895,7 @@ fn process_finalize_program(
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
 
     let message = [Message::new_with_blockhash(
-        &[loader_v4::finalize(
+        &[instruction::finalize(
             program_address,
             &authority_pubkey,
             &next_version.pubkey(),
@@ -1173,7 +1176,7 @@ fn build_retract_instruction(
 
         match status {
             Retracted => Ok(None),
-            LoaderV4Status::Deployed => Ok(Some(loader_v4::retract(buffer_address, authority))),
+            LoaderV4Status::Deployed => Ok(Some(instruction::retract(buffer_address, authority))),
             LoaderV4Status::Finalized => Err("Program is immutable".into()),
         }
     } else {
@@ -1217,7 +1220,7 @@ fn build_set_program_length_instructions(
         }
     }
 
-    let set_program_length_instruction = loader_v4::set_program_length(
+    let set_program_length_instruction = instruction::set_program_length(
         buffer_address,
         &authority_pubkey,
         program_data_length,
