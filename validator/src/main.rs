@@ -404,7 +404,7 @@ fn validators_set(
             .into_iter()
             .collect();
         if validators_set.contains(identity_pubkey) {
-            eprintln!("The validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}");
+            error!("The validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}");
             exit(1);
         }
         Some(validators_set)
@@ -421,8 +421,8 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
     };
     for entrypoint in entrypoints {
         match solana_net_utils::get_cluster_shred_version_with_binding(entrypoint, bind_address) {
-            Err(err) => eprintln!("get_cluster_shred_version failed: {entrypoint}, {err}"),
-            Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
+            Err(err) => error!("get_cluster_shred_version failed: {entrypoint}, {err}"),
+            Ok(0) => error!("entrypoint {entrypoint} returned shred-version zero"),
             Ok(shred_version) => {
                 info!(
                     "obtained shred-version {} from {}",
@@ -898,21 +898,6 @@ pub fn main() {
         _ => unreachable!(),
     };
 
-    let cli::thread_args::NumThreadConfig {
-        accounts_db_clean_threads,
-        accounts_db_foreground_threads,
-        accounts_db_hash_threads,
-        accounts_index_flush_threads,
-        ip_echo_server_threads,
-        rayon_global_threads,
-        replay_forks_threads,
-        replay_transactions_threads,
-        rocksdb_compaction_threads,
-        rocksdb_flush_threads,
-        tvu_receive_threads,
-        tvu_sigverify_threads,
-    } = cli::thread_args::parse_num_threads_args(&matches);
-
     let identity_keypair = keypair_of(&matches, "identity").unwrap_or_else(|| {
         clap::Error::with_description(
             "The --identity <KEYPAIR> argument is required",
@@ -936,6 +921,21 @@ pub fn main() {
     };
     let use_progress_bar = logfile.is_none();
     let _logger_thread = redirect_stderr_to_file(logfile);
+
+    let cli::thread_args::NumThreadConfig {
+        accounts_db_clean_threads,
+        accounts_db_foreground_threads,
+        accounts_db_hash_threads,
+        accounts_index_flush_threads,
+        ip_echo_server_threads,
+        rayon_global_threads,
+        replay_forks_threads,
+        replay_transactions_threads,
+        rocksdb_compaction_threads,
+        rocksdb_flush_threads,
+        tvu_receive_threads,
+        tvu_sigverify_threads,
+    } = cli::thread_args::parse_num_threads_args(&matches);
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
@@ -1001,7 +1001,7 @@ pub fn main() {
     // Canonicalize ledger path to avoid issues with symlink creation
     let ledger_path = create_and_canonicalize_directories([&ledger_path])
         .unwrap_or_else(|err| {
-            eprintln!(
+            error!(
                 "Unable to access ledger path '{}': {err}",
                 ledger_path.display(),
             );
@@ -1020,7 +1020,7 @@ pub fn main() {
             None => DEFAULT_MAX_LEDGER_SHREDS,
         };
         if limit_ledger_size < DEFAULT_MIN_MAX_LEDGER_SHREDS {
-            eprintln!(
+            error!(
                 "The provided --limit-ledger-size value was too small, the minimum value is \
                  {DEFAULT_MIN_MAX_LEDGER_SHREDS}"
             );
@@ -1067,7 +1067,7 @@ pub fn main() {
         .unwrap_or_else(|| ledger_path.join(AccountsDb::DEFAULT_ACCOUNTS_HASH_CACHE_DIR));
     let accounts_hash_cache_path = create_and_canonicalize_directories([&accounts_hash_cache_path])
         .unwrap_or_else(|err| {
-            eprintln!(
+            error!(
                 "Unable to access accounts hash cache path '{}': {err}",
                 accounts_hash_cache_path.display(),
             );
@@ -1143,7 +1143,7 @@ pub fn main() {
 
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
     if !(0.0..=1.0).contains(&shrink_ratio) {
-        eprintln!(
+        error!(
             "The specified account-shrink-ratio is invalid, it must be between 0. and 1.0 \
              inclusive: {shrink_ratio}"
         );
@@ -1160,7 +1160,7 @@ pub fn main() {
         .into_iter()
         .map(|entrypoint| {
             solana_net_utils::parse_host_port(&entrypoint).unwrap_or_else(|e| {
-                eprintln!("failed to parse entrypoint address: {e}");
+                error!("failed to parse entrypoint address: {e}");
                 exit(1);
             })
         })
@@ -1169,7 +1169,7 @@ pub fn main() {
         .collect::<Vec<_>>();
     for addr in &entrypoint_addrs {
         if !socket_addr_space.check(addr) {
-            eprintln!("invalid entrypoint address: {addr}");
+            error!("invalid entrypoint address: {addr}");
             exit(1);
         }
     }
@@ -1199,7 +1199,7 @@ pub fn main() {
 
                 let read = |file| {
                     fs::read(&file).unwrap_or_else(|err| {
-                        eprintln!("Unable to read {file}: {err}");
+                        error!("Unable to read {file}: {err}");
                         exit(1)
                     })
                 };
@@ -1214,7 +1214,7 @@ pub fn main() {
                 Arc::new(
                     tower_storage::EtcdTowerStorage::new(endpoints, Some(tls_config))
                         .unwrap_or_else(|err| {
-                            eprintln!("Failed to connect to etcd: {err}");
+                            error!("Failed to connect to etcd: {err}");
                             exit(1);
                         }),
                 )
@@ -1264,14 +1264,14 @@ pub fn main() {
             .ok();
     let account_shrink_paths = account_shrink_paths.as_ref().map(|paths| {
         create_and_canonicalize_directories(paths).unwrap_or_else(|err| {
-            eprintln!("Unable to access account shrink path: {err}");
+            error!("Unable to access account shrink path: {err}");
             exit(1);
         })
     });
     let (account_shrink_run_paths, account_shrink_snapshot_paths) = account_shrink_paths
         .map(|paths| {
             create_all_accounts_run_and_snapshot_dirs(&paths).unwrap_or_else(|err| {
-                eprintln!("Error: {err}");
+                error!("Error: {err}");
                 exit(1);
             })
         })
@@ -1412,7 +1412,7 @@ pub fn main() {
         value_t_or_exit!(matches, "rpc_send_transaction_batch_ms", u64);
 
     if rpc_send_batch_send_rate_ms > rpc_send_retry_rate_ms {
-        eprintln!(
+        error!(
             "The specified rpc-send-batch-ms ({rpc_send_batch_send_rate_ms}) is invalid, it must \
              be <= rpc-send-retry-ms ({rpc_send_retry_rate_ms})"
         );
@@ -1421,7 +1421,7 @@ pub fn main() {
 
     let tps = rpc_send_batch_size as u64 * MILLIS_PER_SECOND / rpc_send_batch_send_rate_ms;
     if tps > send_transaction_service::MAX_TRANSACTION_SENDS_PER_SECOND {
-        eprintln!(
+        error!(
             "Either the specified rpc-send-batch-size ({}) or rpc-send-batch-ms ({}) is invalid, \
              'rpc-send-batch-size * 1000 / rpc-send-batch-ms' must be smaller than ({}) .",
             rpc_send_batch_size,
@@ -1439,7 +1439,7 @@ pub fn main() {
         })
         .transpose()
         .unwrap_or_else(|e| {
-            eprintln!("failed to parse rpc send-transaction-service tpu peer address: {e}");
+            error!("failed to parse rpc send-transaction-service tpu peer address: {e}");
             exit(1);
         });
     let rpc_send_transaction_also_leader = matches.is_present("rpc_send_transaction_also_leader");
@@ -1627,13 +1627,13 @@ pub fn main() {
             vec![ledger_path.join("accounts")]
         };
     let account_paths = create_and_canonicalize_directories(account_paths).unwrap_or_else(|err| {
-        eprintln!("Unable to access account path: {err}");
+        error!("Unable to access account path: {err}");
         exit(1);
     });
 
     let (account_run_paths, account_snapshot_paths) =
         create_all_accounts_run_and_snapshot_dirs(&account_paths).unwrap_or_else(|err| {
-            eprintln!("Error: {err}");
+            error!("Error: {err}");
             exit(1);
         });
 
@@ -1672,7 +1672,7 @@ pub fn main() {
         &ledger_path
     };
     let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).unwrap_or_else(|err| {
-        eprintln!(
+        error!(
             "Failed to create snapshots directory '{}': {err}",
             snapshots_dir.display(),
         );
@@ -1683,7 +1683,7 @@ pub fn main() {
         .iter()
         .any(|account_path| account_path == &snapshots_dir)
     {
-        eprintln!(
+        error!(
             "Failed: The --accounts and --snapshots paths must be unique since they \
              both create 'snapshots' subdirectories, otherwise there may be collisions",
         );
@@ -1692,7 +1692,7 @@ pub fn main() {
 
     let bank_snapshots_dir = snapshots_dir.join("snapshots");
     fs::create_dir_all(&bank_snapshots_dir).unwrap_or_else(|err| {
-        eprintln!(
+        error!(
             "Failed to create bank snapshots directory '{}': {err}",
             bank_snapshots_dir.display(),
         );
@@ -1706,7 +1706,7 @@ pub fn main() {
             snapshots_dir.clone()
         };
     fs::create_dir_all(&full_snapshot_archives_dir).unwrap_or_else(|err| {
-        eprintln!(
+        error!(
             "Failed to create full snapshot archives directory '{}': {err}",
             full_snapshot_archives_dir.display(),
         );
@@ -1721,7 +1721,7 @@ pub fn main() {
         snapshots_dir.clone()
     };
     fs::create_dir_all(&incremental_snapshot_archives_dir).unwrap_or_else(|err| {
-        eprintln!(
+        error!(
             "Failed to create incremental snapshot archives directory '{}': {err}",
             incremental_snapshot_archives_dir.display(),
         );
@@ -1744,7 +1744,7 @@ pub fn main() {
             .value_of("snapshot_version")
             .map_or(SnapshotVersion::default(), |s| {
                 s.parse::<SnapshotVersion>().unwrap_or_else(|err| {
-                    eprintln!("Error: {err}");
+                    error!("Error: {err}");
                     exit(1)
                 })
             });
@@ -1876,7 +1876,7 @@ pub fn main() {
 
     let public_rpc_addr = matches.value_of("public_rpc_addr").map(|addr| {
         solana_net_utils::parse_host_port(addr).unwrap_or_else(|e| {
-            eprintln!("failed to parse public rpc address: {e}");
+            error!("failed to parse public rpc address: {e}");
             exit(1);
         })
     });
@@ -1885,7 +1885,7 @@ pub fn main() {
         if SystemMonitorService::check_os_network_limits() {
             info!("OS network limits test passed.");
         } else {
-            eprintln!("OS network limit test failed. See: https://docs.solanalabs.com/operations/guides/validator-start#system-tuning");
+            error!("OS network limit test failed. See: https://docs.solanalabs.com/operations/guides/validator-start#system-tuning");
             exit(1);
         }
     }
@@ -1921,7 +1921,7 @@ pub fn main() {
         .value_of("gossip_host")
         .map(|gossip_host| {
             solana_net_utils::parse_host(gossip_host).unwrap_or_else(|err| {
-                eprintln!("Failed to parse --gossip-host: {err}");
+                error!("Failed to parse --gossip-host: {err}");
                 exit(1);
             })
         })
@@ -1939,7 +1939,7 @@ pub fn main() {
                     solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_address)
                         .map_or_else(
                             |err| {
-                                eprintln!(
+                                error!(
                                     "Failed to contact cluster entrypoint {entrypoint_addr}: {err}"
                                 );
                                 None
@@ -1949,7 +1949,7 @@ pub fn main() {
                 });
 
                 gossip_host.unwrap_or_else(|| {
-                    eprintln!("Unable to determine the validator's public IP address");
+                    error!("Unable to determine the validator's public IP address");
                     exit(1);
                 })
             } else {
@@ -1962,7 +1962,7 @@ pub fn main() {
         value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {
             solana_net_utils::find_available_port_in_range(bind_address, (0, 1)).unwrap_or_else(
                 |err| {
-                    eprintln!("Unable to find an available gossip port: {err}");
+                    error!("Unable to find an available gossip port: {err}");
                     exit(1);
                 },
             )
@@ -1971,7 +1971,7 @@ pub fn main() {
 
     let public_tpu_addr = matches.value_of("public_tpu_addr").map(|public_tpu_addr| {
         solana_net_utils::parse_host_port(public_tpu_addr).unwrap_or_else(|err| {
-            eprintln!("Failed to parse --public-tpu-address: {err}");
+            error!("Failed to parse --public-tpu-address: {err}");
             exit(1);
         })
     });
@@ -1981,7 +1981,7 @@ pub fn main() {
             .value_of("public_tpu_forwards_addr")
             .map(|public_tpu_forwards_addr| {
                 solana_net_utils::parse_host_port(public_tpu_forwards_addr).unwrap_or_else(|err| {
-                    eprintln!("Failed to parse --public-tpu-forwards-address: {err}");
+                    error!("Failed to parse --public-tpu-forwards-address: {err}");
                     exit(1);
                 })
             });
