@@ -405,7 +405,7 @@ fn validators_set(
             .collect();
         if validators_set.contains(identity_pubkey) {
             error!("The validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}");
-            exit(1);
+            report_startup_failure_and_exit(1);
         }
         Some(validators_set)
     } else {
@@ -922,6 +922,9 @@ pub fn main() {
     let use_progress_bar = logfile.is_none();
     let _logger_thread = redirect_stderr_to_file(logfile);
 
+    info!("{} {}", crate_name!(), solana_version);
+    info!("Starting validator with: {:#?}", std::env::args_os());
+
     let cli::thread_args::NumThreadConfig {
         accounts_db_clean_threads,
         accounts_db_foreground_threads,
@@ -936,9 +939,6 @@ pub fn main() {
         tvu_receive_threads,
         tvu_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(&matches);
-
-    info!("{} {}", crate_name!(), solana_version);
-    info!("Starting validator with: {:#?}", std::env::args_os());
 
     let cuda = matches.is_present("cuda");
     if cuda {
@@ -965,11 +965,7 @@ pub fn main() {
             None => StakedNodesOverrides::default(),
             Some(p) => load_staked_nodes_overrides(p).unwrap_or_else(|err| {
                 error!("Failed to load stake-nodes-overrides from {}: {}", p, err);
-                clap::Error::with_description(
-                    "Failed to load configuration of stake-nodes-overrides argument",
-                    clap::ErrorKind::InvalidValue,
-                )
-                .exit()
+                report_startup_failure_and_exit(1);
             }),
         }
         .staked_map_id,
@@ -1005,7 +1001,7 @@ pub fn main() {
                 "Unable to access ledger path '{}': {err}",
                 ledger_path.display(),
             );
-            exit(1);
+            report_startup_failure_and_exit(1);
         })
         .pop()
         .unwrap();
@@ -1024,7 +1020,7 @@ pub fn main() {
                 "The provided --limit-ledger-size value was too small, the minimum value is \
                  {DEFAULT_MIN_MAX_LEDGER_SHREDS}"
             );
-            exit(1);
+            report_startup_failure_and_exit(1);
         }
         Some(limit_ledger_size)
     } else {
@@ -1071,7 +1067,7 @@ pub fn main() {
                 "Unable to access accounts hash cache path '{}': {err}",
                 accounts_hash_cache_path.display(),
             );
-            exit(1);
+            report_startup_failure_and_exit(1);
         })
         .pop()
         .unwrap();
@@ -1147,7 +1143,7 @@ pub fn main() {
             "The specified account-shrink-ratio is invalid, it must be between 0. and 1.0 \
              inclusive: {shrink_ratio}"
         );
-        exit(1);
+        report_startup_failure_and_exit(1);
     }
 
     let shrink_ratio = if accounts_shrink_optimize_total_space {
@@ -1161,7 +1157,7 @@ pub fn main() {
         .map(|entrypoint| {
             solana_net_utils::parse_host_port(&entrypoint).unwrap_or_else(|e| {
                 error!("failed to parse entrypoint address: {e}");
-                exit(1);
+                report_startup_failure_and_exit(1);
             })
         })
         .collect::<HashSet<_>>()
@@ -1170,7 +1166,7 @@ pub fn main() {
     for addr in &entrypoint_addrs {
         if !socket_addr_space.check(addr) {
             error!("invalid entrypoint address: {addr}");
-            exit(1);
+            report_startup_failure_and_exit(1);
         }
     }
     // TODO: Once entrypoints are updated to return shred-version, this should
@@ -1200,7 +1196,7 @@ pub fn main() {
                 let read = |file| {
                     fs::read(&file).unwrap_or_else(|err| {
                         error!("Unable to read {file}: {err}");
-                        exit(1)
+                        report_startup_failure_and_exit(1);
                     })
                 };
 
@@ -1215,7 +1211,7 @@ pub fn main() {
                     tower_storage::EtcdTowerStorage::new(endpoints, Some(tls_config))
                         .unwrap_or_else(|err| {
                             error!("Failed to connect to etcd: {err}");
-                            exit(1);
+                            report_startup_failure_and_exit(1);
                         }),
                 )
             }
@@ -1265,14 +1261,14 @@ pub fn main() {
     let account_shrink_paths = account_shrink_paths.as_ref().map(|paths| {
         create_and_canonicalize_directories(paths).unwrap_or_else(|err| {
             error!("Unable to access account shrink path: {err}");
-            exit(1);
+            report_startup_failure_and_exit(1);
         })
     });
     let (account_shrink_run_paths, account_shrink_snapshot_paths) = account_shrink_paths
         .map(|paths| {
             create_all_accounts_run_and_snapshot_dirs(&paths).unwrap_or_else(|err| {
                 error!("Error: {err}");
-                exit(1);
+                report_startup_failure_and_exit(1);
             })
         })
         .unzip();
@@ -1416,7 +1412,7 @@ pub fn main() {
             "The specified rpc-send-batch-ms ({rpc_send_batch_send_rate_ms}) is invalid, it must \
              be <= rpc-send-retry-ms ({rpc_send_retry_rate_ms})"
         );
-        exit(1);
+        report_startup_failure_and_exit(1);
     }
 
     let tps = rpc_send_batch_size as u64 * MILLIS_PER_SECOND / rpc_send_batch_send_rate_ms;
@@ -1428,7 +1424,7 @@ pub fn main() {
             rpc_send_batch_send_rate_ms,
             send_transaction_service::MAX_TRANSACTION_SENDS_PER_SECOND
         );
-        exit(1);
+        report_startup_failure_and_exit(1);
     }
     let rpc_send_transaction_tpu_peers = matches
         .values_of("rpc_send_transaction_tpu_peer")
@@ -1440,7 +1436,7 @@ pub fn main() {
         .transpose()
         .unwrap_or_else(|e| {
             error!("failed to parse rpc send-transaction-service tpu peer address: {e}");
-            exit(1);
+            report_startup_failure_and_exit(1);
         });
     let rpc_send_transaction_also_leader = matches.is_present("rpc_send_transaction_also_leader");
     let leader_forward_count =
@@ -1628,13 +1624,13 @@ pub fn main() {
         };
     let account_paths = create_and_canonicalize_directories(account_paths).unwrap_or_else(|err| {
         error!("Unable to access account path: {err}");
-        exit(1);
+        report_startup_failure_and_exit(1);
     });
 
     let (account_run_paths, account_snapshot_paths) =
         create_all_accounts_run_and_snapshot_dirs(&account_paths).unwrap_or_else(|err| {
             error!("Error: {err}");
-            exit(1);
+            report_startup_failure_and_exit(1);
         });
 
     // From now on, use run/ paths in the same way as the previous account_paths.
@@ -1676,7 +1672,7 @@ pub fn main() {
             "Failed to create snapshots directory '{}': {err}",
             snapshots_dir.display(),
         );
-        exit(1);
+        report_startup_failure_and_exit(1);
     });
 
     if account_paths
@@ -1687,7 +1683,7 @@ pub fn main() {
             "Failed: The --accounts and --snapshots paths must be unique since they \
              both create 'snapshots' subdirectories, otherwise there may be collisions",
         );
-        exit(1);
+        report_startup_failure_and_exit(1);
     }
 
     let bank_snapshots_dir = snapshots_dir.join("snapshots");
@@ -1696,7 +1692,7 @@ pub fn main() {
             "Failed to create bank snapshots directory '{}': {err}",
             bank_snapshots_dir.display(),
         );
-        exit(1);
+        report_startup_failure_and_exit(1);
     });
 
     let full_snapshot_archives_dir =
@@ -1710,7 +1706,7 @@ pub fn main() {
             "Failed to create full snapshot archives directory '{}': {err}",
             full_snapshot_archives_dir.display(),
         );
-        exit(1);
+        report_startup_failure_and_exit(1);
     });
 
     let incremental_snapshot_archives_dir = if let Some(incremental_snapshot_archive_path) =
@@ -1725,7 +1721,7 @@ pub fn main() {
             "Failed to create incremental snapshot archives directory '{}': {err}",
             incremental_snapshot_archives_dir.display(),
         );
-        exit(1);
+        report_startup_failure_and_exit(1);
     });
 
     let archive_format = {
@@ -1745,7 +1741,7 @@ pub fn main() {
             .map_or(SnapshotVersion::default(), |s| {
                 s.parse::<SnapshotVersion>().unwrap_or_else(|err| {
                     error!("Error: {err}");
-                    exit(1)
+                    report_startup_failure_and_exit(1)
                 })
             });
 
@@ -1848,7 +1844,7 @@ pub fn main() {
              \n\t- full snapshot interval MUST be larger than incremental snapshot interval \
              (if enabled)",
         );
-        exit(1);
+        report_startup_failure_and_exit(1);
     }
 
     configure_banking_trace_dir_byte_limit(&mut validator_config, &matches);
@@ -1877,7 +1873,7 @@ pub fn main() {
     let public_rpc_addr = matches.value_of("public_rpc_addr").map(|addr| {
         solana_net_utils::parse_host_port(addr).unwrap_or_else(|e| {
             error!("failed to parse public rpc address: {e}");
-            exit(1);
+            report_startup_failure_and_exit(1);
         })
     });
 
@@ -1886,7 +1882,7 @@ pub fn main() {
             info!("OS network limits test passed.");
         } else {
             error!("OS network limit test failed. See: https://docs.solanalabs.com/operations/guides/validator-start#system-tuning");
-            exit(1);
+            report_startup_failure_and_exit(1);
         }
     }
 
@@ -1922,7 +1918,7 @@ pub fn main() {
         .map(|gossip_host| {
             solana_net_utils::parse_host(gossip_host).unwrap_or_else(|err| {
                 error!("Failed to parse --gossip-host: {err}");
-                exit(1);
+                report_startup_failure_and_exit(1);
             })
         })
         .unwrap_or_else(|| {
@@ -1950,7 +1946,7 @@ pub fn main() {
 
                 gossip_host.unwrap_or_else(|| {
                     error!("Unable to determine the validator's public IP address");
-                    exit(1);
+                    report_startup_failure_and_exit(1);
                 })
             } else {
                 IpAddr::V4(Ipv4Addr::LOCALHOST)
@@ -1963,7 +1959,7 @@ pub fn main() {
             solana_net_utils::find_available_port_in_range(bind_address, (0, 1)).unwrap_or_else(
                 |err| {
                     error!("Unable to find an available gossip port: {err}");
-                    exit(1);
+                    report_startup_failure_and_exit(1);
                 },
             )
         }),
@@ -1972,7 +1968,7 @@ pub fn main() {
     let public_tpu_addr = matches.value_of("public_tpu_addr").map(|public_tpu_addr| {
         solana_net_utils::parse_host_port(public_tpu_addr).unwrap_or_else(|err| {
             error!("Failed to parse --public-tpu-address: {err}");
-            exit(1);
+            report_startup_failure_and_exit(1);
         })
     });
 
@@ -1982,7 +1978,7 @@ pub fn main() {
             .map(|public_tpu_forwards_addr| {
                 solana_net_utils::parse_host_port(public_tpu_forwards_addr).unwrap_or_else(|err| {
                     error!("Failed to parse --public-tpu-forwards-address: {err}");
-                    exit(1);
+                    report_startup_failure_and_exit(1);
                 })
             });
 
@@ -2023,7 +2019,7 @@ pub fn main() {
     if restricted_repair_only_mode {
         if validator_config.wen_restart_proto_path.is_some() {
             error!("--restricted-repair-only-mode is not compatible with --wen_restart");
-            exit(1);
+            report_startup_failure_and_exit(1);
         }
 
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports
@@ -2159,11 +2155,11 @@ pub fn main() {
         Err(err) => match err.downcast_ref() {
             Some(ValidatorError::WenRestartFinished) => {
                 error!("Please remove --wen_restart and use --wait_for_supermajority as instructed above");
-                exit(200);
+                report_startup_failure_and_exit(200);
             }
             _ => {
                 error!("Failed to start validator: {:?}", err);
-                exit(1);
+                report_startup_failure_and_exit(1);
             }
         },
     };
@@ -2171,7 +2167,7 @@ pub fn main() {
     if let Some(filename) = init_complete_file {
         File::create(filename).unwrap_or_else(|_| {
             error!("Unable to create: {}", filename);
-            exit(1);
+            report_startup_failure_and_exit(1);
         });
     }
     info!("Validator initialized");
@@ -2226,4 +2222,9 @@ fn process_account_indexes(matches: &ArgMatches) -> AccountSecondaryIndexes {
         keys,
         indexes: account_indexes,
     }
+}
+
+fn report_startup_failure_and_exit(code: i32) -> ! {
+    println!("Startup sequence failed!");
+    exit(code);
 }
