@@ -1316,6 +1316,17 @@ fn process_program_deploy(
         fetch_feature_set(&rpc_client)?
     };
 
+    if !skip_feature_verification {
+        if feature_set.is_active(&solana_feature_set::enable_loader_v4::id()) {
+            warn!("Loader-v4 is available now. Please migrate your program.");
+        }
+        if do_initial_deploy
+            && feature_set.is_active(&solana_feature_set::disable_new_loader_v3_deployments::id())
+        {
+            return Err("No new programs can be deployed on loader-v3. Please use the program-v4 subcommand instead.".into());
+        }
+    }
+
     let (program_data, program_len, buffer_program_data) =
         if let Some(program_location) = program_location {
             let program_data = read_and_verify_elf(program_location, feature_set)?;
