@@ -86,27 +86,6 @@ test-stable-sbf)
   tar cjvf "$sbf_dump_archive" $sbf_target_path/{deploy/*.txt,sbf-solana-solana/release/*.so}
   exit 0
   ;;
-test-stable-perf)
-  if [[ $(uname) = Linux ]]; then
-    # Enable persistence mode to keep the CUDA kernel driver loaded, avoiding a
-    # lengthy and unexpected delay the first time CUDA is involved when the driver
-    # is not yet loaded.
-    sudo --non-interactive ./net/scripts/enable-nvidia-persistence-mode.sh || true
-
-    rm -rf target/perf-libs
-    ./fetch-perf-libs.sh
-
-    # Force CUDA for solana-core unit tests
-    export TEST_PERF_LIBS_CUDA=1
-
-    # Force CUDA in ci/localnet-sanity.sh
-    export SOLANA_CUDA=1
-  fi
-
-  _ cargo build --bins ${V:+--verbose}
-  _ cargo test --package solana-perf --package solana-ledger --package solana-core --lib ${V:+--verbose} -- --nocapture
-  _ cargo run --manifest-path poh-bench/Cargo.toml ${V:+--verbose} -- --hashes-per-tick 10
-  ;;
 test-wasm)
   _ node --version
   _ npm --version
