@@ -132,8 +132,8 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .help("Optionally stops writing after this byte offset"),
                         )
                         .arg(
-                            Arg::with_name("program")
-                                .long("program")
+                            Arg::with_name("program-keypair")
+                                .long("program-keypair")
                                 .value_name("PROGRAM_SIGNER")
                                 .takes_value(true)
                                 .validator(is_valid_signer)
@@ -323,12 +323,12 @@ pub fn parse_program_v4_subcommand(
 
             let program_address = pubkey_of(matches, "program-id");
             let program_pubkey = if let Ok((program_signer, Some(program_pubkey))) =
-                signer_of(matches, "program", wallet_manager)
+                signer_of(matches, "program-keypair", wallet_manager)
             {
                 bulk_signers.push(program_signer);
                 Some(program_pubkey)
             } else {
-                pubkey_of_signer(matches, "program", wallet_manager)?
+                pubkey_of_signer(matches, "program-keypair", wallet_manager)?
             };
 
             let buffer_pubkey = if let Ok((buffer_signer, Some(buffer_pubkey))) =
@@ -348,7 +348,7 @@ pub fn parse_program_v4_subcommand(
             let program_signer_index = signer_info.index_of_or_none(program_pubkey);
             assert!(
                 program_address.is_some() != program_signer_index.is_some(),
-                "Requires either program signer or program address",
+                "Requires either --program-keypair or --program-id",
             );
 
             CliCommandInfo {
@@ -1754,7 +1754,7 @@ mod tests {
             "program-v4",
             "deploy",
             "/Users/test/program.so",
-            "--program",
+            "--program-keypair",
             &program_keypair_file,
         ]);
         assert_eq!(
@@ -1781,7 +1781,7 @@ mod tests {
             "program-v4",
             "deploy",
             "/Users/test/program.so",
-            "--program",
+            "--program-keypair",
             &program_keypair_file,
             "--authority",
             &authority_keypair_file,
