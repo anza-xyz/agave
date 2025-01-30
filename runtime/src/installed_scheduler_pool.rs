@@ -323,8 +323,8 @@ pub enum SchedulerStatus {
     /// happening.
     Unavailable,
     /// Scheduler is installed into a bank; could be running or just be waiting for additional
-    /// transactions. This will be transitioned to [`Self::Stale`] after certain time (i.e.  `
-    /// olana_unified_scheduler_pool::DEFAULT_TIMEOUT_DURATION`]) has passed if its bank hasn't
+    /// transactions. This will be transitioned to [`Self::Stale`] after certain time (i.e.
+    /// `solana_unified_scheduler_pool::DEFAULT_TIMEOUT_DURATION`) has passed if its bank hasn't
     /// been frozen since installed.
     Active(InstalledSchedulerBox),
     /// Scheduler has yet to freeze its associated bank even after it's taken too long since
