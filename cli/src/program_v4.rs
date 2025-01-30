@@ -71,7 +71,7 @@ pub enum ProgramV4CliCommand {
         program_signer_index: Option<SignerIndex>,
         buffer_signer_index: Option<SignerIndex>,
         authority_signer_index: SignerIndex,
-        program_location: String,
+        path_to_elf: String,
         upload_range: Range<Option<usize>>,
         use_rpc: bool,
     },
@@ -114,9 +114,9 @@ impl ProgramV4SubCommands for App<'_, '_> {
                     SubCommand::with_name("deploy")
                         .about("Deploy a new or redeploy an existing program")
                         .arg(
-                            Arg::with_name("program-location")
+                            Arg::with_name("path-to-elf")
                                 .index(1)
-                                .value_name("PROGRAM_FILEPATH")
+                                .value_name("PATH-TO-ELF")
                                 .takes_value(true)
                                 .help("/path/to/program.so"),
                         )
@@ -320,8 +320,8 @@ pub fn parse_program_v4_subcommand(
                 default_signer.signer_from_path(matches, wallet_manager)?,
             )];
 
-            let program_location = matches
-                .value_of("program-location")
+            let path_to_elf = matches
+                .value_of("path-to-elf")
                 .map(|location| location.to_string());
 
             let program_address = pubkey_of(matches, "program-id");
@@ -362,7 +362,7 @@ pub fn parse_program_v4_subcommand(
                     authority_signer_index: signer_info
                         .index_of(authority_pubkey)
                         .expect("Authority signer is missing"),
-                    program_location: program_location.expect("Program location is missing"),
+                    path_to_elf: path_to_elf.expect("Path to ELF is missing"),
                     upload_range: value_t!(matches, "start-offset", usize).ok()
                         ..value_t!(matches, "end-offset", usize).ok(),
                     use_rpc: matches.is_present("use_rpc"),
@@ -491,12 +491,12 @@ pub fn process_program_v4_subcommand(
             program_signer_index,
             buffer_signer_index,
             authority_signer_index,
-            program_location,
+            path_to_elf,
             upload_range,
             use_rpc,
         } => {
             let mut program_data = Vec::new();
-            let mut file = File::open(program_location)
+            let mut file = File::open(path_to_elf)
                 .map_err(|err| format!("Unable to open program file: {err}"))?;
             file.read_to_end(&mut program_data)
                 .map_err(|err| format!("Unable to read program file: {err}"))?;
@@ -1768,7 +1768,7 @@ mod tests {
                     program_signer_index: Some(1),
                     buffer_signer_index: None,
                     authority_signer_index: 0,
-                    program_location: "/Users/test/program.so".to_string(),
+                    path_to_elf: "/Users/test/program.so".to_string(),
                     upload_range: None..None,
                     use_rpc: false,
                 }),
@@ -1797,7 +1797,7 @@ mod tests {
                     program_signer_index: Some(1),
                     buffer_signer_index: None,
                     authority_signer_index: 2,
-                    program_location: "/Users/test/program.so".to_string(),
+                    path_to_elf: "/Users/test/program.so".to_string(),
                     upload_range: None..None,
                     use_rpc: false,
                 }),
@@ -1827,7 +1827,7 @@ mod tests {
                     program_signer_index: None,
                     buffer_signer_index: None,
                     authority_signer_index: 1,
-                    program_location: "/Users/test/program.so".to_string(),
+                    path_to_elf: "/Users/test/program.so".to_string(),
                     upload_range: None..None,
                     use_rpc: false,
                 }),
@@ -1858,7 +1858,7 @@ mod tests {
                     program_signer_index: None,
                     buffer_signer_index: Some(1),
                     authority_signer_index: 2,
-                    program_location: "/Users/test/program.so".to_string(),
+                    path_to_elf: "/Users/test/program.so".to_string(),
                     upload_range: None..None,
                     use_rpc: false,
                 }),
@@ -1895,7 +1895,7 @@ mod tests {
                     program_signer_index: None,
                     buffer_signer_index: Some(1),
                     authority_signer_index: 2,
-                    program_location: "/Users/test/program.so".to_string(),
+                    path_to_elf: "/Users/test/program.so".to_string(),
                     upload_range: Some(16)..Some(32),
                     use_rpc: true,
                 }),
