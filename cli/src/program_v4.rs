@@ -1035,13 +1035,12 @@ fn send_messages(
     use_rpc: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for message in initial_messages.iter() {
+        let blockhash = rpc_client.get_latest_blockhash()?;
+        let mut initial_transaction = Transaction::new_unsigned(message.clone());
         if message.account_keys.contains(&system_program::id()) {
             // The initial message that creates and initializes the account
             // has up to 3 signatures (payer, program, and authority).
             if let Some(initial_signer) = program_signer {
-                let blockhash = rpc_client.get_latest_blockhash()?;
-
-                let mut initial_transaction = Transaction::new_unsigned(message.clone());
                 initial_transaction.try_sign(
                     &[
                         config.signers[0],
@@ -1050,41 +1049,27 @@ fn send_messages(
                     ],
                     blockhash,
                 )?;
-                let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-                    &initial_transaction,
-                    config.commitment,
-                    config.send_transaction_config,
-                );
-                log_instruction_custom_error_ex::<SystemError, _>(
-                    result,
-                    &config.output_format,
-                    common_error_adapter,
-                )
-                .map_err(|err| format!("Failed to send initial message: {err}"))?;
             } else {
                 return Err("Buffer account not created yet, must provide a key pair".into());
             }
         } else {
             // All other messages have up to 2 signatures (payer, and authority).
-            let blockhash = rpc_client.get_latest_blockhash()?;
-
-            let mut initial_transaction = Transaction::new_unsigned(message.clone());
             initial_transaction.try_sign(
                 &[config.signers[0], config.signers[*auth_signer_index]],
                 blockhash,
             )?;
-            let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-                &initial_transaction,
-                config.commitment,
-                config.send_transaction_config,
-            );
-            log_instruction_custom_error_ex::<SystemError, _>(
-                result,
-                &config.output_format,
-                common_error_adapter,
-            )
-            .map_err(|err| format!("Failed to send message: {err}"))?;
         }
+        let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+            &initial_transaction,
+            config.commitment,
+            config.send_transaction_config,
+        );
+        log_instruction_custom_error_ex::<SystemError, _>(
+            result,
+            &config.output_format,
+            common_error_adapter,
+        )
+        .map_err(|err| format!("Failed to send initial message: {err}"))?;
     }
 
     if !write_messages.is_empty() {
