@@ -43,6 +43,7 @@ use {
         request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
+    solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_system_interface::{
         error::SystemError, instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH,
@@ -1033,10 +1034,10 @@ fn send_messages(
     program_signer: Option<&dyn Signer>,
     use_rpc: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for message in initial_messages {
-        if message.header.num_required_signatures == 3 {
-            // The initial message that creates the account and truncates it to the required size requires
-            // 3 signatures (payer, program, and authority).
+    for message in initial_messages.iter() {
+        if message.account_keys.contains(&system_program::id()) {
+            // The initial message that creates and initializes the account
+            // has up to 3 signatures (payer, program, and authority).
             if let Some(initial_signer) = program_signer {
                 let blockhash = rpc_client.get_latest_blockhash()?;
 
@@ -1059,12 +1060,12 @@ fn send_messages(
                     &config.output_format,
                     common_error_adapter,
                 )
-                .map_err(|err| format!("Account allocation failed: {err}"))?;
+                .map_err(|err| format!("Failed to send initial message: {err}"))?;
             } else {
                 return Err("Buffer account not created yet, must provide a key pair".into());
             }
-        } else if message.header.num_required_signatures == 2 {
-            // All other messages should require 2 signatures (payer, and authority)
+        } else {
+            // All other messages have up to 2 signatures (payer, and authority).
             let blockhash = rpc_client.get_latest_blockhash()?;
 
             let mut initial_transaction = Transaction::new_unsigned(message.clone());
@@ -1082,9 +1083,7 @@ fn send_messages(
                 &config.output_format,
                 common_error_adapter,
             )
-            .map_err(|err| format!("Failed to send initial message: {err}"))?;
-        } else {
-            return Err("Initial message requires incorrect number of signatures".into());
+            .map_err(|err| format!("Failed to send message: {err}"))?;
         }
     }
 
@@ -1764,6 +1763,33 @@ mod tests {
         let authority_keypair = Keypair::new();
         let authority_keypair_file = make_tmp_path("authority_keypair_file");
         write_keypair_file(&authority_keypair, &authority_keypair_file).unwrap();
+
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program-v4",
+            "deploy",
+            "/Users/test/program.so",
+            "--program",
+            &program_keypair_file,
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
+                    program_address: None,
+                    program_signer_index: Some(1),
+                    buffer_signer_index: None,
+                    authority_signer_index: 0,
+                    program_location: "/Users/test/program.so".to_string(),
+                    upload_range: None..None,
+                    use_rpc: false,
+                }),
+                signers: vec![
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&program_keypair_file).unwrap()),
+                ],
+            }
+        );
 
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
