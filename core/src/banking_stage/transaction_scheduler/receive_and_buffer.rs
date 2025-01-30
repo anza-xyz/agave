@@ -174,7 +174,6 @@ impl SanitizedTransactionReceiveAndBuffer {
         const CHUNK_SIZE: usize = 128;
         let lock_results: [_; CHUNK_SIZE] = core::array::from_fn(|_| Ok(()));
 
-        let mut arc_packets = ArrayVec::<_, CHUNK_SIZE>::new();
         let mut transactions = ArrayVec::<_, CHUNK_SIZE>::new();
         let mut max_ages = ArrayVec::<_, CHUNK_SIZE>::new();
         let mut fee_budget_limits_vec = ArrayVec::<_, CHUNK_SIZE>::new();
@@ -185,32 +184,27 @@ impl SanitizedTransactionReceiveAndBuffer {
             chunk
                 .iter()
                 .filter_map(|packet| {
-                    packet
-                        .build_sanitized_transaction(
-                            vote_only,
-                            root_bank.as_ref(),
-                            root_bank.get_reserved_account_keys(),
-                        )
-                        .map(|(tx, deactivation_slot)| (packet.clone(), tx, deactivation_slot))
+                    packet.build_sanitized_transaction(
+                        vote_only,
+                        root_bank.as_ref(),
+                        root_bank.get_reserved_account_keys(),
+                    )
                 })
                 .inspect(|_| saturating_add_assign!(post_sanitization_count, 1))
-                .filter(|(_packet, tx, _deactivation_slot)| {
+                .filter(|(tx, _deactivation_slot)| {
                     validate_account_locks(
                         tx.message().account_keys(),
                         transaction_account_lock_limit,
                     )
                     .is_ok()
                 })
-                .filter_map(|(packet, tx, deactivation_slot)| {
+                .filter_map(|(tx, deactivation_slot)| {
                     tx.compute_budget_instruction_details()
                         .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
-                        .map(|compute_budget| {
-                            (packet, tx, deactivation_slot, compute_budget.into())
-                        })
+                        .map(|compute_budget| (tx, deactivation_slot, compute_budget.into()))
                         .ok()
                 })
-                .for_each(|(packet, tx, deactivation_slot, fee_budget_limits)| {
-                    arc_packets.push(packet);
+                .for_each(|(tx, deactivation_slot, fee_budget_limits)| {
                     transactions.push(tx);
                     max_ages.push(calculate_max_age(
                         sanitized_epoch,
