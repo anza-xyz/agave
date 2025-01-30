@@ -676,12 +676,12 @@ pub fn process_deploy_program(
     if buffer_signer.is_none() || &buffer_address != program_address {
         // Redeploy an existing program
         if !program_account_exists {
-            return Err("Program account does not exist".into());
+            return Err("Program account does not exist. Did you perhaps intent to deploy a new program instead? Then use --program-keypair instead of --program-id.".into());
         }
     } else {
         // Deploy new program
         if program_account_exists {
-            return Err("Program account does exist already".into());
+            return Err("Program account does exist already. Did you perhaps intent to redeploy an existing program instead? Then use --program-id instead of --program-keypair.".into());
         }
     }
 
