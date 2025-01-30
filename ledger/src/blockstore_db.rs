@@ -1468,11 +1468,12 @@ pub struct WriteBatch {
     write_batch: RWriteBatch,
 }
 
-pub struct BlockstoreByteReference<'a> {
+pub(crate) struct BlockstoreByteReference<'a> {
     slice: DBPinnableSlice<'a>,
 }
 
 impl<'a> From<DBPinnableSlice<'a>> for BlockstoreByteReference<'a> {
+    #[inline]
     fn from(slice: DBPinnableSlice<'a>) -> Self {
         Self { slice }
     }
@@ -1481,6 +1482,7 @@ impl<'a> From<DBPinnableSlice<'a>> for BlockstoreByteReference<'a> {
 impl std::ops::Deref for BlockstoreByteReference<'_> {
     type Target = [u8];
 
+    #[inline]
     fn deref(&self) -> &[u8] {
         &self.slice
     }
