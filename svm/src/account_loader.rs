@@ -1,5 +1,5 @@
 #[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::field_qualifiers;
+use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_overrides::AccountOverrides,
@@ -138,12 +138,14 @@ pub struct FeesOnlyTransaction {
     pub fee_details: FeeDetails,
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     account_cache: RwLock<AHashMap<Pubkey, AccountSharedData>>,
     callbacks: &'a CB,
     pub(crate) feature_set: Arc<FeatureSet>,
 }
 impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new_with_account_cache_capacity(
         account_overrides: Option<&'a AccountOverrides>,
         callbacks: &'a CB,
