@@ -154,7 +154,7 @@ installed on your system.
 
 ### Prerequisites
 
-Before building from source, or developing Solana programs, make sure to install the following prerequisites:
+Install the following prerequisites before building from source or developing Solana programs:
 
 #### For Debian and Other Linux Distributions:
 
