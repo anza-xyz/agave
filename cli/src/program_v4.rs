@@ -75,7 +75,7 @@ pub enum ProgramV4CliCommand {
         upload_range: Range<Option<usize>>,
         use_rpc: bool,
     },
-    Undeploy {
+    Close {
         program_address: Pubkey,
         authority_signer_index: SignerIndex,
     },
@@ -176,8 +176,8 @@ impl ProgramV4SubCommands for App<'_, '_> {
                         )),
                 )
                 .subcommand(
-                    SubCommand::with_name("undeploy")
-                        .about("Undeploy/close a program")
+                    SubCommand::with_name("close")
+                        .about("Close a program and delete the account")
                         .arg(
                             Arg::with_name("program-id")
                                 .long("program-id")
@@ -370,7 +370,7 @@ pub fn parse_program_v4_subcommand(
                 signers: signer_info.signers,
             }
         }
-        ("undeploy", Some(matches)) => {
+        ("close", Some(matches)) => {
             let mut bulk_signers = vec![Some(
                 default_signer.signer_from_path(matches, wallet_manager)?,
             )];
@@ -382,7 +382,7 @@ pub fn parse_program_v4_subcommand(
                 default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
 
             CliCommandInfo {
-                command: CliCommand::ProgramV4(ProgramV4CliCommand::Undeploy {
+                command: CliCommand::ProgramV4(ProgramV4CliCommand::Close {
                     program_address: pubkey_of(matches, "program-id")
                         .expect("Program address is missing"),
                     authority_signer_index: signer_info
@@ -514,10 +514,10 @@ pub fn process_program_v4_subcommand(
                 *use_rpc,
             )
         }
-        ProgramV4CliCommand::Undeploy {
+        ProgramV4CliCommand::Close {
             program_address,
             authority_signer_index,
-        } => process_undeploy_program(rpc_client, config, authority_signer_index, program_address),
+        } => process_close_program(rpc_client, config, authority_signer_index, program_address),
         ProgramV4CliCommand::TransferAuthority {
             program_address,
             authority_signer_index,
@@ -784,7 +784,7 @@ pub fn process_deploy_program(
     Ok(config.output_format.formatted_string(&program_id))
 }
 
-fn process_undeploy_program(
+fn process_close_program(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig,
     auth_signer_index: &SignerIndex,
@@ -1611,7 +1611,7 @@ mod tests {
     }
 
     #[test]
-    fn test_undeploy() {
+    fn test_close() {
         let mut config = CliConfig::default();
 
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
@@ -1621,7 +1621,7 @@ mod tests {
         config.signers.push(&payer);
         config.signers.push(&authority_signer);
 
-        assert!(process_undeploy_program(
+        assert!(process_close_program(
             Arc::new(rpc_client_no_existing_program()),
             &config,
             &1,
@@ -1629,7 +1629,7 @@ mod tests {
         )
         .is_err());
 
-        assert!(process_undeploy_program(
+        assert!(process_close_program(
             Arc::new(rpc_client_with_program_retracted()),
             &config,
             &1,
@@ -1637,7 +1637,7 @@ mod tests {
         )
         .is_ok());
 
-        assert!(process_undeploy_program(
+        assert!(process_close_program(
             Arc::new(rpc_client_with_program_deployed()),
             &config,
             &1,
@@ -1645,7 +1645,7 @@ mod tests {
         )
         .is_ok());
 
-        assert!(process_undeploy_program(
+        assert!(process_close_program(
             Arc::new(rpc_client_with_program_finalized()),
             &config,
             &1,
@@ -1653,7 +1653,7 @@ mod tests {
         )
         .is_err());
 
-        assert!(process_undeploy_program(
+        assert!(process_close_program(
             Arc::new(rpc_client_wrong_account_owner()),
             &config,
             &1,
@@ -1661,7 +1661,7 @@ mod tests {
         )
         .is_err());
 
-        assert!(process_undeploy_program(
+        assert!(process_close_program(
             Arc::new(rpc_client_wrong_authority()),
             &config,
             &1,
@@ -1910,7 +1910,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::cognitive_complexity)]
-    fn test_cli_parse_undeploy() {
+    fn test_cli_parse_close() {
         let test_commands = get_clap_app("test", "desc", "version");
 
         let default_keypair = Keypair::new();
@@ -1929,7 +1929,7 @@ mod tests {
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
             "program-v4",
-            "undeploy",
+            "close",
             "--program-id",
             &program_keypair_file,
             "--authority",
@@ -1938,7 +1938,7 @@ mod tests {
         assert_eq!(
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: CliCommand::ProgramV4(ProgramV4CliCommand::Undeploy {
+                command: CliCommand::ProgramV4(ProgramV4CliCommand::Close {
                     program_address: program_keypair.pubkey(),
                     authority_signer_index: 1,
                 }),
