@@ -48,7 +48,7 @@ name = "solana_cost_model"
 
 [dev-dependencies]
 itertools = { workspace = true }
-rand = "0.8.5"
+rand = "0.9.0"
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-compute-budget-instruction = { workspace = true, features = [
     "dev-context-only-utils",
