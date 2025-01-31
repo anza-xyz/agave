@@ -11,6 +11,9 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [features]
+# Needed by the monorepo for checks in CI, can be removed when the SDK is
+# extracted
+dummy-for-ci-check = []
 # "program" feature is a legacy feature retained to support v1.3 and older
 # programs.  New development should not use this feature.  Instead use the
 # solana-program crate
@@ -68,6 +71,7 @@ frozen-abi = [
     "solana-genesis-config/frozen-abi",
     "solana-hard-forks/frozen-abi",
     "solana-inflation/frozen-abi",
+    "solana-packet/frozen-abi",
     "solana-poh-config/frozen-abi",
     "solana-program/frozen-abi",
     "solana-rent-collector/frozen-abi",
