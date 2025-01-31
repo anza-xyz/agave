@@ -5,7 +5,7 @@ use {
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crate::banking_stage::consumer::RetryableIndex,
-    crossbeam_channel::{Receiver, RecvError, SendError, Sender},
+    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_poh::poh_recorder::SharedWorkingBank,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -24,7 +24,7 @@ use {
 #[derive(Debug, Error)]
 pub enum ConsumeWorkerError<Tx> {
     #[error("Failed to receive work from scheduler: {0}")]
-    Recv(#[from] RecvError),
+    Recv(#[from] TryRecvError),
     #[error("Failed to send finalized consume work to scheduler: {0}")]
     Send(#[from] SendError<FinishedConsumeWork<Tx>>),
 }
@@ -70,11 +70,19 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
     pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
         while !self.exit.load(Ordering::Relaxed) {
-            let work = self.consume_receiver.recv()?;
-            match self.consume(work)? {
-                ProcessingStatus::Processed => {}
-                ProcessingStatus::CouldNotProcess(work) => {
-                    self.retry_drain(work)?;
+            match self.consume_receiver.try_recv() {
+                Ok(work) => match self.consume(work)? {
+                    ProcessingStatus::Processed => {}
+                    ProcessingStatus::CouldNotProcess(work) => {
+                        self.retry_drain(work)?;
+                    }
+                },
+                Err(TryRecvError::Empty) => {
+                    const SLEEP_DURATION: Duration = Duration::from_millis(1);
+                    std::thread::sleep(SLEEP_DURATION);
+                }
+                Err(err) => {
+                    return Err(ConsumeWorkerError::from(err));
                 }
             }
         }
