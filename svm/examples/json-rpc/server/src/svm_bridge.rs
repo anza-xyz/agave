@@ -13,7 +13,7 @@ use {
             ProgramRuntimeEnvironments,
         },
         solana_sbpf::{
-            program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
+            program::{BuiltinProgram, SBPFVersion},
             vm::Config,
         },
     },
@@ -160,38 +160,38 @@ pub fn create_custom_environment<'a>() -> BuiltinProgram<InvokeContext<'a>> {
     };
 
     // Register system calls that the compiled contract calls during execution.
-    let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext>>::default();
-    function_registry
-        .register_function_hashed(*b"abort", SyscallAbort::vm)
+    let mut loader = BuiltinProgram::new_loader(vm_config);
+    loader
+        .register_function("abort", SyscallAbort::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_log_", SyscallLog::vm)
+    loader
+        .register_function("sol_log_", SyscallLog::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_log_64_", SyscallLogU64::vm)
+    loader
+        .register_function("sol_log_64_", SyscallLogU64::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_log_compute_units_", SyscallLogBpfComputeUnits::vm)
+    loader
+        .register_function("sol_log_compute_units_", SyscallLogBpfComputeUnits::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_log_pubkey", SyscallLogPubkey::vm)
+    loader
+        .register_function("sol_log_pubkey", SyscallLogPubkey::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_memcpy_", SyscallMemcpy::vm)
+    loader
+        .register_function("sol_memcpy_", SyscallMemcpy::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_memset_", SyscallMemset::vm)
+    loader
+        .register_function("sol_memset_", SyscallMemset::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
+    loader
+        .register_function("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_set_return_data", SyscallSetReturnData::vm)
+    loader
+        .register_function("sol_set_return_data", SyscallSetReturnData::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_get_clock_sysvar", SyscallGetClockSysvar::vm)
+    loader
+        .register_function("sol_get_clock_sysvar", SyscallGetClockSysvar::vm)
         .expect("Registration failed");
-    BuiltinProgram::new_loader(vm_config, function_registry)
+    loader
 }
 
 pub fn create_executable_environment(
@@ -205,10 +205,7 @@ pub fn create_executable_environment(
     program_cache.environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(create_custom_environment()),
         // We are not using program runtime v2
-        program_runtime_v2: Arc::new(BuiltinProgram::new_loader(
-            Config::default(),
-            FunctionRegistry::default(),
-        )),
+        program_runtime_v2: Arc::new(BuiltinProgram::new_loader(Config::default())),
     };
 
     program_cache.fork_graph = Some(Arc::downgrade(&fork_graph));

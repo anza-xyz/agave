@@ -47,10 +47,7 @@ use {
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
         },
-        solana_sbpf::{
-            program::{BuiltinProgram, FunctionRegistry},
-            vm::Config as VmConfig,
-        },
+        solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -282,12 +279,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
         program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
     ) {
-        let empty_loader = || {
-            Arc::new(BuiltinProgram::new_loader(
-                VmConfig::default(),
-                FunctionRegistry::default(),
-            ))
-        };
+        let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
 
         program_cache.latest_root_slot = self.slot;
         program_cache.latest_root_epoch = self.epoch;
