@@ -4,10 +4,10 @@ FROM ${BASE_IMAGE}
 ARG \
   RUST_VERSION= \
   RUST_NIGHTLY_VERSION= \
-  GOLANG_VERSION=1.21.3 \
-  NODE_MAJOR=18 \
-  SCCACHE_VERSION=v0.8.1 \
-  GRCOV_VERSION=v0.8.18
+  GOLANG_VERSION= \
+  NODE_MAJOR= \
+  SCCACHE_VERSION= \
+  GRCOV_VERSION=
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -27,6 +27,10 @@ ENV \
 RUN \
   if [ -z "$RUST_VERSION" ]; then echo "ERROR: The RUST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$RUST_NIGHTLY_VERSION" ]; then echo "ERROR: The RUST_NIGHTLY_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$GOLANG_VERSION" ]; then echo "ERROR: The GOLANG_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$NODE_MAJOR" ]; then echo "ERROR: The NODE_MAJOR argument is required!" && exit 1; fi && \
+  if [ -z "$SCCACHE_VERSION" ]; then echo "ERROR: The SCCACHE_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$GRCOV_VERSION" ]; then echo "ERROR: The GRCOV_VERSION argument is required!" && exit 1; fi && \
   apt-get update && \
   apt-get install --no-install-recommends -y \
   # basic
@@ -78,7 +82,9 @@ RUN \
   rustup component add llvm-tools-preview --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup target add wasm32-unknown-unknown && \
   cargo install cargo-audit && \
-  cargo install cargo-hack && \
+  # uncomment once the dcou-parition related patch is upstreamed...
+  # cargo install cargo-hack && \
+  cargo install --git https://github.com/anza-xyz/cargo-hack.git --rev 5e59c3ec6c661c02601487c0d4b2a2649fe06c9f cargo-hack && \
   cargo install cargo-sort && \
   cargo install mdbook && \
   cargo install mdbook-linkcheck && \

@@ -18,7 +18,7 @@ use {
     serde_json::{Map, Value},
     solana_account::ReadableAccount,
     solana_account_decoder::{
-        encode_ui_account, parse_account_data::AccountAdditionalDataV2,
+        encode_ui_account, parse_account_data::AccountAdditionalDataV3,
         parse_token::UiTokenAccount, UiAccountEncoding, UiDataSliceConfig,
     },
     solana_clap_utils::keypair::SignOnly,
@@ -158,7 +158,7 @@ pub struct CliAccount {
 
 pub struct CliAccountNewConfig {
     pub data_encoding: UiAccountEncoding,
-    pub additional_data: Option<AccountAdditionalDataV2>,
+    pub additional_data: Option<AccountAdditionalDataV3>,
     pub data_slice_config: Option<UiDataSliceConfig>,
     pub use_lamports_unit: bool,
 }

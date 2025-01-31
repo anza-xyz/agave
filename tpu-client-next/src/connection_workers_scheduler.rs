@@ -12,6 +12,7 @@ use {
         workers_cache::{maybe_shutdown_worker, WorkerInfo, WorkersCache, WorkersCacheError},
         SendTransactionStats,
     },
+    async_trait::async_trait,
     log::*,
     quinn::Endpoint,
     solana_keypair::Keypair,
@@ -90,6 +91,26 @@ pub struct ConnectionWorkersSchedulerConfig {
     pub leaders_fanout: Fanout,
 }
 
+/// The [`WorkersBroadcaster`] trait defines a customizable mechanism for
+/// sending transaction batches to workers corresponding to the provided list of
+/// addresses. Implementations of this trait are used by the
+/// [`ConnectionWorkersScheduler`] to distribute transactions to workers
+/// accordingly.
+#[async_trait]
+pub trait WorkersBroadcaster {
+    /// Sends a `transaction_batch` to workers associated with the given
+    /// `leaders` addresses.
+    ///
+    /// Returns error if a critical issue occurs, e.g. the implementation
+    /// encounters an unrecoverable error. In this case, it will trigger
+    /// stopping the scheduler and cleaning all the data.
+    async fn send_to_workers(
+        workers: &mut WorkersCache,
+        leaders: &[SocketAddr],
+        transaction_batch: TransactionBatch,
+    ) -> Result<(), ConnectionWorkersSchedulerError>;
+}
+
 pub type TransactionStatsAndReceiver = (
     SendTransactionStatsPerAddr,
     mpsc::Receiver<TransactionBatch>,
@@ -98,6 +119,32 @@ pub type TransactionStatsAndReceiver = (
 impl ConnectionWorkersScheduler {
     /// Starts the scheduler, which manages the distribution of transactions to
     /// the network's upcoming leaders.
+    ///
+    /// This method is a shorthand for
+    /// [`ConnectionWorkersScheduler::run_with_broadcaster`] using
+    /// [`NonblockingBroadcaster`] strategy.
+    ///
+    /// Transactions that fail to be delivered to workers due to full channels
+    /// will be dropped. The same for transactions that failed to be delivered
+    /// over the network.
+    pub async fn run(
+        config: ConnectionWorkersSchedulerConfig,
+        leader_updater: Box<dyn LeaderUpdater>,
+        transaction_receiver: mpsc::Receiver<TransactionBatch>,
+        cancel: CancellationToken,
+    ) -> Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError> {
+        Self::run_with_broadcaster::<NonblockingBroadcaster>(
+            config,
+            leader_updater,
+            transaction_receiver,
+            cancel,
+        )
+        .await
+    }
+
+    /// Starts the scheduler, which manages the distribution of transactions to
+    /// the network's upcoming leaders. `Broadcaster` allows to customize the
+    /// way transactions are send to the leaders, see [`WorkersBroadcaster`].
     ///
     /// Runs the main loop that handles worker scheduling and management for
     /// connections. Returns the error quic statistics per connection address or
@@ -108,7 +155,7 @@ impl ConnectionWorkersScheduler {
     ///
     /// Importantly, if some transactions were not delivered due to network
     /// problems, they will not be retried when the problem is resolved.
-    pub async fn run(
+    pub async fn run_with_broadcaster<Broadcaster: WorkersBroadcaster>(
         ConnectionWorkersSchedulerConfig {
             bind,
             stake_identity,
@@ -126,6 +173,8 @@ impl ConnectionWorkersScheduler {
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
         let mut send_stats_per_addr = SendTransactionStatsPerAddr::new();
+
+        let mut last_error = None;
 
         loop {
             let transaction_batch: TransactionBatch = tokio::select! {
@@ -163,28 +212,11 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            for new_leader in fanout_leaders {
-                if !workers.contains(new_leader) {
-                    warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
-                    continue;
-                }
-
-                let send_res =
-                    workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
-                match send_res {
-                    Ok(()) => (),
-                    Err(WorkersCacheError::ShutdownError) => {
-                        debug!("Connection to {new_leader} was closed, worker cache shutdown");
-                    }
-                    Err(WorkersCacheError::ReceiverDropped) => {
-                        // Remove the worker from the cache, if the peer has disconnected.
-                        maybe_shutdown_worker(workers.pop(*new_leader));
-                    }
-                    Err(err) => {
-                        warn!("Connection to {new_leader} was closed, worker error: {err}");
-                        // If we have failed to send batch, it will be dropped.
-                    }
-                }
+            if let Err(error) =
+                Broadcaster::send_to_workers(&mut workers, fanout_leaders, transaction_batch).await
+            {
+                last_error = Some(error);
+                break;
             }
         }
 
@@ -192,6 +224,9 @@ impl ConnectionWorkersScheduler {
 
         endpoint.close(0u32.into(), b"Closing connection");
         leader_updater.stop().await;
+        if let Some(error) = last_error {
+            return Err(error);
+        }
         Ok((send_stats_per_addr, transaction_receiver))
     }
 
@@ -232,6 +267,45 @@ impl ConnectionWorkersScheduler {
         });
 
         WorkerInfo::new(txs_sender, handle, cancel)
+    }
+}
+
+/// [`NonblockingBroadcaster`] attempts to immediately send transactions to all
+/// the workers. If worker cannot accept transactions because it's channel is
+/// full, the transactions will not be sent to this worker.
+struct NonblockingBroadcaster;
+
+#[async_trait]
+impl WorkersBroadcaster for NonblockingBroadcaster {
+    async fn send_to_workers(
+        workers: &mut WorkersCache,
+        leaders: &[SocketAddr],
+        transaction_batch: TransactionBatch,
+    ) -> Result<(), ConnectionWorkersSchedulerError> {
+        for new_leader in leaders {
+            if !workers.contains(new_leader) {
+                warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
+                continue;
+            }
+
+            let send_res =
+                workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
+            match send_res {
+                Ok(()) => (),
+                Err(WorkersCacheError::ShutdownError) => {
+                    debug!("Connection to {new_leader} was closed, worker cache shutdown");
+                }
+                Err(WorkersCacheError::ReceiverDropped) => {
+                    // Remove the worker from the cache, if the peer has disconnected.
+                    maybe_shutdown_worker(workers.pop(*new_leader));
+                }
+                Err(err) => {
+                    warn!("Connection to {new_leader} was closed, worker error: {err}");
+                    // If we have failed to send batch, it will be dropped.
+                }
+            }
+        }
+        Ok(())
     }
 }
 

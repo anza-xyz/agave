@@ -286,7 +286,7 @@ pub(crate) mod tests {
         crossbeam_channel::unbounded,
         dashmap::DashMap,
         solana_account_decoder::{
-            parse_account_data::SplTokenAdditionalData, parse_token::token_amount_to_ui_amount_v2,
+            parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
         solana_runtime::bank::{Bank, TransactionBalancesSet},
@@ -427,9 +427,9 @@ pub(crate) mod tests {
         let pre_token_balance = TransactionTokenBalance {
             account_index: 0,
             mint: Pubkey::new_unique().to_string(),
-            ui_token_amount: token_amount_to_ui_amount_v2(
+            ui_token_amount: token_amount_to_ui_amount_v3(
                 42,
-                &SplTokenAdditionalData::with_decimals(2),
+                &SplTokenAdditionalDataV2::with_decimals(2),
             ),
             owner: owner.clone(),
             program_id: token_program_id.clone(),
@@ -438,9 +438,9 @@ pub(crate) mod tests {
         let post_token_balance = TransactionTokenBalance {
             account_index: 0,
             mint: Pubkey::new_unique().to_string(),
-            ui_token_amount: token_amount_to_ui_amount_v2(
+            ui_token_amount: token_amount_to_ui_amount_v3(
                 58,
-                &SplTokenAdditionalData::with_decimals(2),
+                &SplTokenAdditionalDataV2::with_decimals(2),
             ),
             owner,
             program_id: token_program_id,

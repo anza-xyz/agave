@@ -38,6 +38,7 @@ pub enum LoaderInstruction {
     Finalize,
 }
 
+#[deprecated(since = "2.2.0", note = "Use loader-v4 instead")]
 #[cfg(feature = "bincode")]
 pub fn write(
     account_pubkey: &Pubkey,
@@ -53,6 +54,7 @@ pub fn write(
     )
 }
 
+#[deprecated(since = "2.2.0", note = "Use loader-v4 instead")]
 #[cfg(feature = "bincode")]
 pub fn finalize(account_pubkey: &Pubkey, program_id: &Pubkey) -> Instruction {
     let account_metas = vec![

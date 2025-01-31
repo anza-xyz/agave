@@ -63,7 +63,7 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.5
         with:
-          version: "v0.8.1"
+          version: "v0.9.1"
 
       - shell: bash
         run: |
@@ -91,7 +91,7 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.5
         with:
-          version: "v0.8.1"
+          version: "v0.9.1"
 
       - shell: bash
         run: |
@@ -129,7 +129,7 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.5
         with:
-          version: "v0.8.1"
+          version: "v0.9.1"
 
       - shell: bash
         run: |

@@ -1422,6 +1422,33 @@ pub struct WriteBatch {
     write_batch: RWriteBatch,
 }
 
+pub(crate) struct BlockstoreByteReference<'a> {
+    slice: DBPinnableSlice<'a>,
+}
+
+impl<'a> From<DBPinnableSlice<'a>> for BlockstoreByteReference<'a> {
+    #[inline]
+    fn from(slice: DBPinnableSlice<'a>) -> Self {
+        Self { slice }
+    }
+}
+
+impl std::ops::Deref for BlockstoreByteReference<'_> {
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        &self.slice
+    }
+}
+
+impl AsRef<[u8]> for BlockstoreByteReference<'_> {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self
+    }
+}
+
 impl WriteBatch {
     fn put_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K, value: &[u8]) -> Result<()> {
         self.write_batch.put_cf(cf, key, value);
@@ -1476,7 +1503,7 @@ where
     pub(crate) fn multi_get_bytes<'a, K>(
         &'a self,
         keys: impl IntoIterator<Item = &'a K> + 'a,
-    ) -> impl Iterator<Item = Result<Option<Vec<u8>>>> + 'a
+    ) -> impl Iterator<Item = Result<Option<BlockstoreByteReference<'a>>>> + 'a
     where
         K: AsRef<[u8]> + 'a + ?Sized,
     {
@@ -1488,10 +1515,9 @@ where
         let result = self
             .backend
             .multi_get_cf(self.handle(), keys)
-            .map(|out| Ok(out?.as_deref().map(<[u8]>::to_vec)));
+            .map(|out| Ok(out?.map(BlockstoreByteReference::from)));
 
         if let Some(op_start_instant) = is_perf_enabled {
-            // use multi-get instead
             report_rocksdb_read_perf(
                 C::NAME,
                 PERF_METRIC_OP_NAME_MULTI_GET,

@@ -47,6 +47,8 @@ pub fn initialized_result_with_timings() -> ResultWithTimings {
 }
 
 pub trait InstalledSchedulerPool: Send + Sync + Debug {
+    /// A very thin wrapper of [`Self::take_resumed_scheduler`] to take a scheduler from this pool
+    /// for a brand-new bank.
     fn take_scheduler(&self, context: SchedulingContext) -> InstalledSchedulerBox {
         self.take_resumed_scheduler(context, initialized_result_with_timings())
     }
@@ -57,6 +59,13 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
         result_with_timings: ResultWithTimings,
     ) -> InstalledSchedulerBox;
 
+    /// Registers an opaque timeout listener.
+    ///
+    /// This method and the passed `struct` called [`TimeoutListener`] are very opaque by purpose.
+    /// Specifically, it doesn't provide any way to tell which listener is semantically associated
+    /// to which particular scheduler. That's because proper _unregistration_ is omitted at the
+    /// timing of scheduler returning to reduce latency of the normal block-verification code-path,
+    /// relying on eventual stale listener clean-up by `solScCleaner`.
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener);
 }
 
@@ -96,23 +105,23 @@ impl Debug for TimeoutListener {
 /// graph TD
 ///     Bank["Arc#lt;Bank#gt;"]
 ///
-///     subgraph solana-runtime
+///     subgraph solana-runtime[<span style="font-size: 70%">solana-runtime</span>]
 ///         BankForks;
 ///         BankWithScheduler;
 ///         Bank;
-///         LoadExecuteAndCommitTransactions(["load_execute_and_commit_transactions()"]);
+///         LoadExecuteAndCommitTransactions([<span style="font-size: 67%">load_execute_and_commit_transactions#lpar;#rpar;</span>]);
 ///         SchedulingContext;
 ///         InstalledSchedulerPool{{InstalledSchedulerPool}};
 ///         InstalledScheduler{{InstalledScheduler}};
 ///     end
 ///
-///     subgraph solana-unified-scheduler-pool
+///     subgraph solana-unified-scheduler-pool[<span style="font-size: 70%">solana-unified-scheduler-pool</span>]
 ///         SchedulerPool;
 ///         PooledScheduler;
 ///         ScheduleExecution(["schedule_execution()"]);
 ///     end
 ///
-///     subgraph solana-ledger
+///     subgraph solana-ledger[<span style="font-size: 60%">solana-ledger</span>]
 ///         ExecuteBatch(["execute_batch()"]);
 ///     end
 ///
@@ -306,18 +315,24 @@ impl WaitReason {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum SchedulerStatus {
-    /// Unified scheduler is disabled or installed scheduler is consumed by wait_for_termination().
-    /// Note that transition to Unavailable from {Active, Stale} is one-way (i.e. one-time).
-    /// Also, this variant is transiently used as a placeholder internally when transitioning
-    /// scheduler statuses, which isn't observable unless panic is happening.
+    /// Unified scheduler is disabled or installed scheduler is consumed by
+    /// [`InstalledScheduler::wait_for_termination`]. Note that transition to [`Self::Unavailable`]
+    /// from {[`Self::Active`], [`Self::Stale`]} is one-way (i.e. one-time) unlike [`Self::Active`]
+    /// <=> [`Self::Stale`] below.  Also, this variant is transiently used as a placeholder
+    /// internally when transitioning scheduler statuses, which isn't observable unless panic is
+    /// happening.
     Unavailable,
-    /// Scheduler is installed into a bank; could be running or just be idling.
-    /// This will be transitioned to Stale after certain time has passed if its bank hasn't been
-    /// frozen.
+    /// Scheduler is installed into a bank; could be running or just be waiting for additional
+    /// transactions. This will be transitioned to [`Self::Stale`] after certain time (i.e.
+    /// `solana_unified_scheduler_pool::DEFAULT_TIMEOUT_DURATION`) has passed if its bank hasn't
+    /// been frozen since installed.
     Active(InstalledSchedulerBox),
-    /// Scheduler is idling for long time, returning scheduler back to the pool.
-    /// This will be immediately (i.e. transaparently) transitioned to Active as soon as there's
-    /// new transaction to be executed.
+    /// Scheduler has yet to freeze its associated bank even after it's taken too long since
+    /// installed, resulting in returning the scheduler back to the pool. Later, this can
+    /// immediately (i.e. transparently) be transitioned to [`Self::Active`] as soon as there's new
+    /// transaction to be executed (= [`BankWithScheduler::schedule_transaction_executions`] is
+    /// called, which internally calls [`BankWithSchedulerInner::with_active_scheduler`] to make
+    /// the transition happen).
     Stale(InstalledSchedulerPoolArc, ResultWithTimings),
 }
 
@@ -581,17 +596,26 @@ impl BankWithSchedulerInner {
         let weak_bank = Arc::downgrade(self);
         TimeoutListener::new(move |pool| {
             let Some(bank) = weak_bank.upgrade() else {
+                // BankWithSchedulerInner is already dropped, indicating successful and timely
+                // `wait_for_termination()` on the bank prior to this triggering of the timeout,
+                // rendering this callback invocation no-op.
                 return;
             };
 
             let Ok(mut scheduler) = bank.scheduler.write() else {
+                // BankWithScheduler's lock is poisoned...
                 return;
             };
 
+            // Reaching here means that it's been awhile since this active scheduler is taken from
+            // the pool and yet it has yet to be `wait_for_termination()`-ed. To avoid unbounded
+            // thread creation under forky condition, return the scheduler for now, even if the
+            // bank could process more transactions later.
             scheduler.maybe_transition_from_active_to_stale(|scheduler| {
-                // The scheduler hasn't still been wait_for_termination()-ed after awhile...
                 // Return the installed scheduler back to the scheduler pool as soon as the
-                // scheduler gets idle after executing all currently-scheduled transactions.
+                // scheduler indicates the completion of all currently-scheduled transaction
+                // executions by `solana_unified_scheduler_pool::ThreadManager::end_session()`
+                // internally.
 
                 let id = scheduler.id();
                 let (result_with_timings, uninstalled_scheduler) =

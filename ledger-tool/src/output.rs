@@ -16,7 +16,7 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError},
         blockstore_meta::{DuplicateSlotProof, ErasureMeta},
-        shred::{Shred, ShredType},
+        shred::{self, Shred, ShredType},
     },
     solana_runtime::bank::{Bank, TotalAccountsStats},
     solana_sdk::{
@@ -408,7 +408,7 @@ impl From<Shred> for CliDuplicateShred {
             merkle_root: shred.merkle_root().ok(),
             chained_merkle_root: shred.chained_merkle_root().ok(),
             last_in_slot: shred.last_in_slot(),
-            payload: shred.payload().clone(),
+            payload: shred::Payload::unwrap_or_clone(shred.payload().clone()),
         }
     }
 }

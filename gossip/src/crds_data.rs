@@ -7,7 +7,7 @@ use {
         legacy_contact_info::LegacyContactInfo,
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
-    rand::{CryptoRng, Rng},
+    rand::Rng,
     serde::de::{Deserialize, Deserializer},
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{
@@ -116,7 +116,7 @@ pub(crate) fn new_rand_timestamp<R: Rng>(rng: &mut R) -> u64 {
 impl CrdsData {
     /// New random CrdsData for tests and benchmarks.
     pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> CrdsData {
-        let kind = rng.gen_range(0..9);
+        let kind = rng.gen_range(0..8);
         // TODO: Implement other kinds of CrdsData here.
         // TODO: Assign ranges to each arm proportional to their frequency in
         // the mainnet crds table.
@@ -126,12 +126,11 @@ impl CrdsData {
             1 => CrdsData::LowestSlot(0, LowestSlot::new_rand(rng, pubkey)),
             2 => CrdsData::LegacySnapshotHashes(LegacySnapshotHashes::new_rand(rng, pubkey)),
             3 => CrdsData::AccountsHashes(AccountsHashes::new_rand(rng, pubkey)),
-            4 => CrdsData::Version(Version::new_rand(rng, pubkey)),
-            5 => CrdsData::Vote(rng.gen_range(0..MAX_VOTES), Vote::new_rand(rng, pubkey)),
-            6 => CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
+            4 => CrdsData::Vote(rng.gen_range(0..MAX_VOTES), Vote::new_rand(rng, pubkey)),
+            5 => CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
                 rng, pubkey,
             )),
-            7 => CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(rng, pubkey)),
+            6 => CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(rng, pubkey)),
             _ => CrdsData::EpochSlots(
                 rng.gen_range(0..MAX_EPOCH_SLOTS),
                 EpochSlots::new_rand(rng, pubkey),
@@ -437,31 +436,6 @@ impl Sanitize for Version {
     }
 }
 
-impl Version {
-    pub(crate) fn new(from: Pubkey) -> Self {
-        Self {
-            from,
-            wallclock: timestamp(),
-            version: solana_version::LegacyVersion2::default(),
-        }
-    }
-
-    /// New random Version for tests and benchmarks.
-    fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
-        Self {
-            from: pubkey.unwrap_or_else(pubkey::new_rand),
-            wallclock: new_rand_timestamp(rng),
-            version: solana_version::LegacyVersion2 {
-                major: rng.gen(),
-                minor: rng.gen(),
-                patch: rng.gen(),
-                commit: Some(rng.gen()),
-                feature_set: rng.gen(),
-            },
-        }
-    }
-}
-
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub(crate) struct NodeInstance {
@@ -472,9 +446,10 @@ pub(crate) struct NodeInstance {
 }
 
 impl NodeInstance {
+    #[cfg(test)]
     pub(crate) fn new<R>(rng: &mut R, from: Pubkey, now: u64) -> Self
     where
-        R: Rng + CryptoRng,
+        R: Rng + rand::CryptoRng,
     {
         Self {
             from,
@@ -484,19 +459,10 @@ impl NodeInstance {
         }
     }
 
+    #[cfg(test)]
     // Clones the value with an updated wallclock.
     pub(crate) fn with_wallclock(&self, wallclock: u64) -> Self {
         Self { wallclock, ..*self }
-    }
-
-    // Returns true if the crds-value is a duplicate instance of this node,
-    // with a more recent timestamp.
-    // The older instance is considered the duplicate instance. If a staked
-    // node is restarted it will receive its old instance value from gossip.
-    // Considering the new instance as the duplicate would prevent the node
-    // from restarting.
-    pub(crate) fn check_duplicate(&self, other: &NodeInstance) -> bool {
-        self.token != other.token && self.timestamp <= other.timestamp && self.from == other.from
     }
 
     // Returns None if tokens are the same or other is not a node-instance from
@@ -686,8 +652,6 @@ mod test {
             timestamp: now + 1,
             token: node.token,
         };
-        assert!(!node.check_duplicate(&other));
-        assert!(!other.check_duplicate(&node));
         assert_eq!(node.overrides(&other), None);
         assert_eq!(other.overrides(&node), None);
         // Older timestamp is not a duplicate.
@@ -697,8 +661,6 @@ mod test {
             timestamp: now - 1,
             token: rng.gen(),
         };
-        assert!(!node.check_duplicate(&other));
-        assert!(other.check_duplicate(&node));
         assert_eq!(node.overrides(&other), Some(true));
         assert_eq!(other.overrides(&node), Some(false));
         // Updated wallclock is not a duplicate.
@@ -712,8 +674,6 @@ mod test {
                 token: node.token,
             }
         );
-        assert!(!node.check_duplicate(&other));
-        assert!(!other.check_duplicate(&node));
         assert_eq!(node.overrides(&other), None);
         assert_eq!(other.overrides(&node), None);
         // Duplicate instance; tied timestamp.
@@ -724,8 +684,6 @@ mod test {
                 timestamp: now,
                 token: rng.gen(),
             };
-            assert!(node.check_duplicate(&other));
-            assert!(other.check_duplicate(&node));
             assert_eq!(node.overrides(&other), Some(other.token < node.token));
             assert_eq!(other.overrides(&node), Some(node.token < other.token));
         }
@@ -737,8 +695,6 @@ mod test {
                 timestamp: now + 1,
                 token: rng.gen(),
             };
-            assert!(node.check_duplicate(&other));
-            assert!(!other.check_duplicate(&node));
             assert_eq!(node.overrides(&other), Some(false));
             assert_eq!(other.overrides(&node), Some(true));
         }
@@ -749,8 +705,6 @@ mod test {
             timestamp: now + 1,
             token: rng.gen(),
         };
-        assert!(!node.check_duplicate(&other));
-        assert!(!other.check_duplicate(&node));
         assert_eq!(node.overrides(&other), None);
         assert_eq!(other.overrides(&node), None);
     }

@@ -11,7 +11,7 @@ use {
     serde_json,
     solana_account_decoder::{
         encode_ui_account,
-        parse_account_data::{AccountAdditionalDataV2, SplTokenAdditionalData},
+        parse_account_data::{AccountAdditionalDataV3, SplTokenAdditionalDataV2},
         parse_token::{get_token_account_mint, is_known_spl_token_id},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
@@ -63,8 +63,8 @@ use {
     },
     spl_token_2022::{
         extension::{
-            interest_bearing_mint::InterestBearingConfig, BaseStateWithExtensions,
-            StateWithExtensions,
+            interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
+            BaseStateWithExtensions, StateWithExtensions,
         },
         state::Mint,
     },
@@ -437,7 +437,7 @@ impl JsonRpcRequestProcessor {
         account_map.get(pubkey).cloned()
     }
 
-    fn get_additional_mint_data(&self, data: &[u8]) -> Result<SplTokenAdditionalData> {
+    fn get_additional_mint_data(&self, data: &[u8]) -> Result<SplTokenAdditionalDataV2> {
         StateWithExtensions::<Mint>::unpack(data)
             .map_err(|_| {
                 Error::invalid_params("Invalid param: Token mint could not be unpacked".to_string())
@@ -447,9 +447,14 @@ impl JsonRpcRequestProcessor {
                     .get_extension::<InterestBearingConfig>()
                     .map(|x| (*x, self.clock().unix_timestamp))
                     .ok();
-                SplTokenAdditionalData {
+                let scaled_ui_amount_config = mint
+                    .get_extension::<ScaledUiAmountConfig>()
+                    .map(|x| (*x, self.clock().unix_timestamp))
+                    .ok();
+                SplTokenAdditionalDataV2 {
                     decimals: mint.base.decimals,
                     interest_bearing_config,
+                    scaled_ui_amount_config,
                 }
             })
     }
@@ -494,7 +499,7 @@ impl JsonRpcRequestProcessor {
                     .or_else(|| self.get_account(&mint_pubkey))
             })
             .and_then(|mint_account| self.get_additional_mint_data(mint_account.data()).ok())
-            .map(|data| AccountAdditionalDataV2 {
+            .map(|data| AccountAdditionalDataV3 {
                 spl_token_additional_data: Some(data),
             });
 

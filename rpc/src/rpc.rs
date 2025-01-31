@@ -18,8 +18,8 @@ use {
     jsonrpc_derive::rpc,
     solana_account_decoder::{
         encode_ui_account,
-        parse_account_data::SplTokenAdditionalData,
-        parse_token::{is_known_spl_token_id, token_amount_to_ui_amount_v2, UiTokenAmount},
+        parse_account_data::SplTokenAdditionalDataV2,
+        parse_token::{is_known_spl_token_id, token_amount_to_ui_amount_v3, UiTokenAmount},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
     solana_accounts_db::{
@@ -99,8 +99,8 @@ use {
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     spl_token_2022::{
         extension::{
-            interest_bearing_mint::InterestBearingConfig, BaseStateWithExtensions,
-            StateWithExtensions,
+            interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
+            BaseStateWithExtensions, StateWithExtensions,
         },
         solana_program::program_pack::Pack,
         state::{Account as TokenAccount, Mint},
@@ -2004,7 +2004,7 @@ impl JsonRpcRequestProcessor {
         let mint = &Pubkey::from_str(&token_account.base.mint.to_string())
             .expect("Token account mint should be convertible to Pubkey");
         let (_, data) = get_mint_owner_and_additional_data(&bank, mint)?;
-        let balance = token_amount_to_ui_amount_v2(token_account.base.amount, &data);
+        let balance = token_amount_to_ui_amount_v3(token_account.base.amount, &data);
         Ok(new_response(&bank, balance))
     }
 
@@ -2031,11 +2031,17 @@ impl JsonRpcRequestProcessor {
             .map(|x| (*x, bank.clock().unix_timestamp))
             .ok();
 
-        let supply = token_amount_to_ui_amount_v2(
+        let scaled_ui_amount_config = mint
+            .get_extension::<ScaledUiAmountConfig>()
+            .map(|x| (*x, bank.clock().unix_timestamp))
+            .ok();
+
+        let supply = token_amount_to_ui_amount_v3(
             mint.base.supply,
-            &SplTokenAdditionalData {
+            &SplTokenAdditionalDataV2 {
                 decimals: mint.base.decimals,
                 interest_bearing_config,
+                scaled_ui_amount_config,
             },
         );
         Ok(new_response(&bank, supply))
@@ -2089,7 +2095,7 @@ impl JsonRpcRequestProcessor {
             .map(|Reverse((amount, address))| {
                 Ok(RpcTokenAccountBalance {
                     address: address.to_string(),
-                    amount: token_amount_to_ui_amount_v2(amount, &data),
+                    amount: token_amount_to_ui_amount_v3(amount, &data),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -4586,6 +4592,7 @@ pub mod tests {
             state::{AccountState as TokenAccountState, Mint},
         },
         std::{borrow::Cow, collections::HashMap, net::Ipv4Addr},
+        test_case::test_case,
     };
 
     const TEST_MINT_LAMPORTS: u64 = 1_000_000_000;
@@ -8161,224 +8168,237 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_token_parsing() {
-        for program_id in solana_account_decoder::parse_token::spl_token_ids() {
-            let rpc = RpcHandler::start();
-            let bank = rpc.working_bank();
-            let RpcHandler { io, meta, .. } = rpc;
+    #[test_case(spl_token::id(), None, None; "spl_token")]
+    #[test_case(spl_token_2022::id(), Some(InterestBearingConfig { pre_update_average_rate: 500.into(), current_rate: 500.into(),..Default::default() }), None; "spl_token_2022_with _interest")]
+    #[test_case(spl_token_2022::id(), None, Some(ScaledUiAmountConfig { new_multiplier: 2.0f64.into(), ..Default::default() }); "spl-token-2022 with multiplier")]
+    fn test_token_parsing(
+        program_id: Pubkey,
+        mut interest_bearing_config: Option<InterestBearingConfig>,
+        scaled_ui_amount_config: Option<ScaledUiAmountConfig>,
+    ) {
+        let rpc = RpcHandler::start();
+        let bank = rpc.working_bank();
+        let RpcHandler { io, meta, .. } = rpc;
 
-            let mint = SplTokenPubkey::new_from_array([2; 32]);
-            let owner = SplTokenPubkey::new_from_array([3; 32]);
-            let delegate = SplTokenPubkey::new_from_array([4; 32]);
-            let token_account_pubkey = solana_pubkey::new_rand();
-            let amount = 420;
-            let delegated_amount = 30;
-            let rent_exempt_amount = 10;
-            let supply = 500;
-            let decimals = 2;
-            let (program_name, account_size, mint_size, additional_data) = if program_id
-                == solana_inline_spl::token_2022::id()
-            {
-                let account_base = TokenAccount {
-                    mint,
-                    owner,
-                    delegate: COption::Some(delegate),
-                    amount,
-                    state: TokenAccountState::Initialized,
-                    is_native: COption::Some(rent_exempt_amount),
-                    delegated_amount,
-                    close_authority: COption::Some(owner),
-                };
-                let account_size = ExtensionType::try_calculate_account_len::<TokenAccount>(&[
-                    ExtensionType::ImmutableOwner,
-                    ExtensionType::MemoTransfer,
-                ])
+        let mint = SplTokenPubkey::new_from_array([2; 32]);
+        let owner = SplTokenPubkey::new_from_array([3; 32]);
+        let delegate = SplTokenPubkey::new_from_array([4; 32]);
+        let token_account_pubkey = solana_pubkey::new_rand();
+        let amount = 420;
+        let delegated_amount = 30;
+        let rent_exempt_amount = 10;
+        let supply = 500;
+        let decimals = 2;
+        let (program_name, account_size, mint_size, additional_data) = if program_id
+            == solana_inline_spl::token_2022::id()
+        {
+            let account_base = TokenAccount {
+                mint,
+                owner,
+                delegate: COption::Some(delegate),
+                amount,
+                state: TokenAccountState::Initialized,
+                is_native: COption::Some(rent_exempt_amount),
+                delegated_amount,
+                close_authority: COption::Some(owner),
+            };
+            let account_size = ExtensionType::try_calculate_account_len::<TokenAccount>(&[
+                ExtensionType::ImmutableOwner,
+                ExtensionType::MemoTransfer,
+            ])
+            .unwrap();
+            let mut account_data = vec![0; account_size];
+            let mut account_state =
+                StateWithExtensionsMut::<TokenAccount>::unpack_uninitialized(&mut account_data)
+                    .unwrap();
+
+            account_state.base = account_base;
+            account_state.pack_base();
+            account_state.init_account_type().unwrap();
+            account_state
+                .init_extension::<ImmutableOwner>(true)
                 .unwrap();
-                let mut account_data = vec![0; account_size];
-                let mut account_state =
-                    StateWithExtensionsMut::<TokenAccount>::unpack_uninitialized(&mut account_data)
-                        .unwrap();
+            let memo_transfer = account_state.init_extension::<MemoTransfer>(true).unwrap();
+            memo_transfer.require_incoming_transfer_memos = true.into();
 
-                account_state.base = account_base;
-                account_state.pack_base();
-                account_state.init_account_type().unwrap();
-                account_state
-                    .init_extension::<ImmutableOwner>(true)
-                    .unwrap();
-                let memo_transfer = account_state.init_extension::<MemoTransfer>(true).unwrap();
-                memo_transfer.require_incoming_transfer_memos = true.into();
+            let token_account = AccountSharedData::from(Account {
+                lamports: 111,
+                data: account_data.to_vec(),
+                owner: program_id,
+                ..Account::default()
+            });
+            bank.store_account(&token_account_pubkey, &token_account);
 
-                let token_account = AccountSharedData::from(Account {
-                    lamports: 111,
-                    data: account_data.to_vec(),
-                    owner: program_id,
-                    ..Account::default()
-                });
-                bank.store_account(&token_account_pubkey, &token_account);
+            let mint_base = Mint {
+                mint_authority: COption::Some(owner),
+                supply,
+                decimals,
+                is_initialized: true,
+                freeze_authority: COption::Some(owner),
+            };
+            let mut extensions = vec![ExtensionType::MintCloseAuthority];
+            if interest_bearing_config.is_some() {
+                extensions.push(ExtensionType::InterestBearingConfig);
+            }
+            if scaled_ui_amount_config.is_some() {
+                extensions.push(ExtensionType::ScaledUiAmount);
+            }
+            let mint_size = ExtensionType::try_calculate_account_len::<Mint>(&extensions).unwrap();
+            let mut mint_data = vec![0; mint_size];
+            let mut mint_state =
+                StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut mint_data).unwrap();
 
-                let mint_size = ExtensionType::try_calculate_account_len::<Mint>(&[
-                    ExtensionType::MintCloseAuthority,
-                    ExtensionType::InterestBearingConfig,
-                ])
+            mint_state.base = mint_base;
+            mint_state.pack_base();
+            mint_state.init_account_type().unwrap();
+            let mint_close_authority = mint_state
+                .init_extension::<MintCloseAuthority>(true)
                 .unwrap();
-                let mint_base = Mint {
-                    mint_authority: COption::Some(owner),
-                    supply,
-                    decimals,
-                    is_initialized: true,
-                    freeze_authority: COption::Some(owner),
-                };
-                let mut mint_data = vec![0; mint_size];
-                let mut mint_state =
-                    StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut mint_data).unwrap();
-
-                mint_state.base = mint_base;
-                mint_state.pack_base();
-                mint_state.init_account_type().unwrap();
-                let mint_close_authority = mint_state
-                    .init_extension::<MintCloseAuthority>(true)
-                    .unwrap();
-                mint_close_authority.close_authority =
-                    OptionalNonZeroPubkey::try_from(Some(owner)).unwrap();
-                let interest_bearing_config = mint_state
-                    .init_extension::<InterestBearingConfig>(true)
-                    .unwrap();
+            mint_close_authority.close_authority =
+                OptionalNonZeroPubkey::try_from(Some(owner)).unwrap();
+            if let Some(interest_bearing_config) = interest_bearing_config.as_mut() {
                 interest_bearing_config.initialization_timestamp =
                     bank.clock().unix_timestamp.saturating_sub(1_000_000).into();
-                interest_bearing_config.pre_update_average_rate = 500.into();
                 interest_bearing_config.last_update_timestamp = bank.clock().unix_timestamp.into();
-                interest_bearing_config.current_rate = 500.into();
+                let extension = mint_state
+                    .init_extension::<InterestBearingConfig>(true)
+                    .unwrap();
+                *extension = *interest_bearing_config;
+            }
 
-                let additional_data = SplTokenAdditionalData {
-                    decimals,
-                    interest_bearing_config: Some((
-                        *interest_bearing_config,
-                        bank.clock().unix_timestamp,
-                    )),
-                };
+            if let Some(scaled_ui_amount_config) = scaled_ui_amount_config.as_ref() {
+                let extension = mint_state
+                    .init_extension::<ScaledUiAmountConfig>(true)
+                    .unwrap();
+                *extension = *scaled_ui_amount_config;
+            }
 
-                let mint_account = AccountSharedData::from(Account {
-                    lamports: 111,
-                    data: mint_data.to_vec(),
-                    owner: program_id,
-                    ..Account::default()
-                });
-                bank.store_account(&Pubkey::from_str(&mint.to_string()).unwrap(), &mint_account);
-                ("spl-token-2022", account_size, mint_size, additional_data)
-            } else {
-                let account_size = TokenAccount::get_packed_len();
-                let mut account_data = vec![0; account_size];
-                let token_account = TokenAccount {
-                    mint,
-                    owner,
-                    delegate: COption::Some(delegate),
-                    amount,
-                    state: TokenAccountState::Initialized,
-                    is_native: COption::Some(rent_exempt_amount),
-                    delegated_amount,
-                    close_authority: COption::Some(owner),
-                };
-                TokenAccount::pack(token_account, &mut account_data).unwrap();
-                let token_account = AccountSharedData::from(Account {
-                    lamports: 111,
-                    data: account_data.to_vec(),
-                    owner: program_id,
-                    ..Account::default()
-                });
-                bank.store_account(&token_account_pubkey, &token_account);
-
-                // Add the mint
-                let mint_size = Mint::get_packed_len();
-                let mut mint_data = vec![0; mint_size];
-                let mint_state = Mint {
-                    mint_authority: COption::Some(owner),
-                    supply,
-                    decimals,
-                    is_initialized: true,
-                    freeze_authority: COption::Some(owner),
-                };
-                Mint::pack(mint_state, &mut mint_data).unwrap();
-                let mint_account = AccountSharedData::from(Account {
-                    lamports: 111,
-                    data: mint_data.to_vec(),
-                    owner: program_id,
-                    ..Account::default()
-                });
-                bank.store_account(&Pubkey::from_str(&mint.to_string()).unwrap(), &mint_account);
-                let additional_data = SplTokenAdditionalData {
-                    decimals,
-                    interest_bearing_config: None,
-                };
-                ("spl-token", account_size, mint_size, additional_data)
+            let additional_data = SplTokenAdditionalDataV2 {
+                decimals,
+                interest_bearing_config: interest_bearing_config
+                    .map(|v| (v, bank.clock().unix_timestamp)),
+                scaled_ui_amount_config: scaled_ui_amount_config
+                    .map(|v| (v, bank.clock().unix_timestamp)),
             };
 
-            let req = format!(
-                r#"{{"jsonrpc":"2.0","id":1,"method":"getAccountInfo","params":["{token_account_pubkey}", {{"encoding": "jsonParsed"}}]}}"#,
-            );
-            let res = io.handle_request_sync(&req, meta.clone());
-            let result: Value = serde_json::from_str(&res.expect("actual response"))
-                .expect("actual response deserialization");
-            let token_ui_amount = token_amount_to_ui_amount_v2(amount, &additional_data);
-            let delegated_ui_amount =
-                token_amount_to_ui_amount_v2(delegated_amount, &additional_data);
-            let rent_exempt_ui_amount =
-                token_amount_to_ui_amount_v2(rent_exempt_amount, &additional_data);
-            let mut expected_value = json!({
-                "program": program_name,
-                "space": account_size,
-                "parsed": {
-                    "type": "account",
-                    "info": {
-                        "mint": mint.to_string(),
-                        "owner": owner.to_string(),
-                        "tokenAmount": json!(token_ui_amount),
-                        "delegate": delegate.to_string(),
-                        "state": "initialized",
-                        "isNative": true,
-                        "rentExemptReserve": json!(rent_exempt_ui_amount),
-                        "delegatedAmount": json!(delegated_ui_amount),
-                        "closeAuthority": owner.to_string(),
-                    }
-                }
+            let mint_account = AccountSharedData::from(Account {
+                lamports: 111,
+                data: mint_data.to_vec(),
+                owner: program_id,
+                ..Account::default()
             });
-            if program_id == solana_inline_spl::token_2022::id() {
-                expected_value["parsed"]["info"]["extensions"] = json!([
-                    {
-                        "extension": "immutableOwner"
-                    },
-                    {
-                        "extension": "memoTransfer",
-                        "state": {
-                            "requireIncomingTransferMemos": true
-                        }
-                    },
-                ]);
-            }
-            assert_eq!(result["result"]["value"]["data"], expected_value);
+            bank.store_account(&Pubkey::from_str(&mint.to_string()).unwrap(), &mint_account);
+            ("spl-token-2022", account_size, mint_size, additional_data)
+        } else {
+            let account_size = TokenAccount::get_packed_len();
+            let mut account_data = vec![0; account_size];
+            let token_account = TokenAccount {
+                mint,
+                owner,
+                delegate: COption::Some(delegate),
+                amount,
+                state: TokenAccountState::Initialized,
+                is_native: COption::Some(rent_exempt_amount),
+                delegated_amount,
+                close_authority: COption::Some(owner),
+            };
+            TokenAccount::pack(token_account, &mut account_data).unwrap();
+            let token_account = AccountSharedData::from(Account {
+                lamports: 111,
+                data: account_data.to_vec(),
+                owner: program_id,
+                ..Account::default()
+            });
+            bank.store_account(&token_account_pubkey, &token_account);
 
-            // Test Mint
-            let req = format!(
-                r#"{{"jsonrpc":"2.0","id":1,"method":"getAccountInfo","params":["{mint}", {{"encoding": "jsonParsed"}}]}}"#,
-            );
-            let res = io.handle_request_sync(&req, meta);
-            let result: Value = serde_json::from_str(&res.expect("actual response"))
-                .expect("actual response deserialization");
-            let mut expected_value = json!({
-                "program": program_name,
-                "space": mint_size,
-                "parsed": {
-                    "type": "mint",
-                    "info": {
-                        "mintAuthority": owner.to_string(),
-                        "decimals": 2,
-                        "supply": "500".to_string(),
-                        "isInitialized": true,
-                        "freezeAuthority": owner.to_string(),
-                    }
-                }
+            // Add the mint
+            let mint_size = Mint::get_packed_len();
+            let mut mint_data = vec![0; mint_size];
+            let mint_state = Mint {
+                mint_authority: COption::Some(owner),
+                supply,
+                decimals,
+                is_initialized: true,
+                freeze_authority: COption::Some(owner),
+            };
+            Mint::pack(mint_state, &mut mint_data).unwrap();
+            let mint_account = AccountSharedData::from(Account {
+                lamports: 111,
+                data: mint_data.to_vec(),
+                owner: program_id,
+                ..Account::default()
             });
-            if program_id == solana_inline_spl::token_2022::id() {
+            bank.store_account(&Pubkey::from_str(&mint.to_string()).unwrap(), &mint_account);
+            let additional_data = SplTokenAdditionalDataV2::with_decimals(decimals);
+            ("spl-token", account_size, mint_size, additional_data)
+        };
+
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getAccountInfo","params":["{token_account_pubkey}", {{"encoding": "jsonParsed"}}]}}"#,
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        let result: Value = serde_json::from_str(&res.expect("actual response"))
+            .expect("actual response deserialization");
+        let token_ui_amount = token_amount_to_ui_amount_v3(amount, &additional_data);
+        let delegated_ui_amount = token_amount_to_ui_amount_v3(delegated_amount, &additional_data);
+        let rent_exempt_ui_amount =
+            token_amount_to_ui_amount_v3(rent_exempt_amount, &additional_data);
+        let mut expected_value = json!({
+            "program": program_name,
+            "space": account_size,
+            "parsed": {
+                "type": "account",
+                "info": {
+                    "mint": mint.to_string(),
+                    "owner": owner.to_string(),
+                    "tokenAmount": json!(token_ui_amount),
+                    "delegate": delegate.to_string(),
+                    "state": "initialized",
+                    "isNative": true,
+                    "rentExemptReserve": json!(rent_exempt_ui_amount),
+                    "delegatedAmount": json!(delegated_ui_amount),
+                    "closeAuthority": owner.to_string(),
+                }
+            }
+        });
+        if program_id == solana_inline_spl::token_2022::id() {
+            expected_value["parsed"]["info"]["extensions"] = json!([
+                {
+                    "extension": "immutableOwner"
+                },
+                {
+                    "extension": "memoTransfer",
+                    "state": {
+                        "requireIncomingTransferMemos": true
+                    }
+                },
+            ]);
+        }
+        assert_eq!(result["result"]["value"]["data"], expected_value);
+
+        // Test Mint
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"getAccountInfo","params":["{mint}", {{"encoding": "jsonParsed"}}]}}"#,
+        );
+        let res = io.handle_request_sync(&req, meta);
+        let result: Value = serde_json::from_str(&res.expect("actual response"))
+            .expect("actual response deserialization");
+        let mut expected_value = json!({
+            "program": program_name,
+            "space": mint_size,
+            "parsed": {
+                "type": "mint",
+                "info": {
+                    "mintAuthority": owner.to_string(),
+                    "decimals": 2,
+                    "supply": "500".to_string(),
+                    "isInitialized": true,
+                    "freezeAuthority": owner.to_string(),
+                }
+            }
+        });
+        if program_id == solana_inline_spl::token_2022::id() {
+            if interest_bearing_config.is_some() {
                 expected_value["parsed"]["info"]["extensions"] = json!([
                     {
                         "extension": "mintCloseAuthority",
@@ -8398,8 +8418,27 @@ pub mod tests {
                     }
                 ]);
             }
-            assert_eq!(result["result"]["value"]["data"], expected_value,);
+            if scaled_ui_amount_config.is_some() {
+                expected_value["parsed"]["info"]["extensions"] = json!([
+                    {
+                        "extension": "mintCloseAuthority",
+                        "state": {
+                            "closeAuthority": owner.to_string(),
+                        }
+                    },
+                    {
+                        "extension": "scaledUiAmountConfig",
+                        "state": {
+                            "multiplier": "0",
+                            "newMultiplier": "2",
+                            "newMultiplierEffectiveTimestamp": 0,
+                            "authority": null,
+                        }
+                    }
+                ]);
+            }
         }
+        assert_eq!(result["result"]["value"]["data"], expected_value,);
     }
 
     #[test]

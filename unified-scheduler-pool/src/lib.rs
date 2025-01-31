@@ -1,12 +1,16 @@
 //! Transaction scheduling code.
 //!
-//! This crate implements 3 solana-runtime traits (`InstalledScheduler`, `UninstalledScheduler` and
-//! `InstalledSchedulerPool`) to provide a concrete transaction scheduling implementation
+//! This crate implements 3 solana-runtime traits [`InstalledScheduler`], [`UninstalledScheduler`]
+//! and [`InstalledSchedulerPool`] to provide a concrete transaction scheduling implementation
 //! (including executing txes and committing tx results).
 //!
-//! At the highest level, this crate takes `SanitizedTransaction`s via its `schedule_execution()`
-//! and commits any side-effects (i.e. on-chain state changes) into the associated `Bank` via
-//! `solana-ledger`'s helper function called `execute_batch()`.
+//! At the highest level, this crate takes [`SanitizedTransaction`]s via its
+//! [`InstalledScheduler::schedule_execution`] and commits any side-effects (i.e. on-chain state
+//! changes) into the associated [`Bank`](solana_runtime::bank::Bank) via `solana-ledger`'s helper
+//! function called [`execute_batch`].
+//!
+//! Refer to [`PooledScheduler`] doc comment for general overview of scheduler state transitions
+//! regarding to pooling and the actual use.
 
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
@@ -72,9 +76,20 @@ enum CheckPoint {
 
 type AtomicSchedulerId = AtomicU64;
 
-// SchedulerPool must be accessed as a dyn trait from solana-runtime, because SchedulerPool
-// contains some internal fields, whose types aren't available in solana-runtime (currently
-// TransactionStatusSender; also, PohRecorder in the future)...
+/// A pool of idling schedulers (usually [`PooledScheduler`]), ready to be taken by bank.
+///
+/// Also, the pool runs a _cleaner_ thread named as `solScCleaner`. its jobs include:
+///
+/// - Shrink of pool if there are too many idle schedulers.
+/// - Invocation of timeouts registered by [`InstalledSchedulerPool::register_timeout_listener`].
+/// - The actual destruction of any retired schedulers including thread termination and the heavy
+///   `UsageQueueLoader` drop.
+///
+/// `SchedulerPool` (and [`PooledScheduler`] in this regard) must be accessed as a dyn trait from
+/// `solana-runtime`, because it contains some internal fields, whose types aren't available in
+/// `solana-runtime` ( [`TransactionStatusSender`] and [`TransactionRecorder`]). Refer to the doc
+/// comment with a diagram at [`solana_runtime::installed_scheduler_pool::InstalledScheduler`] for
+/// explanation of this rather complex dyn trait/type hierarchy.
 #[derive(Debug)]
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
@@ -256,6 +271,9 @@ where
                     drop(timeout_listeners);
 
                     let count = expired_listeners.len();
+                    // Now triggers all expired listeners. Usually, triggering timeouts does
+                    // nothing because the callbacks will be no-op if already successfully
+                    // `wait_for_termination()`-ed.
                     for (timeout_listener, _registered_at) in expired_listeners {
                         timeout_listener.trigger(scheduler_pool.clone());
                     }
@@ -682,10 +700,10 @@ mod chained_channel {
 
 /// The primary owner of all [`UsageQueue`]s used for particular [`PooledScheduler`].
 ///
-/// Currently, the simplest implementation. This grows memory usage in unbounded way. Cleaning will
-/// be added later. This struct is here to be put outside `solana-unified-scheduler-logic` for the
-/// crate's original intent (separation of logics from this crate). Some practical and mundane
-/// pruning will be implemented in this type.
+/// Currently, the simplest implementation. This grows memory usage in unbounded way. Overgrown
+/// instance destruction is managed via `solScCleaner`. This struct is here to be put outside
+/// `solana-unified-scheduler-logic` for the crate's original intent (separation of concerns from
+/// the pure-logic-only crate). Some practical and mundane pruning will be implemented in this type.
 #[derive(Default, Debug)]
 pub struct UsageQueueLoader {
     usage_queues: DashMap<Pubkey, UsageQueue>,
@@ -709,6 +727,73 @@ fn disconnected<T>() -> Receiver<T> {
     crossbeam_channel::unbounded().1
 }
 
+#[cfg_attr(doc, aquamarine::aquamarine)]
+/// The concrete scheduler instance along with 1 scheduler and N handler threads.
+///
+/// This implements the dyn-compatible [`InstalledScheduler`] trait to be interacted by
+/// solana-runtime code as `Box<dyn _>`.  This also implements the [`SpawnableScheduler`] subtrait
+/// to be spawned and pooled by [`SchedulerPool`].  When a scheduler is said to be _taken_ from a
+/// pool, the Rust's ownership is literally moved from the pool's vec to the particular
+/// [`BankWithScheduler`](solana_runtime::installed_scheduler_pool::BankWithScheduler) for
+/// type-level protection against double-use by different banks. As soon as the bank is
+/// [`is_complete()`](`solana_runtime::bank::Bank::is_complete`) (i.e. ready for freezing), the
+/// associated scheduler is immediately _returned_ to the pool via
+/// [`InstalledScheduler::wait_for_termination`], to be taken by other banks quickly (usually,
+/// child bank).
+///
+/// Pooling is implemented to avoid repeated thread creation/destruction. Further more, each
+/// scheduler should manage its own set of threads, to be independent from other scheduler's
+/// threads for concurrent and efficient processing of banks of different forks.
+///
+/// It's intentionally designed for a start and end of scheduler use by banks not to incur any
+/// heavy system resource manipulation to reduce the latency of this per-block bookkeeping as much
+/// as possible.
+///
+/// To complement the above most common situation, there's various erroneous conditions: timeouts
+/// and abortions.
+///
+/// Timeouts are for rare conditions where there are abandoned-yet-unpruned banks in the
+/// [`BankForks`](solana_runtime::bank_forks::BankForks) under forky (unsteady rooting) cluster
+/// conditions. The pool's background cleaner thread (`solScCleaner`) triggers the timeout-based
+/// out-of-pool (i.e. _taken_) scheduler reclaimation with prior coordination of
+/// [`BankForks::insert()`](solana_runtime::bank_forks::BankForks::insert) via
+/// [`InstalledSchedulerPool::register_timeout_listener`].
+///
+/// Abortions are for another rate conditions where there's a fatal processing error, marking the
+/// given block as dead. In this case, all threads are terminated abruptly as much as possible to
+/// avoid any further system resource consumption on this possibly malice block. This error
+/// condition can implicitly be signalled to the replay stage on further transaction scheduling or
+/// can explicitly be done so on the eventual `wait_for_termination()` by drops or timeouts.
+///
+/// Lastly, scheduler can finally be _retired_ to be ready for thread termination due to various
+/// reasons like [`UsageQueueLoader`] being overgrown or many idling schedulers in the pool, in
+/// addition to the obvious reason of aborted scheduler.
+///
+/// ### Life cycle and ownership movement across crates of a particular scheduler
+///
+/// ```mermaid
+/// stateDiagram-v2
+///     [*] --> Active: Spawned (New bank by solReplayStage)
+///     state solana-runtime {
+///         state if_usable <<choice>>
+///         Active --> if_usable: Returned (Bank-freezing by solReplayStage)
+///         Active --> if_usable: Dropped (BankForks-pruning by solReplayStage)
+///         Aborted --> if_usable: Dropped (BankForks-pruning by solReplayStage)
+///         if_usable --> Pooled: IF !overgrown && !aborted
+///         Active --> Aborted: Errored on TX execution
+///         Aborted --> Stale: !Droppped after TIMEOUT_DURATION since taken
+///         Active --> Stale: No new TX after TIMEOUT_DURATION since taken
+///         Stale --> if_usable: Returned (Timeout-triggered by solScCleaner)
+///         Pooled --> Active: Taken (New bank by solReplayStage)
+///     }
+///     state solana-unified-scheduler-pool {
+///         Pooled --> Idle: !Taken after POOLING_DURATION
+///         if_usable --> Trashed: IF overgrown || aborted
+///         Idle --> Retired
+///         Trashed --> Retired
+///     }
+///     Retired --> [*]: Terminated (by solScCleaner)
+/// ```
 #[derive(Debug)]
 pub struct PooledScheduler<TH: TaskHandler> {
     inner: PooledSchedulerInner<Self, TH>,

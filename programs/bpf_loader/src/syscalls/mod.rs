@@ -64,6 +64,7 @@ use {
     solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
+        marker::PhantomData,
         mem::{align_of, size_of},
         slice::from_raw_parts_mut,
         str::{from_utf8, Utf8Error},
@@ -228,6 +229,68 @@ impl HasherImpl for Keccak256Hasher {
     }
     fn get_max_slices(compute_budget: &ComputeBudget) -> u64 {
         compute_budget.sha256_max_slices
+    }
+}
+
+// The VmSlice class is used for cases when you need a slice that is stored in the BPF
+// interpreter's virtual address space. Because this source code can be compiled with
+// addresses of different bit depths, we cannot assume that the 64-bit BPF interpreter's
+// pointer sizes can be mapped to physical pointer sizes. In particular, if you need a
+// slice-of-slices in the virtual space, the inner slices will be different sizes in a
+// 32-bit app build than in the 64-bit virtual space. Therefore instead of a slice-of-slices,
+// you should implement a slice-of-VmSlices, which can then use VmSlice::translate() to
+// map to the physical address.
+// This class must consist only of 16 bytes: a u64 ptr and a u64 len, to match the 64-bit
+// implementation of a slice in Rust. The PhantomData entry takes up 0 bytes.
+
+#[repr(C)]
+pub struct VmSlice<T> {
+    ptr: u64,
+    len: u64,
+    resource_type: PhantomData<T>,
+}
+
+impl<T> VmSlice<T> {
+    pub fn new(ptr: u64, len: u64) -> Self {
+        VmSlice {
+            ptr,
+            len,
+            resource_type: PhantomData,
+        }
+    }
+
+    pub fn ptr(&self) -> u64 {
+        self.ptr
+    }
+    pub fn len(&self) -> u64 {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Adjust the length of the vector. This is unchecked, and it assumes that the pointer
+    /// points to valid memory of the correct length after vm-translation.
+    pub fn resize(&mut self, len: u64) {
+        self.len = len;
+    }
+
+    /// Returns a slice using a mapped physical address
+    pub fn translate(
+        &self,
+        memory_mapping: &MemoryMapping,
+        check_aligned: bool,
+    ) -> Result<&[T], Error> {
+        translate_slice::<T>(memory_mapping, self.ptr, self.len, check_aligned)
+    }
+
+    pub fn translate_mut(
+        &mut self,
+        memory_mapping: &MemoryMapping,
+        check_aligned: bool,
+    ) -> Result<&mut [T], Error> {
+        translate_slice_mut::<T>(memory_mapping, self.ptr, self.len, check_aligned)
     }
 }
 
@@ -652,6 +715,62 @@ fn translate_slice<'a, T>(
     .map(|value| &*value)
 }
 
+fn translate_slice_of_slices_inner<'a, T>(
+    memory_mapping: &MemoryMapping,
+    access_type: AccessType,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a mut [VmSlice<T>], Error> {
+    if len == 0 {
+        return Ok(&mut []);
+    }
+
+    let total_size = len.saturating_mul(size_of::<VmSlice<T>>() as u64);
+    if isize::try_from(total_size).is_err() {
+        return Err(SyscallError::InvalidLength.into());
+    }
+
+    let host_addr = translate(memory_mapping, access_type, vm_addr, total_size)?;
+
+    if check_aligned && !address_is_aligned::<VmSlice<T>>(host_addr) {
+        return Err(SyscallError::UnalignedPointer.into());
+    }
+    Ok(unsafe { from_raw_parts_mut(host_addr as *mut VmSlice<T>, len as usize) })
+}
+
+#[allow(dead_code)]
+fn translate_slice_of_slices_mut<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a mut [VmSlice<T>], Error> {
+    translate_slice_of_slices_inner::<T>(
+        memory_mapping,
+        AccessType::Store,
+        vm_addr,
+        len,
+        check_aligned,
+    )
+}
+
+fn translate_slice_of_slices<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a [VmSlice<T>], Error> {
+    translate_slice_of_slices_inner::<T>(
+        memory_mapping,
+        AccessType::Load,
+        vm_addr,
+        len,
+        check_aligned,
+    )
+    .map(|value| &*value)
+}
+
 /// Take a virtual pointer to a string (points to SBF VM memory space), translate it
 /// pass it to a user-defined work function
 fn translate_string_and_do(
@@ -758,22 +877,17 @@ fn translate_and_check_program_address_inputs<'a>(
     check_aligned: bool,
 ) -> Result<(Vec<&'a [u8]>, &'a Pubkey), Error> {
     let untranslated_seeds =
-        translate_slice::<&[u8]>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
+        translate_slice_of_slices::<u8>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
     if untranslated_seeds.len() > MAX_SEEDS {
         return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
     }
     let seeds = untranslated_seeds
         .iter()
         .map(|untranslated_seed| {
-            if untranslated_seed.len() > MAX_SEED_LEN {
+            if untranslated_seed.len() > MAX_SEED_LEN as u64 {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
-            translate_slice::<u8>(
-                memory_mapping,
-                untranslated_seed.as_ptr() as *const _ as u64,
-                untranslated_seed.len() as u64,
-                check_aligned,
-            )
+            untranslated_seed.translate(memory_mapping, check_aligned)
         })
         .collect::<Result<Vec<_>, Error>>()?;
     let program_id = translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned)?;
@@ -1838,7 +1952,7 @@ declare_builtin_function!(
             poseidon::HASH_BYTES as u64,
             invoke_context.get_check_aligned(),
         )?;
-        let inputs = translate_slice::<&[u8]>(
+        let inputs = translate_slice_of_slices::<u8>(
             memory_mapping,
             vals_addr,
             vals_len,
@@ -1846,14 +1960,7 @@ declare_builtin_function!(
         )?;
         let inputs = inputs
             .iter()
-            .map(|input| {
-                translate_slice::<u8>(
-                    memory_mapping,
-                    input.as_ptr() as *const _ as u64,
-                    input.len() as u64,
-                    invoke_context.get_check_aligned(),
-                )
-            })
+            .map(|input| input.translate(memory_mapping, invoke_context.get_check_aligned()))
             .collect::<Result<Vec<_>, Error>>()?;
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
@@ -2054,22 +2161,18 @@ declare_builtin_function!(
         )?;
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
-            let vals = translate_slice::<&[u8]>(
+            let vals = translate_slice_of_slices::<u8>(
                 memory_mapping,
                 vals_addr,
                 vals_len,
                 invoke_context.get_check_aligned(),
             )?;
+
             for val in vals.iter() {
-                let bytes = translate_slice::<u8>(
-                    memory_mapping,
-                    val.as_ptr() as u64,
-                    val.len() as u64,
-                    invoke_context.get_check_aligned(),
-                )?;
+                let bytes = val.translate(memory_mapping, invoke_context.get_check_aligned())?;
                 let cost = compute_budget.mem_op_base_cost.max(
                     hash_byte_cost.saturating_mul(
-                        (val.len() as u64)
+                        val.len()
                             .checked_div(2)
                             .expect("div by non-zero literal"),
                     ),

@@ -185,6 +185,7 @@ impl Tvu {
             tvu_config.shred_version,
             bank_forks.clone(),
             cluster_info.clone(),
+            outstanding_repair_requests.clone(),
             turbine_disabled,
             exit.clone(),
         );

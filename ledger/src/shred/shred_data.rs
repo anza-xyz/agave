@@ -3,6 +3,7 @@ use {
         self,
         common::dispatch,
         legacy, merkle,
+        payload::Payload,
         traits::{Shred as _, ShredData as ShredDataTrait},
         DataShredHeader, Error, ShredCommonHeader, ShredFlags, ShredType, ShredVariant, SignedData,
         MAX_DATA_SHREDS_PER_SLOT,
@@ -23,9 +24,9 @@ impl ShredData {
     dispatch!(pub(super) fn erasure_shard(self) -> Result<Vec<u8>, Error>);
     dispatch!(pub(super) fn erasure_shard_as_slice(&self) -> Result<&[u8], Error>);
     dispatch!(pub(super) fn erasure_shard_index(&self) -> Result<usize, Error>);
-    dispatch!(pub(super) fn into_payload(self) -> Vec<u8>);
+    dispatch!(pub(super) fn into_payload(self) -> Payload);
     dispatch!(pub(super) fn parent(&self) -> Result<Slot, Error>);
-    dispatch!(pub(super) fn payload(&self) -> &Vec<u8>);
+    dispatch!(pub(super) fn payload(&self) -> &Payload);
     dispatch!(pub(super) fn sanitize(&self) -> Result<(), Error>);
     dispatch!(pub(super) fn set_signature(&mut self, signature: Signature));
 

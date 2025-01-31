@@ -27,6 +27,7 @@ pub mod snapshot_bank_utils;
 pub mod snapshot_config;
 pub mod snapshot_hash;
 pub mod snapshot_minimizer;
+pub mod snapshot_mode;
 pub mod snapshot_package;
 pub mod snapshot_utils;
 mod stake_account;

@@ -49,9 +49,17 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
-pub(crate) use self::merkle::SIZE_OF_MERKLE_ROOT;
 #[cfg(test)]
 pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
+pub(crate) use self::{merkle::SIZE_OF_MERKLE_ROOT, payload::serde_bytes_payload};
+pub use {
+    self::{
+        payload::Payload,
+        shred_data::ShredData,
+        stats::{ProcessShredsStats, ShredFetchStats},
+    },
+    crate::shredder::{ReedSolomonCache, Shredder},
+};
 use {
     self::{shred_code::ShredCode, traits::Shred as _},
     crate::blockstore::{self, MAX_DATA_SHREDS_PER_SLOT},
@@ -72,17 +80,11 @@ use {
     std::{fmt::Debug, time::Instant},
     thiserror::Error,
 };
-pub use {
-    self::{
-        shred_data::ShredData,
-        stats::{ProcessShredsStats, ShredFetchStats},
-    },
-    crate::shredder::{ReedSolomonCache, Shredder},
-};
 
 mod common;
 mod legacy;
 mod merkle;
+mod payload;
 pub mod shred_code;
 mod shred_data;
 mod stats;
@@ -369,9 +371,9 @@ impl Shred {
     dispatch!(pub(crate) fn erasure_shard_index(&self) -> Result<usize, Error>);
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
 
-    dispatch!(pub fn into_payload(self) -> Vec<u8>);
+    dispatch!(pub fn into_payload(self) -> Payload);
     dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(pub fn payload(&self) -> &Vec<u8>);
+    dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
 
     // Only for tests.
@@ -408,8 +410,12 @@ impl Shred {
         ))
     }
 
-    pub fn new_from_serialized_shred(shred: Vec<u8>) -> Result<Self, Error> {
-        Ok(match layout::get_shred_variant(&shred)? {
+    pub fn new_from_serialized_shred<T>(shred: T) -> Result<Self, Error>
+    where
+        T: AsRef<[u8]> + Into<Payload>,
+        Payload: From<T>,
+    {
+        Ok(match layout::get_shred_variant(shred.as_ref())? {
             ShredVariant::LegacyCode => {
                 let shred = legacy::ShredCode::from_payload(shred)?;
                 Self::from(ShredCode::from(shred))
@@ -647,6 +653,18 @@ pub mod layout {
     }
 
     #[inline]
+    pub fn get_shred_and_repair_nonce(packet: &Packet) -> Option<(&[u8], Option<Nonce>)> {
+        let data = packet.data(..)?;
+        if !packet.meta().repair() {
+            return Some((data, None));
+        }
+        let offset = data.len().checked_sub(4)?;
+        let (shred, nonce) = data.split_at(offset);
+        let nonce = u32::from_le_bytes(<[u8; 4]>::try_from(nonce).unwrap());
+        Some((shred, Some(nonce)))
+    }
+
+    #[inline]
     pub fn get_common_header_bytes(shred: &[u8]) -> Option<&[u8]> {
         shred.get(..SIZE_OF_COMMON_SHRED_HEADER)
     }
@@ -681,7 +699,7 @@ pub mod layout {
     }
 
     #[inline]
-    pub(crate) fn get_index(shred: &[u8]) -> Option<u32> {
+    pub fn get_index(shred: &[u8]) -> Option<u32> {
         let bytes = <[u8; 4]>::try_from(shred.get(73..73 + 4)?).unwrap();
         Some(u32::from_le_bytes(bytes))
     }
@@ -1210,7 +1228,7 @@ pub(crate) fn make_merkle_shreds_from_entries(
         reed_solomon_cache,
         stats,
     )?;
-    Ok(shreds.into_iter().flatten().map(Shred::from).collect())
+    Ok(shreds.into_iter().map(Shred::from).collect())
 }
 
 // Accepts shreds in the slot range [root + 1, max_slot].
@@ -1379,6 +1397,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         bincode::serialized_size,
+        itertools::Itertools,
         rand::Rng,
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
@@ -1404,7 +1423,7 @@ mod tests {
         data_size: usize,
         chained: bool,
         is_last_in_slot: bool,
-    ) -> Result<Vec<Vec<merkle::Shred>>, Error> {
+    ) -> Result<Vec<merkle::Shred>, Error> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
         let parent_offset = rng.gen_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
@@ -1561,8 +1580,8 @@ mod tests {
             is_last_in_slot,
         )
         .unwrap();
-        assert_eq!(shreds.len(), 1);
-        let shreds: Vec<_> = shreds.into_iter().flatten().map(Shred::from).collect();
+        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
+        assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
 
         assert_matches!(shreds[0].shred_type(), ShredType::Data);
         let parent_slot = shreds[0].parent().unwrap();
@@ -2273,7 +2292,6 @@ mod tests {
         )
         .unwrap()
         .into_iter()
-        .flatten()
         .map(Shred::from)
         .map(|shred| fill_retransmitter_signature(&mut rng, shred, chained, is_last_in_slot))
         .collect();
