@@ -96,8 +96,8 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     map_internal: RwLock<HashMap<Pubkey, AccountMapEntry<T>, ahash::RandomState>>,
     storage: Arc<BucketMapHolder<T, U>>,
     bin: usize,
-    lowest_pubkey: Pubkey,
-    highest_pubkey: Pubkey,
+    pub(crate) lowest_pubkey: Pubkey,
+    pub(crate) highest_pubkey: Pubkey,
 
     bucket: Option<Arc<BucketApi<(Slot, U)>>>,
 
