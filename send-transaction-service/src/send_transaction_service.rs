@@ -3,7 +3,7 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::Itertools,
     log::{warn, *},
-    solana_client::connection_cache::ConnectionCache,
+    solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_measure::measure::Measure,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -688,6 +688,10 @@ pub trait TransactionClient {
         wire_transactions: Vec<Vec<u8>>,
         stats: &SendTransactionServiceStats,
     );
+
+    fn protocol(&self) -> Protocol;
+
+    fn exit(&self);
 }
 
 pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
@@ -793,6 +797,12 @@ where
             self.send_transactions(address, wire_transactions.clone(), stats);
         }
     }
+
+    fn protocol(&self) -> Protocol {
+        self.connection_cache.protocol()
+    }
+
+    fn exit(&self) {}
 }
 
 #[cfg(test)]
