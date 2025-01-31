@@ -492,6 +492,7 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
     end_bound: Bound<Pubkey>,
     is_finished: bool,
     returns_items: AccountsIndexIteratorReturnsItems,
+    last_bin_range: Option<(usize, Vec<(Pubkey, AccountMapEntry<T>)>)>,
 }
 
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIterator<'a, T, U> {
@@ -574,6 +575,7 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
             is_finished: false,
             bin_calculator: &index.bin_calculator,
             returns_items,
+            last_bin_range: None,
         }
     }
 
@@ -604,16 +606,36 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
         }
         let (start_bin, bin_range) = self.bin_start_and_range();
         let mut chunk = Vec::with_capacity(ITER_BATCH_SIZE);
-        'outer: for i in self.account_maps.iter().skip(start_bin).take(bin_range) {
-            for (pubkey, account_map_entry) in
-                Self::range(&i, (self.start_bound, self.end_bound), self.returns_items)
-            {
-                if chunk.len() >= ITER_BATCH_SIZE
-                    && self.returns_items == AccountsIndexIteratorReturnsItems::Sorted
-                {
+        'outer: for (i, map) in self
+            .account_maps
+            .iter()
+            .skip(start_bin)
+            .take(bin_range)
+            .enumerate()
+        {
+            let bin = start_bin + i;
+            let mut range = match self.last_bin_range.take() {
+                Some((last_bin, r)) if last_bin == bin => {
+                    // we've already loaded this bin from last iteration, so just continue where we left off
+                    r
+                }
+                _ => {
+                    // else load the new bin
+                    Self::range(
+                        &map,
+                        (self.start_bound, self.end_bound),
+                        self.collect_all_unsorted,
+                    )
+                }
+            };
+
+            for (pubkey, account_map_entry) in &range {
+                if chunk.len() >= ITER_BATCH_SIZE && !self.collect_all_unsorted {
+                    range.drain(0..chunk.len());
+                    self.last_bin_range = Some((bin, range));
                     break 'outer;
                 }
-                let item = (pubkey, account_map_entry);
+                let item = (*pubkey, account_map_entry.clone());
                 chunk.push(item);
             }
         }
