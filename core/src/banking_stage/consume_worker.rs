@@ -189,7 +189,7 @@ pub(crate) struct ConsumeWorkerMetrics {
 impl ConsumeWorkerMetrics {
     /// Report and reset metrics iff the interval has elapsed and the worker did some work.
     pub fn maybe_report_and_reset(&self) {
-        const REPORT_INTERVAL_MS: u64 = 1000;
+        const REPORT_INTERVAL_MS: u64 = 20;
         if self.interval.should_update(REPORT_INTERVAL_MS)
             && self.has_data.swap(false, Ordering::Relaxed)
         {
