@@ -6878,6 +6878,22 @@ impl TransactionProcessingCallback for Bank {
             .map(|(stake, _)| (*stake))
             .unwrap_or(0)
     }
+
+    fn calculate_fee(
+        &self,
+        message: &impl SVMMessage,
+        lamports_per_signature: u64,
+        prioritization_fee: u64,
+        feature_set: &FeatureSet,
+    ) -> FeeDetails {
+        solana_fee::calculate_fee_details(
+            message,
+            false, /* zero_fees_for_test */
+            lamports_per_signature,
+            prioritization_fee,
+            FeeFeatures::from(feature_set),
+        )
+    }
 }
 
 #[cfg(feature = "dev-context-only-utils")]

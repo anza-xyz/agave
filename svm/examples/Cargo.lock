@@ -7515,7 +7515,6 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-feature-set",
- "solana-fee",
  "solana-fee-structure",
  "solana-hash",
  "solana-instruction",

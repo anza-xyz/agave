@@ -8,6 +8,7 @@ use {
     },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::FeatureSet,
+    solana_fee_structure::FeeDetails,
     solana_program_runtime::{
         invoke_context::InvokeContext,
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
@@ -30,6 +31,7 @@ use {
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
         transaction_processor::TransactionBatchProcessor,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_type_overrides::sync::{Arc, RwLock},
     std::{
         cmp::Ordering,
@@ -106,6 +108,25 @@ impl TransactionProcessingCallback for MockBankCallback {
             .entry(*address)
             .or_default()
             .push((account, is_writable));
+    }
+
+    fn calculate_fee(
+        &self,
+        message: &impl SVMMessage,
+        lamports_per_signature: u64,
+        prioritization_fee: u64,
+        _feature_set: &FeatureSet,
+    ) -> FeeDetails {
+        let signature_count = message
+            .num_transaction_signatures()
+            .saturating_add(message.num_ed25519_signatures())
+            .saturating_add(message.num_secp256k1_signatures())
+            .saturating_add(message.num_secp256r1_signatures());
+
+        FeeDetails::new(
+            signature_count.saturating_mul(lamports_per_signature),
+            prioritization_fee,
+        )
     }
 }
 
