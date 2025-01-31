@@ -30,6 +30,7 @@ solana-sdk-ids = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-type-overrides = { workspace = true }
+solana-vote-interface = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

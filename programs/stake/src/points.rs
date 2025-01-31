@@ -4,12 +4,10 @@
 use {
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
-    solana_program::{
-        stake::state::{Delegation, Stake, StakeStateV2},
-        vote::state::VoteState,
-    },
+    solana_program::stake::state::{Delegation, Stake, StakeStateV2},
     solana_pubkey::Pubkey,
     solana_sysvar::stake_history::StakeHistory,
+    solana_vote_interface::state::VoteState,
     std::cmp::Ordering,
 };
 

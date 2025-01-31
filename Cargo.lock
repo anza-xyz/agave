@@ -9754,6 +9754,7 @@ dependencies = [
  "solana-sysvar-id",
  "solana-transaction-context",
  "solana-type-overrides",
+ "solana-vote-interface",
  "solana-vote-program",
  "test-case",
 ]
