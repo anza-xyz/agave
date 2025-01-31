@@ -54,6 +54,10 @@ const DEFAULT_BATCH_SEND_RATE_MS: u64 = 1;
 // The maximum transaction batch send rate in MS
 pub const MAX_BATCH_SEND_RATE_MS: usize = 100_000;
 
+// Alias trait to shorten function definitions.
+pub trait TpuInfoWithSendStatic: TpuInfo + std::marker::Send + 'static {}
+impl<T> TpuInfoWithSendStatic for T where T: TpuInfo + std::marker::Send + 'static {}
+
 pub struct SendTransactionService {
     receive_txn_thread: JoinHandle<()>,
     retry_thread: JoinHandle<()>,
@@ -143,7 +147,7 @@ pub const LEADER_INFO_REFRESH_RATE_MS: u64 = 1000;
 /// used for sending transactions.
 pub struct CurrentLeaderInfo<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     /// The last time the leader info was refreshed
     last_leader_refresh: Option<Instant>,
@@ -157,7 +161,7 @@ where
 
 impl<T> CurrentLeaderInfo<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     /// Get the leader info, refresh if expired
     pub fn get_leader_info(&mut self) -> Option<&T> {
@@ -330,7 +334,7 @@ impl SendTransactionServiceStatsReport {
 const SEND_TRANSACTION_METRICS_REPORT_RATE_MS: u64 = 5000;
 
 impl SendTransactionService {
-    pub fn new<T: TpuInfo + std::marker::Send + 'static>(
+    pub fn new<T: TpuInfoWithSendStatic>(
         tpu_address: SocketAddr,
         bank_forks: &Arc<RwLock<BankForks>>,
         leader_info: Option<T>,
@@ -356,7 +360,7 @@ impl SendTransactionService {
         )
     }
 
-    pub fn new_with_config<T: TpuInfo + std::marker::Send + 'static>(
+    pub fn new_with_config<T: TpuInfoWithSendStatic>(
         tpu_address: SocketAddr,
         bank_forks: &Arc<RwLock<BankForks>>,
         leader_info: Option<T>,
@@ -402,7 +406,7 @@ impl SendTransactionService {
     }
 
     /// Thread responsible for receiving transactions from RPC clients.
-    fn receive_txn_thread<T: TpuInfo + std::marker::Send + 'static>(
+    fn receive_txn_thread<T: TpuInfoWithSendStatic>(
         receiver: Receiver<TransactionInfo>,
         client: ConnectionCacheClient<T>,
         retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
@@ -504,7 +508,7 @@ impl SendTransactionService {
     }
 
     /// Thread responsible for retrying transactions
-    fn retry_thread<T: TpuInfo + std::marker::Send + 'static>(
+    fn retry_thread<T: TpuInfoWithSendStatic>(
         bank_forks: Arc<RwLock<BankForks>>,
         client: ConnectionCacheClient<T>,
         retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
@@ -549,7 +553,7 @@ impl SendTransactionService {
     }
 
     /// Retry transactions sent before.
-    fn process_transactions<T: TpuInfo + std::marker::Send + 'static>(
+    fn process_transactions<T: TpuInfoWithSendStatic>(
         working_bank: &Bank,
         root_bank: &Bank,
         transactions: &mut HashMap<Signature, TransactionInfo>,
@@ -686,7 +690,7 @@ pub trait TransactionClient {
     );
 }
 
-pub struct ConnectionCacheClient<T: TpuInfo + std::marker::Send + 'static> {
+pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
     connection_cache: Arc<ConnectionCache>,
     tpu_address: SocketAddr,
     tpu_peers: Option<Vec<SocketAddr>>,
@@ -697,7 +701,7 @@ pub struct ConnectionCacheClient<T: TpuInfo + std::marker::Send + 'static> {
 // Manual implementation of Clone without requiring T to be Clone
 impl<T> Clone for ConnectionCacheClient<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     fn clone(&self) -> Self {
         Self {
@@ -712,7 +716,7 @@ where
 
 impl<T> ConnectionCacheClient<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     pub fn new(
         connection_cache: Arc<ConnectionCache>,
@@ -767,7 +771,7 @@ where
 
 impl<T> TransactionClient for ConnectionCacheClient<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     fn send_transactions_in_batch(
         &self,
