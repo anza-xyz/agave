@@ -629,14 +629,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
                 }
             };
 
+            let mut count = 0;
             for (pubkey, account_map_entry) in &range {
                 if chunk.len() >= ITER_BATCH_SIZE && !self.collect_all_unsorted {
-                    range.drain(0..chunk.len());
+                    range.drain(0..count);
                     self.last_bin_range = Some((bin, range));
                     break 'outer;
                 }
                 let item = (*pubkey, account_map_entry.clone());
                 chunk.push(item);
+                count += 1;
             }
         }
 
