@@ -386,10 +386,6 @@ impl SendTransactionService {
         config: Config,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let stats_report = Arc::new(SendTransactionServiceStatsReport::default());
-
-        let retry_transactions = Arc::new(Mutex::new(HashMap::new()));
-
         let client = ConnectionCacheClient::new(
             connection_cache.clone(),
             tpu_address,
@@ -397,6 +393,20 @@ impl SendTransactionService {
             leader_info,
             config.leader_forward_count,
         );
+
+        Self::new_with_client(bank_forks, receiver, client, config, exit)
+    }
+
+    pub fn new_with_client<Client: TransactionClient + Clone + std::marker::Send + 'static>(
+        bank_forks: &Arc<RwLock<BankForks>>,
+        receiver: Receiver<TransactionInfo>,
+        client: Client,
+        config: Config,
+        exit: Arc<AtomicBool>,
+    ) -> Self {
+        let stats_report = Arc::new(SendTransactionServiceStatsReport::default());
+
+        let retry_transactions = Arc::new(Mutex::new(HashMap::new()));
 
         let receive_txn_thread = Self::receive_txn_thread(
             receiver,
@@ -415,6 +425,7 @@ impl SendTransactionService {
             stats_report,
             exit.clone(),
         );
+
         Self {
             receive_txn_thread,
             retry_thread,
@@ -423,9 +434,9 @@ impl SendTransactionService {
     }
 
     /// Thread responsible for receiving transactions from RPC clients.
-    fn receive_txn_thread<T: TpuInfoWithSendStatic>(
+    fn receive_txn_thread<Client: TransactionClient + std::marker::Send + 'static>(
         receiver: Receiver<TransactionInfo>,
-        client: ConnectionCacheClient<T>,
+        client: Client,
         retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
         Config {
             batch_send_rate_ms,
@@ -525,9 +536,9 @@ impl SendTransactionService {
     }
 
     /// Thread responsible for retrying transactions
-    fn retry_thread<T: TpuInfoWithSendStatic>(
+    fn retry_thread<Client: TransactionClient + std::marker::Send + 'static>(
         bank_forks: Arc<RwLock<BankForks>>,
-        client: ConnectionCacheClient<T>,
+        client: Client,
         retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
         config: Config,
         stats_report: Arc<SendTransactionServiceStatsReport>,
@@ -570,11 +581,11 @@ impl SendTransactionService {
     }
 
     /// Retry transactions sent before.
-    fn process_transactions<T: TpuInfoWithSendStatic>(
+    fn process_transactions<Client: TransactionClient + std::marker::Send + 'static>(
         working_bank: &Bank,
         root_bank: &Bank,
         transactions: &mut HashMap<Signature, TransactionInfo>,
-        client: &ConnectionCacheClient<T>,
+        client: &Client,
         &Config {
             retry_rate_ms,
             service_max_retries,
@@ -1065,11 +1076,105 @@ where
     async fn stop(&mut self) {}
 }
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+mod test_utils {
+    use {
+        super::{
+            ConnectionCacheClient, TpuClientNextClient, TpuInfoWithSendStatic, TransactionClient,
+        },
+        crate::tpu_info::NullTpuInfo,
+        solana_client::connection_cache::ConnectionCache,
+        std::{net::SocketAddr, sync::Arc},
+        tokio::runtime::Handle,
+    };
+
+    // `maybe_runtime` argument is introduced to be able to use runtime from test
+    // for the TpuClientNext, while ConnectionCache uses runtime created internally
+    // in the quic-client module and it is impossible to pass test runtime there.
+    pub trait CreateClient: TransactionClient {
+        fn create_client(
+            maybe_runtime: Option<Handle>,
+            my_tpu_address: SocketAddr,
+            tpu_peers: Option<Vec<SocketAddr>>,
+            leader_forward_count: u64,
+        ) -> Self;
+    }
+
+    impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
+        fn create_client(
+            maybe_runtime: Option<Handle>,
+            my_tpu_address: SocketAddr,
+            tpu_peers: Option<Vec<SocketAddr>>,
+            leader_forward_count: u64,
+        ) -> Self {
+            assert!(maybe_runtime.is_none());
+            let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
+            ConnectionCacheClient::new(
+                connection_cache,
+                my_tpu_address,
+                tpu_peers,
+                None,
+                leader_forward_count,
+            )
+        }
+    }
+
+    impl CreateClient for TpuClientNextClient<NullTpuInfo> {
+        fn create_client(
+            maybe_runtime: Option<Handle>,
+            my_tpu_address: SocketAddr,
+            tpu_peers: Option<Vec<SocketAddr>>,
+            leader_forward_count: u64,
+        ) -> Self {
+            let runtime_handle =
+                maybe_runtime.expect("Runtime should be provided for the TpuClientNextClient.");
+            Self::new(
+                runtime_handle,
+                my_tpu_address,
+                tpu_peers,
+                None,
+                leader_forward_count,
+                None,
+            )
+        }
+    }
+
+    pub trait Cancelable {
+        fn cancel(&self);
+    }
+
+    impl<T> Cancelable for ConnectionCacheClient<T>
+    where
+        T: TpuInfoWithSendStatic,
+    {
+        fn cancel(&self) {}
+    }
+
+    impl<T> Cancelable for TpuClientNextClient<T>
+    where
+        T: TpuInfoWithSendStatic + Clone,
+    {
+        fn cancel(&self) {
+            self.cancel().unwrap();
+        }
+    }
+
+    // Define type alias to simplify definition of test functions.
+    pub trait ClientWithCreator:
+        CreateClient + TransactionClient + Cancelable + Send + Clone + 'static
+    {
+    }
+    impl<T> ClientWithCreator for T where
+        T: CreateClient + TransactionClient + Cancelable + Send + Clone + 'static
+    {
+    }
+}
+
 #[cfg(test)]
 mod test {
     use {
         super::*,
-        crate::tpu_info::NullTpuInfo,
+        crate::{send_transaction_service::test_utils::ClientWithCreator, tpu_info::NullTpuInfo},
         crossbeam_channel::{bounded, unbounded},
         solana_sdk::{
             account::AccountSharedData,
@@ -1080,34 +1185,44 @@ mod test {
             system_program, system_transaction,
         },
         std::ops::Sub,
+        tokio::runtime::Handle,
     };
 
-    #[test]
-    fn service_exit() {
-        let tpu_address = "127.0.0.1:0".parse().unwrap();
+    fn service_exit<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
         let (sender, receiver) = unbounded();
 
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let send_transaction_service = SendTransactionService::new::<NullTpuInfo>(
-            tpu_address,
+        let client = C::create_client(maybe_runtime, "127.0.0.1:0".parse().unwrap(), None, 1);
+
+        let send_transaction_service = SendTransactionService::new_with_client(
             &bank_forks,
-            None,
             receiver,
-            &connection_cache,
-            1000,
-            1,
+            client.clone(),
+            Config {
+                retry_rate_ms: 1000,
+                ..Config::default()
+            },
             Arc::new(AtomicBool::new(false)),
         );
 
         drop(sender);
         send_transaction_service.join().unwrap();
+        client.cancel();
     }
 
     #[test]
-    fn validator_exit() {
-        let tpu_address = "127.0.0.1:0".parse().unwrap();
+    fn service_exit_with_connection_cache() {
+        service_exit::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+
+    async fn service_exit_with_tpu_client_next() {
+        service_exit::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
+    }
+
+    fn validator_exit<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
         let (sender, receiver) = bounded(0);
@@ -1123,15 +1238,15 @@ mod test {
         };
 
         let exit = Arc::new(AtomicBool::new(false));
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let _send_transaction_service = SendTransactionService::new::<NullTpuInfo>(
-            tpu_address,
+        let client = C::create_client(maybe_runtime, "127.0.0.1:0".parse().unwrap(), None, 1);
+        let _send_transaction_service = SendTransactionService::new_with_client(
             &bank_forks,
-            None,
             receiver,
-            &connection_cache,
-            1000,
-            1,
+            client.clone(),
+            Config {
+                retry_rate_ms: 1000,
+                ..Config::default()
+            },
             exit.clone(),
         );
 
@@ -1139,6 +1254,7 @@ mod test {
 
         thread::spawn(move || {
             exit.store(true, Ordering::Relaxed);
+            client.cancel();
         });
 
         let mut option = Ok(());
@@ -1147,33 +1263,25 @@ mod test {
         }
     }
 
-    fn create_client(
-        tpu_peers: Option<Vec<SocketAddr>>,
-        leader_forward_count: u64,
-    ) -> ConnectionCacheClient<NullTpuInfo> {
-        let tpu_address = "127.0.0.1:0".parse().unwrap();
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-
-        ConnectionCacheClient::new(
-            connection_cache,
-            tpu_address,
-            tpu_peers,
-            None,
-            leader_forward_count,
-        )
+    #[test]
+    fn validator_exit_with_connection_cache() {
+        validator_exit::<ConnectionCacheClient<NullTpuInfo>>(None);
     }
 
-    #[test]
-    fn process_transactions() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn validator_exit_with_tpu_client_next() {
+        validator_exit::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
+    }
+
+    fn process_transactions<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         solana_logger::setup();
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(4);
         genesis_config.fee_rate_governor = solana_sdk::fee_calculator::FeeRateGovernor::new(0, 0);
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let config = Config {
-            leader_forward_count: 1,
-            ..Config::default()
-        };
+
+        let leader_forward_count = 1;
+        let config = Config::default();
 
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
@@ -1229,8 +1337,13 @@ mod test {
             ),
         );
 
-        let client = create_client(config.tpu_peers.clone(), config.leader_forward_count);
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let client = C::create_client(
+            maybe_runtime,
+            "127.0.0.1:0".parse().unwrap(),
+            config.tpu_peers.clone(),
+            leader_forward_count,
+        );
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1259,7 +1372,7 @@ mod test {
                 Some(Instant::now()),
             ),
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1288,7 +1401,7 @@ mod test {
                 Some(Instant::now()),
             ),
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1317,7 +1430,7 @@ mod test {
                 Some(Instant::now()),
             ),
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1348,7 +1461,7 @@ mod test {
             ),
         );
 
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1389,7 +1502,7 @@ mod test {
                 Some(Instant::now().sub(Duration::from_millis(4000))),
             ),
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1406,7 +1519,7 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1418,23 +1531,32 @@ mod test {
         assert_eq!(
             result,
             ProcessTransactionsResult {
+                retried: 1,
                 max_retries_elapsed: 1,
                 ..ProcessTransactionsResult::default()
             }
         );
+        client.cancel();
     }
 
     #[test]
-    fn test_retry_durable_nonce_transactions() {
+    fn process_transactions_with_connection_cache() {
+        process_transactions::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn process_transactions_with_tpu_client_next() {
+        process_transactions::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
+    }
+
+    fn retry_durable_nonce_transactions<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         solana_logger::setup();
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(4);
         genesis_config.fee_rate_governor = solana_sdk::fee_calculator::FeeRateGovernor::new(0, 0);
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let config = Config {
-            leader_forward_count: 1,
-            ..Config::default()
-        };
+        let leader_forward_count = 1;
+        let config = Config::default();
 
         let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
@@ -1499,8 +1621,13 @@ mod test {
             ),
         );
         let stats = SendTransactionServiceStats::default();
-        let client = create_client(config.tpu_peers.clone(), config.leader_forward_count);
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let client = C::create_client(
+            maybe_runtime,
+            "127.0.0.1:0".parse().unwrap(),
+            config.tpu_peers.clone(),
+            leader_forward_count,
+        );
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1528,7 +1655,7 @@ mod test {
                 Some(Instant::now()),
             ),
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1558,7 +1685,7 @@ mod test {
                 Some(Instant::now().sub(Duration::from_millis(4000))),
             ),
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1586,7 +1713,7 @@ mod test {
                 Some(Instant::now()),
             ),
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1615,7 +1742,7 @@ mod test {
                 Some(Instant::now()),
             ),
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1644,7 +1771,7 @@ mod test {
                 Some(Instant::now()),
             ),
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1675,7 +1802,7 @@ mod test {
                 Some(Instant::now().sub(Duration::from_millis(4000))),
             ),
         );
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1703,7 +1830,7 @@ mod test {
         let nonce_account =
             AccountSharedData::new_data(43, &new_nonce_state, &system_program::id()).unwrap();
         working_bank.store_account(&nonce_address, &nonce_account);
-        let result = SendTransactionService::process_transactions::<NullTpuInfo>(
+        let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
             &mut transactions,
@@ -1719,5 +1846,18 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
+        client.cancel();
+    }
+
+    #[test]
+    fn retry_durable_nonce_transactions_with_connection_cache() {
+        retry_durable_nonce_transactions::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn retry_durable_nonce_transactions_with_tpu_client_next() {
+        retry_durable_nonce_transactions::<TpuClientNextClient<NullTpuInfo>>(Some(
+            Handle::current(),
+        ));
     }
 }
