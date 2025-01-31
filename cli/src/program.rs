@@ -1435,7 +1435,7 @@ fn process_program_deploy(
     if result.is_err() && !buffer_provided {
         // We might have deployed "temporary" buffer but failed to deploy our program from this
         // buffer, reporting this to the user - so he can retry deploying re-using same buffer.
-        report_ephemeral_mnemonic(buffer_words, buffer_mnemonic);
+        report_ephemeral_mnemonic(buffer_words, buffer_mnemonic, &buffer_pubkey);
     }
     result
 }
@@ -1676,7 +1676,7 @@ fn process_write_buffer(
         use_rpc,
     );
     if result.is_err() && buffer_signer_index.is_none() && buffer_signer.is_some() {
-        report_ephemeral_mnemonic(words, mnemonic);
+        report_ephemeral_mnemonic(words, mnemonic, &buffer_pubkey);
     }
     result
 }
@@ -3076,38 +3076,16 @@ fn create_ephemeral_keypair(
     Ok((WORDS, mnemonic, new_keypair))
 }
 
-fn recover_ephemeral_keypair(
-    mnemonic: &str,
-) -> Result<Keypair, Box<dyn std::error::Error>> {
-    let mnemonic = Mnemonic::from_phrase(mnemonic, Language::English)?;
-    let seed = Seed::new(&mnemonic, "");
-    let keypair = keypair_from_seed(seed.as_bytes())?;
-    Ok(keypair)
-}
-
-fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic) {
+fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic, ephemeral_pubkey: &Pubkey) {
     let phrase: &str = mnemonic.phrase();
     let divider = String::from_utf8(vec![b'='; phrase.len()]).unwrap();
-    match recover_ephemeral_keypair(phrase) {
-        Ok(keypair) => {
-            eprintln!("{divider}\nRecover the intermediate account's ephemeral keypair file with");
-            eprintln!("`solana-keygen recover` and the following {words}-word seed phrase:");
-            eprintln!("{divider}\n{phrase}\n{divider}");
-            eprintln!("To resume a deploy, pass the recovered keypair as the");
-            eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer`.");
-            eprintln!("Or to recover the account's lamports, use:");
-            eprintln!("{divider}\nsolana program close {}\n{divider}", keypair.pubkey().to_string());
-        },
-        Err(_) => {
-            eprintln!("{divider}\nRecover the intermediate account's ephemeral keypair file with");
-            eprintln!("`solana-keygen recover` and the following {words}-word seed phrase:");
-            eprintln!("{divider}\n{phrase}\n{divider}");
-            eprintln!("To resume a deploy, pass the recovered keypair as the");
-            eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer`.");
-            eprintln!("Or to recover the account's lamports, pass it as the");
-            eprintln!("[BUFFER_ACCOUNT_ADDRESS] argument to `solana program close`.\n{divider}");
-        }
-    }
+    eprintln!("{divider}\nRecover the intermediate account's ephemeral keypair file with");
+    eprintln!("`solana-keygen recover` and the following {words}-word seed phrase:");
+    eprintln!("{divider}\n{phrase}\n{divider}");
+    eprintln!("To resume a deploy, pass the recovered keypair as the");
+    eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer'.");
+    eprintln!("Or to recover the account's lamports, use:");
+    eprintln!("{divider}\nsolana program close {}\n{divider}", ephemeral_pubkey.to_string());
 }
 
 fn fetch_feature_set(rpc_client: &RpcClient) -> Result<FeatureSet, Box<dyn std::error::Error>> {
