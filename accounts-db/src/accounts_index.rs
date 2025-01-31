@@ -485,6 +485,8 @@ pub struct AccountsIndexRootsStats {
     pub clean_dead_slot_us: u64,
 }
 
+type RangeItemVec<T> = Vec<(Pubkey, AccountMapEntry<T>)>;
+
 pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     account_maps: &'a LockMapTypeSlice<T, U>,
     bin_calculator: &'a PubkeyBinCalculator24,
@@ -492,7 +494,7 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
     end_bound: Bound<Pubkey>,
     is_finished: bool,
     returns_items: AccountsIndexIteratorReturnsItems,
-    last_bin_range: Option<(usize, Vec<(Pubkey, AccountMapEntry<T>)>)>,
+    last_bin_range: Option<(usize, RangeItemVec<T>)>,
 }
 
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIterator<'a, T, U> {
@@ -500,7 +502,7 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
         map: &AccountMaps<T, U>,
         range: R,
         returns_items: AccountsIndexIteratorReturnsItems,
-    ) -> Vec<(Pubkey, AccountMapEntry<T>)>
+    ) -> RangeItemVec<T>
     where
         R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
@@ -629,8 +631,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
                 }
             };
 
-            let mut count = 0;
-            for (pubkey, account_map_entry) in &range {
+            for (count, (pubkey, account_map_entry)) in range.iter().enumerate() {
                 if chunk.len() >= ITER_BATCH_SIZE && !self.collect_all_unsorted {
                     range.drain(0..count);
                     self.last_bin_range = Some((bin, range));
@@ -638,7 +639,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
                 }
                 let item = (*pubkey, account_map_entry.clone());
                 chunk.push(item);
-                count += 1;
             }
         }
 
