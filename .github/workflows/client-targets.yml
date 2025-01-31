@@ -9,7 +9,6 @@ on:
       - master
     paths:
       - "client/**"
-      - "sdk/**"
       - ".github/workflows/client-targets.yml"
       - "ci/rust-version.sh"
       - "**/Cargo.toml"

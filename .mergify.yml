@@ -196,7 +196,7 @@ pull_request_rules:
           2. Open a follow-up PR to update the JavaScript client `@solana/web3.js` ([example](https://github.com/solana-labs/solana-web3.js/pull/2868/files))
 
           Thank you for keeping the RPC clients in sync with the server API @{{author}}.
-  - name: Reminder to add Firedancer team to changes in `programs/` and `sdk/`
+  - name: Reminder to add Firedancer team to changes in `programs/`
     conditions:
       - or:
         - files~=^programs/address-lookup-table/src/.*\.rs$
@@ -208,8 +208,6 @@ pull_request_rules:
         - files~=^programs/system/src/.*\.rs$
         - files~=^programs/vote/src/.*\.rs$
         - files~=^programs/zk-elgamal-proof/src/.*\.rs$
-        - files~=^sdk/program/src/stake.*\.rs$  # includes stake_history.rs
-        - files~=^sdk/program/src/vote/.*\.rs$
     actions:
       comment:
         message: |

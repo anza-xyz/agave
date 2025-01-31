@@ -52,22 +52,8 @@ test-stable-sbf)
   # platform-tools version
   "$cargo_build_sbf" --version
 
-  # SBF solana-sdk legacy compile test
-  "$cargo_build_sbf" --manifest-path sdk/sdk/Cargo.toml
-
-  # Ensure the minimum supported "rust-version" matches platform tools to fail
-  # quickly if users try to build with an older platform tools install
-  cargo_toml=sdk/program/Cargo.toml
-  source "scripts/read-cargo-variable.sh"
-  crate_rust_version=$(readCargoVariable rust-version $cargo_toml)
-  platform_tools_rust_version=$("$cargo_build_sbf" --version | grep rustc)
-  platform_tools_rust_version=$(echo "$platform_tools_rust_version" | cut -d\  -f2) # Remove "rustc " prefix from a string like "rustc 1.68.0-dev"
-  platform_tools_rust_version=$(echo "$platform_tools_rust_version" | cut -d- -f1)  # Remove "-dev" suffix from a string like "1.68.0-dev"
-
-  if [[ $crate_rust_version != "$platform_tools_rust_version" ]]; then
-    echo "Error: Update 'rust-version' field in '$cargo_toml' from $crate_rust_version to $platform_tools_rust_version"
-    exit 1
-  fi
+  # Install the platform tools
+  _ platform-tools-sdk/sbf/scripts/install.sh
 
   # SBF program tests
   export SBF_OUT_DIR=target/sbf-solana-solana/release
@@ -84,19 +70,6 @@ test-stable-sbf)
   sbf_dump_archive="sbf-dumps.tar.bz2"
   rm -f "$sbf_dump_archive"
   tar cjvf "$sbf_dump_archive" $sbf_target_path/{deploy/*.txt,sbf-solana-solana/release/*.so}
-  exit 0
-  ;;
-test-wasm)
-  _ node --version
-  _ npm --version
-  for dir in sdk/{program,sdk}; do
-    if [[ -r "$dir"/package.json ]]; then
-      pushd "$dir"
-      _ npm install
-      _ npm test
-      popd
-    fi
-  done
   exit 0
   ;;
 test-docs)
