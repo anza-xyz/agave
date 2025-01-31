@@ -244,142 +244,193 @@ fn get_cluster_info(
     ))
 }
 
+struct EndpointData {
+    rpc_client: RpcClient,
+    last_transaction_count: u64,
+    last_recent_blockhash: Hash,
+}
+
+struct EndpointFailure {
+    test_name: String,
+    message: String,
+}
+
+fn query_endpoint(config: &Config, endpoint: &mut EndpointData) -> Option<EndpointFailure> {
+    match get_cluster_info(&config, &endpoint.rpc_client) {
+        Ok((transaction_count, recent_blockhash, vote_accounts, validator_balances)) => {
+            info!("Current transaction count: {}", transaction_count);
+            info!("Recent blockhash: {}", recent_blockhash);
+            info!("Current validator count: {}", vote_accounts.current.len());
+            info!(
+                "Delinquent validator count: {}",
+                vote_accounts.delinquent.len()
+            );
+
+            let mut failures = vec![];
+
+            let total_current_stake = vote_accounts
+                .current
+                .iter()
+                .map(|vote_account| vote_account.activated_stake)
+                .sum();
+            let total_delinquent_stake = vote_accounts
+                .delinquent
+                .iter()
+                .map(|vote_account| vote_account.activated_stake)
+                .sum();
+
+            let total_stake = total_current_stake + total_delinquent_stake;
+            let current_stake_percent = total_current_stake as f64 * 100. / total_stake as f64;
+            info!(
+                "Current stake: {:.2}% | Total stake: {}, current stake: {}, delinquent: {}",
+                current_stake_percent,
+                Sol(total_stake),
+                Sol(total_current_stake),
+                Sol(total_delinquent_stake)
+            );
+
+            if transaction_count > endpoint.last_transaction_count {
+                endpoint.last_transaction_count = transaction_count;
+            } else {
+                failures.push(EndpointFailure {
+                    test_name: "transaction-count".into(),
+                    message: format!(
+                        "Transaction count is not advancing: {transaction_count} <= {0}",
+                        endpoint.last_transaction_count
+                    ),
+                });
+            }
+
+            if recent_blockhash != endpoint.last_recent_blockhash {
+                endpoint.last_recent_blockhash = recent_blockhash;
+            } else {
+                failures.push(EndpointFailure {
+                    test_name: "recent-blockhash".into(),
+                    message: format!("Unable to get new blockhash: {recent_blockhash}"),
+                });
+            }
+
+            if config.monitor_active_stake
+                && current_stake_percent < config.active_stake_alert_threshold as f64
+            {
+                failures.push(EndpointFailure {
+                    test_name: "current-stake".into(),
+                    message: format!("Current stake is {current_stake_percent:.2}%"),
+                });
+            }
+
+            let mut validator_errors = vec![];
+            for validator_identity in config.validator_identity_pubkeys.iter() {
+                let formatted_validator_identity =
+                    format_labeled_address(&validator_identity.to_string(), &config.address_labels);
+                if vote_accounts
+                    .delinquent
+                    .iter()
+                    .any(|vai| vai.node_pubkey == *validator_identity.to_string())
+                {
+                    validator_errors.push(format!("{formatted_validator_identity} delinquent"));
+                } else if !vote_accounts
+                    .current
+                    .iter()
+                    .any(|vai| vai.node_pubkey == *validator_identity.to_string())
+                {
+                    validator_errors.push(format!("{formatted_validator_identity} missing"));
+                }
+
+                if let Some(balance) = validator_balances.get(validator_identity) {
+                    if *balance < config.minimum_validator_identity_balance {
+                        failures.push(EndpointFailure {
+                            test_name: "balance".into(),
+                            message: format!(
+                                "{} has {}",
+                                formatted_validator_identity,
+                                Sol(*balance)
+                            ),
+                        });
+                    }
+                }
+            }
+
+            if !validator_errors.is_empty() {
+                failures.push(EndpointFailure {
+                    test_name: "delinquent".into(),
+                    message: validator_errors.join(","),
+                });
+            }
+
+            for failure in failures.iter() {
+                error!("{} sanity failure: {}", failure.test_name, failure.message);
+            }
+            failures.into_iter().next() // Only report the first failure if any
+        }
+        Err(err) => {
+            let mut failure = Some(EndpointFailure {
+                test_name: "rpc-error".into(),
+                message: err.to_string(),
+            });
+
+            if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind() {
+                if let Some(client_error::reqwest::StatusCode::BAD_GATEWAY) = reqwest_err.status() {
+                    if config.ignore_http_bad_gateway {
+                        warn!("Error suppressed: {}", err);
+                        failure = None;
+                    }
+                }
+            }
+            failure
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn error::Error>> {
     solana_logger::setup_with_default_filter();
     solana_metrics::set_panic_hook("watchtower", /*version:*/ None);
 
     let config = get_config();
 
-    let rpc_client =
-        RpcClient::new_with_timeout(config.json_rpc_urls[0].clone(), config.rpc_timeout); // TODO: Using only the fist URL
+    let mut endpoints: Vec<_> = config
+        .json_rpc_urls
+        .iter()
+        .map(|url| EndpointData {
+            rpc_client: RpcClient::new_with_timeout(url, config.rpc_timeout),
+            last_transaction_count: 0,
+            last_recent_blockhash: Hash::default(),
+        })
+        .collect();
+
+    // let num_agreeing_endpoints = rpc_clients.len() / 2 + 1; // TODO: Make it a config option?
+
     let notifier = Notifier::default();
-    let mut last_transaction_count = 0;
-    let mut last_recent_blockhash = Hash::default();
+
     let mut last_notification_msg = "".into();
     let mut num_consecutive_failures = 0;
     let mut last_success = Instant::now();
     let mut incident = Hash::new_unique();
 
     loop {
-        let failure = match get_cluster_info(&config, &rpc_client) {
-            Ok((transaction_count, recent_blockhash, vote_accounts, validator_balances)) => {
-                info!("Current transaction count: {}", transaction_count);
-                info!("Recent blockhash: {}", recent_blockhash);
-                info!("Current validator count: {}", vote_accounts.current.len());
-                info!(
-                    "Delinquent validator count: {}",
-                    vote_accounts.delinquent.len()
-                );
+        let mut failures = vec![];
 
-                let mut failures = vec![];
+        for endpoint in &mut endpoints {
+            failures.push(query_endpoint(&config, endpoint));
+        }
 
-                let total_current_stake = vote_accounts
-                    .current
-                    .iter()
-                    .map(|vote_account| vote_account.activated_stake)
-                    .sum();
-                let total_delinquent_stake = vote_accounts
-                    .delinquent
-                    .iter()
-                    .map(|vote_account| vote_account.activated_stake)
-                    .sum();
-
-                let total_stake = total_current_stake + total_delinquent_stake;
-                let current_stake_percent = total_current_stake as f64 * 100. / total_stake as f64;
-                info!(
-                    "Current stake: {:.2}% | Total stake: {}, current stake: {}, delinquent: {}",
-                    current_stake_percent,
-                    Sol(total_stake),
-                    Sol(total_current_stake),
-                    Sol(total_delinquent_stake)
-                );
-
-                if transaction_count > last_transaction_count {
-                    last_transaction_count = transaction_count;
-                } else {
-                    failures.push((
-                        "transaction-count",
-                        format!(
-                            "Transaction count is not advancing: {transaction_count} <= {last_transaction_count}"
-                        ),
-                    ));
-                }
-
-                if recent_blockhash != last_recent_blockhash {
-                    last_recent_blockhash = recent_blockhash;
-                } else {
-                    failures.push((
-                        "recent-blockhash",
-                        format!("Unable to get new blockhash: {recent_blockhash}"),
-                    ));
-                }
-
-                if config.monitor_active_stake
-                    && current_stake_percent < config.active_stake_alert_threshold as f64
-                {
-                    failures.push((
-                        "current-stake",
-                        format!("Current stake is {current_stake_percent:.2}%"),
-                    ));
-                }
-
-                let mut validator_errors = vec![];
-                for validator_identity in config.validator_identity_pubkeys.iter() {
-                    let formatted_validator_identity = format_labeled_address(
-                        &validator_identity.to_string(),
-                        &config.address_labels,
-                    );
-                    if vote_accounts
-                        .delinquent
-                        .iter()
-                        .any(|vai| vai.node_pubkey == *validator_identity.to_string())
-                    {
-                        validator_errors.push(format!("{formatted_validator_identity} delinquent"));
-                    } else if !vote_accounts
-                        .current
-                        .iter()
-                        .any(|vai| vai.node_pubkey == *validator_identity.to_string())
-                    {
-                        validator_errors.push(format!("{formatted_validator_identity} missing"));
-                    }
-
-                    if let Some(balance) = validator_balances.get(validator_identity) {
-                        if *balance < config.minimum_validator_identity_balance {
-                            failures.push((
-                                "balance",
-                                format!("{} has {}", formatted_validator_identity, Sol(*balance)),
-                            ));
-                        }
-                    }
-                }
-
-                if !validator_errors.is_empty() {
-                    failures.push(("delinquent", validator_errors.join(",")));
-                }
-
-                for failure in failures.iter() {
-                    error!("{} sanity failure: {}", failure.0, failure.1);
-                }
-                failures.into_iter().next() // Only report the first failure if any
+        // TODO: Remove debug logs
+        for failure in &failures {
+            if let Some(EndpointFailure {
+                test_name: failure_test_name,
+                message: failure_error_message,
+            }) = &failure
+            {
+                debug!("Error: {} {}", failure_test_name, failure_error_message);
             }
-            Err(err) => {
-                let mut failure = Some(("rpc-error", err.to_string()));
+        }
 
-                if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind() {
-                    if let Some(client_error::reqwest::StatusCode::BAD_GATEWAY) =
-                        reqwest_err.status()
-                    {
-                        if config.ignore_http_bad_gateway {
-                            warn!("Error suppressed: {}", err);
-                            failure = None;
-                        }
-                    }
-                }
-                failure
-            }
-        };
-
-        if let Some((failure_test_name, failure_error_message)) = &failure {
+        if let Some(EndpointFailure {
+            test_name: failure_test_name,
+            message: failure_error_message,
+        }) = &failures[0]
+        // TODO: Only handling the failure from the first rpc client
+        {
             let notification_msg = format!(
                 "agave-watchtower{}: Error: {}: {}",
                 config.name_suffix, failure_test_name, failure_error_message
