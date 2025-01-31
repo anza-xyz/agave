@@ -568,6 +568,12 @@ pub(crate) struct VotePacketCountMetrics {
 
     // How many votes ingested from tpu were dropped
     dropped_tpu_votes: u64,
+
+    // How many votes were drained from gossip
+    drained_gossip_votes: u64,
+
+    // How many votes were drained from tpu
+    drained_tpu_votes: u64,
 }
 
 impl VotePacketCountMetrics {
@@ -581,7 +587,9 @@ impl VotePacketCountMetrics {
             "id" => id,
             ("slot", slot, i64),
             ("dropped_gossip_votes", self.dropped_gossip_votes, i64),
-            ("dropped_tpu_votes", self.dropped_tpu_votes, i64)
+            ("dropped_tpu_votes", self.dropped_tpu_votes, i64),
+            ("drained_gossip_votes", self.drained_gossip_votes, i64),
+            ("drained_tpu_votes", self.drained_tpu_votes, i64),
         );
     }
 }
@@ -1080,6 +1088,28 @@ impl LeaderSlotMetricsTracker {
                 leader_slot_metrics
                     .vote_packet_count_metrics
                     .dropped_tpu_votes,
+                count
+            );
+        }
+    }
+
+    pub(crate) fn increment_drained_gossip_vote_count(&mut self, count: u64) {
+        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
+            saturating_add_assign!(
+                leader_slot_metrics
+                    .vote_packet_count_metrics
+                    .drained_gossip_votes,
+                count
+            );
+        }
+    }
+
+    pub(crate) fn increment_drained_tpu_vote_count(&mut self, count: u64) {
+        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
+            saturating_add_assign!(
+                leader_slot_metrics
+                    .vote_packet_count_metrics
+                    .drained_tpu_votes,
                 count
             );
         }

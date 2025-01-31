@@ -510,9 +510,12 @@ impl VoteStorage {
         // Based on the stake distribution present in the supplied bank, drain the unprocessed votes
         // from each validator using a weighted random ordering. Votes from validators with
         // 0 stake are ignored.
-        let all_vote_packets = self
+        let (all_vote_packets, num_drained_tpu_votes, num_drained_gossip_votes) = self
             .latest_unprocessed_votes
             .drain_unprocessed(bank.clone());
+
+        slot_metrics_tracker.increment_drained_tpu_vote_count(num_drained_tpu_votes);
+        slot_metrics_tracker.increment_drained_gossip_vote_count(num_drained_gossip_votes);
 
         // vote storage does not have a message hash map, so pass in an empty one
         let mut dummy_message_hash_to_transaction = HashMap::new();

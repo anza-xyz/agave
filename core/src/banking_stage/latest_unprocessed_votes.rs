@@ -14,6 +14,7 @@ use {
         hash::Hash,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
+        saturating_add_assign,
         slot_hashes::SlotHashes,
         sysvar,
     },
@@ -453,7 +454,10 @@ impl LatestUnprocessedVotes {
     /// Drains all votes yet to be processed sorted by a weighted random ordering by stake
     /// Do not touch votes that are for a different fork from `bank` as we know they will fail,
     /// however the next bank could be built on a different fork and consume these votes.
-    pub fn drain_unprocessed(&self, bank: Arc<Bank>) -> Vec<Arc<ImmutableDeserializedPacket>> {
+    pub fn drain_unprocessed(
+        &self,
+        bank: Arc<Bank>,
+    ) -> (Vec<Arc<ImmutableDeserializedPacket>>, u64, u64) {
         let slot_hashes = bank
             .get_account(&sysvar::slot_hashes::id())
             .and_then(|account| from_account::<SlotHashes, _>(&account));
@@ -465,19 +469,29 @@ impl LatestUnprocessedVotes {
             );
         }
 
-        self.weighted_random_order_by_stake()
-            .filter_map(|pubkey| {
-                self.get_entry(pubkey).and_then(|lock| {
-                    let mut latest_vote = lock.write().unwrap();
-                    if !Self::is_valid_for_our_fork(&latest_vote, &slot_hashes) {
-                        return None;
-                    }
-                    latest_vote.take_vote().inspect(|_vote| {
-                        self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
+        let mut num_tpu_votes: u64 = 0;
+        let mut num_gossip_votes: u64 = 0;
+        (
+            self.weighted_random_order_by_stake()
+                .filter_map(|pubkey| {
+                    self.get_entry(pubkey).and_then(|lock| {
+                        let mut latest_vote = lock.write().unwrap();
+                        if !Self::is_valid_for_our_fork(&latest_vote, &slot_hashes) {
+                            return None;
+                        }
+                        latest_vote.take_vote().inspect(|_vote| {
+                            match latest_vote.vote_source {
+                                VoteSource::Tpu => saturating_add_assign!(num_tpu_votes, 1),
+                                VoteSource::Gossip => saturating_add_assign!(num_gossip_votes, 1),
+                            }
+                            self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
+                        })
                     })
                 })
-            })
-            .collect_vec()
+                .collect_vec(),
+            num_tpu_votes,
+            num_gossip_votes,
+        )
     }
 
     /// Check if `vote` can land in our fork based on `slot_hashes`
