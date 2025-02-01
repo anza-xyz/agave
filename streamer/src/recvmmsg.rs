@@ -107,18 +107,6 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
             iov_len: buffer.len(),
         });
 
-        #[cfg(not(target_env = "musl"))]
-        let msg_hdr = msghdr {
-            msg_name: addr.as_mut_ptr() as *mut _,
-            msg_namelen: SOCKADDR_STORAGE_SIZE as socklen_t,
-            msg_iov: iov.as_mut_ptr(),
-            msg_iovlen: 1,
-            msg_control: ptr::null::<libc::c_void>() as *mut _,
-            msg_controllen: 0,
-            msg_flags: 0,
-        };
-
-        #[cfg(target_env = "musl")]
         let msg_hdr = {
             // Cannot construct msghdr directly on musl
             // See https://github.com/rust-lang/libc/issues/2344 for more info
