@@ -3085,7 +3085,7 @@ fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic, ephemeral_
     eprintln!("To resume a deploy, pass the recovered keypair as the");
     eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer'.");
     eprintln!("Or to recover the account's lamports, use:");
-    eprintln!("{divider}\nsolana program close {}\n{divider}", ephemeral_pubkey.to_string());
+    eprintln!("{divider}\nsolana program close {ephemeral_pubkey}\n{divider}");
 }
 
 fn fetch_feature_set(rpc_client: &RpcClient) -> Result<FeatureSet, Box<dyn std::error::Error>> {
