@@ -255,7 +255,12 @@ struct EndpointFailure {
     message: String,
 }
 
-fn query_endpoint(config: &Config, endpoint: &mut EndpointData) -> Option<EndpointFailure> {
+fn query_endpoint(
+    config: &Config,
+    endpoint: &mut EndpointData,
+) -> client_error::Result<Option<EndpointFailure>> {
+    info!("Querying {}", endpoint.rpc_client.url());
+
     match get_cluster_info(&config, &endpoint.rpc_client) {
         Ok((transaction_count, recent_blockhash, vote_accounts, validator_balances)) => {
             info!("Current transaction count: {}", transaction_count);
@@ -358,26 +363,23 @@ fn query_endpoint(config: &Config, endpoint: &mut EndpointData) -> Option<Endpoi
                 });
             }
 
-            for failure in failures.iter() {
+            for failure in &failures {
                 error!("{} sanity failure: {}", failure.test_name, failure.message);
             }
-            failures.into_iter().next() // Only report the first failure if any
+
+            Ok(failures.into_iter().next()) // Only report the first failure if any
         }
         Err(err) => {
-            let mut failure = Some(EndpointFailure {
-                test_name: "rpc-error".into(),
-                message: err.to_string(),
-            });
-
             if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind() {
                 if let Some(client_error::reqwest::StatusCode::BAD_GATEWAY) = reqwest_err.status() {
                     if config.ignore_http_bad_gateway {
                         warn!("Error suppressed: {}", err);
-                        failure = None;
+                        return Ok(None);
                     }
                 }
             }
-            failure
+            error!("rpc-service sanity failure: {}", err);
+            Err(err)
         }
     }
 }
@@ -398,59 +400,72 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         })
         .collect();
 
-    // let num_agreeing_endpoints = rpc_clients.len() / 2 + 1; // TODO: Make it a config option?
+    let min_agreeing_endpoints = endpoints.len() / 2 + 1; // TODO: Make it a config option?
 
     let notifier = Notifier::default();
 
-    let mut last_notification_msg = "".into();
+    let mut last_notification_msg = "".to_string();
     let mut num_consecutive_failures = 0;
     let mut last_success = Instant::now();
     let mut incident = Hash::new_unique();
 
     loop {
-        let mut failures = vec![];
+        let mut failures: HashMap<String, String> = HashMap::new(); // test_name -> message
+        let mut num_unreachable = 0;
 
         for endpoint in &mut endpoints {
-            failures.push(query_endpoint(&config, endpoint));
-        }
-
-        // TODO: Remove debug logs
-        for failure in &failures {
-            if let Some(EndpointFailure {
-                test_name: failure_test_name,
-                message: failure_error_message,
-            }) = &failure
-            {
-                debug!("Error: {} {}", failure_test_name, failure_error_message);
+            match query_endpoint(&config, endpoint) {
+                Ok(None) => {}
+                Ok(Some(failure)) => {
+                    // Collecting only one failure of each type
+                    failures
+                        .entry(failure.test_name)
+                        .or_insert(failure.message.clone());
+                }
+                Err(_) => {
+                    num_unreachable += 1;
+                }
             }
         }
 
-        if let Some(EndpointFailure {
-            test_name: failure_test_name,
-            message: failure_error_message,
-        }) = &failures[0]
-        // TODO: Only handling the failure from the first rpc client
-        {
-            let notification_msg = format!(
-                "agave-watchtower{}: Error: {}: {}",
-                config.name_suffix, failure_test_name, failure_error_message
+        let num_reachable = endpoints.len() - num_unreachable;
+        if num_reachable < min_agreeing_endpoints {
+            failures.insert(
+                "watchtower-reliability".into(),
+                format!(
+                    "Watchtower is unrealiable, {} of {} RPC endpoints are unreachable",
+                    num_unreachable,
+                    endpoints.len()
+                ),
             );
+        }
+
+        if !failures.is_empty() {
             num_consecutive_failures += 1;
             if num_consecutive_failures > config.unhealthy_threshold {
                 datapoint_info!("watchtower-sanity", ("ok", false, bool));
-                if last_notification_msg != notification_msg {
-                    notifier.send(&notification_msg, &NotificationType::Trigger { incident });
+                // TODO: Aggregate messages?
+                for (failure_test_name, failure_error_message) in &failures {
+                    let notification_msg = format!(
+                        "agave-watchtower{}: Error: {}: {}",
+                        config.name_suffix, failure_test_name, failure_error_message
+                    );
+                    if last_notification_msg != notification_msg {
+                        notifier.send(&notification_msg, &NotificationType::Trigger { incident });
+                    }
+                    datapoint_error!(
+                        "watchtower-sanity-failure",
+                        ("test", failure_test_name, String),
+                        ("err", failure_error_message, String)
+                    );
+                    last_notification_msg = notification_msg;
                 }
-                datapoint_error!(
-                    "watchtower-sanity-failure",
-                    ("test", failure_test_name, String),
-                    ("err", failure_error_message, String)
-                );
-                last_notification_msg = notification_msg;
             } else {
                 info!(
                     "Failure {} of {}: {}",
-                    num_consecutive_failures, config.unhealthy_threshold, notification_msg
+                    num_consecutive_failures,
+                    config.unhealthy_threshold,
+                    "TODO: notificaton message here" // notification_msg
                 );
             }
         } else {
@@ -475,6 +490,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             num_consecutive_failures = 0;
             incident = Hash::new_unique();
         }
+
         sleep(config.interval);
     }
 }
