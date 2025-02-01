@@ -3932,7 +3932,7 @@ pub mod tests {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         // Setup an account index for test.
         // Two bins. First bin has 2000 accounts, second bin has 0 accounts.
-        let num_pubkeys = 2000;
+        let num_pubkeys = 2 * ITER_BATCH_SIZE;
         let pubkeys = (0..num_pubkeys)
             .map(|_| Pubkey::new_unique())
             .collect::<Vec<_>>();
@@ -3961,16 +3961,19 @@ pub mod tests {
         // self.last_bin_range, so that the second iter.next() don't need to
         // load/filter/sort the first bin again.
         let x = iter.next().unwrap();
-        assert_eq!(x.len(), 1000);
+        assert_eq!(x.len(), ITER_BATCH_SIZE);
         assert!(x.is_sorted_by(|a, b| a.0 < b.0)); // The result should be sorted by pubkey.
         assert!(iter.last_bin_range.is_some()); // last_bin_range should be cached.
         assert_eq!(iter.last_bin_range.as_ref().unwrap().0, 0); // This is the first bin.
-        assert_eq!(iter.last_bin_range.as_ref().unwrap().1.len(), 1000); // Contains the remaining 1000 items.
+        assert_eq!(
+            iter.last_bin_range.as_ref().unwrap().1.len(),
+            ITER_BATCH_SIZE
+        ); // Contains the remaining 1000 items.
 
         // Second iter.next() should return the second batch of pubkeys - the remaining 1000 pubkeys.
         let x = iter.next().unwrap();
         assert!(x.is_sorted_by(|a, b| a.0 < b.0)); // The result should be sorted by pubkey.
-        assert_eq!(x.len(), 1000); // contains the remaining 1000 pubkeys.
+        assert_eq!(x.len(), ITER_BATCH_SIZE); // contains the remaining 1000 pubkeys.
         assert!(iter.last_bin_range.is_none()); // last_bin_range should be cleared.
     }
 
