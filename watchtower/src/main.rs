@@ -2,7 +2,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    clap::{crate_description, crate_name, value_t_or_exit, values_t, App, Arg},
+    clap::{crate_description, crate_name, value_t, value_t_or_exit, values_t, App, Arg},
     log::*,
     solana_clap_utils::{
         hidden_unless_forced,
@@ -79,13 +79,23 @@ fn get_config() -> Config {
             }
         })
         .arg(
-            Arg::with_name("json_rpc_urls")
+            Arg::with_name("json_rpc_url")
                 .long("url")
                 .value_name("URL")
                 .takes_value(true)
                 .validator(is_url)
+                .help("JSON RPC URL for the cluster (conflicts with --urls)"),
+        )
+        .arg(
+            Arg::with_name("json_rpc_urls")
+                .long("urls")
+                .value_name("URL")
+                .takes_value(true)
+                .validator(is_url)
                 .multiple(true)
-                .help("JSON RPC URLs for the cluster"),
+                .number_of_values(3)
+                .conflicts_with("json_rpc_url")
+                .help("JSON RPC URLs for the cluster (takes exactly 3 values, conflicts with --url)"),
         )
         .arg(
             Arg::with_name("rpc_timeout")
@@ -182,8 +192,9 @@ fn get_config() -> Config {
         "minimum_validator_identity_balance",
         f64
     ));
-    let json_rpc_urls =
-        values_t!(matches, "json_rpc_urls", String).unwrap_or_else(|_| vec![config.json_rpc_url]);
+    let json_rpc_urls = values_t!(matches, "json_rpc_urls", String).unwrap_or_else(|_| {
+        vec![value_t!(matches, "json_rpc_url", String).unwrap_or_else(|_| config.json_rpc_url)]
+    });
     let rpc_timeout = value_t_or_exit!(matches, "rpc_timeout", u64);
     let rpc_timeout = Duration::from_secs(rpc_timeout);
     let validator_identity_pubkeys: Vec<_> = pubkeys_of(&matches, "validator_identities")
@@ -400,7 +411,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         })
         .collect();
 
-    let min_agreeing_endpoints = endpoints.len() / 2 + 1; // TODO: Make it a config option?
+    let min_agreeing_endpoints = endpoints.len() / 2 + 1;
 
     let notifier = Notifier::default();
 
