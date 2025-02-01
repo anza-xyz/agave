@@ -84,7 +84,6 @@ fn process_deprecated_instruction(
     )
 }
 
-
 struct BenchAuthorize {
     instruction_data: Vec<u8>,
     transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
@@ -336,6 +335,58 @@ impl BenchVote {
     }
 }
 
+struct BenchWithdraw {
+    instruction_data: Vec<u8>,
+    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+    instruction_accounts: Vec<AccountMeta>,
+}
+
+impl BenchWithdraw {
+    pub fn new() -> Self {
+        let (vote_pubkey, vote_account) = create_test_account();
+        let authorized_withdrawer_pubkey = solana_pubkey::new_rand();
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account.clone()),
+            (sysvar::clock::id(), create_default_clock_account()),
+            (sysvar::rent::id(), create_default_rent_account()),
+            (authorized_withdrawer_pubkey, AccountSharedData::default()),
+        ];
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: sysvar::clock::id(),
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
+        let instruction_data = serialize(&VoteInstruction::Authorize(
+            authorized_withdrawer_pubkey,
+            VoteAuthorize::Withdrawer,
+        ))
+        .unwrap();
+
+        Self {
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+        }
+    }
+
+    fn run(&self) {
+        // should pass, withdraw using authorized_withdrawer to authorized_withdrawer's account
+        let _accounts = process_instruction(
+            &self.instruction_data,
+            self.transaction_accounts.clone(),
+            self.instruction_accounts.clone(),
+            Ok(()),
+        );
+    }
+}
+
 fn bench_initialize_account(c: &mut Criterion) {
     let test_setup = BenchInitializeAccount::new();
     c.bench_function("vote_instruction_initialize_account", |bencher| {
@@ -357,10 +408,18 @@ fn bench_vote(c: &mut Criterion) {
     });
 }
 
+fn bench_withdraw(c: &mut Criterion) {
+    let test_setup = BenchWithdraw::new();
+    c.bench_function("vote_instruction_withdraw", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_account,
     bench_authorize,
     bench_vote,
+    bench_withdraw,
 );
 criterion_main!(benches);
