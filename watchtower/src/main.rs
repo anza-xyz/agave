@@ -18,7 +18,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{client_error, response::RpcVoteAccountStatus},
     std::{
-        collections::HashMap,
+        collections::{BTreeMap, HashMap},
         error,
         thread::sleep,
         time::{Duration, Instant},
@@ -421,7 +421,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let mut incident = Hash::new_unique();
 
     loop {
-        let mut failures: HashMap<String, String> = HashMap::new(); // test_name -> message
+        let mut failures = BTreeMap::new(); // test_name -> message
         let mut num_unreachable = 0;
 
         for endpoint in &mut endpoints {
@@ -441,21 +441,18 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
         let num_reachable = endpoints.len() - num_unreachable;
         if num_reachable < min_agreeing_endpoints {
-            failures.insert(
-                "watchtower-reliability".into(),
-                format!(
-                    "Watchtower is unrealiable, {} of {} RPC endpoints are unreachable",
-                    num_unreachable,
-                    endpoints.len()
-                ),
+            let watchtower_unreliable_msg = format!(
+                "Watchtower is unrealiable, {} of {} RPC endpoints are unreachable",
+                num_unreachable,
+                endpoints.len()
             );
+            failures.insert("watchtower-reliability".into(), watchtower_unreliable_msg);
         }
 
         if !failures.is_empty() {
             num_consecutive_failures += 1;
             if num_consecutive_failures > config.unhealthy_threshold {
                 datapoint_info!("watchtower-sanity", ("ok", false, bool));
-                // TODO: Aggregate messages?
                 for (failure_test_name, failure_error_message) in &failures {
                     let notification_msg = format!(
                         "agave-watchtower{}: Error: {}: {}",
@@ -476,7 +473,14 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     "Failure {} of {}: {}",
                     num_consecutive_failures,
                     config.unhealthy_threshold,
-                    "TODO: notificaton message here" // notification_msg
+                    failures
+                        .iter()
+                        .map(|item| format!(
+                            "agave-watchtower{}: Error: {}: {}",
+                            config.name_suffix, item.0, item.1
+                        ))
+                        .collect::<Vec<_>>()
+                        .join("; ")
                 );
             }
         } else {
