@@ -261,15 +261,10 @@ struct EndpointData {
     last_recent_blockhash: Hash,
 }
 
-struct EndpointFailure {
-    test_name: String,
-    message: String,
-}
-
 fn query_endpoint(
     config: &Config,
     endpoint: &mut EndpointData,
-) -> client_error::Result<Option<EndpointFailure>> {
+) -> client_error::Result<Option<(&'static str, String)>> {
     info!("Querying {}", endpoint.rpc_client.url());
 
     match get_cluster_info(&config, &endpoint.rpc_client) {
@@ -308,31 +303,31 @@ fn query_endpoint(
             if transaction_count > endpoint.last_transaction_count {
                 endpoint.last_transaction_count = transaction_count;
             } else {
-                failures.push(EndpointFailure {
-                    test_name: "transaction-count".into(),
-                    message: format!(
+                failures.push((
+                    "transaction-count",
+                    format!(
                         "Transaction count is not advancing: {transaction_count} <= {0}",
                         endpoint.last_transaction_count
                     ),
-                });
+                ));
             }
 
             if recent_blockhash != endpoint.last_recent_blockhash {
                 endpoint.last_recent_blockhash = recent_blockhash;
             } else {
-                failures.push(EndpointFailure {
-                    test_name: "recent-blockhash".into(),
-                    message: format!("Unable to get new blockhash: {recent_blockhash}"),
-                });
+                failures.push((
+                    "recent-blockhash",
+                    format!("Unable to get new blockhash: {recent_blockhash}"),
+                ));
             }
 
             if config.monitor_active_stake
                 && current_stake_percent < config.active_stake_alert_threshold as f64
             {
-                failures.push(EndpointFailure {
-                    test_name: "current-stake".into(),
-                    message: format!("Current stake is {current_stake_percent:.2}%"),
-                });
+                failures.push((
+                    "current-stake",
+                    format!("Current stake is {current_stake_percent:.2}%"),
+                ));
             }
 
             let mut validator_errors = vec![];
@@ -355,27 +350,20 @@ fn query_endpoint(
 
                 if let Some(balance) = validator_balances.get(validator_identity) {
                     if *balance < config.minimum_validator_identity_balance {
-                        failures.push(EndpointFailure {
-                            test_name: "balance".into(),
-                            message: format!(
-                                "{} has {}",
-                                formatted_validator_identity,
-                                Sol(*balance)
-                            ),
-                        });
+                        failures.push((
+                            "balance",
+                            format!("{} has {}", formatted_validator_identity, Sol(*balance)),
+                        ));
                     }
                 }
             }
 
             if !validator_errors.is_empty() {
-                failures.push(EndpointFailure {
-                    test_name: "delinquent".into(),
-                    message: validator_errors.join(","),
-                });
+                failures.push(("delinquent", validator_errors.join(",")));
             }
 
             for failure in &failures {
-                error!("{} sanity failure: {}", failure.test_name, failure.message);
+                error!("{} sanity failure: {}", failure.0, failure.1);
             }
 
             Ok(failures.into_iter().next()) // Only report the first failure if any
@@ -427,11 +415,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         for endpoint in &mut endpoints {
             match query_endpoint(&config, endpoint) {
                 Ok(None) => {}
-                Ok(Some(failure)) => {
+                Ok(Some((failure_test_name, failure_error_message))) => {
                     // Collecting only one failure of each type
                     failures
-                        .entry(failure.test_name)
-                        .or_insert(failure.message.clone());
+                        .entry(failure_test_name)
+                        .or_insert(failure_error_message.clone());
                 }
                 Err(_) => {
                     num_unreachable += 1;
