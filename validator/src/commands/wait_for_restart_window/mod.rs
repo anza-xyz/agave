@@ -21,7 +21,7 @@ use {
     },
 };
 
-pub fn command(default_args: &DefaultArgs) -> App<'_, '_> {
+pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
     SubCommand::with_name("wait-for-restart-window")
         .about("Monitor the validator for a good time to restart")
         .arg(
