@@ -32,8 +32,7 @@ pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .value_name("MINUTES")
                 .default_value(&default_args.wait_for_restart_window_min_idle_time)
                 .help(
-                    "Minimum time that the validator should not be leader before \
-               restarting",
+                    "Minimum time that the validator should not be leader before restarting",
                 ),
         )
         .arg(
