@@ -63,8 +63,7 @@ pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .help("Skip health check"),
         )
         .after_help(
-            "Note: If this command exits with a non-zero status then this not a good time \
-       for a restart",
+            "Note: If this command exits with a non-zero status then this not a good time for a restart",
         )
 }
 
