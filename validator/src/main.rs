@@ -64,8 +64,7 @@ use {
         snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
     },
     solana_sdk::{
-        clock::{Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_S_PER_SLOT},
-        commitment_config::CommitmentConfig,
+        clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
         hash::Hash,
         pubkey::Pubkey,
         signature::{read_keypair, Keypair, Signer},
