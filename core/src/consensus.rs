@@ -20,7 +20,10 @@ use {
         tower_storage::{SavedTower, SavedTowerVersions, TowerStorage},
     },
     chrono::prelude::*,
-    solana_ledger::{ancestor_iterator::AncestorIterator, blockstore::Blockstore, blockstore_db},
+    solana_ledger::{
+        ancestor_iterator::AncestorIterator,
+        blockstore::{self, Blockstore},
+    },
     solana_runtime::{bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE},
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
@@ -1725,7 +1728,7 @@ pub fn reconcile_blockstore_roots_with_external_source(
     // blockstore.max_root() might have been updated already.
     // so take a &mut param both to input (and output iff we update root)
     last_blockstore_root: &mut Slot,
-) -> blockstore_db::Result<()> {
+) -> blockstore::Result<()> {
     let external_root = external_source.root();
     if *last_blockstore_root < external_root {
         // Ensure external_root itself to exist and be marked as rooted in the blockstore

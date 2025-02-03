@@ -1,5 +1,5 @@
 use {
-    crate::{blockstore::*, blockstore_db::Result, blockstore_meta::SlotMeta},
+    crate::{blockstore::*, blockstore_meta::SlotMeta},
     log::*,
     solana_sdk::clock::Slot,
 };

@@ -1,8 +1,7 @@
 use {
     crate::{
         block_error::BlockError,
-        blockstore::Blockstore,
-        blockstore_db::BlockstoreError,
+        blockstore::{Blockstore, BlockstoreError},
         blockstore_meta::SlotMeta,
         entry_notifier_service::{EntryNotification, EntryNotifierSender},
         leader_schedule_cache::LeaderScheduleCache,

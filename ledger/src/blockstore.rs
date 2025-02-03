@@ -7,7 +7,7 @@ use {
         ancestor_iterator::AncestorIterator,
         blockstore_db::{
             columns as cf, Column, ColumnIndexDeprecation, IteratorDirection, IteratorMode,
-            LedgerColumn, Result, Rocks, WriteBatch,
+            LedgerColumn, Rocks, WriteBatch,
         },
         blockstore_meta::*,
         blockstore_metrics::BlockstoreRpcApiMetrics,
@@ -91,7 +91,7 @@ use static_assertions::const_assert_eq;
 pub use {
     crate::{
         blockstore_db::{
-            default_num_compaction_threads, default_num_flush_threads, BlockstoreError,
+            default_num_compaction_threads, default_num_flush_threads, Result, BlockstoreError,
         },
         blockstore_meta::{OptimisticSlotMetaVersioned, SlotMeta},
         blockstore_metrics::BlockstoreInsertionMetrics,

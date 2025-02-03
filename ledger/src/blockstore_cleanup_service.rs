@@ -6,8 +6,8 @@
 
 use {
     crate::{
-        blockstore::{Blockstore, PurgeType},
-        blockstore_db::{columns, ColumnName, Result as BlockstoreResult},
+        blockstore::{self, Blockstore, PurgeType},
+        blockstore_db::{columns, ColumnName},
     },
     solana_measure::measure::Measure,
     solana_sdk::clock::{Slot, DEFAULT_MS_PER_SLOT},
@@ -237,8 +237,8 @@ impl BlockstoreCleanupService {
     }
 
     fn report_disk_metrics(
-        pre: BlockstoreResult<u64>,
-        post: BlockstoreResult<u64>,
+        pre: blockstore::Result<u64>,
+        post: blockstore::Result<u64>,
         total_shreds: u64,
     ) {
         if let (Ok(pre), Ok(post)) = (pre, post) {
