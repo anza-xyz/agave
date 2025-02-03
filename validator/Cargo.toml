@@ -79,6 +79,7 @@ tempfile = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
+solana-memory-management = { workspace = true }
 
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }
@@ -86,3 +87,6 @@ signal-hook = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+alloc_monitor = []
