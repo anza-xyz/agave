@@ -43,7 +43,7 @@ members = [
     "connection-cache",
     "core",
     "cost-model",
-    "curves/*",
+    "curves/curve25519",
     "dos",
     "download-utils",
     "entry",
