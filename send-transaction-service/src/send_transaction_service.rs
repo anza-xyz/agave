@@ -1,5 +1,5 @@
 #[deprecated(
-    since = "2.1.12",
+    since = "2.2.0",
     note = "Please import from `send_transaction_service` directly."
 )]
 pub use crate::{
