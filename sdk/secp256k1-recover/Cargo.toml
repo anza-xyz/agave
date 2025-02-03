@@ -23,15 +23,13 @@ thiserror = { workspace = true }
 solana-define-syscall = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
-libsecp256k1 = { workspace = true }
+k256 = { workspace = true, features = ["ecdsa"] }
 
 [dev-dependencies]
 anyhow = { workspace = true }
 borsh = { workspace = true }
+elliptic-curve = { workspace = true }
 solana-program = { path = "../../sdk/program" }
-
-[target.'cfg(not(target_os = "solana"))'.dev-dependencies]
-libsecp256k1 = { workspace = true, features = ["hmac"] }
 
 [features]
 borsh = ["dep:borsh"]

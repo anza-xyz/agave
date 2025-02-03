@@ -59,15 +59,15 @@ fn test_secp256k1_recover_malleability() {
     ];
     let recovery_id: u8 = 0;
 
-    let signature = libsecp256k1::Signature::parse_standard_slice(&signature_bytes).unwrap();
+    let signature = k256::ecdsa::Signature::from_slice(&signature_bytes).unwrap();
 
     // Flip the S value in the signature to make a different but valid signature.
-    let mut alt_signature = signature;
-    alt_signature.s = -alt_signature.s;
-    let alt_recovery_id = libsecp256k1::RecoveryId::parse(recovery_id ^ 1).unwrap();
+    let alt_signature =
+        k256::ecdsa::Signature::from_scalars(signature.r(), -signature.s()).unwrap();
+    let alt_recovery_id = k256::ecdsa::RecoveryId::from_byte(recovery_id ^ 1).unwrap();
 
-    let alt_signature_bytes = alt_signature.serialize();
-    let alt_recovery_id = alt_recovery_id.serialize();
+    let alt_signature_bytes = alt_signature.to_bytes();
+    let alt_recovery_id = alt_recovery_id.to_byte();
 
     let recovered_pubkey =
         secp256k1_recover(&message_hash.0, recovery_id, &signature_bytes[..]).unwrap();

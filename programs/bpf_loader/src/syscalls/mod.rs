@@ -1012,28 +1012,27 @@ declare_builtin_function!(
             SECP256K1_PUBLIC_KEY_LENGTH as u64,
             invoke_context.get_check_aligned(),
         )?;
-
-        let Ok(message) = libsecp256k1::Message::parse_slice(hash) else {
-            return Ok(Secp256k1RecoverError::InvalidHash.into());
-        };
-        let Ok(adjusted_recover_id_val) = recovery_id_val.try_into() else {
+        if hash.len() != 32 {
+            return Err(Secp256k1RecoverError::InvalidHash.into());
+        }
+        let Ok(adjusted_recover_id_val) = u8::try_from(recovery_id_val) else {
             return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
         };
-        let Ok(recovery_id) = libsecp256k1::RecoveryId::parse(adjusted_recover_id_val) else {
+        let Ok(recovery_id) = k256::ecdsa::RecoveryId::try_from(adjusted_recover_id_val) else {
             return Ok(Secp256k1RecoverError::InvalidRecoveryId.into());
         };
-        let Ok(signature) = libsecp256k1::Signature::parse_standard_slice(signature) else {
+        let Ok(signature) = k256::ecdsa::Signature::from_slice(signature) else {
             return Ok(Secp256k1RecoverError::InvalidSignature.into());
         };
 
-        let public_key = match libsecp256k1::recover(&message, &signature, &recovery_id) {
-            Ok(key) => key.serialize(),
+        let public_key = match k256::ecdsa::VerifyingKey::recover_from_prehash(hash, &signature, recovery_id) {
+            Ok(key) => key.to_encoded_point(false),
             Err(_) => {
                 return Ok(Secp256k1RecoverError::InvalidSignature.into());
             }
         };
-
-        secp256k1_recover_result.copy_from_slice(&public_key[1..65]);
+        #[allow(clippy::indexing_slicing)]
+        secp256k1_recover_result.copy_from_slice(&public_key.as_bytes()[1..65]);
         Ok(SUCCESS)
     }
 );

@@ -10317,21 +10317,7 @@ fn test_call_precomiled_program() {
     activate_all_features(&mut genesis_config);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-    // libsecp256k1
-    // Since libsecp256k1 is still using the old version of rand, this test
-    // copies the `random` implementation at:
-    // https://docs.rs/libsecp256k1/latest/src/libsecp256k1/lib.rs.html#430
-    let secp_privkey = {
-        use rand::RngCore;
-        let mut rng = rand::thread_rng();
-        loop {
-            let mut ret = [0u8; libsecp256k1::util::SECRET_KEY_SIZE];
-            rng.fill_bytes(&mut ret);
-            if let Ok(key) = libsecp256k1::SecretKey::parse(&ret) {
-                break key;
-            }
-        }
-    };
+    let secp_privkey = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
     let message_arr = b"hello";
     let instruction =
         solana_sdk::secp256k1_instruction::new_secp256k1_instruction(&secp_privkey, message_arr);

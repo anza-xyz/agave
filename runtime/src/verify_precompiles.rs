@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn test_verify_precompiles_secp256k1() {
-        let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let secp_privkey = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
         let message_arr = b"hello";
         let mut secp_instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
         let mint_keypair = Keypair::new();
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn test_verify_precompiles_mixed() {
         let message_arr = b"hello";
-        let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let secp_privkey = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
         let mut secp_instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
         let ed25519_privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
         let ed25519_instruction = new_ed25519_instruction(&ed25519_privkey, message_arr);

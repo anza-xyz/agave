@@ -2,7 +2,7 @@
 
 extern crate test;
 use {
-    rand0_7::{thread_rng, Rng},
+    rand::Rng,
     solana_feature_set::FeatureSet,
     solana_sdk::{
         hash::Hash,
@@ -20,9 +20,9 @@ const TX_COUNT: u16 = 5120;
 fn create_test_transactions(message_length: u16) -> Vec<Transaction> {
     (0..TX_COUNT)
         .map(|_| {
-            let mut rng = thread_rng();
-            let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
-            let message: Vec<u8> = (0..message_length).map(|_| rng.gen_range(0, 255)).collect();
+            let mut rng = rand::rngs::OsRng;
+            let secp_privkey = k256::ecdsa::SigningKey::random(&mut rng);
+            let message: Vec<u8> = (0..message_length).map(|_| rng.gen_range(0..255)).collect();
             let secp_instruction = new_secp256k1_instruction(&secp_privkey, &message);
             let mint_keypair = Keypair::new();
 

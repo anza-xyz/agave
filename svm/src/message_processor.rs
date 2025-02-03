@@ -120,6 +120,7 @@ mod tests {
             ec::{EcGroup, EcKey},
             nid::Nid,
         },
+        rand::rngs::OsRng,
         rand0_7::thread_rng,
         solana_account::{AccountSharedData, ReadableAccount},
         solana_compute_budget::compute_budget::ComputeBudget,
@@ -597,7 +598,7 @@ mod tests {
     }
 
     fn secp256k1_instruction_for_test() -> Instruction {
-        let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let secret_key = k256::ecdsa::SigningKey::random(&mut OsRng);
         new_secp256k1_instruction(&secret_key, b"hello")
     }
 

@@ -102,8 +102,9 @@ name = "solana_runtime"
 agave-transaction-view = { workspace = true }
 assert_matches = { workspace = true }
 ed25519-dalek = { workspace = true }
-libsecp256k1 = { workspace = true }
+k256 = { workspace = true }
 memoffset = { workspace = true }
+rand = { workspace = true }
 rand0-7 = { package = "rand", version = "0.7" }
 rand_chacha = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }

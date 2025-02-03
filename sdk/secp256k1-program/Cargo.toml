@@ -12,7 +12,7 @@ edition = { workspace = true }
 [dependencies]
 bincode = { workspace = true, optional = true }
 digest = { workspace = true }
-libsecp256k1 = { workspace = true, features = ["hmac"] }
+k256 = { workspace = true, default-features = false, features = ["arithmetic", "ecdsa-core", "ecdsa"] }
 serde = { workspace = true, optional = true }
 serde_derive = { workspace = true, optional = true }
 sha3 = { workspace = true }
@@ -23,7 +23,9 @@ solana-sdk-ids = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+elliptic-curve = { workspace = true }
 hex = { workspace = true }
+rand = { workspace = true }
 rand0-7 = { workspace = true }
 solana-account-info = { workspace = true }
 solana-hash = { workspace = true }
