@@ -1,19 +1,15 @@
 use {
     crate::{cli::DefaultArgs, dashboard::Dashboard},
     clap::{App, ArgMatches, SubCommand},
-    std::{
-        path::{Path, PathBuf},
-        process::exit,
-        time::Duration,
-    },
+    std::{path::Path, process::exit, time::Duration},
 };
 
-pub fn command<'a>(_default_args: &'a DefaultArgs) -> App<'a, 'a> {
+pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
     SubCommand::with_name("monitor").about("Monitor the validator")
 }
 
-pub fn execute(_matches: &ArgMatches, ledger_path: &PathBuf) {
-    monitor_validator(&ledger_path);
+pub fn execute(_matches: &ArgMatches, ledger_path: &Path) {
+    monitor_validator(ledger_path);
 }
 
 pub fn monitor_validator(ledger_path: &Path) {
