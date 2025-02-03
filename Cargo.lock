@@ -5185,7 +5185,7 @@ dependencies = [
  "lru",
  "parking_lot 0.11.2",
  "smallvec",
- "spin 0.9.2",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -5309,7 +5309,7 @@ dependencies = [
  "cc",
  "getrandom 0.2.10",
  "libc",
- "spin 0.9.2",
+ "spin 0.9.8",
  "untrusted 0.9.0",
  "windows-sys 0.48.0",
 ]
@@ -10978,9 +10978,9 @@ checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "spin"
-version = "0.9.2"
+version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "511254be0c5bcf062b019a6c89c01a664aa359ded62f78aa72c6fc137c0590e5"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "spinning_top"
