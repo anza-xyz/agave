@@ -846,10 +846,9 @@ impl ProgramTest {
         let bank = Bank::new_with_paths(
             &genesis_config,
             Arc::new(RuntimeConfig {
-                compute_budget: self.compute_max_units.map(|max_units| ComputeBudget {
-                    compute_unit_limit: max_units,
-                    ..ComputeBudget::default()
-                }),
+                compute_budget: self
+                    .compute_max_units
+                    .map(|max_units| ComputeBudget::new(max_units)),
                 transaction_account_lock_limit: self.transaction_account_lock_limit,
                 ..RuntimeConfig::default()
             }),

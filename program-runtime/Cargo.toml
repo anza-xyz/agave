@@ -22,7 +22,7 @@ rand = { workspace = true }
 serde = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-clock = { workspace = true }
-solana-compute-budget = { workspace = true }
+solana-compute-budget = { workspace = true, features = ["svm-internal"] }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-feature-set = { workspace = true }

@@ -981,10 +981,7 @@ impl TestValidator {
         let runtime_config = RuntimeConfig {
             compute_budget: config
                 .compute_unit_limit
-                .map(|compute_unit_limit| ComputeBudget {
-                    compute_unit_limit,
-                    ..ComputeBudget::default()
-                }),
+                .map(|compute_unit_limit| ComputeBudget::new(compute_unit_limit)),
             log_messages_bytes_limit: config.log_messages_bytes_limit,
             transaction_account_lock_limit: config.transaction_account_lock_limit,
         };
