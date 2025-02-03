@@ -5,6 +5,7 @@ extern crate test;
 use {
     solana_account::{create_account_for_test, Account, AccountSharedData},
     solana_clock::{Clock, Slot},
+    solana_feature_set::{deprecate_legacy_vote_ixs, FeatureSet},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
     solana_program_runtime::invoke_context::mock_process_instruction,
@@ -19,6 +20,7 @@ use {
             MAX_LOCKOUT_HISTORY,
         },
     },
+    std::sync::Arc,
     test::Bencher,
 };
 
@@ -93,6 +95,31 @@ fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountM
     )
 }
 
+fn bench_process_deprecated_vote_instruction(
+    bencher: &mut Bencher,
+    transaction_accounts: Vec<TransactionAccount>,
+    instruction_account_metas: Vec<AccountMeta>,
+    instruction_data: Vec<u8>,
+) {
+    bencher.iter(|| {
+        mock_process_instruction(
+            &solana_vote_program::id(),
+            Vec::new(),
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_account_metas.clone(),
+            Ok(()),
+            solana_vote_program::vote_processor::Entrypoint::vm,
+            |invoke_context| {
+                let mut deprecated_feature_set = FeatureSet::all_enabled();
+                deprecated_feature_set.deactivate(&deprecate_legacy_vote_ixs::id());
+                invoke_context.mock_set_feature_set(Arc::new(deprecated_feature_set));
+            },
+            |_invoke_context| {},
+        );
+    });
+}
+
 fn bench_process_vote_instruction(
     bencher: &mut Bencher,
     transaction_accounts: Vec<TransactionAccount>,
@@ -134,7 +161,7 @@ fn bench_process_vote(bencher: &mut Bencher) {
     );
     let instruction_data = bincode::serialize(&VoteInstruction::Vote(vote)).unwrap();
 
-    bench_process_vote_instruction(
+    bench_process_deprecated_vote_instruction(
         bencher,
         transaction_accounts,
         instruction_account_metas,
@@ -164,7 +191,7 @@ fn bench_process_vote_state_update(bencher: &mut Bencher) {
     let instruction_data =
         bincode::serialize(&VoteInstruction::UpdateVoteState(vote_state_update)).unwrap();
 
-    bench_process_vote_instruction(
+    bench_process_deprecated_vote_instruction(
         bencher,
         transaction_accounts,
         instruction_account_metas,
