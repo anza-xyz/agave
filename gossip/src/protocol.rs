@@ -1,6 +1,7 @@
+//! Definitions for the base of all Gossip protocol messages
 use {
     crate::{
-        crds_data::MAX_WALLCLOCK,
+        crds_data::{CrdsData, MAX_WALLCLOCK},
         crds_gossip_pull::CrdsFilter,
         crds_value::CrdsValue,
         ping_pong::{self, Pong},
@@ -42,10 +43,10 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
 // TODO These messages should go through the gpu pipeline for spam filtering
+/// Gossip protocol messages base enum
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Protocol {
-    /// Gossip protocol messages
     PullRequest(CrdsFilter, CrdsValue),
     PullResponse(Pubkey, Vec<CrdsValue>),
     PushMessage(Pubkey, Vec<CrdsValue>),
@@ -152,10 +153,44 @@ impl Sanitize for Protocol {
         match self {
             Protocol::PullRequest(filter, val) => {
                 filter.sanitize()?;
+                // PullRequest is only allowed to have ContactInfo in its CrdsData
+                match val.data() {
+                    CrdsData::LegacyContactInfo(_) => {}
+                    CrdsData::ContactInfo(_) => {}
+                    _ => {
+                        return Err(SanitizeError::InvalidValue);
+                    }
+                }
                 val.sanitize()
             }
-            Protocol::PullResponse(_, val) => val.sanitize(),
-            Protocol::PushMessage(_, val) => val.sanitize(),
+            Protocol::PullResponse(_, val) => {
+                // PullResponse is allowed to carry anything in its CrdsData, except for deprecated fields
+                for v in val {
+                    match v.data() {
+                        CrdsData::LegacyVersion(_) => {
+                            return Err(SanitizeError::InvalidValue);
+                        }
+                        _ => {
+                            v.sanitize()?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Protocol::PushMessage(_, val) => {
+                //Push is allowed to carry anything in its CrdsData, except for deprecated fields
+                for v in val {
+                    match v.data() {
+                        CrdsData::LegacyVersion(_) => {
+                            return Err(SanitizeError::InvalidValue);
+                        }
+                        _ => {
+                            v.sanitize()?;
+                        }
+                    }
+                }
+                Ok(())
+            }
             Protocol::PruneMessage(from, val) => {
                 if *from != val.pubkey {
                     Err(SanitizeError::InvalidValue)
