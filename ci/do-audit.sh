@@ -81,6 +81,17 @@ cargo_audit_ignores=(
   # Dependency tree:
   # hashbrown 0.15.0
   --ignore RUSTSEC-2024-0402
+
+  # Crate:     openssl
+  # Version:   0.10.68
+  # Title:     ssl::select_next_proto use after free
+  # Date:      2025-02-02
+  # ID:        RUSTSEC-2025-0004
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2025-0004
+  # Solution:  Upgrade to >=0.10.70
+  # Dependency tree:
+  # openssl 0.10.68
+  --ignore RUSTSEC-2025-0004
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
 # we want the `cargo audit` exit code, not `$dep_tree_filter`'s
