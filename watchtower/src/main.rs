@@ -410,11 +410,15 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     loop {
         let mut failures = BTreeMap::new(); // test_name -> message
+
+        let mut num_healthy = 0;
         let mut num_unreachable = 0;
 
         for endpoint in &mut endpoints {
             match query_endpoint(&config, endpoint) {
-                Ok(None) => {}
+                Ok(None) => {
+                    num_healthy += 1;
+                }
                 Ok(Some((failure_test_name, failure_error_message))) => {
                     // Collecting only one failure of each type
                     failures
@@ -437,7 +441,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             failures.insert("watchtower-reliability".into(), watchtower_unreliable_msg);
         }
 
-        if !failures.is_empty() {
+        if num_healthy < min_agreeing_endpoints {
             let notification_msg = format!(
                 "agave-watchtower{}: {}",
                 config.name_suffix,
