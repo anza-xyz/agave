@@ -1,6 +1,8 @@
 #![allow(clippy::arithmetic_side_effects)]
 pub mod send_transaction_service;
 pub mod send_transaction_service_stats;
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+pub mod test_utils;
 pub mod tpu_info;
 pub mod transaction_client;
 
