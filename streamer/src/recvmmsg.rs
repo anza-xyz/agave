@@ -1,15 +1,9 @@
 //! The `recvmmsg` module provides recvmmsg() API implementation
 
 pub use solana_perf::packet::NUM_RCVMMSGS;
-use {
-    crate::{
-        msghdr::create_msghdr,
-        packet::{Meta, Packet},
-    },
-    std::{cmp, io, net::UdpSocket},
-};
 #[cfg(target_os = "linux")]
 use {
+    crate::msghdr::create_msghdr,
     itertools::izip,
     libc::{iovec, mmsghdr, sockaddr_storage, socklen_t, AF_INET, AF_INET6, MSG_WAITFORONE},
     std::{
@@ -17,6 +11,10 @@ use {
         net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
         os::unix::io::AsRawFd,
     },
+};
+use {
+    crate::packet::{Meta, Packet},
+    std::{cmp, io, net::UdpSocket},
 };
 
 #[cfg(not(target_os = "linux"))]
