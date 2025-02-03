@@ -673,6 +673,7 @@ impl From<ShredVariant> for ShredType {
 }
 
 impl From<ShredVariant> for u8 {
+    #[inline]
     fn from(shred_variant: ShredVariant) -> u8 {
         match shred_variant {
             ShredVariant::LegacyCode => u8::from(ShredType::Code),
@@ -723,6 +724,7 @@ impl From<ShredVariant> for u8 {
 
 impl TryFrom<u8> for ShredVariant {
     type Error = Error;
+    #[inline]
     fn try_from(shred_variant: u8) -> Result<Self, Self::Error> {
         if shred_variant == u8::from(ShredType::Code) {
             Ok(ShredVariant::LegacyCode)
@@ -1261,7 +1263,7 @@ mod tests {
                 |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
-            assert_eq!(stats.bad_parent_offset, 1);
+            assert_eq!(stats.index_overrun, 5);
         }
         {
             let mut stats = ShredFetchStats::default();
