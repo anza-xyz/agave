@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 use {
     libc::{iovec, msghdr, sockaddr_storage, socklen_t},
     std::{
@@ -5,6 +7,7 @@ use {
         ptr,
     },
 };
+
 pub(crate) fn create_msghdr(
     msg_name: &mut MaybeUninit<sockaddr_storage>,
     msg_namelen: socklen_t,
