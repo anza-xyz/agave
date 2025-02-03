@@ -22,21 +22,18 @@ pub fn command<'a>(_default_args: &'a DefaultArgs) -> App<'a, 'a> {
                         .takes_value(true)
                         .validator(is_keypair)
                         .help(
-                            "Path to keypair of the authorized voter to add [default: \
-                       read JSON keypair from stdin]",
+                            "Path to keypair of the authorized voter to add [default: read JSON keypair from stdin]",
                         ),
                 )
                 .after_help(
-                    "Note: the new authorized voter only applies to the currently running \
-               validator instance",
+                    "Note: the new authorized voter only applies to the currently running validator instance",
                 ),
         )
         .subcommand(
             SubCommand::with_name("remove-all")
                 .about("Remove all authorized voters")
                 .after_help(
-                    "Note: the removal only applies to the currently running validator \
-               instance",
+                    "Note: the removal only applies to the currently running validator instance",
                 ),
         )
 }
