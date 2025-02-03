@@ -9,7 +9,6 @@
 /programs/bpf_loader/ @anza-xyz/svm
 /programs/compute-budget/ @anza-xyz/svm
 /programs/loader-v4/ @anza-xyz/svm
-/programs/system/ @anza-xyz/svm
 /runtime-transaction/ @anza-xyz/tx-metadata
 /svm-conformance/ @anza-xyz/svm
 /svm-rent-collector/ @anza-xyz/svm

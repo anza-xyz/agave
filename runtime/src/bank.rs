@@ -199,10 +199,10 @@ use {
     solana_accounts_db::accounts_db::{
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
+    solana_nonce_account::{get_system_account_kind, SystemAccountKind},
     solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
     solana_sdk::nonce,
     solana_svm::program_loader::load_program_with_pubkey,
-    solana_system_program::{get_system_account_kind, SystemAccountKind},
 };
 
 /// params to `verify_accounts_hash`

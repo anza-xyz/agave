@@ -38,6 +38,7 @@ solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
+solana-nonce-account = { workspace = true }
 solana-precompiles = { workspace = true }
 solana-program = { workspace = true, default-features = false }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
@@ -48,7 +49,6 @@ solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
-solana-system-program = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
@@ -91,6 +91,7 @@ solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-svm = { path = ".", features = ["dev-context-only-utils"] }
 solana-svm-conformance = { workspace = true }
+solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true }

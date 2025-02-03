@@ -19,6 +19,7 @@ use {
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
     solana_instructions_sysvar::construct_instructions_data,
     solana_nonce::state::State as NonceState,
+    solana_nonce_account::{get_system_account_kind, SystemAccountKind},
     solana_pubkey::Pubkey,
     solana_rent::RentDue,
     solana_rent_debits::RentDebits,
@@ -29,7 +30,6 @@ use {
     },
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_system_program::{get_system_account_kind, SystemAccountKind},
     solana_transaction_context::{IndexOfAccount, TransactionAccount},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::{
