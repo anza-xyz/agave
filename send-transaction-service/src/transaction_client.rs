@@ -11,6 +11,10 @@ use {
     },
 };
 
+// Alias trait to shorten function definitions.
+pub trait TpuInfoWithSendStatic: TpuInfo + std::marker::Send + 'static {}
+impl<T> TpuInfoWithSendStatic for T where T: TpuInfo + std::marker::Send + 'static {}
+
 pub trait TransactionClient {
     fn send_transactions_in_batch(
         &self,
@@ -19,7 +23,7 @@ pub trait TransactionClient {
     );
 }
 
-pub struct ConnectionCacheClient<T: TpuInfo + std::marker::Send + 'static> {
+pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
     connection_cache: Arc<ConnectionCache>,
     tpu_address: SocketAddr,
     tpu_peers: Option<Vec<SocketAddr>>,
@@ -30,7 +34,7 @@ pub struct ConnectionCacheClient<T: TpuInfo + std::marker::Send + 'static> {
 // Manual implementation of Clone without requiring T to be Clone
 impl<T> Clone for ConnectionCacheClient<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     fn clone(&self) -> Self {
         Self {
@@ -45,7 +49,7 @@ where
 
 impl<T> ConnectionCacheClient<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     pub fn new(
         connection_cache: Arc<ConnectionCache>,
@@ -100,7 +104,7 @@ where
 
 impl<T> TransactionClient for ConnectionCacheClient<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     fn send_transactions_in_batch(
         &self,
@@ -131,7 +135,7 @@ pub const LEADER_INFO_REFRESH_RATE_MS: u64 = 1000;
 /// used for sending transactions.
 pub struct CurrentLeaderInfo<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     /// The last time the leader info was refreshed
     last_leader_refresh: Option<Instant>,
@@ -145,7 +149,7 @@ where
 
 impl<T> CurrentLeaderInfo<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     /// Get the leader info, refresh if expired
     pub fn get_leader_info(&mut self) -> Option<&T> {
