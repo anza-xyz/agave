@@ -7615,6 +7615,7 @@ dependencies = [
  "solana-instruction",
  "solana-log-collector",
  "solana-nonce",
+ "solana-nonce-account",
  "solana-packet",
  "solana-program-runtime",
  "solana-pubkey",
