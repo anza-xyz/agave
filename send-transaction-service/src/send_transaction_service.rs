@@ -507,7 +507,10 @@ impl SendTransactionService {
 mod test {
     use {
         super::*,
-        crate::{test_utils::ClientWithCreator, tpu_info::NullTpuInfo},
+        crate::{
+            test_utils::ClientWithCreator, tpu_info::NullTpuInfo,
+            transaction_client::TpuClientNextClient,
+        },
         crossbeam_channel::{bounded, unbounded},
         solana_sdk::{
             account::AccountSharedData,
@@ -547,6 +550,12 @@ mod test {
     #[test]
     fn service_exit_with_connection_cache() {
         service_exit::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+
+    async fn service_exit_with_tpu_client_next() {
+        service_exit::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     fn validator_exit<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
@@ -593,6 +602,11 @@ mod test {
     #[test]
     fn validator_exit_with_connection_cache() {
         validator_exit::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn validator_exit_with_tpu_client_next() {
+        validator_exit::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     fn process_transactions<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
@@ -863,6 +877,11 @@ mod test {
     #[test]
     fn process_transactions_with_connection_cache() {
         process_transactions::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn process_transactions_with_tpu_client_next() {
+        process_transactions::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     fn retry_durable_nonce_transactions<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
@@ -1168,5 +1187,12 @@ mod test {
     #[test]
     fn retry_durable_nonce_transactions_with_connection_cache() {
         retry_durable_nonce_transactions::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn retry_durable_nonce_transactions_with_tpu_client_next() {
+        retry_durable_nonce_transactions::<TpuClientNextClient<NullTpuInfo>>(Some(
+            Handle::current(),
+        ));
     }
 }
