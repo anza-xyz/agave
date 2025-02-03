@@ -86,13 +86,13 @@ use {
     trees::{Tree, TreeWalk},
 };
 pub mod blockstore_purge;
+pub mod error;
 #[cfg(test)]
 use static_assertions::const_assert_eq;
 pub use {
     crate::{
-        blockstore_db::{
-            default_num_compaction_threads, default_num_flush_threads, Result, BlockstoreError,
-        },
+        blockstore::error::{BlockstoreError, Result},
+        blockstore_db::{default_num_compaction_threads, default_num_flush_threads},
         blockstore_meta::{OptimisticSlotMetaVersioned, SlotMeta},
         blockstore_metrics::BlockstoreInsertionMetrics,
     },
