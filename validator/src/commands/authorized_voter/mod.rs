@@ -3,10 +3,10 @@ use {
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::is_keypair,
     solana_sdk::signature::{read_keypair, Signer},
-    std::{fs, path::PathBuf, process::exit},
+    std::{fs, path::Path, process::exit},
 };
 
-pub fn command<'a>(_default_args: &'a DefaultArgs) -> App<'a, 'a> {
+pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
     SubCommand::with_name("authorized-voter")
         .about("Adjust the validator authorized voters")
         .setting(AppSettings::SubcommandRequiredElseHelp)
@@ -38,7 +38,7 @@ pub fn command<'a>(_default_args: &'a DefaultArgs) -> App<'a, 'a> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &PathBuf) {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
     match matches.subcommand() {
         ("add", Some(subcommand_matches)) => {
             if let Ok(authorized_voter_keypair) =
@@ -54,7 +54,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &PathBuf) {
                     authorized_voter_keypair.display()
                 );
 
-                let admin_client = admin_rpc_service::connect(&ledger_path);
+                let admin_client = admin_rpc_service::connect(ledger_path);
                 admin_rpc_service::runtime()
                     .block_on(async move {
                         admin_client
@@ -77,7 +77,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &PathBuf) {
                     authorized_voter_keypair.pubkey()
                 );
 
-                let admin_client = admin_rpc_service::connect(&ledger_path);
+                let admin_client = admin_rpc_service::connect(ledger_path);
                 admin_rpc_service::runtime()
                     .block_on(async move {
                         admin_client
@@ -92,11 +92,9 @@ pub fn execute(matches: &ArgMatches, ledger_path: &PathBuf) {
                         exit(1);
                     });
             }
-
-            return;
         }
         ("remove-all", _) => {
-            let admin_client = admin_rpc_service::connect(&ledger_path);
+            let admin_client = admin_rpc_service::connect(ledger_path);
             admin_rpc_service::runtime()
                 .block_on(async move { admin_client.await?.remove_all_authorized_voters().await })
                 .unwrap_or_else(|err| {
@@ -104,7 +102,6 @@ pub fn execute(matches: &ArgMatches, ledger_path: &PathBuf) {
                     exit(1);
                 });
             println!("All authorized voters removed");
-            return;
         }
         _ => unreachable!(),
     }
