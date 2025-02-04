@@ -639,11 +639,18 @@ impl Validator {
 
         // Measure the PoH hash rate as early as possible to minimize
         // contention with other threads
-        let my_poh_hashes_per_second = if config.no_poh_speed_test {
-            None
-        } else {
-            Some(measure_poh_speed(POH_SPEED_CHECK_NUM_HASHES))
-        };
+        //
+        // Skip the check for Development clusters as this will be the type for
+        // tests or for clusters that we don't know what the rate will be
+        // without a rebuilt Bank
+        let my_poh_hashes_per_second =
+            match (genesis_config.cluster_type, !config.no_poh_speed_test) {
+                (_, false) | (ClusterType::Development, _) => {
+                    info!("Skipping the PoH speed check");
+                    None
+                }
+                (_, true) => Some(measure_poh_speed(POH_SPEED_CHECK_NUM_HASHES)),
+            };
 
         let thread_manager = ThreadManager::new(&config.thread_manager_config)?;
         // Initialize the global rayon pool first to ensure the value in config
