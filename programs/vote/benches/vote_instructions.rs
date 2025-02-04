@@ -33,6 +33,94 @@ fn create_default_clock_account() -> AccountSharedData {
     account::create_account_shared_data_for_test(&Clock::default())
 }
 
+fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountMeta>) {
+    // vote accounts are usually almost full of votes in normal operation
+    let num_initial_votes = MAX_LOCKOUT_HISTORY as Slot;
+
+    let clock = Clock::default();
+    let mut slot_hashes = SlotHashes::new(&[]);
+    for i in 0..MAX_ENTRIES {
+        // slot hashes is full in normal operation
+        slot_hashes.add(i as Slot, Hash::new_unique());
+    }
+
+    let vote_pubkey = Pubkey::new_unique();
+    let authority_pubkey = Pubkey::new_unique();
+    let vote_account = {
+        let mut vote_state = VoteState::new(
+            &VoteInit {
+                node_pubkey: authority_pubkey,
+                authorized_voter: authority_pubkey,
+                authorized_withdrawer: authority_pubkey,
+                commission: 0,
+            },
+            &clock,
+        );
+
+        for next_vote_slot in 0..num_initial_votes {
+            vote_state.process_next_vote_slot(next_vote_slot, 0, 0);
+        }
+        let mut vote_account_data: Vec<u8> = vec![0; VoteState::size_of()];
+        let versioned = VoteStateVersions::new_current(vote_state);
+        VoteState::serialize(&versioned, &mut vote_account_data).unwrap();
+
+        Account {
+            lamports: 1,
+            data: vote_account_data,
+            owner: solana_vote_program::id(),
+            executable: false,
+            rent_epoch: 0,
+        }
+    };
+
+    let transaction_accounts = vec![
+        (solana_vote_program::id(), AccountSharedData::default()),
+        (vote_pubkey, AccountSharedData::from(vote_account)),
+        (
+            sysvar::slot_hashes::id(),
+            AccountSharedData::from(create_account_for_test(&slot_hashes)),
+        ),
+        (
+            sysvar::clock::id(),
+            AccountSharedData::from(create_account_for_test(&clock)),
+        ),
+        (authority_pubkey, AccountSharedData::default()),
+    ];
+    let instruction_account_metas = vec![
+        AccountMeta {
+            // `[WRITE]` Vote account to vote with
+            pubkey: vote_pubkey,
+            is_signer: false,
+            is_writable: true,
+        },
+        AccountMeta {
+            // `[]` Slot hashes sysvar
+            pubkey: sysvar::slot_hashes::id(),
+            is_signer: false,
+            is_writable: false,
+        },
+        AccountMeta {
+            // `[]` Clock sysvar
+            pubkey: sysvar::clock::id(),
+            is_signer: false,
+            is_writable: false,
+        },
+        AccountMeta {
+            // `[SIGNER]` Vote authority
+            pubkey: authority_pubkey,
+            is_signer: true,
+            is_writable: false,
+        },
+    ];
+
+    (
+        num_initial_votes,
+        slot_hashes,
+        transaction_accounts,
+        instruction_account_metas,
+    )
+}
+
 fn create_test_account() -> (Pubkey, AccountSharedData) {
     let rent = Rent::default();
     let balance = VoteState::get_rent_exempt_reserve(&rent);
@@ -231,7 +319,7 @@ struct BenchVote {
 impl BenchVote {
     pub fn new() -> Self {
         let (num_initial_votes, slot_hashes, transaction_accounts, instruction_accounts) =
-            Self::create_accounts();
+            create_accounts();
 
         let num_vote_slots = 4;
         let last_vote_slot = num_initial_votes
@@ -258,93 +346,6 @@ impl BenchVote {
         }
     }
 
-    fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountMeta>) {
-        // vote accounts are usually almost full of votes in normal operation
-        let num_initial_votes = MAX_LOCKOUT_HISTORY as Slot;
-
-        let clock = Clock::default();
-        let mut slot_hashes = SlotHashes::new(&[]);
-        for i in 0..MAX_ENTRIES {
-            // slot hashes is full in normal operation
-            slot_hashes.add(i as Slot, Hash::new_unique());
-        }
-
-        let vote_pubkey = Pubkey::new_unique();
-        let authority_pubkey = Pubkey::new_unique();
-        let vote_account = {
-            let mut vote_state = VoteState::new(
-                &VoteInit {
-                    node_pubkey: authority_pubkey,
-                    authorized_voter: authority_pubkey,
-                    authorized_withdrawer: authority_pubkey,
-                    commission: 0,
-                },
-                &clock,
-            );
-
-            for next_vote_slot in 0..num_initial_votes {
-                vote_state.process_next_vote_slot(next_vote_slot, 0, 0);
-            }
-            let mut vote_account_data: Vec<u8> = vec![0; VoteState::size_of()];
-            let versioned = VoteStateVersions::new_current(vote_state);
-            VoteState::serialize(&versioned, &mut vote_account_data).unwrap();
-
-            Account {
-                lamports: 1,
-                data: vote_account_data,
-                owner: solana_vote_program::id(),
-                executable: false,
-                rent_epoch: 0,
-            }
-        };
-
-        let transaction_accounts = vec![
-            (solana_vote_program::id(), AccountSharedData::default()),
-            (vote_pubkey, AccountSharedData::from(vote_account)),
-            (
-                sysvar::slot_hashes::id(),
-                AccountSharedData::from(create_account_for_test(&slot_hashes)),
-            ),
-            (
-                sysvar::clock::id(),
-                AccountSharedData::from(create_account_for_test(&clock)),
-            ),
-            (authority_pubkey, AccountSharedData::default()),
-        ];
-        let instruction_account_metas = vec![
-            AccountMeta {
-                // `[WRITE]` Vote account to vote with
-                pubkey: vote_pubkey,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                // `[]` Slot hashes sysvar
-                pubkey: sysvar::slot_hashes::id(),
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                // `[]` Clock sysvar
-                pubkey: sysvar::clock::id(),
-                is_signer: false,
-                is_writable: false,
-            },
-            AccountMeta {
-                // `[SIGNER]` Vote authority
-                pubkey: authority_pubkey,
-                is_signer: true,
-                is_writable: false,
-            },
-        ];
-
-        (
-            num_initial_votes,
-            slot_hashes,
-            transaction_accounts,
-            instruction_account_metas,
-        )
-    }
     pub fn run(&self) {
         let _accounts = process_deprecated_instruction(
             &self.instruction_data,
@@ -517,6 +518,52 @@ impl BenchUpdateCommission {
     }
 }
 
+struct BenchVoteSwitch {
+    instruction_data: Vec<u8>,
+    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+    instruction_accounts: Vec<AccountMeta>,
+}
+
+impl BenchVoteSwitch {
+    fn new() -> Self {
+        let (num_initial_votes, slot_hashes, transaction_accounts, instruction_accounts) =
+            create_accounts();
+
+        let num_vote_slots = 4;
+        let last_vote_slot = num_initial_votes
+            .saturating_add(num_vote_slots)
+            .saturating_sub(1);
+
+        let last_vote_hash = slot_hashes
+            .iter()
+            .find(|(slot, _hash)| *slot == last_vote_slot)
+            .unwrap()
+            .1;
+
+        let vote = Vote::new(
+            (num_initial_votes..=last_vote_slot).collect(),
+            last_vote_hash,
+        );
+        assert_eq!(vote.slots.len(), 4);
+        let instruction_data =
+            serialize(&VoteInstruction::VoteSwitch(vote, Hash::default())).unwrap();
+
+        Self {
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+        }
+    }
+    fn run(&self) {
+        let _accounts = process_deprecated_instruction(
+            &self.instruction_data,
+            self.transaction_accounts.clone(),
+            self.instruction_accounts.clone(),
+            Ok(()),
+        );
+    }
+}
+
 fn bench_initialize_account(c: &mut Criterion) {
     let test_setup = BenchInitializeAccount::new();
     c.bench_function("vote_instruction_initialize_account", |bencher| {
@@ -559,6 +606,13 @@ fn bench_update_commission(c: &mut Criterion) {
     });
 }
 
+fn bench_vote_switch(c: &mut Criterion) {
+    let test_setup = BenchVoteSwitch::new();
+    c.bench_function("vote_vote_switch", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_account,
@@ -567,5 +621,6 @@ criterion_group!(
     bench_withdraw,
     bench_update_validator_identity,
     bench_update_commission,
+    bench_vote_switch,
 );
 criterion_main!(benches);
