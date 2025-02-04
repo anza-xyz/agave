@@ -232,7 +232,6 @@ macro_rules! convert_column_key_bytes_to_index {
     }};
 }
 
-
 pub trait Column {
     // The logical key for how data will be accessed in this column
     type Index;
