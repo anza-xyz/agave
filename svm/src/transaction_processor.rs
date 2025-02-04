@@ -744,6 +744,93 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 })
                 .collect();
 
+        // HANA TODO i believe, to not have to worry about cache hell, we should parse and filter here
+        // remind me again why i cant just... filter and leave replenish alone...
+        // maybe i just need to write a new replenish. idk man
+        // ok. yea. i think... uh... ok
+        // * call `new_from_cache` outside the loop, let `is_first_round` be a bool
+        // * before the loop, figure out wtf in `missing_programs` is from our batch
+        //   i believe what i want is... v1/v2, exclude (invalid) if callbacks result is None
+        //   v3/v4 parse and check the slot. however i could also... ignore v1/v2 since theyll never be valid
+        //   and v3/v4 i believe i can rely on logic similar to the local cache update...
+        //   this gets fucked up with the `is_first_round` bool
+        //
+        // what i *really* want is just... a way to give global a bunch of program ids
+        // and it gives me bytecode... ugh no that doesnt work. because it need to compile the misses
+        // which it relies on us to supply the accounts for
+        //
+        // another thing im not sure about is if buffers showing up in global cache is a bug or a feature
+        //
+        // ok. modified entries is actually... good
+        // i think what i want is... load accounts for tx. filter by program owner
+        // then also filter anything that was modified in previous caches
+        // carrying over `modified_entries` and possibly the internal bools from cache to cache...
+        //
+        // i think i need to draw this up as an issue and just tag a bunch of people
+        // well. step back. what are my options here
+        //
+        // filter with AccountLoader. load with callback. track modified programs to mask with tombstones
+        // we could exclude these programs from the missing_programs list so theyre never loaded
+        // or just... ok actually i think. keeping modified and just adding it to every program cache
+        // is probably the best approach here. since it overrides whatever is in it
+        // then we can... well, no, idk. we 64x accounts-db calls if we keep callback here
+        // we could use AccountLoader. carry over modified. exclude modified from missing
+        // this doesnt work for hand-created accounts. is that a problem? only if it poisons global
+        //
+        // wait a second. the cache entries for our local cache are always created anew
+        // i think extract... jesus extract is difficult. first of all the match criteria doesnt work for us
+        // even aside from alexanders point about forking. it just skips instead of puttin the tombstone
+        // whereas a global tombstone inserts a local tombstone
+        //
+        // fucking hell. why do we even need all the information on a closed or delayed tombstone?
+        // ok well it isnt checked until we are deep in rbpf-land so we cant change that
+        //
+        // so that means our options are:
+        // * per-tx cache. filter with loader. replenish with callback. eat the cost of accounts-db lookups
+        //   ie hope that its just account_checks_owners is slow and get_account_shared_data is fast (im... skeptical)
+        //   carry over modified hashmap between caches and rely on it to preempt
+        // * per-tx cache. filter with loader. replenish with loader
+        //   we could try to exclude modified from the loads entirely to mitigate poisoning
+        //   but we would also need to exclude creations i believe
+        // * per-batch cache, incrementally add new programs as needed
+        //   this is a step backwards though. we dont want to do this unless necessary
+        //
+        // i think after reviewing this all, what i want is a shared modified hashmap
+        // starts empty. passed to filter and stuff in it is excluded
+        // replenish doesnt need to be changed further. we either store or merge modified into the cache
+        // then we execute. if execution was successful we drain its modified and merge with the shared one
+        // and repeat with filter. this assumes it doesnt matter if 
+        //
+        // HANA thinking through this fresh, i asked pankaj some questions but am not sure about global still
+        // ideally we shouldnt have to care. the idea here is roughly a laod/filter/replenish/merge where:
+        // * first batch gets fresh accounts from load. filter and replenish dont matter
+        // * some program is changed. merge takes its entry from the local cache and holds onto it
+        // * loop, second batch loads and calls filter. filter EXCLUDES the modified accounts
+        //   i understand this perfectly wrt loaderv3 and believe it works for loaderv4
+        //   loaderv1/v2 dont matter since deployments are disabled
+        //   this list does not contain new system-created accounts, and that is the current question
+        //   these would be tombstoned if sent back up to global, but the forking implications are ???
+        // * replenish sees a load list excluding modified programs. therefore all accounts match accounts-db
+        //   the global cache is exposed to no new uncommitted data except system-created accounts
+        // * merge adds any new modified programs to the monotonically increasing modified list
+        // from there the loop behaves the same until the end
+        // we can probably get whether to evict from the modified list we accumulate
+        //
+        // if the system accounts are a problem we need to change the cache logic to not load them
+        // hiding them from global is fine... for v3/v4 we only care if they dont parse
+        // for v1/v2... hard. we fundamentally have no way at this level to distinguish valid from invalid
+        //
+        // its possible forking doesnt matter. the global claims to be fork-aware. but i still dont understand that one thing
+        //
+        // pankaj says the cache should *not* contain buffers
+        // so first maybe in a fresh branch see if buffer entries do go local to global, they 100% exist in local
+        // we can save a lot of pain if we reject v3/v4 "program" accounts that fail to parse
+        // then our foundation prs underneath this one are:
+        // * add cache tests
+        // * rwlock accounts cache and impl callback
+        // * reduce upwards flow of bad data from local to global
+        // and we can impl the plan detailed above
+
         let mut loaded_programs_for_txs: Option<ProgramCacheForTxBatch> = None;
         loop {
             let (program_to_store, task_cookie, task_waiter) = {
@@ -776,6 +863,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // im going to need to read a lot of global cache code to understand this
                 // my one concern is we might fight for global cache locks too much
                 // actually theyre probably all rwlock right? if so its 100% fine, no contention
+                //
+                // HANA ok change this to and_then, exclude tombstones
+                // the task waiter is fine... i think, this is all rather confusing
                 let program_to_store = program_to_load.map(|(key, count)| {
                     // Load, verify and compile one program.
                     let program = load_program_with_pubkey(
@@ -798,6 +888,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             if let Some((key, program)) = program_to_store {
                 loaded_programs_for_txs.as_mut().unwrap().loaded_missing = true;
+                // HANA TODO in a per-tx world this almost certainly poisons the global cache
+                // we would be writing uncommitted state back up to it if we dont exclude tombstones
+                // this adds a confusing and scary condition however re: new v1/v2 accounts
+                // but... maybe it doesnt matter... since they can never execute...
                 let mut program_cache = self.program_cache.write().unwrap();
                 // Submit our last completed loading task.
                 if program_cache.finish_cooperative_loading_task(self.slot, key, program)
