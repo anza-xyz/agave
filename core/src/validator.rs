@@ -629,6 +629,14 @@ impl Validator {
 
         let start_time = Instant::now();
 
+        if !ledger_path.is_dir() {
+            return Err(anyhow!(
+                "ledger directory does not exist or is not accessible: {ledger_path:?}"
+            ));
+        }
+        let genesis_config = load_genesis(config, ledger_path)?;
+        metrics_config_sanity_check(genesis_config.cluster_type)?;
+
         // Measure the PoH hash rate as early as possible to minimize
         // contention with other threads
         let my_poh_hashes_per_second = if config.no_poh_speed_test {
@@ -716,14 +724,6 @@ impl Validator {
         }
         sigverify::init();
         info!("Initializing sigverify done.");
-
-        if !ledger_path.is_dir() {
-            return Err(anyhow!(
-                "ledger directory does not exist or is not accessible: {ledger_path:?}"
-            ));
-        }
-        let genesis_config = load_genesis(config, ledger_path)?;
-        metrics_config_sanity_check(genesis_config.cluster_type)?;
 
         info!("Cleaning accounts paths..");
         *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
