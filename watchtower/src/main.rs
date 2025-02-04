@@ -412,46 +412,51 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         let mut failures = BTreeMap::new(); // test_name -> message
 
         let mut num_healthy = 0;
-        let mut num_unreachable = 0;
+        let mut num_reachable = 0;
 
         for endpoint in &mut endpoints {
             match query_endpoint(&config, endpoint) {
                 Ok(None) => {
                     num_healthy += 1;
+                    num_reachable += 1;
                 }
                 Ok(Some((failure_test_name, failure_error_message))) => {
+                    num_reachable += 1;
+
                     // Collecting only one failure of each type
                     failures
                         .entry(failure_test_name)
                         .or_insert(failure_error_message.clone());
                 }
-                Err(_) => {
-                    num_unreachable += 1;
-                }
+                Err(_) => {}
             }
         }
 
-        let num_reachable = endpoints.len() - num_unreachable;
         if num_reachable < min_agreeing_endpoints {
+            failures.clear(); // Ignoring other failures when watchtower is unrealiable
+
             let watchtower_unreliable_msg = format!(
-                "Watchtower is unrealiable, {} of {} RPC endpoints are unreachable",
-                num_unreachable,
+                "Watchtower is unrealiable, {} of {} RPC endpoints are reachable",
+                num_reachable,
                 endpoints.len()
             );
             failures.insert("watchtower-reliability".into(), watchtower_unreliable_msg);
         }
 
         if num_healthy < min_agreeing_endpoints {
+            if failures.len() > 1 {
+                failures.clear(); // Ignoring other failures when watchtower is unrealiable
+
+                let watchtower_unreliable_msg =
+                    "Watchtower is unrealiable, RPC endpoints provide inconsistent information"
+                        .into();
+                failures.insert("watchtower-reliability".into(), watchtower_unreliable_msg);
+            }
+
+            let (failure_test_name, failure_error_message) = failures.iter().next().unwrap();
             let notification_msg = format!(
-                "agave-watchtower{}: {}",
-                config.name_suffix,
-                failures
-                    .iter()
-                    .map(|(failure_test_name, failure_error_message)| {
-                        format!("Error: {}: {}", failure_test_name, failure_error_message)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("; ")
+                "agave-watchtower{}: Error: {}: {}",
+                config.name_suffix, failure_test_name, failure_error_message
             );
             num_consecutive_failures += 1;
             if num_consecutive_failures > config.unhealthy_threshold {
@@ -459,13 +464,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 if last_notification_msg != notification_msg {
                     notifier.send(&notification_msg, &NotificationType::Trigger { incident });
                 }
-                for (failure_test_name, failure_error_message) in &failures {
-                    datapoint_error!(
-                        "watchtower-sanity-failure",
-                        ("test", failure_test_name, String),
-                        ("err", failure_error_message, String)
-                    );
-                }
+                datapoint_error!(
+                    "watchtower-sanity-failure",
+                    ("test", failure_test_name, String),
+                    ("err", failure_error_message, String)
+                );
                 last_notification_msg = notification_msg;
             } else {
                 info!(
