@@ -267,18 +267,6 @@ pub trait TypedColumn: Column {
     }
 }
 
-impl TypedColumn for columns::AddressSignatures {
-    type Type = blockstore_meta::AddressSignatureMeta;
-}
-
-impl TypedColumn for columns::TransactionMemos {
-    type Type = String;
-}
-
-impl TypedColumn for columns::TransactionStatusIndex {
-    type Type = blockstore_meta::TransactionStatusIndexMeta;
-}
-
 pub trait ProtobufColumn: Column {
     type Type: prost::Message + Default;
 }
@@ -291,30 +279,6 @@ pub trait ProtobufColumn: Column {
 /// oldest entries that are older than the latest root in order to maintain the
 /// configured --limit-ledger-size under the validator argument.
 pub trait SlotColumn<Index = Slot> {}
-
-impl<T: SlotColumn> Column for T {
-    type Index = Slot;
-    type Key = [u8; std::mem::size_of::<Slot>()];
-
-    #[inline]
-    fn key(slot: &Self::Index) -> Self::Key {
-        slot.to_be_bytes()
-    }
-
-    /// Converts a RocksDB key to its u64 Index.
-    fn index(key: &[u8]) -> Self::Index {
-        convert_column_key_bytes_to_index!(key, 0..8 => Slot::from_be_bytes)
-    }
-
-    fn slot(index: Self::Index) -> Slot {
-        index
-    }
-
-    /// Converts a Slot to its u64 Index.
-    fn as_index(slot: Slot) -> u64 {
-        slot
-    }
-}
 
 pub enum IndexError {
     UnpackError,
@@ -343,6 +307,42 @@ pub trait ColumnIndexDeprecation: Column {
             // executed.
             Self::as_index(0)
         }
+    }
+}
+
+impl TypedColumn for columns::AddressSignatures {
+    type Type = blockstore_meta::AddressSignatureMeta;
+}
+
+impl TypedColumn for columns::TransactionMemos {
+    type Type = String;
+}
+
+impl TypedColumn for columns::TransactionStatusIndex {
+    type Type = blockstore_meta::TransactionStatusIndexMeta;
+}
+
+impl<T: SlotColumn> Column for T {
+    type Index = Slot;
+    type Key = [u8; std::mem::size_of::<Slot>()];
+
+    #[inline]
+    fn key(slot: &Self::Index) -> Self::Key {
+        slot.to_be_bytes()
+    }
+
+    /// Converts a RocksDB key to its u64 Index.
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key, 0..8 => Slot::from_be_bytes)
+    }
+
+    fn slot(index: Self::Index) -> Slot {
+        index
+    }
+
+    /// Converts a Slot to its u64 Index.
+    fn as_index(slot: Slot) -> u64 {
+        slot
     }
 }
 
