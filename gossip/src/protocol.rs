@@ -165,18 +165,10 @@ impl Sanitize for Protocol {
                 val.sanitize()
             }
             Protocol::PushMessage(_, val) => {
-                //Push is allowed to carry anything in its CrdsData, except for deprecated fields
-                for v in val {
-                    match v.data() {
-                        CrdsData::LegacyVersion(_) => {
-                            return Err(SanitizeError::InvalidValue);
-                        }
-                        _ => {
-                            v.sanitize()?;
-                        }
-                    }
-                }
-                Ok(())
+                // PushMessage is allowed to carry anything in its CrdsData, including deprecated Crds
+                // such that a deprecated Crds gets ingested instead of the node having to pull it from
+                // other nodes that have inserted it into their Crds table
+                val.sanitize()
             }
             Protocol::PruneMessage(from, val) => {
                 if *from != val.pubkey {
