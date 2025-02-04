@@ -1032,7 +1032,11 @@ fn make_stub_shred(
         Shred::ShredData(ShredData {
             common_header,
             data_header,
-            payload: Payload::from(payload),
+            // Recovered data shreds are concurrently inserted into blockstore
+            // while their payload is sent to retransmit-stage. Using a shared
+            // payload between the two concurrent paths will reduce allocations
+            // and memcopies.
+            payload: Payload::from(std::sync::Arc::new(payload)),
         })
     };
     if let Some(chained_merkle_root) = chained_merkle_root {
@@ -1768,6 +1772,12 @@ mod test {
                 }
             });
             assert_eq!(recovered_shreds, removed_shreds);
+            for shred in recovered_shreds {
+                match shred.shred_type() {
+                    ShredType::Code => assert_matches!(shred.payload(), Payload::Unique(_)),
+                    ShredType::Data => assert_matches!(shred.payload(), Payload::Shared(_)),
+                }
+            }
         }
     }
 
@@ -2095,6 +2105,9 @@ mod test {
             })
             .collect();
         assert_eq!(recovered_data_shreds.len(), data_shreds.len());
+        for shred in &recovered_data_shreds {
+            assert_matches!(shred.payload(), Payload::Shared(_));
+        }
         for (shred, other) in recovered_data_shreds.into_iter().zip(data_shreds) {
             match shred {
                 Shred::ShredCode(_) => panic!("Invalid shred type!"),

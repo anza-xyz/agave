@@ -1010,10 +1010,14 @@ impl Blockstore {
                 // are not stored in blockstore.
                 match shred.shred_type() {
                     ShredType::Code => {
+                        // Don't need Arc overhead here!
+                        debug_assert_matches!(shred.payload(), shred::Payload::Unique(_));
                         recovered_shreds.push(shred.into_payload());
                         None
                     }
                     ShredType::Data => {
+                        // Verify that the cloning is cheap here.
+                        debug_assert_matches!(shred.payload(), shred::Payload::Shared(_));
                         recovered_shreds.push(shred.payload().clone());
                         Some(shred)
                     }
