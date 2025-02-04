@@ -10137,6 +10137,7 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-runtime",
  "solana-sdk",
+ "solana-sdk-ids",
  "solana-streamer",
  "solana-tpu-client",
  "tokio",

@@ -787,8 +787,28 @@ impl TestValidator {
         let validator_stake_lamports = sol_to_lamports(1_000_000.);
         let mint_lamports = sol_to_lamports(500_000_000.);
 
+        // Only activate features which are not explicitly deactivated.
+        let mut feature_set = FeatureSet::default().inactive;
+        for feature in &config.deactivate_feature_set {
+            if feature_set.remove(feature) {
+                info!("Feature for {:?} deactivated", feature)
+            } else {
+                warn!(
+                    "Feature {:?} set for deactivation is not a known Feature public key",
+                    feature,
+                )
+            }
+        }
+
         let mut accounts = config.accounts.clone();
         for (address, account) in solana_program_test::programs::spl_programs(&config.rent) {
+            accounts.entry(address).or_insert(account);
+        }
+        for (address, account) in
+            solana_program_test::programs::core_bpf_programs(&config.rent, |feature_id| {
+                feature_set.contains(feature_id)
+            })
+        {
             accounts.entry(address).or_insert(account);
         }
         for upgradeable_program in &config.upgradeable_programs {
@@ -853,18 +873,6 @@ impl TestValidator {
             genesis_config.ticks_per_slot = ticks_per_slot;
         }
 
-        // Only activate features which are not explicitly deactivated.
-        let mut feature_set = FeatureSet::default().inactive;
-        for feature in &config.deactivate_feature_set {
-            if feature_set.remove(feature) {
-                info!("Feature for {:?} deactivated", feature)
-            } else {
-                warn!(
-                    "Feature {:?} set for deactivation is not a known Feature public key",
-                    feature,
-                )
-            }
-        }
         for feature in feature_set {
             genesis_utils::activate_feature(&mut genesis_config, feature);
         }
@@ -1294,5 +1302,42 @@ mod test {
         assert_eq!(feature_account.owner, solana_sdk::feature::id());
         let feature_state: Feature = bincode::deserialize(feature_account.data()).unwrap();
         assert!(feature_state.activated_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_core_bpf_programs() {
+        let (test_validator, _payer) = TestValidatorGenesis::default()
+            .deactivate_features(&[
+                // Don't migrate the config program.
+                solana_sdk::feature_set::migrate_config_program_to_core_bpf::id(),
+            ])
+            .start_async()
+            .await;
+
+        let rpc_client = test_validator.get_async_rpc_client();
+
+        let fetched_programs = rpc_client
+            .get_multiple_accounts(&[
+                solana_sdk_ids::address_lookup_table::id(),
+                solana_sdk_ids::config::id(),
+                solana_sdk_ids::feature::id(),
+            ])
+            .await
+            .unwrap();
+
+        // Address lookup table is a BPF program.
+        let account = fetched_programs[0].as_ref().unwrap();
+        assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
+        assert!(account.executable);
+
+        // Config is a builtin.
+        let account = fetched_programs[1].as_ref().unwrap();
+        assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
+        assert!(account.executable);
+
+        // Feature Gate is a BPF program.
+        let account = fetched_programs[2].as_ref().unwrap();
+        assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
+        assert!(account.executable);
     }
 }
