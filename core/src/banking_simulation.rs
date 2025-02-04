@@ -57,7 +57,7 @@ use {
             Arc, RwLock,
         },
         thread::{self, sleep, JoinHandle},
-        time::{Duration, SystemTime},
+        time::{Duration, Instant, SystemTime},
     },
     thiserror::Error,
 };
@@ -267,19 +267,25 @@ impl SimulatorLoopLogger {
             .unwrap()
     }
 
-    fn log_frozen_bank_cost(&self, bank: &Bank) {
+    fn log_frozen_bank_cost(&self, bank: &Bank, bank_elapsed: Duration) {
         info!(
-            "bank cost: slot: {} {:?} (frozen)",
+            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {} txs: {} (frozen)",
             bank.slot(),
+            bank_elapsed.as_millis(),
             Self::bank_costs(bank),
+            bank.collector_fees(),
+            bank.executed_transaction_count(),
         );
     }
 
-    fn log_ongoing_bank_cost(&self, bank: &Bank) {
+    fn log_ongoing_bank_cost(&self, bank: &Bank, bank_elapsed: Duration) {
         debug!(
-            "bank cost: slot: {} {:?} (ongoing)",
+            "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {} txs: {} (ongoing)",
             bank.slot(),
+            bank_elapsed.as_millis(),
             Self::bank_costs(bank),
+            bank.collector_fees(),
+            bank.executed_transaction_count(),
         );
     }
 
@@ -312,8 +318,14 @@ impl SimulatorLoopLogger {
         }
     }
 
-    fn on_new_leader(&self, bank: &Bank, new_slot: Slot, new_leader: Pubkey) {
-        self.log_frozen_bank_cost(bank);
+    fn on_new_leader(
+        &self,
+        bank: &Bank,
+        bank_elapsed: Duration,
+        new_slot: Slot,
+        new_leader: Pubkey,
+    ) {
+        self.log_frozen_bank_cost(bank, bank_elapsed);
         info!(
             "{} isn't leader anymore at slot {}; new leader: {}",
             self.simulated_leader, new_slot, new_leader
@@ -432,7 +444,7 @@ impl SimulatorLoop {
             base_simulation_time,
             freeze_time_by_slot: self.freeze_time_by_slot,
         };
-        let mut bank = self.bank;
+        let (mut bank, mut bank_created) = (self.bank, Instant::now());
         loop {
             if self.poh_recorder.read().unwrap().bank().is_none() {
                 let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
@@ -466,7 +478,7 @@ impl SimulatorLoop {
                     .slot_leader_at(new_slot, None)
                     .unwrap();
                 if new_leader != self.simulated_leader {
-                    logger.on_new_leader(&bank, new_slot, new_leader);
+                    logger.on_new_leader(&bank, bank_created.elapsed(), new_slot, new_leader);
                     break;
                 } else if sender_thread.is_finished() {
                     warn!("sender thread existed maybe due to completion of sending traced events");
@@ -484,7 +496,7 @@ impl SimulatorLoop {
                 self.retracer
                     .hash_event(bank.slot(), &bank.last_blockhash(), &bank.hash());
                 if *bank.collector_id() == self.simulated_leader {
-                    logger.log_frozen_bank_cost(&bank);
+                    logger.log_frozen_bank_cost(&bank, bank_created.elapsed());
                 }
                 self.retransmit_slots_sender.send(bank.slot()).unwrap();
                 update_bank_forks_and_poh_recorder_for_new_tpu_bank(
@@ -493,13 +505,16 @@ impl SimulatorLoop {
                     new_bank,
                     false,
                 );
-                bank = self
-                    .bank_forks
-                    .read()
-                    .unwrap()
-                    .working_bank_with_scheduler();
+                (bank, bank_created) = (
+                    self.bank_forks
+                        .read()
+                        .unwrap()
+                        .working_bank_with_scheduler(),
+                    Instant::now(),
+                );
+                logger.log_ongoing_bank_cost(&bank, bank_created.elapsed());
             } else {
-                logger.log_ongoing_bank_cost(&bank);
+                logger.log_ongoing_bank_cost(&bank, bank_created.elapsed());
             }
 
             sleep(Duration::from_millis(10));
