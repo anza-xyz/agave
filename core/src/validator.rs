@@ -629,7 +629,8 @@ impl Validator {
 
         let start_time = Instant::now();
 
-        // Run the speed check as early as possible to
+        // Measure the PoH hash rate as early as possible to minimize
+        // contention with other threads
         let my_poh_hashes_per_second = if config.no_poh_speed_test {
             None
         } else {
