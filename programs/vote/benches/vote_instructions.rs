@@ -3,6 +3,7 @@ use {
     criterion::{criterion_group, criterion_main, Criterion},
     solana_account::{self as account, create_account_for_test, Account, AccountSharedData},
     solana_clock::{Clock, Slot},
+    solana_epoch_schedule::EpochSchedule,
     solana_feature_set::{deprecate_legacy_vote_ixs, FeatureSet},
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta},
@@ -39,6 +40,25 @@ fn create_test_account() -> (Pubkey, AccountSharedData) {
     (
         vote_pubkey,
         create_account(&vote_pubkey, &solana_pubkey::new_rand(), 0, balance),
+    )
+}
+
+fn create_test_account_with_authorized() -> (Pubkey, Pubkey, Pubkey, AccountSharedData) {
+    let vote_pubkey = solana_pubkey::new_rand();
+    let authorized_voter = solana_pubkey::new_rand();
+    let authorized_withdrawer = solana_pubkey::new_rand();
+
+    (
+        vote_pubkey,
+        authorized_voter,
+        authorized_withdrawer,
+        create_account_with_authorized(
+            &solana_pubkey::new_rand(),
+            &authorized_voter,
+            &authorized_withdrawer,
+            0,
+            100,
+        ),
     )
 }
 
@@ -396,7 +416,7 @@ struct BenchUpdateValidatorIdentity {
 impl BenchUpdateValidatorIdentity {
     pub fn new() -> Self {
         let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
-            Self::create_test_account_with_authorized();
+            create_test_account_with_authorized();
 
         let node_pubkey = solana_pubkey::new_rand();
         let instruction_data = serialize(&VoteInstruction::UpdateValidatorIdentity).unwrap();
@@ -433,26 +453,61 @@ impl BenchUpdateValidatorIdentity {
         }
     }
 
-    fn create_test_account_with_authorized() -> (Pubkey, Pubkey, Pubkey, AccountSharedData) {
-        let vote_pubkey = solana_pubkey::new_rand();
-        let authorized_voter = solana_pubkey::new_rand();
-        let authorized_withdrawer = solana_pubkey::new_rand();
-
-        (
-            vote_pubkey,
-            authorized_voter,
-            authorized_withdrawer,
-            create_account_with_authorized(
-                &solana_pubkey::new_rand(),
-                &authorized_voter,
-                &authorized_withdrawer,
-                0,
-                100,
-            ),
-        )
-    }
-
     pub fn run(&self) {
+        let _accounts = process_instruction(
+            &self.instruction_data,
+            self.transaction_accounts.clone(),
+            self.instruction_accounts.clone(),
+            Ok(()),
+        );
+    }
+}
+
+struct BenchUpdateCommission {
+    instruction_data: Vec<u8>,
+    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+    instruction_accounts: Vec<AccountMeta>,
+}
+
+impl BenchUpdateCommission {
+    fn new() -> Self {
+        let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
+            create_test_account_with_authorized();
+        let instruction_data = serialize(&VoteInstruction::UpdateCommission(u8::MAX)).unwrap();
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account),
+            (authorized_withdrawer, AccountSharedData::default()),
+            // Add the sysvar accounts so they're in the cache for mock processing
+            (
+                sysvar::clock::id(),
+                account::create_account_shared_data_for_test(&Clock::default()),
+            ),
+            (
+                sysvar::epoch_schedule::id(),
+                account::create_account_shared_data_for_test(&EpochSchedule::without_warmup()),
+            ),
+        ];
+        let instruction_accounts = vec![
+            AccountMeta {
+                // `[WRITE]` Vote account to be updated
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                // `[SIGNER]` Withdraw authority
+                pubkey: authorized_withdrawer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+        Self {
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+        }
+    }
+    fn run(&self) {
         let _accounts = process_instruction(
             &self.instruction_data,
             self.transaction_accounts.clone(),
@@ -497,6 +552,13 @@ fn bench_update_validator_identity(c: &mut Criterion) {
     });
 }
 
+fn bench_update_commission(c: &mut Criterion) {
+    let test_setup = BenchUpdateCommission::new();
+    c.bench_function("vote_update_commission", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_account,
@@ -504,5 +566,6 @@ criterion_group!(
     bench_vote,
     bench_withdraw,
     bench_update_validator_identity,
+    bench_update_commission,
 );
 criterion_main!(benches);
