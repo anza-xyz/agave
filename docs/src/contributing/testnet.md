@@ -62,7 +62,7 @@ You will normally only need to do this once. Once this is done, you will be able
   * You can manually write `SOLANA_METRICS_CONFIG` in the `./net/config/config` file
 * By default, metrics are only logged by agave if `RUST_LOG` is set to `info` or higher. You can provide it as environment for `./net.sh start` command, or set this in your shell environment.
   ```bash
-  RUST_LOG="info,solana_runtime=debug"
+  RUST_LOG="solana_metrics=info"
   ```
 
 ### To validate that your database and metrics environment variables are set up 100% correctly
@@ -169,10 +169,11 @@ source net/config/config
 You will want to have a script like this pretty much immediately to avoid making mistakes in the init process:
 ```bash
 # Create the testnet with reasonable node sizes for a small test
+# This particular one will have 7 nodes: 1 bootstrap validator, 4 regular validators, and 2 clients
 ./gce.sh create -n4 -c2 --custom-machine-type "--machine-type n1-standard-16" --client-machine-type "--machine-type n1-standard-4"
 # Patch metrics config from env into config file
 ./init-metrics.sh -e
-# Enable metrics and stat the network (this will also build software)
+# Enable metrics and start the network (this will also build software)
 RUST_LOG=info ./net.sh start  -c bench-tps=2="--tx_count 25000"
 ```
 
