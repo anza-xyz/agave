@@ -19,7 +19,7 @@ use {
         vote_processor::Entrypoint,
         vote_state::{
             create_account, create_account_with_authorized, Vote, VoteAuthorize, VoteInit,
-            VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            VoteState, VoteStateUpdate, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
     std::sync::Arc,
@@ -627,6 +627,60 @@ impl BenchAuthorizeChecked {
     }
 }
 
+struct BenchUpdateVoteState {
+    instruction_data: Vec<u8>,
+    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+    instruction_accounts: Vec<AccountMeta>,
+}
+
+impl BenchUpdateVoteState {
+    fn new(switch: bool) -> Self {
+        let (num_initial_votes, slot_hashes, transaction_accounts, instruction_accounts) =
+            create_accounts();
+
+        let num_vote_slots = MAX_LOCKOUT_HISTORY as Slot;
+        let last_vote_slot = num_initial_votes
+            .saturating_add(num_vote_slots)
+            .saturating_sub(1);
+        let last_vote_hash = slot_hashes
+            .iter()
+            .find(|(slot, _hash)| *slot == last_vote_slot)
+            .unwrap()
+            .1;
+        let slots_and_lockouts: Vec<(Slot, u32)> =
+            ((num_initial_votes.saturating_add(1)..=last_vote_slot).zip((1u32..=31).rev()))
+                .collect();
+        let mut vote_state_update = VoteStateUpdate::from(slots_and_lockouts);
+        vote_state_update.root = Some(num_initial_votes);
+        vote_state_update.hash = last_vote_hash;
+
+        let instruction_data = if switch {
+            serialize(&VoteInstruction::UpdateVoteStateSwitch(
+                vote_state_update,
+                Hash::default(),
+            ))
+            .unwrap()
+        } else {
+            serialize(&VoteInstruction::UpdateVoteState(vote_state_update)).unwrap()
+        };
+
+        Self {
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+        }
+    }
+
+    fn run(&self) {
+        let _accounts = process_deprecated_instruction(
+            &self.instruction_data,
+            self.transaction_accounts.clone(),
+            self.instruction_accounts.clone(),
+            Ok(()),
+        );
+    }
+}
+
 fn bench_initialize_account(c: &mut Criterion) {
     let test_setup = BenchInitializeAccount::new();
     c.bench_function("vote_instruction_initialize_account", |bencher| {
@@ -683,6 +737,20 @@ fn bench_authorize_checked(c: &mut Criterion) {
     });
 }
 
+fn bench_update_vote_state(c: &mut Criterion) {
+    let test_setup = BenchUpdateVoteState::new(false);
+    c.bench_function("vote_update_vote_state", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
+fn bench_update_vote_state_switch(c: &mut Criterion) {
+    let test_setup = BenchUpdateVoteState::new(true);
+    c.bench_function("vote_update_vote_state_switch", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_account,
@@ -693,5 +761,7 @@ criterion_group!(
     bench_update_commission,
     bench_vote_switch,
     bench_authorize_checked,
+    bench_update_vote_state,
+    bench_update_vote_state_switch,
 );
 criterion_main!(benches);
