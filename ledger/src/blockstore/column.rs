@@ -1,3 +1,4 @@
+//! Traits that define how data is encoded in the RocksDB-backed Blockstore.
 use {
     crate::{
         blockstore::error::Result,
@@ -12,6 +13,13 @@ use {
     },
     solana_storage_proto::convert::generated,
 };
+
+// To add a new column, declare the type below and implement the applicable
+// traits for it. At the very least, Column and ColumnName will be necessary.
+//
+// Afterwards, update the Rocks implementation to create / load the new column.
+// Lastly, remember to account for the column's cleanup so that the column does
+// not grow unbounded.
 
 pub mod columns {
     // This avoids relatively obvious `super::` qualifications required for all non-trivial type
@@ -207,13 +215,6 @@ pub mod columns {
     /// * index type: `crate::shred::ErasureSetId` `(Slot, fec_set_index: u32)`
     /// * value type: [`blockstore_meta::MerkleRootMeta`]`
     pub struct MerkleRootMeta;
-
-    // When adding a new column ...
-    // - Add struct below and implement `Column` and `ColumnName` traits
-    // - Add descriptor in Rocks::cf_descriptors() and name in Rocks::columns()
-    // - Account for column in both `run_purge_with_stats()` and
-    //   `compact_storage()` in ledger/src/blockstore/blockstore_purge.rs !!
-    // - Account for column in `analyze_storage()` in ledger-tool/src/main.rs
 }
 
 macro_rules! convert_column_index_to_key_bytes {
@@ -231,11 +232,15 @@ macro_rules! convert_column_key_bytes_to_index {
     }};
 }
 
-pub trait Column {
-    type Index;
-    type Key: AsRef<[u8]>;
 
+pub trait Column {
+    // The logical key for how data will be accessed in this column
+    type Index;
+    // Byte array representation of the Index type; this is the format RocksDB accepts
+    type Key: AsRef<[u8]>;
+    // Converts Self::Index to Self::Key
     fn key(index: &Self::Index) -> Self::Key;
+    // Converts Self::Key to Self::Index
     fn index(key: &[u8]) -> Self::Index;
     // This trait method is primarily used by `Database::delete_range_cf()`, and is therefore only
     // relevant for columns keyed by Slot: ie. SlotColumns and columns that feature a Slot as the
@@ -244,10 +249,12 @@ pub trait Column {
     fn slot(index: Self::Index) -> Slot;
 }
 
+// RocksDB has a notion of columns families to group related data. The columns are refer
 pub trait ColumnName {
     const NAME: &'static str;
 }
 
+// Columns that serialize data on insertion and deserialize on fetch
 pub trait TypedColumn: Column {
     type Type: Serialize + DeserializeOwned;
 
