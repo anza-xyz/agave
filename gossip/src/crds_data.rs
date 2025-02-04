@@ -89,7 +89,7 @@ impl Sanitize for CrdsData {
                 }
                 val.sanitize()
             }
-            CrdsData::LegacyVersion(_) => Err(SanitizeError::InvalidValue),
+            CrdsData::LegacyVersion(version) => version.sanitize(),
             CrdsData::Version(version) => version.sanitize(),
             CrdsData::NodeInstance(node) => node.sanitize(),
             CrdsData::DuplicateShred(ix, shred) => {

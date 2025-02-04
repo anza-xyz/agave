@@ -160,18 +160,9 @@ impl Sanitize for Protocol {
                 }
             }
             Protocol::PullResponse(_, val) => {
-                // PullResponse is allowed to carry anything in its CrdsData, except for deprecated fields
-                for v in val {
-                    match v.data() {
-                        CrdsData::LegacyVersion(_) => {
-                            return Err(SanitizeError::InvalidValue);
-                        }
-                        _ => {
-                            v.sanitize()?;
-                        }
-                    }
-                }
-                Ok(())
+                // PullResponse is allowed to carry anything in its CrdsData, including deprecated Crds
+                // such that a deprecated Crds does not get pulled and then rejected.
+                val.sanitize()
             }
             Protocol::PushMessage(_, val) => {
                 //Push is allowed to carry anything in its CrdsData, except for deprecated fields
