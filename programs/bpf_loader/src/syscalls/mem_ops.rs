@@ -195,7 +195,7 @@ fn memmove_non_contiguous(
     n: u64,
     accounts: &[SerializedAccountMetadata],
     memory_mapping: &MemoryMapping,
-    check_aligned: bool,
+    resize_area: bool,
 ) -> Result<u64, Error> {
     let reverse = dst_addr.wrapping_sub(src_addr) < n;
     iter_memory_pair_chunks(
@@ -207,7 +207,7 @@ fn memmove_non_contiguous(
         accounts,
         memory_mapping,
         reverse,
-        check_aligned,
+        resize_area,
         |src_host_addr, dst_host_addr, chunk_len| {
             unsafe { std::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
             Ok(0)
@@ -234,7 +234,7 @@ fn memcmp_non_contiguous(
     n: u64,
     accounts: &[SerializedAccountMetadata],
     memory_mapping: &MemoryMapping,
-    check_aligned: bool,
+    resize_area: bool,
 ) -> Result<i32, Error> {
     let memcmp_chunk = |s1_addr, s2_addr, chunk_len| {
         let res = unsafe {
@@ -260,7 +260,7 @@ fn memcmp_non_contiguous(
         accounts,
         memory_mapping,
         false,
-        check_aligned,
+        resize_area,
         memcmp_chunk,
     ) {
         Ok(res) => Ok(res),
@@ -327,7 +327,7 @@ fn iter_memory_pair_chunks<T, F>(
     accounts: &[SerializedAccountMetadata],
     memory_mapping: &MemoryMapping,
     reverse: bool,
-    check_aligned: bool,
+    resize_area: bool,
     mut fun: F,
 ) -> Result<T, Error>
 where
@@ -340,7 +340,7 @@ where
         src_access,
         src_addr,
         n_bytes,
-        check_aligned,
+        resize_area,
     )
     .map_err(EbpfError::from)?;
     let mut dst_chunk_iter = MemoryChunkIterator::new(
@@ -349,7 +349,7 @@ where
         dst_access,
         dst_addr,
         n_bytes,
-        check_aligned,
+        resize_area,
     )
     .map_err(EbpfError::from)?;
 
@@ -447,7 +447,7 @@ struct MemoryChunkIterator<'a> {
     len: u64,
     account_index: Option<usize>,
     is_account: Option<bool>,
-    check_aligned: bool,
+    resize_area: bool,
 }
 
 impl<'a> MemoryChunkIterator<'a> {
@@ -457,7 +457,7 @@ impl<'a> MemoryChunkIterator<'a> {
         access_type: AccessType,
         vm_addr: u64,
         len: u64,
-        check_aligned: bool,
+        resize_area: bool,
     ) -> Result<MemoryChunkIterator<'a>, EbpfError> {
         let vm_addr_end = vm_addr.checked_add(len).ok_or(EbpfError::AccessViolation(
             access_type,
@@ -476,7 +476,7 @@ impl<'a> MemoryChunkIterator<'a> {
             vm_addr_end,
             account_index: None,
             is_account: None,
-            check_aligned,
+            resize_area,
         })
     }
 
@@ -534,7 +534,7 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
                 } else {
                     region_is_account = region.vm_addr == account_addr
                         // unaligned programs do not have a resize area
-                        || (self.check_aligned && region.vm_addr == resize_addr);
+                        || (self.resize_area && region.vm_addr == resize_addr);
                     break;
                 }
             } else {
@@ -608,7 +608,7 @@ impl DoubleEndedIterator for MemoryChunkIterator<'_> {
             } else {
                 region_is_account = region.vm_addr == account_addr
                     // unaligned programs do not have a resize area
-                    || (self.check_aligned && region.vm_addr == resize_addr);
+                    || (self.resize_area && region.vm_addr == resize_addr);
                 break;
             }
         }
