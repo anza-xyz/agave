@@ -25,6 +25,9 @@ printf "%s\n" "${files[@]}"
 
 has_error=0
 for file in "${files[@]}"; do
+  if [ -z $file ]; then
+    continue
+  fi
   read -r crate_name package_publish workspace < <(toml get "$file" . | jq -r '(.package.name | tostring)+" "+(.package.publish | tostring)+" "+(.workspace | tostring)')
   echo "=== $crate_name ($file) ==="
 
