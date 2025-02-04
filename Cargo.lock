@@ -6139,9 +6139,11 @@ dependencies = [
 name = "solana-accounts-db"
 version = "2.2.0"
 dependencies = [
+ "agave-thread-manager",
  "ahash 0.8.11",
  "assert_matches",
  "bincode",
+ "bitvec",
  "blake3",
  "bv",
  "bytemuck",
