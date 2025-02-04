@@ -564,6 +564,69 @@ impl BenchVoteSwitch {
     }
 }
 
+struct BenchAuthorizeChecked {
+    instruction_data: Vec<u8>,
+    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+    instruction_accounts: Vec<AccountMeta>,
+}
+
+impl BenchAuthorizeChecked {
+    fn new() -> Self {
+        let vote_pubkey = Pubkey::new_unique();
+        let new_authorized_pubkey = Pubkey::new_unique();
+        let vote_account = AccountSharedData::new(100, VoteState::size_of(), &id());
+        let clock_address = sysvar::clock::id();
+        let clock_account = account::create_account_shared_data_for_test(&Clock::default());
+        let default_authorized_pubkey = Pubkey::default();
+        let authorized_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+        let new_authorized_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account),
+            (clock_address, clock_account),
+            (default_authorized_pubkey, authorized_account),
+            (new_authorized_pubkey, new_authorized_account),
+        ];
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: clock_address,
+                is_signer: false,
+                is_writable: false,
+            },
+            AccountMeta {
+                pubkey: default_authorized_pubkey,
+                is_signer: true,
+                is_writable: false,
+            },
+            AccountMeta {
+                pubkey: new_authorized_pubkey,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+
+        let instruction_data =
+            serialize(&VoteInstruction::AuthorizeChecked(VoteAuthorize::Voter)).unwrap();
+        Self {
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+        }
+    }
+    fn run(&self) {
+        let _accounts = process_instruction(
+            &self.instruction_data,
+            self.transaction_accounts.clone(),
+            self.instruction_accounts.clone(),
+            Ok(()),
+        );
+    }
+}
+
 fn bench_initialize_account(c: &mut Criterion) {
     let test_setup = BenchInitializeAccount::new();
     c.bench_function("vote_instruction_initialize_account", |bencher| {
@@ -613,6 +676,13 @@ fn bench_vote_switch(c: &mut Criterion) {
     });
 }
 
+fn bench_authorize_checked(c: &mut Criterion) {
+    let test_setup = BenchAuthorizeChecked::new();
+    c.bench_function("vote_authorize_checked", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_account,
@@ -622,5 +692,6 @@ criterion_group!(
     bench_update_validator_identity,
     bench_update_commission,
     bench_vote_switch,
+    bench_authorize_checked,
 );
 criterion_main!(benches);
