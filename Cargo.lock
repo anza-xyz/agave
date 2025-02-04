@@ -8801,6 +8801,7 @@ dependencies = [
  "solana-runtime",
  "solana-sbpf",
  "solana-sdk",
+ "solana-sdk-ids",
  "solana-stake-program",
  "solana-svm",
  "solana-timings",

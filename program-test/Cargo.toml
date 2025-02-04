@@ -32,6 +32,7 @@ solana-program-runtime = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-svm = { workspace = true }
 solana-timings = { workspace = true }
 solana-vote-program = { workspace = true }

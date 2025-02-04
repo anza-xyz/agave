@@ -15,27 +15,27 @@ mod spl_memo_3_0 {
 static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
     (
         solana_inline_spl::token::ID,
-        solana_sdk::bpf_loader::ID,
+        solana_sdk_ids::bpf_loader::ID,
         include_bytes!("programs/spl_token-3.5.0.so"),
     ),
     (
         solana_inline_spl::token_2022::ID,
-        solana_sdk::bpf_loader_upgradeable::ID,
+        solana_sdk_ids::bpf_loader_upgradeable::ID,
         include_bytes!("programs/spl_token_2022-5.0.2.so"),
     ),
     (
         spl_memo_1_0::ID,
-        solana_sdk::bpf_loader::ID,
+        solana_sdk_ids::bpf_loader::ID,
         include_bytes!("programs/spl_memo-1.0.0.so"),
     ),
     (
         spl_memo_3_0::ID,
-        solana_sdk::bpf_loader::ID,
+        solana_sdk_ids::bpf_loader::ID,
         include_bytes!("programs/spl_memo-3.0.0.so"),
     ),
     (
         solana_inline_spl::associated_token_account::ID,
-        solana_sdk::bpf_loader::ID,
+        solana_sdk_ids::bpf_loader::ID,
         include_bytes!("programs/spl_associated_token_account-1.1.1.so"),
     ),
 ];
@@ -111,7 +111,7 @@ pub fn spl_programs(rent: &Rent) -> Vec<(Pubkey, AccountSharedData)> {
         .iter()
         .flat_map(|(program_id, loader_id, elf)| {
             let mut accounts = vec![];
-            if loader_id.eq(&solana_sdk::bpf_loader_upgradeable::ID) {
+            if loader_id.eq(&solana_sdk_ids::bpf_loader_upgradeable::ID) {
                 for (key, account) in bpf_loader_upgradeable_program_accounts(program_id, elf, rent)
                 {
                     accounts.push((key, AccountSharedData::from(account)));
