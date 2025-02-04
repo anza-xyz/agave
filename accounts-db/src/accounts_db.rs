@@ -6375,9 +6375,6 @@ impl AccountsDb {
                     .map(|should_flush_f| should_flush_f(key, account))
                     .unwrap_or(true);
                 if should_flush {
-                    // Add `key` to uncleaned_pubkeys since we know this account will now be
-                    // written to a storage, and should be visited by `clean`.
-                    self.uncleaned_pubkeys.entry(slot).or_default().push(*key);
                     flush_stats.total_size += aligned_stored_size(account.data().len()) as u64;
                     flush_stats.num_flushed += 1;
                     Some((key, account))
@@ -6425,6 +6422,13 @@ impl AccountsDb {
         // There is some racy condition for existing readers who just has read exactly while
         // flushing. That case is handled by retry_to_get_account_accessor()
         assert!(self.accounts_cache.remove_slot(slot).is_some());
+
+        // Add `accounts` to uncleaned_pubkeys since we know they were written
+        // to a storage and should be visited by `clean`.
+        self.uncleaned_pubkeys
+            .entry(slot)
+            .or_default()
+            .extend(accounts.iter().map(|(pubkey, _account)| **pubkey));
 
         flush_stats
     }
