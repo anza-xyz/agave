@@ -5,10 +5,8 @@
 use {
     crate::{
         ancestor_iterator::AncestorIterator,
-        blockstore_db::{
-            columns as cf, Column, ColumnIndexDeprecation, IteratorDirection, IteratorMode,
-            LedgerColumn, Rocks, WriteBatch,
-        },
+        blockstore::column::{columns as cf, Column, ColumnIndexDeprecation},
+        blockstore_db::{IteratorDirection, IteratorMode, LedgerColumn, Rocks, WriteBatch},
         blockstore_meta::*,
         blockstore_metrics::BlockstoreRpcApiMetrics,
         blockstore_options::{
@@ -86,6 +84,7 @@ use {
     trees::{Tree, TreeWalk},
 };
 pub mod blockstore_purge;
+pub mod column;
 pub mod error;
 #[cfg(test)]
 use static_assertions::const_assert_eq;

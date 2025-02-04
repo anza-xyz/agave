@@ -5,9 +5,10 @@
 //! the services begins removing data in FIFO order.
 
 use {
-    crate::{
-        blockstore::{self, Blockstore, PurgeType},
-        blockstore_db::{columns, ColumnName},
+    crate::blockstore::{
+        self,
+        column::{columns, ColumnName},
+        Blockstore, PurgeType,
     },
     solana_measure::measure::Measure,
     solana_sdk::clock::{Slot, DEFAULT_MS_PER_SLOT},
