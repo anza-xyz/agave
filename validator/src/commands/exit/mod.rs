@@ -14,8 +14,7 @@ pub fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .long("force")
                 .takes_value(false)
                 .help(
-                    "Request the validator exit immediately instead of waiting for a \
-               restart window",
+                    "Request the validator exit immediately instead of waiting for a restart window",
                 ),
         )
         .arg(
@@ -33,8 +32,7 @@ pub fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .value_name("MINUTES")
                 .default_value(&default_args.exit_min_idle_time)
                 .help(
-                    "Minimum time that the validator should not be leader before \
-               restarting",
+                    "Minimum time that the validator should not be leader before restarting",
                 ),
         )
         .arg(
