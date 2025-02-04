@@ -17,8 +17,8 @@ use {
         vote_instruction::VoteInstruction,
         vote_processor::Entrypoint,
         vote_state::{
-            create_account, Vote, VoteAuthorize, VoteInit, VoteState, VoteStateVersions,
-            MAX_LOCKOUT_HISTORY,
+            create_account, create_account_with_authorized, Vote, VoteAuthorize, VoteInit,
+            VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
     std::sync::Arc,
@@ -387,6 +387,81 @@ impl BenchWithdraw {
     }
 }
 
+struct BenchUpdateValidatorIdentity {
+    instruction_data: Vec<u8>,
+    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+    instruction_accounts: Vec<AccountMeta>,
+}
+
+impl BenchUpdateValidatorIdentity {
+    pub fn new() -> Self {
+        let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
+            Self::create_test_account_with_authorized();
+
+        let node_pubkey = solana_pubkey::new_rand();
+        let instruction_data = serialize(&VoteInstruction::UpdateValidatorIdentity).unwrap();
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account),
+            (node_pubkey, AccountSharedData::default()),
+            (authorized_withdrawer, AccountSharedData::default()),
+        ];
+        let instruction_accounts = vec![
+            AccountMeta {
+                // `[WRITE]` Vote account to be updated with the given authority public key
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                // `[SIGNER]` New validator identity (node_pubkey)
+                pubkey: node_pubkey,
+                is_signer: true,
+                is_writable: false,
+            },
+            AccountMeta {
+                // `[SIGNER]` Withdraw authority
+                pubkey: authorized_withdrawer,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+
+        Self {
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+        }
+    }
+
+    fn create_test_account_with_authorized() -> (Pubkey, Pubkey, Pubkey, AccountSharedData) {
+        let vote_pubkey = solana_pubkey::new_rand();
+        let authorized_voter = solana_pubkey::new_rand();
+        let authorized_withdrawer = solana_pubkey::new_rand();
+
+        (
+            vote_pubkey,
+            authorized_voter,
+            authorized_withdrawer,
+            create_account_with_authorized(
+                &solana_pubkey::new_rand(),
+                &authorized_voter,
+                &authorized_withdrawer,
+                0,
+                100,
+            ),
+        )
+    }
+
+    pub fn run(&self) {
+        let _accounts = process_instruction(
+            &self.instruction_data,
+            self.transaction_accounts.clone(),
+            self.instruction_accounts.clone(),
+            Ok(()),
+        );
+    }
+}
+
 fn bench_initialize_account(c: &mut Criterion) {
     let test_setup = BenchInitializeAccount::new();
     c.bench_function("vote_instruction_initialize_account", |bencher| {
@@ -415,11 +490,19 @@ fn bench_withdraw(c: &mut Criterion) {
     });
 }
 
+fn bench_update_validator_identity(c: &mut Criterion) {
+    let test_setup = BenchUpdateValidatorIdentity::new();
+    c.bench_function("vote_update_validator_identity", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_account,
     bench_authorize,
     bench_vote,
     bench_withdraw,
+    bench_update_validator_identity,
 );
 criterion_main!(benches);
