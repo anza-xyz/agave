@@ -7,9 +7,7 @@ use {
         admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
         bootstrap,
         cli::{self, app, warn_for_deprecated_arguments, DefaultArgs},
-        commands,
-        dashboard::Dashboard,
-        ledger_lockfile, lock_ledger, redirect_stderr_to_file,
+        commands, ledger_lockfile, lock_ledger, redirect_stderr_to_file,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
@@ -325,7 +323,7 @@ pub fn main() {
             println!("Exit request sent");
 
             if monitor {
-                monitor_validator(&ledger_path);
+                commands::monitor::monitor_validator(&ledger_path);
             }
             return;
         }
