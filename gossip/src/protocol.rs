@@ -154,14 +154,10 @@ impl Sanitize for Protocol {
             Protocol::PullRequest(filter, val) => {
                 filter.sanitize()?;
                 // PullRequest is only allowed to have ContactInfo in its CrdsData
-                match val.data() {
-                    CrdsData::LegacyContactInfo(_) => {}
-                    CrdsData::ContactInfo(_) => {}
-                    _ => {
-                        return Err(SanitizeError::InvalidValue);
-                    }
+                if let CrdsData::LegacyContactInfo(_) | CrdsData::ContactInfo(_) = val.data() {
+                    return val.sanitize();
                 }
-                val.sanitize()
+                return Err(SanitizeError::InvalidValue);
             }
             Protocol::PullResponse(_, val) => {
                 // PullResponse is allowed to carry anything in its CrdsData, except for deprecated fields
