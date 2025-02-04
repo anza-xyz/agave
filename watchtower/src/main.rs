@@ -18,7 +18,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{client_error, response::RpcVoteAccountStatus},
     std::{
-        collections::{BTreeMap, HashMap},
+        collections::HashMap,
         error,
         thread::sleep,
         time::{Duration, Instant},
@@ -403,13 +403,13 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let notifier = Notifier::default();
 
-    let mut last_notification_msg = "".to_string();
+    let mut last_notification_msg = "".into();
     let mut num_consecutive_failures = 0;
     let mut last_success = Instant::now();
     let mut incident = Hash::new_unique();
 
     loop {
-        let mut failures = BTreeMap::new(); // test_name -> message
+        let mut failures = HashMap::new(); // test_name -> message
 
         let mut num_healthy = 0;
         let mut num_reachable = 0;
@@ -433,10 +433,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
 
         if num_reachable < min_agreeing_endpoints {
-            failures.clear(); // Ignoring other failures when watchtower is unrealiable
+            failures.clear(); // Ignoring other failures when watchtower is unreliable
 
             let watchtower_unreliable_msg = format!(
-                "Watchtower is unrealiable, {} of {} RPC endpoints are reachable",
+                "Watchtower is unreliable, {} of {} RPC endpoints are reachable",
                 num_reachable,
                 endpoints.len()
             );
@@ -445,10 +445,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
         if num_healthy < min_agreeing_endpoints {
             if failures.len() > 1 {
-                failures.clear(); // Ignoring other failures when watchtower is unrealiable
+                failures.clear(); // Ignoring other failures when watchtower is unreliable
 
                 let watchtower_unreliable_msg =
-                    "Watchtower is unrealiable, RPC endpoints provide inconsistent information"
+                    "Watchtower is unreliable, RPC endpoints provide inconsistent information"
                         .into();
                 failures.insert("watchtower-reliability".into(), watchtower_unreliable_msg);
             }
