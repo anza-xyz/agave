@@ -170,7 +170,7 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
-    solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{
@@ -3161,7 +3161,7 @@ impl Bank {
     }
 
     /// Prepare a locked transaction batch from a list of sanitized transactions.
-    pub fn prepare_sanitized_batch<'a, 'b, Tx: SVMTransaction>(
+    pub fn prepare_sanitized_batch<'a, 'b, Tx: TransactionWithMeta>(
         &'a self,
         txs: &'b [Tx],
     ) -> TransactionBatch<'a, 'b, Tx> {
@@ -3170,7 +3170,7 @@ impl Bank {
 
     /// Prepare a locked transaction batch from a list of sanitized transactions, and their cost
     /// limited packing status
-    pub fn prepare_sanitized_batch_with_results<'a, 'b, Tx: SVMTransaction>(
+    pub fn prepare_sanitized_batch_with_results<'a, 'b, Tx: TransactionWithMeta>(
         &'a self,
         transactions: &'b [Tx],
         transaction_results: impl Iterator<Item = Result<()>>,
@@ -3181,18 +3181,23 @@ impl Bank {
             .feature_set
             .is_active(&feature_set::relax_intrabatch_account_locks::id());
 
-        // with simd83 enabled, we must deduplicate transactions by signature
-        // previously, conflicting account locks would do it as a side effect
-        let mut batch_signatures = AHashSet::with_capacity(transactions.len());
+        // with simd83 enabled, we must deduplicate transactions by message hash
+        // previously, conflicting account locks would dedupe transactions as a side effect
+        let mut batch_message_hashes = AHashSet::with_capacity(transactions.len());
         let transaction_results =
             transaction_results
                 .enumerate()
                 .map(|(i, tx_result)| match tx_result {
-                    Ok(())
-                        if relax_intrabatch_account_locks
-                            && !batch_signatures.insert(transactions[i].signature()) =>
-                    {
-                        Err(TransactionError::AccountInUse)
+                    Ok(()) if relax_intrabatch_account_locks => {
+                        let message_hash =
+                            *transactions[i].as_sanitized_transaction().message_hash();
+
+                        // `HashSet::insert()` returns `true` when the value does *not* already exist
+                        if batch_message_hashes.insert(message_hash) {
+                            Ok(())
+                        } else {
+                            Err(TransactionError::AccountInUse)
+                        }
                     }
                     Ok(()) => Ok(()),
                     Err(e) => Err(e),
