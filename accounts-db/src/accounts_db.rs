@@ -1499,7 +1499,7 @@ pub struct AccountsDb {
 
     write_cache_limit_bytes: Option<u64>,
 
-    sender_bg_hasher: Option<Sender<Vec<CachedAccount>>>,
+    sender_bg_hasher: RwLock<Option<Sender<Vec<CachedAccount>>>>,
     read_only_accounts_cache: ReadOnlyAccountsCache,
 
     /// distribute the accounts across storage lists
@@ -2014,7 +2014,7 @@ impl AccountsDb {
 
         let thread_pool_hash = make_hash_thread_pool(accounts_db_config.num_hash_threads);
 
-        let mut new = Self {
+        let new = Self {
             accounts_index,
             paths,
             base_working_path,
@@ -2066,7 +2066,7 @@ impl AccountsDb {
             active_stats: ActiveStats::default(),
             storage: AccountStorage::default(),
             accounts_cache: AccountsCache::default(),
-            sender_bg_hasher: None,
+            sender_bg_hasher: RwLock::new(None),
             uncleaned_pubkeys: DashMap::default(),
             next_id: AtomicAccountsFileId::new(0),
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
@@ -2095,7 +2095,6 @@ impl AccountsDb {
             best_ancient_slots_to_shrink: RwLock::default(),
         };
 
-        new.start_background_hasher();
         {
             for path in new.paths.iter() {
                 std::fs::create_dir_all(path).expect("Create directory failed.");
@@ -2369,7 +2368,11 @@ impl AccountsDb {
         info!("Background account hasher has stopped");
     }
 
-    fn start_background_hasher(&mut self) {
+    pub fn start_background_hasher(&self) {
+        if self.is_background_hasher_running() {
+            return;
+        }
+
         let (sender, receiver) = unbounded();
         Builder::new()
             .name("solDbStoreHashr".to_string())
@@ -2377,7 +2380,15 @@ impl AccountsDb {
                 Self::background_hasher(receiver);
             })
             .unwrap();
-        self.sender_bg_hasher = Some(sender);
+        *self.sender_bg_hasher.write().unwrap() = Some(sender);
+    }
+
+    pub fn stop_background_hasher(&self) {
+        drop(self.sender_bg_hasher.write().unwrap().take())
+    }
+
+    pub fn is_background_hasher_running(&self) -> bool {
+        self.sender_bg_hasher.read().unwrap().is_some()
     }
 
     #[must_use]
@@ -6528,7 +6539,7 @@ impl AccountsDb {
             .unzip();
 
         // hash this accounts in bg
-        if let Some(ref sender) = &self.sender_bg_hasher {
+        if let Some(sender) = self.sender_bg_hasher.read().unwrap().as_ref() {
             let _ = sender.send(cached_accounts);
         };
 
