@@ -1100,8 +1100,9 @@ impl ServeRepair {
             identity_keypair,
         )?;
         debug!(
-            "Sending repair request from {} for {:#?}",
+            "Sending repair request from {} to {} for {:#?}",
             identity_keypair.pubkey(),
+            peer.pubkey,
             repair_request
         );
         match repair_protocol {
