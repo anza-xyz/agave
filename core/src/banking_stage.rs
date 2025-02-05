@@ -70,18 +70,21 @@ pub mod unprocessed_packet_batches;
 pub mod unprocessed_transaction_storage;
 
 mod consume_worker;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod decision_maker;
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod decision_maker;
 mod forward_packet_batches_by_accounts;
 mod immutable_deserialized_packet;
 mod latest_unprocessed_votes;
 mod leader_slot_timing_metrics;
 mod multi_iterator_scanner;
-mod packet_deserializer;
+pub mod packet_deserializer;
 mod packet_filter;
 mod packet_receiver;
 mod read_write_account_set;
-mod scheduler_messages;
-mod transaction_scheduler;
+pub mod scheduler_messages;
+pub mod transaction_scheduler;
 
 // Fixed thread size seems to be fastest on GCP setup
 pub const NUM_THREADS: u32 = 6;

@@ -612,7 +612,26 @@ fn calculate_max_age(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        crossbeam_channel::unbounded,
+        solana_keypair::Keypair,
+        solana_ledger::genesis_utils::GenesisConfigInfo,
+        solana_perf::packet::{to_packet_batches, NUM_PACKETS},
+        solana_poh::poh_recorder::BankStart,
+        solana_pubkey::Pubkey,
+        solana_runtime::bank_forks,
+        solana_runtime::genesis_utils::create_genesis_config,
+        solana_sdk::{
+            hash::Hash, message::Message, signer::Signer, system_instruction,
+            transaction::Transaction,
+        },
+        std::{
+            sync::Arc,
+            thread,
+            time::{Duration, Instant},
+        },
+    };
 
     #[test]
     fn test_calculate_max_age() {
@@ -637,5 +656,79 @@ mod tests {
                 alt_invalidation_slot: current_slot + solana_sdk::slot_hashes::get_entries() as u64,
             }
         );
+    }
+
+    #[test]
+    fn test_sanitized_transaction_receive_and_buffer() {
+        solana_logger::setup_with_default("solana=trace");
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100_000);
+        let (bank, bank_forks) =
+            Bank::new_for_benches(&genesis_config).wrap_with_bank_forks_for_tests();
+        let bank_start = BankStart {
+            working_bank: bank,
+            bank_creation_time: Arc::new(Instant::now()),
+        };
+
+        // TODO maybe use `let bank = Arc::new(Bank::default_for_tests());`?
+
+        // Need to create all the accounts used in the transactions?
+        // Need to create a thread that takes sender and these accounts to produce transactions
+        // Do I need to properly fund these txs?
+
+        let num_txs = NUM_PACKETS;
+        let (sender, receiver) = unbounded();
+        let handle = thread::spawn(move || {
+            // Can we just generate random bytes?
+            // prepare keypairs
+            let from_keypairs: Vec<Keypair> = (0..num_txs).map(|_| Keypair::new()).collect();
+            let to_pubkeys: Vec<Pubkey> = (0..num_txs).map(|_| Pubkey::new_unique()).collect();
+            let recent_blockhash = Hash::new_unique();
+
+            let txs: Vec<Transaction> = (0..num_txs)
+                .map(|i| {
+                    let transfer =
+                        system_instruction::transfer(&from_keypairs[i].pubkey(), &to_pubkeys[i], 1);
+                    let message = Message::new(&[transfer], Some(&from_keypairs[i].pubkey()));
+                    Transaction::new(&vec![&from_keypairs[i]], message, recent_blockhash)
+                })
+                .collect();
+
+            let packets_batches = BankingPacketBatch::new(to_packet_batches(&txs, NUM_PACKETS));
+            // Send 2 times to touch more code in receive_until packet_deserializer.rs
+            for _ in 0..2 {
+                if sender.send(packets_batches.clone()).is_err() {
+                    panic!("Unexpectedly dropped receiver!");
+                }
+            }
+        });
+
+        let mut rb = SanitizedTransactionReceiveAndBuffer::new(
+            PacketDeserializer::new(receiver),
+            bank_forks,
+            false,
+        );
+        thread::sleep(Duration::from_secs(1));
+
+        const TOTAL_BUFFERED_PACKETS: usize = 100_000;
+        let mut container =
+            <SanitizedTransactionReceiveAndBuffer as ReceiveAndBuffer>::Container::with_capacity(
+                TOTAL_BUFFERED_PACKETS,
+            );
+        let mut count_metrics = SchedulerCountMetrics::default();
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let decision = BufferedPacketsDecision::Consume(bank_start);
+
+        match rb.receive_and_buffer_packets(
+            &mut container,
+            &mut timing_metrics,
+            &mut count_metrics,
+            &decision,
+        ) {
+            Ok(num_received) => assert_eq!(num_received, 2 * num_txs),
+            Err(_) => panic!("Receiver unexpectedly dropped!"),
+        }
+        thread::sleep(Duration::from_secs(1));
+        drop(rb);
+        assert!(handle.join().is_ok());
     }
 }

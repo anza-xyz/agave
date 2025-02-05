@@ -51,6 +51,7 @@ pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     id_to_transaction_state: Slab<TransactionState<Tx>>,
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Create a new `TransactionStateContainer` with the given capacity.
     fn with_capacity(capacity: usize) -> Self;
