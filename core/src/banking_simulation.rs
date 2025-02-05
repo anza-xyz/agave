@@ -279,7 +279,7 @@ impl SimulatorLoopLogger {
     }
 
     fn log_ongoing_bank_cost(&self, bank: &Bank, bank_elapsed: Duration) {
-        debug!(
+        info!(
             "simulated bank slot+delta: {}+{}ms costs: {:?} fees: {} txs: {} (ongoing)",
             bank.slot(),
             bank_elapsed.as_millis(),
