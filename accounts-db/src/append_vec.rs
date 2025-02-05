@@ -301,7 +301,7 @@ pub struct AppendVecStat {
 }
 
 lazy_static! {
-    pub static ref APPEND_VEC_STAT: AppendVecStat = AppendVecStat {
+    pub static ref APPEND_VEC_STATS: AppendVecStat = AppendVecStat {
         mmap_files_open: AtomicU64::new(0),
         mmap_files_dirty: AtomicU64::new(0),
         open_as_file_io: AtomicU64::new(0),
@@ -310,19 +310,19 @@ lazy_static! {
 
 impl Drop for AppendVec {
     fn drop(&mut self) {
-        APPEND_VEC_STAT
+        APPEND_VEC_STATS
             .mmap_files_open
             .fetch_sub(1, Ordering::Relaxed);
         match &self.backing {
             AppendVecFileBacking::Mmap(mmap_only) => {
                 if mmap_only.is_dirty.load(Ordering::Acquire) {
-                    APPEND_VEC_STAT
+                    APPEND_VEC_STATS
                         .mmap_files_dirty
                         .fetch_sub(1, Ordering::Relaxed);
                 }
             }
             AppendVecFileBacking::File(_) => {
-                APPEND_VEC_STAT
+                APPEND_VEC_STATS
                     .open_as_file_io
                     .fetch_sub(1, Ordering::Relaxed);
             }
@@ -385,7 +385,7 @@ impl AppendVec {
             );
             std::process::exit(1);
         });
-        APPEND_VEC_STAT
+        APPEND_VEC_STATS
             .mmap_files_open
             .fetch_add(1, Ordering::Relaxed);
 
@@ -436,7 +436,7 @@ impl AppendVec {
                 let should_flush = mmap_only.is_dirty.swap(false, Ordering::AcqRel);
                 if should_flush {
                     mmap_only.mmap.flush()?;
-                    APPEND_VEC_STAT
+                    APPEND_VEC_STATS
                         .mmap_files_dirty
                         .fetch_sub(1, Ordering::Relaxed);
                 }
@@ -541,10 +541,10 @@ impl AppendVec {
         #[cfg(unix)]
         // we must use mmap on non-linux
         if storage_access == StorageAccess::File {
-            APPEND_VEC_STAT
+            APPEND_VEC_STATS
                 .mmap_files_open
                 .fetch_add(1, Ordering::Relaxed);
-            APPEND_VEC_STAT
+            APPEND_VEC_STATS
                 .open_as_file_io
                 .fetch_add(1, Ordering::Relaxed);
 
@@ -566,7 +566,7 @@ impl AppendVec {
             }
             result?
         };
-        APPEND_VEC_STAT
+        APPEND_VEC_STATS
             .mmap_files_open
             .fetch_add(1, Ordering::Relaxed);
 
@@ -1189,7 +1189,7 @@ impl AppendVec {
                     // (This also ensures the 'dirty counter' datapoint is correct.)
                     if !mmap_only.is_dirty.load(Ordering::Acquire) {
                         mmap_only.is_dirty.store(true, Ordering::Release);
-                        APPEND_VEC_STAT
+                        APPEND_VEC_STATS
                             .mmap_files_dirty
                             .fetch_add(1, Ordering::Relaxed);
                     }
