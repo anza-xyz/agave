@@ -26,7 +26,6 @@ use {
     },
     solana_clock::{Epoch, Slot},
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_feature_set::{
         enable_transaction_loading_failure_fees, remove_accounts_executable_flag_checks, FeatureSet,
     },
@@ -527,6 +526,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         if let CheckedTransactionDetails {
             nonce: Some(ref nonce_info),
             lamports_per_signature: _,
+            compute_budget_limits: _,
         } = checked_details
         {
             let next_durable_nonce = DurableNonce::from_blockhash(environment_blockhash);
@@ -563,11 +563,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         error_counters: &mut TransactionErrorMetrics,
         callbacks: &CB,
     ) -> TransactionResult<ValidatedTransactionDetails> {
-        let compute_budget_limits = process_compute_budget_instructions(
-            message.program_instructions_iter(),
-            &account_loader.feature_set,
-        )
-        .inspect_err(|_err| {
+        let CheckedTransactionDetails {
+            nonce,
+            lamports_per_signature,
+            compute_budget_limits,
+        } = checked_details;
+
+        let compute_budget_limits = compute_budget_limits.inspect_err(|_err| {
             error_counters.invalid_compute_budget += 1;
         })?;
 
@@ -587,11 +589,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &mut loaded_fee_payer.account,
         )
         .rent_amount;
-
-        let CheckedTransactionDetails {
-            nonce,
-            lamports_per_signature,
-        } = checked_details;
 
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
         let fee_details = if lamports_per_signature == 0 {
@@ -1208,6 +1205,7 @@ mod tests {
         solana_account::{create_account_shared_data_for_test, WritableAccount},
         solana_clock::Clock,
         solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+        solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_epoch_schedule::EpochSchedule,
         solana_feature_set::FeatureSet,
@@ -2186,7 +2184,11 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature),
+                CheckedTransactionDetails::new(
+                    None,
+                    lamports_per_signature,
+                    Ok(compute_budget_limits),
+                ),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
@@ -2264,7 +2266,11 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature),
+                CheckedTransactionDetails::new(
+                    None,
+                    lamports_per_signature,
+                    Ok(compute_budget_limits),
+                ),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
@@ -2313,7 +2319,11 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature),
+                CheckedTransactionDetails::new(
+                    None,
+                    lamports_per_signature,
+                    Ok(ComputeBudgetLimits::default()),
+                ),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
@@ -2345,7 +2355,11 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature),
+                CheckedTransactionDetails::new(
+                    None,
+                    lamports_per_signature,
+                    Ok(ComputeBudgetLimits::default()),
+                ),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
@@ -2381,7 +2395,11 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature),
+                CheckedTransactionDetails::new(
+                    None,
+                    lamports_per_signature,
+                    Ok(ComputeBudgetLimits::default()),
+                ),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
@@ -2415,7 +2433,11 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature),
+                CheckedTransactionDetails::new(
+                    None,
+                    lamports_per_signature,
+                    Ok(ComputeBudgetLimits::default()),
+                ),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
@@ -2437,6 +2459,10 @@ mod tests {
             ],
             Some(&Pubkey::new_unique()),
         ));
+        let compute_budget_limits = process_compute_budget_instructions(
+            SVMMessage::program_instructions_iter(&message),
+            &FeatureSet::default(),
+        );
 
         let mock_bank = MockBankCallback::default();
         let mut account_loader = (&mock_bank).into();
@@ -2445,7 +2471,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature),
+                CheckedTransactionDetails::new(None, lamports_per_signature, compute_budget_limits),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
@@ -2513,8 +2539,11 @@ mod tests {
                 .try_advance_nonce(next_durable_nonce, lamports_per_signature)
                 .unwrap();
 
-            let tx_details =
-                CheckedTransactionDetails::new(Some(future_nonce.clone()), lamports_per_signature);
+            let tx_details = CheckedTransactionDetails::new(
+                Some(future_nonce.clone()),
+                lamports_per_signature,
+                Ok(compute_budget_limits),
+            );
 
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
@@ -2578,7 +2607,7 @@ mod tests {
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature),
+                CheckedTransactionDetails::new(None, lamports_per_signature, Ok(compute_budget_limits)),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
@@ -2618,10 +2647,15 @@ mod tests {
             Some(&fee_payer_address),
             &Hash::new_unique(),
         ));
+        let compute_budget_limits = process_compute_budget_instructions(
+            SVMMessage::program_instructions_iter(&message),
+            &FeatureSet::default(),
+        )
+        .unwrap();
         TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
             &mut account_loader,
             &message,
-            CheckedTransactionDetails::new(None, 5000),
+            CheckedTransactionDetails::new(None, 5000, Ok(compute_budget_limits)),
             &Hash::default(),
             FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),

@@ -1,6 +1,7 @@
 use {
     super::{Bank, BankStatusCache},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_perf::perf_libs,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
@@ -111,11 +112,14 @@ impl Bank {
         next_lamports_per_signature: u64,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionCheckResult {
+        let compute_budget_limits =
+            process_compute_budget_instructions(tx.program_instructions_iter(), &self.feature_set);
         let recent_blockhash = tx.recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
             Ok(CheckedTransactionDetails::new(
                 None,
                 hash_info.lamports_per_signature(),
+                compute_budget_limits,
             ))
         } else if let Some((nonce, previous_lamports_per_signature)) = self
             .check_load_and_advance_message_nonce_account(
@@ -127,6 +131,7 @@ impl Bank {
             Ok(CheckedTransactionDetails::new(
                 Some(nonce),
                 previous_lamports_per_signature,
+                compute_budget_limits,
             ))
         } else {
             error_counters.blockhash_not_found += 1;

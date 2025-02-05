@@ -21,7 +21,6 @@ solana-account = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
-solana-compute-budget-instruction = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
@@ -71,6 +70,7 @@ rand0-7 = { workspace = true }
 shuttle = { workspace = true }
 solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true, features = ["dev-context-only-utils"] }
+solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-ed25519-program = { workspace = true }
@@ -89,7 +89,7 @@ solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-svm = { path = ".", features = ["dev-context-only-utils"] }
+solana-svm = { path = ".", features = ["dev-context-only-utils", "svm-internal"] }
 solana-svm-conformance = { workspace = true }
 solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
@@ -115,6 +115,7 @@ shuttle-test = [
     "solana-bpf-loader-program/shuttle-test",
     "solana-loader-v4-program/shuttle-test",
 ]
+svm-internal = []
 
 [lints]
 workspace = true
