@@ -4,27 +4,21 @@ use {
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
-    crossbeam_channel::{Receiver, RecvError, SendError, Sender},
+    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_measure::measure_us,
     solana_poh::leader_bank_notifier::LeaderBankNotifier,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::timing::AtomicInterval,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    std::{
-        sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-            Arc,
-        },
-        time::Duration,
-    },
+    std::{sync::Arc, time::Duration},
     thiserror::Error,
 };
 
 #[derive(Debug, Error)]
 pub enum ConsumeWorkerError<Tx> {
     #[error("Failed to receive work from scheduler: {0}")]
-    Recv(#[from] RecvError),
+    Recv(#[from] TryRecvError),
     #[error("Failed to send finalized consume work to scheduler: {0}")]
     Send(#[from] SendError<FinishedConsumeWork<Tx>>),
 }
@@ -35,7 +29,7 @@ pub(crate) struct ConsumeWorker<Tx> {
     consumed_sender: Sender<FinishedConsumeWork<Tx>>,
 
     leader_bank_notifier: Arc<LeaderBankNotifier>,
-    metrics: Arc<ConsumeWorkerMetrics>,
+    metrics: ConsumeWorkerMetrics,
 }
 
 impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
@@ -51,52 +45,48 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             consumer,
             consumed_sender,
             leader_bank_notifier,
-            metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
+            metrics: ConsumeWorkerMetrics::new(id),
         }
     }
 
-    pub fn metrics_handle(&self) -> Arc<ConsumeWorkerMetrics> {
-        self.metrics.clone()
-    }
-
-    pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
+    pub fn run(mut self) -> Result<(), ConsumeWorkerError<Tx>> {
         loop {
-            let work = self.consume_receiver.recv()?;
-            self.consume_loop(work)?;
+            match self.consume_receiver.try_recv() {
+                Ok(work) => {
+                    self.consume_loop(work)?;
+                }
+                Err(TryRecvError::Empty) => {
+                    const SLEEP_DURATION: Duration = Duration::from_millis(5);
+                    std::thread::sleep(SLEEP_DURATION);
+                }
+                Err(err) => {
+                    return Err(ConsumeWorkerError::from(err));
+                }
+            }
+            self.metrics.maybe_report_and_reset();
         }
     }
 
-    fn consume_loop(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
+    fn consume_loop(&mut self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
         let (maybe_consume_bank, get_bank_us) = measure_us!(self.get_consume_bank());
+
         let Some(mut bank) = maybe_consume_bank else {
-            self.metrics
-                .timing_metrics
-                .wait_for_bank_failure_us
-                .fetch_add(get_bank_us, Ordering::Relaxed);
+            self.metrics.timing_metrics.wait_for_bank_failure_us += get_bank_us;
             return self.retry_drain(work);
         };
-        self.metrics
-            .timing_metrics
-            .wait_for_bank_success_us
-            .fetch_add(get_bank_us, Ordering::Relaxed);
+        self.metrics.timing_metrics.wait_for_bank_success_us += get_bank_us;
 
-        for work in try_drain_iter(work, &self.consume_receiver) {
+        for work in try_drain_iter(work, &self.consume_receiver.clone()) {
             if bank.is_complete() || {
                 // check if the bank got interrupted before completion
                 self.get_consume_bank_id() != Some(bank.bank_id())
             } {
                 let (maybe_new_bank, get_bank_us) = measure_us!(self.get_consume_bank());
                 if let Some(new_bank) = maybe_new_bank {
-                    self.metrics
-                        .timing_metrics
-                        .wait_for_bank_success_us
-                        .fetch_add(get_bank_us, Ordering::Relaxed);
+                    self.metrics.timing_metrics.wait_for_bank_success_us += get_bank_us;
                     bank = new_bank;
                 } else {
-                    self.metrics
-                        .timing_metrics
-                        .wait_for_bank_failure_us
-                        .fetch_add(get_bank_us, Ordering::Relaxed);
+                    self.metrics.timing_metrics.wait_for_bank_failure_us += get_bank_us;
                     return self.retry_drain(work);
                 }
             }
@@ -108,7 +98,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
     /// Consume a single batch.
     fn consume(
-        &self,
+        &mut self,
         bank: &Arc<Bank>,
         work: ConsumeWork<Tx>,
     ) -> Result<(), ConsumeWorkerError<Tx>> {
@@ -119,7 +109,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         );
 
         self.metrics.update_for_consume(&output);
-        self.metrics.has_data.store(true, Ordering::Relaxed);
+        self.metrics.has_data = true;
 
         self.consumed_sender.send(FinishedConsumeWork {
             work,
@@ -143,26 +133,20 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     /// Retry current batch and all outstanding batches.
-    fn retry_drain(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
-        for work in try_drain_iter(work, &self.consume_receiver) {
+    fn retry_drain(&mut self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
+        for work in try_drain_iter(work, &self.consume_receiver.clone()) {
             self.retry(work)?;
         }
         Ok(())
     }
 
     /// Send transactions back to scheduler as retryable.
-    fn retry(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
+    fn retry(&mut self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
         let retryable_indexes: Vec<_> = (0..work.transactions.len()).collect();
         let num_retryable = retryable_indexes.len();
-        self.metrics
-            .count_metrics
-            .retryable_transaction_count
-            .fetch_add(num_retryable, Ordering::Relaxed);
-        self.metrics
-            .count_metrics
-            .retryable_expired_bank_count
-            .fetch_add(num_retryable, Ordering::Relaxed);
-        self.metrics.has_data.store(true, Ordering::Relaxed);
+        self.metrics.count_metrics.retryable_transaction_count += num_retryable;
+        self.metrics.count_metrics.retryable_expired_bank_count += num_retryable;
+        self.metrics.has_data = true;
         self.consumed_sender.send(FinishedConsumeWork {
             work,
             retryable_indexes,
@@ -184,7 +168,7 @@ fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T>
 pub(crate) struct ConsumeWorkerMetrics {
     id: String,
     interval: AtomicInterval,
-    has_data: AtomicBool,
+    has_data: bool,
 
     count_metrics: ConsumeWorkerCountMetrics,
     error_metrics: ConsumeWorkerTransactionErrorMetrics,
@@ -193,11 +177,10 @@ pub(crate) struct ConsumeWorkerMetrics {
 
 impl ConsumeWorkerMetrics {
     /// Report and reset metrics iff the interval has elapsed and the worker did some work.
-    pub fn maybe_report_and_reset(&self) {
+    pub fn maybe_report_and_reset(&mut self) {
         const REPORT_INTERVAL_MS: u64 = 20;
-        if self.interval.should_update(REPORT_INTERVAL_MS)
-            && self.has_data.swap(false, Ordering::Relaxed)
-        {
+        if self.interval.should_update(REPORT_INTERVAL_MS) && self.has_data {
+            self.has_data = false;
             self.count_metrics.report_and_reset(&self.id);
             self.timing_metrics.report_and_reset(&self.id);
             self.error_metrics.report_and_reset(&self.id);
@@ -208,7 +191,7 @@ impl ConsumeWorkerMetrics {
         Self {
             id: id.to_string(),
             interval: AtomicInterval::default(),
-            has_data: AtomicBool::new(false),
+            has_data: false,
             count_metrics: ConsumeWorkerCountMetrics::default(),
             error_metrics: ConsumeWorkerTransactionErrorMetrics::default(),
             timing_metrics: ConsumeWorkerTimingMetrics::default(),
@@ -216,26 +199,23 @@ impl ConsumeWorkerMetrics {
     }
 
     fn update_for_consume(
-        &self,
+        &mut self,
         ProcessTransactionBatchOutput {
             cost_model_throttled_transactions_count,
             cost_model_us,
             execute_and_commit_transactions_output,
         }: &ProcessTransactionBatchOutput,
     ) {
-        self.count_metrics
-            .cost_model_throttled_transactions_count
-            .fetch_add(*cost_model_throttled_transactions_count, Ordering::Relaxed);
-        self.timing_metrics
-            .cost_model_us
-            .fetch_add(*cost_model_us, Ordering::Relaxed);
+        self.count_metrics.cost_model_throttled_transactions_count +=
+            *cost_model_throttled_transactions_count;
+        self.timing_metrics.cost_model_us += *cost_model_us;
         self.update_on_execute_and_commit_transactions_output(
             execute_and_commit_transactions_output,
         );
     }
 
     fn update_on_execute_and_commit_transactions_output(
-        &self,
+        &mut self,
         ExecuteAndCommitTransactionsOutput {
             transaction_counts,
             retryable_transaction_indexes,
@@ -246,44 +226,26 @@ impl ConsumeWorkerMetrics {
             ..
         }: &ExecuteAndCommitTransactionsOutput,
     ) {
-        self.count_metrics
-            .transactions_attempted_processing_count
-            .fetch_add(
-                transaction_counts.attempted_processing_count,
-                Ordering::Relaxed,
-            );
-        self.count_metrics
-            .processed_transactions_count
-            .fetch_add(transaction_counts.processed_count, Ordering::Relaxed);
-        self.count_metrics
-            .processed_with_successful_result_count
-            .fetch_add(
-                transaction_counts.processed_with_successful_result_count,
-                Ordering::Relaxed,
-            );
-        self.count_metrics
-            .retryable_transaction_count
-            .fetch_add(retryable_transaction_indexes.len(), Ordering::Relaxed);
-        let min_prioritization_fees = self
+        self.count_metrics.transactions_attempted_processing_count +=
+            transaction_counts.attempted_processing_count;
+        self.count_metrics.processed_transactions_count += transaction_counts.processed_count;
+        self.count_metrics.processed_with_successful_result_count +=
+            transaction_counts.processed_with_successful_result_count;
+        self.count_metrics.retryable_transaction_count += retryable_transaction_indexes.len();
+        self.count_metrics.min_prioritization_fees = self
             .count_metrics
             .min_prioritization_fees
-            .fetch_min(*min_prioritization_fees, Ordering::Relaxed);
-        let max_prioritization_fees = self
+            .min(*min_prioritization_fees);
+        self.count_metrics.max_prioritization_fees = self
             .count_metrics
             .max_prioritization_fees
-            .fetch_max(*max_prioritization_fees, Ordering::Relaxed);
-        self.count_metrics
-            .min_prioritization_fees
-            .swap(min_prioritization_fees, Ordering::Relaxed);
-        self.count_metrics
-            .max_prioritization_fees
-            .swap(max_prioritization_fees, Ordering::Relaxed);
+            .max(*max_prioritization_fees);
         self.update_on_execute_and_commit_timings(execute_and_commit_timings);
         self.update_on_error_counters(error_counters);
     }
 
     fn update_on_execute_and_commit_timings(
-        &self,
+        &mut self,
         LeaderExecuteAndCommitTimings {
             collect_balances_us,
             load_execute_us,
@@ -294,37 +256,19 @@ impl ConsumeWorkerMetrics {
             ..
         }: &LeaderExecuteAndCommitTimings,
     ) {
-        self.timing_metrics
-            .collect_balances_us
-            .fetch_add(*collect_balances_us, Ordering::Relaxed);
-        self.timing_metrics
-            .load_execute_us_min
-            .fetch_min(*load_execute_us, Ordering::Relaxed);
-        self.timing_metrics
-            .load_execute_us_max
-            .fetch_max(*load_execute_us, Ordering::Relaxed);
-        self.timing_metrics
-            .load_execute_us
-            .fetch_add(*load_execute_us, Ordering::Relaxed);
-        self.timing_metrics
-            .freeze_lock_us
-            .fetch_add(*freeze_lock_us, Ordering::Relaxed);
-        self.timing_metrics
-            .record_us
-            .fetch_add(*record_us, Ordering::Relaxed);
-        self.timing_metrics
-            .commit_us
-            .fetch_add(*commit_us, Ordering::Relaxed);
-        self.timing_metrics
-            .find_and_send_votes_us
-            .fetch_add(*find_and_send_votes_us, Ordering::Relaxed);
-        self.timing_metrics
-            .num_batches_processed
-            .fetch_add(1, Ordering::Relaxed);
+        self.timing_metrics.collect_balances_us += *collect_balances_us;
+        self.timing_metrics.load_execute_us_min += *load_execute_us;
+        self.timing_metrics.load_execute_us_max += *load_execute_us;
+        self.timing_metrics.load_execute_us += *load_execute_us;
+        self.timing_metrics.freeze_lock_us += *freeze_lock_us;
+        self.timing_metrics.record_us += *record_us;
+        self.timing_metrics.commit_us += *commit_us;
+        self.timing_metrics.find_and_send_votes_us += *find_and_send_votes_us;
+        self.timing_metrics.num_batches_processed += 1;
     }
 
     fn update_on_error_counters(
-        &self,
+        &mut self,
         TransactionErrorMetrics {
             total,
             account_in_use,
@@ -352,266 +296,218 @@ impl ConsumeWorkerMetrics {
             program_execution_temporarily_restricted,
         }: &TransactionErrorMetrics,
     ) {
-        self.error_metrics
-            .total
-            .fetch_add(total.0, Ordering::Relaxed);
-        self.error_metrics
-            .account_in_use
-            .fetch_add(account_in_use.0, Ordering::Relaxed);
-        self.error_metrics
-            .too_many_account_locks
-            .fetch_add(too_many_account_locks.0, Ordering::Relaxed);
-        self.error_metrics
-            .account_loaded_twice
-            .fetch_add(account_loaded_twice.0, Ordering::Relaxed);
-        self.error_metrics
-            .account_not_found
-            .fetch_add(account_not_found.0, Ordering::Relaxed);
-        self.error_metrics
-            .blockhash_not_found
-            .fetch_add(blockhash_not_found.0, Ordering::Relaxed);
-        self.error_metrics
-            .blockhash_too_old
-            .fetch_add(blockhash_too_old.0, Ordering::Relaxed);
-        self.error_metrics
-            .call_chain_too_deep
-            .fetch_add(call_chain_too_deep.0, Ordering::Relaxed);
-        self.error_metrics
-            .already_processed
-            .fetch_add(already_processed.0, Ordering::Relaxed);
-        self.error_metrics
-            .instruction_error
-            .fetch_add(instruction_error.0, Ordering::Relaxed);
-        self.error_metrics
-            .insufficient_funds
-            .fetch_add(insufficient_funds.0, Ordering::Relaxed);
-        self.error_metrics
-            .invalid_account_for_fee
-            .fetch_add(invalid_account_for_fee.0, Ordering::Relaxed);
-        self.error_metrics
-            .invalid_account_index
-            .fetch_add(invalid_account_index.0, Ordering::Relaxed);
-        self.error_metrics
-            .invalid_program_for_execution
-            .fetch_add(invalid_program_for_execution.0, Ordering::Relaxed);
-        self.error_metrics
-            .invalid_compute_budget
-            .fetch_add(invalid_compute_budget.0, Ordering::Relaxed);
-        self.error_metrics
-            .not_allowed_during_cluster_maintenance
-            .fetch_add(not_allowed_during_cluster_maintenance.0, Ordering::Relaxed);
-        self.error_metrics
-            .invalid_writable_account
-            .fetch_add(invalid_writable_account.0, Ordering::Relaxed);
-        self.error_metrics
-            .invalid_rent_paying_account
-            .fetch_add(invalid_rent_paying_account.0, Ordering::Relaxed);
-        self.error_metrics
-            .would_exceed_max_block_cost_limit
-            .fetch_add(would_exceed_max_block_cost_limit.0, Ordering::Relaxed);
-        self.error_metrics
-            .would_exceed_max_account_cost_limit
-            .fetch_add(would_exceed_max_account_cost_limit.0, Ordering::Relaxed);
-        self.error_metrics
-            .would_exceed_max_vote_cost_limit
-            .fetch_add(would_exceed_max_vote_cost_limit.0, Ordering::Relaxed);
-        self.error_metrics
-            .would_exceed_account_data_block_limit
-            .fetch_add(would_exceed_account_data_block_limit.0, Ordering::Relaxed);
-        self.error_metrics
-            .max_loaded_accounts_data_size_exceeded
-            .fetch_add(max_loaded_accounts_data_size_exceeded.0, Ordering::Relaxed);
-        self.error_metrics
-            .program_execution_temporarily_restricted
-            .fetch_add(
-                program_execution_temporarily_restricted.0,
-                Ordering::Relaxed,
-            );
+        self.error_metrics.total += total.0;
+        self.error_metrics.account_in_use += account_in_use.0;
+        self.error_metrics.too_many_account_locks += too_many_account_locks.0;
+        self.error_metrics.account_loaded_twice += account_loaded_twice.0;
+        self.error_metrics.account_not_found += account_not_found.0;
+        self.error_metrics.blockhash_not_found += blockhash_not_found.0;
+        self.error_metrics.blockhash_too_old += blockhash_too_old.0;
+        self.error_metrics.call_chain_too_deep += call_chain_too_deep.0;
+        self.error_metrics.already_processed += already_processed.0;
+        self.error_metrics.instruction_error += instruction_error.0;
+        self.error_metrics.insufficient_funds += insufficient_funds.0;
+        self.error_metrics.invalid_account_for_fee += invalid_account_for_fee.0;
+        self.error_metrics.invalid_account_index += invalid_account_index.0;
+        self.error_metrics.invalid_program_for_execution += invalid_program_for_execution.0;
+        self.error_metrics.invalid_compute_budget += invalid_compute_budget.0;
+        self.error_metrics.not_allowed_during_cluster_maintenance +=
+            not_allowed_during_cluster_maintenance.0;
+        self.error_metrics.invalid_writable_account += invalid_writable_account.0;
+        self.error_metrics.invalid_rent_paying_account += invalid_rent_paying_account.0;
+        self.error_metrics.would_exceed_max_block_cost_limit += would_exceed_max_block_cost_limit.0;
+        self.error_metrics.would_exceed_max_account_cost_limit +=
+            would_exceed_max_account_cost_limit.0;
+        self.error_metrics.would_exceed_max_vote_cost_limit += would_exceed_max_vote_cost_limit.0;
+        self.error_metrics.would_exceed_account_data_block_limit +=
+            would_exceed_account_data_block_limit.0;
+        self.error_metrics.max_loaded_accounts_data_size_exceeded +=
+            max_loaded_accounts_data_size_exceeded.0;
+        self.error_metrics.program_execution_temporarily_restricted +=
+            program_execution_temporarily_restricted.0;
     }
 }
 
 struct ConsumeWorkerCountMetrics {
-    transactions_attempted_processing_count: AtomicU64,
-    processed_transactions_count: AtomicU64,
-    processed_with_successful_result_count: AtomicU64,
-    retryable_transaction_count: AtomicUsize,
-    retryable_expired_bank_count: AtomicUsize,
-    cost_model_throttled_transactions_count: AtomicU64,
-    min_prioritization_fees: AtomicU64,
-    max_prioritization_fees: AtomicU64,
+    transactions_attempted_processing_count: u64,
+    processed_transactions_count: u64,
+    processed_with_successful_result_count: u64,
+    retryable_transaction_count: usize,
+    retryable_expired_bank_count: usize,
+    cost_model_throttled_transactions_count: u64,
+    min_prioritization_fees: u64,
+    max_prioritization_fees: u64,
 }
 
 impl Default for ConsumeWorkerCountMetrics {
     fn default() -> Self {
         Self {
-            transactions_attempted_processing_count: AtomicU64::default(),
-            processed_transactions_count: AtomicU64::default(),
-            processed_with_successful_result_count: AtomicU64::default(),
-            retryable_transaction_count: AtomicUsize::default(),
-            retryable_expired_bank_count: AtomicUsize::default(),
-            cost_model_throttled_transactions_count: AtomicU64::default(),
-            min_prioritization_fees: AtomicU64::new(u64::MAX),
-            max_prioritization_fees: AtomicU64::default(),
+            transactions_attempted_processing_count: 0,
+            processed_transactions_count: 0,
+            processed_with_successful_result_count: 0,
+            retryable_transaction_count: 0,
+            retryable_expired_bank_count: 0,
+            cost_model_throttled_transactions_count: 0,
+            min_prioritization_fees: u64::MAX,
+            max_prioritization_fees: 0,
         }
     }
 }
 
 impl ConsumeWorkerCountMetrics {
-    fn report_and_reset(&self, id: &str) {
+    fn report_and_reset(&mut self, id: &str) {
         datapoint_info!(
             "banking_stage_worker_counts",
             "id" => id,
             (
                 "transactions_attempted_processing_count",
-                self.transactions_attempted_processing_count
-                    .swap(0, Ordering::Relaxed),
+                self.transactions_attempted_processing_count,
                 i64
             ),
             (
                 "processed_transactions_count",
-                self.processed_transactions_count.swap(0, Ordering::Relaxed),
+                self.processed_transactions_count,
                 i64
             ),
             (
                 "processed_with_successful_result_count",
-                self.processed_with_successful_result_count
-                    .swap(0, Ordering::Relaxed),
+                self.processed_with_successful_result_count,
                 i64
             ),
             (
                 "retryable_transaction_count",
-                self.retryable_transaction_count.swap(0, Ordering::Relaxed),
+                self.retryable_transaction_count,
                 i64
             ),
             (
                 "retryable_expired_bank_count",
-                self.retryable_expired_bank_count.swap(0, Ordering::Relaxed),
+                self.retryable_expired_bank_count,
                 i64
             ),
             (
                 "cost_model_throttled_transactions_count",
-                self.cost_model_throttled_transactions_count
-                    .swap(0, Ordering::Relaxed),
+                self.cost_model_throttled_transactions_count,
                 i64
             ),
             (
                 "min_prioritization_fees",
-                self.min_prioritization_fees
-                    .swap(u64::MAX, Ordering::Relaxed),
+                self.min_prioritization_fees,
                 i64
             ),
             (
                 "max_prioritization_fees",
-                self.max_prioritization_fees.swap(0, Ordering::Relaxed),
+                self.max_prioritization_fees,
                 i64
             ),
         );
+        *self = Self::default();
     }
 }
 
 #[derive(Default)]
 struct ConsumeWorkerTimingMetrics {
-    cost_model_us: AtomicU64,
-    collect_balances_us: AtomicU64,
-    load_execute_us: AtomicU64,
-    load_execute_us_min: AtomicU64,
-    load_execute_us_max: AtomicU64,
-    freeze_lock_us: AtomicU64,
-    record_us: AtomicU64,
-    commit_us: AtomicU64,
-    find_and_send_votes_us: AtomicU64,
-    wait_for_bank_success_us: AtomicU64,
-    wait_for_bank_failure_us: AtomicU64,
-    num_batches_processed: AtomicU64,
+    cost_model_us: u64,
+    collect_balances_us: u64,
+    load_execute_us: u64,
+    load_execute_us_min: u64,
+    load_execute_us_max: u64,
+    freeze_lock_us: u64,
+    record_us: u64,
+    commit_us: u64,
+    find_and_send_votes_us: u64,
+    wait_for_bank_success_us: u64,
+    wait_for_bank_failure_us: u64,
+    num_batches_processed: u64,
 }
 
 impl ConsumeWorkerTimingMetrics {
-    fn report_and_reset(&self, id: &str) {
+    fn report_and_reset(&mut self, id: &str) {
         datapoint_info!(
             "banking_stage_worker_timing",
             "id" => id,
             (
                 "cost_model_us",
-                self.cost_model_us.swap(0, Ordering::Relaxed),
+                self.cost_model_us,
                 i64
             ),
             (
                 "collect_balances_us",
-                self.collect_balances_us.swap(0, Ordering::Relaxed),
+                self.collect_balances_us,
                 i64
             ),
             (
                 "load_execute_us",
-                self.load_execute_us.swap(0, Ordering::Relaxed),
+                self.load_execute_us,
                 i64
             ),
             (
                 "load_execute_us_min",
-                self.load_execute_us_min.swap(0, Ordering::Relaxed),
+                self.load_execute_us_min,
                 i64
             ),
             (
                 "load_execute_us_max",
-                self.load_execute_us_max.swap(0, Ordering::Relaxed),
+                self.load_execute_us_max,
                 i64
             ),
             (
                 "num_batches_processed",
-                self.num_batches_processed.swap(0, Ordering::Relaxed),
+                self.num_batches_processed,
                 i64
             ),
             (
                 "freeze_lock_us",
-                self.freeze_lock_us.swap(0, Ordering::Relaxed),
+                self.freeze_lock_us,
                 i64
             ),
-            ("record_us", self.record_us.swap(0, Ordering::Relaxed), i64),
-            ("commit_us", self.commit_us.swap(0, Ordering::Relaxed), i64),
+            ("record_us", self.record_us, i64),
+            ("commit_us", self.commit_us, i64),
             (
                 "find_and_send_votes_us",
-                self.find_and_send_votes_us.swap(0, Ordering::Relaxed),
+                self.find_and_send_votes_us,
                 i64
             ),
             (
                 "wait_for_bank_success_us",
-                self.wait_for_bank_success_us.swap(0, Ordering::Relaxed),
+                self.wait_for_bank_success_us,
                 i64
             ),
             (
                 "wait_for_bank_failure_us",
-                self.wait_for_bank_failure_us.swap(0, Ordering::Relaxed),
+                self.wait_for_bank_failure_us,
                 i64
             ),
         );
+        *self = Self::default();
     }
 }
 
 #[derive(Default)]
 struct ConsumeWorkerTransactionErrorMetrics {
-    total: AtomicUsize,
-    account_in_use: AtomicUsize,
-    too_many_account_locks: AtomicUsize,
-    account_loaded_twice: AtomicUsize,
-    account_not_found: AtomicUsize,
-    blockhash_not_found: AtomicUsize,
-    blockhash_too_old: AtomicUsize,
-    call_chain_too_deep: AtomicUsize,
-    already_processed: AtomicUsize,
-    instruction_error: AtomicUsize,
-    insufficient_funds: AtomicUsize,
-    invalid_account_for_fee: AtomicUsize,
-    invalid_account_index: AtomicUsize,
-    invalid_program_for_execution: AtomicUsize,
-    invalid_compute_budget: AtomicUsize,
-    not_allowed_during_cluster_maintenance: AtomicUsize,
-    invalid_writable_account: AtomicUsize,
-    invalid_rent_paying_account: AtomicUsize,
-    would_exceed_max_block_cost_limit: AtomicUsize,
-    would_exceed_max_account_cost_limit: AtomicUsize,
-    would_exceed_max_vote_cost_limit: AtomicUsize,
-    would_exceed_account_data_block_limit: AtomicUsize,
-    max_loaded_accounts_data_size_exceeded: AtomicUsize,
-    program_execution_temporarily_restricted: AtomicUsize,
+    total: usize,
+    account_in_use: usize,
+    too_many_account_locks: usize,
+    account_loaded_twice: usize,
+    account_not_found: usize,
+    blockhash_not_found: usize,
+    blockhash_too_old: usize,
+    call_chain_too_deep: usize,
+    already_processed: usize,
+    instruction_error: usize,
+    insufficient_funds: usize,
+    invalid_account_for_fee: usize,
+    invalid_account_index: usize,
+    invalid_program_for_execution: usize,
+    invalid_compute_budget: usize,
+    not_allowed_during_cluster_maintenance: usize,
+    invalid_writable_account: usize,
+    invalid_rent_paying_account: usize,
+    would_exceed_max_block_cost_limit: usize,
+    would_exceed_max_account_cost_limit: usize,
+    would_exceed_max_vote_cost_limit: usize,
+    would_exceed_account_data_block_limit: usize,
+    max_loaded_accounts_data_size_exceeded: usize,
+    program_execution_temporarily_restricted: usize,
 }
 
 impl ConsumeWorkerTransactionErrorMetrics {
@@ -619,111 +515,105 @@ impl ConsumeWorkerTransactionErrorMetrics {
         datapoint_info!(
             "banking_stage_worker_error_metrics",
             "id" => id,
-            ("total", self.total.swap(0, Ordering::Relaxed), i64),
+            ("total", self.total, i64),
             (
                 "account_in_use",
-                self.account_in_use.swap(0, Ordering::Relaxed),
+                self.account_in_use,
                 i64
             ),
             (
                 "too_many_account_locks",
-                self.too_many_account_locks.swap(0, Ordering::Relaxed),
+                self.too_many_account_locks,
                 i64
             ),
             (
                 "account_loaded_twice",
-                self.account_loaded_twice.swap(0, Ordering::Relaxed),
+                self.account_loaded_twice,
                 i64
             ),
             (
                 "account_not_found",
-                self.account_not_found.swap(0, Ordering::Relaxed),
+                self.account_not_found,
                 i64
             ),
             (
                 "blockhash_not_found",
-                self.blockhash_not_found.swap(0, Ordering::Relaxed),
+                self.blockhash_not_found,
                 i64
             ),
             (
                 "blockhash_too_old",
-                self.blockhash_too_old.swap(0, Ordering::Relaxed),
+                self.blockhash_too_old,
                 i64
             ),
             (
                 "call_chain_too_deep",
-                self.call_chain_too_deep.swap(0, Ordering::Relaxed),
+                self.call_chain_too_deep,
                 i64
             ),
             (
                 "already_processed",
-                self.already_processed.swap(0, Ordering::Relaxed),
+                self.already_processed,
                 i64
             ),
             (
                 "instruction_error",
-                self.instruction_error.swap(0, Ordering::Relaxed),
+                self.instruction_error,
                 i64
             ),
             (
                 "insufficient_funds",
-                self.insufficient_funds.swap(0, Ordering::Relaxed),
+                self.insufficient_funds,
                 i64
             ),
             (
                 "invalid_account_for_fee",
-                self.invalid_account_for_fee.swap(0, Ordering::Relaxed),
+                self.invalid_account_for_fee,
                 i64
             ),
             (
                 "invalid_account_index",
-                self.invalid_account_index.swap(0, Ordering::Relaxed),
+                self.invalid_account_index,
                 i64
             ),
             (
                 "invalid_program_for_execution",
-                self.invalid_program_for_execution
-                    .swap(0, Ordering::Relaxed),
+                self.invalid_program_for_execution,
                 i64
             ),
             (
                 "invalid_compute_budget",
-                self.invalid_compute_budget
-                    .swap(0, Ordering::Relaxed),
+                self.invalid_compute_budget,
                 i64
             ),
             (
                 "not_allowed_during_cluster_maintenance",
-                self.not_allowed_during_cluster_maintenance
-                    .swap(0, Ordering::Relaxed),
+                self.not_allowed_during_cluster_maintenance,
                 i64
             ),
             (
                 "invalid_writable_account",
-                self.invalid_writable_account.swap(0, Ordering::Relaxed),
+                self.invalid_writable_account,
                 i64
             ),
             (
                 "invalid_rent_paying_account",
-                self.invalid_rent_paying_account.swap(0, Ordering::Relaxed),
+                self.invalid_rent_paying_account,
                 i64
             ),
             (
                 "would_exceed_max_block_cost_limit",
-                self.would_exceed_max_block_cost_limit
-                    .swap(0, Ordering::Relaxed),
+                self.would_exceed_max_block_cost_limit,
                 i64
             ),
             (
                 "would_exceed_max_account_cost_limit",
-                self.would_exceed_max_account_cost_limit
-                    .swap(0, Ordering::Relaxed),
+                self.would_exceed_max_account_cost_limit,
                 i64
             ),
             (
                 "would_exceed_max_vote_cost_limit",
-                self.would_exceed_max_vote_cost_limit
-                    .swap(0, Ordering::Relaxed),
+                self.would_exceed_max_vote_cost_limit,
                 i64
             ),
         );

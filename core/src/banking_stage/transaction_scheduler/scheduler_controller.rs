@@ -11,7 +11,6 @@ use {
         },
     },
     crate::banking_stage::{
-        consume_worker::ConsumeWorkerMetrics,
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
         forwarder::Forwarder,
@@ -51,8 +50,6 @@ pub(crate) struct SchedulerController<C: LikeClusterInfo, R: ReceiveAndBuffer> {
     /// Metrics tracking time spent in difference code sections
     /// over an interval and during a leader slot.
     timing_metrics: SchedulerTimingMetrics,
-    /// Metric report handles for the worker threads.
-    worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     /// State for forwarding packets to the leader, if enabled.
     forwarder: Option<Forwarder<C>>,
 }
@@ -63,7 +60,6 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
         receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
         scheduler: PrioGraphScheduler<R::Transaction>,
-        worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
         forwarder: Option<Forwarder<C>>,
     ) -> Self {
         Self {
@@ -75,7 +71,6 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
             leader_detection_metrics: SchedulerLeaderDetectionMetrics::default(),
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
-            worker_metrics,
             forwarder,
         }
     }
@@ -121,9 +116,6 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
                 .maybe_report_and_reset_interval(should_report);
             self.timing_metrics
                 .maybe_report_and_reset_interval(should_report);
-            self.worker_metrics
-                .iter()
-                .for_each(|metrics| metrics.maybe_report_and_reset());
         }
 
         Ok(())
@@ -573,7 +565,6 @@ mod tests {
             receive_and_buffer,
             bank_forks,
             scheduler,
-            vec![], // no actual workers with metrics to report, this can be empty
             None,
         );
 
