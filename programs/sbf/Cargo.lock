@@ -5071,8 +5071,6 @@ dependencies = [
 name = "solana-account-info"
 version = "2.2.0"
 dependencies = [
- "bincode",
- "serde",
  "solana-program-error",
  "solana-program-memory",
  "solana-pubkey",
@@ -5954,17 +5952,10 @@ dependencies = [
 name = "solana-feature-gate-interface"
 version = "2.2.0"
 dependencies = [
- "bincode",
  "serde",
  "serde_derive",
- "solana-account",
- "solana-account-info",
- "solana-instruction",
- "solana-program-error",
  "solana-pubkey",
- "solana-rent",
  "solana-sdk-ids",
- "solana-system-interface",
 ]
 
 [[package]]
@@ -6352,7 +6343,6 @@ dependencies = [
  "solana-instruction",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-system-interface",
 ]
 
 [[package]]
@@ -6365,7 +6355,6 @@ dependencies = [
  "solana-instruction",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-system-interface",
 ]
 
 [[package]]
@@ -6648,77 +6637,28 @@ dependencies = [
 name = "solana-program"
 version = "2.2.0"
 dependencies = [
- "bincode",
- "blake3",
  "borsh 0.10.3",
  "borsh 1.5.5",
- "bs58",
- "bytemuck",
  "console_error_panic_hook",
  "console_log",
  "getrandom 0.2.10",
- "lazy_static",
- "log",
- "memoffset 0.9.0",
  "num-bigint 0.4.6",
- "num-derive",
- "num-traits",
  "rand 0.8.5",
- "serde",
- "serde_bytes",
- "serde_derive",
- "solana-account-info",
- "solana-address-lookup-table-interface",
- "solana-atomic-u64",
- "solana-big-mod-exp",
- "solana-bincode",
- "solana-blake3-hasher",
  "solana-borsh",
- "solana-clock",
- "solana-cpi",
- "solana-decode-error",
  "solana-define-syscall",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
  "solana-example-mocks",
- "solana-feature-gate-interface",
  "solana-fee-calculator",
  "solana-hash",
  "solana-instruction",
- "solana-instructions-sysvar",
- "solana-keccak-hasher",
- "solana-last-restart-slot",
- "solana-loader-v2-interface",
- "solana-loader-v3-interface",
- "solana-loader-v4-interface",
  "solana-message",
- "solana-msg",
- "solana-native-token",
- "solana-nonce",
- "solana-program-entrypoint",
  "solana-program-error",
- "solana-program-memory",
- "solana-program-option",
- "solana-program-pack",
  "solana-pubkey",
  "solana-rent",
- "solana-sanitize",
- "solana-sdk-ids",
- "solana-sdk-macro",
- "solana-secp256k1-recover",
- "solana-serde-varint",
- "solana-serialize-utils",
- "solana-sha256-hasher",
  "solana-short-vec",
- "solana-slot-hashes",
- "solana-slot-history",
- "solana-stable-layout",
  "solana-stake-interface",
- "solana-system-interface",
  "solana-sysvar",
- "solana-sysvar-id",
- "solana-vote-interface",
- "thiserror 2.0.11",
  "wasm-bindgen",
 ]
 
