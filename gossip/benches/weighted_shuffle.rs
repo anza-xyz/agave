@@ -43,7 +43,8 @@ fn bench_weighted_shuffle_shuffle(c: &mut Criterion) {
         b.iter(|| {
             rng.fill(&mut seed[..]);
             let mut rng = ChaChaRng::from_seed(seed);
-            let shuffle = weighted_shuffle.clone().shuffle(&mut rng);
+            let mut weighted_shuffle = weighted_shuffle.clone();
+            let shuffle = weighted_shuffle.shuffle(&mut rng);
             black_box(shuffle.collect::<Vec<_>>());
         })
     });

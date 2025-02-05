@@ -30,7 +30,6 @@ const BIT_MASK: usize = FANOUT - 1;
 ///     weight.
 ///   - Zero weighted indices are shuffled and appear only at the end, after
 ///     non-zero weighted indices.
-#[derive(Clone)]
 pub struct WeightedShuffle<T> {
     // Number of "internal" nodes of the tree.
     num_nodes: usize,
@@ -215,11 +214,11 @@ where
     }
 }
 
-impl<'a, T: 'a> WeightedShuffle<T>
+impl<T> WeightedShuffle<T>
 where
     T: Copy + ConstZero + PartialOrd + SampleUniform + SubAssign,
 {
-    pub fn shuffle<R: Rng>(mut self, rng: &'a mut R) -> impl Iterator<Item = usize> + 'a {
+    pub fn shuffle<'a, R: Rng>(&'a mut self, rng: &'a mut R) -> impl Iterator<Item = usize> + 'a {
         std::iter::from_fn(move || {
             if self.weight > Self::ZERO {
                 let sample =
@@ -250,6 +249,28 @@ fn get_num_nodes_and_tree_size(count: usize) -> (/*num_nodes:*/ usize, /*tree_si
         nodes *= FANOUT;
     }
     (size + nodes, size + count.div_ceil(FANOUT))
+}
+
+// #[derive(Clone)] does not overwrite clone_from which is used in
+// retransmit-stage to minimize allocations.
+impl<T: Clone> Clone for WeightedShuffle<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            num_nodes: self.num_nodes,
+            tree: self.tree.clone(),
+            weight: self.weight.clone(),
+            zeros: self.zeros.clone(),
+        }
+    }
+
+    #[inline]
+    fn clone_from(&mut self, other: &Self) {
+        self.num_nodes = other.num_nodes;
+        self.tree.clone_from(&other.tree);
+        self.weight = other.weight.clone();
+        self.zeros.clone_from(&other.zeros);
+    }
 }
 
 #[cfg(test)]
@@ -386,7 +407,8 @@ mod tests {
         let weights = [1, 0, 1000, 0, 0, 10, 100, 0];
         let mut counts = [0; 8];
         for _ in 0..100000 {
-            let mut shuffle = WeightedShuffle::new("", weights).shuffle(&mut rng);
+            let mut weighted_shuffle = WeightedShuffle::new("", weights);
+            let mut shuffle = weighted_shuffle.shuffle(&mut rng);
             counts[shuffle.next().unwrap()] += 1;
             let _ = shuffle.count(); // consume the rest.
         }
@@ -409,7 +431,7 @@ mod tests {
         const SEED: [u8; 32] = [48u8; 32];
         let weights = [19i64, 23, 7, 0, 0, 23, 3, 0, 5, 0, 19, 29];
         let mut rng = ChaChaRng::from_seed(SEED);
-        let shuffle = WeightedShuffle::new("", weights);
+        let mut shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.shuffle(&mut rng).collect::<Vec<_>>(),
             [8, 1, 5, 10, 11, 0, 2, 6, 9, 4, 3, 7]
@@ -417,7 +439,7 @@ mod tests {
         // Negative weights and overflowing ones are treated as zero.
         let weights = [19, 23, 7, -57, i64::MAX, 23, 3, i64::MAX, 5, -79, 19, 29];
         let mut rng = ChaChaRng::from_seed(SEED);
-        let shuffle = WeightedShuffle::new("", weights);
+        let mut shuffle = WeightedShuffle::new("", weights);
         assert_eq!(
             shuffle.shuffle(&mut rng).collect::<Vec<_>>(),
             [8, 1, 5, 10, 11, 0, 2, 6, 9, 4, 3, 7]
@@ -553,7 +575,7 @@ mod tests {
             let mut seed = [0u8; 32];
             rng.fill(&mut seed[..]);
             let mut rng = ChaChaRng::from_seed(seed);
-            let shuffle = WeightedShuffle::<u64>::new("", &weights);
+            let mut shuffle = WeightedShuffle::<u64>::new("", &weights);
             let shuffle: Vec<_> = shuffle.shuffle(&mut rng).collect();
             let mut rng = ChaChaRng::from_seed(seed);
             let shuffle_slow = weighted_shuffle_slow(&mut rng, weights.clone());
@@ -572,7 +594,7 @@ mod tests {
             let seed = rng.gen::<[u8; 32]>();
             let mut rng = ChaChaRng::from_seed(seed);
             let shuffle_slow = weighted_shuffle_slow(&mut rng.clone(), weights.clone());
-            let shuffle = WeightedShuffle::new("", weights);
+            let mut shuffle = WeightedShuffle::new("", weights);
             if size > 0 {
                 assert_eq!(shuffle.first(&mut rng.clone()), Some(shuffle_slow[0]));
             }
