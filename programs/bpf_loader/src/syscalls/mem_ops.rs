@@ -490,18 +490,24 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
 
         let region_is_account;
 
-        let mut account_index = self.account_index.unwrap_or_default();
-        self.account_index = Some(account_index);
+        let account_index = self.account_index.get_or_insert_default();
 
+        // Do not allow iteration over account/non-account boundary.
+
+        // First check whether the region is account data or not
+        // Note: that if an account has empty account data, it still has a resize area
+        // Note: for deprecated unaligned programs, there is no resize area an empty data accounts do NOT count as accounts
         loop {
-            if let Some(account) = self.accounts.get(account_index) {
+            if let Some(account) = self.accounts.get(*account_index) {
+                // region is either account data or 10k resize region
                 let account_addr = account.vm_data_addr;
                 let resize_addr = account_addr.saturating_add(account.original_data_len as u64);
 
                 if resize_addr < region.vm_addr {
-                    // region is after this account, move on next one
-                    account_index = account_index.saturating_add(1);
-                    self.account_index = Some(account_index);
+                    // region is not this account, move onto the next account
+
+                    // note that we iterate in the same linear direction as regions
+                    *account_index = account_index.saturating_add(1);
                 } else {
                     region_is_account =
                         region.vm_addr == account_addr || region.vm_addr == resize_addr;
@@ -556,25 +562,31 @@ impl DoubleEndedIterator for MemoryChunkIterator<'_> {
 
         let region_is_account;
 
-        let mut account_index = self
+        let account_index = self
             .account_index
-            .unwrap_or_else(|| self.accounts.len().saturating_sub(1));
-        self.account_index = Some(account_index);
+            .get_or_insert_with(|| self.accounts.len().saturating_sub(1));
 
+        // Do not allow iteration over account/non-account boundary.
+
+        // First check whether the region is account data or not
+        // Note: that if an account has empty account data, it still has a resize area
+        // Note: for deprecated unaligned programs, there is no resize area an empty data accounts do NOT count as accounts
         loop {
-            let Some(account) = self.accounts.get(account_index) else {
+            let Some(account) = self.accounts.get(*account_index) else {
                 // address is after all the accounts
                 region_is_account = false;
                 break;
             };
 
+            // region is either account data or 10k resize region
             let account_addr = account.vm_data_addr;
             let resize_addr = account_addr.saturating_add(account.original_data_len as u64);
 
-            if account_index > 0 && account_addr > region.vm_addr {
-                account_index = account_index.saturating_sub(1);
+            if *account_index > 0 && account_addr > region.vm_addr {
+                // region is not this account, move onto the previous account
 
-                self.account_index = Some(account_index);
+                // note that we iterate in the same linear direction as regions
+                *account_index = account_index.saturating_sub(1);
             } else {
                 region_is_account = region.vm_addr == account_addr || region.vm_addr == resize_addr;
                 break;
