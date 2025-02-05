@@ -80,7 +80,7 @@ declare_builtin_function!(
             )?;
             let syscall_context = invoke_context.get_syscall_context()?;
 
-            *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, &syscall_context.accounts_metadata, memory_mapping)?;
+            *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, &syscall_context.accounts_metadata, memory_mapping, invoke_context.get_check_aligned())?;
         } else {
             let s1 = translate_slice::<u8>(
                 memory_mapping,
@@ -133,7 +133,7 @@ declare_builtin_function!(
         {
             let syscall_context = invoke_context.get_syscall_context()?;
 
-            memset_non_contiguous(dst_addr, c as u8, n, &syscall_context.accounts_metadata, memory_mapping)
+            memset_non_contiguous(dst_addr, c as u8, n, &syscall_context.accounts_metadata, memory_mapping, invoke_context.get_check_aligned())
         } else {
             let s = translate_slice_mut::<u8>(
                 memory_mapping,
@@ -166,6 +166,7 @@ fn memmove(
             n,
             &syscall_context.accounts_metadata,
             memory_mapping,
+            invoke_context.get_check_aligned(),
         )
     } else {
         let dst_ptr = translate_slice_mut::<u8>(
@@ -194,6 +195,7 @@ fn memmove_non_contiguous(
     n: u64,
     accounts: &[SerializedAccountMetadata],
     memory_mapping: &MemoryMapping,
+    resize_area: bool,
 ) -> Result<u64, Error> {
     let reverse = dst_addr.wrapping_sub(src_addr) < n;
     iter_memory_pair_chunks(
@@ -205,6 +207,7 @@ fn memmove_non_contiguous(
         accounts,
         memory_mapping,
         reverse,
+        resize_area,
         |src_host_addr, dst_host_addr, chunk_len| {
             unsafe { std::ptr::copy(src_host_addr, dst_host_addr as *mut u8, chunk_len) };
             Ok(0)
@@ -231,6 +234,7 @@ fn memcmp_non_contiguous(
     n: u64,
     accounts: &[SerializedAccountMetadata],
     memory_mapping: &MemoryMapping,
+    resize_area: bool,
 ) -> Result<i32, Error> {
     let memcmp_chunk = |s1_addr, s2_addr, chunk_len| {
         let res = unsafe {
@@ -256,6 +260,7 @@ fn memcmp_non_contiguous(
         accounts,
         memory_mapping,
         false,
+        resize_area,
         memcmp_chunk,
     ) {
         Ok(res) => Ok(res),
@@ -293,9 +298,16 @@ fn memset_non_contiguous(
     n: u64,
     accounts: &[SerializedAccountMetadata],
     memory_mapping: &MemoryMapping,
+    check_aligned: bool,
 ) -> Result<u64, Error> {
-    let dst_chunk_iter =
-        MemoryChunkIterator::new(memory_mapping, accounts, AccessType::Store, dst_addr, n)?;
+    let dst_chunk_iter = MemoryChunkIterator::new(
+        memory_mapping,
+        accounts,
+        AccessType::Store,
+        dst_addr,
+        n,
+        check_aligned,
+    )?;
     for item in dst_chunk_iter {
         let (dst_region, dst_vm_addr, dst_len) = item?;
         let dst_host_addr = Result::from(dst_region.vm_to_host(dst_vm_addr, dst_len as u64))?;
@@ -305,6 +317,7 @@ fn memset_non_contiguous(
     Ok(0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn iter_memory_pair_chunks<T, F>(
     src_access: AccessType,
     src_addr: u64,
@@ -314,18 +327,31 @@ fn iter_memory_pair_chunks<T, F>(
     accounts: &[SerializedAccountMetadata],
     memory_mapping: &MemoryMapping,
     reverse: bool,
+    resize_area: bool,
     mut fun: F,
 ) -> Result<T, Error>
 where
     T: Default,
     F: FnMut(*const u8, *const u8, usize) -> Result<T, Error>,
 {
-    let mut src_chunk_iter =
-        MemoryChunkIterator::new(memory_mapping, accounts, src_access, src_addr, n_bytes)
-            .map_err(EbpfError::from)?;
-    let mut dst_chunk_iter =
-        MemoryChunkIterator::new(memory_mapping, accounts, dst_access, dst_addr, n_bytes)
-            .map_err(EbpfError::from)?;
+    let mut src_chunk_iter = MemoryChunkIterator::new(
+        memory_mapping,
+        accounts,
+        src_access,
+        src_addr,
+        n_bytes,
+        resize_area,
+    )
+    .map_err(EbpfError::from)?;
+    let mut dst_chunk_iter = MemoryChunkIterator::new(
+        memory_mapping,
+        accounts,
+        dst_access,
+        dst_addr,
+        n_bytes,
+        resize_area,
+    )
+    .map_err(EbpfError::from)?;
 
     let mut src_chunk = None;
     let mut dst_chunk = None;
@@ -421,6 +447,7 @@ struct MemoryChunkIterator<'a> {
     len: u64,
     account_index: Option<usize>,
     is_account: Option<bool>,
+    resize_area: bool,
 }
 
 impl<'a> MemoryChunkIterator<'a> {
@@ -430,6 +457,7 @@ impl<'a> MemoryChunkIterator<'a> {
         access_type: AccessType,
         vm_addr: u64,
         len: u64,
+        resize_area: bool,
     ) -> Result<MemoryChunkIterator<'a>, EbpfError> {
         let vm_addr_end = vm_addr.checked_add(len).ok_or(EbpfError::AccessViolation(
             access_type,
@@ -448,6 +476,7 @@ impl<'a> MemoryChunkIterator<'a> {
             vm_addr_end,
             account_index: None,
             is_account: None,
+            resize_area,
         })
     }
 
@@ -503,8 +532,9 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
                     account_index = account_index.saturating_add(1);
                     self.account_index = Some(account_index);
                 } else {
-                    region_is_account =
-                        region.vm_addr == account_addr || region.vm_addr == resize_addr;
+                    region_is_account = region.vm_addr == account_addr
+                        // unaligned programs do not have a resize area
+                        || (self.resize_area && region.vm_addr == resize_addr);
                     break;
                 }
             } else {
@@ -576,7 +606,9 @@ impl<'a> DoubleEndedIterator for MemoryChunkIterator<'a> {
 
                 self.account_index = Some(account_index);
             } else {
-                region_is_account = region.vm_addr == account_addr || region.vm_addr == resize_addr;
+                region_is_account = region.vm_addr == account_addr
+                    // unaligned programs do not have a resize area
+                    || (self.resize_area && region.vm_addr == resize_addr);
                 break;
             }
         }
@@ -633,7 +665,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(vec![], &config, &SBPFVersion::V2).unwrap();
 
         let mut src_chunk_iter =
-            MemoryChunkIterator::new(&memory_mapping, &[], AccessType::Load, 0, 1).unwrap();
+            MemoryChunkIterator::new(&memory_mapping, &[], AccessType::Load, 0, 1, true).unwrap();
         src_chunk_iter.next().unwrap().unwrap();
     }
 
@@ -647,7 +679,8 @@ mod tests {
         let memory_mapping = MemoryMapping::new(vec![], &config, &SBPFVersion::V2).unwrap();
 
         let mut src_chunk_iter =
-            MemoryChunkIterator::new(&memory_mapping, &[], AccessType::Load, u64::MAX, 1).unwrap();
+            MemoryChunkIterator::new(&memory_mapping, &[], AccessType::Load, u64::MAX, 1, true)
+                .unwrap();
         src_chunk_iter.next().unwrap().unwrap();
     }
 
@@ -672,6 +705,7 @@ mod tests {
             AccessType::Load,
             MM_PROGRAM_START - 1,
             42,
+            true,
         )
         .unwrap();
         assert_matches!(
@@ -681,9 +715,15 @@ mod tests {
 
         // check oob at the upper bound. Since the memory mapping isn't empty,
         // this always happens on the second next().
-        let mut src_chunk_iter =
-            MemoryChunkIterator::new(&memory_mapping, &[], AccessType::Load, MM_PROGRAM_START, 43)
-                .unwrap();
+        let mut src_chunk_iter = MemoryChunkIterator::new(
+            &memory_mapping,
+            &[],
+            AccessType::Load,
+            MM_PROGRAM_START,
+            43,
+            true,
+        )
+        .unwrap();
         assert!(src_chunk_iter.next().unwrap().is_ok());
         assert_matches!(
             src_chunk_iter.next().unwrap().unwrap_err().downcast_ref().unwrap(),
@@ -691,10 +731,16 @@ mod tests {
         );
 
         // check oob at the upper bound on the first next_back()
-        let mut src_chunk_iter =
-            MemoryChunkIterator::new(&memory_mapping, &[], AccessType::Load, MM_PROGRAM_START, 43)
-                .unwrap()
-                .rev();
+        let mut src_chunk_iter = MemoryChunkIterator::new(
+            &memory_mapping,
+            &[],
+            AccessType::Load,
+            MM_PROGRAM_START,
+            43,
+            true,
+        )
+        .unwrap()
+        .rev();
         assert_matches!(
             src_chunk_iter.next().unwrap().unwrap_err().downcast_ref().unwrap(),
             EbpfError::AccessViolation(AccessType::Load, addr, 43, "program") if *addr == MM_PROGRAM_START
@@ -707,6 +753,7 @@ mod tests {
             AccessType::Load,
             MM_PROGRAM_START - 1,
             43,
+            true,
         )
         .unwrap()
         .rev();
@@ -738,6 +785,7 @@ mod tests {
             AccessType::Load,
             MM_PROGRAM_START - 1,
             1,
+            true,
         )
         .unwrap();
         assert!(src_chunk_iter.next().unwrap().is_err());
@@ -749,6 +797,7 @@ mod tests {
             AccessType::Load,
             MM_PROGRAM_START + 42,
             1,
+            true,
         )
         .unwrap();
         assert!(src_chunk_iter.next().unwrap().is_err());
@@ -761,9 +810,15 @@ mod tests {
             (MM_PROGRAM_START + 41, 1),
         ] {
             for rev in [true, false] {
-                let iter =
-                    MemoryChunkIterator::new(&memory_mapping, &[], AccessType::Load, vm_addr, len)
-                        .unwrap();
+                let iter = MemoryChunkIterator::new(
+                    &memory_mapping,
+                    &[],
+                    AccessType::Load,
+                    vm_addr,
+                    len,
+                    true,
+                )
+                .unwrap();
                 let res = if rev {
                     to_chunk_vec(iter.rev())
                 } else {
@@ -806,9 +861,15 @@ mod tests {
             (MM_PROGRAM_START + 8, 4, vec![(MM_PROGRAM_START + 8, 4)]),
         ] {
             for rev in [false, true] {
-                let iter =
-                    MemoryChunkIterator::new(&memory_mapping, &[], AccessType::Load, vm_addr, len)
-                        .unwrap();
+                let iter = MemoryChunkIterator::new(
+                    &memory_mapping,
+                    &[],
+                    AccessType::Load,
+                    vm_addr,
+                    len,
+                    true,
+                )
+                .unwrap();
                 let res = if rev {
                     expected.reverse();
                     to_chunk_vec(iter.rev())
@@ -850,6 +911,7 @@ mod tests {
                 &[],
                 &memory_mapping,
                 false,
+                true,
                 |_src, _dst, _len| Ok::<_, Error>(0),
             ).unwrap_err().downcast_ref().unwrap(),
             EbpfError::AccessViolation(AccessType::Load, addr, 8, "program") if *addr == MM_PROGRAM_START + 8
@@ -866,6 +928,7 @@ mod tests {
                 &[],
                 &memory_mapping,
                 false,
+                true,
                 |_src, _dst, _len| Ok::<_, Error>(0),
             ).unwrap_err().downcast_ref().unwrap(),
             EbpfError::AccessViolation(AccessType::Load, addr, 3, "program") if *addr == MM_PROGRAM_START + 10
@@ -897,6 +960,7 @@ mod tests {
             4,
             &[],
             &memory_mapping,
+            true,
         )
         .unwrap();
     }
@@ -947,6 +1011,7 @@ mod tests {
             len as u64,
             &[],
             &memory_mapping,
+            true,
         )
         .unwrap();
 
@@ -977,7 +1042,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            memset_non_contiguous(MM_PROGRAM_START, 0x33, 9, &[], &memory_mapping).unwrap(),
+            memset_non_contiguous(MM_PROGRAM_START, 0x33, 9, &[], &memory_mapping, true).unwrap(),
             0
         );
     }
@@ -1005,7 +1070,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            memset_non_contiguous(MM_PROGRAM_START + 1, 0x55, 7, &[], &memory_mapping).unwrap(),
+            memset_non_contiguous(MM_PROGRAM_START + 1, 0x55, 7, &[], &memory_mapping, true)
+                .unwrap(),
             0
         );
         assert_eq!(&mem1, &[0x11]);
@@ -1041,7 +1107,8 @@ mod tests {
                 MM_PROGRAM_START + 9,
                 9,
                 &[],
-                &memory_mapping
+                &memory_mapping,
+                true
             )
             .unwrap(),
             0
@@ -1054,7 +1121,8 @@ mod tests {
                 MM_PROGRAM_START + 1,
                 8,
                 &[],
-                &memory_mapping
+                &memory_mapping,
+                true
             )
             .unwrap(),
             0
@@ -1067,7 +1135,8 @@ mod tests {
                 MM_PROGRAM_START + 11,
                 5,
                 &[],
-                &memory_mapping
+                &memory_mapping,
+                true
             )
             .unwrap(),
             unsafe { memcmp(b"oobar", b"obarb", 5) }

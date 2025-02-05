@@ -5628,7 +5628,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
         let mut bank_client = BankClient::new_shared(bank);
         let authority_keypair = Keypair::new();
 
-        let (bank, program_id) = load_upgradeable_program_and_advance_slot(
+        let (bank, loader_v4_program_id) = load_upgradeable_program_and_advance_slot(
             &mut bank_client,
             bank_forks.as_ref(),
             &mint_keypair,
@@ -5636,30 +5636,45 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
             "solana_sbf_rust_account_mem",
         );
 
+        let deprecated_program_id = create_program(
+            &bank,
+            &bpf_loader_deprecated::id(),
+            "solana_sbf_rust_account_mem_deprecated",
+        );
+
         let mint_pubkey = mint_keypair.pubkey();
-        let account_metas = vec![
-            AccountMeta::new(mint_pubkey, true),
-            AccountMeta::new_readonly(program_id, false),
-            AccountMeta::new(account_keypair.pubkey(), false),
-        ];
 
-        let account = AccountSharedData::new(42, 1024, &program_id);
-        bank.store_account(&account_keypair.pubkey(), &account);
+        for deprecated in [false, true] {
+            let program_id = if deprecated {
+                deprecated_program_id
+            } else {
+                loader_v4_program_id
+            };
 
-        for instr in 0..=15 {
-            println!("Testing direct_mapping:{direct_mapping} instruction:{instr}");
-            let instruction =
-                Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
+            let account_metas = vec![
+                AccountMeta::new(mint_pubkey, true),
+                AccountMeta::new_readonly(program_id, false),
+                AccountMeta::new(account_keypair.pubkey(), false),
+            ];
 
-            let message = Message::new(&[instruction], Some(&mint_pubkey));
-            let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-            let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+            let account = AccountSharedData::new(42, 1024, &program_id);
+            bank.store_account(&account_keypair.pubkey(), &account);
 
-            if direct_mapping {
-                assert!(logs.last().unwrap().ends_with(" failed: InvalidLength"));
-            } else if result.is_err() {
-                // without direct mapping, we should never get the InvalidLength error
-                assert!(!logs.last().unwrap().ends_with(" failed: InvalidLength"));
+            for instr in 0..=15 {
+                println!("Testing deprecated:{deprecated} direct_mapping:{direct_mapping} instruction:{instr}");
+                let instruction =
+                    Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
+
+                let message = Message::new(&[instruction], Some(&mint_pubkey));
+                let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+                let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+
+                if direct_mapping {
+                    assert!(logs.last().unwrap().ends_with(" failed: InvalidLength"));
+                } else if result.is_err() {
+                    // without direct mapping, we should never get the InvalidLength error
+                    assert!(!logs.last().unwrap().ends_with(" failed: InvalidLength"));
+                }
             }
         }
     }
