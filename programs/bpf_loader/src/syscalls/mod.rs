@@ -12,7 +12,6 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
-    solana_account_info::AccountInfo,
     solana_bn254::prelude::{
         alt_bn128_addition, alt_bn128_multiplication, alt_bn128_multiplication_128,
         alt_bn128_pairing, AltBn128Error, ALT_BN128_ADDITION_OUTPUT_LEN,
@@ -243,6 +242,7 @@ impl HasherImpl for Keccak256Hasher {
 // This class must consist only of 16 bytes: a u64 ptr and a u64 len, to match the 64-bit
 // implementation of a slice in Rust. The PhantomData entry takes up 0 bytes.
 
+#[derive(Clone)]
 #[repr(C)]
 pub struct VmSlice<T> {
     ptr: u64,
@@ -292,6 +292,51 @@ impl<T> VmSlice<T> {
     ) -> Result<&mut [T], Error> {
         translate_slice_mut::<T>(memory_mapping, self.ptr, self.len, check_aligned)
     }
+}
+
+// Structs to allow the AccountInfo translation to properly reference elements within
+// the 64-bit virtual address space even when built in 32-bit mode.
+#[derive(Clone)]
+#[repr(C)]
+pub struct VmNonNull<T> {
+    pub addr: u64,
+    resource_type: PhantomData<T>,
+}
+
+#[derive(Clone)]
+#[repr(C)]
+pub struct VmBoxOfRefCell<T> {
+    _strong_addr: u64,
+    _weak_addr: u64,
+    _borrow_flag: u64,
+    pub value: T,
+}
+
+/// Account information, in the virtual address space. Note: Since the addresses are u64,
+/// there is no lifetime on this struct, and the borrow checker cannot properly reason
+/// about references to the virtual memory via these addresses.
+#[derive(Clone)]
+#[repr(C)]
+pub struct VmAccountInfo<'a> {
+    /// Public key of the account (&'a Pubkey)
+    pub key: u64,
+    /// The address to the lamports in the account.  Modifiable by programs. (in `AccountInfo`: &'a mut u64)
+    pub lamports: VmNonNull<VmBoxOfRefCell<u64>>,
+    /// The data slice held in this account.  Modifiable by programs. (In `AccountInfo`: &'a mut [u8])
+    pub data: VmNonNull<VmBoxOfRefCell<VmSlice<u8>>>,
+    /// Program that owns this account (in `AccountInfo`: &'a Pubkey)
+    pub owner: u64,
+    /// The epoch at which this account will next owe rent
+    pub rent_epoch: u64,
+
+    /// Was the transaction signed by this account's public key?
+    pub is_signer: bool,
+    /// Is the account writable?
+    pub is_writable: bool,
+    /// This account's data contains a loaded program (and is now read-only)
+    pub executable: bool,
+
+    phantom: PhantomData<&'a u8>,
 }
 
 fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<(), Error> {
