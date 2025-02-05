@@ -4,6 +4,7 @@ use {
         retransmit_stage::RetransmitStage,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
+    itertools::{Either, Itertools},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     solana_feature_set as feature_set,
     solana_gossip::cluster_info::ClusterInfo,
@@ -65,7 +66,7 @@ pub fn spawn_shred_sigverify(
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     shred_fetch_receiver: Receiver<PacketBatch>,
     retransmit_sender: Sender<Vec<shred::Payload>>,
-    verified_sender: Sender<Vec<PacketBatch>>,
+    verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
     num_sigverify_threads: NonZeroUsize,
 ) -> JoinHandle<()> {
     let recycler_cache = RecyclerCache::warmed();
@@ -130,7 +131,7 @@ fn run_shred_sigverify<const K: usize>(
     deduper: &Deduper<K, [u8]>,
     shred_fetch_receiver: &Receiver<PacketBatch>,
     retransmit_sender: &Sender<Vec<shred::Payload>>,
-    verified_sender: &Sender<Vec<PacketBatch>>,
+    verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     cache: &RwLock<LruCache>,
     stats: &mut ShredSigVerifyStats,
@@ -242,18 +243,37 @@ fn run_shred_sigverify<const K: usize>(
             })
     });
     stats.resign_micros += resign_start.elapsed().as_micros() as u64;
-    // Exclude repair packets from retransmit.
-    let shreds: Vec<_> = packets
+    // Extract shred payload from packets, and separate out repaired shreds.
+    let (shreds, repairs): (Vec<_>, Vec<_>) = packets
         .iter()
         .flat_map(PacketBatch::iter)
-        .filter(|packet| !packet.meta().discard() && !packet.meta().repair())
-        .filter_map(shred::layout::get_shred)
-        .map(<[u8]>::to_vec)
-        .map(shred::Payload::from)
-        .collect();
+        .filter(|packet| !packet.meta().discard())
+        .filter_map(|packet| {
+            let shred = shred::layout::get_shred(packet)?.to_vec();
+            Some((shred, packet.meta().repair()))
+        })
+        .partition_map(|(shred, repair)| {
+            if repair {
+                // No need for Arc overhead here because repaired shreds are
+                // not retranmitted.
+                Either::Right(shred::Payload::from(shred))
+            } else {
+                // Share the payload between the retransmit-stage and the
+                // window-service.
+                Either::Left(shred::Payload::from(Arc::new(shred)))
+            }
+        });
+    // Repaired shreds are not retransmitted.
     stats.num_retransmit_shreds += shreds.len();
-    retransmit_sender.send(shreds)?;
-    verified_sender.send(packets)?;
+    retransmit_sender.send(shreds.clone())?;
+    // Send all shreds to window service to be inserted into blockstore.
+    let shreds = shreds
+        .into_iter()
+        .map(|shred| (shred, /*is_repaired:*/ false));
+    let repairs = repairs
+        .into_iter()
+        .map(|shred| (shred, /*is_repaired:*/ true));
+    verified_sender.send(shreds.chain(repairs).collect())?;
     stats.elapsed_micros += now.elapsed().as_micros() as u64;
     Ok(())
 }
