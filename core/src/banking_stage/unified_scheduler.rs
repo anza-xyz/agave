@@ -51,7 +51,7 @@ pub(crate) fn ensure_banking_stage_setup(
 ) {
     let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
     let unified_receiver = channels.unified_receiver().clone();
-    let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
+    let mut decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
     let transaction_recorder = poh_recorder.read().unwrap().new_recorder();
 
     let banking_packet_handler = Box::new(
