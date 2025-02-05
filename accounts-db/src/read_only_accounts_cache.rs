@@ -1,7 +1,7 @@
 //! ReadOnlyAccountsCache used to store accounts, such as executable accounts,
 //! which can be large, loaded many times, and rarely change.
 #[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
+use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     ahash::random_state::RandomState as AHashRandomState,
     dashmap::{mapref::entry::Entry, DashMap},
@@ -34,6 +34,11 @@ const CACHE_ENTRY_SIZE: usize =
 type ReadOnlyCacheKey = Pubkey;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(account(pub), slot(pub), last_update_time(pub))
+)]
 struct ReadOnlyAccountCacheEntry {
     account: AccountSharedData,
     /// 'slot' tracks when the 'account' is stored. This important for
@@ -172,6 +177,7 @@ impl ReadOnlyAccountsCache {
         self.store_with_timestamp(pubkey, slot, account, self.timestamp())
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn store_with_timestamp(
         &self,
         pubkey: Pubkey,
@@ -230,6 +236,7 @@ impl ReadOnlyAccountsCache {
         Some(entry)
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn cache_len(&self) -> usize {
         self.cache.len()
     }
@@ -300,7 +307,7 @@ impl ReadOnlyAccountsCache {
                         .evictor_wakeup_count_productive
                         .fetch_add(1, Ordering::Relaxed);
 
-                    #[cfg(not(test))]
+                    #[cfg(not(feature = "dev-context-only-utils"))]
                     let (num_evicts, evict_us) = measure_us!(Self::evict(
                         max_data_size_lo,
                         &data_size,
@@ -308,7 +315,7 @@ impl ReadOnlyAccountsCache {
                         &cache,
                         &mut rng,
                     ));
-                    #[cfg(test)]
+                    #[cfg(feature = "dev-context-only-utils")]
                     let (num_evicts, evict_us) = measure_us!(Self::evict(
                         max_data_size_lo,
                         &data_size,
@@ -337,7 +344,10 @@ impl ReadOnlyAccountsCache {
         evict_sample_size: usize,
         cache: &DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry, AHashRandomState>,
         rng: &mut R,
-        #[cfg(test)] mut callback: impl FnMut(&Pubkey, ReadOnlyAccountCacheEntry),
+        #[cfg(feature = "dev-context-only-utils")] mut callback: impl FnMut(
+            &Pubkey,
+            ReadOnlyAccountCacheEntry,
+        ),
     ) -> u64
     where
         R: Rng,
@@ -372,9 +382,9 @@ impl ReadOnlyAccountsCache {
             }
 
             let key = key_to_evict.expect("eviction sample should not be empty");
-            #[cfg(not(test))]
+            #[cfg(not(feature = "dev-context-only-utils"))]
             Self::do_remove(&key, cache, data_size);
-            #[cfg(test)]
+            #[cfg(feature = "dev-context-only-utils")]
             {
                 let entry = Self::do_remove(&key, cache, data_size);
                 callback(&key, entry.unwrap());
@@ -387,6 +397,33 @@ impl ReadOnlyAccountsCache {
     /// Return the elapsed time of the cache.
     fn timestamp(&self) -> u64 {
         self.timer.elapsed().as_nanos() as u64
+    }
+
+    // Evict entries, but in the foreground
+    //
+    // Evicting in the background is non-deterministic w.r.t. when the evictor runs,
+    // which can make asserting invariants difficult in tests.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn evict_in_foreground<R, C>(
+        &self,
+        evict_sample_size: usize,
+        rng: &mut R,
+        callback: C,
+    ) -> u64
+    where
+        R: Rng,
+        C: FnMut(&Pubkey, ReadOnlyAccountCacheEntry),
+    {
+        #[allow(clippy::used_underscore_binding)]
+        let target_data_size = self._max_data_size_lo;
+        Self::evict(
+            target_data_size,
+            &self.data_size,
+            evict_sample_size,
+            &self.cache,
+            rng,
+            callback,
+        )
     }
 }
 
@@ -415,11 +452,11 @@ impl ReadOnlyAccountCacheEntry {
 mod tests {
     use {
         super::*,
-        rand::{rngs::SmallRng, Rng, SeedableRng},
+        rand::{Rng, SeedableRng},
         rand_chacha::ChaChaRng,
         solana_sdk::account::Account,
         std::{
-            collections::{HashMap, HashSet},
+            collections::HashMap,
             iter::repeat_with,
             sync::Arc,
             time::{Duration, Instant},
@@ -428,32 +465,6 @@ mod tests {
     };
 
     impl ReadOnlyAccountsCache {
-        // Evict entries, but in the foreground
-        //
-        // Evicting in the background is non-deterministic w.r.t. when the evictor runs,
-        // which can make asserting invariants difficult in tests.
-        fn evict_in_foreground<R, C>(
-            &self,
-            evict_sample_size: usize,
-            rng: &mut R,
-            callback: C,
-        ) -> u64
-        where
-            R: Rng,
-            C: FnMut(&Pubkey, ReadOnlyAccountCacheEntry),
-        {
-            #[allow(clippy::used_underscore_binding)]
-            let target_data_size = self._max_data_size_lo;
-            Self::evict(
-                target_data_size,
-                &self.data_size,
-                evict_sample_size,
-                &self.cache,
-                rng,
-                callback,
-            )
-        }
-
         /// reset the read only accounts cache
         #[cfg(feature = "dev-context-only-utils")]
         pub fn reset_for_tests(&self) {
@@ -535,81 +546,6 @@ mod tests {
             assert_eq!(account, local_account);
             assert_eq!(slot, local_slot);
         }
-    }
-
-    /// Checks whether the evicted items are relatively old.
-    #[test_matrix([
-        (50, 45),
-        (500, 450),
-        (5000, 4500),
-        (50_000, 49_000)
-    ], [8, 10, 16])]
-    fn test_read_only_accounts_cache_eviction(
-        num_accounts: (usize, usize),
-        evict_sample_size: usize,
-    ) {
-        const DATA_SIZE: usize = 19;
-        let (num_accounts_hi, num_accounts_lo) = num_accounts;
-        let max_cache_size = num_accounts_lo * (CACHE_ENTRY_SIZE + DATA_SIZE);
-        // Use SmallRng as it's faster than the default ChaCha and we don't
-        // need a crypto rng here.
-        let mut rng = SmallRng::from_entropy();
-        let cache = ReadOnlyAccountsCache::new(
-            max_cache_size,
-            usize::MAX, // <-- do not evict in the background
-            evict_sample_size,
-        );
-        let data = vec![0u8; DATA_SIZE];
-        let mut newer_half = HashSet::new();
-        for i in 0..num_accounts_hi {
-            let pubkey = Pubkey::new_unique();
-            let account = AccountSharedData::from(Account {
-                lamports: 100,
-                data: data.clone(),
-                executable: false,
-                rent_epoch: 0,
-                owner: pubkey,
-            });
-            let slot = 0;
-            cache.store(pubkey, slot, account.clone());
-            if i >= num_accounts_hi / 2 {
-                // Store some of the most recently used accounts so we can
-                // check that we don't evict from this set.
-                newer_half.insert(pubkey);
-            }
-        }
-        assert_eq!(cache.cache_len(), num_accounts_hi);
-
-        let mut evicts = 0;
-        let mut evicts_from_newer_half = 0;
-        let mut evicted = vec![];
-        for _ in 0..1000 {
-            cache.evict_in_foreground(evict_sample_size, &mut rng, |pubkey, entry| {
-                evicts += 1;
-                if newer_half.contains(pubkey) {
-                    evicts_from_newer_half += 1;
-                }
-                evicted.push((*pubkey, entry));
-            });
-            assert!(!evicted.is_empty());
-            for (pubkey, entry) in evicted.drain(..) {
-                cache.store_with_timestamp(
-                    pubkey,
-                    entry.slot,
-                    entry.account,
-                    entry.last_update_time.load(Ordering::Relaxed),
-                );
-            }
-        }
-
-        // Probability of evicting the bottom half is:
-        //
-        // P = 1 - (1 - (50/100))^K
-        //
-        // Which gives around 0.984375 (98.43%). Given this result, it's safe to
-        // assume that the error margin should not exceed 3%.
-        let error_margin = (evicts_from_newer_half as f64) / (evicts as f64);
-        assert!(error_margin < 0.03);
     }
 
     #[test_matrix([8, 10, 16])]
