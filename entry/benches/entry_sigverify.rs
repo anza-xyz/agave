@@ -1,7 +1,7 @@
 #![feature(test)]
 extern crate test;
 use {
-    solana_entry::entry::{self, VerifyRecyclers},
+    solana_entry::entry,
     solana_hash::Hash,
     solana_message::SimpleAddressLoader,
     solana_perf::test_tx::test_tx,
@@ -52,14 +52,11 @@ fn bench_gpusigverify(bencher: &mut Bencher) {
         }
     };
 
-    let recycler = VerifyRecyclers::default();
-
     bencher.iter(|| {
         let res = entry::start_verify_transactions(
             entries.clone(),
             false,
             &thread_pool,
-            recycler.clone(),
             Arc::new(verify_transaction),
         );
 

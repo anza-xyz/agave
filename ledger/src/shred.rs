@@ -49,9 +49,9 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
+pub(crate) use self::payload::serde_bytes_payload;
 #[cfg(test)]
 pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
-pub(crate) use self::{merkle::SIZE_OF_MERKLE_ROOT, payload::serde_bytes_payload};
 pub use {
     self::{
         payload::Payload,

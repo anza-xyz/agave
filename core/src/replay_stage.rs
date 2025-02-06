@@ -35,7 +35,6 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     rayon::{prelude::*, ThreadPool},
     solana_accounts_db::contains::Contains,
-    solana_entry::entry::VerifyRecyclers,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
@@ -604,7 +603,6 @@ impl ReplayStage {
             rpc_subscriptions.clone(),
         );
         let run_replay = move || {
-            let verify_recyclers = VerifyRecyclers::default();
             let _exit = Finalizer::new(exit.clone());
             let mut identity_keypair = cluster_info.keypair().clone();
             let mut my_pubkey = identity_keypair.pubkey();
@@ -733,7 +731,6 @@ impl ReplayStage {
                     transaction_status_sender.as_ref(),
                     cache_block_meta_sender.as_ref(),
                     entry_notification_sender.as_ref(),
-                    &verify_recyclers,
                     &mut heaviest_subtree_fork_choice,
                     &replay_vote_sender,
                     &bank_notification_sender,
@@ -2238,7 +2235,6 @@ impl ReplayStage {
         transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
-        verify_recyclers: &VerifyRecyclers,
         log_messages_bytes_limit: Option<usize>,
         prioritization_fee_cache: &PrioritizationFeeCache,
     ) -> result::Result<usize, BlockstoreProcessorError> {
@@ -2258,7 +2254,6 @@ impl ReplayStage {
             transaction_status_sender,
             entry_notification_sender,
             Some(replay_vote_sender),
-            verify_recyclers,
             false,
             log_messages_bytes_limit,
             prioritization_fee_cache,
@@ -2916,7 +2911,6 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
-        verify_recyclers: &VerifyRecyclers,
         replay_vote_sender: &ReplayVoteSender,
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
@@ -3001,7 +2995,6 @@ impl ReplayStage {
                             transaction_status_sender,
                             entry_notification_sender,
                             &replay_vote_sender.clone(),
-                            &verify_recyclers.clone(),
                             log_messages_bytes_limit,
                             prioritization_fee_cache,
                         );
@@ -3031,7 +3024,6 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
-        verify_recyclers: &VerifyRecyclers,
         replay_vote_sender: &ReplayVoteSender,
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
@@ -3090,7 +3082,6 @@ impl ReplayStage {
                     transaction_status_sender,
                     entry_notification_sender,
                     &replay_vote_sender.clone(),
-                    &verify_recyclers.clone(),
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
                 );
@@ -3408,7 +3399,6 @@ impl ReplayStage {
         transaction_status_sender: Option<&TransactionStatusSender>,
         cache_block_meta_sender: Option<&CacheBlockMetaSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
-        verify_recyclers: &VerifyRecyclers,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         replay_vote_sender: &ReplayVoteSender,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
@@ -3455,7 +3445,6 @@ impl ReplayStage {
                     progress,
                     transaction_status_sender,
                     entry_notification_sender,
-                    verify_recyclers,
                     replay_vote_sender,
                     replay_timing,
                     log_messages_bytes_limit,
@@ -3475,7 +3464,6 @@ impl ReplayStage {
                         progress,
                         transaction_status_sender,
                         entry_notification_sender,
-                        verify_recyclers,
                         replay_vote_sender,
                         replay_timing,
                         log_messages_bytes_limit,
@@ -5063,7 +5051,6 @@ pub(crate) mod tests {
                 None,
                 None,
                 &replay_vote_sender,
-                &VerifyRecyclers::default(),
                 None,
                 &PrioritizationFeeCache::new(0u64),
             );
@@ -9139,7 +9126,6 @@ pub(crate) mod tests {
         // Set up bank0
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
-        let recyclers = VerifyRecyclers::default();
         let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(1)
             .thread_name(|i| format!("solReplayTx{i:02}"))
@@ -9151,7 +9137,6 @@ pub(crate) mod tests {
             &blockstore,
             &replay_tx_thread_pool,
             &ProcessOptions::default(),
-            &recyclers,
             None,
             None,
         );
@@ -9172,7 +9157,6 @@ pub(crate) mod tests {
             &bank1,
             &replay_tx_thread_pool,
             &ProcessOptions::default(),
-            &recyclers,
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             None,
             None,

@@ -29,6 +29,7 @@ Release channels have their own copy of this changelog:
   * Add `--snapshot-zstd-compression-level` to set the compression level when archiving snapshots with zstd.
   * SDK:
     * `cargo-build-sbf`: add `--skip-tools-install` flag to avoid downloading platform tools and `--no-rustup-override` flag to not use rustup when invoking `cargo`. Useful for immutable environments like Nix.
+  * Remove support for `--cuda` from `agave-validator`
 
 ## 2.1.0
 * Breaking:

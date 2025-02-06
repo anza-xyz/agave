@@ -198,6 +198,7 @@ pub(crate) fn get_signed_data(shred: &[u8]) -> Option<SignedData> {
 }
 
 // Returns offsets within the shred payload which is signed.
+#[cfg(test)]
 pub(crate) fn get_signed_data_offsets(shred: &[u8]) -> Option<Range<usize>> {
     match get_shred_variant(shred).ok()? {
         ShredVariant::LegacyCode | ShredVariant::LegacyData => {
