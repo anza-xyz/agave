@@ -7520,6 +7520,7 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-clock",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-feature-set",
  "solana-fee-structure",
  "solana-hash",

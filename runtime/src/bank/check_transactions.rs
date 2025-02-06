@@ -1,6 +1,7 @@
 use {
     super::{Bank, BankStatusCache},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_perf::perf_libs,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -90,14 +91,21 @@ impl Bank {
             .iter()
             .zip(lock_results)
             .map(|(tx, lock_res)| match lock_res {
-                Ok(()) => self.check_transaction_age(
-                    tx.borrow(),
-                    max_age,
-                    &next_durable_nonce,
-                    &hash_queue,
-                    next_lamports_per_signature,
-                    error_counters,
-                ),
+                Ok(()) => {
+                    let compute_budget_limits = process_compute_budget_instructions(
+                        tx.borrow().program_instructions_iter(),
+                        &self.feature_set,
+                    );
+                    self.check_transaction_age(
+                        tx.borrow(),
+                        max_age,
+                        &next_durable_nonce,
+                        &hash_queue,
+                        next_lamports_per_signature,
+                        error_counters,
+                        compute_budget_limits,
+                    )
+                }
                 Err(e) => Err(e.clone()),
             })
             .collect()
@@ -111,9 +119,8 @@ impl Bank {
         hash_queue: &BlockhashQueue,
         next_lamports_per_signature: u64,
         error_counters: &mut TransactionErrorMetrics,
+        compute_budget_limits: Result<ComputeBudgetLimits, TransactionError>,
     ) -> TransactionCheckResult {
-        let compute_budget_limits =
-            process_compute_budget_instructions(tx.program_instructions_iter(), &self.feature_set);
         let recent_blockhash = tx.recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
             Ok(CheckedTransactionDetails::new(
