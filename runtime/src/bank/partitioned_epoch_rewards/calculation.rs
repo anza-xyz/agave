@@ -379,7 +379,7 @@ impl Bank {
                     if vote_account.owner() != &solana_vote_program {
                         return None;
                     }
-                    let vote_state = vote_account.vote_state();
+                    let vote_state_view = vote_account.vote_state_view();
 
                     let pre_lamport = stake_account.lamports();
 
@@ -387,7 +387,7 @@ impl Bank {
                         rewarded_epoch,
                         stake_state,
                         &mut stake_account,
-                        vote_state,
+                        vote_state_view,
                         &point_value,
                         stake_history,
                         reward_calc_tracer.as_ref(),
@@ -401,7 +401,7 @@ impl Bank {
                             "calculated reward: {} {} {} {}",
                             stake_pubkey, pre_lamport, post_lamport, stakers_reward
                         );
-                        let commission = vote_state.commission;
+                        let commission = vote_state_view.commission();
 
                         // track voter rewards
                         let mut voters_reward_entry = vote_account_rewards
@@ -506,7 +506,7 @@ impl Bank {
 
                     calculate_points(
                         stake_account.stake_state(),
-                        vote_account.vote_state(),
+                        vote_account.vote_state_view(),
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
                     )

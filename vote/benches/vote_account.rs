@@ -27,7 +27,8 @@ fn new_rand_vote_account<R: Rng>(
         leader_schedule_epoch: rng.gen(),
         unix_timestamp: rng.gen(),
     };
-    let vote_state = VoteState::new(&vote_init, &clock);
+    let mut vote_state = VoteState::new(&vote_init, &clock);
+    vote_state.process_next_vote_slot(0, 0, 1);
     let account = AccountSharedData::new_data(
         rng.gen(), // lamports
         &VoteStateVersions::new_current(vote_state.clone()),
@@ -44,7 +45,11 @@ fn bench_vote_account_try_from(b: &mut Bencher) {
 
     b.iter(|| {
         let vote_account = VoteAccount::try_from(account.clone()).unwrap();
-        let state = vote_account.vote_state();
-        assert_eq!(state, &vote_state);
+        let vote_state_view = vote_account.vote_state_view();
+        assert_eq!(&vote_state.node_pubkey, vote_state_view.node_pubkey());
+        assert_eq!(vote_state.commission, vote_state_view.commission());
+        assert_eq!(vote_state.credits(), vote_state_view.credits());
+        assert_eq!(vote_state.last_timestamp, vote_state_view.last_timestamp());
+        assert_eq!(vote_state.root_slot, vote_state_view.root_slot());
     });
 }
