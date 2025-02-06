@@ -82,7 +82,7 @@ use {
     },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_rpc::{
-        cache_block_meta_service::{CacheBlockMetaSender, CacheBlockMetaService},
+        block_meta_service::{BlockMetaSender, BlockMetaService},
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
             BankNotificationSenderConfig, OptimisticallyConfirmedBank,
@@ -192,6 +192,7 @@ impl BlockVerificationMethod {
 pub enum BlockProductionMethod {
     #[default]
     CentralScheduler,
+    CentralSchedulerGreedy,
 }
 
 impl BlockProductionMethod {
@@ -502,8 +503,8 @@ struct TransactionHistoryServices {
     transaction_status_service: Option<TransactionStatusService>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     max_complete_rewards_slot: Arc<AtomicU64>,
-    cache_block_meta_sender: Option<CacheBlockMetaSender>,
-    cache_block_meta_service: Option<CacheBlockMetaService>,
+    block_meta_sender: Option<BlockMetaSender>,
+    block_meta_service: Option<BlockMetaService>,
 }
 
 /// A struct easing passing Validator TPU Configurations
@@ -563,7 +564,7 @@ pub struct Validator {
     rpc_completed_slots_service: Option<JoinHandle<()>>,
     optimistically_confirmed_bank_tracker: Option<OptimisticallyConfirmedBankTracker>,
     transaction_status_service: Option<TransactionStatusService>,
-    cache_block_meta_service: Option<CacheBlockMetaService>,
+    block_meta_service: Option<BlockMetaService>,
     entry_notifier_service: Option<EntryNotifierService>,
     system_monitor_service: Option<SystemMonitorService>,
     sample_performance_service: Option<SamplePerformanceService>,
@@ -815,8 +816,8 @@ impl Validator {
                 transaction_status_service,
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
-                cache_block_meta_sender,
-                cache_block_meta_service,
+                block_meta_sender,
+                block_meta_service,
             },
             blockstore_process_options,
             blockstore_root_scan,
@@ -1028,7 +1029,7 @@ impl Validator {
             &leader_schedule_cache,
             &blockstore_process_options,
             transaction_status_sender.as_ref(),
-            cache_block_meta_sender.clone(),
+            block_meta_sender.clone(),
             entry_notification_sender,
             blockstore_root_scan,
             accounts_background_request_sender.clone(),
@@ -1494,7 +1495,7 @@ impl Validator {
             block_commitment_cache,
             config.turbine_disabled.clone(),
             transaction_status_sender.clone(),
-            cache_block_meta_sender,
+            block_meta_sender,
             entry_notification_sender.clone(),
             vote_tracker.clone(),
             retransmit_slots_sender,
@@ -1638,7 +1639,7 @@ impl Validator {
             rpc_completed_slots_service,
             optimistically_confirmed_bank_tracker,
             transaction_status_service,
-            cache_block_meta_service,
+            block_meta_service,
             entry_notifier_service,
             system_monitor_service,
             sample_performance_service,
@@ -1741,10 +1742,8 @@ impl Validator {
                 .expect("transaction_status_service");
         }
 
-        if let Some(cache_block_meta_service) = self.cache_block_meta_service {
-            cache_block_meta_service
-                .join()
-                .expect("cache_block_meta_service");
+        if let Some(block_meta_service) = self.block_meta_service {
+            block_meta_service.join().expect("block_meta_service");
         }
 
         if let Some(system_monitor_service) = self.system_monitor_service {
@@ -2077,9 +2076,7 @@ fn load_blockstore(
             config.account_paths.clone(),
             Some(&config.snapshot_config),
             &process_options,
-            transaction_history_services
-                .cache_block_meta_sender
-                .as_ref(),
+            transaction_history_services.block_meta_sender.as_ref(),
             entry_notifier_service
                 .as_ref()
                 .map(|service| service.sender()),
@@ -2128,7 +2125,7 @@ pub struct ProcessBlockStore<'a> {
     leader_schedule_cache: &'a LeaderScheduleCache,
     process_options: &'a blockstore_processor::ProcessOptions,
     transaction_status_sender: Option<&'a TransactionStatusSender>,
-    cache_block_meta_sender: Option<CacheBlockMetaSender>,
+    block_meta_sender: Option<BlockMetaSender>,
     entry_notification_sender: Option<&'a EntryNotifierSender>,
     blockstore_root_scan: Option<BlockstoreRootScan>,
     accounts_background_request_sender: AbsRequestSender,
@@ -2148,7 +2145,7 @@ impl<'a> ProcessBlockStore<'a> {
         leader_schedule_cache: &'a LeaderScheduleCache,
         process_options: &'a blockstore_processor::ProcessOptions,
         transaction_status_sender: Option<&'a TransactionStatusSender>,
-        cache_block_meta_sender: Option<CacheBlockMetaSender>,
+        block_meta_sender: Option<BlockMetaSender>,
         entry_notification_sender: Option<&'a EntryNotifierSender>,
         blockstore_root_scan: BlockstoreRootScan,
         accounts_background_request_sender: AbsRequestSender,
@@ -2164,7 +2161,7 @@ impl<'a> ProcessBlockStore<'a> {
             leader_schedule_cache,
             process_options,
             transaction_status_sender,
-            cache_block_meta_sender,
+            block_meta_sender,
             entry_notification_sender,
             blockstore_root_scan: Some(blockstore_root_scan),
             accounts_background_request_sender,
@@ -2202,7 +2199,7 @@ impl<'a> ProcessBlockStore<'a> {
                 self.leader_schedule_cache,
                 self.process_options,
                 self.transaction_status_sender,
-                self.cache_block_meta_sender.as_ref(),
+                self.block_meta_sender.as_ref(),
                 self.entry_notification_sender,
                 &self.accounts_background_request_sender,
             )
@@ -2512,10 +2509,10 @@ fn initialize_rpc_transaction_history_services(
     ));
 
     let max_complete_rewards_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
-    let (cache_block_meta_sender, cache_block_meta_receiver) = unbounded();
-    let cache_block_meta_sender = Some(cache_block_meta_sender);
-    let cache_block_meta_service = Some(CacheBlockMetaService::new(
-        cache_block_meta_receiver,
+    let (block_meta_sender, block_meta_receiver) = unbounded();
+    let block_meta_sender = Some(block_meta_sender);
+    let block_meta_service = Some(BlockMetaService::new(
+        block_meta_receiver,
         blockstore,
         max_complete_rewards_slot.clone(),
         exit,
@@ -2525,8 +2522,8 @@ fn initialize_rpc_transaction_history_services(
         transaction_status_service,
         max_complete_transaction_status_slot,
         max_complete_rewards_slot,
-        cache_block_meta_sender,
-        cache_block_meta_service,
+        block_meta_sender,
+        block_meta_service,
     }
 }
 

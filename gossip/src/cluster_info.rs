@@ -1740,8 +1740,8 @@ impl ClusterInfo {
             self.update_data_budget(stakes.len()) / PULL_RESPONSE_MIN_SERIALIZED_SIZE;
         let mut packet_batch =
             PacketBatch::new_unpinned_with_recycler(recycler, 64, "handle_pull_requests");
+        let mut rng = rand::thread_rng();
         let (caller_and_filters, addrs): (Vec<_>, Vec<_>) = {
-            let mut rng = rand::thread_rng();
             let check_pull_request =
                 self.check_pull_request(Instant::now(), &mut rng, &mut packet_batch);
             requests
@@ -1767,82 +1767,63 @@ impl ClusterInfo {
                 &self.stats,
             )
         };
-        struct Chunk<'a> {
-            addr: &'a SocketAddr,
-            values: Vec<&'a CrdsValue>,
-            score: u64,
-        }
+        // Prioritize more recent values, staked values and ContactInfos.
+        let get_score = |value: &CrdsValue| -> u64 {
+            let age = now.saturating_sub(value.wallclock());
+            // score CrdsValue: 2x score if staked; 2x score if ContactInfo
+            let score = DEFAULT_EPOCH_DURATION_MS
+                .saturating_sub(age)
+                .div(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS)
+                .max(1);
+            let score = if stakes.contains_key(&value.pubkey()) {
+                2 * score
+            } else {
+                score
+            };
+            let score = match value.data() {
+                CrdsData::ContactInfo(_) => 2 * score,
+                _ => score,
+            };
+            score
+        };
         let mut num_crds_values = 0;
-        let mut chunks = Vec::with_capacity(pull_responses.len());
-        for (addr, crds_values) in addrs.iter().zip(&pull_responses) {
-            if crds_values.is_empty() {
-                continue;
-            }
-            num_crds_values += crds_values.len();
-
-            for chunk_values in split_gossip_messages(PULL_RESPONSE_MAX_PAYLOAD_SIZE, crds_values) {
-                let chunk_score = chunk_values
-                    .iter()
-                    .map(|value| {
-                        let age = now.saturating_sub(value.wallclock());
-                        // score CrdsValue: 2x score if staked; 2x score if ContactInfo
-                        let score = DEFAULT_EPOCH_DURATION_MS
-                            .saturating_sub(age)
-                            .div(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS)
-                            .max(1);
-                        let score = if stakes.contains_key(&value.pubkey()) {
-                            2 * score
-                        } else {
-                            score
-                        };
-                        let score = match value.data() {
-                            CrdsData::ContactInfo(_) => 2 * score,
-                            _ => score,
-                        };
-                        score
-                    })
-                    .max()
-                    .unwrap_or_default();
-
-                chunks.push(Chunk {
-                    addr,
-                    values: chunk_values,
-                    score: chunk_score,
-                });
-            }
-        }
-        if chunks.is_empty() {
-            return packet_batch;
-        }
-        let scores: Vec<u64> = chunks.iter().map(|c| c.score).collect();
-        let mut rng = rand::thread_rng();
-        let shuffle =
-            WeightedShuffle::<u64>::new("handle-pull-requests", &scores).shuffle(&mut rng);
-        let mut total_bytes = 0;
-        let mut sent_pull_responses = 0;
-        let mut sent_crds_values = 0;
-        for chunk in shuffle.map(|i: usize| &chunks[i]) {
-            let Chunk { addr, values, .. } = chunk;
-            let chunk_values: Vec<CrdsValue> = values.iter().map(|&v| v.clone()).collect();
-            let response = Protocol::PullResponse(self_id, chunk_values);
-            match Packet::from_data(Some(addr), response) {
-                Err(err) => {
-                    error!("failed to write pull-response packet: {:?}", err);
-                }
-                Ok(packet) => {
-                    let packet_size = packet.meta().size;
-                    if self.outbound_budget.take(packet_size) {
-                        total_bytes += packet_size;
-                        packet_batch.push(packet);
-                        sent_pull_responses += 1;
-                        sent_crds_values += values.len();
+        let (scores, mut pull_responses): (Vec<_>, Vec<_>) = addrs
+            .iter()
+            .zip(pull_responses)
+            .flat_map(|(addr, values)| {
+                num_crds_values += values.len();
+                split_gossip_messages(PULL_RESPONSE_MAX_PAYLOAD_SIZE, values).map(move |values| {
+                    let score = values.iter().map(get_score).max().unwrap_or_default();
+                    (score, (addr, values))
+                })
+            })
+            .collect();
+        let (total_bytes, sent_crds_values, sent_pull_responses) =
+            WeightedShuffle::new("handle-pull-requests", scores)
+                .shuffle(&mut rng)
+                .filter_map(|k| {
+                    let (addr, values) = &mut pull_responses[k];
+                    let num_values = values.len();
+                    let response = Protocol::PullResponse(self_id, std::mem::take(values));
+                    let packet = Packet::from_data(Some(addr), response)
+                        .inspect_err(|err| error!("failed to write pull-response packet: {err:?}"))
+                        .ok()?;
+                    Some((packet, num_values))
+                })
+                .take_while(|(packet, _)| {
+                    if self.outbound_budget.take(packet.meta().size) {
+                        true
                     } else {
                         self.stats.gossip_pull_request_no_budget.add_relaxed(1);
-                        break;
+                        false
                     }
-                }
-            }
-        }
+                })
+                .map(|(packet, num_values)| {
+                    let num_bytes = packet.meta().size;
+                    packet_batch.push(packet);
+                    (num_bytes, num_values)
+                })
+                .fold((0, 0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + 1));
         let dropped_responses = num_crds_values.saturating_sub(sent_crds_values);
         self.stats
             .gossip_pull_request_sent_requests

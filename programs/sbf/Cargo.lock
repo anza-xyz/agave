@@ -6868,6 +6868,7 @@ dependencies = [
  "solana-runtime",
  "solana-sbpf",
  "solana-sdk",
+ "solana-sdk-ids",
  "solana-svm",
  "solana-timings",
  "solana-vote-program",

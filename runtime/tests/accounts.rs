@@ -65,6 +65,9 @@ fn test_shrink_and_clean() {
             }
             accounts.add_root(current_slot);
             accounts.flush_accounts_cache(true, Some(current_slot));
+            // `flush` populates uncleaned_pubkeys, but this test fails if
+            // uncleaned_pubkeys is not empty.
+            accounts.uncleaned_pubkeys().clear();
         }
 
         // let's dance.

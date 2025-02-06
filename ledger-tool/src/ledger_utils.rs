@@ -25,8 +25,7 @@ use {
     },
     solana_measure::measure_time,
     solana_rpc::{
-        cache_block_meta_service::CacheBlockMetaService,
-        transaction_status_service::TransactionStatusService,
+        block_meta_service::BlockMetaService, transaction_status_service::TransactionStatusService,
     },
     solana_runtime::{
         accounts_background_service::{
@@ -293,8 +292,8 @@ pub fn load_and_process_ledger(
     let (
         transaction_status_sender,
         transaction_status_service,
-        cache_block_meta_sender,
-        cache_block_meta_service,
+        block_meta_sender,
+        block_meta_service,
     ) = if geyser_plugin_active || enable_rpc_transaction_history {
         // Need Primary (R/W) access to insert transaction and rewards data;
         // obtain Primary access if we do not already have it
@@ -320,11 +319,11 @@ pub fn load_and_process_ledger(
             tss_exit.clone(),
         );
 
-        let (cache_block_meta_sender, cache_block_meta_receiver) = unbounded();
+        let (block_meta_sender, block_meta_receiver) = unbounded();
         // Nothing else will be interacting with max_complete_rewards_slot
         let max_complete_rewards_slot = Arc::default();
-        let cache_block_meta_service = CacheBlockMetaService::new(
-            cache_block_meta_receiver,
+        let block_meta_service = BlockMetaService::new(
+            block_meta_receiver,
             write_blockstore,
             max_complete_rewards_slot,
             exit.clone(),
@@ -335,8 +334,8 @@ pub fn load_and_process_ledger(
                 sender: transaction_status_sender,
             }),
             Some(transaction_status_service),
-            Some(cache_block_meta_sender),
-            Some(cache_block_meta_service),
+            Some(block_meta_sender),
+            Some(block_meta_service),
         )
     } else {
         (transaction_status_sender, None, None, None)
@@ -349,7 +348,7 @@ pub fn load_and_process_ledger(
             account_paths,
             snapshot_config.as_ref(),
             &process_options,
-            cache_block_meta_sender.as_ref(),
+            block_meta_sender.as_ref(),
             None, // Maybe support this later, though
             accounts_update_notifier,
             exit.clone(),
@@ -432,7 +431,7 @@ pub fn load_and_process_ledger(
         &leader_schedule_cache,
         &process_options,
         transaction_status_sender.as_ref(),
-        cache_block_meta_sender.as_ref(),
+        block_meta_sender.as_ref(),
         None, // entry_notification_sender
         &accounts_background_request_sender,
     )
@@ -448,7 +447,7 @@ pub fn load_and_process_ledger(
     if let Some(service) = transaction_status_service {
         service.quiesce_and_join_for_tests(tss_exit);
     }
-    if let Some(service) = cache_block_meta_service {
+    if let Some(service) = block_meta_service {
         service.join().unwrap();
     }
 
