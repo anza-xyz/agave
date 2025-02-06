@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
+aquamarine = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
