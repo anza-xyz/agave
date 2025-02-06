@@ -5241,12 +5241,10 @@ impl Bank {
                         self.skipped_rewrites.lock().unwrap().clone(),
                     )
             });
-            let log = format!(" accounts_delta: {}", hash.0);
-            (hash, us, log)
+            (hash, us)
         });
 
-        let mut hash = if let Some((accounts_delta_hash, _measure, _log)) = delta_hash_info.as_ref()
-        {
+        let mut hash = if let Some((accounts_delta_hash, _measure)) = delta_hash_info.as_ref() {
             hashv(&[
                 self.parent_hash.as_ref(),
                 accounts_delta_hash.0.as_ref(),
@@ -5316,8 +5314,9 @@ impl Bank {
 
         let total_us = measure_total.end_as_us();
 
-        let (accounts_delta_hash_us, accounts_delta_hash_log) =
-            delta_hash_info.map(|(_hash, us, log)| (us, log)).unzip();
+        let (accounts_delta_hash_us, accounts_delta_hash_log) = delta_hash_info
+            .map(|(hash, us)| (us, format!(" accounts_delta: {}", hash.0)))
+            .unzip();
         datapoint_info!(
             "bank-hash_internal_state",
             ("slot", slot, i64),
