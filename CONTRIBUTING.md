@@ -150,12 +150,12 @@ matches the logical flow in your PR description.
 
 Labels make it easier to manage and track PRs / issues.  Below some common labels
 that we use in Solana.  For the complete list of labels, please refer to the
-[label page](https://github.com/solana-labs/solana/issues/labels):
+[label page](https://github.com/anza-xyz/agave/issues/labels):
 
 * "feature-gate": when you add a new feature gate or modify the behavior of
 an existing feature gate, please add the "feature-gate" label to your PR.
 New feature gates should also always have a corresponding tracking issue
-(go to "New Issue" -> "Feature Gate Tracker [Get Started](https://github.com/solana-labs/solana/issues/new?assignees=&labels=feature-gate&template=1-feature-gate.yml&title=Feature+Gate%3A+)")
+(go to "New Issue" -> "Feature Gate Tracker [Get Started](https://github.com/anza-xyz/agave/issues/new?assignees=&labels=feature-gate&template=1-feature-gate.yml&title=Feature+Gate%3A+)")
 and should be updated each time the feature is activated on a cluster.
 
 * "automerge": When a PR is labelled with "automerge", the PR will be
@@ -230,7 +230,7 @@ Note that these lists are *independent* of how simple/complicated the actual
 ## Draft Pull Requests
 
 If you want early feedback on your PR, use GitHub's "Draft Pull Request"
-mechanism. Draft PRs are a convenient way to collaborate with the Solana
+mechanism. Draft PRs are a convenient way to collaborate with the Agave
 maintainers without triggering notifications as you make changes. When you feel
 your PR is ready for a broader audience, you can transition your draft PR to a
 standard PR with the click of a button.
@@ -240,41 +240,6 @@ approvals when you click "Ready for Review", so a review that meant "I approve
 of the direction" suddenly has the appearance of "I approve of these changes."
 Instead, add a comment that mentions the usernames that you would like a review
 from. Ask explicitly what you would like feedback on.
-
-## Crate Creation
-
-If your PR includes a new crate, you must publish its v0.0.1 version
-before the PR can be merged.  Here are the steps:
-
-* Create a sub-directory for your new crate.
-* Under the newly-created directory, create a Cargo.toml file.  Below is an
-  example template:
-
-```toml
-[package]
-name = "solana-<PACKAGE_NAME>"
-version = "0.0.1"
-description = "<DESCRIPTION>"
-authors = ["Anza Maintainers <maintainers@anza.xyz>"]
-repository = "https://github.com/anza-xyz/agave"
-homepage = "https://anza.xyz"
-documentation = "https://docs.rs/solana-<PACKAGE_NAME>"
-license = "Apache-2.0"
-edition = "2021"
-```
-
-* Submit the PR for initial review.  You should see the crate-check CI
-  job fails because the newly created crate is not yet published.
-
-* Once all review feedback has been addressed, publish v0.0.1 of the crate
-  under your personal crates.io account, and then transfer the crate ownership
-  to "anza-team".
-  https://crates.io/policies#package-ownership
-
-* After successful publication, update the PR by replacing the v0.0.1 version
-  number with the correct version.  At this time you should see the crate-check
-  CI job passes, and your published crate should be available under
-  https://crates.io/crates/.
 
 ## Rust coding conventions
 
@@ -320,12 +285,12 @@ confused with 3-letter acronyms.
 
 ## Design Proposals
 
-This Solana validator client's architecture is described by docs generated from markdown files in the `docs/src/`
-directory and viewable on the official [Solana Labs Validator Client](https://docs.solanalabs.com) documentation website.
+This Agave validator client's architecture is described by docs generated from markdown files in the `docs/src/`
+directory and viewable on the official [Agave Validator Client](https://docs.anza.xyz) documentation website.
 
 Current design proposals may be viewed on the docs site:
 
-1. [Accepted Proposals](https://docs.solanalabs.com/proposals/accepted-design-proposals)
-2. [Implemented Proposals](https://docs.solanalabs.com/implemented-proposals/implemented-proposals)
+1. [Accepted Proposals](https://docs.anza.xyz/proposals/accepted-design-proposals)
+2. [Implemented Proposals](https://docs.anza.xyz/implemented-proposals/implemented-proposals)
 
 New design proposals should follow this guide on [how to submit a design proposal](./docs/src/proposals.md#submit-a-design-proposal).
