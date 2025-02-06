@@ -23,6 +23,7 @@ mod serde_snapshot_tests {
             accounts_hash::AccountsHash,
             ancestors::Ancestors,
         },
+        solana_nohash_hasher::BuildNoHashHasher,
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount},
             clock::Slot,
@@ -133,7 +134,10 @@ mod serde_snapshot_tests {
         storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
-        let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
+        let storage: AccountStorageMap = AccountStorageMap::with_capacity_and_hasher(
+            storage_entries.len(),
+            BuildNoHashHasher::default(),
+        );
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
             // Copy file to new directory

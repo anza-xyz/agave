@@ -4,6 +4,7 @@ use {
     crate::accounts_db::{AccountStorageEntry, AccountsFileId},
     dashmap::DashMap,
     solana_clock::Slot,
+    solana_nohash_hasher::BuildNoHashHasher,
     std::sync::Arc,
 };
 
@@ -18,7 +19,7 @@ pub struct AccountStorageReference {
     pub id: AccountsFileId,
 }
 
-pub type AccountStorageMap = DashMap<Slot, AccountStorageReference>;
+pub type AccountStorageMap = DashMap<Slot, AccountStorageReference, BuildNoHashHasher<Slot>>;
 
 #[derive(Default, Debug)]
 pub struct AccountStorage {
@@ -27,7 +28,7 @@ pub struct AccountStorage {
     /// while shrink is operating on a slot, there can be 2 append vecs active for that slot
     /// Once the index has been updated to only refer to the new append vec, the single entry for the slot in 'map' can be updated.
     /// Entries in 'shrink_in_progress_map' can be found by 'get_account_storage_entry'
-    shrink_in_progress_map: DashMap<Slot, Arc<AccountStorageEntry>>,
+    shrink_in_progress_map: DashMap<Slot, Arc<AccountStorageEntry>, BuildNoHashHasher<Slot>>,
 }
 
 impl AccountStorage {
@@ -227,7 +228,7 @@ impl AccountStorage {
 
 /// iterate contents of AccountStorage without exposing internals
 pub struct AccountStorageIter<'a> {
-    iter: dashmap::iter::Iter<'a, Slot, AccountStorageReference>,
+    iter: dashmap::iter::Iter<'a, Slot, AccountStorageReference, BuildNoHashHasher<Slot>>,
 }
 
 impl<'a> AccountStorageIter<'a> {
