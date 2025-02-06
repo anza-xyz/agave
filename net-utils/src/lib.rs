@@ -37,7 +37,7 @@ pub(crate) const HEADER_LENGTH: usize = 4;
 pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
 
 /// Determine the public IP address of this machine by asking an ip_echo_server at the given
-/// address
+/// address.
 pub fn get_public_ip_addr(ip_echo_server_addr: &SocketAddr) -> Result<IpAddr, String> {
     let fut = ip_echo_server_request(*ip_echo_server_addr, IpEchoServerMessage::default());
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -66,7 +66,7 @@ pub fn get_public_ip_addr_with_binding(
     Ok(resp.address)
 }
 
-///Retrieves cluster shred version from Entrypoint address provided
+/// Retrieves cluster shred version from Entrypoint address provided.
 pub fn get_cluster_shred_version(ip_echo_server_addr: &SocketAddr) -> Result<u16, String> {
     let fut = ip_echo_server_request(*ip_echo_server_addr, IpEchoServerMessage::default());
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -78,7 +78,8 @@ pub fn get_cluster_shred_version(ip_echo_server_addr: &SocketAddr) -> Result<u16
         .ok_or_else(|| "IP echo server does not return a shred-version".to_owned())
 }
 
-///Retrieves cluster shred version from Entrypoint address provided, binds client-side socket to IP provided
+/// Retrieves cluster shred version from Entrypoint address provided,
+/// binds client-side socket to the IP provided.
 pub fn get_cluster_shred_version_with_binding(
     ip_echo_server_addr: &SocketAddr,
     bind_address: IpAddr,
@@ -144,7 +145,7 @@ pub fn verify_all_reachable_udp(
 /// Checks if all of the provided TCP ports are reachable by the machine at
 /// `ip_echo_server_addr`. Tests must complete within timeout provided.
 /// Tests will run concurrently when possible, using up to 64 threads for IO.
-/// This function assumes that all sockets are bound to the same IP, and will panic otherwise
+/// This function assumes that all sockets are bound to the same IP, and will panic otherwise.
 pub fn verify_all_reachable_tcp(
     ip_echo_server_addr: &SocketAddr,
     tcp_listeners: Vec<TcpListener>,
