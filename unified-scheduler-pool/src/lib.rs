@@ -701,7 +701,6 @@ where
         trace!("spawn block production scheduler: end!");
     }
 
-
     fn create_handler_context(
         &self,
         mode: SchedulingMode,

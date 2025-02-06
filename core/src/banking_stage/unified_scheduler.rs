@@ -32,14 +32,13 @@ use {
         packet_deserializer::PacketDeserializer,
         LikeClusterInfo,
     },
-    crate::banking_trace::Channels,
+    crate::{banking_stage::BankingStage, banking_trace::Channels},
     agave_banking_stage_ingress_types::BankingPacketBatch,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::sync::{Arc, RwLock},
 };
-use crate::banking_stage::BankingStage;
 
 #[allow(dead_code)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -50,7 +49,6 @@ pub(crate) fn ensure_banking_stage_setup(
     cluster_info: &impl LikeClusterInfo,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
 ) {
-
     if !pool.block_production_supported() {
         return;
     }
