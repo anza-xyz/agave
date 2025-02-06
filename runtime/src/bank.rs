@@ -3189,11 +3189,8 @@ impl Bank {
                 .enumerate()
                 .map(|(i, tx_result)| match tx_result {
                     Ok(()) if relax_intrabatch_account_locks => {
-                        let message_hash =
-                            *transactions[i].as_sanitized_transaction().message_hash();
-
                         // `HashSet::insert()` returns `true` when the value does *not* already exist
-                        if batch_message_hashes.insert(message_hash) {
+                        if batch_message_hashes.insert(transactions[i].message_hash()) {
                             Ok(())
                         } else {
                             Err(TransactionError::AccountInUse)
