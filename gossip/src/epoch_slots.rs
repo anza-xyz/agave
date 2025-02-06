@@ -8,7 +8,7 @@ use {
     flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress},
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{clock::Slot, pubkey::Pubkey},
-    std::sync::Arc,
+    std::{borrow::Cow, ops::Range, sync::Arc},
 };
 
 pub const MAX_SLOTS_PER_ENTRY: usize = 2048 * 8;
@@ -144,22 +144,9 @@ impl Uncompressed {
             slots: Arc::new(slots),
         }
     }
-    pub fn to_slots(&self, min_slot: Slot) -> Vec<Slot> {
-        let mut rv = vec![];
-        let start = if min_slot < self.first_slot {
-            0
-        } else {
-            (min_slot - self.first_slot) as usize
-        };
-        for i in start..self.num {
-            if i >= self.slots.len() as usize {
-                break;
-            }
-            if self.slots.get(i as u64) {
-                rv.push(self.first_slot + i as Slot);
-            }
-        }
-        rv
+    #[cfg(test)]
+    fn to_slots(&self, min_slot: Slot) -> Vec<Slot> {
+        SlotsIter::new(Cow::Borrowed(self), min_slot).collect()
     }
     pub fn add(&mut self, slots: &[Slot]) -> usize {
         for (i, s) in slots.iter().enumerate() {
@@ -229,14 +216,12 @@ impl CompressedSlots {
             CompressedSlots::Flate2(_) => 0,
         }
     }
-    pub fn to_slots(&self, min_slot: Slot) -> Result<Vec<Slot>> {
-        match self {
-            CompressedSlots::Uncompressed(vals) => Ok(vals.to_slots(min_slot)),
-            CompressedSlots::Flate2(vals) => {
-                let unc = vals.inflate()?;
-                Ok(unc.to_slots(min_slot))
-            }
-        }
+    fn to_slots(&self, min_slot: Slot) -> Result<SlotsIter<'_>> {
+        let slots = match self {
+            Self::Uncompressed(slots) => Cow::Borrowed(slots),
+            Self::Flate2(slots) => Cow::Owned(slots.inflate()?),
+        };
+        Ok(SlotsIter::new(slots, min_slot))
     }
     pub fn deflate(&mut self) -> Result<()> {
         match self {
@@ -340,13 +325,12 @@ impl EpochSlots {
         self.slots.iter().map(|s| s.first_slot()).min()
     }
 
-    pub fn to_slots(&self, min_slot: Slot) -> Vec<Slot> {
+    pub fn to_slots(&self, min_slot: Slot) -> impl Iterator<Item = Slot> + '_ {
         self.slots
             .iter()
-            .filter(|s| min_slot < s.first_slot() + s.num_slots() as u64)
-            .filter_map(|s| s.to_slots(min_slot).ok())
+            .filter(move |s| min_slot < s.first_slot() + s.num_slots() as u64)
+            .filter_map(move |s| s.to_slots(min_slot).ok())
             .flatten()
-            .collect()
     }
 
     /// New random EpochSlots for tests and simulations.
@@ -360,6 +344,33 @@ impl EpochSlots {
             .collect();
         epoch_slots.add(&slots);
         epoch_slots
+    }
+}
+
+struct SlotsIter<'a> {
+    unc: Cow<'a, Uncompressed>,
+    range: Range<Slot>,
+}
+
+impl<'a> SlotsIter<'a> {
+    fn new(unc: Cow<'a, Uncompressed>, min_slot: Slot) -> Self {
+        let start = min_slot.saturating_sub(unc.first_slot);
+        let end = unc.slots.len().min(unc.num as u64);
+        let range = start..end;
+        Self { unc, range }
+    }
+}
+
+impl Iterator for SlotsIter<'_> {
+    type Item = Slot;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let k = self.range.next()?;
+            if self.unc.slots.get(k) {
+                return Some(self.unc.first_slot + k);
+            }
+        }
     }
 }
 
@@ -484,9 +495,9 @@ mod tests {
         let mut slots = EpochSlots::default();
         assert_eq!(slots.fill(&range, 1), 5000);
         assert_eq!(slots.wallclock, 1);
-        assert_eq!(slots.to_slots(0), range);
-        assert_eq!(slots.to_slots(4999), vec![4999]);
-        assert!(slots.to_slots(5000).is_empty());
+        assert!(slots.to_slots(0).eq(range));
+        assert!(slots.to_slots(4999).eq(vec![4999]));
+        assert_eq!(slots.to_slots(5000).next(), None);
     }
     #[test]
     fn test_epoch_slots_fill_sparce_range() {
@@ -501,8 +512,8 @@ mod tests {
         assert!(slots.slots[1].first_slot() >= next);
         assert_ne!(slots.slots[1].num_slots(), 0);
         assert_ne!(slots.slots[2].num_slots(), 0);
-        assert_eq!(slots.to_slots(0), range);
-        assert_eq!(slots.to_slots(4999 * 3), vec![4999 * 3]);
+        assert!(slots.to_slots(0).eq(range));
+        assert!(slots.to_slots(4999 * 3).eq(vec![4999 * 3]));
     }
 
     #[test]
@@ -510,7 +521,7 @@ mod tests {
         let range: Vec<Slot> = (0..5000).map(|x| x * 7).collect();
         let mut slots = EpochSlots::default();
         assert_eq!(slots.fill(&range, 2), 5000);
-        assert_eq!(slots.to_slots(0), range);
+        assert!(slots.to_slots(0).eq(range));
     }
 
     fn make_rand_slots<R: Rng>(rng: &mut R) -> impl Iterator<Item = Slot> + '_ {
@@ -544,7 +555,7 @@ mod tests {
             let sz = slots.add(&range);
             let mut slots = CompressedSlots::Uncompressed(slots);
             slots.deflate().unwrap();
-            let slots = slots.to_slots(0).unwrap();
+            let slots = slots.to_slots(0).unwrap().collect::<Vec<_>>();
             assert_eq!(slots.len(), sz);
             assert_eq!(slots[..], range[..sz]);
         }
@@ -567,7 +578,7 @@ mod tests {
             for s in &slots.slots {
                 assert!(s.to_slots(0).is_ok());
             }
-            let slots = slots.to_slots(0);
+            let slots = slots.to_slots(0).collect::<Vec<_>>();
             assert_eq!(slots[..], range[..slots.len()]);
             assert_eq!(sz, slots.len())
         }
