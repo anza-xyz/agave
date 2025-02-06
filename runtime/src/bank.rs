@@ -5231,7 +5231,7 @@ impl Bank {
             .feature_set
             .is_active(&feature_set::remove_accounts_delta_hash::id()))
         .then(|| {
-            let (hash, us) = measure_us!({
+            measure_us!({
                 self.rc
                     .accounts
                     .accounts_db
@@ -5240,8 +5240,7 @@ impl Bank {
                         None,
                         self.skipped_rewrites.lock().unwrap().clone(),
                     )
-            });
-            (hash, us)
+            })
         });
 
         let mut hash = if let Some((accounts_delta_hash, _measure)) = delta_hash_info.as_ref() {
