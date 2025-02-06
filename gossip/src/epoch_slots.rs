@@ -8,7 +8,7 @@ use {
     flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress},
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{clock::Slot, pubkey::Pubkey},
-    std::{borrow::Cow, ops::Range, sync::Arc},
+    std::{borrow::Cow, sync::Arc},
 };
 
 pub const MAX_SLOTS_PER_ENTRY: usize = 2048 * 8;
@@ -146,7 +146,7 @@ impl Uncompressed {
     }
     #[cfg(test)]
     fn to_slots(&self, min_slot: Slot) -> Vec<Slot> {
-        SlotsIter::new(Cow::Borrowed(self), min_slot).collect()
+        Self::get_slots(Cow::Borrowed(self), min_slot).collect()
     }
     pub fn add(&mut self, slots: &[Slot]) -> usize {
         for (i, s) in slots.iter().enumerate() {
@@ -166,6 +166,15 @@ impl Uncompressed {
             self.num = std::cmp::max(self.num, 1 + (*s - self.first_slot) as usize);
         }
         slots.len()
+    }
+
+    fn get_slots(this: Cow<'_, Self>, min_slot: Slot) -> impl Iterator<Item = Slot> + '_ {
+        let first_slot = this.first_slot;
+        let start = min_slot.saturating_sub(first_slot);
+        let end = this.slots.len().min(this.num as u64);
+        (start..end)
+            .filter(move |&k| this.slots.get(k))
+            .map(move |k| first_slot + k)
     }
 }
 
@@ -216,12 +225,12 @@ impl CompressedSlots {
             CompressedSlots::Flate2(_) => 0,
         }
     }
-    fn to_slots(&self, min_slot: Slot) -> Result<SlotsIter<'_>> {
+    fn to_slots(&self, min_slot: Slot) -> Result<impl Iterator<Item = Slot> + '_> {
         let slots = match self {
             Self::Uncompressed(slots) => Cow::Borrowed(slots),
             Self::Flate2(slots) => Cow::Owned(slots.inflate()?),
         };
-        Ok(SlotsIter::new(slots, min_slot))
+        Ok(Uncompressed::get_slots(slots, min_slot))
     }
     pub fn deflate(&mut self) -> Result<()> {
         match self {
@@ -344,33 +353,6 @@ impl EpochSlots {
             .collect();
         epoch_slots.add(&slots);
         epoch_slots
-    }
-}
-
-struct SlotsIter<'a> {
-    unc: Cow<'a, Uncompressed>,
-    range: Range<Slot>,
-}
-
-impl<'a> SlotsIter<'a> {
-    fn new(unc: Cow<'a, Uncompressed>, min_slot: Slot) -> Self {
-        let start = min_slot.saturating_sub(unc.first_slot);
-        let end = unc.slots.len().min(unc.num as u64);
-        let range = start..end;
-        Self { unc, range }
-    }
-}
-
-impl Iterator for SlotsIter<'_> {
-    type Item = Slot;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let k = self.range.next()?;
-            if self.unc.slots.get(k) {
-                return Some(self.unc.first_slot + k);
-            }
-        }
     }
 }
 
