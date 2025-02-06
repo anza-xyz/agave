@@ -304,7 +304,7 @@ impl Shredder {
         let data: Vec<_> = data
             .iter()
             .map(Borrow::borrow)
-            .map(Shred::erasure_shard_as_slice)
+            .map(Shred::erasure_shard)
             .collect::<Result<_, _>>()
             .unwrap();
         let mut parity = vec![vec![0u8; data[0].len()]; num_coding];
@@ -372,7 +372,7 @@ impl Shredder {
                 Ok(index) if index < fec_set_size => index,
                 _ => return Err(Error::from(InvalidIndex)),
             };
-            shards[index] = Some(shred.erasure_shard()?);
+            shards[index] = Some(shred.erasure_shard()?.to_vec());
             if index < num_data_shreds {
                 mask[index] = true;
             }

@@ -36,7 +36,8 @@ use {
         protocol::{
             split_gossip_messages, Ping, PingCache, Protocol, PruneData,
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
-            MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE,
+            MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE,
+            PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE,
         },
         restart_crds_values::{
             RestartHeaviestFork, RestartLastVotedForkSlots, RestartLastVotedForkSlotsError,
@@ -48,7 +49,6 @@ use {
     rand::{seq::SliceRandom, CryptoRng, Rng},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     solana_ledger::shred::Shred,
-    solana_measure::measure::Measure,
     solana_net_utils::{
         bind_common_in_range_with_config, bind_common_with_config, bind_in_range,
         bind_in_range_with_config, bind_more_with_config, bind_to_localhost, bind_to_unspecified,
@@ -1736,7 +1736,6 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
     ) -> PacketBatch {
         const DEFAULT_EPOCH_DURATION_MS: u64 = DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT;
-        let mut time = Measure::start("handle_pull_requests");
         let output_size_limit =
             self.update_data_budget(stakes.len()) / PULL_RESPONSE_MIN_SERIALIZED_SIZE;
         let mut packet_batch =
@@ -1768,45 +1767,75 @@ impl ClusterInfo {
                 &self.stats,
             )
         };
-        let (responses, scores): (Vec<_>, Vec<_>) = addrs
-            .iter()
-            .zip(pull_responses)
-            .flat_map(|(addr, responses)| repeat(addr).zip(responses))
-            .map(|(addr, response)| {
-                let age = now.saturating_sub(response.wallclock());
-                let score = DEFAULT_EPOCH_DURATION_MS
-                    .saturating_sub(age)
-                    .div(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS)
-                    .max(1);
-                let score = if stakes.contains_key(&response.pubkey()) {
-                    2 * score
-                } else {
-                    score
-                };
-                let score = match response.data() {
-                    CrdsData::ContactInfo(_) => 2 * score,
-                    _ => score,
-                };
-                ((addr, response), score)
-            })
-            .unzip();
-        if responses.is_empty() {
+        struct Chunk<'a> {
+            addr: &'a SocketAddr,
+            values: Vec<&'a CrdsValue>,
+            score: u64,
+        }
+        let mut num_crds_values = 0;
+        let mut chunks = Vec::with_capacity(pull_responses.len());
+        for (addr, crds_values) in addrs.iter().zip(&pull_responses) {
+            if crds_values.is_empty() {
+                continue;
+            }
+            num_crds_values += crds_values.len();
+
+            for chunk_values in split_gossip_messages(PULL_RESPONSE_MAX_PAYLOAD_SIZE, crds_values) {
+                let chunk_score = chunk_values
+                    .iter()
+                    .map(|value| {
+                        let age = now.saturating_sub(value.wallclock());
+                        // score CrdsValue: 2x score if staked; 2x score if ContactInfo
+                        let score = DEFAULT_EPOCH_DURATION_MS
+                            .saturating_sub(age)
+                            .div(CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS)
+                            .max(1);
+                        let score = if stakes.contains_key(&value.pubkey()) {
+                            2 * score
+                        } else {
+                            score
+                        };
+                        let score = match value.data() {
+                            CrdsData::ContactInfo(_) => 2 * score,
+                            _ => score,
+                        };
+                        score
+                    })
+                    .max()
+                    .unwrap_or_default();
+
+                chunks.push(Chunk {
+                    addr,
+                    values: chunk_values,
+                    score: chunk_score,
+                });
+            }
+        }
+        if chunks.is_empty() {
             return packet_batch;
         }
+        let scores: Vec<u64> = chunks.iter().map(|c| c.score).collect();
         let mut rng = rand::thread_rng();
-        let shuffle = WeightedShuffle::new("handle-pull-requests", &scores).shuffle(&mut rng);
+        let shuffle =
+            WeightedShuffle::<u64>::new("handle-pull-requests", &scores).shuffle(&mut rng);
         let mut total_bytes = 0;
-        let mut sent = 0;
-        for (addr, response) in shuffle.map(|i| &responses[i]) {
-            let response = vec![response.clone()];
-            let response = Protocol::PullResponse(self_id, response);
+        let mut sent_pull_responses = 0;
+        let mut sent_crds_values = 0;
+        for chunk in shuffle.map(|i: usize| &chunks[i]) {
+            let Chunk { addr, values, .. } = chunk;
+            let chunk_values: Vec<CrdsValue> = values.iter().map(|&v| v.clone()).collect();
+            let response = Protocol::PullResponse(self_id, chunk_values);
             match Packet::from_data(Some(addr), response) {
-                Err(err) => error!("failed to write pull-response packet: {:?}", err),
+                Err(err) => {
+                    error!("failed to write pull-response packet: {:?}", err);
+                }
                 Ok(packet) => {
-                    if self.outbound_budget.take(packet.meta().size) {
-                        total_bytes += packet.meta().size;
+                    let packet_size = packet.meta().size;
+                    if self.outbound_budget.take(packet_size) {
+                        total_bytes += packet_size;
                         packet_batch.push(packet);
-                        sent += 1;
+                        sent_pull_responses += 1;
+                        sent_crds_values += values.len();
                     } else {
                         self.stats.gossip_pull_request_no_budget.add_relaxed(1);
                         break;
@@ -1814,21 +1843,16 @@ impl ClusterInfo {
                 }
             }
         }
-        time.stop();
-        let dropped_responses = responses.len() - sent;
+        let dropped_responses = num_crds_values.saturating_sub(sent_crds_values);
         self.stats
             .gossip_pull_request_sent_requests
-            .add_relaxed(sent as u64);
+            .add_relaxed(sent_pull_responses as u64);
         self.stats
             .gossip_pull_request_dropped_requests
             .add_relaxed(dropped_responses as u64);
-        debug!(
-            "handle_pull_requests: {} sent: {} total: {} total_bytes: {}",
-            time,
-            sent,
-            responses.len(),
-            total_bytes
-        );
+        self.stats
+            .gossip_pull_request_sent_bytes
+            .add_relaxed(total_bytes as u64);
         packet_batch
     }
 

@@ -1,15 +1,10 @@
 //! Config program
 
 use {
-    crate::ConfigKeys,
-    bincode::deserialize,
-    solana_log_collector::ic_msg,
-    solana_program_runtime::declare_process_instruction,
-    solana_sdk::{
-        instruction::InstructionError, program_utils::limited_deserialize, pubkey::Pubkey,
-        transaction_context::IndexOfAccount,
-    },
-    std::collections::BTreeSet,
+    crate::ConfigKeys, bincode::deserialize, solana_bincode::limited_deserialize,
+    solana_instruction::error::InstructionError, solana_log_collector::ic_msg,
+    solana_program_runtime::declare_process_instruction, solana_pubkey::Pubkey,
+    solana_transaction_context::IndexOfAccount, std::collections::BTreeSet,
 };
 
 pub const DEFAULT_COMPUTE_UNITS: u64 = 450;
@@ -19,7 +14,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let data = instruction_context.get_instruction_data();
 
-    let key_list: ConfigKeys = limited_deserialize(data)?;
+    let key_list: ConfigKeys = limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)?;
     let config_account_key = transaction_context.get_key_of_account_at_index(
         instruction_context.get_index_of_instruction_account_in_transaction(0)?,
     )?;
@@ -139,14 +134,13 @@ mod tests {
         crate::{config_instruction, get_config_data, id, ConfigKeys, ConfigState},
         bincode::serialized_size,
         serde_derive::{Deserialize, Serialize},
+        solana_account::{AccountSharedData, ReadableAccount},
+        solana_instruction::AccountMeta,
+        solana_keypair::Keypair,
         solana_program_runtime::invoke_context::mock_process_instruction,
-        solana_sdk::{
-            account::{AccountSharedData, ReadableAccount},
-            instruction::AccountMeta,
-            pubkey::Pubkey,
-            signature::{Keypair, Signer},
-            system_instruction::SystemInstruction,
-        },
+        solana_pubkey::Pubkey,
+        solana_signer::Signer,
+        solana_system_interface::instruction::SystemInstruction,
     };
 
     fn process_instruction(
@@ -198,7 +192,11 @@ mod tests {
         let config_pubkey = config_keypair.pubkey();
         let instructions =
             config_instruction::create_account::<MyConfig>(&from_pubkey, &config_pubkey, 1, keys);
-        let system_instruction = limited_deserialize(&instructions[0].data).unwrap();
+        let system_instruction = limited_deserialize(
+            &instructions[0].data,
+            solana_packet::PACKET_DATA_SIZE as u64,
+        )
+        .unwrap();
         let SystemInstruction::CreateAccount {
             lamports: _,
             space,

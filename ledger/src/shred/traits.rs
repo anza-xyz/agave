@@ -28,9 +28,7 @@ pub(super) trait Shred<'a>: Sized {
     // Returns the shard index within the erasure coding set.
     fn erasure_shard_index(&self) -> Result<usize, Error>;
     // Returns the portion of the shred's payload which is erasure coded.
-    fn erasure_shard(self) -> Result<Vec<u8>, Error>;
-    // Like Shred::erasure_shard but returning a slice.
-    fn erasure_shard_as_slice(&self) -> Result<&[u8], Error>;
+    fn erasure_shard(&self) -> Result<&[u8], Error>;
 
     // Portion of the payload which is signed.
     fn signed_data(&'a self) -> Result<Self::SignedData, Error>;

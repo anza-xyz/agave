@@ -1100,8 +1100,9 @@ impl ServeRepair {
             identity_keypair,
         )?;
         debug!(
-            "Sending repair request from {} for {:#?}",
+            "Sending repair request from {} to {} for {:#?}",
             identity_keypair.pubkey(),
+            peer.pubkey,
             repair_request
         );
         match repair_protocol {
@@ -1130,7 +1131,7 @@ impl ServeRepair {
             .compute_weights_exclude_nonfrozen(slot, &repair_peers)
             .into_iter()
             .unzip();
-        let peers = WeightedShuffle::new("repair_request_ancestor_hashes", &weights)
+        let peers = WeightedShuffle::new("repair_request_ancestor_hashes", weights)
             .shuffle(&mut rand::thread_rng())
             .map(|i| index[i])
             .filter_map(|i| {

@@ -5,10 +5,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_sbpf::{
-        elf::Executable,
-        program::{BuiltinProgram, FunctionRegistry},
-        verifier::RequisiteVerifier,
-        vm::Config,
+        elf::Executable, program::BuiltinProgram, verifier::RequisiteVerifier, vm::Config,
     },
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
@@ -449,9 +446,9 @@ impl ProgramCacheEntry {
         account_size: usize,
         builtin_function: BuiltinFunctionWithContext,
     ) -> Self {
-        let mut function_registry = FunctionRegistry::default();
-        function_registry
-            .register_function_hashed(*b"entrypoint", builtin_function)
+        let mut program = BuiltinProgram::new_builtin();
+        program
+            .register_function("entrypoint", builtin_function)
             .unwrap();
         Self {
             deployment_slot,
@@ -459,7 +456,7 @@ impl ProgramCacheEntry {
             account_size,
             effective_slot: deployment_slot,
             tx_usage_counter: AtomicU64::new(0),
-            program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_builtin(function_registry)),
+            program: ProgramCacheEntryType::Builtin(program),
             ix_usage_counter: AtomicU64::new(0),
             latest_access_slot: AtomicU64::new(0),
         }
@@ -530,10 +527,7 @@ pub struct ProgramRuntimeEnvironments {
 
 impl Default for ProgramRuntimeEnvironments {
     fn default() -> Self {
-        let empty_loader = Arc::new(BuiltinProgram::new_loader(
-            Config::default(),
-            FunctionRegistry::default(),
-        ));
+        let empty_loader = Arc::new(BuiltinProgram::new_loader(Config::default()));
         Self {
             program_runtime_v1: empty_loader.clone(),
             program_runtime_v2: empty_loader,

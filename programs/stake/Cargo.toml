@@ -17,20 +17,20 @@ solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-config-program = { workspace = true }
 solana-feature-set = { workspace = true }
+solana-genesis-config = { workspace = true }
 solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-native-token = { workspace = true }
 solana-packet = { workspace = true }
-solana-program = { workspace = true }
 solana-program-runtime = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = ["sha2"] }
 solana-rent = { workspace = true }
-solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-stake-interface = { workspace = true }
 solana-sysvar = { workspace = true }
-solana-transaction-context = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-type-overrides = { workspace = true }
-solana-vote-program = { workspace = true, default-features = false }
+solana-vote-interface = { workspace = true, features = ["bincode"] }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -40,12 +40,10 @@ solana-compute-budget = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-logger = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-sysvar-id = { workspace = true }
+solana-vote-program = { workspace = true, default-features = false }
 test-case = { workspace = true }
-
-[features]
-default = ["metrics"]
-metrics = ["solana-vote-program/metrics"]
 
 [lib]
 crate-type = ["lib"]

@@ -71,6 +71,7 @@ update_solana_dependencies() {
     solana-streamer
     solana-svm-rent-collector
     solana-svm-transaction
+    solana-sysvar-id
     solana-test-validator
     solana-thin-client
     solana-tpu-client
@@ -205,6 +206,7 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-streamer streamer")
   crates_map+=("solana-svm-rent-collector svm-rent-collector")
   crates_map+=("solana-svm-transaction svm-transaction")
+  crates_map+=("solana-sysvar-id sdk/sysvar-id")
   crates_map+=("solana-test-validator test-validator")
   crates_map+=("solana-thin-client thin-client")
   crates_map+=("solana-tpu-client tpu-client")

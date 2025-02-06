@@ -43,7 +43,7 @@ members = [
     "connection-cache",
     "core",
     "cost-model",
-    "curves/*",
+    "curves/curve25519",
     "dos",
     "download-utils",
     "entry",
@@ -109,102 +109,6 @@ members = [
     "rpc-test",
     "runtime",
     "runtime-transaction",
-    "sdk/account",
-    "sdk/account-info",
-    "sdk/address-lookup-table-interface",
-    "sdk/atomic-u64",
-    "sdk/big-mod-exp",
-    "sdk/bincode",
-    "sdk/blake3-hasher",
-    "sdk/borsh",
-    "sdk/client-traits",
-    "sdk/clock",
-    "sdk/cluster-type",
-    "sdk/commitment-config",
-    "sdk/compute-budget-interface",
-    "sdk/cpi",
-    "sdk/decode-error",
-    "sdk/define-syscall",
-    "sdk/derivation-path",
-    "sdk/ed25519-program",
-    "sdk/epoch-info",
-    "sdk/epoch-rewards",
-    "sdk/epoch-rewards-hasher",
-    "sdk/epoch-schedule",
-    "sdk/example-mocks",
-    "sdk/feature-gate-interface",
-    "sdk/feature-set",
-    "sdk/fee-calculator",
-    "sdk/fee-structure",
-    "sdk/file-download",
-    "sdk/frozen-abi",
-    "sdk/frozen-abi/macro",
-    "sdk/genesis-config",
-    "sdk/hard-forks",
-    "sdk/hash",
-    "sdk/inflation",
-    "sdk/instruction",
-    "sdk/instructions-sysvar",
-    "sdk/keccak-hasher",
-    "sdk/keypair",
-    "sdk/loader-v2-interface",
-    "sdk/loader-v3-interface",
-    "sdk/loader-v4-interface",
-    "sdk/logger",
-    "sdk/macro",
-    "sdk/message",
-    "sdk/msg",
-    "sdk/native-token",
-    "sdk/nonce",
-    "sdk/nonce-account",
-    "sdk/offchain-message",
-    "sdk/package-metadata",
-    "sdk/package-metadata-macro",
-    "sdk/packet",
-    "sdk/poh-config",
-    "sdk/precompile-error",
-    "sdk/precompiles",
-    "sdk/presigner",
-    "sdk/program",
-    "sdk/program-entrypoint",
-    "sdk/program-error",
-    "sdk/program-memory",
-    "sdk/program-option",
-    "sdk/program-pack",
-    "sdk/pubkey",
-    "sdk/quic-definitions",
-    "sdk/rent",
-    "sdk/rent-collector",
-    "sdk/rent-debits",
-    "sdk/reserved-account-keys",
-    "sdk/reward-info",
-    "sdk/sanitize",
-    "sdk/sdk",
-    "sdk/sdk-ids",
-    "sdk/secp256k1-program",
-    "sdk/secp256r1-program",
-    "sdk/seed-derivable",
-    "sdk/seed-phrase",
-    "sdk/serde",
-    "sdk/serde-varint",
-    "sdk/serialize-utils",
-    "sdk/sha256-hasher",
-    "sdk/short-vec",
-    "sdk/shred-version",
-    "sdk/signature",
-    "sdk/signer",
-    "sdk/slot-hashes",
-    "sdk/slot-history",
-    "sdk/stable-layout",
-    "sdk/system-transaction",
-    "sdk/sysvar",
-    "sdk/sysvar-id",
-    "sdk/time-utils",
-    "sdk/transaction",
-    "sdk/transaction-context",
-    "sdk/transaction-error",
-    "sdk/validator-exit",
-    "sdk/vote-interface",
     "send-transaction-service",
     "stake-accounts",
     "storage-bigtable",
@@ -246,7 +150,7 @@ members = [
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf", "svm/examples", "svm/tests/example-programs"]
+exclude = ["programs/sbf", "sdk", "svm/examples", "svm/tests/example-programs"]
 
 resolver = "2"
 
@@ -286,7 +190,7 @@ assert_cmd = "2.0"
 assert_matches = "1.5.0"
 async-channel = "1.9.0"
 async-lock = "3.4.0"
-async-trait = "0.1.85"
+async-trait = "0.1.86"
 atty = "0.2.11"
 backoff = "0.4.0"
 base64 = "0.22.1"
@@ -301,7 +205,7 @@ byte-unit = "4.0.19"
 bytecount = "0.6.8"
 bytemuck = "1.21.0"
 bytemuck_derive = "1.8.1"
-bytes = "1.9"
+bytes = "1.10"
 bzip2 = "0.4.4"
 caps = "0.5.5"
 cargo_metadata = "0.15.4"
@@ -429,7 +333,7 @@ reqwest = { version = "0.11.27", default-features = false }
 reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
 rpassword = "7.3"
-rustls = { version = "0.23.21", features = ["std"], default-features = false }
+rustls = { version = "0.23.22", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.25"
 seqlock = "0.2.0"
@@ -437,7 +341,7 @@ serde = "1.0.217" # must match the serde_derive version, see https://github.com/
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.15"
 serde_derive = "1.0.217" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
-serde_json = "1.0.137"
+serde_json = "1.0.138"
 serde_with = { version = "3.12.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "2.0.0"
@@ -467,7 +371,7 @@ solana-big-mod-exp = { path = "sdk/big-mod-exp", version = "=2.2.0" }
 solana-bincode = { path = "sdk/bincode", version = "=2.2.0" }
 solana-blake3-hasher = { path = "sdk/blake3-hasher" }
 solana-bloom = { path = "bloom", version = "=2.2.0" }
-solana-bn254 = { path = "curves/bn254", version = "=2.2.0" }
+solana-bn254 = { path = "sdk/bn254", version = "=2.2.0" }
 solana-borsh = { path = "sdk/borsh", version = "=2.2.0" }
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=2.2.0" }
 solana-bucket-map = { path = "bucket_map", version = "=2.2.0" }
@@ -605,17 +509,18 @@ solana-rpc-client-api = { path = "rpc-client-api", version = "=2.2.0" }
 solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2.2.0" }
 solana-runtime = { path = "runtime", version = "=2.2.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=2.2.0" }
-solana-sbpf = "=0.9.0"
+solana-sbpf = "=0.10.0"
 solana-sdk = { path = "sdk/sdk", version = "=2.2.0" }
 solana-sdk-ids = { path = "sdk/sdk-ids", version = "=2.2.0" }
 solana-sdk-macro = { path = "sdk/macro", version = "=2.2.0" }
 solana-secp256k1-program = { path = "sdk/secp256k1-program", version = "=2.2.0" }
-solana-secp256k1-recover = { path = "curves/secp256k1-recover", version = "=2.2.0", default-features = false }
+solana-secp256k1-recover = { path = "sdk/secp256k1-recover", version = "=2.2.0", default-features = false }
 solana-send-transaction-service = { path = "send-transaction-service", version = "=2.2.0" }
 solana-short-vec = { path = "sdk/short-vec", version = "=2.2.0" }
 solana-shred-version = { path = "sdk/shred-version", version = "=2.2.0" }
 solana-stable-layout = { path = "sdk/stable-layout", version = "=2.2.0" }
-solana-stake-program = { path = "programs/stake", version = "=2.2.0", default-features = false }
+solana-stake-interface = { version = "1.2.1" }
+solana-stake-program = { path = "programs/stake", version = "=2.2.0" }
 solana-storage-bigtable = { path = "storage-bigtable", version = "=2.2.0" }
 solana-storage-proto = { path = "storage-proto", version = "=2.2.0" }
 solana-streamer = { path = "streamer", version = "=2.2.0" }
@@ -683,7 +588,7 @@ tokio = "1.43.0"
 tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.20.1"
-tokio-util = "0.7"
+tokio-util = "0.7.13"
 toml = "0.8.12"
 tonic = "0.9.2"
 tonic-build = "0.9.2"
@@ -738,11 +643,14 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 #
 # There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
 # comments and the overrides in sync.
+solana-clock = { path = "sdk/clock" }
 solana-curve25519 = { path = "curves/curve25519" }
 solana-account-info = { path = "sdk/account-info" }
 solana-borsh = { path = "sdk/borsh" }
 solana-cpi = { path = "sdk/cpi" }
 solana-decode-error = { path = "sdk/decode-error" }
+solana-frozen-abi = { path = "sdk/frozen-abi" }
+solana-frozen-abi-macro = { path = "sdk/frozen-abi/macro" }
 solana-hash = { path = "sdk/hash" }
 solana-instruction = { path = "sdk/instruction" }
 solana-msg = { path = "sdk/msg" }
@@ -753,6 +661,7 @@ solana-program-option = { path = "sdk/program-option" }
 solana-program-pack = { path = "sdk/program-pack" }
 solana-pubkey = { path = "sdk/pubkey" }
 solana-sha256-hasher = { path = "sdk/sha256-hasher" }
+solana-sysvar-id = { path = "sdk/sysvar-id" }
 solana-zk-sdk = { path = "zk-sdk" }
 
 # curve25519-dalek uses the simd backend by default in v4 if possible,

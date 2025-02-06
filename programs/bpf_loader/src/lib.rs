@@ -16,12 +16,11 @@ use {
         enable_bpf_loader_set_authority_checked_ix, remove_accounts_executable_flag_checks,
     },
     solana_instruction::{error::InstructionError, AccountMeta},
+    solana_loader_v3_interface::{
+        instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
+    },
     solana_log_collector::{ic_logger_msg, ic_msg, LogCollector},
     solana_measure::measure::Measure,
-    solana_program::{
-        bpf_loader_upgradeable::UpgradeableLoaderState,
-        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-    },
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
@@ -1583,9 +1582,9 @@ mod test_utils {
     #[cfg(feature = "svm-internal")]
     use {
         super::*, crate::syscalls::create_program_runtime_environment_v1,
-        solana_account::ReadableAccount, solana_program::loader_v4,
-        solana_program::loader_v4::LoaderV4State,
+        solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
         solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
+        solana_sdk_ids::loader_v4,
     };
 
     #[cfg(feature = "svm-internal")]

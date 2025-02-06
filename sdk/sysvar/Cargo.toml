@@ -36,6 +36,7 @@ solana-sdk-ids = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["sysvar"] }
 solana-slot-history = { workspace = true, features = ["sysvar"] }
+solana-stake-interface = { workspace = true }
 solana-sysvar-id = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
@@ -56,10 +57,14 @@ solana-sysvar = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [features]
-bincode = ["dep:bincode", "serde"]
+bincode = ["dep:bincode", "serde", "solana-stake-interface/bincode"]
 bytemuck = ["dep:bytemuck", "dep:bytemuck_derive"]
 dev-context-only-utils = ["bincode", "bytemuck", "solana-instructions-sysvar/dev-context-only-utils"]
-frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-stake-interface/frozen-abi"
+]
 serde = [
     "dep:serde",
     "dep:serde_derive",
@@ -71,6 +76,7 @@ serde = [
     "solana-rent/serde",
     "solana-slot-hashes/serde",
     "solana-slot-history/serde",
+    "solana-stake-interface/serde",
 ]
 
 [package.metadata.docs.rs]

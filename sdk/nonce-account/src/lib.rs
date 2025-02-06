@@ -46,6 +46,30 @@ pub fn lamports_per_signature_of(account: &AccountSharedData) -> Option<u64> {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum SystemAccountKind {
+    System,
+    Nonce,
+}
+
+pub fn get_system_account_kind(account: &AccountSharedData) -> Option<SystemAccountKind> {
+    if system_program::check_id(account.owner()) {
+        if account.data().is_empty() {
+            Some(SystemAccountKind::System)
+        } else if account.data().len() == State::size() {
+            let nonce_versions: Versions = account.state().ok()?;
+            match nonce_versions.state() {
+                State::Uninitialized => None,
+                State::Initialized(_) => Some(SystemAccountKind::Nonce),
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -124,5 +148,54 @@ mod tests {
             verify_nonce_account(&account, durable_nonce.as_hash()),
             Some(data)
         );
+    }
+
+    #[test]
+    fn test_get_system_account_kind_system_ok() {
+        let system_account = AccountSharedData::default();
+        assert_eq!(
+            get_system_account_kind(&system_account),
+            Some(SystemAccountKind::System)
+        );
+    }
+
+    #[test]
+    fn test_get_system_account_kind_nonce_ok() {
+        let nonce_account = AccountSharedData::new_data(
+            42,
+            &Versions::new(State::Initialized(Data::default())),
+            &system_program::id(),
+        )
+        .unwrap();
+        assert_eq!(
+            get_system_account_kind(&nonce_account),
+            Some(SystemAccountKind::Nonce)
+        );
+    }
+
+    #[test]
+    fn test_get_system_account_kind_uninitialized_nonce_account_fail() {
+        assert_eq!(
+            get_system_account_kind(&crate::create_account(42).borrow()),
+            None
+        );
+    }
+
+    #[test]
+    fn test_get_system_account_kind_system_owner_nonzero_nonnonce_data_fail() {
+        let other_data_account =
+            AccountSharedData::new_data(42, b"other", &Pubkey::default()).unwrap();
+        assert_eq!(get_system_account_kind(&other_data_account), None);
+    }
+
+    #[test]
+    fn test_get_system_account_kind_nonsystem_owner_with_nonce_data_fail() {
+        let nonce_account = AccountSharedData::new_data(
+            42,
+            &Versions::new(State::Initialized(Data::default())),
+            &Pubkey::new_unique(),
+        )
+        .unwrap();
+        assert_eq!(get_system_account_kind(&nonce_account), None);
     }
 }

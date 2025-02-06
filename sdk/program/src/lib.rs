@@ -638,13 +638,6 @@ pub use solana_pubkey::{declare_deprecated_id, declare_id, pubkey};
 #[deprecated(since = "2.1.0", note = "Use `solana-sysvar-id` crate instead")]
 pub use solana_sysvar_id::{declare_deprecated_sysvar_id, declare_sysvar_id};
 
-#[macro_use]
-extern crate serde_derive;
-
-#[cfg_attr(feature = "frozen-abi", macro_use)]
-#[cfg(feature = "frozen-abi")]
-extern crate solana_frozen_abi_macro;
-
 /// Convenience macro for doing integer division where the operation's safety
 /// can be checked at compile-time.
 ///

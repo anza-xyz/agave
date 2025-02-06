@@ -9,12 +9,12 @@ use {
     solana_account::{state_traits::StateMut, AccountSharedData, WritableAccount},
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
-    solana_program::stake::{
-        instruction::StakeError,
+    solana_stake_interface::{
+        error::StakeError,
         state::{Stake, StakeStateV2},
     },
     solana_sysvar::stake_history::StakeHistory,
-    solana_vote_program::vote_state::VoteState,
+    solana_vote_interface::state::VoteState,
 };
 
 #[derive(Debug, PartialEq, Eq)]

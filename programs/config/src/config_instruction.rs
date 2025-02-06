@@ -1,10 +1,8 @@
 use {
     crate::{id, ConfigKeys, ConfigState},
-    solana_sdk::{
-        instruction::{AccountMeta, Instruction},
-        pubkey::Pubkey,
-        system_instruction,
-    },
+    solana_instruction::{AccountMeta, Instruction},
+    solana_pubkey::Pubkey,
+    solana_system_interface::instruction as system_instruction,
 };
 
 fn initialize_account<T: ConfigState>(config_pubkey: &Pubkey) -> Instruction {

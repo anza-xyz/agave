@@ -19,6 +19,7 @@ solana-bincode = { workspace = true }
 solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-nonce = { workspace = true, features = ["serde"] }
+solana-nonce-account = { workspace = true }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["sha2"] }
@@ -35,6 +36,7 @@ solana-compute-budget = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-hash = { workspace = true }
 solana-logger = { workspace = true }
+solana-nonce-account = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk = { workspace = true }
 solana-sha256-hasher = { workspace = true }

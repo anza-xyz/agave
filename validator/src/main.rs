@@ -7,12 +7,9 @@ use {
         admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
         bootstrap,
         cli::{self, app, warn_for_deprecated_arguments, DefaultArgs},
-        dashboard::Dashboard,
-        ledger_lockfile, lock_ledger, new_spinner_progress_bar, println_name_value,
-        redirect_stderr_to_file,
+        commands, ledger_lockfile, lock_ledger, redirect_stderr_to_file,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
-    console::style,
     crossbeam_channel::unbounded,
     log::*,
     rand::{seq::SliceRandom, thread_rng},
@@ -58,8 +55,6 @@ use {
         rpc::{JsonRpcConfig, RpcBigtableConfig},
         rpc_pubsub_service::PubSubConfig,
     },
-    solana_rpc_client::rpc_client::RpcClient,
-    solana_rpc_client_api::config::RpcLeaderScheduleConfig,
     solana_runtime::{
         runtime_config::RuntimeConfig,
         snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
@@ -67,17 +62,16 @@ use {
         snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
     },
     solana_sdk::{
-        clock::{Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_S_PER_SLOT},
-        commitment_config::CommitmentConfig,
+        clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
         hash::Hash,
         pubkey::Pubkey,
-        signature::{read_keypair, Keypair, Signer},
+        signature::{Keypair, Signer},
     },
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{
-        collections::{HashSet, VecDeque},
+        collections::HashSet,
         env,
         fs::{self, File},
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -86,7 +80,7 @@ use {
         process::exit,
         str::FromStr,
         sync::{Arc, RwLock},
-        time::{Duration, SystemTime},
+        time::Duration,
     },
 };
 
@@ -101,288 +95,6 @@ enum Operation {
 }
 
 const MILLIS_PER_SECOND: u64 = 1000;
-
-fn monitor_validator(ledger_path: &Path) {
-    let dashboard = Dashboard::new(ledger_path, None, None).unwrap_or_else(|err| {
-        println!(
-            "Error: Unable to connect to validator at {}: {:?}",
-            ledger_path.display(),
-            err,
-        );
-        exit(1);
-    });
-    dashboard.run(Duration::from_secs(2));
-}
-
-fn wait_for_restart_window(
-    ledger_path: &Path,
-    identity: Option<Pubkey>,
-    min_idle_time_in_minutes: usize,
-    max_delinquency_percentage: u8,
-    skip_new_snapshot_check: bool,
-    skip_health_check: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let sleep_interval = Duration::from_secs(5);
-
-    let min_idle_slots = (min_idle_time_in_minutes as f64 * 60. / DEFAULT_S_PER_SLOT) as Slot;
-
-    let admin_client = admin_rpc_service::connect(ledger_path);
-    let rpc_addr = admin_rpc_service::runtime()
-        .block_on(async move { admin_client.await?.rpc_addr().await })
-        .map_err(|err| format!("Unable to get validator RPC address: {err}"))?;
-
-    let Some(rpc_client) = rpc_addr.map(RpcClient::new_socket) else {
-        return Err("RPC not available".into());
-    };
-
-    let my_identity = rpc_client.get_identity()?;
-    let identity = identity.unwrap_or(my_identity);
-    let monitoring_another_validator = identity != my_identity;
-    println_name_value("Identity:", &identity.to_string());
-    println_name_value(
-        "Minimum Idle Time:",
-        &format!("{min_idle_slots} slots (~{min_idle_time_in_minutes} minutes)"),
-    );
-
-    println!("Maximum permitted delinquency: {max_delinquency_percentage}%");
-
-    let mut current_epoch = None;
-    let mut leader_schedule = VecDeque::new();
-    let mut restart_snapshot = None;
-    let mut upcoming_idle_windows = vec![]; // Vec<(starting slot, idle window length in slots)>
-
-    let progress_bar = new_spinner_progress_bar();
-    let monitor_start_time = SystemTime::now();
-
-    let mut seen_incremential_snapshot = false;
-    loop {
-        let snapshot_slot_info = rpc_client.get_highest_snapshot_slot().ok();
-        let snapshot_slot_info_has_incremential = snapshot_slot_info
-            .as_ref()
-            .map(|snapshot_slot_info| snapshot_slot_info.incremental.is_some())
-            .unwrap_or_default();
-        seen_incremential_snapshot |= snapshot_slot_info_has_incremential;
-
-        let epoch_info = rpc_client.get_epoch_info_with_commitment(CommitmentConfig::processed())?;
-        let healthy = skip_health_check || rpc_client.get_health().ok().is_some();
-        let delinquent_stake_percentage = {
-            let vote_accounts = rpc_client.get_vote_accounts()?;
-            let current_stake: u64 = vote_accounts
-                .current
-                .iter()
-                .map(|va| va.activated_stake)
-                .sum();
-            let delinquent_stake: u64 = vote_accounts
-                .delinquent
-                .iter()
-                .map(|va| va.activated_stake)
-                .sum();
-            let total_stake = current_stake + delinquent_stake;
-            delinquent_stake as f64 / total_stake as f64
-        };
-
-        if match current_epoch {
-            None => true,
-            Some(current_epoch) => current_epoch != epoch_info.epoch,
-        } {
-            progress_bar.set_message(format!(
-                "Fetching leader schedule for epoch {}...",
-                epoch_info.epoch
-            ));
-            let first_slot_in_epoch = epoch_info.absolute_slot - epoch_info.slot_index;
-            leader_schedule = rpc_client
-                .get_leader_schedule_with_config(
-                    Some(first_slot_in_epoch),
-                    RpcLeaderScheduleConfig {
-                        identity: Some(identity.to_string()),
-                        ..RpcLeaderScheduleConfig::default()
-                    },
-                )?
-                .ok_or_else(|| {
-                    format!("Unable to get leader schedule from slot {first_slot_in_epoch}")
-                })?
-                .get(&identity.to_string())
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|slot_index| first_slot_in_epoch.saturating_add(slot_index as u64))
-                .filter(|slot| *slot > epoch_info.absolute_slot)
-                .collect::<VecDeque<_>>();
-
-            upcoming_idle_windows.clear();
-            {
-                let mut leader_schedule = leader_schedule.clone();
-                let mut max_idle_window = 0;
-
-                let mut idle_window_start_slot = epoch_info.absolute_slot;
-                while let Some(next_leader_slot) = leader_schedule.pop_front() {
-                    let idle_window = next_leader_slot - idle_window_start_slot;
-                    max_idle_window = max_idle_window.max(idle_window);
-                    if idle_window > min_idle_slots {
-                        upcoming_idle_windows.push((idle_window_start_slot, idle_window));
-                    }
-                    idle_window_start_slot = next_leader_slot;
-                }
-                if !leader_schedule.is_empty() && upcoming_idle_windows.is_empty() {
-                    return Err(format!(
-                        "Validator has no idle window of at least {} slots. Largest idle window \
-                         for epoch {} is {} slots",
-                        min_idle_slots, epoch_info.epoch, max_idle_window
-                    )
-                    .into());
-                }
-            }
-
-            current_epoch = Some(epoch_info.epoch);
-        }
-
-        let status = {
-            if !healthy {
-                style("Node is unhealthy").red().to_string()
-            } else {
-                // Wait until a hole in the leader schedule before restarting the node
-                let in_leader_schedule_hole = if epoch_info.slot_index + min_idle_slots
-                    > epoch_info.slots_in_epoch
-                {
-                    Err("Current epoch is almost complete".to_string())
-                } else {
-                    while leader_schedule
-                        .front()
-                        .map(|slot| *slot < epoch_info.absolute_slot)
-                        .unwrap_or(false)
-                    {
-                        leader_schedule.pop_front();
-                    }
-                    while upcoming_idle_windows
-                        .first()
-                        .map(|(slot, _)| *slot < epoch_info.absolute_slot)
-                        .unwrap_or(false)
-                    {
-                        upcoming_idle_windows.pop();
-                    }
-
-                    match leader_schedule.front() {
-                        None => {
-                            Ok(()) // Validator has no leader slots
-                        }
-                        Some(next_leader_slot) => {
-                            let idle_slots =
-                                next_leader_slot.saturating_sub(epoch_info.absolute_slot);
-                            if idle_slots >= min_idle_slots {
-                                Ok(())
-                            } else {
-                                Err(match upcoming_idle_windows.first() {
-                                    Some((starting_slot, length_in_slots)) => {
-                                        format!(
-                                            "Next idle window in {} slots, for {} slots",
-                                            starting_slot.saturating_sub(epoch_info.absolute_slot),
-                                            length_in_slots
-                                        )
-                                    }
-                                    None => format!(
-                                        "Validator will be leader soon. Next leader slot is \
-                                         {next_leader_slot}"
-                                    ),
-                                })
-                            }
-                        }
-                    }
-                };
-
-                match in_leader_schedule_hole {
-                    Ok(_) => {
-                        if skip_new_snapshot_check {
-                            break; // Restart!
-                        }
-                        let snapshot_slot = snapshot_slot_info.map(|snapshot_slot_info| {
-                            snapshot_slot_info
-                                .incremental
-                                .unwrap_or(snapshot_slot_info.full)
-                        });
-                        if restart_snapshot.is_none() {
-                            restart_snapshot = snapshot_slot;
-                        }
-                        if restart_snapshot == snapshot_slot && !monitoring_another_validator {
-                            "Waiting for a new snapshot".to_string()
-                        } else if delinquent_stake_percentage
-                            >= (max_delinquency_percentage as f64 / 100.)
-                        {
-                            style("Delinquency too high").red().to_string()
-                        } else if seen_incremential_snapshot && !snapshot_slot_info_has_incremential
-                        {
-                            // Restarts using just a full snapshot will put the node significantly
-                            // further behind than if an incremental snapshot is also used, as full
-                            // snapshots are larger and take much longer to create.
-                            //
-                            // Therefore if the node just created a new full snapshot, wait a
-                            // little longer until it creates the first incremental snapshot for
-                            // the full snapshot.
-                            "Waiting for incremental snapshot".to_string()
-                        } else {
-                            break; // Restart!
-                        }
-                    }
-                    Err(why) => style(why).yellow().to_string(),
-                }
-            }
-        };
-
-        progress_bar.set_message(format!(
-            "{} | Processed Slot: {} {} | {:.2}% delinquent stake | {}",
-            {
-                let elapsed =
-                    chrono::Duration::from_std(monitor_start_time.elapsed().unwrap()).unwrap();
-
-                format!(
-                    "{:02}:{:02}:{:02}",
-                    elapsed.num_hours(),
-                    elapsed.num_minutes() % 60,
-                    elapsed.num_seconds() % 60
-                )
-            },
-            epoch_info.absolute_slot,
-            if monitoring_another_validator {
-                "".to_string()
-            } else {
-                format!(
-                    "| Full Snapshot Slot: {} | Incremental Snapshot Slot: {}",
-                    snapshot_slot_info
-                        .as_ref()
-                        .map(|snapshot_slot_info| snapshot_slot_info.full.to_string())
-                        .unwrap_or_else(|| '-'.to_string()),
-                    snapshot_slot_info
-                        .as_ref()
-                        .and_then(|snapshot_slot_info| snapshot_slot_info
-                            .incremental
-                            .map(|incremental| incremental.to_string()))
-                        .unwrap_or_else(|| '-'.to_string()),
-                )
-            },
-            delinquent_stake_percentage * 100.,
-            status
-        ));
-        std::thread::sleep(sleep_interval);
-    }
-    drop(progress_bar);
-    println!("{}", style("Ready to restart").green());
-    Ok(())
-}
-
-fn set_repair_whitelist(
-    ledger_path: &Path,
-    whitelist: Vec<Pubkey>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let admin_client = admin_rpc_service::connect(ledger_path);
-    admin_rpc_service::runtime()
-        .block_on(async move { admin_client.await?.set_repair_whitelist(whitelist).await })
-        .map_err(|err| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("setRepairWhitelist request failed: {err}"),
-            )
-        })?;
-    Ok(())
-}
 
 // This function is duplicated in ledger-tool/src/main.rs...
 fn hardforks_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Slot>> {
@@ -464,435 +176,52 @@ pub fn main() {
     let operation = match matches.subcommand() {
         ("", _) | ("run", _) => Operation::Run,
         ("authorized-voter", Some(authorized_voter_subcommand_matches)) => {
-            match authorized_voter_subcommand_matches.subcommand() {
-                ("add", Some(subcommand_matches)) => {
-                    if let Ok(authorized_voter_keypair) =
-                        value_t!(subcommand_matches, "authorized_voter_keypair", String)
-                    {
-                        let authorized_voter_keypair = fs::canonicalize(&authorized_voter_keypair)
-                            .unwrap_or_else(|err| {
-                                println!(
-                                    "Unable to access path: {authorized_voter_keypair}: {err:?}"
-                                );
-                                exit(1);
-                            });
-                        println!(
-                            "Adding authorized voter path: {}",
-                            authorized_voter_keypair.display()
-                        );
-
-                        let admin_client = admin_rpc_service::connect(&ledger_path);
-                        admin_rpc_service::runtime()
-                            .block_on(async move {
-                                admin_client
-                                    .await?
-                                    .add_authorized_voter(
-                                        authorized_voter_keypair.display().to_string(),
-                                    )
-                                    .await
-                            })
-                            .unwrap_or_else(|err| {
-                                println!("addAuthorizedVoter request failed: {err}");
-                                exit(1);
-                            });
-                    } else {
-                        let mut stdin = std::io::stdin();
-                        let authorized_voter_keypair =
-                            read_keypair(&mut stdin).unwrap_or_else(|err| {
-                                println!("Unable to read JSON keypair from stdin: {err:?}");
-                                exit(1);
-                            });
-                        println!(
-                            "Adding authorized voter: {}",
-                            authorized_voter_keypair.pubkey()
-                        );
-
-                        let admin_client = admin_rpc_service::connect(&ledger_path);
-                        admin_rpc_service::runtime()
-                            .block_on(async move {
-                                admin_client
-                                    .await?
-                                    .add_authorized_voter_from_bytes(Vec::from(
-                                        authorized_voter_keypair.to_bytes(),
-                                    ))
-                                    .await
-                            })
-                            .unwrap_or_else(|err| {
-                                println!("addAuthorizedVoterFromBytes request failed: {err}");
-                                exit(1);
-                            });
-                    }
-
-                    return;
-                }
-                ("remove-all", _) => {
-                    let admin_client = admin_rpc_service::connect(&ledger_path);
-                    admin_rpc_service::runtime()
-                        .block_on(async move {
-                            admin_client.await?.remove_all_authorized_voters().await
-                        })
-                        .unwrap_or_else(|err| {
-                            println!("removeAllAuthorizedVoters request failed: {err}");
-                            exit(1);
-                        });
-                    println!("All authorized voters removed");
-                    return;
-                }
-                _ => unreachable!(),
-            }
+            commands::authorized_voter::execute(authorized_voter_subcommand_matches, &ledger_path);
+            return;
         }
         ("plugin", Some(plugin_subcommand_matches)) => {
-            match plugin_subcommand_matches.subcommand() {
-                ("list", _) => {
-                    let admin_client = admin_rpc_service::connect(&ledger_path);
-                    let plugins = admin_rpc_service::runtime()
-                        .block_on(async move { admin_client.await?.list_plugins().await })
-                        .unwrap_or_else(|err| {
-                            println!("Failed to list plugins: {err}");
-                            exit(1);
-                        });
-                    if !plugins.is_empty() {
-                        println!("Currently the following plugins are loaded:");
-                        for (plugin, i) in plugins.into_iter().zip(1..) {
-                            println!("  {i}) {plugin}");
-                        }
-                    } else {
-                        println!("There are currently no plugins loaded");
-                    }
-                    return;
-                }
-                ("unload", Some(subcommand_matches)) => {
-                    if let Ok(name) = value_t!(subcommand_matches, "name", String) {
-                        let admin_client = admin_rpc_service::connect(&ledger_path);
-                        admin_rpc_service::runtime()
-                            .block_on(async {
-                                admin_client.await?.unload_plugin(name.clone()).await
-                            })
-                            .unwrap_or_else(|err| {
-                                println!("Failed to unload plugin {name}: {err:?}");
-                                exit(1);
-                            });
-                        println!("Successfully unloaded plugin: {name}");
-                    }
-                    return;
-                }
-                ("load", Some(subcommand_matches)) => {
-                    if let Ok(config) = value_t!(subcommand_matches, "config", String) {
-                        let admin_client = admin_rpc_service::connect(&ledger_path);
-                        let name = admin_rpc_service::runtime()
-                            .block_on(async {
-                                admin_client.await?.load_plugin(config.clone()).await
-                            })
-                            .unwrap_or_else(|err| {
-                                println!("Failed to load plugin {config}: {err:?}");
-                                exit(1);
-                            });
-                        println!("Successfully loaded plugin: {name}");
-                    }
-                    return;
-                }
-                ("reload", Some(subcommand_matches)) => {
-                    if let Ok(name) = value_t!(subcommand_matches, "name", String) {
-                        if let Ok(config) = value_t!(subcommand_matches, "config", String) {
-                            let admin_client = admin_rpc_service::connect(&ledger_path);
-                            admin_rpc_service::runtime()
-                                .block_on(async {
-                                    admin_client
-                                        .await?
-                                        .reload_plugin(name.clone(), config.clone())
-                                        .await
-                                })
-                                .unwrap_or_else(|err| {
-                                    println!("Failed to reload plugin {name}: {err:?}");
-                                    exit(1);
-                                });
-                            println!("Successfully reloaded plugin: {name}");
-                        }
-                    }
-                    return;
-                }
-                _ => unreachable!(),
-            }
+            commands::plugin::execute(plugin_subcommand_matches, &ledger_path);
+            return;
         }
         ("contact-info", Some(subcommand_matches)) => {
-            let output_mode = subcommand_matches.value_of("output");
-            let admin_client = admin_rpc_service::connect(&ledger_path);
-            let contact_info = admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.contact_info().await })
-                .unwrap_or_else(|err| {
-                    eprintln!("Contact info query failed: {err}");
-                    exit(1);
-                });
-            if let Some(mode) = output_mode {
-                match mode {
-                    "json" => println!("{}", serde_json::to_string_pretty(&contact_info).unwrap()),
-                    "json-compact" => print!("{}", serde_json::to_string(&contact_info).unwrap()),
-                    _ => unreachable!(),
-                }
-            } else {
-                print!("{contact_info}");
-            }
+            commands::contact_info::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("init", _) => Operation::Initialize,
         ("exit", Some(subcommand_matches)) => {
-            let min_idle_time = value_t_or_exit!(subcommand_matches, "min_idle_time", usize);
-            let force = subcommand_matches.is_present("force");
-            let monitor = subcommand_matches.is_present("monitor");
-            let skip_new_snapshot_check = subcommand_matches.is_present("skip_new_snapshot_check");
-            let skip_health_check = subcommand_matches.is_present("skip_health_check");
-            let max_delinquent_stake =
-                value_t_or_exit!(subcommand_matches, "max_delinquent_stake", u8);
-
-            if !force {
-                wait_for_restart_window(
-                    &ledger_path,
-                    None,
-                    min_idle_time,
-                    max_delinquent_stake,
-                    skip_new_snapshot_check,
-                    skip_health_check,
-                )
-                .unwrap_or_else(|err| {
-                    println!("{err}");
-                    exit(1);
-                });
-            }
-
-            let admin_client = admin_rpc_service::connect(&ledger_path);
-            admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.exit().await })
-                .unwrap_or_else(|err| {
-                    println!("exit request failed: {err}");
-                    exit(1);
-                });
-            println!("Exit request sent");
-
-            if monitor {
-                monitor_validator(&ledger_path);
-            }
+            commands::exit::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("monitor", _) => {
-            monitor_validator(&ledger_path);
+            commands::monitor::execute(&matches, &ledger_path);
             return;
         }
         ("staked-nodes-overrides", Some(subcommand_matches)) => {
-            if !subcommand_matches.is_present("path") {
-                println!(
-                    "staked-nodes-overrides requires argument of location of the configuration"
-                );
-                exit(1);
-            }
-
-            let path = subcommand_matches.value_of("path").unwrap();
-
-            let admin_client = admin_rpc_service::connect(&ledger_path);
-            admin_rpc_service::runtime()
-                .block_on(async move {
-                    admin_client
-                        .await?
-                        .set_staked_nodes_overrides(path.to_string())
-                        .await
-                })
-                .unwrap_or_else(|err| {
-                    println!("setStakedNodesOverrides request failed: {err}");
-                    exit(1);
-                });
+            commands::staked_nodes_overrides::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("set-identity", Some(subcommand_matches)) => {
-            let require_tower = subcommand_matches.is_present("require_tower");
-
-            if let Ok(identity_keypair) = value_t!(subcommand_matches, "identity", String) {
-                let identity_keypair = fs::canonicalize(&identity_keypair).unwrap_or_else(|err| {
-                    println!("Unable to access path: {identity_keypair}: {err:?}");
-                    exit(1);
-                });
-                println!(
-                    "New validator identity path: {}",
-                    identity_keypair.display()
-                );
-
-                let admin_client = admin_rpc_service::connect(&ledger_path);
-                admin_rpc_service::runtime()
-                    .block_on(async move {
-                        admin_client
-                            .await?
-                            .set_identity(identity_keypair.display().to_string(), require_tower)
-                            .await
-                    })
-                    .unwrap_or_else(|err| {
-                        println!("setIdentity request failed: {err}");
-                        exit(1);
-                    });
-            } else {
-                let mut stdin = std::io::stdin();
-                let identity_keypair = read_keypair(&mut stdin).unwrap_or_else(|err| {
-                    println!("Unable to read JSON keypair from stdin: {err:?}");
-                    exit(1);
-                });
-                println!("New validator identity: {}", identity_keypair.pubkey());
-
-                let admin_client = admin_rpc_service::connect(&ledger_path);
-                admin_rpc_service::runtime()
-                    .block_on(async move {
-                        admin_client
-                            .await?
-                            .set_identity_from_bytes(
-                                Vec::from(identity_keypair.to_bytes()),
-                                require_tower,
-                            )
-                            .await
-                    })
-                    .unwrap_or_else(|err| {
-                        println!("setIdentityFromBytes request failed: {err}");
-                        exit(1);
-                    });
-            };
-
+            commands::set_identity::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("set-log-filter", Some(subcommand_matches)) => {
-            let filter = value_t_or_exit!(subcommand_matches, "filter", String);
-            let admin_client = admin_rpc_service::connect(&ledger_path);
-            admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.set_log_filter(filter).await })
-                .unwrap_or_else(|err| {
-                    println!("set log filter failed: {err}");
-                    exit(1);
-                });
+            commands::set_log_filter::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("wait-for-restart-window", Some(subcommand_matches)) => {
-            let min_idle_time = value_t_or_exit!(subcommand_matches, "min_idle_time", usize);
-            let identity = pubkey_of(subcommand_matches, "identity");
-            let max_delinquent_stake =
-                value_t_or_exit!(subcommand_matches, "max_delinquent_stake", u8);
-            let skip_new_snapshot_check = subcommand_matches.is_present("skip_new_snapshot_check");
-            let skip_health_check = subcommand_matches.is_present("skip_health_check");
-
-            wait_for_restart_window(
-                &ledger_path,
-                identity,
-                min_idle_time,
-                max_delinquent_stake,
-                skip_new_snapshot_check,
-                skip_health_check,
-            )
-            .unwrap_or_else(|err| {
-                println!("{err}");
-                exit(1);
-            });
+            commands::wait_for_restart_window::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("repair-shred-from-peer", Some(subcommand_matches)) => {
-            let pubkey = value_t!(subcommand_matches, "pubkey", Pubkey).ok();
-            let slot = value_t_or_exit!(subcommand_matches, "slot", u64);
-            let shred_index = value_t_or_exit!(subcommand_matches, "shred", u64);
-            let admin_client = admin_rpc_service::connect(&ledger_path);
-            admin_rpc_service::runtime()
-                .block_on(async move {
-                    admin_client
-                        .await?
-                        .repair_shred_from_peer(pubkey, slot, shred_index)
-                        .await
-                })
-                .unwrap_or_else(|err| {
-                    println!("repair shred from peer failed: {err}");
-                    exit(1);
-                });
+            commands::repair_shred_from_peer::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("repair-whitelist", Some(repair_whitelist_subcommand_matches)) => {
-            match repair_whitelist_subcommand_matches.subcommand() {
-                ("get", Some(subcommand_matches)) => {
-                    let output_mode = subcommand_matches.value_of("output");
-                    let admin_client = admin_rpc_service::connect(&ledger_path);
-                    let repair_whitelist = admin_rpc_service::runtime()
-                        .block_on(async move { admin_client.await?.repair_whitelist().await })
-                        .unwrap_or_else(|err| {
-                            eprintln!("Repair whitelist query failed: {err}");
-                            exit(1);
-                        });
-                    if let Some(mode) = output_mode {
-                        match mode {
-                            "json" => println!(
-                                "{}",
-                                serde_json::to_string_pretty(&repair_whitelist).unwrap()
-                            ),
-                            "json-compact" => {
-                                print!("{}", serde_json::to_string(&repair_whitelist).unwrap())
-                            }
-                            _ => unreachable!(),
-                        }
-                    } else {
-                        print!("{repair_whitelist}");
-                    }
-                    return;
-                }
-                ("set", Some(subcommand_matches)) => {
-                    let whitelist = if subcommand_matches.is_present("whitelist") {
-                        let validators_set: HashSet<_> =
-                            values_t_or_exit!(subcommand_matches, "whitelist", Pubkey)
-                                .into_iter()
-                                .collect();
-                        validators_set.into_iter().collect::<Vec<_>>()
-                    } else {
-                        return;
-                    };
-                    set_repair_whitelist(&ledger_path, whitelist).unwrap_or_else(|err| {
-                        eprintln!("{err}");
-                        exit(1);
-                    });
-                    return;
-                }
-                ("remove-all", _) => {
-                    set_repair_whitelist(&ledger_path, Vec::default()).unwrap_or_else(|err| {
-                        eprintln!("{err}");
-                        exit(1);
-                    });
-                    return;
-                }
-                _ => unreachable!(),
-            }
+            commands::repair_whitelist::execute(repair_whitelist_subcommand_matches, &ledger_path);
+            return;
         }
         ("set-public-address", Some(subcommand_matches)) => {
-            let parse_arg_addr = |arg_name: &str, arg_long: &str| -> Option<SocketAddr> {
-                subcommand_matches.value_of(arg_name).map(|host_port| {
-                    solana_net_utils::parse_host_port(host_port).unwrap_or_else(|err| {
-                        eprintln!(
-                            "Failed to parse --{arg_long} address. It must be in the HOST:PORT \
-                             format. {err}"
-                        );
-                        exit(1);
-                    })
-                })
-            };
-            let tpu_addr = parse_arg_addr("tpu_addr", "tpu");
-            let tpu_forwards_addr = parse_arg_addr("tpu_forwards_addr", "tpu-forwards");
-
-            macro_rules! set_public_address {
-                ($public_addr:expr, $set_public_address:ident, $request:literal) => {
-                    if let Some(public_addr) = $public_addr {
-                        let admin_client = admin_rpc_service::connect(&ledger_path);
-                        admin_rpc_service::runtime()
-                            .block_on(async move {
-                                admin_client.await?.$set_public_address(public_addr).await
-                            })
-                            .unwrap_or_else(|err| {
-                                eprintln!("{} request failed: {err}", $request);
-                                exit(1);
-                            });
-                    }
-                };
-            }
-            set_public_address!(tpu_addr, set_public_tpu_address, "setPublicTpuAddress");
-            set_public_address!(
-                tpu_forwards_addr,
-                set_public_tpu_forwards_address,
-                "setPublicTpuForwardsAddress"
-            );
+            commands::set_public_address::execute(subcommand_matches, &ledger_path);
             return;
         }
         _ => unreachable!(),

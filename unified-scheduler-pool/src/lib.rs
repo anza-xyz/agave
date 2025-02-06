@@ -574,7 +574,7 @@ where
         self.block_production_scheduler_respawner
             .lock()
             .unwrap()
-            .as_ref()
+            .as_mut()
             .map(|respawner| respawner.banking_stage_monitor.status())
     }
 
@@ -1990,7 +1990,7 @@ pub enum BankingStageStatus {
 }
 
 pub trait BankingStageMonitor: Send + Debug {
-    fn status(&self) -> BankingStageStatus;
+    fn status(&mut self) -> BankingStageStatus;
 }
 
 #[derive(Debug, Default)]

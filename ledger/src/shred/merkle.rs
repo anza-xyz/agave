@@ -88,16 +88,16 @@ pub(super) enum Shred {
 }
 
 impl Shred {
-    dispatch!(fn common_header(&self) -> &ShredCommonHeader);
-    dispatch!(fn erasure_shard_as_slice_mut(&mut self) -> Result<&mut [u8], Error>);
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
+    dispatch!(fn erasure_shard_mut(&mut self) -> Result<&mut [u8], Error>);
     dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
-    dispatch!(fn payload(&self) -> &Payload);
     dispatch!(fn sanitize(&self) -> Result<(), Error>);
     dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
-    dispatch!(fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
     dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
+    dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
+    dispatch!(pub(super) fn payload(&self) -> &Payload);
+    dispatch!(pub(super) fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
 
     #[inline]
     fn fec_set_index(&self) -> u32 {
@@ -136,7 +136,7 @@ impl Shred {
         &self.common_header().signature
     }
 
-    fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>
+    pub(super) fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>
     where
         Payload: From<T>,
     {
@@ -150,10 +150,12 @@ impl Shred {
 
 #[cfg(test)]
 impl Shred {
-    dispatch!(fn chained_merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(fn erasure_shard_as_slice(&self) -> Result<&[u8], Error>);
-    dispatch!(fn merkle_root(&self) -> Result<Hash, Error>);
+    dispatch!(fn erasure_shard(&self) -> Result<&[u8], Error>);
     dispatch!(fn proof_size(&self) -> Result<u8, Error>);
+    dispatch!(pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error>);
+    dispatch!(pub(super) fn merkle_root(&self) -> Result<Hash, Error>);
+    dispatch!(pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    dispatch!(pub(super) fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
 
     fn index(&self) -> u32 {
         self.common_header().index
@@ -464,24 +466,15 @@ macro_rules! impl_merkle_shred {
             Ok(Self::ERASURE_SHARD_START_OFFSET..offset)
         }
 
-        // Returns the erasure coded slice as an owned Vec<u8>.
-        fn erasure_shard(self) -> Result<Vec<u8>, Error> {
-            let Range { start, end } = self.erausre_shard_offsets()?;
-            let mut shard = Payload::unwrap_or_clone(self.payload);
-            shard.truncate(end);
-            shard.drain(..start);
-            Ok(shard)
-        }
-
         // Returns the erasure coded slice as an immutable reference.
-        fn erasure_shard_as_slice(&self) -> Result<&[u8], Error> {
+        fn erasure_shard(&self) -> Result<&[u8], Error> {
             self.payload
                 .get(self.erausre_shard_offsets()?)
                 .ok_or(Error::InvalidPayloadSize(self.payload.len()))
         }
 
         // Returns the erasure coded slice as a mutable reference.
-        fn erasure_shard_as_slice_mut(&mut self) -> Result<&mut [u8], Error> {
+        fn erasure_shard_mut(&mut self) -> Result<&mut [u8], Error> {
             let offsets = self.erausre_shard_offsets()?;
             let payload_size = self.payload.len();
             self.payload
@@ -539,12 +532,8 @@ impl<'a> ShredTrait<'a> for ShredData {
         })
     }
 
-    fn erasure_shard(self) -> Result<Vec<u8>, Error> {
+    fn erasure_shard(&self) -> Result<&[u8], Error> {
         Self::erasure_shard(self)
-    }
-
-    fn erasure_shard_as_slice(&self) -> Result<&[u8], Error> {
-        Self::erasure_shard_as_slice(self)
     }
 
     fn sanitize(&self) -> Result<(), Error> {
@@ -599,12 +588,8 @@ impl<'a> ShredTrait<'a> for ShredCode {
         })
     }
 
-    fn erasure_shard(self) -> Result<Vec<u8>, Error> {
+    fn erasure_shard(&self) -> Result<&[u8], Error> {
         Self::erasure_shard(self)
-    }
-
-    fn erasure_shard_as_slice(&self) -> Result<&[u8], Error> {
-        Self::erasure_shard_as_slice(self)
     }
 
     fn sanitize(&self) -> Result<(), Error> {
@@ -899,7 +884,7 @@ pub(super) fn recover(
     let mut shards: Vec<(&mut [u8], bool)> = shreds
         .iter_mut()
         .zip(&mask)
-        .map(|(shred, &mask)| Ok((shred.erasure_shard_as_slice_mut()?, mask)))
+        .map(|(shred, &mask)| Ok((shred.erasure_shard_mut()?, mask)))
         .collect::<Result<_, Error>>()?;
     reed_solomon_cache
         .get(num_data_shreds, num_coding_shreds)?
@@ -1401,7 +1386,7 @@ fn finish_erasure_batch(
         .encode(
             shreds
                 .iter_mut()
-                .map(Shred::erasure_shard_as_slice_mut)
+                .map(Shred::erasure_shard_mut)
                 .collect::<Result<Vec<&mut [u8]>, _>>()?,
         )?;
     // Set the chained_merkle_root for each shred.
@@ -1683,7 +1668,7 @@ mod test {
         }
         let data: Vec<_> = shreds
             .iter()
-            .map(Shred::erasure_shard_as_slice)
+            .map(Shred::erasure_shard)
             .collect::<Result<_, _>>()
             .unwrap();
         let mut parity = vec![vec![0u8; data[0].len()]; num_coding_shreds];

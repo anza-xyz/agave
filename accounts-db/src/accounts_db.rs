@@ -1530,11 +1530,11 @@ pub struct AccountsDb {
     /// Starting file size of appendvecs
     file_size: u64,
 
-    /// Thread pool used for par_iter
+    /// Foreground thread pool used for par_iter
     pub thread_pool: ThreadPool,
-
+    /// Thread pool for AccountsBackgroundServices
     pub thread_pool_clean: ThreadPool,
-
+    /// Thread pool for AccountsHashVerifier
     pub thread_pool_hash: ThreadPool,
 
     accounts_delta_hashes: Mutex<HashMap<Slot, AccountsDeltaHash>>,
@@ -2693,6 +2693,8 @@ impl AccountsDb {
 
     /// called with cli argument to verify refcounts are correct on all accounts
     /// this is very slow
+    /// this function will call Rayon par_iter, so you will want to have thread pool installed if
+    /// you want to call this without consuming all the cores on the CPU.
     fn exhaustively_verify_refcounts(&self, max_slot_inclusive: Option<Slot>) {
         let max_slot_inclusive =
             max_slot_inclusive.unwrap_or_else(|| self.accounts_index.max_root_inclusive());
@@ -2798,7 +2800,14 @@ impl AccountsDb {
         old_storages_policy: OldStoragesPolicy,
     ) {
         if self.exhaustively_verify_refcounts {
-            self.exhaustively_verify_refcounts(max_clean_root_inclusive);
+            //at startup use all cores to verify refcounts
+            if is_startup {
+                self.exhaustively_verify_refcounts(max_clean_root_inclusive);
+            } else {
+                // otherwise, use the cleaning thread pool
+                self.thread_pool_clean
+                    .install(|| self.exhaustively_verify_refcounts(max_clean_root_inclusive));
+            }
         }
 
         let _guard = self.active_stats.activate(ActiveStatItem::Clean);
@@ -7631,12 +7640,11 @@ impl AccountsDb {
         accounts: &impl StorableAccounts<'a>,
         reclaim: UpsertReclaim,
         update_index_thread_selection: UpdateIndexThreadSelection,
+        thread_pool: &ThreadPool,
     ) -> SlotList<AccountInfo> {
         let target_slot = accounts.target_slot();
-        // using a thread pool here results in deadlock panics from bank_hashes.write()
-        // so, instead we limit how many threads will be created to the same size as the bg thread pool
         let len = std::cmp::min(accounts.len(), infos.len());
-        let threshold = 1;
+
         let update = |start, end| {
             let mut reclaims = Vec::with_capacity((end - start) / 2);
 
@@ -7658,6 +7666,8 @@ impl AccountsDb {
             });
             reclaims
         };
+
+        let threshold = 1;
         if matches!(
             update_index_thread_selection,
             UpdateIndexThreadSelection::PoolWithThreshold,
@@ -7665,15 +7675,17 @@ impl AccountsDb {
         {
             let chunk_size = std::cmp::max(1, len / quarter_thread_count()); // # pubkeys/thread
             let batches = 1 + len / chunk_size;
-            (0..batches)
-                .into_par_iter()
-                .map(|batch| {
-                    let start = batch * chunk_size;
-                    let end = std::cmp::min(start + chunk_size, len);
-                    update(start, end)
-                })
-                .flatten()
-                .collect::<Vec<_>>()
+            thread_pool.install(|| {
+                (0..batches)
+                    .into_par_iter()
+                    .map(|batch| {
+                        let start = batch * chunk_size;
+                        let end = std::cmp::min(start + chunk_size, len);
+                        update(start, end)
+                    })
+                    .flatten()
+                    .collect::<Vec<_>>()
+            })
         } else {
             update(0, len)
         }
@@ -8265,6 +8277,7 @@ impl AccountsDb {
             transactions,
             reclaim,
             update_index_thread_selection,
+            &self.thread_pool,
         );
     }
 
@@ -8284,6 +8297,7 @@ impl AccountsDb {
             None,
             StoreReclaims::Ignore,
             UpdateIndexThreadSelection::PoolWithThreshold,
+            &self.thread_pool_clean,
         )
     }
 
@@ -8295,6 +8309,7 @@ impl AccountsDb {
         transactions: Option<&'a [&'a SanitizedTransaction]>,
         reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
+        thread_pool: &ThreadPool,
     ) -> StoreAccountsTiming {
         self.stats
             .store_num_accounts
@@ -8323,8 +8338,13 @@ impl AccountsDb {
         // after the account are stored by the above `store_accounts_to`
         // call and all the accounts are stored, all reads after this point
         // will know to not check the cache anymore
-        let mut reclaims =
-            self.update_index(infos, &accounts, reclaim, update_index_thread_selection);
+        let mut reclaims = self.update_index(
+            infos,
+            &accounts,
+            reclaim,
+            update_index_thread_selection,
+            thread_pool,
+        );
 
         // For each updated account, `reclaims` should only have at most one
         // item (if the account was previously updated in this slot).

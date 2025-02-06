@@ -30,8 +30,7 @@ use {
     solana_feature_set::{
         enable_transaction_loading_failure_fees, remove_accounts_executable_flag_checks, FeatureSet,
     },
-    solana_fee::FeeFeatures,
-    solana_fee_structure::{FeeBudgetLimits, FeeStructure},
+    solana_fee_structure::{FeeBudgetLimits, FeeDetails, FeeStructure},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_log_collector::LogCollector,
@@ -47,10 +46,7 @@ use {
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
         },
-        solana_sbpf::{
-            program::{BuiltinProgram, FunctionRegistry},
-            vm::Config as VmConfig,
-        },
+        solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -282,12 +278,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
         program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
     ) {
-        let empty_loader = || {
-            Arc::new(BuiltinProgram::new_loader(
-                VmConfig::default(),
-                FunctionRegistry::default(),
-            ))
-        };
+        let empty_loader = || Arc::new(BuiltinProgram::new_loader(VmConfig::default()));
 
         program_cache.latest_root_slot = self.slot;
         program_cache.latest_root_epoch = self.epoch;
@@ -424,6 +415,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             .rent_collector
                             .unwrap_or(&RentCollector::default()),
                         &mut error_metrics,
+                        callbacks,
                     )
                 }));
             validate_fees_us = validate_fees_us.saturating_add(single_validate_fees_us);
@@ -526,6 +518,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
+        callbacks: &CB,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         // If this is a nonce transaction, validate the nonce info.
         // This must be done for every transaction to support SIMD83 because
@@ -554,6 +547,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             fee_lamports_per_signature,
             rent_collector,
             error_counters,
+            callbacks,
         )
     }
 
@@ -567,6 +561,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
+        callbacks: &CB,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let compute_budget_limits = process_compute_budget_instructions(
             message.program_instructions_iter(),
@@ -599,13 +594,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         } = checked_details;
 
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-        let fee_details = solana_fee::calculate_fee_details(
-            message,
-            lamports_per_signature == 0,
-            fee_lamports_per_signature,
-            fee_budget_limits.prioritization_fee,
-            FeeFeatures::from(account_loader.feature_set.as_ref()),
-        );
+        let fee_details = if lamports_per_signature == 0 {
+            FeeDetails::default()
+        } else {
+            callbacks.calculate_fee(
+                message,
+                fee_lamports_per_signature,
+                fee_budget_limits.prioritization_fee,
+                account_loader.feature_set.as_ref(),
+            )
+        };
 
         let fee_payer_index = 0;
         validate_fee_payer(
@@ -1301,6 +1299,25 @@ mod tests {
                 .entry(*address)
                 .or_default()
                 .push((account, is_writable));
+        }
+
+        fn calculate_fee(
+            &self,
+            message: &impl SVMMessage,
+            lamports_per_signature: u64,
+            prioritization_fee: u64,
+            _feature_set: &FeatureSet,
+        ) -> FeeDetails {
+            let signature_count = message
+                .num_transaction_signatures()
+                .saturating_add(message.num_ed25519_signatures())
+                .saturating_add(message.num_secp256k1_signatures())
+                .saturating_add(message.num_secp256r1_signatures());
+
+            FeeDetails::new(
+                signature_count.saturating_mul(lamports_per_signature),
+                prioritization_fee,
+            )
         }
     }
 
@@ -2174,6 +2191,7 @@ mod tests {
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
+                &mock_bank,
             );
 
         let post_validation_fee_payer_account = {
@@ -2251,6 +2269,7 @@ mod tests {
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
+                &mock_bank,
             );
 
         let post_validation_fee_payer_account = {
@@ -2299,6 +2318,7 @@ mod tests {
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
+                &mock_bank,
             );
 
         assert_eq!(error_counters.account_not_found.0, 1);
@@ -2330,6 +2350,7 @@ mod tests {
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
+                &mock_bank,
             );
 
         assert_eq!(error_counters.insufficient_funds.0, 1);
@@ -2365,6 +2386,7 @@ mod tests {
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
+                &mock_bank,
             );
 
         assert_eq!(
@@ -2398,6 +2420,7 @@ mod tests {
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
+                &mock_bank,
             );
 
         assert_eq!(error_counters.invalid_account_for_fee.0, 1);
@@ -2427,6 +2450,7 @@ mod tests {
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
+                &mock_bank,
             );
 
         assert_eq!(error_counters.invalid_compute_budget.0, 1);
@@ -2500,6 +2524,7 @@ mod tests {
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
+                &mock_bank,
             );
 
             let post_validation_fee_payer_account = {
@@ -2558,6 +2583,7 @@ mod tests {
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
+                &mock_bank,
             );
 
             assert_eq!(error_counters.insufficient_funds.0, 1);
@@ -2600,6 +2626,7 @@ mod tests {
             FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut TransactionErrorMetrics::default(),
+            &mock_bank,
         )
         .unwrap();
 

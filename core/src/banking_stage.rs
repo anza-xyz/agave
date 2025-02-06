@@ -645,7 +645,7 @@ impl BankingStage {
     fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(
         id: u32,
         packet_receiver: BankingPacketReceiver,
-        decision_maker: DecisionMaker,
+        mut decision_maker: DecisionMaker,
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
@@ -665,7 +665,7 @@ impl BankingStage {
             .spawn(move || {
                 Self::process_loop(
                     &mut packet_receiver,
-                    &decision_maker,
+                    &mut decision_maker,
                     &mut forwarder,
                     &consumer,
                     id,
@@ -677,7 +677,7 @@ impl BankingStage {
 
     #[allow(clippy::too_many_arguments)]
     fn process_buffered_packets<T: LikeClusterInfo>(
-        decision_maker: &DecisionMaker,
+        decision_maker: &mut DecisionMaker,
         forwarder: &mut Forwarder<T>,
         consumer: &Consumer,
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
@@ -741,7 +741,7 @@ impl BankingStage {
 
     fn process_loop<T: LikeClusterInfo>(
         packet_receiver: &mut PacketReceiver,
-        decision_maker: &DecisionMaker,
+        decision_maker: &mut DecisionMaker,
         forwarder: &mut Forwarder<T>,
         consumer: &Consumer,
         id: u32,

@@ -1,0 +1,336 @@
+[profile.release]
+split-debuginfo = "unpacked"
+lto = "thin"
+
+[workspace]
+members = [
+    "account",
+    "account-info",
+    "address-lookup-table-interface",
+    "atomic-u64",
+    "big-mod-exp",
+    "bincode",
+    "blake3-hasher",
+    "bn254",
+    "borsh",
+    "client-traits",
+    "clock",
+    "cluster-type",
+    "commitment-config",
+    "compute-budget-interface",
+    "cpi",
+    "decode-error",
+    "define-syscall",
+    "derivation-path",
+    "ed25519-program",
+    "epoch-info",
+    "epoch-rewards",
+    "epoch-rewards-hasher",
+    "epoch-schedule",
+    "example-mocks",
+    "feature-gate-interface",
+    "feature-set",
+    "fee-calculator",
+    "fee-structure",
+    "file-download",
+    "frozen-abi",
+    "frozen-abi/macro",
+    "genesis-config",
+    "hard-forks",
+    "hash",
+    "inflation",
+    "instruction",
+    "instructions-sysvar",
+    "keccak-hasher",
+    "keypair",
+    "loader-v2-interface",
+    "loader-v3-interface",
+    "loader-v4-interface",
+    "logger",
+    "macro",
+    "message",
+    "msg",
+    "native-token",
+    "nonce",
+    "nonce-account",
+    "offchain-message",
+    "package-metadata",
+    "package-metadata-macro",
+    "packet",
+    "poh-config",
+    "precompile-error",
+    "precompiles",
+    "presigner",
+    "program",
+    "program-entrypoint",
+    "program-error",
+    "program-memory",
+    "program-option",
+    "program-pack",
+    "pubkey",
+    "quic-definitions",
+    "rent",
+    "rent-collector",
+    "rent-debits",
+    "reserved-account-keys",
+    "reward-info",
+    "sanitize",
+    "sdk",
+    "sdk-ids",
+    "secp256k1-program",
+    "secp256k1-recover",
+    "secp256r1-program",
+    "seed-derivable",
+    "seed-phrase",
+    "serde",
+    "serde-varint",
+    "serialize-utils",
+    "sha256-hasher",
+    "short-vec",
+    "shred-version",
+    "signature",
+    "signer",
+    "slot-hashes",
+    "slot-history",
+    "stable-layout",
+    "system-transaction",
+    "sysvar",
+    "sysvar-id",
+    "time-utils",
+    "transaction",
+    "transaction-context",
+    "transaction-error",
+    "validator-exit",
+    "vote-interface",
+]
+
+resolver = "2"
+
+[workspace.package]
+version = "2.2.0"
+authors = ["Anza Maintainers <maintainers@anza.xyz>"]
+repository = "https://github.com/anza-xyz/agave"
+homepage = "https://anza.xyz/"
+license = "Apache-2.0"
+edition = "2021"
+
+[workspace.lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(target_os, values("solana"))',
+    'cfg(feature, values("frozen-abi", "no-entrypoint"))',
+]
+
+[workspace.dependencies]
+ahash = "0.8.11"
+anyhow = "1.0.95"
+arbitrary = "1.4.1"
+ark-bn254 = "0.4.0"
+ark-ec = "0.4.0"
+ark-ff = "0.4.0"
+ark-serialize = "0.4.0"
+array-bytes = "=1.4.1"
+assert_matches = "1.5.0"
+base64 = "0.22.1"
+bincode = "1.3.3"
+bitflags = { version = "2.8.0" }
+blake3 = "1.5.5"
+borsh = { version = "1.5.5", features = ["derive", "unstable__schema"] }
+borsh0-10 = { package = "borsh", version = "0.10.3" }
+bs58 = { version = "0.5.1", default-features = false }
+bv = "0.11.1"
+bytemuck = "1.21.0"
+bytemuck_derive = "1.8.1"
+cfg_eval = "0.1.2"
+chrono = { version = "0.4.39", default-features = false }
+console = "0.15.10"
+console_error_panic_hook = "0.1.7"
+console_log = "0.2.2"
+criterion = "0.5.1"
+curve25519-dalek = { version = "4.1.3", features = ["digest", "rand_core"] }
+derivation-path = { version = "0.2.0", default-features = false }
+digest = "0.10.7"
+ed25519-dalek = "=1.0.1"
+ed25519-dalek-bip32 = "0.2.0"
+env_logger = "0.9.3"
+five8_const = "0.1.3"
+getrandom = "0.2.10"
+hex = "0.4.3"
+hmac = "0.12.1"
+im = "15.1.0"
+indicatif = "0.17.9"
+itertools = "0.12.1"
+js-sys = "0.3.77"
+lazy_static = "1.5.0"
+libsecp256k1 = { version = "0.6.0", default-features = false, features = [
+    "std",
+    "static-context",
+] }
+log = "0.4.25"
+memmap2 = "0.5.10"
+memoffset = "0.9"
+num-bigint = "0.4.6"
+num-derive = "0.4"
+num-traits = "0.2"
+num_enum = "0.7.3"
+openssl = "0.10"
+parking_lot = "0.12"
+pbkdf2 = { version = "0.11.0", default-features = false }
+proc-macro2 = "1.0.93"
+proptest = "1.6"
+qstring = "0.7.2"
+qualifier_attr = { version = "0.2.2", default-features = false }
+quote = "1.0"
+rand = "0.8.5"
+rand0-7 = { package = "rand", version = "0.7" }
+reqwest = { version = "0.11.27", default-features = false }
+serde = "1.0.217" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde-big-array = "0.5.1"
+serde_bytes = "0.11.15"
+serde_derive = "1.0.217" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde_json = "1.0.137"
+serde_with = { version = "3.12.0", default-features = false }
+serial_test = "2.0.0"
+sha2 = "0.10.8"
+sha3 = "0.10.8"
+siphasher = "0.3.11"
+solana-account = { path = "account", version = "=2.2.0" }
+solana-account-info = { path = "account-info", version = "=2.2.0" }
+solana-address-lookup-table-interface = { path = "address-lookup-table-interface", version = "=2.2.0" }
+solana-atomic-u64 = { path = "atomic-u64", version = "=2.2.0" }
+solana-big-mod-exp = { path = "big-mod-exp", version = "=2.2.0" }
+solana-bincode = { path = "bincode", version = "=2.2.0" }
+solana-blake3-hasher = { path = "blake3-hasher" }
+solana-bn254 = { path = "bn254", version = "=2.2.0" }
+solana-borsh = { path = "borsh", version = "=2.2.0" }
+solana-client-traits = { path = "client-traits", version = "=2.2.0" }
+solana-clock = { path = "clock", version = "=2.2.0" }
+solana-cluster-type = { path = "cluster-type", version = "=2.2.0" }
+solana-commitment-config = { path = "commitment-config", version = "=2.2.0" }
+solana-compute-budget-interface = { path = "compute-budget-interface", version = "=2.2.0" }
+solana-cpi = { path = "cpi", version = "=2.2.0" }
+solana-decode-error = { path = "decode-error", version = "=2.2.0" }
+solana-define-syscall = { path = "define-syscall", version = "=2.2.0" }
+solana-derivation-path = { path = "derivation-path", version = "=2.2.0" }
+solana-ed25519-program = { path = "ed25519-program", version = "=2.2.0" }
+solana-program-entrypoint = { path = "program-entrypoint", version = "=2.2.0" }
+solana-epoch-info = { path = "epoch-info", version = "=2.2.0" }
+solana-epoch-rewards = { path = "epoch-rewards", version = "=2.2.0" }
+solana-epoch-rewards-hasher = { path = "epoch-rewards-hasher", version = "=2.2.0" }
+solana-epoch-schedule = { path = "epoch-schedule", version = "=2.2.0" }
+solana-example-mocks = { path = "example-mocks", version = "=2.2.0" }
+solana-feature-gate-interface = { path = "feature-gate-interface", version = "=2.2.0" }
+solana-feature-set = { path = "feature-set", version = "=2.2.0" }
+solana-fee-calculator = { path = "fee-calculator", version = "=2.2.0" }
+solana-fee-structure = { path = "fee-structure", version = "=2.2.0" }
+solana-frozen-abi = { path = "frozen-abi", version = "=2.2.0" }
+solana-frozen-abi-macro = { path = "frozen-abi/macro", version = "=2.2.0" }
+solana-file-download = { path = "file-download", version = "=2.2.0" }
+solana-genesis-config = { path = "genesis-config", version = "=2.2.0" }
+solana-hard-forks = { path = "hard-forks", version = "=2.2.0", default-features = false }
+solana-hash = { path = "hash", version = "=2.2.0", default-features = false }
+solana-inflation = { path = "inflation", version = "=2.2.0" }
+solana-instruction = { path = "instruction", version = "=2.2.0", default-features = false }
+solana-instructions-sysvar = { path = "instructions-sysvar", version = "=2.2.0" }
+solana-keccak-hasher = { path = "keccak-hasher", version = "=2.2.0" }
+solana-keypair = { path = "keypair", version = "=2.2.0" }
+solana-last-restart-slot = { path = "last-restart-slot", version = "=2.2.0" }
+solana-loader-v2-interface = { path = "loader-v2-interface", version = "=2.2.0" }
+solana-loader-v3-interface = { path = "loader-v3-interface", version = "=2.2.0" }
+solana-loader-v4-interface = { path = "loader-v4-interface", version = "=2.2.0" }
+solana-logger = { path = "logger", version = "=2.2.0" }
+solana-message = { path = "message", version = "=2.2.0" }
+solana-msg = { path = "msg", version = "=2.2.0" }
+solana-native-token = { path = "native-token", version = "=2.2.0" }
+solana-nonce = { path = "nonce", version = "=2.2.0" }
+solana-nonce-account = { path = "nonce-account", version = "=2.2.0" }
+solana-offchain-message = { path = "offchain-message", version = "=2.2.0" }
+solana-package-metadata = { path = "package-metadata", version = "=2.2.0" }
+solana-package-metadata-macro = { path = "package-metadata-macro", version = "=2.2.0" }
+solana-packet = { path = "packet", version = "=2.2.0" }
+solana-poh-config = { path = "poh-config", version = "=2.2.0" }
+solana-precompile-error = { path = "precompile-error", version = "=2.2.0" }
+solana-precompiles = { path = "precompiles", version = "=2.2.0" }
+solana-presigner = { path = "presigner", version = "=2.2.0" }
+solana-program = { path = "program", version = "=2.2.0", default-features = false }
+solana-program-error = { path = "program-error", version = "=2.2.0" }
+solana-program-memory = { path = "program-memory", version = "=2.2.0" }
+solana-program-option = { path = "program-option", version = "=2.2.0" }
+solana-program-pack = { path = "program-pack", version = "=2.2.0" }
+solana-pubkey = { path = "pubkey", version = "=2.2.0", default-features = false }
+solana-quic-definitions = { path = "quic-definitions", version = "=2.2.0" }
+solana-rent = { path = "rent", version = "=2.2.0", default-features = false }
+solana-rent-collector = { path = "rent-collector", version = "=2.2.0" }
+solana-rent-debits = { path = "rent-debits", version = "=2.2.0" }
+solana-reserved-account-keys = { path = "reserved-account-keys", version = "=2.2.0", default-features = false }
+solana-reward-info = { path = "reward-info", version = "=2.2.0" }
+solana-sanitize = { path = "sanitize", version = "=2.2.0" }
+solana-secp256r1-program = { path = "secp256r1-program", version = "=2.2.0", default-features = false }
+solana-seed-derivable = { path = "seed-derivable", version = "=2.2.0" }
+solana-seed-phrase = { path = "seed-phrase", version = "=2.2.0" }
+solana-serde = { path = "serde", version = "=2.2.0" }
+solana-serde-varint = { path = "serde-varint", version = "=2.2.0" }
+solana-serialize-utils = { path = "serialize-utils", version = "=2.2.0" }
+solana-sha256-hasher = { path = "sha256-hasher", version = "=2.2.0" }
+solana-signature = { path = "signature", version = "=2.2.0", default-features = false }
+solana-signer = { path = "signer", version = "=2.2.0" }
+solana-slot-hashes = { path = "slot-hashes", version = "=2.2.0" }
+solana-slot-history = { path = "slot-history", version = "=2.2.0" }
+solana-time-utils = { path = "time-utils", version = "=2.2.0" }
+solana-sdk = { path = "sdk", version = "=2.2.0" }
+solana-sdk-ids = { path = "sdk-ids", version = "=2.2.0" }
+solana-sdk-macro = { path = "macro", version = "=2.2.0" }
+solana-secp256k1-program = { path = "secp256k1-program", version = "=2.2.0" }
+solana-secp256k1-recover = { path = "secp256k1-recover", version = "=2.2.0" }
+solana-short-vec = { path = "short-vec", version = "=2.2.0" }
+solana-shred-version = { path = "shred-version", version = "=2.2.0" }
+solana-stable-layout = { path = "stable-layout", version = "=2.2.0" }
+solana-stake-interface = { version = "1.2.1" }
+solana-system-interface = "1.0"
+solana-system-transaction = { path = "system-transaction", version = "=2.2.0" }
+solana-sysvar = { path = "sysvar", version = "=2.2.0" }
+solana-sysvar-id = { path = "sysvar-id", version = "=2.2.0" }
+solana-transaction = { path = "transaction", version = "=2.2.0" }
+solana-transaction-error = { path = "transaction-error", version = "=2.2.0" }
+solana-transaction-context = { path = "transaction-context", version = "=2.2.0" }
+solana-validator-exit = { path = "validator-exit", version = "=2.2.0" }
+solana-vote-interface = { path = "vote-interface", version = "=2.2.0" }
+static_assertions = "1.1.0"
+strum = "0.24"
+strum_macros = "0.24"
+syn = "2.0"
+test-case = "3.3.1"
+thiserror = "2.0.11"
+tiny-bip39 = "0.8.2"
+toml = "0.8.12"
+uriparse = "0.6.4"
+wasm-bindgen = "0.2"
+
+[patch.crates-io]
+# We include the following crates as our dependencies above from crates.io:
+#
+#  * solana-system-interface
+#
+# They, in turn, depend on a number of crates that we also include directly
+# using `path` specifications.  For example, `solana-system-interface` depends
+# on `solana-instruction`.  And we explicitly specify `solana-instruction` above
+# as a local path dependency:
+#
+#     solana-instruction = { path = "instruction", version = "=2.2.0" }
+#
+# Unfortunately, Cargo will try to resolve the `solana-system-interface`
+# `solana-instruction` dependency only using what is available on crates.io.
+# Crates.io normally contains a previous version of these crates, and we end up
+# with two versions of `solana-instruction` and all of their dependencies in our
+# build tree.
+#
+# If you are developing downstream using non-crates-io solana-program (local or
+# forked repo, or from github rev, eg), duplicate the following patch statements
+# in your Cargo.toml. If you still hit duplicate-type errors with the patch
+# statements in place, run `cargo update -p solana-program` to remove extraneous
+# versions from your Cargo.lock file.
+solana-cpi = { path = "cpi" }
+solana-instruction = { path = "instruction" }
+solana-program-error = { path = "program-error" }
+solana-pubkey = { path = "pubkey" }
+solana-sysvar-id = { path = "sysvar-id" }

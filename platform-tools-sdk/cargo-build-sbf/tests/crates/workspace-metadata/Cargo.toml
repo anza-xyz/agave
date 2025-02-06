@@ -10,15 +10,13 @@ edition = "2021"
 publish = false
 
 [dependencies]
-solana-program = { path = "../../../../../sdk/program", version = "=2.2.0" }
+solana-account-info= { path = "../../../../../sdk/account-info", version = "=2.2.0" }
+solana-program-entrypoint = { path = "../../../../../sdk/program-entrypoint", version = "=2.2.0" }
+solana-program-error= { path = "../../../../../sdk/program-error", version = "=2.2.0" }
+solana-pubkey = { path = "../../../../../sdk/pubkey", version = "=2.2.0" }
 
 [lib]
 crate-type = ["cdylib"]
-
-[patch.crates-io]
-solana-decode-error = { path = "../../../../../sdk/decode-error" }
-solana-instruction = { path = "../../../../../sdk/instruction" }
-solana-pubkey = { path = "../../../../../sdk/pubkey" }
 
 [workspace]
 

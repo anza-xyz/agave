@@ -23,10 +23,12 @@ pub(crate) fn batch_converter_creator(
         let bank_forks = bank_forks.clone();
 
         Box::new(move |batches, task_submitter| {
+            /*
             let decision = decision_maker.make_consume_or_forward_decision();
             if matches!(decision, BufferedPacketsDecision::Forward) {
                 return;
             }
+            */
             let bank = bank_forks.read().unwrap().root_bank();
             for batch in batches.iter() {
                 // over-provision nevertheless some of packets could be invalid.

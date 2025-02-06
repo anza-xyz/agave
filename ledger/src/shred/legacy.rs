@@ -94,16 +94,7 @@ impl<'a> Shred<'a> for ShredData {
         })
     }
 
-    fn erasure_shard(self) -> Result<Vec<u8>, Error> {
-        if self.payload.len() != Self::SIZE_OF_PAYLOAD {
-            return Err(Error::InvalidPayloadSize(self.payload.len()));
-        }
-        let mut shard = Payload::unwrap_or_clone(self.payload);
-        shard.truncate(SIZE_OF_ERASURE_ENCODED_SLICE);
-        Ok(shard)
-    }
-
-    fn erasure_shard_as_slice(&self) -> Result<&[u8], Error> {
+    fn erasure_shard(&self) -> Result<&[u8], Error> {
         if self.payload.len() != Self::SIZE_OF_PAYLOAD {
             return Err(Error::InvalidPayloadSize(self.payload.len()));
         }
@@ -160,18 +151,7 @@ impl<'a> Shred<'a> for ShredCode {
         })
     }
 
-    fn erasure_shard(self) -> Result<Vec<u8>, Error> {
-        if self.payload.len() != Self::SIZE_OF_PAYLOAD {
-            return Err(Error::InvalidPayloadSize(self.payload.len()));
-        }
-        let mut shard = Payload::unwrap_or_clone(self.payload);
-        // ShredCode::SIZE_OF_HEADERS bytes at the beginning of the coding
-        // shreds contains the header and is not part of erasure coding.
-        shard.drain(..Self::SIZE_OF_HEADERS);
-        Ok(shard)
-    }
-
-    fn erasure_shard_as_slice(&self) -> Result<&[u8], Error> {
+    fn erasure_shard(&self) -> Result<&[u8], Error> {
         if self.payload.len() != Self::SIZE_OF_PAYLOAD {
             return Err(Error::InvalidPayloadSize(self.payload.len()));
         }

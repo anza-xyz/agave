@@ -8,11 +8,12 @@ use {
     },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::FeatureSet,
+    solana_fee_structure::FeeDetails,
     solana_program_runtime::{
         invoke_context::InvokeContext,
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
         solana_sbpf::{
-            program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
+            program::{BuiltinProgram, SBPFVersion},
             vm::Config,
         },
     },
@@ -30,6 +31,7 @@ use {
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
         transaction_processor::TransactionBatchProcessor,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_type_overrides::sync::{Arc, RwLock},
     std::{
         cmp::Ordering,
@@ -106,6 +108,25 @@ impl TransactionProcessingCallback for MockBankCallback {
             .entry(*address)
             .or_default()
             .push((account, is_writable));
+    }
+
+    fn calculate_fee(
+        &self,
+        message: &impl SVMMessage,
+        lamports_per_signature: u64,
+        prioritization_fee: u64,
+        _feature_set: &FeatureSet,
+    ) -> FeeDetails {
+        let signature_count = message
+            .num_transaction_signatures()
+            .saturating_add(message.num_ed25519_signatures())
+            .saturating_add(message.num_secp256k1_signatures())
+            .saturating_add(message.num_secp256r1_signatures());
+
+        FeeDetails::new(
+            signature_count.saturating_mul(lamports_per_signature),
+            prioritization_fee,
+        )
     }
 }
 
@@ -309,35 +330,30 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
 
     // These functions are system calls the compile contract calls during execution, so they
     // need to be registered.
-    let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext>>::default();
-    function_registry
-        .register_function_hashed(*b"abort", SyscallAbort::vm)
+    let mut loader = BuiltinProgram::new_loader(vm_config);
+    loader
+        .register_function("abort", SyscallAbort::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_log_", SyscallLog::vm)
+    loader
+        .register_function("sol_log_", SyscallLog::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_memcpy_", SyscallMemcpy::vm)
+    loader
+        .register_function("sol_memcpy_", SyscallMemcpy::vm)
         .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_memset_", SyscallMemset::vm)
+    loader
+        .register_function("sol_memset_", SyscallMemset::vm)
         .expect("Registration failed");
-
-    function_registry
-        .register_function_hashed(*b"sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
+    loader
+        .register_function("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
         .expect("Registration failed");
-
-    function_registry
-        .register_function_hashed(*b"sol_set_return_data", SyscallSetReturnData::vm)
+    loader
+        .register_function("sol_set_return_data", SyscallSetReturnData::vm)
         .expect("Registration failed");
-
-    function_registry
-        .register_function_hashed(*b"sol_get_clock_sysvar", SyscallGetClockSysvar::vm)
+    loader
+        .register_function("sol_get_clock_sysvar", SyscallGetClockSysvar::vm)
         .expect("Registration failed");
-
-    function_registry
-        .register_function_hashed(*b"sol_get_rent_sysvar", SyscallGetRentSysvar::vm)
+    loader
+        .register_function("sol_get_rent_sysvar", SyscallGetRentSysvar::vm)
         .expect("Registration failed");
-
-    BuiltinProgram::new_loader(vm_config, function_registry)
+    loader
 }

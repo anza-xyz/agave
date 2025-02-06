@@ -27,7 +27,7 @@ solana-bincode = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-clock = { workspace = true }
-solana-epoch-info = { workspace = true }
+solana-epoch-info = { workspace = true, features = ["serde"] }
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
@@ -40,7 +40,7 @@ solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["verify"] }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-vote-program = { workspace = true }

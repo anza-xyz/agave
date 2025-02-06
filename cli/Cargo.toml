@@ -40,7 +40,7 @@ solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
-solana-compute-budget-interface = { workspace = true }
+solana-compute-budget-interface = { workspace = true, features = ["borsh"] }
 solana-config-program = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-decode-error = { workspace = true }
@@ -51,12 +51,13 @@ solana-feature-set = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
+solana-loader-v4-interface = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-logger = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-nonce = { workspace = true }
-solana-offchain-message = { workspace = true }
+solana-offchain-message = { workspace = true, features = ["verify"] }
 solana-packet = { workspace = true }
 solana-program = { workspace = true }
 solana-program-runtime = { workspace = true }

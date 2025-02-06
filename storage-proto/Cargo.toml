@@ -20,9 +20,9 @@ solana-instruction = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-serde = { workspace = true }
-solana-signature = { workspace = true }
+solana-signature = { workspace = true, features = ["std"] }
 solana-transaction = { workspace = true }
-solana-transaction-context = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["serde"] }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 

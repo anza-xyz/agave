@@ -67,6 +67,25 @@ impl TpuInfo for ClusterTpuInfo {
         unique_leaders
     }
 
+    fn get_not_unique_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
+        let recorder = self.poh_recorder.read().unwrap();
+        let leader_pubkeys: Vec<_> = (0..max_count)
+            .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
+            .collect();
+        drop(recorder);
+        leader_pubkeys
+            .iter()
+            .filter_map(|leader_pubkey| {
+                self.recent_peers
+                    .get(leader_pubkey)
+                    .map(|addr| match protocol {
+                        Protocol::UDP => &addr.0,
+                        Protocol::QUIC => &addr.1,
+                    })
+            })
+            .collect()
+    }
+
     fn get_leader_tpus_with_slots(
         &self,
         max_count: u64,
@@ -276,8 +295,8 @@ mod test {
             vec![&recent_peers.get(&first_leader).unwrap().0]
         );
         assert_eq!(
-            leader_info.get_leader_tpus_with_slots(1, Protocol::UDP),
-            vec![(&recent_peers.get(&first_leader).unwrap().0, 0)]
+            leader_info.get_not_unique_leader_tpus(1, Protocol::UDP),
+            vec![&recent_peers.get(&first_leader).unwrap().0]
         );
 
         let second_leader = solana_ledger::leader_schedule_utils::slot_leader_at(
@@ -295,11 +314,8 @@ mod test {
             expected_leader_sockets
         );
         assert_eq!(
-            leader_info.get_leader_tpus_with_slots(2, Protocol::UDP),
+            leader_info.get_not_unique_leader_tpus(2, Protocol::UDP),
             expected_leader_sockets
-                .into_iter()
-                .zip([0, 4])
-                .collect::<Vec<_>>()
         );
 
         let third_leader = solana_ledger::leader_schedule_utils::slot_leader_at(
@@ -307,33 +323,29 @@ mod test {
             &bank,
         )
         .unwrap();
-        let mut expected_leader_sockets = vec![
+        let expected_leader_sockets = vec![
             &recent_peers.get(&first_leader).unwrap().0,
             &recent_peers.get(&second_leader).unwrap().0,
             &recent_peers.get(&third_leader).unwrap().0,
         ];
-        expected_leader_sockets.dedup();
+        let mut unique_expected_leader_sockets = expected_leader_sockets.clone();
+        unique_expected_leader_sockets.dedup();
         assert_eq!(
             leader_info.get_leader_tpus(3, Protocol::UDP),
-            expected_leader_sockets
+            unique_expected_leader_sockets
         );
-        // Only 2 leader tpus are returned always... so [0, 4, 8] isn't right here.
-        // This assumption is safe. After all, leader schedule generation must be deterministic.
         assert_eq!(
-            leader_info.get_leader_tpus_with_slots(3, Protocol::UDP),
+            leader_info.get_not_unique_leader_tpus(3, Protocol::UDP),
             expected_leader_sockets
-                .into_iter()
-                .zip([0, 4])
-                .collect::<Vec<_>>()
         );
 
         for x in 4..8 {
             assert!(leader_info.get_leader_tpus(x, Protocol::UDP).len() <= recent_peers.len());
-            assert!(
+            assert_eq!(
                 leader_info
-                    .get_leader_tpus_with_slots(x, Protocol::UDP)
-                    .len()
-                    <= recent_peers.len()
+                    .get_not_unique_leader_tpus(x, Protocol::UDP)
+                    .len(),
+                x as usize
             );
         }
     }

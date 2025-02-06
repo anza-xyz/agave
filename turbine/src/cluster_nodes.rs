@@ -296,8 +296,8 @@ pub fn new_cluster_nodes<T: 'static>(
         .map(|(ix, node)| (*node.pubkey(), ix))
         .collect();
     let broadcast = TypeId::of::<T>() == TypeId::of::<BroadcastStage>();
-    let stakes: Vec<u64> = nodes.iter().map(|node| node.stake).collect();
-    let mut weighted_shuffle = WeightedShuffle::new("cluster-nodes", &stakes);
+    let stakes = nodes.iter().map(|node| node.stake);
+    let mut weighted_shuffle = WeightedShuffle::new("cluster-nodes", stakes);
     if broadcast {
         weighted_shuffle.remove_index(index[&self_pubkey]);
     }

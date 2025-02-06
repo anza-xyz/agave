@@ -41,6 +41,7 @@ solana-reserved-account-keys = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["verify"] }
 
 [lib]
 crate-type = ["lib"]

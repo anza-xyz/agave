@@ -1,11 +1,5 @@
 use {
-    crate::{
-        accounts_index::AccountsIndexRootsStats,
-        append_vec::{
-            APPEND_VEC_MMAPPED_FILES_DIRTY, APPEND_VEC_MMAPPED_FILES_OPEN,
-            APPEND_VEC_OPEN_AS_FILE_IO,
-        },
-    },
+    crate::{accounts_index::AccountsIndexRootsStats, append_vec::APPEND_VEC_STATS},
     solana_sdk::timing::AtomicInterval,
     std::{
         num::Saturating,
@@ -244,17 +238,17 @@ impl LatestAccountsIndexRootsStats {
             ),
             (
                 "append_vecs_open",
-                APPEND_VEC_MMAPPED_FILES_OPEN.load(Ordering::Relaxed),
+                APPEND_VEC_STATS.mmap_files_open.load(Ordering::Relaxed),
                 i64
             ),
             (
                 "append_vecs_dirty",
-                APPEND_VEC_MMAPPED_FILES_DIRTY.load(Ordering::Relaxed),
+                APPEND_VEC_STATS.mmap_files_dirty.load(Ordering::Relaxed),
                 i64
             ),
             (
                 "append_vecs_open_as_file_io",
-                APPEND_VEC_OPEN_AS_FILE_IO.load(Ordering::Relaxed),
+                APPEND_VEC_STATS.open_as_file_io.load(Ordering::Relaxed),
                 i64
             )
         );

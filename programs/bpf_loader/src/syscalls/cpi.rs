@@ -3,13 +3,8 @@ use {
     crate::serialization::account_data_region_memory_state,
     scopeguard::defer,
     solana_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix},
+    solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
-    solana_program::{
-        bpf_loader_upgradeable,
-        syscalls::{
-            MAX_CPI_ACCOUNT_INFOS, MAX_CPI_INSTRUCTION_ACCOUNTS, MAX_CPI_INSTRUCTION_DATA_LEN,
-        },
-    },
     solana_program_runtime::invoke_context::SerializedAccountMetadata,
     solana_sbpf::{
         ebpf,
@@ -19,6 +14,25 @@ use {
     solana_transaction_context::BorrowedAccount,
     std::{mem, ptr},
 };
+// consts inlined to avoid solana-program dep
+const MAX_CPI_INSTRUCTION_DATA_LEN: u64 = 10 * 1024;
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    MAX_CPI_INSTRUCTION_DATA_LEN,
+    solana_program::syscalls::MAX_CPI_INSTRUCTION_DATA_LEN
+);
+const MAX_CPI_INSTRUCTION_ACCOUNTS: u8 = u8::MAX;
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    MAX_CPI_INSTRUCTION_ACCOUNTS,
+    solana_program::syscalls::MAX_CPI_INSTRUCTION_ACCOUNTS
+);
+const MAX_CPI_ACCOUNT_INFOS: usize = 128;
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    MAX_CPI_ACCOUNT_INFOS,
+    solana_program::syscalls::MAX_CPI_ACCOUNT_INFOS
+);
 
 fn check_account_info_pointer(
     invoke_context: &InvokeContext,
@@ -1044,7 +1058,7 @@ fn check_authorized_program(
     if native_loader::check_id(program_id)
         || bpf_loader::check_id(program_id)
         || bpf_loader_deprecated::check_id(program_id)
-        || (bpf_loader_upgradeable::check_id(program_id)
+        || (solana_sdk_ids::bpf_loader_upgradeable::check_id(program_id)
             && !(bpf_loader_upgradeable::is_upgrade_instruction(instruction_data)
                 || bpf_loader_upgradeable::is_set_authority_instruction(instruction_data)
                 || (invoke_context

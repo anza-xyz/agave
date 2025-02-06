@@ -5,7 +5,11 @@ use {
     solana_clock::{Clock, Epoch},
     solana_feature_set::FeatureSet,
     solana_instruction::AccountMeta,
-    solana_program::stake::{
+    solana_program_runtime::invoke_context::mock_process_instruction,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::sysvar::{clock, rent, stake_history},
+    solana_stake_interface::{
         instruction::{
             self, AuthorizeCheckedWithSeedArgs, AuthorizeWithSeedArgs, LockupArgs,
             LockupCheckedArgs, StakeInstruction,
@@ -13,16 +17,13 @@ use {
         stake_flags::StakeFlags,
         state::{Authorized, Lockup, StakeAuthorize, StakeStateV2},
     },
-    solana_program_runtime::invoke_context::mock_process_instruction,
-    solana_pubkey::Pubkey,
-    solana_rent::Rent,
-    solana_sdk_ids::sysvar::{clock, rent, stake_history},
     solana_stake_program::{
         stake_instruction,
         stake_state::{Delegation, Meta, Stake},
     },
     solana_sysvar::stake_history::StakeHistory,
-    solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
+    solana_vote_interface::state::{VoteState, VoteStateVersions},
+    solana_vote_program::vote_state,
     std::sync::Arc,
 };
 
@@ -621,7 +622,7 @@ fn bench_deactivate_delinquent(c: &mut Criterion) {
 
     // reference vote account has been consistently voting
     let mut vote_state = VoteState::default();
-    for epoch in 0..=solana_program::stake::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION {
+    for epoch in 0..=solana_stake_interface::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION {
         vote_state.increment_credits(epoch as Epoch, 1);
     }
     let reference_vote_address = Pubkey::new_unique();
@@ -629,7 +630,7 @@ fn bench_deactivate_delinquent(c: &mut Criterion) {
         1,
         &VoteStateVersions::new_current(vote_state),
         VoteState::size_of(),
-        &solana_vote_program::id(),
+        &solana_sdk_ids::vote::id(),
     )
     .unwrap();
 
@@ -657,7 +658,7 @@ fn bench_deactivate_delinquent(c: &mut Criterion) {
     test_setup.add_account(
         clock::id(),
         create_account_shared_data_for_test(&Clock {
-            epoch: solana_program::stake::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION as u64,
+            epoch: solana_stake_interface::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION as u64,
             ..Clock::default()
         }),
     );

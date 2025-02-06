@@ -16,7 +16,9 @@ qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
 solana-account = { workspace = true }
 solana-account-info = { workspace = true }
+solana-big-mod-exp = { workspace = true }
 solana-bincode = { workspace = true }
+solana-blake3-hasher = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
@@ -26,12 +28,13 @@ solana-feature-set = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["serde"] }
+solana-loader-v4-interface = { workspace = true, optional = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-packet = { workspace = true }
 solana-poseidon = { workspace = true }
 solana-precompiles = { workspace = true }
-solana-program = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-memory = { workspace = true }
 solana-program-runtime = { workspace = true }
@@ -58,10 +61,12 @@ solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-last-restart-slot = { workspace = true }
+solana-program = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+static_assertions = { workspace = true }
 test-case = { workspace = true }
 
 [lib]
@@ -87,4 +92,4 @@ shuttle-test = [
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test"
 ]
-svm-internal = []
+svm-internal = ["dep:solana-loader-v4-interface"]

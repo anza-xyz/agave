@@ -1,22 +1,20 @@
 //! The `recvmmsg` module provides recvmmsg() API implementation
 
 pub use solana_perf::packet::NUM_RCVMMSGS;
-use {
-    crate::packet::{Meta, Packet},
-    std::{cmp, io, net::UdpSocket},
-};
 #[cfg(target_os = "linux")]
 use {
+    crate::msghdr::create_msghdr,
     itertools::izip,
-    libc::{
-        iovec, mmsghdr, msghdr, sockaddr_storage, socklen_t, AF_INET, AF_INET6, MSG_WAITFORONE,
-    },
+    libc::{iovec, mmsghdr, sockaddr_storage, socklen_t, AF_INET, AF_INET6, MSG_WAITFORONE},
     std::{
         mem::{self, MaybeUninit},
         net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
         os::unix::io::AsRawFd,
-        ptr,
     },
+};
+use {
+    crate::packet::{Meta, Packet},
+    std::{cmp, io, net::UdpSocket},
 };
 
 #[cfg(not(target_os = "linux"))]
@@ -89,7 +87,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     }
     // Assert that there are no leftovers in packets.
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
-    const SOCKADDR_STORAGE_SIZE: usize = mem::size_of::<sockaddr_storage>();
+    const SOCKADDR_STORAGE_SIZE: socklen_t = mem::size_of::<sockaddr_storage>() as socklen_t;
 
     let mut iovs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
     let mut addrs = [MaybeUninit::zeroed(); NUM_RCVMMSGS];
@@ -107,31 +105,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
             iov_len: buffer.len(),
         });
 
-        #[cfg(not(target_env = "musl"))]
-        let msg_hdr = msghdr {
-            msg_name: addr.as_mut_ptr() as *mut _,
-            msg_namelen: SOCKADDR_STORAGE_SIZE as socklen_t,
-            msg_iov: iov.as_mut_ptr(),
-            msg_iovlen: 1,
-            msg_control: ptr::null::<libc::c_void>() as *mut _,
-            msg_controllen: 0,
-            msg_flags: 0,
-        };
-
-        #[cfg(target_env = "musl")]
-        let msg_hdr = {
-            // Cannot construct msghdr directly on musl
-            // See https://github.com/rust-lang/libc/issues/2344 for more info
-            let mut msg_hdr: msghdr = unsafe { std::mem::zeroed() };
-            msg_hdr.msg_name = addr.as_mut_ptr() as *mut _;
-            msg_hdr.msg_namelen = SOCKADDR_STORAGE_SIZE as socklen_t;
-            msg_hdr.msg_iov = iov.as_mut_ptr();
-            msg_hdr.msg_iovlen = 1;
-            msg_hdr.msg_control = ptr::null::<libc::c_void>() as *mut _;
-            msg_hdr.msg_controllen = 0;
-            msg_hdr.msg_flags = 0;
-            msg_hdr
-        };
+        let msg_hdr = create_msghdr(addr, SOCKADDR_STORAGE_SIZE, iov);
 
         hdr.write(mmsghdr {
             msg_len: 0,

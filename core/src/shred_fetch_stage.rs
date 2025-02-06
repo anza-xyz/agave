@@ -15,7 +15,6 @@ use {
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT},
         epoch_schedule::EpochSchedule,
-        genesis_config::ClusterType,
         packet::{Meta, PACKET_DATA_SIZE},
         pubkey::Pubkey,
         signature::Keypair,
@@ -89,10 +88,6 @@ impl ShredFetchStage {
             )
         };
         let mut stats = ShredFetchStats::default();
-        let cluster_type = {
-            let root_bank = bank_forks.read().unwrap().root_bank();
-            root_bank.cluster_type()
-        };
 
         for mut packet_batch in recvr {
             if last_updated.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
@@ -141,14 +136,13 @@ impl ShredFetchStage {
             // Filter out shreds that are way too far in the future to avoid the
             // overhead of having to hold onto them.
             let max_slot = last_slot + MAX_SHRED_DISTANCE_MINIMUM.max(2 * slots_per_epoch);
-            let enable_chained_merkle_shreds = |shred_slot| {
-                cluster_type == ClusterType::Development
-                    || check_feature_activation(
-                        &feature_set::enable_chained_merkle_shreds::id(),
-                        shred_slot,
-                        &feature_set,
-                        &epoch_schedule,
-                    )
+            let drop_unchained_merkle_shreds = |shred_slot| {
+                check_feature_activation(
+                    &feature_set::drop_unchained_merkle_shreds::id(),
+                    shred_slot,
+                    &feature_set,
+                    &epoch_schedule,
+                )
             };
             let turbine_disabled = turbine_disabled.load(Ordering::Relaxed);
             for packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
@@ -158,7 +152,7 @@ impl ShredFetchStage {
                         last_root,
                         max_slot,
                         shred_version,
-                        enable_chained_merkle_shreds,
+                        drop_unchained_merkle_shreds,
                         &mut stats,
                     )
                 {

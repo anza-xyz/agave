@@ -8,7 +8,10 @@ use {
         pubkey::Pubkey,
     },
     solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
-    std::sync::{atomic::Ordering::Relaxed, Arc, RwLock},
+    std::{
+        sync::{atomic::Ordering::Relaxed, Arc, RwLock},
+        time::{Duration, Instant},
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -34,6 +37,9 @@ pub struct DecisionMaker {
     my_pubkey: Pubkey,
     #[debug("{poh_recorder:p}")]
     poh_recorder: Arc<RwLock<PohRecorder>>,
+
+    cached_decision: Option<BufferedPacketsDecision>,
+    last_decision_time: Instant,
 }
 
 impl DecisionMaker {
@@ -41,10 +47,28 @@ impl DecisionMaker {
         Self {
             my_pubkey,
             poh_recorder,
+            cached_decision: None,
+            last_decision_time: Instant::now(),
         }
     }
 
-    pub(crate) fn make_consume_or_forward_decision(&self) -> BufferedPacketsDecision {
+    pub(crate) fn make_consume_or_forward_decision(&mut self) -> BufferedPacketsDecision {
+        const CACHE_DURATION: Duration = Duration::from_millis(5);
+        let now = Instant::now();
+
+        // If there is a cached decision that has not expired, return it now.
+        if let Some(decision) = &self.cached_decision {
+            if now.duration_since(self.last_decision_time) < CACHE_DURATION {
+                return decision.clone();
+            }
+        }
+
+        self.last_decision_time = now;
+        self.cached_decision = Some(self.make_consume_or_forward_decision_no_cache());
+        self.cached_decision.as_ref().unwrap().clone()
+    }
+
+    fn make_consume_or_forward_decision_no_cache(&self) -> BufferedPacketsDecision {
         let decision;
         {
             let poh_recorder = self.poh_recorder.read().unwrap();
@@ -115,7 +139,7 @@ impl DecisionMaker {
 }
 
 impl BankingStageMonitor for DecisionMaker {
-    fn status(&self) -> BankingStageStatus {
+    fn status(&mut self) -> BankingStageStatus {
         if self.poh_recorder.read().unwrap().is_exited.load(Relaxed) {
             BankingStageStatus::Exited
         } else if matches!(
@@ -186,7 +210,7 @@ mod tests {
                 .write()
                 .unwrap()
                 .set_bank_for_test(bank.clone());
-            let decision = decision_maker.make_consume_or_forward_decision();
+            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
             assert_matches!(decision, BufferedPacketsDecision::Consume(_));
         }
 
@@ -200,7 +224,7 @@ mod tests {
                     next_leader_slot + NUM_CONSECUTIVE_LEADER_SLOTS,
                 )),
             );
-            let decision = decision_maker.make_consume_or_forward_decision();
+            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
             assert!(
                 matches!(decision, BufferedPacketsDecision::Hold),
                 "next_leader_slot_offset: {next_leader_slot_offset}",
@@ -217,7 +241,7 @@ mod tests {
                     next_leader_slot + NUM_CONSECUTIVE_LEADER_SLOTS + 1,
                 )),
             );
-            let decision = decision_maker.make_consume_or_forward_decision();
+            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
             assert!(
                 matches!(decision, BufferedPacketsDecision::ForwardAndHold),
                 "next_leader_slot_offset: {next_leader_slot_offset}",
@@ -227,7 +251,7 @@ mod tests {
         // Known leader, not me - Forward
         {
             poh_recorder.write().unwrap().reset(bank, None);
-            let decision = decision_maker.make_consume_or_forward_decision();
+            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
             assert_matches!(decision, BufferedPacketsDecision::Forward);
         }
     }

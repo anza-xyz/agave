@@ -1,13 +1,14 @@
 pub use solana_file_download::DownloadProgressRecord;
 use {
     log::*,
+    solana_clock::Slot,
     solana_file_download::{download_file, DownloadProgressCallbackOption},
+    solana_genesis_config::DEFAULT_GENESIS_ARCHIVE,
     solana_runtime::{
         snapshot_hash::SnapshotHash,
         snapshot_package::SnapshotKind,
         snapshot_utils::{self, ArchiveFormat, ZstdConfig},
     },
-    solana_sdk::{clock::Slot, genesis_config::DEFAULT_GENESIS_ARCHIVE},
     std::{
         fs,
         net::SocketAddr,

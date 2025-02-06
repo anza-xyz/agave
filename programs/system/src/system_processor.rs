@@ -566,8 +566,8 @@ mod tests {
     };
     use {
         super::*,
-        crate::{get_system_account_kind, SystemAccountKind},
         bincode::serialize,
+        solana_nonce_account::{get_system_account_kind, SystemAccountKind},
         solana_program_runtime::{
             invoke_context::mock_process_instruction, with_mock_invoke_context,
         },
@@ -1808,55 +1808,6 @@ mod tests {
             ),
             Err(InstructionError::InvalidAccountData),
         );
-    }
-
-    #[test]
-    fn test_get_system_account_kind_system_ok() {
-        let system_account = AccountSharedData::default();
-        assert_eq!(
-            get_system_account_kind(&system_account),
-            Some(SystemAccountKind::System)
-        );
-    }
-
-    #[test]
-    fn test_get_system_account_kind_nonce_ok() {
-        let nonce_account = AccountSharedData::new_data(
-            42,
-            &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::default())),
-            &system_program::id(),
-        )
-        .unwrap();
-        assert_eq!(
-            get_system_account_kind(&nonce_account),
-            Some(SystemAccountKind::Nonce)
-        );
-    }
-
-    #[test]
-    fn test_get_system_account_kind_uninitialized_nonce_account_fail() {
-        assert_eq!(
-            get_system_account_kind(&nonce_account::create_account(42).borrow()),
-            None
-        );
-    }
-
-    #[test]
-    fn test_get_system_account_kind_system_owner_nonzero_nonnonce_data_fail() {
-        let other_data_account =
-            AccountSharedData::new_data(42, b"other", &Pubkey::default()).unwrap();
-        assert_eq!(get_system_account_kind(&other_data_account), None);
-    }
-
-    #[test]
-    fn test_get_system_account_kind_nonsystem_owner_with_nonce_data_fail() {
-        let nonce_account = AccountSharedData::new_data(
-            42,
-            &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::default())),
-            &Pubkey::new_unique(),
-        )
-        .unwrap();
-        assert_eq!(get_system_account_kind(&nonce_account), None);
     }
 
     #[test]

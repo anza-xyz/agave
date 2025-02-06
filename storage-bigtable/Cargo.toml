@@ -50,6 +50,7 @@ zstd = { workspace = true }
 [dev-dependencies]
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 

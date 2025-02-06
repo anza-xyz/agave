@@ -536,7 +536,7 @@ impl<'a> InvokeContext<'a> {
             .ok_or(InstructionError::UnsupportedProgramId)?;
         let function = match &entry.program {
             ProgramCacheEntryType::Builtin(program) => program
-                .get_function_registry(SBPFVersion::V0)
+                .get_function_registry()
                 .lookup_by_key(ENTRYPOINT_KEY)
                 .map(|(_name, function)| function),
             _ => None,

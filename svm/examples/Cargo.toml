@@ -55,6 +55,7 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 solana-curve25519 = { path = "../../curves/curve25519" }
 solana-account-info = { path = "../../sdk/account-info" }
 solana-borsh = { path = "../../sdk/borsh" }
+solana-clock = { path = "../../sdk/clock" }
 solana-cpi = { path = "../../sdk/cpi" }
 solana-decode-error = { path = "../../sdk/decode-error" }
 solana-hash = { path = "../../sdk/hash" }
@@ -67,4 +68,5 @@ solana-program-option = { path = "../../sdk/program-option" }
 solana-program-pack = { path = "../../sdk/program-pack" }
 solana-pubkey = { path = "../../sdk/pubkey" }
 solana-sha256-hasher = { path = "../../sdk/sha256-hasher" }
+solana-sysvar-id = { path = "../../sdk/sysvar-id" }
 solana-zk-sdk = { path = "../../zk-sdk" }
