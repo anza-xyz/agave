@@ -364,7 +364,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut filter_executable_us: u64 = 0;
         let mut program_cache_us: u64 = 0;
         let mut execution_us: u64 = 0;
-        let mut evict_from_global_cache = false;
+        let mut evict_from_global_cache = false; // HANA maybe can obviate
+        let mut programs_modified_by_batch: HashMap<Pubkey, Arc<ProgramCacheEntry>> =
+            HashMap::new();
 
         // Validate, execute, and collect results from each transaction in order.
         // With SIMD83, transactions must be executed in order, because transactions
@@ -399,9 +401,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
-            let (program_accounts_map, single_filter_executable_us) = measure_us!(
+            let (mut program_accounts_map, single_filter_executable_us) = measure_us!(
                 self.filter_executable_program_accounts(&account_loader, tx, PROGRAM_OWNERS)
             );
+            // HANA TODO do this in the fn i just dont want to break test interfaces again before im done
+            for key in programs_modified_by_batch.keys() {
+                program_accounts_map.remove(key);
+            }
             filter_executable_us = filter_executable_us.saturating_add(single_filter_executable_us);
 
             let (mut program_cache_for_tx, single_program_cache_us) = measure_us!(self
@@ -412,6 +418,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     config.check_program_modification_slot,
                     config.limit_to_load_programs,
                 ));
+
+            // HANA TODO do this nicer somehwere
+            println!("HANA merging: {:#?}", programs_modified_by_batch);
+            program_cache_for_tx.merge(&programs_modified_by_batch);
+            program_cache_for_tx.merged_modified = false;
+
             if program_cache_for_tx.hit_max_limit {
                 return LoadAndExecuteSanitizedTransactionsOutput {
                     error_metrics,
@@ -451,10 +463,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // Update loaded accounts cache with account states which might have changed.
                     account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
 
-                    if program_cache_for_tx.loaded_missing
-                        || (executed_tx.was_successful()
-                            && !executed_tx.programs_modified_by_tx.is_empty())
+                    if program_cache_for_tx.loaded_missing {
+                        evict_from_global_cache = true;
+                    }
+
+                    if executed_tx.was_successful()
+                        && !executed_tx.programs_modified_by_tx.is_empty()
                     {
+                        for (key, entry) in &executed_tx.programs_modified_by_tx {
+                            programs_modified_by_batch
+                                .entry(*key)
+                                .or_insert(entry.clone());
+                        }
                         evict_from_global_cache = true;
                     }
 
@@ -799,7 +819,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // starts empty. passed to filter and stuff in it is excluded
         // replenish doesnt need to be changed further. we either store or merge modified into the cache
         // then we execute. if execution was successful we drain its modified and merge with the shared one
-        // and repeat with filter. this assumes it doesnt matter if 
+        // and repeat with filter. this assumes it doesnt matter if
         //
         // HANA thinking through this fresh, i asked pankaj some questions but am not sure about global still
         // ideally we shouldnt have to care. the idea here is roughly a laod/filter/replenish/merge where:
