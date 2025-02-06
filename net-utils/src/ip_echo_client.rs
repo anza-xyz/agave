@@ -143,7 +143,7 @@ pub(crate) async fn verify_all_reachable_tcp(
         let listeners = chunk.collect_vec();
         let ports = listeners
             .iter()
-            .map(|l| l.local_addr().unwrap().port())
+            .map(|l| l.local_addr().expect("Sockets should be bound").port())
             .collect_vec();
         info!(
             "Checking that tcp ports {:?} are reachable from {:?}",
@@ -220,7 +220,7 @@ pub(crate) async fn verify_all_reachable_tcp(
 /// necessary if checking many ports.
 /// A given amount of retries will be made to accommodate packet loss.
 /// This function may panic.
-/// This function assumes that all sockets are bound to the same IP
+/// This function assumes that all sockets are bound to the same IP.
 pub(crate) async fn verify_all_reachable_udp(
     ip_echo_server_addr: SocketAddr,
     sockets: &[&UdpSocket],
