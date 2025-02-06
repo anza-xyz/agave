@@ -11,6 +11,7 @@ use {
 };
 
 /// Cached root bank that only loads from bank forks if the root has been updated.
+#[derive(Clone)]
 pub struct RootBankCache {
     bank_forks: Arc<RwLock<BankForks>>,
     cached_root_bank: Weak<Bank>,

@@ -236,7 +236,6 @@ fn test_scheduler_producing_blocks() {
         None,
         None,
         ignored_prioritization_fee_cache,
-        poh_recorder.read().unwrap().new_recorder(),
     );
     let channels = {
         let banking_tracer = BankingTracer::new_disabled();

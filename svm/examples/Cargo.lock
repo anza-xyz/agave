@@ -1386,7 +1386,7 @@ dependencies = [
  "convert_case 0.6.0",
  "proc-macro2",
  "quote",
- "syn 2.0.87",
+ "syn 2.0.96",
  "unicode-xid",
 ]
 

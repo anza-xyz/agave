@@ -476,7 +476,6 @@ fn main() {
             None,
             Some(replay_vote_sender.clone()),
             prioritization_fee_cache.clone(),
-            poh_recorder.read().unwrap().new_recorder(),
         );
         let channels = banking_tracer.create_channels_for_scheduler_pool(&pool);
         ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info, &poh_recorder);

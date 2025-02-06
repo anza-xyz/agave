@@ -1023,7 +1023,6 @@ impl Validator {
                     transaction_status_sender.clone(),
                     Some(replay_vote_sender.clone()),
                     prioritization_fee_cache.clone(),
-                    poh_recorder.read().unwrap().new_recorder(),
                 );
 
                 let channels = banking_tracer.create_channels_for_scheduler_pool(&scheduler_pool);

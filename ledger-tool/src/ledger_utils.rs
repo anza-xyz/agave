@@ -420,7 +420,6 @@ pub fn load_and_process_ledger(
                     transaction_status_sender.clone(),
                     no_replay_vote_sender,
                     ignored_prioritization_fee_cache,
-                    new_poh_recorder.0.new_recorder(),
                 );
                 bank_forks
                     .write()
