@@ -413,14 +413,14 @@ fn validators_set(
     }
 }
 
-fn get_cluster_shred_version(entrypoints: &[SocketAddr]) -> Option<u16> {
+fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -> Option<u16> {
     let entrypoints = {
         let mut index: Vec<_> = (0..entrypoints.len()).collect();
         index.shuffle(&mut rand::thread_rng());
         index.into_iter().map(|i| &entrypoints[i])
     };
     for entrypoint in entrypoints {
-        match solana_net_utils::get_cluster_shred_version(entrypoint) {
+        match solana_net_utils::get_cluster_shred_version_with_binding(entrypoint, bind_address) {
             Err(err) => eprintln!("get_cluster_shred_version failed: {entrypoint}, {err}"),
             Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
             Ok(shred_version) => {
@@ -1179,7 +1179,7 @@ pub fn main() {
     // version can then be deleted from gossip and get_rpc_node above.
     let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
         .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs));
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_address));
 
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         match value_t_or_exit!(matches, "tower_storage", String).as_str() {
@@ -1730,8 +1730,13 @@ pub fn main() {
 
     let archive_format = {
         let archive_format_str = value_t_or_exit!(matches, "snapshot_archive_format", String);
-        ArchiveFormat::from_cli_arg(&archive_format_str)
-            .unwrap_or_else(|| panic!("Archive format not recognized: {archive_format_str}"))
+        let mut archive_format = ArchiveFormat::from_cli_arg(&archive_format_str)
+            .unwrap_or_else(|| panic!("Archive format not recognized: {archive_format_str}"));
+        if let ArchiveFormat::TarZstd { config } = &mut archive_format {
+            config.compression_level =
+                value_t_or_exit!(matches, "snapshot_zstd_compression_level", i32);
+        }
+        archive_format
     };
 
     let snapshot_version =
@@ -1942,15 +1947,16 @@ pub fn main() {
                         "Contacting {} to determine the validator's public IP address",
                         entrypoint_addr
                     );
-                    solana_net_utils::get_public_ip_addr(entrypoint_addr).map_or_else(
-                        |err| {
-                            eprintln!(
-                                "Failed to contact cluster entrypoint {entrypoint_addr}: {err}"
-                            );
-                            None
-                        },
-                        Some,
-                    )
+                    solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_address)
+                        .map_or_else(
+                            |err| {
+                                eprintln!(
+                                    "Failed to contact cluster entrypoint {entrypoint_addr}: {err}"
+                                );
+                                None
+                            },
+                            Some,
+                        )
                 });
 
                 gossip_host.unwrap_or_else(|| {

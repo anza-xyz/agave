@@ -68,6 +68,7 @@ tokio-util = { workspace = true, features = ["codec", "compat"] }
 [dev-dependencies]
 serial_test = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-rpc = { path = ".", features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
@@ -75,6 +76,12 @@ solana-runtime-transaction = { workspace = true, features = [
 solana-stake-program = { workspace = true }
 spl-pod = { workspace = true }
 symlink = { workspace = true }
+test-case = { workspace = true }
+
+[features]
+dev-context-only-utils = [
+    "solana-rpc/dev-context-only-utils",
+]
 
 [lib]
 crate-type = ["lib"]

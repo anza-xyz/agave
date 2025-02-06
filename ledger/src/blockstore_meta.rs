@@ -1,7 +1,7 @@
 use {
     crate::{
         blockstore::MAX_DATA_SHREDS_PER_SLOT,
-        shred::{Shred, ShredType},
+        shred::{self, Shred, ShredType},
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
@@ -107,12 +107,20 @@ mod serde_compat {
     }
 }
 
+pub type Index = IndexV2;
+pub type ShredIndex = ShredIndexV2;
+/// We currently support falling back to the previous format for migration purposes.
+///
+/// See https://github.com/anza-xyz/agave/issues/3570.
+pub type IndexFallback = IndexV1;
+pub type ShredIndexFallback = ShredIndexV1;
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 /// Index recording presence/absence of shreds
-pub struct Index {
+pub struct IndexV1 {
     pub slot: Slot,
-    data: ShredIndex,
-    coding: ShredIndex,
+    data: ShredIndexV1,
+    coding: ShredIndexV1,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -122,9 +130,9 @@ pub struct IndexV2 {
     coding: ShredIndexV2,
 }
 
-impl From<IndexV2> for Index {
+impl From<IndexV2> for IndexV1 {
     fn from(index: IndexV2) -> Self {
-        Index {
+        IndexV1 {
             slot: index.slot,
             data: index.data.into(),
             coding: index.coding.into(),
@@ -132,8 +140,8 @@ impl From<IndexV2> for Index {
     }
 }
 
-impl From<Index> for IndexV2 {
-    fn from(index: Index) -> Self {
+impl From<IndexV1> for IndexV2 {
+    fn from(index: IndexV1) -> Self {
         IndexV2 {
             slot: index.slot,
             data: index.data.into(),
@@ -143,7 +151,7 @@ impl From<Index> for IndexV2 {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct ShredIndex {
+pub struct ShredIndexV1 {
     /// Map representing presence/absence of shreds
     index: BTreeSet<u64>,
 }
@@ -216,10 +224,10 @@ pub struct MerkleRootMeta {
 
 #[derive(Deserialize, Serialize)]
 pub struct DuplicateSlotProof {
-    #[serde(with = "serde_bytes")]
-    pub shred1: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    pub shred2: Vec<u8>,
+    #[serde(with = "shred::serde_bytes_payload")]
+    pub shred1: shred::Payload,
+    #[serde(with = "shred::serde_bytes_payload")]
+    pub shred2: shred::Payload,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
@@ -251,7 +259,7 @@ pub struct FrozenHashStatus {
 
 impl Index {
     pub(crate) fn new(slot: Slot) -> Self {
-        Index {
+        Self {
             slot,
             data: ShredIndex::default(),
             coding: ShredIndex::default(),
@@ -273,11 +281,39 @@ impl Index {
     }
 }
 
+#[cfg(test)]
+#[allow(unused)]
+impl IndexFallback {
+    pub(crate) fn new(slot: Slot) -> Self {
+        Self {
+            slot,
+            data: ShredIndexFallback::default(),
+            coding: ShredIndexFallback::default(),
+        }
+    }
+
+    pub fn data(&self) -> &ShredIndexFallback {
+        &self.data
+    }
+    pub fn coding(&self) -> &ShredIndexFallback {
+        &self.coding
+    }
+
+    pub(crate) fn data_mut(&mut self) -> &mut ShredIndexFallback {
+        &mut self.data
+    }
+    pub(crate) fn coding_mut(&mut self) -> &mut ShredIndexFallback {
+        &mut self.coding
+    }
+}
+
 /// Superseded by [`ShredIndexV2`].
 ///
 /// TODO: Remove this once new [`ShredIndexV2`] is fully rolled out
 /// and no longer relies on it for fallback.
-impl ShredIndex {
+#[cfg(test)]
+#[allow(unused)]
+impl ShredIndexV1 {
     pub fn num_shreds(&self) -> usize {
         self.index.len()
     }
@@ -297,7 +333,6 @@ impl ShredIndex {
         self.index.insert(index);
     }
 
-    #[cfg(test)]
     fn remove(&mut self, index: u64) {
         self.index.remove(&index);
     }
@@ -498,23 +533,23 @@ impl FromIterator<u64> for ShredIndexV2 {
     }
 }
 
-impl FromIterator<u64> for ShredIndex {
+impl FromIterator<u64> for ShredIndexV1 {
     fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
-        ShredIndex {
+        ShredIndexV1 {
             index: iter.into_iter().collect(),
         }
     }
 }
 
-impl From<ShredIndex> for ShredIndexV2 {
-    fn from(value: ShredIndex) -> Self {
+impl From<ShredIndexV1> for ShredIndexV2 {
+    fn from(value: ShredIndexV1) -> Self {
         value.index.into_iter().collect()
     }
 }
 
-impl From<ShredIndexV2> for ShredIndex {
+impl From<ShredIndexV2> for ShredIndexV1 {
     fn from(value: ShredIndexV2) -> Self {
-        ShredIndex {
+        ShredIndexV1 {
             index: value.iter().collect(),
         }
     }
@@ -739,8 +774,14 @@ impl MerkleRootMeta {
 }
 
 impl DuplicateSlotProof {
-    pub(crate) fn new(shred1: Vec<u8>, shred2: Vec<u8>) -> Self {
-        DuplicateSlotProof { shred1, shred2 }
+    pub(crate) fn new<S, T>(shred1: S, shred2: T) -> Self
+    where
+        shred::Payload: From<S> + From<T>,
+    {
+        DuplicateSlotProof {
+            shred1: shred::Payload::from(shred1),
+            shred2: shred::Payload::from(shred2),
+        }
     }
 }
 
@@ -922,7 +963,7 @@ mod test {
             shreds in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
             range in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64)
         ) {
-            let mut legacy = ShredIndex::default();
+            let mut legacy = ShredIndexV1::default();
             let mut v2 = ShredIndexV2::default();
 
             for i in shreds {
@@ -942,7 +983,7 @@ mod test {
             );
 
             assert_eq!(ShredIndexV2::from(legacy.clone()), v2.clone());
-            assert_eq!(ShredIndex::from(v2), legacy);
+            assert_eq!(ShredIndexV1::from(v2), legacy);
         }
 
         /// Property: [`Index`] cannot be deserialized from [`IndexV2`].
@@ -965,7 +1006,7 @@ mod test {
                 slot,
             };
             let config = bincode::DefaultOptions::new().with_fixint_encoding().reject_trailing_bytes();
-            let legacy = config.deserialize::<Index>(&config.serialize(&index).unwrap());
+            let legacy = config.deserialize::<IndexV1>(&config.serialize(&index).unwrap());
             prop_assert!(legacy.is_err());
         }
 
@@ -983,7 +1024,7 @@ mod test {
             data_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
             slot in 0..u64::MAX
         ) {
-            let index = Index {
+            let index = IndexV1 {
                 coding: coding_indices.into_iter().collect(),
                 data: data_indices.into_iter().collect(),
                 slot,

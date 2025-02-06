@@ -6,8 +6,8 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
-    solana_program::vote::state::VoteState,
     solana_pubkey::Pubkey,
+    solana_vote_interface::state::VoteState,
     std::{
         cmp::Ordering,
         collections::{hash_map::Entry, HashMap},
@@ -97,7 +97,7 @@ impl VoteAccount {
         use {
             rand::Rng as _,
             solana_clock::Clock,
-            solana_program::vote::state::{VoteInit, VoteStateVersions},
+            solana_vote_interface::state::{VoteInit, VoteStateVersions},
         };
 
         let mut rng = rand::thread_rng();
@@ -483,8 +483,8 @@ mod tests {
         rand::Rng,
         solana_account::WritableAccount,
         solana_clock::Clock,
-        solana_program::vote::state::{VoteInit, VoteStateVersions},
         solana_pubkey::Pubkey,
+        solana_vote_interface::state::{VoteInit, VoteStateVersions},
         std::iter::repeat_with,
     };
 

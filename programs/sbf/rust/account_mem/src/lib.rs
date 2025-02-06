@@ -108,7 +108,20 @@ pub fn process_instruction(
             // memmov dst overlaps begin of account
             unsafe { sol_memmove(too_early(3).as_mut_ptr(), buf.as_ptr(), 10) };
         }
-
+        14 => {
+            // memmove dst overlaps begin of account, reverse order
+            unsafe { sol_memmove(too_early(0).as_mut_ptr(), too_early(3).as_ptr(), 10) };
+        }
+        15 => {
+            // memmove dst overlaps end of account, reverse order
+            unsafe {
+                sol_memmove(
+                    data[data_len..].as_mut_ptr(),
+                    data[data_len.saturating_sub(3)..].as_mut_ptr(),
+                    10,
+                )
+            };
+        }
         _ => {}
     }
 

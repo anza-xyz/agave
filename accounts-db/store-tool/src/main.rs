@@ -5,10 +5,10 @@ use {
         ArgMatches, SubCommand,
     },
     rayon::prelude::*,
+    solana_account::ReadableAccount,
     solana_accounts_db::append_vec::AppendVec,
-    solana_sdk::{
-        account::ReadableAccount, pubkey::Pubkey, system_instruction::MAX_PERMITTED_DATA_LENGTH,
-    },
+    solana_pubkey::Pubkey,
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
         fs, io,
         mem::ManuallyDrop,

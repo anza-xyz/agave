@@ -14,6 +14,7 @@ use {
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
+    solana_account::{state_traits::StateMut, Account},
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_clap_utils::{
@@ -42,7 +43,15 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::{FeatureSet, FEATURE_NAMES},
+    solana_instruction::{error::InstructionError, Instruction},
+    solana_keypair::{keypair_from_seed, read_keypair_file, Keypair},
+    solana_message::Message,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_program::bpf_loader_upgradeable::{
+        self, get_program_data_address, UpgradeableLoaderState,
+    },
     solana_program_runtime::invoke_context::InvokeContext,
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
@@ -53,20 +62,12 @@ use {
     },
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
-    solana_sdk::{
-        account::Account,
-        account_utils::StateMut,
-        bpf_loader, bpf_loader_deprecated,
-        bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
-        compute_budget,
-        instruction::{Instruction, InstructionError},
-        message::Message,
-        packet::PACKET_DATA_SIZE,
-        pubkey::Pubkey,
-        signature::{keypair_from_seed, read_keypair_file, Keypair, Signature, Signer},
-        system_instruction::{SystemError, MAX_PERMITTED_DATA_LENGTH},
-        transaction::{Transaction, TransactionError},
-    },
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, compute_budget},
+    solana_signature::Signature,
+    solana_signer::Signer,
+    solana_system_interface::{error::SystemError, MAX_PERMITTED_DATA_LENGTH},
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
     std::{
         fs::File,
         io::{Read, Write},
@@ -1315,6 +1316,17 @@ fn process_program_deploy(
         fetch_feature_set(&rpc_client)?
     };
 
+    if !skip_feature_verification {
+        if feature_set.is_active(&solana_feature_set::enable_loader_v4::id()) {
+            warn!("Loader-v4 is available now. Please migrate your program.");
+        }
+        if do_initial_deploy
+            && feature_set.is_active(&solana_feature_set::disable_new_loader_v3_deployments::id())
+        {
+            return Err("No new programs can be deployed on loader-v3. Please use the program-v4 subcommand instead.".into());
+        }
+    }
+
     let (program_data, program_len, buffer_program_data) =
         if let Some(program_location) = program_location {
             let program_data = read_and_verify_elf(program_location, feature_set)?;
@@ -2471,6 +2483,7 @@ fn do_process_program_deploy(
 
     // Create and add final message
     let final_message = {
+        #[allow(deprecated)]
         let instructions = bpf_loader_upgradeable::deploy_with_max_program_len(
             &fee_payer_signer.pubkey(),
             &program_signers[0].pubkey(),
@@ -3109,7 +3122,8 @@ mod tests {
         },
         serde_json::Value,
         solana_cli_output::OutputFormat,
-        solana_sdk::{hash::Hash, signature::write_keypair_file},
+        solana_hash::Hash,
+        solana_keypair::write_keypair_file,
     };
 
     fn make_tmp_path(name: &str) -> String {

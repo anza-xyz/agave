@@ -178,10 +178,10 @@ mod tests {
         file::TieredStorageMagicNumber,
         footer::TieredStorageFooter,
         hot::HOT_FORMAT,
+        solana_pubkey::Pubkey,
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount},
             clock::Slot,
-            pubkey::Pubkey,
             system_instruction::MAX_PERMITTED_DATA_LENGTH,
         },
         std::{

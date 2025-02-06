@@ -86,7 +86,14 @@ where
             while index != 0 {
                 let offset = (index - 1) & BIT_MASK;
                 index = (index - 1) >> BIT_SHIFT; // parent node
-                tree[index][offset] += weight;
+                debug_assert!(index < tree.len());
+                // SAFETY: Index is updated to a lesser value towards zero.
+                // The bitwise AND operation with BIT_MASK ensures that offset
+                // is always less than FANOUT, which is the size of the inner
+                // arrays. As a result, tree[index][offset] never goes out of
+                // bounds.
+                unsafe { tree.get_unchecked_mut(index).get_unchecked_mut(offset) }
+                    .add_assign(weight);
             }
         }
         if num_negative > 0 {
@@ -119,7 +126,12 @@ where
             let offset = (index - 1) & BIT_MASK;
             index = (index - 1) >> BIT_SHIFT; // parent node
             debug_assert!(self.tree[index][offset] >= weight);
-            self.tree[index][offset] -= weight;
+            // SAFETY: Index is updated to a lesser value towards zero. The
+            // bitwise AND operation with BIT_MASK ensures that offset is
+            // always less than FANOUT, which is the size of the inner arrays.
+            // As a result, tree[index][offset] never goes out of bounds.
+            unsafe { self.tree.get_unchecked_mut(index).get_unchecked_mut(offset) }
+                .sub_assign(weight);
         }
     }
 
@@ -128,23 +140,29 @@ where
     fn search(&self, mut val: T) -> (/*index:*/ usize, /*weight:*/ T) {
         debug_assert!(val >= Self::ZERO);
         debug_assert!(val < self.weight);
-        // Traverse the tree downwards from the root while maintaining the
-        // weight of the subtree which contains the target leaf node.
+        debug_assert!(!self.tree.is_empty());
+        // Traverse the tree downwards from the root to the target leaf node.
         let mut index = 0; // root
-        let mut weight = self.weight;
-        while let Some(tree) = self.tree.get(index) {
-            for (j, &node) in tree.iter().enumerate() {
-                if val < node {
-                    // Traverse to the j'th subtree of self.tree[index].
-                    weight = node;
-                    index = (index << BIT_SHIFT) + j + 1;
-                    break;
-                } else {
-                    val -= node;
-                }
+        loop {
+            // SAFETY: function returns if index goes out of bounds.
+            let (offset, &node) = unsafe { self.tree.get_unchecked(index) }
+                .iter()
+                .enumerate()
+                .find(|(_, &node)| {
+                    if val < node {
+                        true
+                    } else {
+                        val -= node;
+                        false
+                    }
+                })
+                .unwrap();
+            // Traverse to the subtree of self.tree[index].
+            index = (index << BIT_SHIFT) + offset + 1;
+            if self.tree.len() <= index {
+                return (index - self.num_nodes, node);
             }
         }
-        (index - self.num_nodes, weight)
     }
 
     pub fn remove_index(&mut self, k: usize) {
@@ -177,7 +195,7 @@ where
     pub fn first<R: Rng>(&self, rng: &mut R) -> Option<usize> {
         if self.weight > Self::ZERO {
             let sample = <T as SampleUniform>::Sampler::sample_single(Self::ZERO, self.weight, rng);
-            let (index, _weight) = WeightedShuffle::search(self, sample);
+            let (index, _) = self.search(sample);
             return Some(index);
         }
         if self.zeros.is_empty() {
@@ -197,7 +215,7 @@ where
             if self.weight > Self::ZERO {
                 let sample =
                     <T as SampleUniform>::Sampler::sample_single(Self::ZERO, self.weight, rng);
-                let (index, weight) = WeightedShuffle::search(&self, sample);
+                let (index, weight) = self.search(sample);
                 self.remove(index, weight);
                 return Some(index);
             }

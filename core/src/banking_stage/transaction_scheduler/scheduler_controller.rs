@@ -105,8 +105,8 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
             self.timing_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
 
-            self.process_transactions(&decision)?;
             self.receive_completed()?;
+            self.process_transactions(&decision)?;
             if self.receive_and_buffer_packets(&decision).is_err() {
                 break;
             }
@@ -123,7 +123,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
                 .maybe_report_and_reset_interval(should_report);
             self.worker_metrics
                 .iter()
-                .for_each(|metrics| metrics.maybe_report_and_reset(new_leader_slot));
+                .for_each(|metrics| metrics.maybe_report_and_reset());
         }
 
         Ok(())

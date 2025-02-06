@@ -15,6 +15,7 @@ codecov = { repository = "solana-labs/solana", branch = "master", service = "git
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
+agave-thread-manager = { workspace = true }
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }
@@ -122,6 +123,7 @@ solana-logger = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
+solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }

@@ -430,10 +430,10 @@ pub struct TransactionBatchItem {
 impl TransactionBatchItem {
     fn with_nonce(nonce_info: NonceInfo) -> Self {
         Self {
-            check_result: Ok(CheckedTransactionDetails {
-                nonce: Some(nonce_info),
-                lamports_per_signature: LAMPORTS_PER_SIGNATURE,
-            }),
+            check_result: Ok(CheckedTransactionDetails::new(
+                Some(nonce_info),
+                LAMPORTS_PER_SIGNATURE,
+            )),
             ..Self::default()
         }
     }
@@ -443,10 +443,7 @@ impl Default for TransactionBatchItem {
     fn default() -> Self {
         Self {
             transaction: Transaction::default(),
-            check_result: Ok(CheckedTransactionDetails {
-                nonce: None,
-                lamports_per_signature: LAMPORTS_PER_SIGNATURE,
-            }),
+            check_result: Ok(CheckedTransactionDetails::new(None, LAMPORTS_PER_SIGNATURE)),
             asserts: TransactionBatchItemAsserts::default(),
         }
     }

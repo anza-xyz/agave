@@ -17,7 +17,7 @@ use {
 
 /// [`WorkerInfo`] holds information about a worker responsible for sending
 /// transaction batches.
-pub(crate) struct WorkerInfo {
+pub struct WorkerInfo {
     sender: mpsc::Sender<TransactionBatch>,
     handle: JoinHandle<()>,
     cancel: CancellationToken,
@@ -69,11 +69,11 @@ impl WorkerInfo {
 
 /// [`WorkersCache`] manages and caches workers. It uses an LRU cache to store and
 /// manage workers. It also tracks transaction statistics for each peer.
-pub(crate) struct WorkersCache {
+pub struct WorkersCache {
     workers: LruCache<SocketAddr, WorkerInfo>,
 
     /// Indicates that the `WorkersCache` is been `shutdown()`, interrupting any outstanding
-    /// `send_txs()` invocations.
+    /// `send_transactions_to_address()` invocations.
     cancel: CancellationToken,
 }
 
@@ -101,7 +101,7 @@ impl WorkersCache {
         }
     }
 
-    pub(crate) fn contains(&self, peer: &SocketAddr) -> bool {
+    pub fn contains(&self, peer: &SocketAddr) -> bool {
         self.workers.contains(peer)
     }
 
@@ -119,7 +119,7 @@ impl WorkersCache {
         None
     }
 
-    pub(crate) fn pop(&mut self, leader: SocketAddr) -> Option<ShutdownWorker> {
+    pub fn pop(&mut self, leader: SocketAddr) -> Option<ShutdownWorker> {
         if let Some(popped_worker) = self.workers.pop(&leader) {
             return Some(ShutdownWorker {
                 leader,
@@ -129,8 +129,16 @@ impl WorkersCache {
         None
     }
 
-    /// Try sending a batch of transactions to the worker for a given peer.
-    pub(crate) fn try_send_transactions_to_address(
+    /// Attempts to send immediately a batch of transactions to the worker for a
+    /// given peer.
+    ///
+    /// This method returns immediately if the channel of worker corresponding
+    /// to this peer is full returning error [`WorkersCacheError::FullChannel`].
+    /// If it happens that the peer's worker is stopped, it returns
+    /// [`WorkersCacheError::ShutdownError`]. In case if the worker is not
+    /// stopped but it's channel is unexpectedly dropped, it returns
+    /// [`WorkersCacheError::ReceiverDropped`].
+    pub fn try_send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
         txs_batch: TransactionBatch,
@@ -149,10 +157,14 @@ impl WorkersCache {
         let send_res = current_worker.try_send_transactions(txs_batch);
 
         if let Err(WorkersCacheError::ReceiverDropped) = send_res {
-            warn!(
+            debug!(
                 "Failed to deliver transaction batch for leader {}, drop batch.",
                 peer.ip()
             );
+            maybe_shutdown_worker(workers.pop(peer).map(|current_worker| ShutdownWorker {
+                leader: *peer,
+                worker: current_worker,
+            }));
         }
 
         send_res
@@ -166,7 +178,7 @@ impl WorkersCache {
         dead_code,
         reason = "This method will be used in the upcoming changes to implement optional backpressure on the sender."
     )]
-    pub(crate) async fn send_transactions_to_address(
+    pub async fn send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
         txs_batch: TransactionBatch,
@@ -183,18 +195,15 @@ impl WorkersCache {
             let send_res = current_worker.send_transactions(txs_batch).await;
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
                 // Remove the worker from the cache, if the peer has disconnected.
-                if let Some(current_worker) = workers.pop(peer) {
-                    // To avoid obscuring the error from send, ignore a possible
-                    // `TaskJoinFailure`.
-                    let close_result = current_worker.shutdown().await;
-                    if let Err(error) = close_result {
-                        error!("Error while closing worker: {error}.");
-                    }
-                }
+                maybe_shutdown_worker(workers.pop(peer).map(|current_worker| ShutdownWorker {
+                    leader: *peer,
+                    worker: current_worker,
+                }));
             }
 
             send_res
         };
+
         cancel
             .run_until_cancelled(body)
             .await
@@ -219,7 +228,7 @@ impl WorkersCache {
 /// [`ShutdownWorker`] takes care of stopping the worker. It's method
 /// `shutdown()` should be executed in a separate task to hide the latency of
 /// finishing worker gracefully.
-pub(crate) struct ShutdownWorker {
+pub struct ShutdownWorker {
     leader: SocketAddr,
     worker: WorkerInfo,
 }
@@ -234,7 +243,7 @@ impl ShutdownWorker {
     }
 }
 
-pub(crate) fn maybe_shutdown_worker(worker: Option<ShutdownWorker>) {
+pub fn maybe_shutdown_worker(worker: Option<ShutdownWorker>) {
     let Some(worker) = worker else {
         return;
     };

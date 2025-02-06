@@ -24,6 +24,7 @@ solana-account-decoder = { workspace = true }
 solana-clock = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
+solana-loader-v2-interface = { workspace = true, features = ["bincode"] }
 solana-message = { workspace = true }
 solana-program = { workspace = true }
 solana-pubkey = { workspace = true }

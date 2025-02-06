@@ -2,12 +2,12 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_program::vote::{
-        self,
-        state::{TowerSync, Vote, VoteStateUpdate},
-    },
     solana_signer::Signer,
     solana_transaction::Transaction,
+    solana_vote_interface::{
+        self as vote,
+        state::{TowerSync, Vote, VoteStateUpdate},
+    },
 };
 
 pub fn new_vote_transaction(

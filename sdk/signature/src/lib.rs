@@ -224,4 +224,53 @@ mod tests {
         let bincode_deserialized: SigShortVec = bincode::deserialize(&bincode_serialized).unwrap();
         assert_eq!(bincode_deserialized, to_serialize);
     }
+
+    #[test]
+    fn test_signature_fromstr() {
+        let signature = Signature::from([
+            103, 7, 88, 96, 203, 140, 191, 47, 231, 37, 30, 220, 61, 35, 93, 112, 225, 2, 5, 11,
+            158, 105, 246, 147, 133, 64, 109, 252, 119, 73, 108, 248, 167, 240, 160, 18, 222, 3, 1,
+            48, 51, 67, 94, 19, 91, 108, 227, 126, 100, 25, 212, 135, 90, 60, 61, 78, 186, 104, 22,
+            58, 242, 74, 148, 6,
+        ]);
+
+        let mut signature_base58_str = bs58::encode(signature).into_string();
+
+        assert_eq!(signature_base58_str.parse::<Signature>(), Ok(signature));
+
+        signature_base58_str.push_str(&bs58::encode(<[u8; 64]>::from(signature)).into_string());
+        assert_eq!(
+            signature_base58_str.parse::<Signature>(),
+            Err(ParseSignatureError::WrongSize)
+        );
+
+        signature_base58_str.truncate(signature_base58_str.len() / 2);
+        assert_eq!(signature_base58_str.parse::<Signature>(), Ok(signature));
+
+        signature_base58_str.truncate(signature_base58_str.len() / 2);
+        assert_eq!(
+            signature_base58_str.parse::<Signature>(),
+            Err(ParseSignatureError::WrongSize)
+        );
+
+        let mut signature_base58_str = bs58::encode(<[u8; 64]>::from(signature)).into_string();
+        assert_eq!(signature_base58_str.parse::<Signature>(), Ok(signature));
+
+        // throw some non-base58 stuff in there
+        signature_base58_str.replace_range(..1, "I");
+        assert_eq!(
+            signature_base58_str.parse::<Signature>(),
+            Err(ParseSignatureError::Invalid)
+        );
+
+        // too long input string
+        // longest valid encoding
+        let mut too_long = bs58::encode(&[255u8; SIGNATURE_BYTES]).into_string();
+        // and one to grow on
+        too_long.push('1');
+        assert_eq!(
+            too_long.parse::<Signature>(),
+            Err(ParseSignatureError::WrongSize)
+        );
+    }
 }

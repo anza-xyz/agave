@@ -1,7 +1,7 @@
 use {
+    solana_clock::{Epoch, DEFAULT_MS_PER_SLOT},
     solana_commitment_config::CommitmentConfig,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::clock::{Epoch, DEFAULT_MS_PER_SLOT},
     std::{thread::sleep, time::Duration},
 };
 

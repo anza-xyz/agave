@@ -127,6 +127,7 @@ impl CostTracker {
         self.transaction_signature_count = Saturating(0);
         self.secp256k1_instruction_signature_count = Saturating(0);
         self.ed25519_instruction_signature_count = Saturating(0);
+        self.secp256r1_instruction_signature_count = Saturating(0);
         self.in_flight_transaction_count = Saturating(0);
     }
 

@@ -3,8 +3,6 @@
 
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
-use byteorder::{ByteOrder, LittleEndian};
-
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[cfg_attr(
     feature = "serde",
@@ -57,13 +55,7 @@ impl HardForks {
             })
             .sum();
 
-        if fork_count > 0 {
-            let mut buf = [0u8; 8];
-            LittleEndian::write_u64(&mut buf[..], fork_count as u64);
-            Some(buf)
-        } else {
-            None
-        }
+        (fork_count > 0).then(|| (fork_count as u64).to_le_bytes())
     }
 }
 

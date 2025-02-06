@@ -11,7 +11,6 @@ edition = { workspace = true }
 
 [dependencies]
 bincode = { workspace = true }
-byteorder = { workspace = true }
 libsecp256k1 = { workspace = true }
 qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
@@ -23,7 +22,6 @@ solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
-solana-define-syscall = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }

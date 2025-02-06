@@ -14,6 +14,7 @@ use {
         spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
     },
     clap::{value_t, App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand},
+    solana_account::{from_account, state_traits::StateMut, Account},
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -31,7 +32,18 @@ use {
         CliEpochReward, CliStakeHistory, CliStakeHistoryEntry, CliStakeState, CliStakeType,
         OutputFormat, ReturnSignersConfig,
     },
+    solana_clock::{Clock, Epoch, UnixTimestamp, SECONDS_PER_DAY},
     solana_commitment_config::CommitmentConfig,
+    solana_epoch_schedule::EpochSchedule,
+    solana_message::Message,
+    solana_native_token::Sol,
+    solana_program::stake::{
+        self,
+        instruction::{self as stake_instruction, LockupArgs, StakeError},
+        state::{Authorized, Lockup, Meta, StakeActivationStatus, StakeAuthorize, StakeStateV2},
+        tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
+    },
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
@@ -40,28 +52,13 @@ use {
         response::{RpcInflationReward, RpcVoteAccountStatus},
     },
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
-    solana_sdk::{
-        account::{from_account, Account},
-        account_utils::StateMut,
-        clock::{Clock, UnixTimestamp, SECONDS_PER_DAY},
-        epoch_schedule::EpochSchedule,
-        message::Message,
-        native_token::Sol,
-        pubkey::Pubkey,
-        stake::{
-            self,
-            instruction::{self as stake_instruction, LockupArgs, StakeError},
-            state::{
-                Authorized, Lockup, Meta, StakeActivationStatus, StakeAuthorize, StakeStateV2,
-            },
-            tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
-        },
-        stake_history::{Epoch, StakeHistory},
-        system_instruction::{self, SystemError},
+    solana_sdk_ids::{
         system_program,
         sysvar::{clock, stake_history},
-        transaction::Transaction,
     },
+    solana_system_interface::{error::SystemError, instruction as system_instruction},
+    solana_sysvar::stake_history::StakeHistory,
+    solana_transaction::Transaction,
     std::{ops::Deref, rc::Rc},
 };
 
@@ -2883,13 +2880,11 @@ mod tests {
     use {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
+        solana_hash::Hash,
+        solana_keypair::{keypair_from_seed, read_keypair_file, write_keypair, Keypair},
+        solana_presigner::Presigner,
         solana_rpc_client_nonce_utils::blockhash_query,
-        solana_sdk::{
-            hash::Hash,
-            signature::{
-                keypair_from_seed, read_keypair_file, write_keypair, Keypair, Presigner, Signer,
-            },
-        },
+        solana_signer::Signer,
         tempfile::NamedTempFile,
     };
 

@@ -3,7 +3,7 @@ use {
         consensus::{heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice, tree_diff::TreeDiff},
         repair::{
             repair_generic_traversal::{get_closest_completion, get_unknown_last_index},
-            repair_service::{BestRepairsStats, RepairService, RepairTiming},
+            repair_service::{RepairMetrics, RepairService},
             repair_weighted_traversal,
             serve_repair::ShredRepairType,
         },
@@ -212,8 +212,7 @@ impl RepairWeight {
         max_new_shreds: usize,
         max_unknown_last_index_repairs: usize,
         max_closest_completion_repairs: usize,
-        repair_timing: &mut RepairTiming,
-        stats: &mut BestRepairsStats,
+        repair_metrics: &mut RepairMetrics,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
         let mut repairs = vec![];
@@ -289,7 +288,7 @@ impl RepairWeight {
         repairs.extend(closest_completion_repairs);
         get_closest_completion_elapsed.stop();
 
-        stats.update(
+        repair_metrics.best_repairs_stats.update(
             num_orphan_slots as u64,
             num_orphan_repairs as u64,
             num_best_shreds_slots as u64,
@@ -301,10 +300,12 @@ impl RepairWeight {
             num_closest_completion_repairs as u64,
             self.trees.len() as u64,
         );
-        repair_timing.get_best_orphans_elapsed += get_best_orphans_elapsed.as_us();
-        repair_timing.get_best_shreds_elapsed += get_best_shreds_elapsed.as_us();
-        repair_timing.get_unknown_last_index_elapsed += get_unknown_last_index_elapsed.as_us();
-        repair_timing.get_closest_completion_elapsed += get_closest_completion_elapsed.as_us();
+        repair_metrics.timing.get_best_orphans_elapsed += get_best_orphans_elapsed.as_us();
+        repair_metrics.timing.get_best_shreds_elapsed += get_best_shreds_elapsed.as_us();
+        repair_metrics.timing.get_unknown_last_index_elapsed +=
+            get_unknown_last_index_elapsed.as_us();
+        repair_metrics.timing.get_closest_completion_elapsed +=
+            get_closest_completion_elapsed.as_us();
 
         repairs
     }

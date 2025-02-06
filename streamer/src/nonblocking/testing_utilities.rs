@@ -20,7 +20,7 @@ use {
     solana_keypair::Keypair,
     solana_net_utils::bind_to_localhost,
     solana_perf::packet::PacketBatch,
-    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
+    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
         net::{SocketAddr, UdpSocket},
@@ -46,6 +46,7 @@ pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
     transport_config.max_idle_timeout(Some(timeout));
     transport_config.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
+    transport_config.send_fairness(QUIC_SEND_FAIRNESS);
     config.transport_config(Arc::new(transport_config));
 
     config
@@ -58,6 +59,7 @@ pub struct TestServerConfig {
     pub max_unstaked_connections: usize,
     pub max_streams_per_ms: u64,
     pub max_connections_per_ipaddr_per_min: u64,
+    pub coalesce_channel_size: usize,
 }
 
 impl Default for TestServerConfig {
@@ -68,6 +70,7 @@ impl Default for TestServerConfig {
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
+            coalesce_channel_size: 100_000, // use a smaller value for test as create a huge bounded channel can take time
         }
     }
 }
@@ -121,6 +124,7 @@ pub fn setup_quic_server_with_sockets(
         max_unstaked_connections,
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min,
+        coalesce_channel_size,
     }: TestServerConfig,
 ) -> SpawnTestServerResult {
     let exit = Arc::new(AtomicBool::new(false));
@@ -136,6 +140,7 @@ pub fn setup_quic_server_with_sockets(
         max_connections_per_ipaddr_per_min,
         wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         coalesce: DEFAULT_TPU_COALESCE,
+        coalesce_channel_size,
     };
     let SpawnNonBlockingServerResult {
         endpoints: _,

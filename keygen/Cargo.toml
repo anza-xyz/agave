@@ -20,7 +20,7 @@ solana-cli-config = { workspace = true }
 solana-derivation-path = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-message = { workspace = true }
+solana-message = { workspace = true, features = ["bincode"] }
 solana-pubkey = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-seed-derivable = { workspace = true }

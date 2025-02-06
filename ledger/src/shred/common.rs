@@ -36,12 +36,12 @@ macro_rules! impl_shred_common {
         }
 
         #[inline]
-        fn payload(&self) -> &Vec<u8> {
+        fn payload(&self) -> &Payload {
             &self.payload
         }
 
         #[inline]
-        fn into_payload(self) -> Vec<u8> {
+        fn into_payload(self) -> Payload {
             self.payload
         }
 

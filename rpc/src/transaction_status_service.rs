@@ -1,6 +1,6 @@
 use {
     crate::transaction_notifier_interface::TransactionNotifierArc,
-    crossbeam_channel::{Receiver, RecvTimeoutError},
+    crossbeam_channel::{Receiver, TryRecvError},
     itertools::izip,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError},
@@ -12,16 +12,24 @@ use {
     },
     std::{
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc,
         },
-        thread::{self, Builder, JoinHandle},
+        thread::{self, sleep, Builder, JoinHandle},
         time::Duration,
     },
 };
 
+// Used when draining and shutting down TSS in unit tests.
+#[cfg(feature = "dev-context-only-utils")]
+const TSS_TEST_QUIESCE_NUM_RETRIES: usize = 100;
+#[cfg(feature = "dev-context-only-utils")]
+const TSS_TEST_QUIESCE_SLEEP_TIME_MS: u64 = 50;
+
 pub struct TransactionStatusService {
     thread_hdl: JoinHandle<()>,
+    #[cfg(feature = "dev-context-only-utils")]
+    transaction_status_receiver: Arc<Receiver<TransactionStatusMessage>>,
 }
 
 impl TransactionStatusService {
@@ -34,47 +42,76 @@ impl TransactionStatusService {
         enable_extended_tx_metadata_storage: bool,
         exit: Arc<AtomicBool>,
     ) -> Self {
+        let transaction_status_receiver = Arc::new(write_transaction_status_receiver);
+        let transaction_status_receiver_handle = Arc::clone(&transaction_status_receiver);
+
         let thread_hdl = Builder::new()
             .name("solTxStatusWrtr".to_string())
             .spawn(move || {
                 info!("TransactionStatusService has started");
+
+                let outstanding_thread_count = Arc::new(AtomicUsize::new(0));
                 loop {
                     if exit.load(Ordering::Relaxed) {
+                        // Wait for the outstanding worker threads to complete before
+                        // joining the main thread and shutting down the service.
+                        while outstanding_thread_count.load(Ordering::SeqCst) > 0 {
+                            sleep(Duration::from_millis(1));
+                        }
                         break;
                     }
 
-                    let message = match write_transaction_status_receiver
-                        .recv_timeout(Duration::from_secs(1))
-                    {
+                    let message = match transaction_status_receiver_handle.try_recv() {
                         Ok(message) => message,
-                        Err(RecvTimeoutError::Disconnected) => {
+                        Err(TryRecvError::Disconnected) => {
                             break;
                         }
-                        Err(RecvTimeoutError::Timeout) => {
+                        Err(TryRecvError::Empty) => {
+                            // TSS is bandwidth sensitive at high TPS, but not necessarily
+                            // latency sensitive. We use a global thread pool to handle
+                            // bursts of work below. This sleep is intended to balance that
+                            // out so other users of the pool can make progress while TSS
+                            // builds up a backlog for the next burst.
+                            sleep(Duration::from_millis(50));
                             continue;
                         }
                     };
 
-                    match Self::write_transaction_status_batch(
-                        message,
-                        &max_complete_transaction_status_slot,
-                        enable_rpc_transaction_history,
-                        transaction_notifier.clone(),
-                        &blockstore,
-                        enable_extended_tx_metadata_storage,
-                    ) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            error!("TransactionStatusService stopping due to error: {err}");
-                            exit.store(true, Ordering::Relaxed);
-                            break;
+                    let max_complete_transaction_status_slot =
+                        Arc::clone(&max_complete_transaction_status_slot);
+                    let blockstore = Arc::clone(&blockstore);
+                    let transaction_notifier = transaction_notifier.clone();
+                    let exit_clone = Arc::clone(&exit);
+                    let outstanding_thread_count_handle = Arc::clone(&outstanding_thread_count);
+
+                    outstanding_thread_count.fetch_add(1, Ordering::Relaxed);
+
+                    rayon::spawn(move || {
+                        match Self::write_transaction_status_batch(
+                            message,
+                            &max_complete_transaction_status_slot,
+                            enable_rpc_transaction_history,
+                            transaction_notifier,
+                            &blockstore,
+                            enable_extended_tx_metadata_storage,
+                        ) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                error!("TransactionStatusService stopping due to error: {err}");
+                                exit_clone.store(true, Ordering::Relaxed);
+                            }
                         }
-                    }
+                        outstanding_thread_count_handle.fetch_sub(1, Ordering::Relaxed);
+                    });
                 }
                 info!("TransactionStatusService has stopped");
             })
             .unwrap();
-        Self { thread_hdl }
+        Self {
+            thread_hdl,
+            #[cfg(feature = "dev-context-only-utils")]
+            transaction_status_receiver,
+        }
     }
 
     fn write_transaction_status_batch(
@@ -221,6 +258,24 @@ impl TransactionStatusService {
     pub fn join(self) -> thread::Result<()> {
         self.thread_hdl.join()
     }
+
+    // Many tests expect all messages to be handled. Wait for the message
+    // queue to drain out before signaling the service to exit.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn quiesce_and_join_for_tests(self, exit: Arc<AtomicBool>) {
+        for _ in 0..TSS_TEST_QUIESCE_NUM_RETRIES {
+            if self.transaction_status_receiver.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(TSS_TEST_QUIESCE_SLEEP_TIME_MS));
+        }
+        assert!(
+            self.transaction_status_receiver.is_empty(),
+            "TransactionStatusService timed out before processing all queued up messages."
+        );
+        exit.store(true, Ordering::Relaxed);
+        self.join().unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -231,7 +286,7 @@ pub(crate) mod tests {
         crossbeam_channel::unbounded,
         dashmap::DashMap,
         solana_account_decoder::{
-            parse_account_data::SplTokenAdditionalData, parse_token::token_amount_to_ui_amount_v2,
+            parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
         solana_runtime::bank::{Bank, TransactionBalancesSet},
@@ -257,14 +312,7 @@ pub(crate) mod tests {
             token_balances::TransactionTokenBalancesSet, TransactionStatusMeta,
             TransactionTokenBalance,
         },
-        std::{
-            sync::{
-                atomic::{AtomicBool, Ordering},
-                Arc,
-            },
-            thread::sleep,
-            time::Duration,
-        },
+        std::sync::{atomic::AtomicBool, Arc},
     };
 
     #[derive(Eq, Hash, PartialEq)]
@@ -379,9 +427,9 @@ pub(crate) mod tests {
         let pre_token_balance = TransactionTokenBalance {
             account_index: 0,
             mint: Pubkey::new_unique().to_string(),
-            ui_token_amount: token_amount_to_ui_amount_v2(
+            ui_token_amount: token_amount_to_ui_amount_v3(
                 42,
-                &SplTokenAdditionalData::with_decimals(2),
+                &SplTokenAdditionalDataV2::with_decimals(2),
             ),
             owner: owner.clone(),
             program_id: token_program_id.clone(),
@@ -390,9 +438,9 @@ pub(crate) mod tests {
         let post_token_balance = TransactionTokenBalance {
             account_index: 0,
             mint: Pubkey::new_unique().to_string(),
-            ui_token_amount: token_amount_to_ui_amount_v2(
+            ui_token_amount: token_amount_to_ui_amount_v3(
                 58,
-                &SplTokenAdditionalData::with_decimals(2),
+                &SplTokenAdditionalDataV2::with_decimals(2),
             ),
             owner,
             program_id: token_program_id,
@@ -431,10 +479,8 @@ pub(crate) mod tests {
         transaction_status_sender
             .send(TransactionStatusMessage::Batch(transaction_status_batch))
             .unwrap();
-        sleep(Duration::from_millis(500));
 
-        exit.store(true, Ordering::Relaxed);
-        transaction_status_service.join().unwrap();
+        transaction_status_service.quiesce_and_join_for_tests(exit);
         assert_eq!(test_notifier.notifications.len(), 1);
         let key = TestNotifierKey {
             slot,
@@ -536,10 +582,7 @@ pub(crate) mod tests {
         transaction_status_sender
             .send(TransactionStatusMessage::Batch(transaction_status_batch))
             .unwrap();
-        sleep(Duration::from_millis(5000));
-
-        exit.store(true, Ordering::Relaxed);
-        transaction_status_service.join().unwrap();
+        transaction_status_service.quiesce_and_join_for_tests(exit);
         assert_eq!(test_notifier.notifications.len(), 2);
 
         let key1 = TestNotifierKey {

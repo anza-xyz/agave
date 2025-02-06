@@ -201,10 +201,10 @@ where
     Err(Error::InvalidErasureMetaConflict)
 }
 
-pub(crate) fn from_shred<F>(
+pub(crate) fn from_shred<T: AsRef<[u8]>, F>(
     shred: Shred,
     self_pubkey: Pubkey, // Pubkey of my node broadcasting crds value.
-    other_payload: Vec<u8>,
+    other_payload: T,
     leader_schedule: Option<F>,
     wallclock: u64,
     max_size: usize, // Maximum serialized size of each DuplicateShred.
@@ -212,8 +212,9 @@ pub(crate) fn from_shred<F>(
 ) -> Result<impl Iterator<Item = DuplicateShred>, Error>
 where
     F: FnOnce(Slot) -> Option<Pubkey>,
+    shred::Payload: From<T>,
 {
-    if shred.payload() == &other_payload {
+    if shred.payload().as_ref() == other_payload.as_ref() {
         return Err(Error::InvalidDuplicateShreds);
     }
     let other_shred = Shred::new_from_serialized_shred(other_payload)?;

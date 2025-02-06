@@ -18,10 +18,10 @@ use {
         ThreadPool,
     },
     solana_measure::measure::Measure,
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::ReadableAccount,
         clock::{BankId, Slot},
-        pubkey::Pubkey,
     },
     std::{
         collections::{btree_map::BTreeMap, HashSet},
@@ -2082,10 +2082,8 @@ pub mod tests {
     use {
         super::*,
         solana_inline_spl::token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
-        solana_sdk::{
-            account::{AccountSharedData, WritableAccount},
-            pubkey::PUBKEY_BYTES,
-        },
+        solana_pubkey::PUBKEY_BYTES,
+        solana_sdk::account::{AccountSharedData, WritableAccount},
         std::ops::RangeInclusive,
     };
 

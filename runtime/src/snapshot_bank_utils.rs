@@ -1150,7 +1150,7 @@ mod tests {
                 SnapshotVersion::default(),
                 &snapshot_archives_dir,
                 &snapshot_archives_dir,
-                ArchiveFormat::TarZstd,
+                ArchiveFormat::Tar,
             )
             .unwrap();
 
@@ -1395,7 +1395,7 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = ArchiveFormat::TarZstd;
+        let snapshot_archive_format = ArchiveFormat::Tar;
 
         let full_snapshot_slot = slot;
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
@@ -1878,7 +1878,7 @@ mod tests {
             SnapshotVersion::default(),
             &snapshot_archives_dir,
             &snapshot_archives_dir,
-            ArchiveFormat::TarZstd,
+            ArchiveFormat::Tar,
         )
         .unwrap();
 

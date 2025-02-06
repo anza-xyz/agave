@@ -4,9 +4,9 @@ extern crate test;
 use {
     rand::Rng,
     solana_account::AccountSharedData,
-    solana_program::vote::state::{VoteInit, VoteState, VoteStateVersions},
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccount,
+    solana_vote_interface::state::{VoteInit, VoteState, VoteStateVersions},
     test::Bencher,
 };
 

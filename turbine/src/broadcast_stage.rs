@@ -16,7 +16,10 @@ use {
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::Protocol,
     },
-    solana_ledger::{blockstore::Blockstore, shred::Shred},
+    solana_ledger::{
+        blockstore::Blockstore,
+        shred::{self, Shred},
+    },
     solana_measure::measure::Measure,
     solana_metrics::{inc_new_counter_error, inc_new_counter_info},
     solana_poh::poh_recorder::WorkingBankEntry,
@@ -486,7 +489,7 @@ pub fn broadcast_shreds(
     transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
     transmit_stats.total_packets += packets.len() + quic_packets.len();
     for (shred, addr) in quic_packets {
-        let shred = Bytes::from(shred.clone());
+        let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred.clone()));
         if let Err(err) = quic_endpoint_sender.blocking_send((addr, shred)) {
             transmit_stats.dropped_packets_quic += 1;
             result = Err(Error::from(err));

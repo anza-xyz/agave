@@ -561,6 +561,10 @@ pub mod enable_alt_bn128_compression_syscall {
     solana_pubkey::declare_id!("EJJewYSddEEtSZHiqugnvhQHiWyZKjkFDQASd7oKSagn");
 }
 
+pub mod fix_alt_bn128_multiplication_input_length {
+    solana_pubkey::declare_id!("bn2puAyxUx6JUabAxYdKdJ5QHbNNmKw8dCGuGCyRrFN");
+}
+
 pub mod enable_program_redeployment_cooldown {
     solana_pubkey::declare_id!("J4HFT8usBxpcF63y46t1upYobJgChmKyZPm5uTBRg25Z");
 }
@@ -617,7 +621,7 @@ pub mod apply_cost_tracker_during_replay {
     solana_pubkey::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
 }
 pub mod bpf_account_data_direct_mapping {
-    solana_pubkey::declare_id!("GJVDwRkUPNdk9QaK4VsU4g1N41QNxhy1hevjf8kz45Mq");
+    solana_pubkey::declare_id!("FNPWmNbHbYy1R8JWVZgCPqsoRBcRu4F6ezSnq5o97Px");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -688,8 +692,12 @@ pub mod remaining_compute_units_syscall_enabled {
     solana_pubkey::declare_id!("5TuppMutoyzhUSfuYdhgzD47F92GL1g89KpCZQKqedxP");
 }
 
-pub mod enable_program_runtime_v2_and_loader_v4 {
-    solana_pubkey::declare_id!("8oBxsYqnCvUTGzgEpxPcnVf7MLbWWPYddE33PftFeBBd");
+pub mod enable_loader_v4 {
+    solana_pubkey::declare_id!("8Cb77yHjPWe9wuWUfXeh6iszFGCDGNCoFk3tprViYHNm");
+}
+
+pub mod disable_new_loader_v3_deployments {
+    solana_pubkey::declare_id!("EmhbpdVtZ2hWRGFWBDjn2i3SJD8Z36z4mpMcZJEnebnP");
 }
 
 pub mod require_rent_exempt_split_destination {
@@ -1084,7 +1092,8 @@ lazy_static! {
         (enable_poseidon_syscall::id(), "Enable Poseidon syscall"),
         (timely_vote_credits::id(), "use timeliness of votes in determining credits to award"),
         (remaining_compute_units_syscall_enabled::id(), "enable the remaining_compute_units syscall"),
-        (enable_program_runtime_v2_and_loader_v4::id(), "Enable Program-Runtime-v2 and Loader-v4 #33293"),
+        (enable_loader_v4::id(), "Enable Loader-v4 SIMD-0167"),
+        (disable_new_loader_v3_deployments::id(), "Disable new loader-v3 deployments SIMD-0167"),
         (require_rent_exempt_split_destination::id(), "Require stake split destination account to be rent exempt"),
         (better_error_codes_for_tx_lamport_check::id(), "better error codes for tx lamport check #33353"),
         (enable_alt_bn128_compression_syscall::id(), "add alt_bn128 compression syscalls"),
@@ -1145,6 +1154,7 @@ lazy_static! {
         (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),
         (reserve_minimal_cus_for_builtin_instructions::id(), "Reserve minimal CUs for builtin instructions SIMD-170 #2562"),
         (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
+        (fix_alt_bn128_multiplication_input_length::id(), "fix alt_bn128 multiplication input length SIMD-0222 #3686"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

@@ -11,7 +11,8 @@ use {
     },
     rayon::prelude::*,
     solana_measure::{measure::Measure, measure_us},
-    solana_sdk::{account::ReadableAccount as _, clock::Slot, hash::Hash, pubkey::Pubkey},
+    solana_pubkey::Pubkey,
+    solana_sdk::{account::ReadableAccount as _, clock::Slot, hash::Hash},
     std::{
         hash::{DefaultHasher, Hash as _, Hasher as _},
         ops::Range,

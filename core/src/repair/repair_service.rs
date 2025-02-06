@@ -122,6 +122,36 @@ impl RepairStatsGroup {
     }
 }
 
+#[derive(Debug)]
+pub struct RepairMetrics {
+    pub stats: RepairStats,
+    pub best_repairs_stats: BestRepairsStats,
+    pub timing: RepairTiming,
+    pub last_report: Instant,
+}
+
+impl Default for RepairMetrics {
+    fn default() -> Self {
+        Self {
+            stats: RepairStats::default(),
+            best_repairs_stats: BestRepairsStats::default(),
+            timing: RepairTiming::default(),
+            last_report: Instant::now(),
+        }
+    }
+}
+
+impl RepairMetrics {
+    pub fn maybe_report(&mut self) {
+        if self.last_report.elapsed().as_secs() > 2 {
+            self.stats.report();
+            self.timing.report();
+            self.best_repairs_stats.report();
+            *self = Self::default();
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct RepairStats {
     pub shred: RepairStatsGroup,
@@ -131,12 +161,47 @@ pub struct RepairStats {
     pub get_best_shreds_us: u64,
 }
 
+impl RepairStats {
+    fn report(&self) {
+        let repair_total = self.shred.count + self.highest_shred.count + self.orphan.count;
+        let slot_to_count: Vec<_> = self
+            .shred
+            .slot_pubkeys
+            .iter()
+            .chain(self.highest_shred.slot_pubkeys.iter())
+            .chain(self.orphan.slot_pubkeys.iter())
+            .map(|(slot, slot_repairs)| (slot, slot_repairs.pubkey_repairs.values().sum::<u64>()))
+            .collect();
+        info!("repair_stats: {:?}", slot_to_count);
+        if repair_total > 0 {
+            let nonzero_num = |x| if x == 0 { None } else { Some(x) };
+            datapoint_info!(
+                "repair_service-my_requests",
+                ("repair-total", repair_total, i64),
+                ("shred-count", self.shred.count, i64),
+                ("highest-shred-count", self.highest_shred.count, i64),
+                ("orphan-count", self.orphan.count, i64),
+                ("shred-slot-max", nonzero_num(self.shred.max), Option<i64>),
+                ("shred-slot-min", nonzero_num(self.shred.min), Option<i64>),
+                ("repair-highest-slot", self.highest_shred.max, i64), // deprecated
+                ("highest-shred-slot-max", nonzero_num(self.highest_shred.max), Option<i64>),
+                ("highest-shred-slot-min", nonzero_num(self.highest_shred.min), Option<i64>),
+                ("repair-orphan", self.orphan.max, i64), // deprecated
+                ("orphan-slot-max", nonzero_num(self.orphan.max), Option<i64>),
+                ("orphan-slot-min", nonzero_num(self.orphan.min), Option<i64>),
+            );
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct RepairTiming {
     pub set_root_elapsed: u64,
     pub dump_slots_elapsed: u64,
     pub get_votes_elapsed: u64,
     pub add_votes_elapsed: u64,
+    pub purge_outstanding_repairs: u64,
+    pub handle_popular_pruned_forks: u64,
     pub get_best_orphans_elapsed: u64,
     pub get_best_shreds_elapsed: u64,
     pub get_unknown_last_index_elapsed: u64,
@@ -153,6 +218,8 @@ impl RepairTiming {
         dump_slots_elapsed: u64,
         get_votes_elapsed: u64,
         add_votes_elapsed: u64,
+        purge_outstanding_repairs: u64,
+        handle_popular_pruned_forks: u64,
         build_repairs_batch_elapsed: u64,
         batch_send_repairs_elapsed: u64,
     ) {
@@ -160,9 +227,58 @@ impl RepairTiming {
         self.dump_slots_elapsed += dump_slots_elapsed;
         self.get_votes_elapsed += get_votes_elapsed;
         self.add_votes_elapsed += add_votes_elapsed;
+        self.purge_outstanding_repairs += purge_outstanding_repairs;
+        self.handle_popular_pruned_forks += handle_popular_pruned_forks;
         self.build_repairs_batch_elapsed += build_repairs_batch_elapsed;
         self.batch_send_repairs_elapsed += batch_send_repairs_elapsed;
         self.send_repairs_elapsed += build_repairs_batch_elapsed + batch_send_repairs_elapsed;
+    }
+
+    fn report(&self) {
+        datapoint_info!(
+            "repair_service-repair_timing",
+            ("set-root-elapsed", self.set_root_elapsed, i64),
+            ("dump-slots-elapsed", self.dump_slots_elapsed, i64),
+            ("get-votes-elapsed", self.get_votes_elapsed, i64),
+            ("add-votes-elapsed", self.add_votes_elapsed, i64),
+            (
+                "purge-outstanding-repairs",
+                self.purge_outstanding_repairs,
+                i64
+            ),
+            (
+                "handle-popular-pruned-forks",
+                self.handle_popular_pruned_forks,
+                i64
+            ),
+            (
+                "get-best-orphans-elapsed",
+                self.get_best_orphans_elapsed,
+                i64
+            ),
+            ("get-best-shreds-elapsed", self.get_best_shreds_elapsed, i64),
+            (
+                "get-unknown-last-index-elapsed",
+                self.get_unknown_last_index_elapsed,
+                i64
+            ),
+            (
+                "get-closest-completion-elapsed",
+                self.get_closest_completion_elapsed,
+                i64
+            ),
+            ("send-repairs-elapsed", self.send_repairs_elapsed, i64),
+            (
+                "build-repairs-batch-elapsed",
+                self.build_repairs_batch_elapsed,
+                i64
+            ),
+            (
+                "batch-send-repairs-elapsed",
+                self.batch_send_repairs_elapsed,
+                i64
+            ),
+        );
     }
 }
 
@@ -207,6 +323,43 @@ impl BestRepairsStats {
         self.num_closest_completion_slots_path += num_closest_completion_slots_path;
         self.num_closest_completion_repairs += num_closest_completion_repairs;
         self.num_repair_trees += num_repair_trees;
+    }
+
+    fn report(&self) {
+        datapoint_info!(
+            "serve_repair-best-repairs",
+            ("call-count", self.call_count, i64),
+            ("orphan-slots", self.num_orphan_slots, i64),
+            ("orphan-repairs", self.num_orphan_repairs, i64),
+            ("best-shreds-slots", self.num_best_shreds_slots, i64),
+            ("best-shreds-repairs", self.num_best_shreds_repairs, i64),
+            (
+                "unknown-last-index-slots",
+                self.num_unknown_last_index_slots,
+                i64
+            ),
+            (
+                "unknown-last-index-repairs",
+                self.num_unknown_last_index_repairs,
+                i64
+            ),
+            (
+                "closest-completion-slots",
+                self.num_closest_completion_slots,
+                i64
+            ),
+            (
+                "closest-completion-slots-path",
+                self.num_closest_completion_slots_path,
+                i64
+            ),
+            (
+                "closest-completion-repairs",
+                self.num_closest_completion_repairs,
+                i64
+            ),
+            ("repair-trees", self.num_repair_trees, i64),
+        );
     }
 }
 
@@ -327,10 +480,8 @@ impl RepairService {
             repair_info.repair_whitelist.clone(),
         );
         let id = repair_info.cluster_info.id();
-        let mut repair_stats = RepairStats::default();
-        let mut repair_timing = RepairTiming::default();
-        let mut best_repairs_stats = BestRepairsStats::default();
-        let mut last_stats = Instant::now();
+        let mut repair_metrics = RepairMetrics::default();
+
         let mut peers_cache = LruCache::new(REPAIR_PEERS_CACHE_CAPACITY);
         let mut popular_pruned_forks_requests = HashSet::new();
         // Maps a repair that may still be outstanding to the timestamp it was requested.
@@ -341,6 +492,8 @@ impl RepairService {
             let mut dump_slots_elapsed;
             let mut get_votes_elapsed;
             let mut add_votes_elapsed;
+            let mut purge_outstanding_repairs;
+            let mut handle_popular_pruned_forks;
 
             let root_bank = root_bank_cache.root_bank();
             let repair_protocol = serve_repair::get_repair_protocol(root_bank.cluster_type());
@@ -406,10 +559,12 @@ impl RepairService {
                 );
                 add_votes_elapsed.stop();
 
+                purge_outstanding_repairs = Measure::start("purge_outstanding_repairs");
                 // Purge old entries. They've either completed or need to be retried.
                 outstanding_repairs.retain(|_repair_request, time| {
                     timestamp().saturating_sub(*time) < REPAIR_REQUEST_TIMEOUT_MS
                 });
+                purge_outstanding_repairs.stop();
 
                 let repairs = match repair_info.wen_restart_repair_slots.clone() {
                     Some(slots_to_repair) => Self::generate_repairs_for_wen_restart(
@@ -426,12 +581,12 @@ impl RepairService {
                         MAX_REPAIR_LENGTH,
                         MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                         MAX_CLOSEST_COMPLETION_REPAIRS,
-                        &mut repair_timing,
-                        &mut best_repairs_stats,
+                        &mut repair_metrics,
                         &mut outstanding_repairs,
                     ),
                 };
 
+                handle_popular_pruned_forks = Measure::start("handle_popular_pruned_forks");
                 let mut popular_pruned_forks = repair_weight.get_popular_pruned_forks(
                     root_bank.epoch_stakes_map(),
                     root_bank.epoch_schedule(),
@@ -457,6 +612,7 @@ impl RepairService {
                         .send(popular_pruned_forks)
                         .unwrap_or_else(|err| error!("failed to send popular pruned forks {err}"));
                 }
+                handle_popular_pruned_forks.stop();
 
                 repairs
             };
@@ -474,7 +630,7 @@ impl RepairService {
                                 &repair_info.cluster_slots,
                                 repair_request,
                                 &mut peers_cache,
-                                &mut repair_stats,
+                                &mut repair_metrics.stats,
                                 &repair_info.repair_validators,
                                 &mut outstanding_requests,
                                 identity_keypair,
@@ -505,137 +661,17 @@ impl RepairService {
             }
             batch_send_repairs_elapsed.stop();
 
-            repair_timing.update(
+            repair_metrics.timing.update(
                 set_root_elapsed.as_us(),
                 dump_slots_elapsed.as_us(),
                 get_votes_elapsed.as_us(),
                 add_votes_elapsed.as_us(),
+                purge_outstanding_repairs.as_us(),
+                handle_popular_pruned_forks.as_us(),
                 build_repairs_batch_elapsed.as_us(),
                 batch_send_repairs_elapsed.as_us(),
             );
-
-            if last_stats.elapsed().as_secs() > 2 {
-                let repair_total = repair_stats.shred.count
-                    + repair_stats.highest_shred.count
-                    + repair_stats.orphan.count;
-                let slot_to_count: Vec<_> = repair_stats
-                    .shred
-                    .slot_pubkeys
-                    .iter()
-                    .chain(repair_stats.highest_shred.slot_pubkeys.iter())
-                    .chain(repair_stats.orphan.slot_pubkeys.iter())
-                    .map(|(slot, slot_repairs)| {
-                        (slot, slot_repairs.pubkey_repairs.values().sum::<u64>())
-                    })
-                    .collect();
-                info!("repair_stats: {:?}", slot_to_count);
-                if repair_total > 0 {
-                    let nonzero_num = |x| if x == 0 { None } else { Some(x) };
-                    datapoint_info!(
-                        "repair_service-my_requests",
-                        ("repair-total", repair_total, i64),
-                        ("shred-count", repair_stats.shred.count, i64),
-                        ("highest-shred-count", repair_stats.highest_shred.count, i64),
-                        ("orphan-count", repair_stats.orphan.count, i64),
-                        ("shred-slot-max", nonzero_num(repair_stats.shred.max), Option<i64>),
-                        ("shred-slot-min", nonzero_num(repair_stats.shred.min), Option<i64>),
-                        ("repair-highest-slot", repair_stats.highest_shred.max, i64), // deprecated
-                        ("highest-shred-slot-max", nonzero_num(repair_stats.highest_shred.max), Option<i64>),
-                        ("highest-shred-slot-min", nonzero_num(repair_stats.highest_shred.min), Option<i64>),
-                        ("repair-orphan", repair_stats.orphan.max, i64), // deprecated
-                        ("orphan-slot-max", nonzero_num(repair_stats.orphan.max), Option<i64>),
-                        ("orphan-slot-min", nonzero_num(repair_stats.orphan.min), Option<i64>),
-                    );
-                }
-                datapoint_info!(
-                    "repair_service-repair_timing",
-                    ("set-root-elapsed", repair_timing.set_root_elapsed, i64),
-                    ("dump-slots-elapsed", repair_timing.dump_slots_elapsed, i64),
-                    ("get-votes-elapsed", repair_timing.get_votes_elapsed, i64),
-                    ("add-votes-elapsed", repair_timing.add_votes_elapsed, i64),
-                    (
-                        "get-best-orphans-elapsed",
-                        repair_timing.get_best_orphans_elapsed,
-                        i64
-                    ),
-                    (
-                        "get-best-shreds-elapsed",
-                        repair_timing.get_best_shreds_elapsed,
-                        i64
-                    ),
-                    (
-                        "get-unknown-last-index-elapsed",
-                        repair_timing.get_unknown_last_index_elapsed,
-                        i64
-                    ),
-                    (
-                        "get-closest-completion-elapsed",
-                        repair_timing.get_closest_completion_elapsed,
-                        i64
-                    ),
-                    (
-                        "send-repairs-elapsed",
-                        repair_timing.send_repairs_elapsed,
-                        i64
-                    ),
-                    (
-                        "build-repairs-batch-elapsed",
-                        repair_timing.build_repairs_batch_elapsed,
-                        i64
-                    ),
-                    (
-                        "batch-send-repairs-elapsed",
-                        repair_timing.batch_send_repairs_elapsed,
-                        i64
-                    ),
-                );
-                datapoint_info!(
-                    "serve_repair-best-repairs",
-                    ("call-count", best_repairs_stats.call_count, i64),
-                    ("orphan-slots", best_repairs_stats.num_orphan_slots, i64),
-                    ("orphan-repairs", best_repairs_stats.num_orphan_repairs, i64),
-                    (
-                        "best-shreds-slots",
-                        best_repairs_stats.num_best_shreds_slots,
-                        i64
-                    ),
-                    (
-                        "best-shreds-repairs",
-                        best_repairs_stats.num_best_shreds_repairs,
-                        i64
-                    ),
-                    (
-                        "unknown-last-index-slots",
-                        best_repairs_stats.num_unknown_last_index_slots,
-                        i64
-                    ),
-                    (
-                        "unknown-last-index-repairs",
-                        best_repairs_stats.num_unknown_last_index_repairs,
-                        i64
-                    ),
-                    (
-                        "closest-completion-slots",
-                        best_repairs_stats.num_closest_completion_slots,
-                        i64
-                    ),
-                    (
-                        "closest-completion-slots-path",
-                        best_repairs_stats.num_closest_completion_slots_path,
-                        i64
-                    ),
-                    (
-                        "closest-completion-repairs",
-                        best_repairs_stats.num_closest_completion_repairs,
-                        i64
-                    ),
-                    ("repair-trees", best_repairs_stats.num_repair_trees, i64),
-                );
-                repair_stats = RepairStats::default();
-                repair_timing = RepairTiming::default();
-                best_repairs_stats = BestRepairsStats::default();
-                last_stats = Instant::now();
-            }
+            repair_metrics.maybe_report();
             sleep(Duration::from_millis(REPAIR_MS));
         }
     }
@@ -1222,8 +1258,7 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
-                &mut RepairTiming::default(),
-                &mut BestRepairsStats::default(),
+                &mut RepairMetrics::default(),
                 &mut HashMap::default(),
             ),
             vec![
@@ -1255,8 +1290,7 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
-                &mut RepairTiming::default(),
-                &mut BestRepairsStats::default(),
+                &mut RepairMetrics::default(),
                 &mut HashMap::default(),
             ),
             vec![ShredRepairType::HighestShred(0, 0)]
@@ -1313,8 +1347,7 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
-                &mut RepairTiming::default(),
-                &mut BestRepairsStats::default(),
+                &mut RepairMetrics::default(),
                 &mut HashMap::default(),
             ),
             expected
@@ -1329,8 +1362,7 @@ mod test {
                 expected.len() - 2,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
-                &mut RepairTiming::default(),
-                &mut BestRepairsStats::default(),
+                &mut RepairMetrics::default(),
                 &mut HashMap::default(),
             )[..],
             expected[0..expected.len() - 2]
@@ -1373,8 +1405,7 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
-                &mut RepairTiming::default(),
-                &mut BestRepairsStats::default(),
+                &mut RepairMetrics::default(),
                 &mut HashMap::default(),
             ),
             expected

@@ -175,9 +175,9 @@ pub(crate) struct ComputedBankState {
     pub my_latest_landed_vote: Option<Slot>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TowerVersions {
-    V1_17_14(Tower1_7_14),
+    V1_7_14(Tower1_7_14),
     V1_14_11(Tower1_14_11),
     Current(Tower),
 }
@@ -189,34 +189,8 @@ impl TowerVersions {
 
     pub fn convert_to_current(self) -> Tower {
         match self {
-            TowerVersions::V1_17_14(tower) => {
-                let box_last_vote = VoteTransaction::from(tower.last_vote.clone());
-
-                Tower {
-                    node_pubkey: tower.node_pubkey,
-                    threshold_depth: tower.threshold_depth,
-                    threshold_size: tower.threshold_size,
-                    vote_state: VoteStateVersions::V1_14_11(Box::new(tower.vote_state))
-                        .convert_to_current(),
-                    last_vote: box_last_vote,
-                    last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
-                    last_timestamp: tower.last_timestamp,
-                    stray_restored_slot: tower.stray_restored_slot,
-                    last_switch_threshold_check: tower.last_switch_threshold_check,
-                }
-            }
-            TowerVersions::V1_14_11(tower) => Tower {
-                node_pubkey: tower.node_pubkey,
-                threshold_depth: tower.threshold_depth,
-                threshold_size: tower.threshold_size,
-                vote_state: VoteStateVersions::V1_14_11(Box::new(tower.vote_state))
-                    .convert_to_current(),
-                last_vote: tower.last_vote,
-                last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
-                last_timestamp: tower.last_timestamp,
-                stray_restored_slot: tower.stray_restored_slot,
-                last_switch_threshold_check: tower.last_switch_threshold_check,
-            },
+            TowerVersions::V1_7_14(tower) => tower.into(),
+            TowerVersions::V1_14_11(tower) => tower.into(),
             TowerVersions::Current(tower) => tower,
         }
     }
@@ -236,19 +210,13 @@ pub(crate) enum BlockhashStatus {
     Blockhash(Hash),
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "9ziHa1vA7WG5RCvXiE3g1f2qjSTNa47FB7e2czo7en7a")
-)]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Tower {
     pub node_pubkey: Pubkey,
     pub(crate) threshold_depth: usize,
     threshold_size: f64,
     pub(crate) vote_state: VoteState,
     last_vote: VoteTransaction,
-    #[serde(skip)]
     // The blockhash used in the last vote transaction, may or may not equal the
     // blockhash of the voted block itself, depending if the vote slot was refreshed.
     // For instance, a vote for slot 5, may be refreshed/resubmitted for inclusion in
@@ -256,7 +224,6 @@ pub struct Tower {
     // For non voting validators this is NonVoting
     last_vote_tx_blockhash: BlockhashStatus,
     last_timestamp: BlockTimestamp,
-    #[serde(skip)]
     // Restored last voted slot which cannot be found in SlotHistory at replayed root
     // (This is a special field for slashing-free validator restart with edge cases).
     // This could be emptied after some time; but left intact indefinitely for easier
@@ -264,7 +231,6 @@ pub struct Tower {
     // Further, stray slot can be stale or not. `Stale` here means whether given
     // bank_forks (=~ ledger) lacks the slot or not.
     stray_restored_slot: Option<Slot>,
-    #[serde(skip)]
     pub last_switch_threshold_check: Option<(Slot, SwitchForkDecision)>,
 }
 
@@ -284,6 +250,62 @@ impl Default for Tower {
         // VoteState::root_slot is ensured to be Some in Tower
         tower.vote_state.root_slot = Some(Slot::default());
         tower
+    }
+}
+
+// Tower1_14_11 is the persisted data format for the Tower,
+// decoupling it from VoteState::Current.
+impl From<Tower> for Tower1_14_11 {
+    fn from(tower: Tower) -> Self {
+        Self {
+            node_pubkey: tower.node_pubkey,
+            threshold_depth: tower.threshold_depth,
+            threshold_size: tower.threshold_size,
+            vote_state: VoteState1_14_11::from(tower.vote_state.clone()),
+            last_vote: tower.last_vote.clone(),
+            last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
+            last_timestamp: tower.last_timestamp,
+            stray_restored_slot: tower.stray_restored_slot,
+            last_switch_threshold_check: tower.last_switch_threshold_check,
+        }
+    }
+}
+
+// Tower1_14_11 is the persisted data format for the Tower,
+// decoupling it from VoteState::Current.
+impl From<Tower1_14_11> for Tower {
+    fn from(tower: Tower1_14_11) -> Self {
+        Self {
+            node_pubkey: tower.node_pubkey,
+            threshold_depth: tower.threshold_depth,
+            threshold_size: tower.threshold_size,
+            vote_state: VoteStateVersions::V1_14_11(Box::new(tower.vote_state))
+                .convert_to_current(),
+            last_vote: tower.last_vote,
+            last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
+            last_timestamp: tower.last_timestamp,
+            stray_restored_slot: tower.stray_restored_slot,
+            last_switch_threshold_check: tower.last_switch_threshold_check,
+        }
+    }
+}
+
+impl From<Tower1_7_14> for Tower {
+    fn from(tower: Tower1_7_14) -> Self {
+        let box_last_vote = VoteTransaction::from(tower.last_vote.clone());
+
+        Self {
+            node_pubkey: tower.node_pubkey,
+            threshold_depth: tower.threshold_depth,
+            threshold_size: tower.threshold_size,
+            vote_state: VoteStateVersions::V1_14_11(Box::new(tower.vote_state))
+                .convert_to_current(),
+            last_vote: box_last_vote,
+            last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
+            last_timestamp: tower.last_timestamp,
+            stray_restored_slot: tower.stray_restored_slot,
+            last_switch_threshold_check: tower.last_switch_threshold_check,
+        }
     }
 }
 
@@ -1662,25 +1684,6 @@ pub enum TowerError {
 
     #[error("The tower is useless because of new hard fork: {0}")]
     HardFork(Slot),
-}
-
-// Tower1_14_11 is the persisted data format for the Tower, decoupling it from VoteState::Current
-// From Tower1_14_11 to Tower is not implemented because it is not an expected conversion
-#[allow(clippy::from_over_into)]
-impl Into<Tower1_14_11> for Tower {
-    fn into(self) -> Tower1_14_11 {
-        Tower1_14_11 {
-            node_pubkey: self.node_pubkey,
-            threshold_depth: self.threshold_depth,
-            threshold_size: self.threshold_size,
-            vote_state: VoteState1_14_11::from(self.vote_state.clone()),
-            last_vote: self.last_vote.clone(),
-            last_vote_tx_blockhash: self.last_vote_tx_blockhash,
-            last_timestamp: self.last_timestamp,
-            stray_restored_slot: self.stray_restored_slot,
-            last_switch_threshold_check: self.last_switch_threshold_check,
-        }
-    }
 }
 
 impl TowerError {

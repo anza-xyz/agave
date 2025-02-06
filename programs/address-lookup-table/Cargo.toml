@@ -15,8 +15,11 @@ bytemuck = { workspace = true }
 log = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true, features = [
+    "bincode",
+    "bytemuck",
+] }
 solana-feature-set = { workspace = true }
-solana-program = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
@@ -27,7 +30,7 @@ solana-log-collector = { workspace = true }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-system-interface = { workspace = true }
+solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 
 [lib]

@@ -1,12 +1,15 @@
 use {
     crate::shred::{
+        self,
         common::impl_shred_common,
+        payload::Payload,
         shred_code, shred_data,
         traits::{Shred, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait},
         CodingShredHeader, DataShredHeader, Error, ShredCommonHeader, ShredFlags, ShredVariant,
         SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_COMMON_SHRED_HEADER, SIZE_OF_DATA_SHRED_HEADERS,
         SIZE_OF_SIGNATURE,
     },
+    assert_matches::debug_assert_matches,
     solana_perf::packet::deserialize_from_with_limit,
     solana_sdk::{clock::Slot, signature::Signature},
     static_assertions::const_assert_eq,
@@ -36,7 +39,7 @@ pub(super) const SIZE_OF_ERASURE_ENCODED_SLICE: usize =
 pub struct ShredData {
     common_header: ShredCommonHeader,
     data_header: DataShredHeader,
-    payload: Vec<u8>,
+    payload: Payload,
 }
 
 // Layout: {common, coding} headers | erasure coded shard
@@ -45,7 +48,7 @@ pub struct ShredData {
 pub struct ShredCode {
     common_header: ShredCommonHeader,
     coding_header: CodingShredHeader,
-    payload: Vec<u8>,
+    payload: Payload,
 }
 
 impl<'a> Shred<'a> for ShredData {
@@ -57,7 +60,11 @@ impl<'a> Shred<'a> for ShredData {
     const SIZE_OF_PAYLOAD: usize = shred_code::ShredCode::SIZE_OF_PAYLOAD;
     const SIZE_OF_HEADERS: usize = SIZE_OF_DATA_SHRED_HEADERS;
 
-    fn from_payload(mut payload: Vec<u8>) -> Result<Self, Error> {
+    fn from_payload<T>(payload: T) -> Result<Self, Error>
+    where
+        Payload: From<T>,
+    {
+        let mut payload = Payload::from(payload);
         let mut cursor = Cursor::new(&payload[..]);
         let common_header: ShredCommonHeader = deserialize_from_with_limit(&mut cursor)?;
         if common_header.shred_variant != ShredVariant::LegacyData {
@@ -91,7 +98,7 @@ impl<'a> Shred<'a> for ShredData {
         if self.payload.len() != Self::SIZE_OF_PAYLOAD {
             return Err(Error::InvalidPayloadSize(self.payload.len()));
         }
-        let mut shard = self.payload;
+        let mut shard = Payload::unwrap_or_clone(self.payload);
         shard.truncate(SIZE_OF_ERASURE_ENCODED_SLICE);
         Ok(shard)
     }
@@ -124,7 +131,11 @@ impl<'a> Shred<'a> for ShredCode {
     const SIZE_OF_PAYLOAD: usize = shred_code::ShredCode::SIZE_OF_PAYLOAD;
     const SIZE_OF_HEADERS: usize = SIZE_OF_CODING_SHRED_HEADERS;
 
-    fn from_payload(mut payload: Vec<u8>) -> Result<Self, Error> {
+    fn from_payload<T>(payload: T) -> Result<Self, Error>
+    where
+        Payload: From<T>,
+    {
+        let mut payload = Payload::from(payload);
         let mut cursor = Cursor::new(&payload[..]);
         let common_header: ShredCommonHeader = deserialize_from_with_limit(&mut cursor)?;
         if common_header.shred_variant != ShredVariant::LegacyCode {
@@ -153,7 +164,7 @@ impl<'a> Shred<'a> for ShredCode {
         if self.payload.len() != Self::SIZE_OF_PAYLOAD {
             return Err(Error::InvalidPayloadSize(self.payload.len()));
         }
-        let mut shard = self.payload;
+        let mut shard = Payload::unwrap_or_clone(self.payload);
         // ShredCode::SIZE_OF_HEADERS bytes at the beginning of the coding
         // shreds contains the header and is not part of erasure coding.
         shard.drain(..Self::SIZE_OF_HEADERS);
@@ -187,19 +198,9 @@ impl ShredDataTrait for ShredData {
         &self.data_header
     }
 
+    #[inline]
     fn data(&self) -> Result<&[u8], Error> {
-        let size = usize::from(self.data_header.size);
-        #[allow(clippy::manual_range_contains)]
-        if size > self.payload.len()
-            || size < Self::SIZE_OF_HEADERS
-            || size > Self::SIZE_OF_HEADERS + Self::CAPACITY
-        {
-            return Err(Error::InvalidDataSize {
-                size: self.data_header.size,
-                payload: self.payload.len(),
-            });
-        }
-        Ok(&self.payload[Self::SIZE_OF_HEADERS..size])
+        Self::get_data(&self.payload, self.data_header.size)
     }
 }
 
@@ -235,12 +236,7 @@ impl ShredData {
             fec_set_index,
         };
         let size = (data.len() + Self::SIZE_OF_HEADERS) as u16;
-        let flags = flags
-            | ShredFlags::from_bits_retain(
-                ShredFlags::SHRED_TICK_REFERENCE_MASK
-                    .bits()
-                    .min(reference_tick),
-            );
+        let flags = flags | ShredFlags::from_reference_tick(reference_tick);
         let data_header = DataShredHeader {
             parent_offset,
             flags,
@@ -256,8 +252,26 @@ impl ShredData {
         Self {
             common_header,
             data_header,
-            payload,
+            payload: Payload::from(payload),
         }
+    }
+
+    // Given shred payload and DataShredHeader.size, returns the slice storing
+    // ledger entries in the shred.
+    pub(super) fn get_data(shred: &[u8], size: u16) -> Result<&[u8], Error> {
+        debug_assert_matches!(
+            shred::layout::get_shred_variant(shred),
+            Ok(ShredVariant::LegacyData)
+        );
+        let size = usize::from(size);
+        (Self::SIZE_OF_HEADERS..=Self::SIZE_OF_HEADERS + Self::CAPACITY)
+            .contains(&size)
+            .then(|| shred.get(Self::SIZE_OF_HEADERS..size))
+            .flatten()
+            .ok_or_else(|| Error::InvalidDataSize {
+                size: size as u16,
+                payload: shred.len(),
+            })
     }
 
     pub(super) fn bytes_to_store(&self) -> &[u8] {
@@ -320,7 +334,7 @@ impl ShredCode {
         Self {
             common_header,
             coding_header,
-            payload,
+            payload: Payload::from(payload),
         }
     }
 }

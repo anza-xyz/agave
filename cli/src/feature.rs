@@ -9,35 +9,31 @@ use {
     clap::{value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
     console::style,
     serde::{Deserialize, Serialize},
+    solana_account::Account,
     solana_clap_utils::{
         compute_budget::ComputeUnitLimit, fee_payer::*, hidden_unless_forced, input_parsers::*,
         input_validators::*, keypair::*,
     },
     solana_cli_output::{cli_version::CliVersion, QuietDisplay, VerboseDisplay},
+    solana_clock::{Epoch, Slot},
+    solana_cluster_type::ClusterType,
+    solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_client::{
         errors::SolanaFeatureGateError, instructions::RevokePendingActivation,
     },
+    solana_feature_gate_interface::{activate_with_lamports, from_account, Feature},
     solana_feature_set::FEATURE_NAMES,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::Error as ClientError, request::MAX_MULTIPLE_ACCOUNTS,
         response::RpcVoteAccountInfo,
     },
-    solana_sdk::{
-        account::Account,
-        clock::Slot,
-        epoch_schedule::EpochSchedule,
-        feature::{self, Feature},
-        genesis_config::ClusterType,
-        incinerator,
-        message::Message,
-        pubkey::Pubkey,
-        stake_history::Epoch,
-        system_instruction::SystemError,
-        system_program,
-        transaction::Transaction,
-    },
+    solana_sdk_ids::{incinerator, system_program},
+    solana_system_interface::error::SystemError,
+    solana_transaction::Transaction,
     std::{cmp::Ordering, collections::HashMap, fmt, rc::Rc, str::FromStr},
 };
 
@@ -881,7 +877,7 @@ fn feature_activation_allowed(
 }
 
 pub(super) fn status_from_account(account: Account) -> Option<CliFeatureStatus> {
-    feature::from_account(&account).map(|feature| match feature.activated_at {
+    from_account(&account).map(|feature| match feature.activated_at {
         None => CliFeatureStatus::Pending,
         Some(activation_slot) => CliFeatureStatus::Active(activation_slot),
     })
@@ -1003,7 +999,7 @@ fn process_activate(
         .unwrap();
 
     if let Some(account) = account {
-        if feature::from_account(&account).is_some() {
+        if from_account(&account).is_some() {
             return Err(format!("{feature_id} has already been activated").into());
         }
     }
@@ -1036,7 +1032,7 @@ fn process_activate(
         ComputeUnitLimit::Default,
         |lamports| {
             Message::new(
-                &feature::activate_with_lamports(&feature_id, &fee_payer.pubkey(), lamports),
+                &activate_with_lamports(&feature_id, &fee_payer.pubkey(), lamports),
                 Some(&fee_payer.pubkey()),
             )
         },

@@ -64,19 +64,10 @@ impl CompletedDataSetsService {
         rpc_subscriptions: &RpcSubscriptions,
         max_slots: &Arc<MaxSlots>,
     ) -> Result<(), RecvTimeoutError> {
-        let completed_data_sets = completed_sets_receiver.recv_timeout(Duration::from_secs(1))?;
-        let mut max_slot = 0;
-        for completed_set_info in std::iter::once(completed_data_sets)
-            .chain(completed_sets_receiver.try_iter())
-            .flatten()
-        {
-            let CompletedDataSetInfo {
-                slot,
-                start_index,
-                end_index,
-            } = completed_set_info;
-            max_slot = max_slot.max(slot);
-            match blockstore.get_entries_in_data_block(slot, start_index, end_index, None) {
+        const RECV_TIMEOUT: Duration = Duration::from_secs(1);
+        let handle_completed_data_set_info = |completed_data_set_info| {
+            let CompletedDataSetInfo { slot, indices } = completed_data_set_info;
+            match blockstore.get_entries_in_data_block(slot, indices, /*slot_meta:*/ None) {
                 Ok(entries) => {
                     let transactions = Self::get_transaction_signatures(entries);
                     if !transactions.is_empty() {
@@ -85,11 +76,17 @@ impl CompletedDataSetsService {
                 }
                 Err(e) => warn!("completed-data-set-service deserialize error: {:?}", e),
             }
+            slot
+        };
+        let slots = completed_sets_receiver
+            .recv_timeout(RECV_TIMEOUT)
+            .map(std::iter::once)?
+            .chain(completed_sets_receiver.try_iter())
+            .flatten()
+            .map(handle_completed_data_set_info);
+        if let Some(slot) = slots.max() {
+            max_slots.shred_insert.fetch_max(slot, Ordering::Relaxed);
         }
-        max_slots
-            .shred_insert
-            .fetch_max(max_slot, Ordering::Relaxed);
-
         Ok(())
     }
 

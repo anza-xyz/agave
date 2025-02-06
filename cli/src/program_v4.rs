@@ -10,6 +10,7 @@ use {
     },
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
+    solana_account::Account,
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
         input_parsers::{pubkey_of, pubkey_of_signer, signer_of},
@@ -25,7 +26,15 @@ use {
         tpu_client::{TpuClient, TpuClientConfig},
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_feature_set::{FeatureSet, FEATURE_NAMES},
+    solana_instruction::Instruction,
+    solana_message::Message,
+    solana_program::loader_v4::{
+        self, LoaderV4State,
+        LoaderV4Status::{self, Retracted},
+    },
     solana_program_runtime::invoke_context::InvokeContext,
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
@@ -34,20 +43,11 @@ use {
         request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
-    solana_sdk::{
-        account::Account,
-        feature_set::{FeatureSet, FEATURE_NAMES},
-        instruction::Instruction,
-        loader_v4::{
-            self, LoaderV4State,
-            LoaderV4Status::{self, Retracted},
-        },
-        message::Message,
-        pubkey::Pubkey,
-        signature::Signer,
-        system_instruction::{self, SystemError, MAX_PERMITTED_DATA_LENGTH},
-        transaction::Transaction,
+    solana_signer::Signer,
+    solana_system_interface::{
+        error::SystemError, instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH,
     },
+    solana_transaction::Transaction,
     std::{
         cmp::Ordering,
         fs::File,
@@ -684,19 +684,20 @@ pub fn process_deploy_program(
         }
     }
 
-    // Create and add truncate message
+    // Create and add set_program_length message
     if let Some(buffer_account) = buffer_account.as_ref() {
-        let (truncate_instructions, _lamports_required) = build_truncate_instructions(
-            rpc_client.clone(),
-            config,
-            auth_signer_index,
-            buffer_account,
-            &buffer_address,
-            program_data.len() as u32,
-        )?;
-        if !truncate_instructions.is_empty() {
+        let (set_program_length_instructions, _lamports_required) =
+            build_set_program_length_instructions(
+                rpc_client.clone(),
+                config,
+                auth_signer_index,
+                buffer_account,
+                &buffer_address,
+                program_data.len() as u32,
+            )?;
+        if !set_program_length_instructions.is_empty() {
             initial_messages.push(Message::new_with_blockhash(
-                &truncate_instructions,
+                &set_program_length_instructions,
                 Some(&payer_pubkey),
                 &blockhash,
             ));
@@ -809,11 +810,11 @@ fn process_undeploy_program(
         vec![]
     };
 
-    let truncate_instruction =
-        loader_v4::truncate(program_address, &authority_pubkey, 0, &payer_pubkey);
+    let set_program_length_instruction =
+        loader_v4::set_program_length(program_address, &authority_pubkey, 0, &payer_pubkey);
 
     initial_messages.push(Message::new_with_blockhash(
-        &[truncate_instruction],
+        &[set_program_length_instruction],
         Some(&payer_pubkey),
         &blockhash,
     ));
@@ -1196,7 +1197,7 @@ fn build_retract_instruction(
     }
 }
 
-fn build_truncate_instructions(
+fn build_set_program_length_instructions(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig,
     auth_signer_index: &SignerIndex,
@@ -1211,14 +1212,7 @@ fn build_truncate_instructions(
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
 
-    let truncate_instruction = if account.data.is_empty() {
-        loader_v4::truncate_uninitialized(
-            buffer_address,
-            &authority_pubkey,
-            program_data_length,
-            &payer_pubkey,
-        )
-    } else {
+    if !account.data.is_empty() {
         if let Ok(LoaderV4State {
             slot: _,
             authority_address_or_next_version,
@@ -1232,19 +1226,19 @@ fn build_truncate_instructions(
             }
 
             if matches!(status, LoaderV4Status::Finalized) {
-                return Err("Program is immutable and it cannot be truncated".into());
+                return Err("Program is immutable".into());
             }
         } else {
             return Err("Program account's state could not be deserialized".into());
         }
+    }
 
-        loader_v4::truncate(
-            buffer_address,
-            &authority_pubkey,
-            program_data_length,
-            &payer_pubkey,
-        )
-    };
+    let set_program_length_instruction = loader_v4::set_program_length(
+        buffer_address,
+        &authority_pubkey,
+        program_data_length,
+        &payer_pubkey,
+    );
 
     let expected_account_data_len =
         LoaderV4State::program_data_offset().saturating_add(program_data_length as usize);
@@ -1263,12 +1257,12 @@ fn build_truncate_instructions(
                             buffer_address,
                             extra_lamports_required,
                         ),
-                        truncate_instruction,
+                        set_program_length_instruction,
                     ],
                     extra_lamports_required,
                 ))
             } else {
-                Ok((vec![truncate_instruction], 0))
+                Ok((vec![set_program_length_instruction], 0))
             }
         }
         Ordering::Equal => {
@@ -1281,7 +1275,7 @@ fn build_truncate_instructions(
             if account.lamports < lamports_required {
                 return Err("Program account has less lamports than required for its size".into());
             }
-            Ok((vec![truncate_instruction], 0))
+            Ok((vec![set_program_length_instruction], 0))
         }
     }
 }
@@ -1362,17 +1356,15 @@ mod tests {
         super::*,
         crate::{clap_app::get_clap_app, cli::parse_command},
         serde_json::json,
+        solana_keypair::{keypair_from_seed, read_keypair_file, write_keypair_file, Keypair},
         solana_rpc_client_api::{
             request::RpcRequest,
             response::{Response, RpcResponseContext},
         },
-        solana_sdk::signature::{
-            keypair_from_seed, read_keypair_file, write_keypair_file, Keypair,
-        },
         std::collections::HashMap,
     };
 
-    fn program_authority() -> solana_sdk::signature::Keypair {
+    fn program_authority() -> solana_keypair::Keypair {
         keypair_from_seed(&[3u8; 32]).unwrap()
     }
 

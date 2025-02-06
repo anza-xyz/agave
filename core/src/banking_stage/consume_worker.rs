@@ -9,7 +9,7 @@ use {
     solana_poh::leader_bank_notifier::LeaderBankNotifier,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::clock::Slot,
+    solana_sdk::timing::AtomicInterval,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         sync::{
@@ -81,7 +81,10 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             .fetch_add(get_bank_us, Ordering::Relaxed);
 
         for work in try_drain_iter(work, &self.consume_receiver) {
-            if bank.is_complete() {
+            if bank.is_complete() || {
+                // check if the bank got interrupted before completion
+                self.get_consume_bank_id() != Some(bank.bank_id())
+            } {
                 let (maybe_new_bank, get_bank_us) = measure_us!(self.get_consume_bank());
                 if let Some(new_bank) = maybe_new_bank {
                     self.metrics
@@ -134,6 +137,11 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             .upgrade()
     }
 
+    /// Try to get the id for the bank that should be used for consuming
+    fn get_consume_bank_id(&self) -> Option<u64> {
+        self.leader_bank_notifier.get_current_bank_id()
+    }
+
     /// Retry current batch and all outstanding batches.
     fn retry_drain(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
         for work in try_drain_iter(work, &self.consume_receiver) {
@@ -175,8 +183,8 @@ fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T>
 /// done.
 pub(crate) struct ConsumeWorkerMetrics {
     id: String,
+    interval: AtomicInterval,
     has_data: AtomicBool,
-    slot: AtomicU64,
 
     count_metrics: ConsumeWorkerCountMetrics,
     error_metrics: ConsumeWorkerTransactionErrorMetrics,
@@ -184,34 +192,23 @@ pub(crate) struct ConsumeWorkerMetrics {
 }
 
 impl ConsumeWorkerMetrics {
-    /// Report and reset metrics when the worker did some work and:
-    /// a) (when a leader) Previous slot is not the same as current.
-    /// b) (when not a leader) report the metrics accumulated so far.
-    pub fn maybe_report_and_reset(&self, slot: Option<Slot>) {
-        let prev_slot_id: u64 = self.slot.load(Ordering::Relaxed);
-        if let Some(slot) = slot {
-            if slot != prev_slot_id {
-                if !self.has_data.swap(false, Ordering::Relaxed) {
-                    return;
-                }
-                self.count_metrics.report_and_reset(&self.id, slot);
-                self.timing_metrics.report_and_reset(&self.id, slot);
-                self.error_metrics.report_and_reset(&self.id, slot);
-                self.slot.swap(slot, Ordering::Relaxed);
-            }
-        } else if prev_slot_id != 0 {
-            self.count_metrics.report_and_reset(&self.id, prev_slot_id);
-            self.timing_metrics.report_and_reset(&self.id, prev_slot_id);
-            self.error_metrics.report_and_reset(&self.id, prev_slot_id);
-            self.slot.swap(0, Ordering::Relaxed);
+    /// Report and reset metrics iff the interval has elapsed and the worker did some work.
+    pub fn maybe_report_and_reset(&self) {
+        const REPORT_INTERVAL_MS: u64 = 1000;
+        if self.interval.should_update(REPORT_INTERVAL_MS)
+            && self.has_data.swap(false, Ordering::Relaxed)
+        {
+            self.count_metrics.report_and_reset(&self.id);
+            self.timing_metrics.report_and_reset(&self.id);
+            self.error_metrics.report_and_reset(&self.id);
         }
     }
 
     fn new(id: u32) -> Self {
         Self {
             id: id.to_string(),
+            interval: AtomicInterval::default(),
             has_data: AtomicBool::new(false),
-            slot: AtomicU64::new(0),
             count_metrics: ConsumeWorkerCountMetrics::default(),
             error_metrics: ConsumeWorkerTransactionErrorMetrics::default(),
             timing_metrics: ConsumeWorkerTimingMetrics::default(),
@@ -460,7 +457,7 @@ impl Default for ConsumeWorkerCountMetrics {
 }
 
 impl ConsumeWorkerCountMetrics {
-    fn report_and_reset(&self, id: &str, slot: u64) {
+    fn report_and_reset(&self, id: &str) {
         datapoint_info!(
             "banking_stage_worker_counts",
             "id" => id,
@@ -508,11 +505,6 @@ impl ConsumeWorkerCountMetrics {
                 self.max_prioritization_fees.swap(0, Ordering::Relaxed),
                 i64
             ),
-            (
-                "slot",
-                slot,
-                i64
-            ),
         );
     }
 }
@@ -534,7 +526,7 @@ struct ConsumeWorkerTimingMetrics {
 }
 
 impl ConsumeWorkerTimingMetrics {
-    fn report_and_reset(&self, id: &str, slot: u64) {
+    fn report_and_reset(&self, id: &str) {
         datapoint_info!(
             "banking_stage_worker_timing",
             "id" => id,
@@ -590,11 +582,6 @@ impl ConsumeWorkerTimingMetrics {
                 self.wait_for_bank_failure_us.swap(0, Ordering::Relaxed),
                 i64
             ),
-            (
-                "slot",
-                slot,
-                i64
-            ),
         );
     }
 }
@@ -628,7 +615,7 @@ struct ConsumeWorkerTransactionErrorMetrics {
 }
 
 impl ConsumeWorkerTransactionErrorMetrics {
-    fn report_and_reset(&self, id: &str, slot: u64) {
+    fn report_and_reset(&self, id: &str) {
         datapoint_info!(
             "banking_stage_worker_error_metrics",
             "id" => id,
@@ -737,11 +724,6 @@ impl ConsumeWorkerTransactionErrorMetrics {
                 "would_exceed_max_vote_cost_limit",
                 self.would_exceed_max_vote_cost_limit
                     .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "slot",
-                slot,
                 i64
             ),
         );

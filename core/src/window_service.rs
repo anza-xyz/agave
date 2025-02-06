@@ -8,7 +8,6 @@ use {
         completed_data_sets_service::CompletedDataSetsSender,
         repair::{
             ancestor_hashes_service::AncestorHashesReplayUpdateReceiver,
-            repair_response,
             repair_service::{
                 DumpedSlotsReceiver, OutstandingShredRepairs, PopularPrunedForksSender, RepairInfo,
                 RepairService,
@@ -24,7 +23,7 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{self, Nonce, ReedSolomonCache, Shred},
+        shred::{self, ReedSolomonCache, Shred},
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
@@ -38,7 +37,7 @@ use {
     solana_turbine::cluster_nodes,
     std::{
         cmp::Reverse,
-        collections::{HashMap, HashSet},
+        collections::HashMap,
         net::{SocketAddr, UdpSocket},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -50,7 +49,6 @@ use {
     tokio::sync::mpsc::Sender as AsyncSender,
 };
 
-type ShredPayload = Vec<u8>;
 type DuplicateSlotSender = Sender<Slot>;
 pub(crate) type DuplicateSlotReceiver = Receiver<Slot>;
 
@@ -202,7 +200,7 @@ fn run_check_duplicate(
                     existing_shred_payload.clone(),
                     shred.clone().into_payload(),
                 )?;
-                (shred, existing_shred_payload)
+                (shred, shred::Payload::from(existing_shred_payload))
             }
         };
 
@@ -219,55 +217,6 @@ fn run_check_duplicate(
         .try_for_each(check_duplicate)
 }
 
-fn verify_repair(
-    outstanding_requests: &mut OutstandingShredRepairs,
-    shred: &Shred,
-    repair_meta: &Option<RepairMeta>,
-) -> bool {
-    repair_meta
-        .as_ref()
-        .map(|repair_meta| {
-            outstanding_requests
-                .register_response(
-                    repair_meta.nonce,
-                    shred,
-                    solana_sdk::timing::timestamp(),
-                    |_| (),
-                )
-                .is_some()
-        })
-        .unwrap_or(true)
-}
-
-fn prune_shreds_by_repair_status(
-    shreds: &mut Vec<Shred>,
-    repair_infos: &mut Vec<Option<RepairMeta>>,
-    outstanding_requests: &RwLock<OutstandingShredRepairs>,
-    accept_repairs_only: bool,
-) {
-    assert_eq!(shreds.len(), repair_infos.len());
-    let mut i = 0;
-    let mut removed = HashSet::new();
-    {
-        let mut outstanding_requests = outstanding_requests.write().unwrap();
-        shreds.retain(|shred| {
-            let should_keep = (
-                (!accept_repairs_only || repair_infos[i].is_some())
-                    && verify_repair(&mut outstanding_requests, shred, &repair_infos[i]),
-                i += 1,
-            )
-                .0;
-            if !should_keep {
-                removed.insert(i - 1);
-            }
-            should_keep
-        });
-    }
-    i = 0;
-    repair_infos.retain(|_repair_info| (!removed.contains(&i), i += 1).0);
-    assert_eq!(shreds.len(), repair_infos.len());
-}
-
 #[allow(clippy::too_many_arguments)]
 fn run_insert<F>(
     thread_pool: &ThreadPool,
@@ -278,8 +227,7 @@ fn run_insert<F>(
     metrics: &mut BlockstoreInsertionMetrics,
     ws_metrics: &mut WindowServiceMetrics,
     completed_data_sets_sender: Option<&CompletedDataSetsSender>,
-    retransmit_sender: &Sender<Vec<ShredPayload>>,
-    outstanding_requests: &RwLock<OutstandingShredRepairs>,
+    retransmit_sender: &Sender<Vec<shred::Payload>>,
     reed_solomon_cache: &ReedSolomonCache,
     accept_repairs_only: bool,
 ) -> Result<()>
@@ -297,29 +245,25 @@ where
         if packet.meta().discard() {
             return None;
         }
+        let repair = packet.meta().repair();
+        if accept_repairs_only && !repair {
+            return None;
+        }
         let shred = shred::layout::get_shred(packet)?;
         let shred = Shred::new_from_serialized_shred(shred.to_vec()).ok()?;
-        if packet.meta().repair() {
-            let repair_info = RepairMeta {
-                // If can't parse the nonce, dump the packet.
-                nonce: repair_response::nonce(packet)?,
-            };
-            Some((shred, Some(repair_info)))
-        } else {
-            Some((shred, None))
-        }
+        Some((shred, repair))
     };
     let now = Instant::now();
-    let (mut shreds, mut repair_infos): (Vec<_>, Vec<_>) = thread_pool.install(|| {
+    let shreds: Vec<_> = thread_pool.install(|| {
         packets
             .par_iter()
             .with_min_len(32)
             .flat_map_iter(|packets| packets.iter().filter_map(handle_packet))
-            .unzip()
+            .collect()
     });
     ws_metrics.handle_packets_elapsed_us += now.elapsed().as_micros() as u64;
     ws_metrics.num_packets += packets.iter().map(PacketBatch::len).sum::<usize>();
-    ws_metrics.num_repairs += repair_infos.iter().filter(|r| r.is_some()).count();
+    ws_metrics.num_repairs += shreds.iter().filter(|&&(_, repair)| repair).count();
     ws_metrics.num_shreds_received += shreds.len();
     for packet in packets.iter().flat_map(PacketBatch::iter) {
         let addr = packet.meta().socket_addr();
@@ -328,26 +272,15 @@ where
 
     let mut prune_shreds_elapsed = Measure::start("prune_shreds_elapsed");
     let num_shreds = shreds.len();
-    prune_shreds_by_repair_status(
-        &mut shreds,
-        &mut repair_infos,
-        outstanding_requests,
-        accept_repairs_only,
-    );
     ws_metrics.num_shreds_pruned_invalid_repair = num_shreds - shreds.len();
-    let repairs: Vec<_> = repair_infos
-        .iter()
-        .map(|repair_info| repair_info.is_some())
-        .collect();
     prune_shreds_elapsed.stop();
     ws_metrics.prune_shreds_elapsed_us += prune_shreds_elapsed.as_us();
 
     let completed_data_sets = blockstore.insert_shreds_handle_duplicate(
         shreds,
-        repairs,
         Some(leader_schedule_cache),
         false, // is_trusted
-        Some(retransmit_sender),
+        retransmit_sender,
         &handle_duplicate,
         reed_solomon_cache,
         metrics,
@@ -358,10 +291,6 @@ where
     }
 
     Ok(())
-}
-
-struct RepairMeta {
-    nonce: Nonce,
 }
 
 pub(crate) struct WindowService {
@@ -375,7 +304,7 @@ impl WindowService {
     pub(crate) fn new(
         blockstore: Arc<Blockstore>,
         verified_receiver: Receiver<Vec<PacketBatch>>,
-        retransmit_sender: Sender<Vec<ShredPayload>>,
+        retransmit_sender: Sender<Vec<shred::Payload>>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
         repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -434,7 +363,6 @@ impl WindowService {
             duplicate_sender,
             completed_data_sets_sender,
             retransmit_sender,
-            outstanding_repair_requests,
             accept_repairs_only,
         );
 
@@ -483,8 +411,7 @@ impl WindowService {
         verified_receiver: Receiver<Vec<PacketBatch>>,
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
-        retransmit_sender: Sender<Vec<ShredPayload>>,
-        outstanding_requests: Arc<RwLock<OutstandingShredRepairs>>,
+        retransmit_sender: Sender<Vec<shred::Payload>>,
         accept_repairs_only: bool,
     ) -> JoinHandle<()> {
         let handle_error = || {
@@ -520,7 +447,6 @@ impl WindowService {
                         &mut ws_metrics,
                         completed_data_sets_sender.as_ref(),
                         &retransmit_sender,
-                        &outstanding_requests,
                         &reed_solomon_cache,
                         accept_repairs_only,
                     ) {
@@ -569,7 +495,6 @@ impl WindowService {
 mod test {
     use {
         super::*,
-        crate::repair::serve_repair::ShredRepairType,
         rand::Rng,
         solana_entry::entry::{create_ticks, Entry},
         solana_gossip::contact_info::ContactInfo,
@@ -708,6 +633,7 @@ mod test {
             let _ = duplicate_shred_sender.send(shred);
         };
         let num_trials = 100;
+        let (dummy_retransmit_sender, _) = crossbeam_channel::bounded(0);
         for slot in 0..num_trials {
             let (shreds, _) = make_many_slot_entries(slot, 1, 10);
             let duplicate_index = 0;
@@ -718,13 +644,15 @@ mod test {
             };
             assert_eq!(duplicate_shred.slot(), slot);
             // Simulate storing both duplicate shreds in the same batch
+            let shreds = [original_shred.clone(), duplicate_shred.clone()]
+                .into_iter()
+                .map(|shred| (shred, /*is_repaired:*/ false));
             blockstore
                 .insert_shreds_handle_duplicate(
-                    vec![original_shred.clone(), duplicate_shred.clone()],
-                    vec![false, false],
+                    shreds,
                     None,
                     false, // is_trusted
-                    None,
+                    &dummy_retransmit_sender,
                     &handle_duplicate,
                     &ReedSolomonCache::default(),
                     &mut BlockstoreInsertionMetrics::default(),
@@ -746,46 +674,5 @@ mod test {
         }
         exit.store(true, Ordering::Relaxed);
         t_check_duplicate.join().unwrap();
-    }
-
-    #[test]
-    fn test_prune_shreds() {
-        solana_logger::setup();
-        let shred = Shred::new_from_parity_shard(
-            5,   // slot
-            5,   // index
-            &[], // parity_shard
-            5,   // fec_set_index
-            6,   // num_data_shreds
-            6,   // num_coding_shreds
-            4,   // position
-            0,   // version
-        );
-        let mut shreds = vec![shred.clone(), shred.clone(), shred.clone()];
-        let repair_meta = RepairMeta { nonce: 0 };
-        let outstanding_requests = Arc::new(RwLock::new(OutstandingShredRepairs::default()));
-        let repair_type = ShredRepairType::Orphan(9);
-        let nonce = outstanding_requests
-            .write()
-            .unwrap()
-            .add_request(repair_type, timestamp());
-        let repair_meta1 = RepairMeta { nonce };
-        let mut repair_infos = vec![None, Some(repair_meta), Some(repair_meta1)];
-        prune_shreds_by_repair_status(&mut shreds, &mut repair_infos, &outstanding_requests, false);
-        assert_eq!(shreds.len(), 2);
-        assert_eq!(repair_infos.len(), 2);
-        assert!(repair_infos[0].is_none());
-        assert_eq!(repair_infos[1].as_ref().unwrap().nonce, nonce);
-
-        shreds = vec![shred.clone(), shred.clone(), shred];
-        let repair_meta2 = RepairMeta { nonce: 0 };
-        let repair_meta3 = RepairMeta { nonce };
-        repair_infos = vec![None, Some(repair_meta2), Some(repair_meta3)];
-        // In wen_restart, we discard all Turbine shreds and only keep valid repair shreds.
-        prune_shreds_by_repair_status(&mut shreds, &mut repair_infos, &outstanding_requests, true);
-        assert_eq!(shreds.len(), 1);
-        assert_eq!(repair_infos.len(), 1);
-        assert!(repair_infos[0].is_some());
-        assert_eq!(repair_infos[0].as_ref().unwrap().nonce, nonce);
     }
 }

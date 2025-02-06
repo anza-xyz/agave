@@ -1,8 +1,8 @@
 use {
     crate::vote_transaction::VoteTransaction, solana_bincode::limited_deserialize,
-    solana_hash::Hash, solana_program::vote::instruction::VoteInstruction, solana_pubkey::Pubkey,
-    solana_signature::Signature, solana_svm_transaction::svm_transaction::SVMTransaction,
-    solana_transaction::Transaction,
+    solana_hash::Hash, solana_pubkey::Pubkey, solana_signature::Signature,
+    solana_svm_transaction::svm_transaction::SVMTransaction, solana_transaction::Transaction,
+    solana_vote_interface::instruction::VoteInstruction,
 };
 
 pub type ParsedVote = (Pubkey, VoteTransaction, Option<Hash>, Signature);
@@ -82,9 +82,9 @@ mod test {
         super::*,
         solana_clock::Slot,
         solana_keypair::Keypair,
-        solana_program::vote::{instruction as vote_instruction, state::Vote},
         solana_sha256_hasher::hash,
         solana_signer::Signer,
+        solana_vote_interface::{instruction as vote_instruction, state::Vote},
     };
 
     // Reimplemented locally from Vote program.
