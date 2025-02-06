@@ -585,7 +585,7 @@ mod target_arch {
 
             // Since Transaction::verify_precompiles only returns a vague
             // `InvalidAccountIndex` error on precompile failure, we use verify()
-            // here direclty to check for the specific
+            // here directly to check for the specific
             // InvalidSignatureValueRange error
             let tx_fail = verify(
                 instruction.data.as_slice(),
