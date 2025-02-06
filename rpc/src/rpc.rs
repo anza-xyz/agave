@@ -1181,32 +1181,24 @@ impl JsonRpcRequestProcessor {
                     }
                 }
 
-                let vote_state = account.vote_state();
-                let last_vote = if let Some(vote) = vote_state.votes.iter().last() {
-                    vote.slot()
-                } else {
-                    0
-                };
-
-                let epoch_credits = vote_state.epoch_credits();
-                let epoch_credits = if epoch_credits.len()
-                    > MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY
-                {
-                    epoch_credits
-                        .iter()
-                        .skip(epoch_credits.len() - MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY)
-                        .cloned()
-                        .collect()
-                } else {
-                    epoch_credits.clone()
-                };
+                let vote_state_view = account.vote_state_view();
+                let last_vote = vote_state_view.last_voted_slot().unwrap_or(0);
+                let num_epoch_credits = vote_state_view.num_epoch_credits();
+                let epoch_credits = vote_state_view
+                    .epoch_credits_iter()
+                    .skip(
+                        num_epoch_credits
+                            .saturating_sub(MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY),
+                    )
+                    .map(Into::into)
+                    .collect();
 
                 Some(RpcVoteAccountInfo {
                     vote_pubkey: vote_pubkey.to_string(),
-                    node_pubkey: vote_state.node_pubkey.to_string(),
+                    node_pubkey: vote_state_view.node_pubkey().to_string(),
                     activated_stake: *activated_stake,
-                    commission: vote_state.commission,
-                    root_slot: vote_state.root_slot.unwrap_or(0),
+                    commission: vote_state_view.commission(),
+                    root_slot: vote_state_view.root_slot().unwrap_or(0),
                     epoch_credits,
                     epoch_vote_account: epoch_vote_accounts.contains_key(vote_pubkey),
                     last_vote,

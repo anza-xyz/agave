@@ -83,6 +83,7 @@ use {
     solana_stake_program::stake_state,
     solana_transaction_status::parse_ui_instruction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
         vote_state::{self, VoteState},
@@ -221,16 +222,16 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
             .map(|(_, (stake, _))| stake)
             .sum();
         for (stake, vote_account) in bank.vote_accounts().values() {
-            let vote_state = vote_account.vote_state();
-            if let Some(last_vote) = vote_state.votes.iter().last() {
-                let entry = last_votes.entry(vote_state.node_pubkey).or_insert((
-                    last_vote.slot(),
-                    vote_state.clone(),
+            let vote_state_view = vote_account.vote_state_view();
+            if let Some(last_vote) = vote_state_view.last_voted_slot() {
+                let entry = last_votes.entry(*vote_state_view.node_pubkey()).or_insert((
+                    last_vote,
+                    vote_state_view.clone(),
                     *stake,
                     total_stake,
                 ));
-                if entry.0 < last_vote.slot() {
-                    *entry = (last_vote.slot(), vote_state.clone(), *stake, total_stake);
+                if entry.0 < last_vote {
+                    *entry = (last_vote, vote_state_view.clone(), *stake, total_stake);
                 }
             }
         }
@@ -254,19 +255,20 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     dot.push("  subgraph cluster_banks {".to_string());
     dot.push("    style=invis".to_string());
     let mut styled_slots = HashSet::new();
-    let mut all_votes: HashMap<Pubkey, HashMap<Slot, VoteState>> = HashMap::new();
+    let mut all_votes: HashMap<Pubkey, HashMap<Slot, VoteStateView>> = HashMap::new();
     for fork_slot in &fork_slots {
         let mut bank = bank_forks[*fork_slot].clone();
 
         let mut first = true;
         loop {
             for (_, vote_account) in bank.vote_accounts().values() {
-                let vote_state = vote_account.vote_state();
-                if let Some(last_vote) = vote_state.votes.iter().last() {
-                    let validator_votes = all_votes.entry(vote_state.node_pubkey).or_default();
+                let vote_state_view = vote_account.vote_state_view();
+                if let Some(last_vote) = vote_state_view.last_voted_slot() {
+                    let validator_votes =
+                        all_votes.entry(*vote_state_view.node_pubkey()).or_default();
                     validator_votes
-                        .entry(last_vote.slot())
-                        .or_insert_with(|| vote_state.clone());
+                        .entry(last_vote)
+                        .or_insert_with(|| vote_state_view.clone());
                 }
             }
 
@@ -344,7 +346,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     let mut absent_votes = 0;
     let mut lowest_last_vote_slot = u64::MAX;
     let mut lowest_total_stake = 0;
-    for (node_pubkey, (last_vote_slot, vote_state, stake, total_stake)) in &last_votes {
+    for (node_pubkey, (last_vote_slot, vote_state_view, stake, total_stake)) in &last_votes {
         all_votes.entry(*node_pubkey).and_modify(|validator_votes| {
             validator_votes.remove(last_vote_slot);
         });
@@ -364,9 +366,8 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                 if matches!(config.vote_account_mode, GraphVoteAccountMode::WithHistory) {
                     format!(
                         "vote history:\n{}",
-                        vote_state
-                            .votes
-                            .iter()
+                        vote_state_view
+                            .votes_iter()
                             .map(|vote| format!(
                                 "slot {} (conf={})",
                                 vote.slot(),
@@ -378,10 +379,9 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                 } else {
                     format!(
                         "last vote slot: {}",
-                        vote_state
-                            .votes
-                            .back()
-                            .map(|vote| vote.slot().to_string())
+                        vote_state_view
+                            .last_voted_slot()
+                            .map(|vote_slot| vote_slot.to_string())
                             .unwrap_or_else(|| "none".to_string())
                     )
                 };
@@ -390,7 +390,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                 node_pubkey,
                 node_pubkey,
                 lamports_to_sol(*stake),
-                vote_state.root_slot.unwrap_or(0),
+                vote_state_view.root_slot().unwrap_or(0),
                 vote_history,
             ));
 
@@ -419,16 +419,15 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     // Add for vote information from all banks.
     if config.include_all_votes {
         for (node_pubkey, validator_votes) in &all_votes {
-            for (vote_slot, vote_state) in validator_votes {
+            for (vote_slot, vote_state_view) in validator_votes {
                 dot.push(format!(
                     r#"  "{} vote {}"[shape=box,style=dotted,label="validator vote: {}\nroot slot: {}\nvote history:\n{}"];"#,
                     node_pubkey,
                     vote_slot,
                     node_pubkey,
-                    vote_state.root_slot.unwrap_or(0),
-                    vote_state
-                        .votes
-                        .iter()
+                    vote_state_view.root_slot().unwrap_or(0),
+                    vote_state_view
+                        .votes_iter()
                         .map(|vote| format!("slot {} (conf={})", vote.slot(), vote.confirmation_count()))
                         .collect::<Vec<_>>()
                         .join("\n")
