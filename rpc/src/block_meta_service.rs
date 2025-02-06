@@ -1,7 +1,7 @@
-//! The `CacheBlockMetaService` is responsible for persisting block metadata
-//! from banks into the `Blockstore`
+//! The `BlockMetaService` is responsible for persisting block metadata from
+//! banks into the `Blockstore`
 
-pub use solana_ledger::blockstore_processor::CacheBlockMetaSender;
+pub use solana_ledger::blockstore_processor::BlockMetaSender;
 use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     solana_ledger::blockstore::{Blockstore, BlockstoreError},
@@ -17,62 +17,61 @@ use {
     },
 };
 
-pub type CacheBlockMetaReceiver = Receiver<Arc<Bank>>;
+pub type BlockMetaReceiver = Receiver<Arc<Bank>>;
 
-pub struct CacheBlockMetaService {
+pub struct BlockMetaService {
     thread_hdl: JoinHandle<()>,
 }
 
-impl CacheBlockMetaService {
+impl BlockMetaService {
     pub fn new(
-        cache_block_meta_receiver: CacheBlockMetaReceiver,
+        block_meta_receiver: BlockMetaReceiver,
         blockstore: Arc<Blockstore>,
         max_complete_rewards_slot: Arc<AtomicU64>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let thread_hdl = Builder::new()
-            .name("solCacheBlkTime".to_string())
+            .name("solBlockMeta".to_string())
             .spawn(move || {
-                info!("CacheBlockMetaService has started");
+                info!("BlockMetaService has started");
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;
                     }
 
-                    let bank = match cache_block_meta_receiver.recv_timeout(Duration::from_secs(1))
-                    {
+                    let bank = match block_meta_receiver.recv_timeout(Duration::from_secs(1)) {
                         Ok(bank) => bank,
                         Err(RecvTimeoutError::Timeout) => continue,
                         Err(err @ RecvTimeoutError::Disconnected) => {
-                            info!("CacheBlockMetaService is stopping because: {err}");
+                            info!("BlockMetaService is stopping because: {err}");
                             break;
                         }
                     };
 
                     if let Err(err) =
-                        Self::cache_block_meta(&bank, &blockstore, &max_complete_rewards_slot)
+                        Self::write_block_meta(&bank, &blockstore, &max_complete_rewards_slot)
                     {
-                        error!("CacheBlockMetaService is stopping because: {err}");
+                        error!("BlockMetaService is stopping because: {err}");
                         // Set the exit flag to allow other services to gracefully stop
                         exit.store(true, Ordering::Relaxed);
                         break;
                     }
                 }
-                info!("CacheBlockMetaService has stopped");
+                info!("BlockMetaService has stopped");
             })
             .unwrap();
         Self { thread_hdl }
     }
 
-    fn cache_block_meta(
+    fn write_block_meta(
         bank: &Bank,
         blockstore: &Blockstore,
         max_complete_rewards_slot: &Arc<AtomicU64>,
     ) -> Result<(), BlockstoreError> {
         let slot = bank.slot();
 
-        blockstore.cache_block_time(slot, bank.clock().unix_timestamp)?;
-        blockstore.cache_block_height(slot, bank.block_height())?;
+        blockstore.set_block_time(slot, bank.clock().unix_timestamp)?;
+        blockstore.set_block_height(slot, bank.block_height())?;
 
         let rewards = bank.get_rewards_and_num_partitions();
         if rewards.should_record() {

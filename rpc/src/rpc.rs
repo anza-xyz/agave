@@ -4903,7 +4903,7 @@ pub mod tests {
                     .unwrap()
                     .clock()
                     .unix_timestamp;
-                self.blockstore.cache_block_time(*root, block_time).unwrap();
+                self.blockstore.set_block_time(*root, block_time).unwrap();
             }
         }
 

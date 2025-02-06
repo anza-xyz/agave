@@ -990,7 +990,7 @@ pub(crate) fn process_blockstore_for_bank_0(
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
     opts: &ProcessOptions,
-    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -1025,7 +1025,7 @@ pub(crate) fn process_blockstore_for_bank_0(
         &replay_tx_thread_pool,
         opts,
         &VerifyRecyclers::default(),
-        cache_block_meta_sender,
+        block_meta_sender,
         entry_notification_sender,
     );
     bank_forks
@@ -1039,7 +1039,7 @@ pub fn process_blockstore_from_root(
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_background_request_sender: &AbsRequestSender,
 ) -> result::Result<(), BlockstoreProcessorError> {
@@ -1105,7 +1105,7 @@ pub fn process_blockstore_from_root(
             leader_schedule_cache,
             opts,
             transaction_status_sender,
-            cache_block_meta_sender,
+            block_meta_sender,
             entry_notification_sender,
             &mut timing,
             accounts_background_request_sender,
@@ -1816,7 +1816,7 @@ fn process_bank_0(
     replay_tx_thread_pool: &ThreadPool,
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
-    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
 ) {
     assert_eq!(bank0.slot(), 0);
@@ -1841,7 +1841,7 @@ fn process_bank_0(
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
     }
-    cache_block_meta(bank0, cache_block_meta_sender);
+    send_block_meta(bank0, block_meta_sender);
 }
 
 // Given a bank, add its children to the pending slots queue if those children slots are
@@ -1916,7 +1916,7 @@ fn load_frozen_forks(
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     timing: &mut ExecuteTimings,
     accounts_background_request_sender: &AbsRequestSender,
@@ -2000,7 +2000,7 @@ fn load_frozen_forks(
                 &recyclers,
                 &mut progress,
                 transaction_status_sender,
-                cache_block_meta_sender,
+                block_meta_sender,
                 entry_notification_sender,
                 None,
                 timing,
@@ -2192,7 +2192,7 @@ pub fn process_single_slot(
     recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
@@ -2257,7 +2257,7 @@ pub fn process_single_slot(
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank.slot(), bank.hash(), false);
     }
-    cache_block_meta(bank, cache_block_meta_sender);
+    send_block_meta(bank, block_meta_sender);
 
     Ok(())
 }
@@ -2325,13 +2325,13 @@ impl TransactionStatusSender {
     }
 }
 
-pub type CacheBlockMetaSender = Sender<Arc<Bank>>;
+pub type BlockMetaSender = Sender<Arc<Bank>>;
 
-pub fn cache_block_meta(bank: &Arc<Bank>, cache_block_meta_sender: Option<&CacheBlockMetaSender>) {
-    if let Some(cache_block_meta_sender) = cache_block_meta_sender {
-        cache_block_meta_sender
+pub fn send_block_meta(bank: &Arc<Bank>, block_meta_sender: Option<&BlockMetaSender>) {
+    if let Some(block_meta_sender) = block_meta_sender {
+        block_meta_sender
             .send(bank.clone())
-            .unwrap_or_else(|err| warn!("cache_block_meta_sender failed: {:?}", err));
+            .unwrap_or_else(|err| warn!("block_meta_sender failed: {:?}", err));
     }
 }
 
