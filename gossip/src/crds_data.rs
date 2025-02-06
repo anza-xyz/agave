@@ -7,7 +7,6 @@ use {
         legacy_contact_info::LegacyContactInfo,
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
-    rand::Rng,
     serde::de::{Deserialize, Deserializer},
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{
@@ -20,6 +19,9 @@ use {
     solana_vote::vote_parser,
     std::{cmp::Ordering, collections::BTreeSet},
 };
+
+#[cfg(feature = "dev-context-only-utils")]
+use {crate::format_validation::FormatValidation, rand::Rng, std::hint::black_box};
 
 pub(crate) const MAX_WALLCLOCK: u64 = 1_000_000_000_000_000;
 pub(crate) const MAX_SLOT: u64 = 1_000_000_000_000_000;
@@ -233,9 +235,9 @@ impl Sanitize for AccountsHashes {
     }
 }
 
-impl AccountsHashes {
-    /// New random AccountsHashes for tests and benchmarks.
-    pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation for AccountsHashes {
+    fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         let num_hashes = rng.gen_range(0..MAX_ACCOUNTS_HASHES) + 1;
         let hashes = std::iter::repeat_with(|| {
             let slot = 47825632 + rng.gen_range(0..512);
@@ -249,6 +251,13 @@ impl AccountsHashes {
             hashes,
             wallclock: new_rand_timestamp(rng),
         }
+    }
+
+    fn exercise(&self) -> anyhow::Result<()> {
+        FormatValidation::exercise(&self)?;
+        let s: u64 = self.hashes.iter().map(|v| v.0).sum();
+        black_box(s);
+        Ok(())
     }
 }
 
@@ -303,8 +312,10 @@ impl LowestSlot {
             wallclock,
         }
     }
+}
 
-    /// New random LowestSlot for tests and benchmarks.
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation for LowestSlot {
     fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         Self {
             from: pubkey.unwrap_or_else(pubkey::new_rand),

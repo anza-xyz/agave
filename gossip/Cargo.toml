@@ -10,9 +10,11 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
+cfg-if = { workspace = true }
 clap = { workspace = true }
 crossbeam-channel = { workspace = true }
 flate2 = { workspace = true }
@@ -21,6 +23,7 @@ itertools = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 num-traits = { workspace = true }
+pcap-file = "2.0.0"
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
@@ -28,6 +31,7 @@ serde = { workspace = true }
 serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
+serde_json = { workspace = true, optional = true }
 siphasher = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clap-utils = { workspace = true }
@@ -62,7 +66,6 @@ solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 static_assertions = { workspace = true }
 thiserror = { workspace = true }
-
 [dev-dependencies]
 bs58 = { workspace = true }
 criterion = { workspace = true }
@@ -70,10 +73,10 @@ num_cpus = { workspace = true }
 rand0-7 = { workspace = true }
 rand_chacha0-2 = { workspace = true }
 serial_test = { workspace = true }
+solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
-
 [features]
 frozen-abi = [
     "dep:solana-frozen-abi",
@@ -88,6 +91,7 @@ frozen-abi = [
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
+dev-context-only-utils = []
 
 [[bench]]
 name = "crds"

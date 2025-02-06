@@ -1293,6 +1293,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
+name = "byteorder_slice"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b294e30387378958e8bf8f4242131b930ea615ff81e8cac2440cea0a6013190"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "bytes"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2019,6 +2028,17 @@ name = "derivative"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fcc3dd5e9e9c0b295d6e1e4d811fb6f157d5ffd784b8d202fc62eac8035a770b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "derive-into-owned"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d94d81e3819a7b06a8638f448bc6339371ca9b6076a99d4a43eece3c4c923"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4477,6 +4497,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83a0692ec44e4cf1ef28ca317f14f8f07da2d95ec3fa01f86e4467b725e60917"
 dependencies = [
  "digest 0.10.7",
+]
+
+[[package]]
+name = "pcap-file"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fc1f139757b058f9f37b76c48501799d12c9aa0aa4c0d4c980b062ee925d1b2"
+dependencies = [
+ "byteorder_slice",
+ "derive-into-owned",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -7824,10 +7855,12 @@ dependencies = [
 name = "solana-gossip"
 version = "2.2.0"
 dependencies = [
+ "anyhow",
  "assert_matches",
  "bincode",
  "bs58",
  "bv",
+ "cfg-if 1.0.0",
  "clap 2.33.3",
  "criterion",
  "crossbeam-channel",
@@ -7838,6 +7871,7 @@ dependencies = [
  "lru",
  "num-traits",
  "num_cpus",
+ "pcap-file",
  "rand 0.7.3",
  "rand 0.8.5",
  "rand_chacha 0.2.2",
@@ -7847,6 +7881,7 @@ dependencies = [
  "serde-big-array",
  "serde_bytes",
  "serde_derive",
+ "serde_json",
  "serial_test",
  "siphasher",
  "solana-bloom",
@@ -7857,6 +7892,7 @@ dependencies = [
  "solana-feature-set",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-gossip",
  "solana-ledger",
  "solana-logger",
  "solana-measure",
