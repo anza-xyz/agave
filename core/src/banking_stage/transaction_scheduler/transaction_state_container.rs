@@ -3,10 +3,7 @@ use {
         transaction_priority_id::TransactionPriorityId,
         transaction_state::{SanitizedTransactionTTL, TransactionState},
     },
-    crate::banking_stage::{
-        immutable_deserialized_packet::ImmutableDeserializedPacket,
-        scheduler_messages::TransactionId,
-    },
+    crate::banking_stage::scheduler_messages::TransactionId,
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
@@ -69,7 +66,7 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Panics if the transaction does not exist.
     fn get_transaction_ttl(&self, id: TransactionId) -> Option<&SanitizedTransactionTTL<Tx>>;
 
-    /// Retries a transaction - inserts transaction back into map (but not packet).
+    /// Retries a transaction - inserts transaction back into map.
     /// This transitions the transaction to `Unprocessed` state.
     fn retry_transaction(
         &mut self,
@@ -158,7 +155,6 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     pub(crate) fn insert_new_transaction(
         &mut self,
         transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Arc<ImmutableDeserializedPacket>,
         priority: u64,
         cost: u64,
     ) -> bool {
@@ -168,12 +164,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         let priority_id = {
             let entry = self.get_vacant_map_entry();
             let transaction_id = entry.key();
-            entry.insert(TransactionState::new(
-                transaction_ttl,
-                Some(packet),
-                priority,
-                cost,
-            ));
+            entry.insert(TransactionState::new(transaction_ttl, priority, cost));
             TransactionPriorityId::new(priority, transaction_id)
         };
 
@@ -332,7 +323,6 @@ mod tests {
             compute_budget::ComputeBudgetInstruction,
             hash::Hash,
             message::Message,
-            packet::Packet,
             signature::Keypair,
             signer::Signer,
             system_instruction,
@@ -345,7 +335,6 @@ mod tests {
         priority: u64,
     ) -> (
         SanitizedTransactionTTL<RuntimeTransaction<SanitizedTransaction>>,
-        Arc<ImmutableDeserializedPacket>,
         u64,
         u64,
     ) {
@@ -360,18 +349,12 @@ mod tests {
             message,
             Hash::default(),
         ));
-        let packet = Arc::new(
-            ImmutableDeserializedPacket::new(
-                Packet::from_data(None, tx.to_versioned_transaction()).unwrap(),
-            )
-            .unwrap(),
-        );
         let transaction_ttl = SanitizedTransactionTTL {
             transaction: tx,
             max_age: MaxAge::MAX,
         };
         const TEST_TRANSACTION_COST: u64 = 5000;
-        (transaction_ttl, packet, priority, TEST_TRANSACTION_COST)
+        (transaction_ttl, priority, TEST_TRANSACTION_COST)
     }
 
     fn push_to_container(
@@ -379,8 +362,8 @@ mod tests {
         num: usize,
     ) {
         for priority in 0..num as u64 {
-            let (transaction_ttl, packet, priority, cost) = test_transaction(priority);
-            container.insert_new_transaction(transaction_ttl, packet, priority, cost);
+            let (transaction_ttl, priority, cost) = test_transaction(priority);
+            container.insert_new_transaction(transaction_ttl, priority, cost);
         }
     }
 

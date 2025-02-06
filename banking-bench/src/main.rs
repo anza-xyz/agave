@@ -7,7 +7,6 @@ use {
     log::*,
     rand::{thread_rng, Rng},
     rayon::prelude::*,
-    solana_client::connection_cache::ConnectionCache,
     solana_core::{
         banking_stage::{update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage},
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
@@ -37,7 +36,6 @@ use {
         transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
-    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     std::{
         sync::{atomic::Ordering, Arc, RwLock},
         thread::sleep,
@@ -305,12 +303,6 @@ fn main() {
                 .help("Number of threads to use in the banking stage"),
         )
         .arg(
-            Arg::new("tpu_disable_quic")
-                .long("tpu-disable-quic")
-                .takes_value(false)
-                .help("Disable forwarding messages to TPU using QUIC"),
-        )
-        .arg(
             Arg::new("simulate_mint")
                 .long("simulate-mint")
                 .takes_value(false)
@@ -468,18 +460,6 @@ fn main() {
         gossip_vote_sender,
         gossip_vote_receiver,
     } = banking_tracer.create_channels(false);
-    let tpu_disable_quic = matches.is_present("tpu_disable_quic");
-    let connection_cache = if tpu_disable_quic {
-        ConnectionCache::with_udp(
-            "connection_cache_banking_bench_udp",
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        )
-    } else {
-        ConnectionCache::new_quic(
-            "connection_cache_banking_bench_quic",
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        )
-    };
     let banking_stage = BankingStage::new_num_threads(
         block_production_method,
         transaction_struct,
@@ -492,10 +472,8 @@ fn main() {
         None,
         replay_vote_sender,
         None,
-        Arc::new(connection_cache),
         bank_forks.clone(),
         &prioritization_fee_cache,
-        false,
     );
 
     // This is so that the signal_receiver does not go out of scope after the closure.

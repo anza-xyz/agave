@@ -498,7 +498,7 @@ mod tests {
         trace!("start");
         let (packet_s, packet_r) = unbounded();
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
-        let verifier = TransactionSigVerifier::new(verified_s);
+        let verifier = TransactionSigVerifier::new(verified_s, None);
         let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerTest", "test");
 
         let now = Instant::now();

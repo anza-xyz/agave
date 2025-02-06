@@ -64,8 +64,6 @@ pub(crate) struct SanitizedTransactionReceiveAndBuffer {
     /// Packet/Transaction ingress.
     packet_receiver: PacketDeserializer,
     bank_forks: Arc<RwLock<BankForks>>,
-
-    forwarding_enabled: bool,
 }
 
 impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
@@ -91,7 +89,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                 },
                 true,
             ),
-            BufferedPacketsDecision::Forward => (MAX_PACKET_RECEIVE_TIME, self.forwarding_enabled),
+            BufferedPacketsDecision::Forward => (MAX_PACKET_RECEIVE_TIME, false),
             BufferedPacketsDecision::ForwardAndHold => (MAX_PACKET_RECEIVE_TIME, true),
         };
 
@@ -143,15 +141,10 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
 }
 
 impl SanitizedTransactionReceiveAndBuffer {
-    pub fn new(
-        packet_receiver: PacketDeserializer,
-        bank_forks: Arc<RwLock<BankForks>>,
-        forwarding_enabled: bool,
-    ) -> Self {
+    pub fn new(packet_receiver: PacketDeserializer, bank_forks: Arc<RwLock<BankForks>>) -> Self {
         Self {
             packet_receiver,
             bank_forks,
-            forwarding_enabled,
         }
     }
 
@@ -179,7 +172,6 @@ impl SanitizedTransactionReceiveAndBuffer {
         const CHUNK_SIZE: usize = 128;
         let lock_results: [_; CHUNK_SIZE] = core::array::from_fn(|_| Ok(()));
 
-        let mut arc_packets = ArrayVec::<_, CHUNK_SIZE>::new();
         let mut transactions = ArrayVec::<_, CHUNK_SIZE>::new();
         let mut max_ages = ArrayVec::<_, CHUNK_SIZE>::new();
         let mut fee_budget_limits_vec = ArrayVec::<_, CHUNK_SIZE>::new();
@@ -190,32 +182,27 @@ impl SanitizedTransactionReceiveAndBuffer {
             chunk
                 .iter()
                 .filter_map(|packet| {
-                    packet
-                        .build_sanitized_transaction(
-                            vote_only,
-                            root_bank.as_ref(),
-                            root_bank.get_reserved_account_keys(),
-                        )
-                        .map(|(tx, deactivation_slot)| (packet.clone(), tx, deactivation_slot))
+                    packet.build_sanitized_transaction(
+                        vote_only,
+                        root_bank.as_ref(),
+                        root_bank.get_reserved_account_keys(),
+                    )
                 })
                 .inspect(|_| saturating_add_assign!(post_sanitization_count, 1))
-                .filter(|(_packet, tx, _deactivation_slot)| {
+                .filter(|(tx, _deactivation_slot)| {
                     validate_account_locks(
                         tx.message().account_keys(),
                         transaction_account_lock_limit,
                     )
                     .is_ok()
                 })
-                .filter_map(|(packet, tx, deactivation_slot)| {
+                .filter_map(|(tx, deactivation_slot)| {
                     tx.compute_budget_instruction_details()
                         .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
-                        .map(|compute_budget| {
-                            (packet, tx, deactivation_slot, compute_budget.into())
-                        })
+                        .map(|compute_budget| (tx, deactivation_slot, compute_budget.into()))
                         .ok()
                 })
-                .for_each(|(packet, tx, deactivation_slot, fee_budget_limits)| {
-                    arc_packets.push(packet);
+                .for_each(|(tx, deactivation_slot, fee_budget_limits)| {
                     transactions.push(tx);
                     max_ages.push(calculate_max_age(
                         sanitized_epoch,
@@ -236,14 +223,12 @@ impl SanitizedTransactionReceiveAndBuffer {
             let mut post_transaction_check_count: usize = 0;
             let mut num_dropped_on_capacity: usize = 0;
             let mut num_buffered: usize = 0;
-            for ((((packet, transaction), max_age), fee_budget_limits), _check_result) in
-                arc_packets
-                    .drain(..)
-                    .zip(transactions.drain(..))
-                    .zip(max_ages.drain(..))
-                    .zip(fee_budget_limits_vec.drain(..))
-                    .zip(check_results)
-                    .filter(|(_, check_result)| check_result.is_ok())
+            for (((transaction, max_age), fee_budget_limits), _check_result) in transactions
+                .drain(..)
+                .zip(max_ages.drain(..))
+                .zip(fee_budget_limits_vec.drain(..))
+                .zip(check_results)
+                .filter(|(_, check_result)| check_result.is_ok())
             {
                 saturating_add_assign!(post_transaction_check_count, 1);
 
@@ -254,7 +239,7 @@ impl SanitizedTransactionReceiveAndBuffer {
                     max_age,
                 };
 
-                if container.insert_new_transaction(transaction_ttl, packet, priority, cost) {
+                if container.insert_new_transaction(transaction_ttl, priority, cost) {
                     saturating_add_assign!(num_dropped_on_capacity, 1);
                 }
                 saturating_add_assign!(num_buffered, 1);
@@ -389,7 +374,7 @@ impl TransactionViewReceiveAndBuffer {
         working_bank: &Bank,
         packet_batch_message: BankingPacketBatch,
     ) -> usize {
-        // Do not support forwarding - only add support for this if we really need it.
+        // If not holding packets, just drop them immediately without parsing.
         if matches!(decision, BufferedPacketsDecision::Forward) {
             return 0;
         }
@@ -531,7 +516,6 @@ impl TransactionViewReceiveAndBuffer {
                 transaction: view,
                 max_age,
             },
-            None,
             priority,
             cost,
         ))

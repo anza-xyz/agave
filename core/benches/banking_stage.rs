@@ -17,7 +17,6 @@ use {
     log::*,
     rand::{thread_rng, Rng},
     rayon::prelude::*,
-    solana_client::connection_cache::ConnectionCache,
     solana_core::{
         banking_stage::{
             committer::Committer,
@@ -315,10 +314,8 @@ fn bench_banking(
         None,
         s,
         None,
-        Arc::new(ConnectionCache::new("connection_cache_test")),
         bank_forks,
         &Arc::new(PrioritizationFeeCache::new(0u64)),
-        false,
     );
 
     let chunk_len = verified.len() / CHUNKS;

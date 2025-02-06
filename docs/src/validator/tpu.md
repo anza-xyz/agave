@@ -31,9 +31,14 @@ transactions when running into this situation.
 to remove excessive packets before then filtering packets with invalid
 signatures by setting the packet's discard flag.
 
-* banking stage: decides whether to forward, hold or process packets
-received. Once it detects the node is the block producer it processes
-held packets and newly received packets with a Bank at the tip slot.
+* banking stage: receives and buffers packet when the node is close to
+becoming the leader. Once it detects the node is the block producer it
+processes held packets and newly received packets with a Bank at the tip slot.
+
+* forwarding stage: forwards received packets to a node that is or will soon
+be leader. Sorts packets by priority and forwards them. Non-vote transactions
+are only forwarded if the node has the option enabled (stake overrides) but
+will always forward tpu votes.
 
 * broadcast stage: receives the valid transactions formed into Entry's from
 banking stage and packages them into shreds to send to network peers through

@@ -628,10 +628,7 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
 mod tests {
     use {
         super::*,
-        crate::banking_stage::{
-            immutable_deserialized_packet::ImmutableDeserializedPacket,
-            transaction_scheduler::transaction_state_container::TransactionStateContainer,
-        },
+        crate::banking_stage::transaction_scheduler::transaction_state_container::TransactionStateContainer,
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -639,14 +636,13 @@ mod tests {
             compute_budget::ComputeBudgetInstruction,
             hash::Hash,
             message::Message,
-            packet::Packet,
             pubkey::Pubkey,
             signature::Keypair,
             signer::Signer,
             system_instruction,
             transaction::{SanitizedTransaction, Transaction},
         },
-        std::{borrow::Borrow, sync::Arc},
+        std::borrow::Borrow,
     };
 
     #[allow(clippy::type_complexity)]
@@ -710,12 +706,6 @@ mod tests {
                 lamports,
                 compute_unit_price,
             );
-            let packet = Arc::new(
-                ImmutableDeserializedPacket::new(
-                    Packet::from_data(None, transaction.to_versioned_transaction()).unwrap(),
-                )
-                .unwrap(),
-            );
             let transaction_ttl = SanitizedTransactionTTL {
                 transaction,
                 max_age: MaxAge::MAX,
@@ -723,7 +713,6 @@ mod tests {
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
                 transaction_ttl,
-                packet,
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );
