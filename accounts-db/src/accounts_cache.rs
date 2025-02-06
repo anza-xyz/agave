@@ -1,5 +1,6 @@
 use {
     crate::{accounts_db::AccountsDb, accounts_hash::AccountHash},
+    ahash::RandomState as AHashRandomState,
     dashmap::DashMap,
     seqlock::SeqLock,
     solana_nohash_hasher::BuildNoHashHasher,
@@ -22,7 +23,7 @@ pub type SlotCache = Arc<SlotCacheInner>;
 
 #[derive(Debug)]
 pub struct SlotCacheInner {
-    cache: DashMap<Pubkey, CachedAccount>,
+    cache: DashMap<Pubkey, CachedAccount, AHashRandomState>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
     unique_account_writes_size: AtomicU64,
@@ -119,7 +120,7 @@ impl SlotCacheInner {
 }
 
 impl Deref for SlotCacheInner {
-    type Target = DashMap<Pubkey, CachedAccount>;
+    type Target = DashMap<Pubkey, CachedAccount, AHashRandomState>;
     fn deref(&self) -> &Self::Target {
         &self.cache
     }
