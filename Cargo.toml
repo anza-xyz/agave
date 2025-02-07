@@ -607,6 +607,17 @@ x509-parser = "0.14.0"
 zeroize = { version = "1.7", default-features = false }
 zstd = "0.13.2"
 
+# curve25519-dalek uses the simd backend by default in v4 if possible,
+# which has very slow performance on some platforms with opt-level 0,
+# which is the default for dev and test builds.
+# This slowdown causes certain interactions in the solana-test-validator,
+# such as verifying ZK proofs in transactions, to take much more than 400ms,
+# creating problems in the testing environment.
+# To enable better performance in solana-test-validator during tests and dev builds,
+# we override the opt-level to 3 for the crate.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
 [patch.crates-io]
 # for details, see https://github.com/anza-xyz/crossbeam/commit/fd279d707025f0e60951e429bf778b4813d1b6bf
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }
@@ -645,14 +656,3 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 # comments and the overrides in sync.
 solana-curve25519 = { path = "curves/curve25519" }
 solana-zk-sdk = { path = "zk-sdk" }
-
-# curve25519-dalek uses the simd backend by default in v4 if possible,
-# which has very slow performance on some platforms with opt-level 0,
-# which is the default for dev and test builds.
-# This slowdown causes certain interactions in the solana-test-validator,
-# such as verifying ZK proofs in transactions, to take much more than 400ms,
-# creating problems in the testing environment.
-# To enable better performance in solana-test-validator during tests and dev builds,
-# we override the opt-level to 3 for the crate.
-[profile.dev.package.curve25519-dalek]
-opt-level = 3
