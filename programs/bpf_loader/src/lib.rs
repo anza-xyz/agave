@@ -269,11 +269,6 @@ fn create_vm<'a, 'b>(
                 .touch(index_in_transaction as IndexOfAccount)
                 .map_err(|_| ())?;
 
-            if account.is_shared() {
-                // See BorrowedAccount::make_data_mut() as to why we reserve extra
-                // MAX_PERMITTED_DATA_INCREASE bytes here.
-                account.reserve(MAX_PERMITTED_DATA_INCREASE);
-            }
             Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
         })),
     )?;

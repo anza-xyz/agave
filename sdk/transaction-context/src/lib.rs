@@ -974,7 +974,12 @@ impl BorrowedAccount<'_> {
         // memory that holds the account but it doesn't actually change content
         // nor length of the account.
         self.make_data_mut();
-        self.account.reserve(additional);
+        // NOTE: we don't call reserve unnecessarily, as the first call to make_data_mut
+        // has already resized the data to an extra MAX_PERMITTED_DATA_INCREASE bytes
+        if additional > MAX_PERMITTED_DATA_INCREASE {
+            self.account
+                .reserve(additional.saturating_sub(MAX_PERMITTED_DATA_INCREASE));
+        }
 
         Ok(())
     }
@@ -1004,9 +1009,6 @@ impl BorrowedAccount<'_> {
         // buffer with MAX_PERMITTED_DATA_INCREASE capacity so that if the
         // transaction reallocs, we don't have to copy the whole account data a
         // second time to fullfill the realloc.
-        //
-        // NOTE: The account memory region CoW code in bpf_loader::create_vm() implements the same
-        // logic and must be kept in sync.
         if self.account.is_shared() {
             self.account.reserve(MAX_PERMITTED_DATA_INCREASE);
         }

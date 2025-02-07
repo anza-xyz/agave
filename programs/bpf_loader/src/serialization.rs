@@ -579,6 +579,13 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                         borrowed_account.set_data_length(post_len)?;
                         let allocated_bytes = post_len.saturating_sub(pre_len);
                         if allocated_bytes > 0 {
+                            // Just in time resize of data field within the internal AccountSharedData
+                            //
+                            // NOTE: this is an optimization for CoW account mappings, where the account's
+                            // data is not immediately resized with an extra MAX_PERMITTED_DATA_INCREASE,
+                            // but if the realloc did occur (and this branch was taken) then we need to reserve
+                            // max permitted amount of extra space so the subsequent code will work correctly
+                            borrowed_account.reserve(MAX_PERMITTED_DATA_INCREASE)?;
                             borrowed_account
                                 .get_data_mut()?
                                 .get_mut(pre_len..pre_len.saturating_add(allocated_bytes))
