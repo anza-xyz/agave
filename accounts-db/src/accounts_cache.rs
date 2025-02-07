@@ -169,7 +169,10 @@ pub struct AccountsCache {
 impl AccountsCache {
     pub fn new_inner(&self) -> SlotCache {
         Arc::new(SlotCacheInner {
-            cache: DashMap::with_shard_amount(ACCOUNTS_CACHE_INNER_NUM_SHARDS),
+            cache: DashMap::with_hasher_and_shard_amount(
+                AHashRandomState::default(),
+                ACCOUNTS_CACHE_INNER_NUM_SHARDS,
+            ),
             same_account_writes: AtomicU64::default(),
             same_account_writes_size: AtomicU64::default(),
             unique_account_writes_size: AtomicU64::default(),
