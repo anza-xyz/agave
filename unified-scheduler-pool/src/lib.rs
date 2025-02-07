@@ -3789,7 +3789,7 @@ mod tests {
             replay_vote_sender: None,
             prioritization_fee_cache,
             banking_packet_receiver: never(),
-            banking_packet_handler: Box::new(|_, _| {}),
+            banking_packet_handler: Box::new(|_, _| Ok(())),
             banking_stage_helper: None,
             transaction_recorder: None,
         };
