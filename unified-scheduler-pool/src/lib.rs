@@ -712,7 +712,7 @@ where
                     self.block_verification_handler_count,
                     // Return various type-specific no-op values.
                     never(),
-                    Box::new(|_, _| {}),
+                    Box::new(|_, _| Ok(())),
                     None,
                     None,
                 )
