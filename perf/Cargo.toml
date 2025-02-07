@@ -18,7 +18,7 @@ dlopen2 = { workspace = true }
 fnv = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
-rand = { workspace = true }
+rand = { version = "0.8.5" }
 rayon = { workspace = true }
 serde = { workspace = true }
 solana-clock = { workspace = true, optional = true }
@@ -55,7 +55,7 @@ name = "solana_perf"
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-rand_chacha = { workspace = true }
+rand_chacha = { version = "0.3.1" }
 solana-logger = { workspace = true }
 solana-perf = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }

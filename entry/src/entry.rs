@@ -7,7 +7,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     dlopen2::symbor::{Container, SymBorApi, Symbol},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     rayon::{prelude::*, ThreadPool},
     serde::{Deserialize, Serialize},
     solana_hash::Hash,
@@ -923,7 +923,7 @@ pub fn create_ticks(num_ticks: u64, hashes_per_tick: u64, mut hash: Hash) -> Vec
 
 pub fn create_random_ticks(num_ticks: u64, max_hashes_per_tick: u64, mut hash: Hash) -> Vec<Entry> {
     repeat_with(|| {
-        let hashes_per_tick = thread_rng().gen_range(1..max_hashes_per_tick);
+        let hashes_per_tick = rng().random_range(1..max_hashes_per_tick);
         next_entry_mut(&mut hash, hashes_per_tick, vec![])
     })
     .take(num_ticks as usize)
@@ -1408,15 +1408,15 @@ mod tests {
         solana_logger::setup();
         for _ in 0..100 {
             let mut time = Measure::start("ticks");
-            let num_ticks = thread_rng().gen_range(1..100);
+            let num_ticks = rng().random_range(1..100);
             info!("create {} ticks:", num_ticks);
             let mut entries = create_random_ticks(num_ticks, 100, Hash::default());
             time.stop();
 
             let mut modified = false;
-            if thread_rng().gen_ratio(1, 2) {
+            if rng().random_ratio(1, 2) {
                 modified = true;
-                let modify_idx = thread_rng().gen_range(0..num_ticks) as usize;
+                let modify_idx = rng().random_range(0..num_ticks) as usize;
                 entries[modify_idx].hash = hash(&[1, 2, 3]);
             }
 

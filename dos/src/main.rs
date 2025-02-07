@@ -45,7 +45,7 @@ use {
     crossbeam_channel::{select, tick, unbounded, Receiver, Sender},
     itertools::Itertools,
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_bench_tps::bench::generate_and_fund_keypairs,
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
@@ -732,7 +732,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
         let mut error_count = 0;
         loop {
             if params.data_type == DataType::Random {
-                thread_rng().fill(&mut data[..]);
+                rng().fill(&mut data[..]);
             }
             let res = socket.send_to(&data, target_addr);
             if res.is_err() {

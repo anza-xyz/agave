@@ -1284,14 +1284,14 @@ mod tests {
 
         // variant
         let serialized_len_x4 = serialized_size(&VoteState::default()).unwrap() * 4;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..1000 {
-            let raw_data_length = rng.gen_range(1..serialized_len_x4);
-            let mut raw_data: Vec<u8> = (0..raw_data_length).map(|_| rng.gen::<u8>()).collect();
+            let raw_data_length = rng.random_range(1..serialized_len_x4);
+            let mut raw_data: Vec<u8> = (0..raw_data_length).map(|_| rng.random::<u8>()).collect();
 
             // pure random data will ~never have a valid enum tag, so lets help it out
-            if raw_data_length >= 4 && rng.gen::<bool>() {
-                let tag = rng.gen::<u8>() % 3;
+            if raw_data_length >= 4 && rng.random::<bool>() {
+                let tag = rng.random::<u8>() % 3;
                 raw_data[0] = tag;
                 raw_data[1] = 0;
                 raw_data[2] = 0;
@@ -1792,7 +1792,7 @@ mod tests {
 
     #[test]
     fn test_serde_compact_vote_state_update() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..5000 {
             run_serde_compact_vote_state_update(&mut rng);
         }
@@ -1800,21 +1800,21 @@ mod tests {
 
     fn run_serde_compact_vote_state_update<R: Rng>(rng: &mut R) {
         let lockouts: VecDeque<_> = std::iter::repeat_with(|| {
-            let slot = 149_303_885_u64.saturating_add(rng.gen_range(0..10_000));
-            let confirmation_count = rng.gen_range(0..33);
+            let slot = 149_303_885_u64.saturating_add(rng.random_range(0..10_000));
+            let confirmation_count = rng.random_range(0..33);
             Lockout::new_with_confirmation_count(slot, confirmation_count)
         })
         .take(32)
         .sorted_by_key(|lockout| lockout.slot())
         .collect();
-        let root = rng.gen_ratio(1, 2).then(|| {
+        let root = rng.random_ratio(1, 2).then(|| {
             lockouts[0]
                 .slot()
-                .checked_sub(rng.gen_range(0..1_000))
+                .checked_sub(rng.random_range(0..1_000))
                 .expect("All slots should be greater than 1_000")
         });
-        let timestamp = rng.gen_ratio(1, 2).then(|| rng.gen());
-        let hash = Hash::from(rng.gen::<[u8; 32]>());
+        let timestamp = rng.random_ratio(1, 2).then(|| rng.random());
+        let hash = Hash::from(rng.random::<[u8; 32]>());
         let vote_state_update = VoteStateUpdate {
             lockouts,
             root,
@@ -1833,7 +1833,7 @@ mod tests {
         let vote = VoteInstruction::UpdateVoteState(vote_state_update.clone());
         let bytes = bincode::serialize(&vote).unwrap();
         assert_eq!(vote, bincode::deserialize(&bytes).unwrap());
-        let hash = Hash::from(rng.gen::<[u8; 32]>());
+        let hash = Hash::from(rng.random::<[u8; 32]>());
         let vote = VoteInstruction::UpdateVoteStateSwitch(vote_state_update, hash);
         let bytes = bincode::serialize(&vote).unwrap();
         assert_eq!(vote, bincode::deserialize(&bytes).unwrap());

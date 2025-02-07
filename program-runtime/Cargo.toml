@@ -16,7 +16,7 @@ enum-iterator = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
-rand = { workspace = true }
+rand = { version = "0.8.5" }
 serde = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-clock = { workspace = true }

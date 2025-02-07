@@ -181,7 +181,7 @@ proptest = "1.6"
 qstring = "0.7.2"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quote = "1.0"
-rand = "0.8.5"
+rand = "0.9.0"
 rand0-7 = { package = "rand", version = "0.7" }
 reqwest = { version = "0.11.27", default-features = false }
 serde = "1.0.217" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251

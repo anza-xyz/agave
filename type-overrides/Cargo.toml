@@ -11,7 +11,7 @@ edition = { workspace = true }
 [dependencies]
 futures = { workspace = true, optional = true }
 lazy_static = { workspace = true }
-rand = { workspace = true }
+rand = { version = "0.8.5" }
 shuttle = { workspace = true, optional = true }
 
 [features]

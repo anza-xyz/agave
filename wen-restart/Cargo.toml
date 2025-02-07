@@ -31,7 +31,7 @@ solana-vote-program = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-rand = { workspace = true }
+rand = { version = "0.8.5" }
 serial_test = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-entry = { workspace = true }

@@ -5832,7 +5832,7 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
 
     // Overwrite block_verification_method with shuffled variants
     let mut methods = BlockVerificationMethod::iter().collect::<Vec<_>>();
-    methods.shuffle(&mut rand::thread_rng());
+    methods.shuffle(&mut rand::rng());
     for (validator_config, method) in config.validator_configs.iter_mut().zip_eq(methods) {
         validator_config.block_verification_method = method;
     }

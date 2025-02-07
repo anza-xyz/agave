@@ -48,7 +48,7 @@ mod tests {
     #![allow(deprecated)]
     use {
         super::*,
-        rand::{seq::SliceRandom, thread_rng},
+        rand::{rng, seq::SliceRandom},
         solana_sdk::{
             account::{from_account, DUMMY_INHERITABLE_ACCOUNT_FIELDS},
             hash::{Hash, HASH_BYTES},
@@ -115,7 +115,7 @@ mod tests {
                 })
             })
             .collect();
-        unsorted_blocks.shuffle(&mut thread_rng());
+        unsorted_blocks.shuffle(&mut rng());
 
         let account = create_account_with_data_for_test(
             unsorted_blocks

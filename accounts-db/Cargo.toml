@@ -30,7 +30,7 @@ modular-bitfield = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
-rand = { workspace = true }
+rand = { version = "0.8.5" }
 rayon = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
@@ -70,7 +70,7 @@ assert_matches = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
-rand_chacha = { workspace = true }
+rand_chacha = { version = "0.3.1" }
 serde_bytes = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-accounts-db = { path = ".", features = ["dev-context-only-utils"] }

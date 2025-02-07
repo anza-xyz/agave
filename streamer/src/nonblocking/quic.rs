@@ -18,7 +18,7 @@ use {
     percentage::Percentage,
     quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime, VarInt},
     quinn_proto::VarIntBoundsExceeded,
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
@@ -1411,8 +1411,8 @@ impl ConnectionTable {
         let num_pruned = std::iter::once(self.table.len())
             .filter(|&size| size > 0)
             .flat_map(|size| {
-                let mut rng = thread_rng();
-                repeat_with(move || rng.gen_range(0..size))
+                let mut rng = rng();
+                repeat_with(move || rng.random_range(0..size))
             })
             .map(|index| {
                 let connection = self.table[index].first();

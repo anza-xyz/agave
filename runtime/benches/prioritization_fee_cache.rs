@@ -2,7 +2,7 @@
 extern crate test;
 
 use {
-    rand::{thread_rng, Rng},
+    rand::{rng, Rng},
     solana_runtime::{
         bank::Bank,
         bank_forks::BankForks,
@@ -86,7 +86,7 @@ fn process_transactions_multiple_slots(banks: &[Arc<Bank>], num_slots: usize, nu
                 })
                 .collect();
 
-            let index = thread_rng().gen_range(0..num_slots);
+            let index = rng().random_range(0..num_slots);
 
             prioritization_fee_cache.update(&banks[index], transactions.iter());
         })

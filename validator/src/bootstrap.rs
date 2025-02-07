@@ -1,7 +1,7 @@
 use {
     itertools::Itertools,
     log::*,
-    rand::{seq::SliceRandom, thread_rng, Rng},
+    rand::{rng, seq::SliceRandom, Rng},
     rayon::prelude::*,
     solana_core::validator::{ValidatorConfig, ValidatorStartProgress},
     solana_download_utils::{download_snapshot_archive, DownloadProgressRecord},
@@ -594,7 +594,7 @@ pub fn rpc_bootstrap(
 ) {
     if do_port_check {
         let mut order: Vec<_> = (0..cluster_entrypoints.len()).collect();
-        order.shuffle(&mut thread_rng());
+        order.shuffle(&mut rng());
         if order.into_iter().all(|i| {
             !verify_reachable_ports(
                 node,
@@ -746,7 +746,7 @@ fn get_rpc_nodes(
         blacklist_timeout = Instant::now();
         get_rpc_peers_timout = Instant::now();
         if bootstrap_config.no_snapshot_fetch {
-            let random_peer = &rpc_peers[thread_rng().gen_range(0..rpc_peers.len())];
+            let random_peer = &rpc_peers[rng().random_range(0..rpc_peers.len())];
             return Ok(vec![GetRpcNodeResult {
                 rpc_contact_info: random_peer.clone(),
                 snapshot_hash: None,

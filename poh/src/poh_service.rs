@@ -376,7 +376,7 @@ impl PohService {
 mod tests {
     use {
         super::*,
-        rand::{thread_rng, Rng},
+        rand::{rng, Rng},
         solana_clock::DEFAULT_HASHES_PER_TICK,
         solana_ledger::{
             blockstore::Blockstore,
@@ -461,7 +461,7 @@ mod tests {
                         time.stop();
                         total_us += time.as_us();
                         total_times += 1;
-                        if is_test_run && thread_rng().gen_ratio(1, 4) {
+                        if is_test_run && rng().random_ratio(1, 4) {
                             sleep(Duration::from_millis(200));
                         }
 

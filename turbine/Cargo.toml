@@ -19,8 +19,8 @@ lazy-lru = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 quinn = { workspace = true }
-rand = { workspace = true }
-rand_chacha = { workspace = true }
+rand = { version = "0.8.5" }
+rand_chacha = { version = "0.3.1" }
 rayon = { workspace = true }
 rustls = { workspace = true }
 solana-entry = { workspace = true }

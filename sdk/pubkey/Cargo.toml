@@ -18,7 +18,7 @@ bytemuck = { workspace = true, optional = true }
 bytemuck_derive = { workspace = true, optional = true }
 five8_const = { workspace = true }
 num-traits = { workspace = true }
-rand = { workspace = true, optional = true }
+rand = { version = "0.8.5", optional = true }
 serde = { workspace = true, optional = true }
 serde_derive = { workspace = true, optional = true }
 solana-atomic-u64 = { workspace = true }

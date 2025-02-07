@@ -305,30 +305,30 @@ mod tests {
             stakes: Arc<StakesEnum>,
             tail: String,
         }
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let stakes_cache = StakesCache::new(Stakes {
-            unused: rng.gen(),
-            epoch: rng.gen(),
+            unused: rng.random(),
+            epoch: rng.random(),
             ..Stakes::default()
         });
-        for _ in 0..rng.gen_range(5usize..10) {
+        for _ in 0..rng.random_range(5usize..10) {
             let vote_pubkey = solana_pubkey::new_rand();
             let vote_account = vote_state::create_account(
                 &vote_pubkey,
-                &solana_pubkey::new_rand(),  // node_pubkey
-                rng.gen_range(0..101),       // commission
-                rng.gen_range(0..1_000_000), // lamports
+                &solana_pubkey::new_rand(),     // node_pubkey
+                rng.random_range(0..101),       // commission
+                rng.random_range(0..1_000_000), // lamports
             );
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
-            for _ in 0..rng.gen_range(10usize..20) {
+            for _ in 0..rng.random_range(10usize..20) {
                 let stake_pubkey = solana_pubkey::new_rand();
-                let rent = Rent::with_slots_per_epoch(rng.gen());
+                let rent = Rent::with_slots_per_epoch(rng.random());
                 let stake_account = stake_state::create_account(
                     &stake_pubkey, // authorized
                     &vote_pubkey,
                     &vote_account,
                     &rent,
-                    rng.gen_range(0..1_000_000), // lamports
+                    rng.random_range(0..1_000_000), // lamports
                 );
                 stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
             }

@@ -19,7 +19,7 @@ solana-sanitize = { workspace = true }
 [dev-dependencies]
 bincode = { workspace = true }
 borsh = { workspace = true }
-rand = { workspace = true }
+rand = { version = "0.8.5" }
 serde = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false, features = [
     "borsh",

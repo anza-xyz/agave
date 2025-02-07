@@ -54,7 +54,7 @@ use {
 fn pubsub_addr() -> SocketAddr {
     SocketAddr::new(
         IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        rand::thread_rng().gen_range(1024..65535),
+        rand::rng().random_range(1024..65535),
     )
 }
 

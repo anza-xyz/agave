@@ -18,18 +18,18 @@ fn new_rand_vote_account<R: Rng>(
         node_pubkey: node_pubkey.unwrap_or_else(Pubkey::new_unique),
         authorized_voter: Pubkey::new_unique(),
         authorized_withdrawer: Pubkey::new_unique(),
-        commission: rng.gen(),
+        commission: rng.random(),
     };
     let clock = solana_clock::Clock {
-        slot: rng.gen(),
-        epoch_start_timestamp: rng.gen(),
-        epoch: rng.gen(),
-        leader_schedule_epoch: rng.gen(),
-        unix_timestamp: rng.gen(),
+        slot: rng.random(),
+        epoch_start_timestamp: rng.random(),
+        epoch: rng.random(),
+        leader_schedule_epoch: rng.random(),
+        unix_timestamp: rng.random(),
     };
     let vote_state = VoteState::new(&vote_init, &clock);
     let account = AccountSharedData::new_data(
-        rng.gen(), // lamports
+        rng.random(), // lamports
         &VoteStateVersions::new_current(vote_state.clone()),
         &solana_sdk_ids::vote::id(), // owner
     )
@@ -39,7 +39,7 @@ fn new_rand_vote_account<R: Rng>(
 
 #[bench]
 fn bench_vote_account_try_from(b: &mut Bencher) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let (account, vote_state) = new_rand_vote_account(&mut rng, None);
 
     b.iter(|| {
