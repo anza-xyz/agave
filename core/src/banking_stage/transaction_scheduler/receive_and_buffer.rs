@@ -235,6 +235,7 @@ impl SanitizedTransactionReceiveAndBuffer {
                 MAX_PROCESSING_AGE,
                 &mut error_counts,
             );
+            info!("ERRORS {:?}", error_counts);
             let post_lock_validation_count = transactions.len();
 
             let mut post_transaction_check_count: usize = 0;
@@ -614,17 +615,17 @@ fn calculate_max_age(
 mod tests {
     use {
         super::*,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::{unbounded, Sender},
+        futures::SinkExt,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_perf::packet::{to_packet_batches, NUM_PACKETS},
+        solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
         solana_poh::poh_recorder::BankStart,
         solana_pubkey::Pubkey,
-        solana_runtime::bank_forks,
-        solana_runtime::genesis_utils::create_genesis_config,
+        solana_runtime::{bank_forks, genesis_utils::create_genesis_config},
         solana_sdk::{
-            hash::Hash, message::Message, signer::Signer, system_instruction,
-            transaction::Transaction,
+            account::AccountSharedData, genesis_config::GenesisConfig, hash::Hash,
+            message::Message, signer::Signer, system_instruction, transaction::Transaction,
         },
         std::{
             sync::Arc,
@@ -658,56 +659,74 @@ mod tests {
         );
     }
 
+    fn create_accounts(num_txs: usize, genesis_config: &mut GenesisConfig) -> Vec<Keypair> {
+        let owner = Keypair::new();
+
+        let account_keypairs: Vec<Keypair> = (0..num_txs).map(|_| Keypair::new()).collect();
+        for keypair in account_keypairs.iter() {
+            genesis_config.add_account(
+                keypair.pubkey(),
+                AccountSharedData::new(1000, 0, &owner.pubkey()),
+            );
+        }
+        account_keypairs
+    }
+
+    fn generate_transactions(
+        num_txs: usize,
+        account_keypairs: &[Keypair],
+        bank: Arc<Bank>,
+        sender: Sender<Arc<Vec<PacketBatch>>>,
+    ) {
+        let from_keypairs = account_keypairs.iter().cycle();
+        let to_keypairs = account_keypairs
+            .iter()
+            .cycle()
+            .skip(account_keypairs.len() / 2)
+            .map(|keypair| keypair.pubkey());
+
+        let recent_blockhash = bank.last_blockhash();
+
+        let mut txs: Vec<Transaction> = Vec::with_capacity(num_txs);
+        for (from, to) in from_keypairs.zip(to_keypairs).take(num_txs) {
+            let transfer = system_instruction::transfer(&from.pubkey(), &to, 1);
+            let message = Message::new(&[transfer], Some(&from.pubkey()));
+            txs.push(Transaction::new(&vec![&from], message, recent_blockhash));
+        }
+
+        let packets_batches = BankingPacketBatch::new(to_packet_batches(&txs, NUM_PACKETS));
+        // Send 2 times to touch more code in receive_until packet_deserializer.rs
+        for _ in 0..2 {
+            if sender.send(packets_batches.clone()).is_err() {
+                panic!("Unexpectedly dropped receiver!");
+            }
+        }
+    }
+
     #[test]
     fn test_sanitized_transaction_receive_and_buffer() {
-        solana_logger::setup_with_default("solana=trace");
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100_000);
+        solana_logger::setup_with_default("trace");
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(100_000);
+        let num_txs = 1024;
+        let account_keypairs = create_accounts(num_txs, &mut genesis_config);
+
         let (bank, bank_forks) =
             Bank::new_for_benches(&genesis_config).wrap_with_bank_forks_for_tests();
         let bank_start = BankStart {
-            working_bank: bank,
+            working_bank: bank.clone(),
             bank_creation_time: Arc::new(Instant::now()),
         };
 
-        // TODO maybe use `let bank = Arc::new(Bank::default_for_tests());`?
-
-        // Need to create all the accounts used in the transactions?
-        // Need to create a thread that takes sender and these accounts to produce transactions
-        // Do I need to properly fund these txs?
-
-        let num_txs = NUM_PACKETS;
         let (sender, receiver) = unbounded();
-        let handle = thread::spawn(move || {
-            // Can we just generate random bytes?
-            // prepare keypairs
-            let from_keypairs: Vec<Keypair> = (0..num_txs).map(|_| Keypair::new()).collect();
-            let to_pubkeys: Vec<Pubkey> = (0..num_txs).map(|_| Pubkey::new_unique()).collect();
-            let recent_blockhash = Hash::new_unique();
-
-            let txs: Vec<Transaction> = (0..num_txs)
-                .map(|i| {
-                    let transfer =
-                        system_instruction::transfer(&from_keypairs[i].pubkey(), &to_pubkeys[i], 1);
-                    let message = Message::new(&[transfer], Some(&from_keypairs[i].pubkey()));
-                    Transaction::new(&vec![&from_keypairs[i]], message, recent_blockhash)
-                })
-                .collect();
-
-            let packets_batches = BankingPacketBatch::new(to_packet_batches(&txs, NUM_PACKETS));
-            // Send 2 times to touch more code in receive_until packet_deserializer.rs
-            for _ in 0..2 {
-                if sender.send(packets_batches.clone()).is_err() {
-                    panic!("Unexpectedly dropped receiver!");
-                }
-            }
-        });
+        generate_transactions(num_txs, &account_keypairs, bank, sender);
 
         let mut rb = SanitizedTransactionReceiveAndBuffer::new(
             PacketDeserializer::new(receiver),
             bank_forks,
             false,
         );
-        thread::sleep(Duration::from_secs(1));
 
         const TOTAL_BUFFERED_PACKETS: usize = 100_000;
         let mut container =
@@ -728,7 +747,5 @@ mod tests {
             Err(_) => panic!("Receiver unexpectedly dropped!"),
         }
         thread::sleep(Duration::from_secs(1));
-        drop(rb);
-        assert!(handle.join().is_ok());
     }
 }

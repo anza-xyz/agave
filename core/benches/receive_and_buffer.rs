@@ -139,6 +139,8 @@ fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
     let mut timing_metrics = SchedulerTimingMetrics::default();
     let decision = BufferedPacketsDecision::Consume(bank_start);
 
+    // TODO use this construction instead to use always new container
+    //  b.iter_batched(|| data.clone(), |mut data| sort(&mut data), BatchSize::SmallInput)
     c.bench_function("sanitized_transaction_receive_and_buffer", |bencher| {
         bencher.iter(|| {
             rb.receive_and_buffer_packets(
@@ -146,7 +148,9 @@ fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
                 &mut timing_metrics,
                 &mut count_metrics,
                 &decision,
-            )
+            );
+            // clear to have the same situation on every iteration
+            container.clear();
         })
     });
     drop(rb);
