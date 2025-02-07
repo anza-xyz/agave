@@ -2517,7 +2517,6 @@ fn main() {
                     let LoadAndProcessLedgerOutput {
                         bank_forks,
                         unified_scheduler_pool,
-                        new_poh_recorder,
                         ..
                     } = load_and_process_ledger_or_exit(
                         arg_matches,
@@ -2546,7 +2545,6 @@ fn main() {
                         block_production_method,
                         transaction_struct,
                         unified_scheduler_pool,
-                        new_poh_recorder,
                     ) {
                         Ok(()) => println!("Ok"),
                         Err(error) => {

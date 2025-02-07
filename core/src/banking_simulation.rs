@@ -28,7 +28,7 @@ use {
     },
     solana_net_utils::bind_to_localhost,
     solana_poh::{
-        poh_recorder::{NewPohRecorder, PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
+        poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
     },
     solana_runtime::{
@@ -695,7 +695,6 @@ impl BankingSimulator {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
-        new_poh_recorder: Option<NewPohRecorder>,
     ) -> (SenderLoop, SimulatorLoop, SimulatorThreads) {
         let parent_slot = self.parent_slot().unwrap();
         let mut packet_batches_by_time = self.banking_trace_events.packet_batches_by_time;
@@ -713,10 +712,7 @@ impl BankingSimulator {
             simulated_leader, self.first_simulated_slot,
         );
 
-        let exit = new_poh_recorder
-            .as_ref()
-            .map(|(poh_recorder, ..)| poh_recorder.is_exited.clone())
-            .unwrap_or_else(|| Arc::new(AtomicBool::default()));
+        let exit = Arc::new(AtomicBool::default());
 
         if let Some(end_slot) = blockstore
             .slot_meta_iterator(self.first_simulated_slot)
@@ -734,23 +730,20 @@ impl BankingSimulator {
 
         info!("Poh is starting!");
 
-        let (poh_recorder, entry_receiver, record_receiver) =
-            new_poh_recorder.unwrap_or_else(|| {
-                PohRecorder::new_with_clear_signal(
-                    bank.tick_height(),
-                    bank.last_blockhash(),
-                    bank.clone(),
-                    None,
-                    bank.ticks_per_slot(),
-                    false,
-                    blockstore.clone(),
-                    blockstore.get_new_shred_signal(0),
-                    &leader_schedule_cache,
-                    &genesis_config.poh_config,
-                    None,
-                    exit.clone(),
-                )
-            });
+        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new_with_clear_signal(
+            bank.tick_height(),
+            bank.last_blockhash(),
+            bank.clone(),
+            None,
+            bank.ticks_per_slot(),
+            false,
+            blockstore.clone(),
+            blockstore.get_new_shred_signal(0),
+            &leader_schedule_cache,
+            &genesis_config.poh_config,
+            None,
+            exit.clone(),
+        );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let poh_service = PohService::new(
             poh_recorder.clone(),
@@ -935,7 +928,6 @@ impl BankingSimulator {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
-        new_poh_recorder: Option<NewPohRecorder>,
     ) -> Result<(), SimulateError> {
         let (sender_loop, simulator_loop, simulator_threads) = self.prepare_simulation(
             genesis_config,
@@ -944,7 +936,6 @@ impl BankingSimulator {
             block_production_method,
             transaction_struct,
             unified_scheduler_pool,
-            new_poh_recorder,
         );
 
         sender_loop.log_starting();
