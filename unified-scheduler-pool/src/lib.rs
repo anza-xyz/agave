@@ -1815,16 +1815,18 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                         },
                         recv(handler_context.banking_packet_receiver) -> banking_packet => {
+                            let helper = handler_context.banking_stage_helper.as_ref().unwrap();
+
                             // See solana_core::banking_stage::unified_scheduler module doc as to
                             // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
-                                handler_context.banking_stage_helper.as_ref().unwrap().disconnect_new_task_sender();
+                                helper.disconnect_new_task_sender();
                                 break;
                             };
 
                             if let Err(SchedulerAborted) = (handler_context.banking_packet_handler)(
-                                handler_context.banking_stage_helper.as_ref().unwrap(),
+                                helper,
                                 banking_packet,
                             ) {
                                 info!("dead new_task_sender");
