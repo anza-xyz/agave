@@ -81,7 +81,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::wait_for_restart_window::command(default_args))
         .subcommand(commands::set_public_address::command(default_args));
 
-    commands::default::add_args(app, default_args)
+    commands::run::add_args(app, default_args)
         .args(&thread_args(&default_args.thread_args))
         .args(&get_deprecated_arguments())
         .after_help("The default subcommand is run")

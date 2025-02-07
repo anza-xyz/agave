@@ -26,21 +26,21 @@ pub fn main() {
 
     match matches.subcommand() {
         ("init", _) => {
-            commands::default::execute(
+            commands::run::execute(
                 &matches,
                 solana_version,
                 socket_addr_space,
                 &ledger_path,
-                commands::default::execute::Operation::Initialize,
+                commands::run::execute::Operation::Initialize,
             );
         }
         ("", _) | ("run", _) => {
-            commands::default::execute(
+            commands::run::execute(
                 &matches,
                 solana_version,
                 socket_addr_space,
                 &ledger_path,
-                commands::default::execute::Operation::Run,
+                commands::run::execute::Operation::Run,
             );
         }
         ("authorized-voter", Some(authorized_voter_subcommand_matches)) => {
