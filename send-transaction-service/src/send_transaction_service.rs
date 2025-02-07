@@ -544,7 +544,7 @@ mod test {
 
         drop(sender);
         send_transaction_service.join().unwrap();
-        client.cancel();
+        client.stop();
     }
 
     #[test]
@@ -553,7 +553,6 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-
     async fn service_exit_with_tpu_client_next() {
         service_exit::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
@@ -590,7 +589,7 @@ mod test {
 
         thread::spawn(move || {
             exit.store(true, Ordering::Relaxed);
-            client.cancel();
+            client.stop();
         });
 
         let mut option = Ok(());
@@ -871,7 +870,7 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        client.cancel();
+        client.stop();
     }
 
     #[test]
@@ -1181,7 +1180,7 @@ mod test {
                 ..ProcessTransactionsResult::default()
             }
         );
-        client.cancel();
+        client.stop();
     }
 
     #[test]

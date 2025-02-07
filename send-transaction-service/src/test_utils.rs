@@ -64,32 +64,32 @@ impl CreateClient for TpuClientNextClient<NullTpuInfo> {
     }
 }
 
-pub trait Cancelable {
-    fn cancel(&self);
+pub trait Stoppable {
+    fn stop(&self);
 }
 
-impl<T> Cancelable for ConnectionCacheClient<T>
+impl<T> Stoppable for ConnectionCacheClient<T>
 where
     T: TpuInfoWithSendStatic,
 {
-    fn cancel(&self) {}
+    fn stop(&self) {}
 }
 
-impl<T> Cancelable for TpuClientNextClient<T>
+impl<T> Stoppable for TpuClientNextClient<T>
 where
     T: TpuInfoWithSendStatic + Clone,
 {
-    fn cancel(&self) {
+    fn stop(&self) {
         self.cancel().unwrap();
     }
 }
 
 // Define type alias to simplify definition of test functions.
 pub trait ClientWithCreator:
-    CreateClient + TransactionClient + Cancelable + Send + Clone + 'static
+    CreateClient + TransactionClient + Stoppable + Send + Clone + 'static
 {
 }
 impl<T> ClientWithCreator for T where
-    T: CreateClient + TransactionClient + Cancelable + Send + Clone + 'static
+    T: CreateClient + TransactionClient + Stoppable + Send + Clone + 'static
 {
 }
