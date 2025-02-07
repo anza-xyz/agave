@@ -264,7 +264,7 @@ impl BankingStageHelper {
         self.do_create_task(transaction, new_index)
     }
 
-    pub fn send_new_task(&self, task: Task) -> std::result::Result<(), SendError<NewTaskPayload>> {
+    pub fn send_new_task(&self, task: Task) -> ScheduleResult {
         self.new_task_sender
             .upgrade()
             .unwrap()
