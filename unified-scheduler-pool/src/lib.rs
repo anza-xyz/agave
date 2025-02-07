@@ -224,7 +224,7 @@ clone_trait_object!(BankingPacketHandler);
 pub struct BankingStageHelper {
     usage_queue_loader: UsageQueueLoader,
     next_task_id: AtomicUsize,
-    new_task_sender: Wek<Sender<NewTaskPayload>>,
+    new_task_sender: Weak<Sender<NewTaskPayload>>,
 }
 
 impl BankingStageHelper {
