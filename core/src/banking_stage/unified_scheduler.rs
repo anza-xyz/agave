@@ -86,9 +86,10 @@ pub(crate) fn ensure_banking_stage_setup(
                     let index = task_id_base + packet_index;
 
                     let task = helper.create_new_task(transaction, index);
-                    helper.send_new_task(task)
+                    helper.send_new_task(task)?
                 }
             }
+            Ok(())
         },
     );
 
