@@ -190,9 +190,9 @@ impl ThreadManager {
         let mut inner = match Arc::try_unwrap(self.inner) {
             Ok(inner) => inner,
             Err(inner) => {
-                let cnt = Arc::strong_count(&inner).saturating_sub(1);
+                let count = Arc::strong_count(&inner).saturating_sub(1);
                 error!(
-                      "{cnt} strong references to Thread Manager are still active, clean shutdown may not be possible!"
+                      "{count} strong references to Thread Manager are still active, clean shutdown may not be possible!"
                   );
                 return Err(ShutdownError::OtherOwnersExist);
             }
@@ -205,20 +205,22 @@ impl ThreadManager {
         // so it does not run any more futures. Normally, you would prefer to ensure nothing is running
         // on the runtime before ThreadManager is terminated.
         for (name, runtime) in inner.tokio_runtimes.drain() {
-            let active_cnt = runtime.counters.active_threads_cnt.load(Ordering::SeqCst);
-            match active_cnt {
+            let active_count = runtime.counters.active_threads_count.load(Ordering::SeqCst);
+            match active_count {
                 0 => debug!("Shutting down Tokio runtime {name}"),
                 _ => {
-                    warn!("Tokio runtime {name} has {active_cnt} active workers during shutdown!");
-                    tokio_orphans = tokio_orphans.saturating_add(active_cnt as usize);
+                    warn!(
+                        "Tokio runtime {name} has {active_count} active workers during shutdown!"
+                    );
+                    tokio_orphans = tokio_orphans.saturating_add(active_count as usize);
                 }
             }
             runtime.tokio.shutdown_background();
         }
 
-        // Can not shutdown rayon runtimes as such, but we can ensure noone is holding on to one
-        // this is by no means foolproof, as you can call spawn on rayon runtimes and those
-        // threads are effectively untraceable. But at least it works for par_iter and such.
+        // We cannot shutdown rayon runtimes this way, but we can ensure no one is holding on to one.
+        // This is by no means foolproof, as you can call spawn on rayon runtimes and those
+        // threads are effectively untraceable. But at least this code works for par_iter and such.
         for (name, runtime) in inner.rayon_runtimes.drain() {
             let count = Arc::strong_count(&runtime.inner);
             if Arc::into_inner(runtime.inner).is_none() {
@@ -227,7 +229,7 @@ impl ThreadManager {
             }
         }
 
-        // Similar to other, we can not command native threads to "just exit". However, we can
+        // Similar to above, we can not command native threads to "just exit". However, we can
         // warn if some of them were not joined at thread manager shutdown.
         for (name, runtime) in inner.native_thread_runtimes.drain() {
             let active_cnt = runtime.running_count.load(Ordering::SeqCst);

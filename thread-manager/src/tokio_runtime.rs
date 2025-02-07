@@ -91,8 +91,8 @@ impl TokioRuntime {
         let counters = Arc::new(ThreadCounters {
             // no workaround, metrics crate will only consume 'static str
             namespace: format!("thread-manager-tokio-{}", &base_name).leak(),
-            total_threads_cnt: num_workers as u64,
-            active_threads_cnt: AtomicU64::new(num_workers as u64),
+            total_threads_count: num_workers as u64,
+            active_threads_count: AtomicU64::new(num_workers as u64),
         });
         builder
             .event_interval(cfg.event_interval)
@@ -156,18 +156,18 @@ impl TokioRuntime {
 pub struct ThreadCounters {
     pub namespace: &'static str,
     // total worker threads
-    pub total_threads_cnt: u64,
+    pub total_threads_count: u64,
     // active worker threads (does not count blocking threads)
-    pub active_threads_cnt: AtomicU64,
+    pub active_threads_count: AtomicU64,
 }
 
 impl ThreadCounters {
     pub fn on_park(&self) {
-        self.active_threads_cnt.fetch_sub(1, Ordering::Relaxed);
+        self.active_threads_count.fetch_sub(1, Ordering::Relaxed);
     }
 
     pub fn on_unpark(&self) {
-        self.active_threads_cnt.fetch_add(1, Ordering::Relaxed);
+        self.active_threads_count.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -175,8 +175,8 @@ async fn metrics_sampler(counters: Arc<ThreadCounters>, period: Duration) {
     let mut interval = tokio::time::interval(period);
     loop {
         interval.tick().await;
-        let active = counters.active_threads_cnt.load(Ordering::Relaxed) as i64;
-        let parked = (counters.total_threads_cnt as i64).saturating_sub(active);
+        let active = counters.active_threads_count.load(Ordering::Relaxed) as i64;
+        let parked = (counters.total_threads_count as i64).saturating_sub(active);
         datapoint_info!(
             counters.namespace,
             ("threads_parked", parked, i64),
