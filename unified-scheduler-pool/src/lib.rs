@@ -228,11 +228,11 @@ pub struct BankingStageHelper {
 }
 
 impl BankingStageHelper {
-    fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
+    fn new(new_task_sender: &Sender<NewTaskPayload>) -> Self {
         Self {
             usage_queue_loader: UsageQueueLoader::default(),
             next_task_id: AtomicUsize::default(),
-            new_task_sender: Arc::downgrade(new_task_sender),
+            new_task_sender: Arc::downgrade(&new_task_sender),
         }
     }
 
