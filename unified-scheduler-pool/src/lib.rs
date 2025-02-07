@@ -215,7 +215,7 @@ struct BankingStageHandlerContext {
 
 trait_set! {
     pub trait BankingPacketHandler =
-        DynClone + FnMut(&BankingStageHelper, BankingPacketBatch) + Send + 'static;
+        DynClone + Send + 'static + FnMut(&BankingStageHelper, BankingPacketBatch) -> ScheduleResult;
 }
 // Make this `Clone`-able so that it can easily propagated to all the handler threads.
 clone_trait_object!(BankingPacketHandler);
