@@ -265,10 +265,11 @@ impl BankingStageHelper {
     }
 
     pub fn send_new_task(&self, task: Task) -> ScheduleResult {
-        self.new_task_sender
-            .upgrade()
-            .unwrap()
-            .send(NewTaskPayload::Payload(task))
+        let sender = self.new_task_sender.upgrade() else {
+            return Err(SchedulerAborted);
+        }
+        sender.send(NewTaskPayload::Payload(task)).unwrap();
+        Ok(())
     }
 }
 
