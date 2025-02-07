@@ -26,6 +26,10 @@ log-*/
 /solana.iml
 /.vscode/
 
+# fetch-core-bpf.sh artifacts
+/core-bpf-genesis-args.sh
+/core-bpf-*.so
+
 # fetch-spl.sh artifacts
 /spl-genesis-args.sh
 /spl-*.so
