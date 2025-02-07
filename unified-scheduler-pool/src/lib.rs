@@ -1825,13 +1825,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 break;
                             };
 
-                            let Ok(()) = (handler_context.banking_packet_handler)(
+                            if let Err(SchedulerAborted) = (handler_context.banking_packet_handler)(
                                 helper,
                                 banking_packet
-                            ) else {
+                            ) {
                                 info!("dead new_task_sender");
                                 break;
-                            };
+                            }
                             continue;
                         },
                     };
