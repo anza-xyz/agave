@@ -690,7 +690,7 @@ where
     fn create_handler_context(
         &self,
         mode: SchedulingMode,
-        new_task_sender: &Sender<NewTaskPayload>,
+        new_task_sender: &Arc<Sender<NewTaskPayload>>,
     ) -> HandlerContext {
         let (
             count,
@@ -3563,7 +3563,7 @@ mod tests {
                     &task,
                     &pool.create_handler_context(
                         BlockVerification,
-                        &crossbeam_channel::unbounded().0,
+                        &Arc::new(crossbeam_channel::unbounded().0),
                     ),
                 );
                 (result, timings)
