@@ -64,7 +64,7 @@ pub(crate) fn ensure_banking_stage_setup(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
             let decision = decision_maker.make_consume_or_forward_decision();
             if matches!(decision, BufferedPacketsDecision::Forward) {
-                return;
+                return Ok(());
             }
             let bank = root_bank_cache.root_bank();
             for batch in batches.iter() {
