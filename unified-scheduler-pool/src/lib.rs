@@ -1831,7 +1831,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             ) else {
                                 info!("dead new_task_sender");
                                 break;
-                            }
+                            };
                             continue;
                         },
                     };
