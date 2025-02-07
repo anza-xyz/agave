@@ -1448,12 +1448,16 @@ fn test_snapshots_restart_validity() {
             10,
         );
 
+        trace!("Waiting for for full snapshot");
+
         expected_balances.extend(new_balances);
 
         cluster.wait_for_next_full_snapshot(
             full_snapshot_archives_dir,
             Some(Duration::from_secs(5 * 60)),
         );
+
+        trace!("generate_account_paths...");
 
         // Create new account paths since validator exit is not guaranteed to cleanup RPC threads,
         // which may delete the old accounts on exit at any point

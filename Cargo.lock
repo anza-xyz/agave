@@ -10254,6 +10254,7 @@ version = "2.2.0"
 dependencies = [
  "base64 0.22.1",
  "bincode",
+ "bs58",
  "lazy_static",
  "log",
  "rand 0.8.5",

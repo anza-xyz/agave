@@ -330,6 +330,8 @@ impl Drop for AppendVec {
         if self.remove_file_on_drop.load(Ordering::Acquire) {
             // If we're reopening in readonly mode, we don't delete the file. See
             // AppendVec::reopen_as_readonly.
+            let bt = std::backtrace::Backtrace::capture();
+            info!("Removing appendvec file {:?} {:?}", self.path, bt);
             if let Err(_err) = remove_file(&self.path) {
                 // promote this to panic soon.
                 // disabled due to many false positive warnings while running tests.

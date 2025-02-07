@@ -144,6 +144,13 @@ impl Default for ClusterConfig {
     }
 }
 
+struct QuicConnectionCacheConfig {
+    stake: u64,
+    total_stake: u64,
+    client_keypair: Keypair,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+}
+
 pub struct LocalCluster {
     /// Keypair with funding to participate in the network
     pub funding_keypair: Keypair,
@@ -152,6 +159,8 @@ pub struct LocalCluster {
     pub validators: HashMap<Pubkey, ClusterValidatorInfo>,
     pub genesis_config: GenesisConfig,
     pub connection_cache: Arc<ConnectionCache>,
+    quic_connection_cache_config: Option<QuicConnectionCacheConfig>,
+    tpu_connection_pool_size: usize,
 }
 
 impl LocalCluster {
@@ -191,21 +200,9 @@ impl LocalCluster {
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
 
-        let connection_cache = if config.tpu_use_quic {
-            let client_keypair = Keypair::new();
+        let quic_connection_cache_config = if config.tpu_use_quic {
+            let client_keypair: Keypair = Keypair::new();
             let stake = DEFAULT_NODE_STAKE;
-
-            for validator_config in config.validator_configs.iter_mut() {
-                let mut overrides = HashMap::new();
-                overrides.insert(client_keypair.pubkey(), stake);
-                validator_config.staked_nodes_overrides = Arc::new(RwLock::new(overrides));
-            }
-
-            assert!(
-                config.tpu_use_quic,
-                "no support for staked override forwarding without quic"
-            );
-
             let total_stake = config.node_stakes.iter().sum::<u64>();
             let stakes = HashMap::from([
                 (client_keypair.pubkey(), stake),
@@ -216,19 +213,25 @@ impl LocalCluster {
                 HashMap::<Pubkey, u64>::default(), // overrides
             )));
 
-            Arc::new(ConnectionCache::new_with_client_options(
-                "connection_cache_local_cluster_quic_staked",
-                config.tpu_connection_pool_size,
-                None,
-                Some((&client_keypair, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))),
-                Some((&staked_nodes, &client_keypair.pubkey())),
-            ))
+            for validator_config in config.validator_configs.iter_mut() {
+                let mut overrides = HashMap::new();
+                overrides.insert(client_keypair.pubkey(), stake);
+                validator_config.staked_nodes_overrides = Arc::new(RwLock::new(overrides));
+            }
+            Some(QuicConnectionCacheConfig {
+                stake,
+                total_stake,
+                client_keypair,
+                staked_nodes,
+            })
         } else {
-            Arc::new(ConnectionCache::with_udp(
-                "connection_cache_local_cluster_udp",
-                config.tpu_connection_pool_size,
-            ))
+            None
         };
+
+        let connection_cache = create_connection_cache(
+            &quic_connection_cache_config,
+            config.tpu_connection_pool_size,
+        );
 
         let mut validator_keys = {
             if let Some(ref keys) = config.validator_keys {
@@ -379,6 +382,8 @@ impl LocalCluster {
             validators,
             genesis_config,
             connection_cache,
+            quic_connection_cache_config,
+            tpu_connection_pool_size: config.tpu_connection_pool_size,
         };
 
         let node_pubkey_to_vote_key: HashMap<Pubkey, Arc<Keypair>> = keys_in_genesis
@@ -709,6 +714,10 @@ impl LocalCluster {
 
             while now.elapsed().as_secs() < wait_time as u64 {
                 if num_confirmed == 0 {
+                    info!(
+                        "zzzzz sending transaction {:?}, {} over {attempts}",
+                        transaction, attempt
+                    );
                     client.send_transaction_to_upcoming_leaders(transaction)?;
                 }
 
@@ -717,6 +726,10 @@ impl LocalCluster {
                     pending_confirmations,
                 ) {
                     num_confirmed = confirmed_blocks;
+                    info!(
+                        "zzzzz confirmed blocks: {} pending: {} for {transaction:?}",
+                        confirmed_blocks, pending_confirmations
+                    );
                     if confirmed_blocks >= pending_confirmations {
                         return Ok(transaction.signatures[0]);
                     }
@@ -726,9 +739,11 @@ impl LocalCluster {
                     wait_time = wait_time.max(
                         MAX_PROCESSING_AGE * pending_confirmations.saturating_sub(num_confirmed),
                     );
+                } else {
+                    info!("zzzzz failed to poll_for_signature_confirmation  num_confirmed: {} pending: {} for {transaction:?}", num_confirmed, pending_confirmations);
                 }
             }
-            info!("{attempt} tries failed transfer");
+            info!("{attempt}/{attempts} tries failed transfer");
             let blockhash = client.rpc_client().get_latest_blockhash()?;
             transaction.sign(keypairs, blockhash);
         }
@@ -973,6 +988,30 @@ impl LocalCluster {
     }
 }
 
+fn create_connection_cache(
+    quic_connection_cache_config: &Option<QuicConnectionCacheConfig>,
+    tpu_connection_pool_size: usize,
+) -> Arc<ConnectionCache> {
+    let connection_cache = if let Some(config) = quic_connection_cache_config {
+        Arc::new(ConnectionCache::new_with_client_options(
+            "connection_cache_local_cluster_quic_staked",
+            tpu_connection_pool_size,
+            None,
+            Some((
+                &config.client_keypair,
+                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            )),
+            Some((&config.staked_nodes, &config.client_keypair.pubkey())),
+        ))
+    } else {
+        Arc::new(ConnectionCache::with_udp(
+            "connection_cache_local_cluster_udp",
+            tpu_connection_pool_size,
+        ))
+    };
+    connection_cache
+}
+
 impl Cluster for LocalCluster {
     fn get_node_pubkeys(&self) -> Vec<Pubkey> {
         self.validators.keys().cloned().collect()
@@ -1059,6 +1098,12 @@ impl Cluster for LocalCluster {
             socket_addr_space,
         );
         self.add_node(pubkey, cluster_validator_info);
+
+        // reset the connection cache as we are connecting to the new nodes
+        self.connection_cache = create_connection_cache(
+            &self.quic_connection_cache_config,
+            self.tpu_connection_pool_size,
+        );
     }
 
     fn add_node(&mut self, pubkey: &Pubkey, cluster_validator_info: ClusterValidatorInfo) {

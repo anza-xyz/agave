@@ -93,6 +93,7 @@ impl LocalCluster {
             if let Some(full_snapshot_archive_info) =
                 snapshot_utils::get_highest_full_snapshot_archive_info(&full_snapshot_archives_dir)
             {
+                trace!("Got snapshot info: {:?}", full_snapshot_archive_info);
                 match next_snapshot_type {
                     NextSnapshotType::FullSnapshot => {
                         if full_snapshot_archive_info.slot() >= last_slot {
@@ -115,6 +116,11 @@ impl LocalCluster {
                         }
                     }
                 }
+            } else {
+                trace!(
+                    "Could not get snapshot info from {:?}",
+                    full_snapshot_archives_dir.as_ref()
+                );
             }
             if let Some(max_wait_duration) = max_wait_duration {
                 assert!(

@@ -15,7 +15,11 @@ lazy_static! {
 pub fn should_track_transaction(signature: &[u8; SIGNATURE_BYTES]) -> bool {
     // We do not use the highest signature byte as it is not really random
     let match_portion: u16 = u16::from_le_bytes([signature[61], signature[62]]) >> 4;
-    trace!("Matching txn: {match_portion:016b} {:016b}", *TXN_MASK);
+    info!(
+        "zzzzz Txn signature: {}",
+        bs58::encode(signature).into_string()
+    );
+    info!("Matching txn: {match_portion:016b} {:016b}", *TXN_MASK);
     *TXN_MASK == match_portion
 }
 
