@@ -17,10 +17,10 @@ add_spl_program_to_fetch() {
   declare version=$2
   declare address=$3
   declare loader=$4
-  
+
   so_name="${PREFIX}_${name//-/_}.so"
   download_url="https://github.com/solana-labs/solana-program-library/releases/download/$name-v$version/$so_name"
-  
+
   programs+=("$name $version $address $loader $download_url")
 }
 
