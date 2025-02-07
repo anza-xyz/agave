@@ -888,9 +888,8 @@ mod tests {
             transaction::{SanitizedTransaction, Transaction},
         },
         solana_streamer::socket::SocketAddrSpace,
-        solana_vote_program::{
-            vote_state::TowerSync, vote_transaction::new_tower_sync_transaction,
-        },
+        solana_vote::vote_transaction::new_tower_sync_transaction,
+        solana_vote_program::vote_state::TowerSync,
         std::{
             sync::atomic::{AtomicBool, Ordering},
             thread::sleep,

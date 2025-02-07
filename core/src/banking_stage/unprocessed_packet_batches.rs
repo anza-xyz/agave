@@ -305,7 +305,8 @@ mod tests {
             system_instruction, system_transaction,
             transaction::Transaction,
         },
-        solana_vote_program::{vote_state::TowerSync, vote_transaction},
+        solana_vote::vote_transaction,
+        solana_vote_program::vote_state::TowerSync,
     };
 
     fn simple_deserialized_packet() -> DeserializedPacket {

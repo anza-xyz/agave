@@ -50,7 +50,7 @@ use {
     solana_shred_version::compute_shred_version,
     solana_time_utils::timestamp,
     solana_timings::ExecuteTimings,
-    solana_vote_program::vote_state::VoteTransaction,
+    solana_vote::vote_transaction::VoteTransaction,
     std::{
         collections::{HashMap, HashSet},
         fs::{read, File},

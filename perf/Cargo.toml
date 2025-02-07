@@ -43,6 +43,7 @@ solana-system-interface = { workspace = true, optional = true }
 solana-system-transaction = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true, optional = true }
+solana-vote = { workspace = true, optional = true }
 solana-vote-program = { workspace = true, optional = true }
 
 [target."cfg(target_os = \"linux\")".dependencies]
@@ -69,6 +70,7 @@ dev-context-only-utils = [
     "dep:solana-system-transaction",
     "dep:solana-transaction",
     "dep:solana-vote-program",
+    "dep:solana-vote",
 ]
 frozen-abi = [
     "dep:solana-frozen-abi",

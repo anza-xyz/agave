@@ -7,7 +7,8 @@ use {
         banking_trace::Channels,
         validator::{BlockProductionMethod, TransactionStructure},
     },
-    solana_vote_program::{vote_state::TowerSync, vote_transaction::new_tower_sync_transaction},
+    solana_vote::vote_transaction::new_tower_sync_transaction,
+    solana_vote_program::vote_state::TowerSync,
 };
 
 extern crate test;

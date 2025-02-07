@@ -298,7 +298,8 @@ mod tests {
         solana_reserved_account_keys::ReservedAccountKeys,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
-        solana_vote_program::{vote_state::TowerSync, vote_transaction},
+        solana_vote::vote_transaction,
+        solana_vote_program::vote_state::TowerSync,
     };
 
     #[test]

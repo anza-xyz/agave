@@ -251,7 +251,8 @@ mod test {
             timing::timestamp,
             vote::state::TowerSync,
         },
-        solana_vote_program::{vote_state::Lockout, vote_transaction::new_tower_sync_transaction},
+        solana_vote::vote_transaction::new_tower_sync_transaction,
+        solana_vote_program::vote_state::Lockout,
         std::str::FromStr,
     };
 

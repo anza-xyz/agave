@@ -252,10 +252,8 @@ mod tests {
             transaction::Transaction,
             vote::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
         },
-        solana_vote_program::{
-            vote_state::{self, TowerSync},
-            vote_transaction,
-        },
+        solana_vote::vote_transaction,
+        solana_vote_program::vote_state::{self, TowerSync},
     };
 
     impl PartitionedStakeReward {

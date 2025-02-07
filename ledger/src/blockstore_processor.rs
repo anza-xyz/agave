@@ -2411,11 +2411,10 @@ pub mod tests {
             transaction_processing_result::ProcessedTransaction,
             transaction_processor::ExecutionRecordingConfig,
         },
-        solana_vote::vote_account::VoteAccount,
+        solana_vote::{vote_account::VoteAccount, vote_transaction},
         solana_vote_program::{
             self,
             vote_state::{TowerSync, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},
-            vote_transaction,
         },
         std::{collections::BTreeSet, slice, sync::RwLock},
         test_case::{test_case, test_matrix},

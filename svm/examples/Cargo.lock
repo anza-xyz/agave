@@ -5683,6 +5683,7 @@ dependencies = [
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-transaction-error",
+ "solana-vote",
  "solana-vote-program",
 ]
 
@@ -8281,10 +8282,12 @@ dependencies = [
  "solana-clock",
  "solana-hash",
  "solana-instruction",
+ "solana-keypair",
  "solana-packet",
  "solana-pubkey",
  "solana-sdk-ids",
  "solana-signature",
+ "solana-signer",
  "solana-svm-transaction",
  "solana-transaction",
  "solana-vote-interface",
@@ -8368,6 +8371,7 @@ dependencies = [
  "solana-shred-version",
  "solana-time-utils",
  "solana-timings",
+ "solana-vote",
  "solana-vote-program",
 ]
 

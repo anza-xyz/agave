@@ -40,6 +40,7 @@ solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true, optional = true }
 solana-transaction-error = { workspace = true }
+solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 
 [lib]

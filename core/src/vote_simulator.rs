@@ -26,10 +26,8 @@ use {
         },
     },
     solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signer},
-    solana_vote_program::{
-        vote_state::{process_vote_unchecked, Lockout, TowerSync},
-        vote_transaction,
-    },
+    solana_vote::vote_transaction,
+    solana_vote_program::vote_state::{process_vote_unchecked, Lockout, TowerSync},
     std::{
         collections::{HashMap, HashSet, VecDeque},
         sync::{Arc, RwLock},

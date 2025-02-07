@@ -26,12 +26,14 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
+solana-signer = { workspace = true }
 solana-svm-transaction = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
 
@@ -43,6 +45,7 @@ name = "solana_vote"
 bincode = { workspace = true }
 rand = { workspace = true }
 solana-keypair = { workspace = true }
+solana-logger = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["bincode"] }
