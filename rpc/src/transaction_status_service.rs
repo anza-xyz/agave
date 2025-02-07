@@ -122,6 +122,7 @@ impl TransactionStatusService {
         blockstore: &Blockstore,
         enable_extended_tx_metadata_storage: bool,
     ) -> Result<(), BlockstoreError> {
+        error!("Start write_transaction_status_batch()");
         match transaction_status_message {
             TransactionStatusMessage::Batch(TransactionStatusBatch {
                 slot,
@@ -252,6 +253,7 @@ impl TransactionStatusService {
                 max_complete_transaction_status_slot.fetch_max(slot, Ordering::SeqCst);
             }
         }
+        error!("End write_transaction_status_batch()");
         Ok(())
     }
 
