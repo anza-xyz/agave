@@ -18,8 +18,9 @@ use {
         vote_instruction::VoteInstruction,
         vote_processor::Entrypoint,
         vote_state::{
-            create_account, create_account_with_authorized, Vote, VoteAuthorize, VoteInit,
-            VoteState, VoteStateUpdate, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            create_account, create_account_with_authorized, Vote, VoteAuthorize,
+            VoteAuthorizeWithSeedArgs, VoteInit, VoteState, VoteStateUpdate, VoteStateVersions,
+            MAX_LOCKOUT_HISTORY,
         },
     },
     std::sync::Arc,
@@ -681,6 +682,78 @@ impl BenchUpdateVoteState {
     }
 }
 
+struct BenchAuthorizeWithSeed {
+    instruction_data: Vec<u8>,
+    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+    instruction_accounts: Vec<AccountMeta>,
+}
+
+impl BenchAuthorizeWithSeed {
+    fn new() -> Self {
+        let vote_pubkey = Pubkey::new_unique();
+        let voter_base_key = Pubkey::new_unique();
+        let vote_account = AccountSharedData::new(100, VoteState::size_of(), &id());
+        let voter_owner = Pubkey::new_unique();
+        let voter_seed = String::from("VOTER_SEED");
+        let new_voter_pubkey = Pubkey::new_unique();
+        let clock = Clock {
+            epoch: 1,
+            leader_schedule_epoch: 2,
+            ..Clock::default()
+        };
+        let clock_account = account::create_account_shared_data_for_test(&clock);
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account),
+            (sysvar::clock::id(), clock_account),
+            (voter_base_key, AccountSharedData::default()),
+        ];
+        let instruction_accounts = vec![
+            AccountMeta {
+                // `[Write]` Vote account to be updated
+                pubkey: vote_pubkey,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                // `[]` Clock sysvar
+                pubkey: sysvar::clock::id(),
+                is_signer: false,
+                is_writable: false,
+            },
+            AccountMeta {
+                // `[SIGNER]` Base key of current Voter or Withdrawer authority's derived key
+                pubkey: voter_base_key,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+
+        let authorization_type = VoteAuthorize::Voter;
+        let instruction_data = serialize(&VoteInstruction::AuthorizeWithSeed(
+            VoteAuthorizeWithSeedArgs {
+                authorization_type,
+                current_authority_derived_key_owner: voter_owner,
+                current_authority_derived_key_seed: voter_seed,
+                new_authority: new_voter_pubkey,
+            },
+        ))
+        .unwrap();
+        Self {
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+        }
+    }
+    fn run(&self) {
+        let _accounts = process_deprecated_instruction(
+            &self.instruction_data,
+            self.transaction_accounts.clone(),
+            self.instruction_accounts.clone(),
+            Ok(()),
+        );
+    }
+}
+
 fn bench_initialize_account(c: &mut Criterion) {
     let test_setup = BenchInitializeAccount::new();
     c.bench_function("vote_instruction_initialize_account", |bencher| {
@@ -751,6 +824,13 @@ fn bench_update_vote_state_switch(c: &mut Criterion) {
     });
 }
 
+fn bench_authorize_with_seed(c: &mut Criterion) {
+    let test_setup = BenchAuthorizeWithSeed::new();
+    c.bench_function("vote_authorize_with_seed", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_account,
@@ -763,5 +843,6 @@ criterion_group!(
     bench_authorize_checked,
     bench_update_vote_state,
     bench_update_vote_state_switch,
+    bench_authorize_with_seed,
 );
 criterion_main!(benches);
