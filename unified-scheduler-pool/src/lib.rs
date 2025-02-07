@@ -1803,13 +1803,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                         },
                         recv(handler_context.banking_packet_receiver) -> banking_packet => {
-                            /*
-                            let Some(new_task_sender) = new_task_sender.upgrade() else {
-                                info!("dead new_task_sender");
-                                break;
-                            };
-                            */
-
                             // See solana_core::banking_stage::unified_scheduler module doc as to
                             // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
@@ -1826,10 +1819,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 break;
                             };
 
-                            (handler_context.banking_packet_handler)(
+                            if let Err(SchedulerAborted) = (handler_context.banking_packet_handler)(
                                 handler_context.banking_stage_helper.as_ref().unwrap(),
-                                banking_packet
-                            );
+                                banking_packet,
+                            ) {
+                                info!("dead new_task_sender");
+                                break;
+                            }
                             continue;
                         },
                     };
