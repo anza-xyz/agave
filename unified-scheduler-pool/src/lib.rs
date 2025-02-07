@@ -272,7 +272,7 @@ impl BankingStageHelper {
         Ok(())
     }
 
-    fn disconnect_new_task_sender(&self) {
+    fn signal_disconnection(&self) {
         let Some(sender) = self.new_task_sender.upgrade() else {
             return;
         };
@@ -1821,13 +1821,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
-                                helper.disconnect_new_task_sender();
+                                helper.signal_disconnection();
                                 break;
                             };
 
                             if let Err(SchedulerAborted) = (handler_context.banking_packet_handler)(
                                 helper,
-                                banking_packet,
+                                banking_packet
                             ) {
                                 info!("dead new_task_sender");
                                 break;
