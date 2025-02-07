@@ -5,7 +5,7 @@ use {
     crate::{get_program_data_address, state::UpgradeableLoaderState},
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_pubkey::Pubkey,
-    solana_sdk_ids::{bpf_loader_upgradeable::id, loader_v4, sysvar},
+    solana_sdk_ids::{bpf_loader_upgradeable::id, sysvar},
     solana_system_interface::instruction as system_instruction,
 };
 
@@ -171,14 +171,6 @@ pub enum UpgradeableLoaderInstruction {
     ///   1. `[signer]` The current authority.
     ///   2. `[signer]` The new authority.
     SetAuthorityChecked,
-
-    /// Migrate the program to loader-v4.
-    ///
-    /// # Account references
-    ///   0. `[writable]` The ProgramData account.
-    ///   1. `[writable]` The Program account.
-    ///   2. `[signer]` The current authority.
-    Migrate,
 }
 
 #[cfg(feature = "bincode")]
@@ -305,10 +297,6 @@ pub fn is_close_instruction(instruction_data: &[u8]) -> bool {
 
 pub fn is_set_authority_checked_instruction(instruction_data: &[u8]) -> bool {
     !instruction_data.is_empty() && 7 == instruction_data[0]
-}
-
-pub fn is_migrate_instruction(instruction_data: &[u8]) -> bool {
-    !instruction_data.is_empty() && 8 == instruction_data[0]
 }
 
 #[cfg(feature = "bincode")]
@@ -452,23 +440,6 @@ pub fn extend_program(
     )
 }
 
-/// Returns the instructions required to migrate a program to loader-v4.
-#[cfg(feature = "bincode")]
-pub fn migrate_program(
-    programdata_address: &Pubkey,
-    program_address: &Pubkey,
-    authority: &Pubkey,
-) -> Instruction {
-    let accounts = vec![
-        AccountMeta::new(*programdata_address, false),
-        AccountMeta::new(*program_address, false),
-        AccountMeta::new_readonly(*authority, true),
-        AccountMeta::new_readonly(loader_v4::id(), false),
-    ];
-
-    Instruction::new_with_bincode(id(), &UpgradeableLoaderInstruction::Migrate, accounts)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,15 +531,6 @@ mod tests {
         assert_is_instruction(
             is_upgrade_instruction,
             UpgradeableLoaderInstruction::Upgrade {},
-        );
-    }
-
-    #[test]
-    fn test_is_migrate_instruction() {
-        assert!(!is_migrate_instruction(&[]));
-        assert_is_instruction(
-            is_migrate_instruction,
-            UpgradeableLoaderInstruction::Migrate {},
         );
     }
 }
