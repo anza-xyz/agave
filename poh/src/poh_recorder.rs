@@ -450,13 +450,7 @@ impl PohRecorder {
 
     // Check if the last slot PoH reset onto was the previous leader's last slot.
     fn building_off_previous_leader_last_block(&self, slot: Slot) -> bool {
-        if slot.saturating_sub(1) == self.start_slot() {
-            println!("6. Building off the previous leader's last block");
-            true
-        } else {
-            println!("4. Building off same fork as previous leader but they're not done");
-            false
-        }
+        slot.saturating_sub(1) == self.start_slot()
     }
 
     fn start_slot_was_mine(&self, my_pubkey: &Pubkey) -> bool {
@@ -477,7 +471,6 @@ impl PohRecorder {
 
         if self.start_slot_was_mine(my_pubkey) {
             // Building off my own block. No need to wait.
-            println!("2. Building off my own block. No need to wait.");
             return true;
         }
 
@@ -490,19 +483,16 @@ impl PohRecorder {
         if !self.is_new_reset_bank_pending(next_slot) {
             // No pending blocks from previous leader have been observed. No
             // need to wait.
-            println!("7. No pending blocks from previous leader have been observed. No need to wait.");
             return true;
         }
 
         self.report_pending_fork_was_detected(next_slot);
         if !self.delay_leader_block_for_pending_fork {
             // Not configured to wait for pending blocks from previous leader.
-            println!("8. Not configured to wait for pending blocks from previous leader.");
             return true;
         }
 
         // Wait for grace ticks
-        println!("9. Wait for grace ticks");
         false
     }
 
@@ -515,21 +505,18 @@ impl PohRecorder {
             == leader_first_tick_height_including_grace_ticks
         {
             // PoH was reset to run immediately.
-            println!("5. PoH was reset to run immediately.");
             return true;
         }
 
         let target_tick_height = leader_first_tick_height_including_grace_ticks.saturating_sub(1);
         if self.tick_height >= target_tick_height {
             // We have finished waiting for grace ticks.
-            println!("1. We have finished waiting for grace ticks.");
             return true;
         }
 
         let ideal_target_tick_height = target_tick_height.saturating_sub(self.grace_ticks);
         if self.tick_height < ideal_target_tick_height {
             // We haven't ticked to our leader slot yet.
-            println!("3. We haven't ticked to our leader slot yet.");
             return false;
         }
 
@@ -1976,7 +1963,22 @@ mod tests {
         let ticks_per_slot = bank.ticks_per_slot();
         let grace_ticks = ticks_per_slot * MAX_GRACE_SLOTS;
         poh_recorder.grace_ticks = grace_ticks;
-        poh_recorder.reset(bank.clone(), Some((0,3)));
+
+        // Setup leader slot ranges.
+        let leader_a_start_slot = 0;
+        let leader_a_end_slot = leader_a_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_b_start_slot = leader_a_end_slot + 1;
+        let leader_b_end_slot = leader_b_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_c_start_slot = leader_b_end_slot + 1;
+        let leader_c_end_slot = leader_c_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+        let leader_d_start_slot = leader_c_end_slot + 1;
+        let leader_d_end_slot = leader_d_start_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1;
+
+        // Reset onto Leader A's first slot 0.
+        poh_recorder.reset(
+            bank.clone(),
+            Some((leader_a_start_slot + 1, leader_a_end_slot)),
+        );
 
         // Setup leader start ticks.
         let ticks_in_leader_slot_set = ticks_per_slot * NUM_CONSECUTIVE_LEADER_SLOTS;
@@ -1985,11 +1987,11 @@ mod tests {
         let leader_c_start_tick = leader_b_start_tick + ticks_in_leader_slot_set;
         let leader_d_start_tick = leader_c_start_tick + ticks_in_leader_slot_set;
 
-        // True, because we've ticked through all the grace ticks
+        // True, because leader A has ticked through all the grace ticks
         assert!(poh_recorder.reached_leader_tick(&leader_a_pubkey, leader_a_start_tick));
 
         // True, because from Leader A's perspective, the previous slot was also
-        // it's own slot, and validators don't give grace periods if previous
+        // its own slot, and validators don't give grace periods if previous
         // slot was also their own.
         assert!(
             poh_recorder.reached_leader_tick(&leader_a_pubkey, leader_a_start_tick + grace_ticks)
@@ -2003,7 +2005,7 @@ mod tests {
             poh_recorder.tick();
         }
 
-        // False, because the Poh was reset on slot 0, which is a block produced
+        // False, because the PoH was reset on slot 0, which is a block produced
         // by previous leader A, so a grace period must be given.
         assert!(
             !poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick + grace_ticks)
@@ -2011,14 +2013,21 @@ mod tests {
 
         // Reset onto Leader A's last slot.
         let mut child_bank = bank.clone();
-        for _ in 0..3 {
+        for _ in leader_a_start_slot + 1..leader_b_start_slot {
             let child_slot = child_bank.slot() + 1;
-            child_bank = Arc::new(Bank::new_from_parent(child_bank, &Pubkey::default(), child_slot));
+            child_bank = Arc::new(Bank::new_from_parent(
+                child_bank,
+                &Pubkey::default(),
+                child_slot,
+            ));
         }
-        poh_recorder.reset(child_bank.clone(), Some((4,7)));
+        poh_recorder.reset(
+            child_bank.clone(),
+            Some((leader_b_start_slot, leader_b_end_slot)),
+        );
 
-        // True, because the Poh was reset on slot 3, the last slot produced by
-        // the previous leader, so we can run immediately.
+        // True, because the PoH was reset the last slot produced by the
+        // previous leader, so we can run immediately.
         assert!(
             poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick + grace_ticks)
         );
@@ -2030,20 +2039,31 @@ mod tests {
         let working_slot = poh_recorder.start_slot();
         poh_recorder.start_tick_height = working_slot * ticks_per_slot + 1;
         let child_slot = child_bank.slot() + 1;
-        child_bank = Arc::new(Bank::new_from_parent(child_bank, &Pubkey::default(), child_slot));
-        poh_recorder.reset(child_bank.clone(), Some((5,7)));
+        child_bank = Arc::new(Bank::new_from_parent(
+            child_bank,
+            &Pubkey::default(),
+            child_slot,
+        ));
+        poh_recorder.reset(
+            child_bank.clone(),
+            Some((leader_b_start_slot + 1, leader_b_end_slot)),
+        );
 
-        // True, because we're building off the previous leader's last block.
+        // True, because we're building off the previous leader A's last block.
         assert!(
             poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick + grace_ticks)
         );
 
         // Simulate generating Leader B's second slot.
         let child_slot = child_bank.slot() + 1;
-        child_bank = Arc::new(Bank::new_from_parent(child_bank, &Pubkey::default(), child_slot));
-        
-        // Reset targeting Leader D's slots.
-        poh_recorder.reset(child_bank, Some((12,15)));
+        child_bank = Arc::new(Bank::new_from_parent(
+            child_bank,
+            &Pubkey::default(),
+            child_slot,
+        ));
+
+        // Reset PoH targeting Leader D's slots.
+        poh_recorder.reset(child_bank, Some((leader_d_start_slot, leader_d_end_slot)));
 
         // Tick through Leader B's remaining slots.
         for _ in ticks_per_slot..ticks_in_leader_slot_set {
@@ -2056,7 +2076,7 @@ mod tests {
         }
 
         // True, because Leader D is not building on any of Leader C's slots.
-        // The Poh was reset on slot 4, built by Leader B.
+        // The Poh was reset onto Leader B's second slot.
         assert!(
             poh_recorder.reached_leader_tick(&leader_d_pubkey, leader_d_start_tick + grace_ticks)
         );
@@ -2065,8 +2085,8 @@ mod tests {
         let active_descendants = vec![NUM_CONSECUTIVE_LEADER_SLOTS];
         poh_recorder.update_start_bank_active_descendants(&active_descendants);
 
-        // True, because there are pending blocks from Leader B on the active
-        // fork, but the config to delay for these is not set.
+        // True, because Leader D observes pending blocks on the active fork,
+        // but the config to delay for these is not set.
         assert!(
             poh_recorder.reached_leader_tick(&leader_d_pubkey, leader_d_start_tick + grace_ticks)
         );
@@ -2074,8 +2094,8 @@ mod tests {
         // Flip the config to delay for pending blocks.
         poh_recorder.delay_leader_block_for_pending_fork = true;
 
-        // False, because there are pending blocks from Leader B on the active
-        // fork, and the config to delay for these is set.
+        // False, because Leader D observes pending blocks on the active fork,
+        // and the config to delay for these is set.
         assert!(
             !poh_recorder.reached_leader_tick(&leader_d_pubkey, leader_d_start_tick + grace_ticks)
         );
