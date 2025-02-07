@@ -31,11 +31,11 @@ solana-account-decoder = { path = "../../account-decoder" }
 solana-bpf-loader-program = { path = "../../programs/bpf_loader" }
 solana-client = { path = "../../client" }
 solana-compute-budget = { path = "../../compute-budget" }
-solana-logger = { path = "../../sdk/logger" }
+solana-logger = "=2.2.0"
 solana-perf = { path = "../../perf" }
 solana-program-runtime = { path = "../../program-runtime" }
 solana-rpc-client-api = { path = "../../rpc-client-api" }
-solana-sdk = { path = "../../sdk/sdk" }
+solana-sdk = "=2.2.0"
 solana-svm = { path = "../" }
 solana-system-program = { path = "../../programs/system" }
 solana-version = { path = "../../version" }
@@ -53,20 +53,4 @@ yaml-rust = "0.4"
 [patch.crates-io]
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }
 solana-curve25519 = { path = "../../curves/curve25519" }
-solana-account-info = { path = "../../sdk/account-info" }
-solana-borsh = { path = "../../sdk/borsh" }
-solana-clock = { path = "../../sdk/clock" }
-solana-cpi = { path = "../../sdk/cpi" }
-solana-decode-error = { path = "../../sdk/decode-error" }
-solana-hash = { path = "../../sdk/hash" }
-solana-instruction = { path = "../../sdk/instruction" }
-solana-msg = { path = "../../sdk/msg" }
-solana-program = { path = "../../sdk/program" }
-solana-program-entrypoint = { path = "../../sdk/program-entrypoint" }
-solana-program-error = { path = "../../sdk/program-error" }
-solana-program-option = { path = "../../sdk/program-option" }
-solana-program-pack = { path = "../../sdk/program-pack" }
-solana-pubkey = { path = "../../sdk/pubkey" }
-solana-sha256-hasher = { path = "../../sdk/sha256-hasher" }
-solana-sysvar-id = { path = "../../sdk/sysvar-id" }
 solana-zk-sdk = { path = "../../zk-sdk" }
