@@ -723,7 +723,7 @@ where
                     handler_context.block_production_handler_count,
                     handler_context.banking_packet_receiver.clone(),
                     handler_context.banking_packet_handler.clone(),
-                    Some(Arc::new(BankingStageHelper::new(new_task_sender.clone()))),
+                    Some(Arc::new(BankingStageHelper::new(&new_task_sender))),
                     Some(handler_context.transaction_recorder.clone()),
                 )
             }
