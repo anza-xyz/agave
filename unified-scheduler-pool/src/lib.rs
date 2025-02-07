@@ -264,7 +264,7 @@ impl BankingStageHelper {
         self.do_create_task(transaction, new_index)
     }
 
-    pub fn send_new_task(&self, task: Task) {
+    pub fn send_new_task(&self, task: Task) -> Result<(), SendError<NewTaskPayload>> {
         self.new_task_sender
             .upgrade()
             .unwrap()
