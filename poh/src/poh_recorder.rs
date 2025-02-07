@@ -440,7 +440,7 @@ impl PohRecorder {
 
     fn is_same_fork_as_previous_leader(&self, slot: Slot) -> bool {
         (slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..slot).any(|slot| {
-            // Check if the last slot Poh reset to was any of the
+            // Check if the last slot PoH reset to was any of the
             // previous leader's slots.
             // If so, PoH is currently building on the previous leader's blocks
             // If not, PoH is building on a different fork
@@ -449,8 +449,24 @@ impl PohRecorder {
     }
 
     // Check if the last slot PoH reset onto was the previous leader's last slot.
-    fn building_off_previous_leader_last_block(&self, slot: Slot) -> bool {
-        slot.saturating_sub(1) == self.start_slot()
+    fn building_off_previous_leader_last_block(&self, my_pubkey: &Pubkey, next_slot: Slot) -> bool {
+        // Walk backwards from the next slot we want to build.
+        for slot in (next_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_slot).rev() {
+            // Identify which leader is responsible for building this slot.
+            let leader_for_slot = self.leader_schedule_cache.slot_leader_at(slot, None);
+            let Some(leader_for_slot) = leader_for_slot else {
+                // No leader for this slot, skip
+                continue;
+            };
+
+            // If the leader for this slot is not me, then it's the previous
+            // leader's last slot.
+            if leader_for_slot != *my_pubkey {
+                // Check if the last slot PoH reset onto was the previous leader's last slot.
+                return slot == self.start_slot();
+            }
+        }
+        false
     }
 
     fn start_slot_was_mine(&self, my_pubkey: &Pubkey) -> bool {
@@ -477,7 +493,7 @@ impl PohRecorder {
         if self.is_same_fork_as_previous_leader(next_slot) {
             // Planning to build off block produced by the leader previous to
             // me. Check if they've completed all of their slots.
-            return self.building_off_previous_leader_last_block(next_slot);
+            return self.building_off_previous_leader_last_block(my_pubkey, next_slot);
         }
 
         if !self.is_new_reset_bank_pending(next_slot) {
@@ -1923,7 +1939,7 @@ mod tests {
         } = create_genesis_config(2);
 
         // Setup start bank.
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank.last_blockhash();
 
         // Setup leader schedule.
@@ -1987,7 +2003,7 @@ mod tests {
         let leader_c_start_tick = leader_b_start_tick + ticks_in_leader_slot_set;
         let leader_d_start_tick = leader_c_start_tick + ticks_in_leader_slot_set;
 
-        // True, because leader A has ticked through all the grace ticks
+        // True, because we have faked leader A ticking through all the grace ticks.
         assert!(poh_recorder.reached_leader_tick(&leader_a_pubkey, leader_a_start_tick));
 
         // True, because from Leader A's perspective, the previous slot was also
@@ -1996,6 +2012,9 @@ mod tests {
         assert!(
             poh_recorder.reached_leader_tick(&leader_a_pubkey, leader_a_start_tick + grace_ticks)
         );
+
+        // Reset PoH on Leader A's first slot 0, ticking towards Leader B's leader slots.
+        poh_recorder.reset(bank.clone(), Some((leader_b_start_slot, leader_b_end_slot)));
 
         // False, because Leader B hasn't ticked to its starting slot yet.
         assert!(!poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
@@ -2012,19 +2031,11 @@ mod tests {
         );
 
         // Reset onto Leader A's last slot.
-        let mut child_bank = bank.clone();
         for _ in leader_a_start_slot + 1..leader_b_start_slot {
-            let child_slot = child_bank.slot() + 1;
-            child_bank = Arc::new(Bank::new_from_parent(
-                child_bank,
-                &Pubkey::default(),
-                child_slot,
-            ));
+            let child_slot = bank.slot() + 1;
+            bank = Arc::new(Bank::new_from_parent(bank, &leader_a_pubkey, child_slot));
         }
-        poh_recorder.reset(
-            child_bank.clone(),
-            Some((leader_b_start_slot, leader_b_end_slot)),
-        );
+        poh_recorder.reset(bank.clone(), Some((leader_b_start_slot, leader_b_end_slot)));
 
         // True, because the PoH was reset the last slot produced by the
         // previous leader, so we can run immediately.
@@ -2033,21 +2044,13 @@ mod tests {
         );
 
         // Simulate skipping Leader B's first slot.
+        poh_recorder.reset(
+            bank.clone(),
+            Some((leader_b_start_slot + 1, leader_b_end_slot)),
+        );
         for _ in 0..ticks_per_slot {
             poh_recorder.tick();
         }
-        let working_slot = poh_recorder.start_slot();
-        poh_recorder.start_tick_height = working_slot * ticks_per_slot + 1;
-        let child_slot = child_bank.slot() + 1;
-        child_bank = Arc::new(Bank::new_from_parent(
-            child_bank,
-            &Pubkey::default(),
-            child_slot,
-        ));
-        poh_recorder.reset(
-            child_bank.clone(),
-            Some((leader_b_start_slot + 1, leader_b_end_slot)),
-        );
 
         // True, because we're building off the previous leader A's last block.
         assert!(
@@ -2055,15 +2058,11 @@ mod tests {
         );
 
         // Simulate generating Leader B's second slot.
-        let child_slot = child_bank.slot() + 1;
-        child_bank = Arc::new(Bank::new_from_parent(
-            child_bank,
-            &Pubkey::default(),
-            child_slot,
-        ));
+        let child_slot = bank.slot() + 1;
+        bank = Arc::new(Bank::new_from_parent(bank, &leader_b_pubkey, child_slot));
 
         // Reset PoH targeting Leader D's slots.
-        poh_recorder.reset(child_bank, Some((leader_d_start_slot, leader_d_end_slot)));
+        poh_recorder.reset(bank, Some((leader_d_start_slot, leader_d_end_slot)));
 
         // Tick through Leader B's remaining slots.
         for _ in ticks_per_slot..ticks_in_leader_slot_set {
@@ -2076,7 +2075,7 @@ mod tests {
         }
 
         // True, because Leader D is not building on any of Leader C's slots.
-        // The Poh was reset onto Leader B's second slot.
+        // The PoH was last reset onto Leader B's second slot.
         assert!(
             poh_recorder.reached_leader_tick(&leader_d_pubkey, leader_d_start_tick + grace_ticks)
         );
