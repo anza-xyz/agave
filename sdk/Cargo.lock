@@ -2750,15 +2750,6 @@ dependencies = [
 
 [[package]]
 name = "solana-decode-error"
-version = "2.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c92852914fe0cfec234576a30b1de4b11516dd729226d5de04e4c67d80447a7"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "solana-decode-error"
 version = "2.2.0"
 dependencies = [
  "num-derive",
@@ -3340,7 +3331,7 @@ name = "solana-precompile-error"
 version = "2.2.0"
 dependencies = [
  "num-traits",
- "solana-decode-error 2.2.0",
+ "solana-decode-error",
 ]
 
 [[package]]
@@ -3405,7 +3396,7 @@ dependencies = [
  "solana-borsh",
  "solana-clock 2.2.0",
  "solana-cpi",
- "solana-decode-error 2.2.0",
+ "solana-decode-error",
  "solana-define-syscall",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
@@ -3472,7 +3463,7 @@ dependencies = [
  "num-traits",
  "serde",
  "serde_derive",
- "solana-decode-error 2.2.0",
+ "solana-decode-error",
  "solana-instruction",
  "solana-msg",
  "solana-pubkey",
@@ -3517,7 +3508,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-atomic-u64",
- "solana-decode-error 2.2.0",
+ "solana-decode-error",
  "solana-define-syscall",
  "solana-frozen-abi 2.2.0",
  "solana-frozen-abi-macro 2.2.0",
@@ -3630,7 +3621,7 @@ dependencies = [
  "solana-cluster-type",
  "solana-commitment-config",
  "solana-compute-budget-interface",
- "solana-decode-error 2.2.0",
+ "solana-decode-error",
  "solana-derivation-path",
  "solana-ed25519-program",
  "solana-epoch-info",
@@ -3926,7 +3917,7 @@ dependencies = [
  "serde_derive",
  "solana-clock 2.1.11",
  "solana-cpi",
- "solana-decode-error 2.1.11",
+ "solana-decode-error",
  "solana-frozen-abi 2.1.11",
  "solana-frozen-abi-macro 2.1.11",
  "solana-instruction",
@@ -3946,7 +3937,7 @@ dependencies = [
  "num-traits",
  "serde",
  "serde_derive",
- "solana-decode-error 2.1.11",
+ "solana-decode-error",
  "solana-instruction",
  "solana-pubkey",
  "wasm-bindgen",
@@ -4108,7 +4099,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-clock 2.2.0",
- "solana-decode-error 2.2.0",
+ "solana-decode-error",
  "solana-epoch-schedule",
  "solana-frozen-abi 2.2.0",
  "solana-frozen-abi-macro 2.2.0",

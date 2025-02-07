@@ -330,6 +330,7 @@ wasm-bindgen = "0.2"
 # statements in place, run `cargo update -p solana-program` to remove extraneous
 # versions from your Cargo.lock file.
 solana-cpi = { path = "cpi" }
+solana-decode-error = { path = "decode-error" }
 solana-instruction = { path = "instruction" }
 solana-program-error = { path = "program-error" }
 solana-pubkey = { path = "pubkey" }
