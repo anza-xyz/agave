@@ -28,6 +28,10 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
+/// How many connections to maintain the tpu-client-next cache. The value is
+/// chosen to match MAX_CONNECTIONS from ConnectionCache
+const MAX_CONNECTIONS: usize = 1024;
+
 // Alias trait to shorten function definitions.
 pub trait TpuInfoWithSendStatic: TpuInfo + std::marker::Send + 'static {}
 impl<T> TpuInfoWithSendStatic for T where T: TpuInfo + std::marker::Send + 'static {}
@@ -39,6 +43,7 @@ pub trait TransactionClient {
         stats: &SendTransactionServiceStats,
     );
 
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     fn protocol(&self) -> Protocol;
 
     fn exit(&self);
@@ -49,7 +54,7 @@ pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
     tpu_address: SocketAddr,
     tpu_peers: Option<Vec<SocketAddr>>,
     leader_info_provider: Arc<Mutex<CurrentLeaderInfo<T>>>,
-    leader_forward_count: u64,
+    leader_fanout: u64,
 }
 
 // Manual implementation of Clone without requiring T to be Clone
@@ -63,7 +68,7 @@ where
             tpu_address: self.tpu_address,
             tpu_peers: self.tpu_peers.clone(),
             leader_info_provider: Arc::clone(&self.leader_info_provider),
-            leader_forward_count: self.leader_forward_count,
+            leader_fanout: self.leader_fanout,
         }
     }
 }
@@ -77,7 +82,7 @@ where
         tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_info: Option<T>,
-        leader_forward_count: u64,
+        leader_fanout: u64,
     ) -> Self {
         let leader_info_provider = Arc::new(Mutex::new(CurrentLeaderInfo::new(leader_info)));
         Self {
@@ -85,15 +90,14 @@ where
             tpu_address,
             tpu_peers,
             leader_info_provider,
-            leader_forward_count,
+            leader_fanout,
         }
     }
 
     fn get_tpu_addresses<'a>(&'a self, leader_info: Option<&'a T>) -> Vec<&'a SocketAddr> {
         leader_info
             .map(|leader_info| {
-                leader_info
-                    .get_leader_tpus(self.leader_forward_count, self.connection_cache.protocol())
+                leader_info.get_leader_tpus(self.leader_fanout, self.connection_cache.protocol())
             })
             .filter(|addresses| !addresses.is_empty())
             .unwrap_or_else(|| vec![&self.tpu_address])
@@ -148,6 +152,7 @@ where
         }
     }
 
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     fn protocol(&self) -> Protocol {
         self.connection_cache.protocol()
     }
@@ -234,7 +239,7 @@ where
     // method takes &self and thus we need to wrap with Mutex.
     join_and_cancel: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
     leader_updater: SendTransactionServiceLeaderUpdater<T>,
-    leader_forward_count: u64,
+    leader_fanout: u64,
 }
 
 type TpuClientJoinHandle =
@@ -249,7 +254,7 @@ where
         my_tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_info: Option<T>,
-        leader_forward_count: u64,
+        leader_fanout: u64,
         identity: Option<Keypair>,
     ) -> Self
     where
@@ -268,7 +273,7 @@ where
                 my_tpu_address,
                 tpu_peers,
             };
-        let config = Self::create_config(identity, leader_forward_count as usize);
+        let config = Self::create_config(identity, leader_fanout as usize);
         let handle = runtime_handle.spawn(ConnectionWorkersScheduler::run(
             config,
             Box::new(leader_updater.clone()),
@@ -281,26 +286,25 @@ where
             join_and_cancel: Arc::new(Mutex::new((Some(handle), cancel))),
             sender,
             leader_updater,
-            leader_forward_count,
+            leader_fanout,
         }
     }
 
     fn create_config(
         stake_identity: Option<Keypair>,
-        leader_forward_count: usize,
+        leader_fanout: usize,
     ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
             bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
             stake_identity,
-            // to match MAX_CONNECTIONS from ConnectionCache
-            num_connections: 1024,
+            num_connections: MAX_CONNECTIONS,
             skip_check_transaction_age: true,
             // experimentally found parameter values
             worker_channel_size: 64,
             max_reconnect_attempts: 4,
             leaders_fanout: Fanout {
-                connect: leader_forward_count,
-                send: leader_forward_count,
+                connect: leader_fanout,
+                send: leader_fanout,
             },
         }
     }
@@ -308,7 +312,7 @@ where
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn cancel(&self) -> Result<(), Box<dyn std::error::Error>> {
         let Ok(lock) = self.join_and_cancel.lock() else {
-            return Err("Failed to stop scheduler: TpuClientNext task panicked.".into());
+            return Err("Failed to stop scheduler.".into());
         };
         lock.1.cancel();
         Ok(())
@@ -316,10 +320,8 @@ where
 
     async fn do_update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let runtime_handle = self.runtime_handle.clone();
-        let config = Self::create_config(
-            Some(identity.insecure_clone()),
-            self.leader_forward_count as usize,
-        );
+        let config =
+            Self::create_config(Some(identity.insecure_clone()), self.leader_fanout as usize);
         let leader_updater = self.leader_updater.clone();
         let handle = self.join_and_cancel.clone();
 
@@ -395,6 +397,7 @@ where
         stats.send_attempt_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     fn protocol(&self) -> Protocol {
         Protocol::QUIC
     }
