@@ -48,4 +48,4 @@ extern crate solana_frozen_abi_macro;
 extern crate solana_metrics;
 
 #[cfg(feature = "dev-context-only-utils")]
-pub mod format_validation;
+pub mod testing_fixtures;

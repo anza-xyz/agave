@@ -1,3 +1,9 @@
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::testing_fixtures::{new_rand_timestamp, new_random_pubkey, FormatValidation},
+    rand::Rng,
+    std::hint::black_box,
+};
 use {
     crate::{
         contact_info::ContactInfo,
@@ -9,19 +15,10 @@ use {
     },
     serde::de::{Deserialize, Deserializer},
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        pubkey::{self, Pubkey},
-        timing::timestamp,
-        transaction::Transaction,
-    },
+    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, transaction::Transaction},
     solana_vote::vote_parser,
     std::{cmp::Ordering, collections::BTreeSet},
 };
-
-#[cfg(feature = "dev-context-only-utils")]
-use {crate::format_validation::FormatValidation, rand::Rng, std::hint::black_box};
 
 pub(crate) const MAX_WALLCLOCK: u64 = 1_000_000_000_000_000;
 pub(crate) const MAX_SLOT: u64 = 1_000_000_000_000_000;
@@ -109,21 +106,16 @@ impl Sanitize for CrdsData {
     }
 }
 
-/// Random timestamp for tests and benchmarks.
-pub(crate) fn new_rand_timestamp<R: Rng>(rng: &mut R) -> u64 {
-    const DELAY: u64 = 10 * 60 * 1000; // 10 minutes
-    timestamp() - DELAY + rng.gen_range(0..2 * DELAY)
-}
-
-impl CrdsData {
+#[cfg(feature = "dev-context-only-utils")]
+impl crate::testing_fixtures::FormatValidation<Pubkey> for CrdsData {
     /// New random CrdsData for tests and benchmarks.
-    pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> CrdsData {
+    fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> CrdsData {
         let kind = rng.gen_range(0..8);
         // TODO: Implement other kinds of CrdsData here.
         // TODO: Assign ranges to each arm proportional to their frequency in
         // the mainnet crds table.
         match kind {
-            0 => CrdsData::from(ContactInfo::new_rand(rng, pubkey)),
+            0 => CrdsData::ContactInfo(ContactInfo::new_rand(rng, pubkey)),
             // Index for LowestSlot is deprecated and should be zero.
             1 => CrdsData::LowestSlot(0, LowestSlot::new_rand(rng, pubkey)),
             2 => CrdsData::LegacySnapshotHashes(LegacySnapshotHashes::new_rand(rng, pubkey)),
@@ -139,7 +131,9 @@ impl CrdsData {
             ),
         }
     }
+}
 
+impl CrdsData {
     pub(crate) fn wallclock(&self) -> u64 {
         match self {
             CrdsData::LegacyContactInfo(contact_info) => contact_info.wallclock(),
@@ -226,6 +220,9 @@ pub(crate) struct AccountsHashes {
 impl Sanitize for AccountsHashes {
     fn sanitize(&self) -> Result<(), SanitizeError> {
         sanitize_wallclock(self.wallclock)?;
+        if self.hashes.len() > MAX_ACCOUNTS_HASHES {
+            return Err(SanitizeError::IndexOutOfBounds);
+        }
         for (slot, _) in &self.hashes {
             if *slot >= MAX_SLOT {
                 return Err(SanitizeError::ValueOutOfBounds);
@@ -247,14 +244,14 @@ impl FormatValidation for AccountsHashes {
         .take(num_hashes)
         .collect();
         Self {
-            from: pubkey.unwrap_or_else(pubkey::new_rand),
+            from: pubkey.unwrap_or_else(|| new_random_pubkey(rng)),
             hashes,
             wallclock: new_rand_timestamp(rng),
         }
     }
 
     fn exercise(&self) -> anyhow::Result<()> {
-        FormatValidation::exercise(&self)?;
+        self.sanitize()?;
         let s: u64 = self.hashes.iter().map(|v| v.0).sum();
         black_box(s);
         Ok(())
@@ -318,7 +315,7 @@ impl LowestSlot {
 impl FormatValidation for LowestSlot {
     fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         Self {
-            from: pubkey.unwrap_or_else(pubkey::new_rand),
+            from: pubkey.unwrap_or_else(|| new_random_pubkey(rng)),
             root: rng.gen(),
             lowest: rng.gen(),
             slots: BTreeSet::default(),
@@ -365,6 +362,19 @@ impl Sanitize for Vote {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation for Vote {
+    /// New random Vote for tests and benchmarks.
+    fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
+        Self {
+            from: pubkey.unwrap_or_else(|| new_random_pubkey(rng)),
+            transaction: Transaction::default(),
+            wallclock: new_rand_timestamp(rng),
+            slot: None,
+        }
+    }
+}
+
 impl Vote {
     // Returns None if cannot parse transaction into a vote.
     pub fn new(from: Pubkey, transaction: Transaction, wallclock: u64) -> Option<Self> {
@@ -374,16 +384,6 @@ impl Vote {
             wallclock,
             slot: vote.last_voted_slot(),
         })
-    }
-
-    /// New random Vote for tests and benchmarks.
-    fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
-        Self {
-            from: pubkey.unwrap_or_else(pubkey::new_rand),
-            transaction: Transaction::default(),
-            wallclock: new_rand_timestamp(rng),
-            slot: None,
-        }
     }
 
     pub(crate) fn transaction(&self) -> &Transaction {

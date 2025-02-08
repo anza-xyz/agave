@@ -1,6 +1,8 @@
+#[cfg(feature = "dev-context-only-utils")]
+use crate::testing_fixtures::*;
 use {
     crate::{
-        crds_data::{self, MAX_SLOT, MAX_WALLCLOCK},
+        crds_data::{MAX_SLOT, MAX_WALLCLOCK},
         protocol::MAX_CRDS_OBJECT_SIZE,
     },
     bincode::serialized_size,
@@ -341,10 +343,12 @@ impl EpochSlots {
             .filter_map(move |s| s.to_slots(min_slot).ok())
             .flatten()
     }
+}
 
-    /// New random EpochSlots for tests and simulations.
-    pub(crate) fn new_rand<R: rand::Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
-        let now = crds_data::new_rand_timestamp(rng);
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation<Pubkey> for EpochSlots {
+    fn new_rand<R: rand::Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
+        let now = new_rand_timestamp(rng);
         let pubkey = pubkey.unwrap_or_else(solana_pubkey::new_rand);
         let mut epoch_slots = Self::new(pubkey, now);
         let num_slots = rng.gen_range(0..20);
@@ -353,6 +357,13 @@ impl EpochSlots {
             .collect();
         epoch_slots.add(&slots);
         epoch_slots
+    }
+
+    fn exercise(&self) -> anyhow::Result<()> {
+        self.sanitize()?;
+        let s: Slot = self.to_slots(0).sum();
+        std::hint::black_box(s);
+        Ok(())
     }
 }
 

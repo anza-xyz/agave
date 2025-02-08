@@ -82,7 +82,7 @@ impl solana_sanitize::Sanitize for CrdsFilter {
 }
 
 impl CrdsFilter {
-    #[cfg(test)]
+    #[cfg(feature = "dev-context-only-utils")]
     pub(crate) fn new_rand(num_items: usize, max_bytes: usize) -> Self {
         let max_bits = (max_bytes * 8) as f64;
         let max_items = Self::max_items(max_bits, FALSE_RATE, KEYS);
@@ -666,6 +666,7 @@ pub(crate) mod tests {
             crds_data::{CrdsData, Vote},
             legacy_contact_info::LegacyContactInfo,
             protocol::Protocol,
+            testing_fixtures::*,
         },
         itertools::Itertools,
         rand::{seq::SliceRandom, SeedableRng},

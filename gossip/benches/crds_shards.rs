@@ -8,6 +8,7 @@ use {
         crds::{Crds, GossipRoute, VersionedCrdsValue},
         crds_shards::CrdsShards,
         crds_value::CrdsValue,
+        testing_fixtures::FormatValidation,
     },
     solana_sdk::timing::timestamp,
     std::iter::repeat_with,

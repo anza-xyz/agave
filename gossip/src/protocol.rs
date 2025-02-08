@@ -1,4 +1,10 @@
 //! Definitions for the base of all Gossip protocol messages
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::contact_info::ContactInfo,
+    crate::testing_fixtures::{new_insecure_keypair, new_rand_timestamp, FormatValidation},
+    solana_sdk::{signature::Keypair, signer::Signer},
+};
 use {
     crate::{
         crds_data::{CrdsData, MAX_WALLCLOCK},
@@ -78,6 +84,35 @@ pub(crate) struct PruneData {
     pub(crate) destination: Pubkey,
     /// Wallclock of the node that generated this message
     pub(crate) wallclock: u64,
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation<(&Keypair, usize)> for PruneData {
+    fn new_rand<R: rand::Rng>(rng: &mut R, source_material: Option<(&Keypair, usize)>) -> Self {
+        let wallclock = new_rand_timestamp(rng);
+        let make = |keypair: &Keypair, num_nodes| {
+            let prunes = std::iter::repeat_with(Pubkey::new_unique)
+                .take(num_nodes)
+                .collect();
+            let mut prune_data = PruneData {
+                pubkey: keypair.pubkey(),
+                prunes,
+                signature: Signature::default(),
+                destination: Pubkey::new_unique(),
+                wallclock,
+            };
+            prune_data.sign(keypair);
+            prune_data
+        };
+        match source_material {
+            Some((keypair, num_nodes)) => make(keypair, num_nodes),
+            None => {
+                let num_nodes = rng.gen_range(5..=MAX_PRUNE_DATA_NODES);
+                let keypair = new_insecure_keypair(rng);
+                make(&keypair, num_nodes)
+            }
+        }
+    }
 }
 
 impl Protocol {
@@ -187,6 +222,37 @@ impl Sanitize for Protocol {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation<&Keypair> for Protocol {
+    fn new_rand<R: rand::Rng>(rng: &mut R, keypair: Option<&Keypair>) -> Self {
+        let mut random_keypair: Option<Keypair> = None;
+        let keypair = keypair
+            .unwrap_or_else(|| random_keypair.get_or_insert_with(|| new_insecure_keypair(rng)));
+        let random_crds_value = |rng| CrdsValue::new_rand(rng, Some(keypair));
+        match rng.gen_range(0..=5) {
+            0 => Protocol::PullResponse(keypair.pubkey(), vec![random_crds_value(rng)]),
+            1 => Protocol::PushMessage(keypair.pubkey(), vec![random_crds_value(rng)]),
+            2 => Protocol::PullRequest(
+                CrdsFilter::new_rand(15, 256),
+                CrdsValue::new(
+                    CrdsData::ContactInfo(ContactInfo::new_rand(rng, Some(keypair.pubkey()))),
+                    keypair,
+                ),
+            ),
+            3 => {
+                let num_nodes = rng.gen_range(1..=MAX_PRUNE_DATA_NODES);
+                Protocol::PruneMessage(
+                    keypair.pubkey(),
+                    PruneData::new_rand(rng, Some((keypair, num_nodes))),
+                )
+            }
+            4 => Protocol::PingMessage(Ping::new_rand(rng, Some(keypair))),
+            5 => Protocol::PongMessage(Pong::new_rand(rng, Some(keypair))),
+            _ => unreachable!("All patterns should be covered"),
+        }
+    }
+}
+
 impl Sanitize for PruneData {
     fn sanitize(&self) -> Result<(), SanitizeError> {
         if self.wallclock >= MAX_WALLCLOCK {
@@ -262,10 +328,9 @@ pub(crate) mod tests {
         super::*,
         crate::{
             contact_info::ContactInfo,
-            crds_data::{
-                self, AccountsHashes, CrdsData, LowestSlot, SnapshotHashes, Vote as CrdsVote,
-            },
+            crds_data::{AccountsHashes, CrdsData, LowestSlot, SnapshotHashes, Vote as CrdsVote},
             duplicate_shred::{self, tests::new_rand_shred, MAX_DUPLICATE_SHREDS},
+            testing_fixtures::FormatValidation,
         },
         rand::Rng,
         solana_ledger::shred::Shredder,
@@ -310,27 +375,6 @@ pub(crate) mod tests {
         let keypair = Keypair::new();
         let socket = new_rand_socket_addr(rng);
         (keypair, socket)
-    }
-
-    fn new_rand_prune_data<R: Rng>(
-        rng: &mut R,
-        self_keypair: &Keypair,
-        num_nodes: Option<usize>,
-    ) -> PruneData {
-        let wallclock = crds_data::new_rand_timestamp(rng);
-        let num_nodes = num_nodes.unwrap_or_else(|| rng.gen_range(0..MAX_PRUNE_DATA_NODES + 1));
-        let prunes = std::iter::repeat_with(Pubkey::new_unique)
-            .take(num_nodes)
-            .collect();
-        let mut prune_data = PruneData {
-            pubkey: self_keypair.pubkey(),
-            prunes,
-            signature: Signature::default(),
-            destination: Pubkey::new_unique(),
-            wallclock,
-        };
-        prune_data.sign(self_keypair);
-        prune_data
     }
 
     #[test]
@@ -395,7 +439,7 @@ pub(crate) mod tests {
         for _ in 0..64 {
             let self_keypair = Keypair::new();
             let prune_data =
-                new_rand_prune_data(&mut rng, &self_keypair, Some(MAX_PRUNE_DATA_NODES));
+                PruneData::new_rand(&mut rng, Some((&self_keypair, MAX_PRUNE_DATA_NODES)));
             let prune_message = Protocol::PruneMessage(self_keypair.pubkey(), prune_data);
             let socket = new_rand_socket_addr(&mut rng);
             assert!(Packet::from_data(Some(&socket), prune_message).is_ok());
@@ -403,7 +447,7 @@ pub(crate) mod tests {
         // Assert that MAX_PRUNE_DATA_NODES is highest possible.
         let self_keypair = Keypair::new();
         let prune_data =
-            new_rand_prune_data(&mut rng, &self_keypair, Some(MAX_PRUNE_DATA_NODES + 1));
+            PruneData::new_rand(&mut rng, Some((&self_keypair, MAX_PRUNE_DATA_NODES + 1)));
         let prune_message = Protocol::PruneMessage(self_keypair.pubkey(), prune_data);
         let socket = new_rand_socket_addr(&mut rng);
         assert!(Packet::from_data(Some(&socket), prune_message).is_err());
@@ -668,7 +712,7 @@ pub(crate) mod tests {
     fn test_prune_data_sign_and_verify_without_prefix() {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
-        let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
+        let mut prune_data = PruneData::new_rand(&mut rng, Some((&keypair, 3)));
 
         prune_data.sign(&keypair);
 
@@ -680,7 +724,7 @@ pub(crate) mod tests {
     fn test_prune_data_sign_and_verify_with_prefix() {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
-        let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
+        let mut prune_data = PruneData::new_rand(&mut rng, Some((&keypair, 3)));
 
         // Manually set the signature with prefixed data
         let prefixed_data = prune_data.signable_data_with_prefix();
@@ -695,7 +739,7 @@ pub(crate) mod tests {
     fn test_prune_data_verify_with_and_without_prefix() {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
-        let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
+        let mut prune_data = PruneData::new_rand(&mut rng, Some((&keypair, 3)));
 
         // Sign with non-prefixed data
         prune_data.sign(&keypair);
