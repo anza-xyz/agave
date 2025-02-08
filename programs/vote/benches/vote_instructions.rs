@@ -870,6 +870,62 @@ impl BenchAuthorizeCheckedWithSeed {
     }
 }
 
+struct BenchCompactUpdateVoteState {
+    instruction_data: Vec<u8>,
+    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+    instruction_accounts: Vec<AccountMeta>,
+}
+
+impl BenchCompactUpdateVoteState {
+    fn new() -> Self {
+        let (vote_pubkey, vote_account) = create_test_account();
+        let vote = Vote::new(vec![1], Hash::default());
+        let vote_state_update = VoteStateUpdate::from(vec![(1, 1)]);
+        let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
+        let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
+        let instruction_accounts = vec![
+            AccountMeta {
+                pubkey: vote_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: sysvar::slot_hashes::id(),
+                is_signer: false,
+                is_writable: false,
+            },
+            AccountMeta {
+                pubkey: sysvar::clock::id(),
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
+
+        let instruction_data =
+            serialize(&VoteInstruction::CompactUpdateVoteState(vote_state_update)).unwrap();
+
+        let transaction_accounts = vec![
+            (vote_pubkey, vote_account.clone()),
+            (sysvar::slot_hashes::id(), slot_hashes_account.clone()),
+            (sysvar::clock::id(), create_default_clock_account()),
+        ];
+
+        Self {
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+        }
+    }
+    fn run(&self) {
+        let _accounts = process_deprecated_instruction(
+            &self.instruction_data,
+            self.transaction_accounts.clone(),
+            self.instruction_accounts.clone(),
+            Ok(()),
+        );
+    }
+}
+
 fn bench_initialize_account(c: &mut Criterion) {
     let test_setup = BenchInitializeAccount::new();
     c.bench_function("vote_instruction_initialize_account", |bencher| {
@@ -954,6 +1010,13 @@ fn bench_authorize_checked_with_seed(c: &mut Criterion) {
     });
 }
 
+fn bench_compact_update_vote_state(c: &mut Criterion) {
+    let test_setup = BenchCompactUpdateVoteState::new();
+    c.bench_function("vote_compact_update_vote_state", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_account,
@@ -968,5 +1031,6 @@ criterion_group!(
     bench_update_vote_state_switch,
     bench_authorize_with_seed,
     bench_authorize_checked_with_seed,
+    bench_compact_update_vote_state,
 );
 criterion_main!(benches);
