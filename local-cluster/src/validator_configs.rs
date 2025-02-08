@@ -18,7 +18,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         geyser_plugin_always_enabled: config.geyser_plugin_always_enabled,
         rpc_addrs: config.rpc_addrs,
         pubsub_config: config.pubsub_config.clone(),
-        snapshot_config: config.snapshot_config.clone(),
+        snapshot_mode: config.snapshot_mode.clone(),
         max_ledger_shreds: config.max_ledger_shreds,
         blockstore_options: config.blockstore_options.clone(),
         broadcast_stage_type: config.broadcast_stage_type.clone(),

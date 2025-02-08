@@ -20,7 +20,7 @@ use {
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_core::{
         consensus::{tower_storage::FileTowerStorage, Tower, SWITCH_FORK_THRESHOLD},
-        validator::{is_snapshot_config_valid, ValidatorConfig},
+        validator::{is_snapshot_mode_valid, ValidatorConfig},
     },
     solana_gossip::gossip_service::discover_cluster,
     solana_ledger::{
@@ -32,7 +32,11 @@ use {
     },
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{
-        snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL, snapshot_config::SnapshotConfig,
+        snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+        snapshot_mode::{
+            SnapshotGenerateConfig, SnapshotLoadAndGenerateModeConfig, SnapshotLoadConfig,
+            SnapshotMode, SnapshotStorageConfig,
+        },
     },
     solana_sdk::{
         account::AccountSharedData,
@@ -550,20 +554,32 @@ impl SnapshotValidatorConfig {
         let bank_snapshots_dir = tempfile::tempdir_in(farf_dir()).unwrap();
         let full_snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
         let incremental_snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
-        let snapshot_config = SnapshotConfig {
-            full_snapshot_archive_interval_slots,
-            incremental_snapshot_archive_interval_slots,
-            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
-            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
-                .path()
-                .to_path_buf(),
-            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
-            maximum_full_snapshot_archives_to_retain: NonZeroUsize::new(usize::MAX).unwrap(),
-            maximum_incremental_snapshot_archives_to_retain: NonZeroUsize::new(usize::MAX).unwrap(),
-            ..SnapshotConfig::default()
-        };
-        assert!(is_snapshot_config_valid(
-            &snapshot_config,
+        let snapshot_mode = SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+            load_config: SnapshotLoadConfig {
+                full_snapshot_config: SnapshotStorageConfig {
+                    archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+                    archives_to_retain: NonZeroUsize::new(usize::MAX).unwrap(),
+                },
+                incremental_snapshot_config: Some(SnapshotStorageConfig {
+                    archives_dir: incremental_snapshot_archives_dir.path().to_path_buf(),
+                    archives_to_retain: NonZeroUsize::new(usize::MAX).unwrap(),
+                }),
+                bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+                ..SnapshotLoadConfig::default_load_and_genarate()
+            },
+            generate_config: SnapshotGenerateConfig {
+                full_snapshot_archive_interval_slots: NonZeroUsize::new(
+                    full_snapshot_archive_interval_slots as usize,
+                )
+                .unwrap(),
+                incremental_snapshot_archive_interval_slots: NonZeroUsize::new(
+                    incremental_snapshot_archive_interval_slots as usize,
+                ),
+                ..SnapshotGenerateConfig::default_generate_config()
+            },
+        });
+        assert!(is_snapshot_mode_valid(
+            &snapshot_mode,
             accounts_hash_interval_slots
         ));
 
@@ -573,7 +589,7 @@ impl SnapshotValidatorConfig {
 
         // Create the validator config
         let validator_config = ValidatorConfig {
-            snapshot_config,
+            snapshot_mode,
             account_paths: account_storage_paths,
             accounts_hash_interval_slots,
             ..ValidatorConfig::default_for_test()

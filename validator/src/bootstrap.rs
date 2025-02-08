@@ -230,7 +230,7 @@ fn get_rpc_peers(
     let rpc_known_peers = rpc_peers
         .iter()
         .filter(|rpc_peer| {
-            is_known_validator(rpc_peer.pubkey(), &validator_config.known_validators)
+            is_known_validator(&rpc_peer.pubkey(), &validator_config.known_validators)
         })
         .count();
 
@@ -1241,11 +1241,16 @@ fn download_snapshot(
     snapshot_kind: SnapshotKind,
 ) -> Result<(), String> {
     let maximum_full_snapshot_archives_to_retain = validator_config
-        .snapshot_config
-        .maximum_full_snapshot_archives_to_retain;
+        .snapshot_mode
+        .get_snapshot_load_config()
+        .full_snapshot_config
+        .archives_to_retain;
     let maximum_incremental_snapshot_archives_to_retain = validator_config
-        .snapshot_config
-        .maximum_incremental_snapshot_archives_to_retain;
+        .snapshot_mode
+        .get_snapshot_load_config()
+        .incremental_snapshot_config
+        .unwrap()
+        .archives_to_retain;
 
     *start_progress.write().unwrap() = ValidatorStartProgress::DownloadingSnapshot {
         slot: desired_snapshot_hash.0,

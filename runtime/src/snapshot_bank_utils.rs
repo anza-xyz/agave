@@ -9,8 +9,11 @@ use {
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
         },
-        snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
+        snapshot_mode::{
+            SnapshotGenerateConfig, SnapshotLoadAndGenerateModeConfig, SnapshotLoadConfig,
+            SnapshotMode, SnapshotStorageConfig,
+        },
         snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage},
         snapshot_utils::{
             self, deserialize_snapshot_data_file, deserialize_snapshot_data_files,
@@ -967,16 +970,26 @@ fn bank_to_full_snapshot_archive_with(
     let snapshot_package =
         SnapshotPackage::new(accounts_package, merkle_or_lattice_accounts_hash, None);
 
-    let snapshot_config = SnapshotConfig {
-        full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
-        incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.as_ref().to_path_buf(),
-        bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
-        archive_format,
-        snapshot_version,
-        ..Default::default()
-    };
+    let snapshot_mode = SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+        load_config: SnapshotLoadConfig {
+            full_snapshot_config: SnapshotStorageConfig {
+                archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
+                ..SnapshotStorageConfig::default_full_snapshot_config()
+            },
+            incremental_snapshot_config: Some(SnapshotStorageConfig {
+                archives_dir: incremental_snapshot_archives_dir.as_ref().to_path_buf(),
+                ..SnapshotStorageConfig::default_incremental_snapshot_config()
+            }),
+            bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
+            archive_format,
+            snapshot_version,
+            ..SnapshotLoadConfig::default_load_and_genarate()
+        },
+        generate_config: SnapshotGenerateConfig::default_generate_config(),
+    });
+
     let snapshot_archive_info =
-        snapshot_utils::serialize_and_archive_snapshot_package(snapshot_package, &snapshot_config)?;
+        snapshot_utils::serialize_and_archive_snapshot_package(snapshot_package, &snapshot_mode)?;
 
     Ok(FullSnapshotArchiveInfo::new(snapshot_archive_info))
 }
@@ -1066,16 +1079,26 @@ pub fn bank_to_incremental_snapshot_archive(
     // this bank snapshot *cannot* be used by fastboot.
     // Putting the snapshot in a tempdir effectively enforces that.
     let temp_bank_snapshots_dir = tempfile::tempdir_in(bank_snapshots_dir)?;
-    let snapshot_config = SnapshotConfig {
-        full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
-        incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.as_ref().to_path_buf(),
-        bank_snapshots_dir: temp_bank_snapshots_dir.path().to_path_buf(),
-        archive_format,
-        snapshot_version,
-        ..Default::default()
-    };
+
+    let snapshot_mode = SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+        load_config: SnapshotLoadConfig {
+            full_snapshot_config: SnapshotStorageConfig {
+                archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
+                ..SnapshotStorageConfig::default_full_snapshot_config()
+            },
+            incremental_snapshot_config: Some(SnapshotStorageConfig {
+                archives_dir: incremental_snapshot_archives_dir.as_ref().to_path_buf(),
+                ..SnapshotStorageConfig::default_incremental_snapshot_config()
+            }),
+            bank_snapshots_dir: temp_bank_snapshots_dir.path().to_path_buf(),
+            archive_format,
+            snapshot_version,
+            ..SnapshotLoadConfig::default_load_and_genarate()
+        },
+        generate_config: SnapshotGenerateConfig::default_generate_config(),
+    });
     let snapshot_archive_info =
-        snapshot_utils::serialize_and_archive_snapshot_package(snapshot_package, &snapshot_config)?;
+        snapshot_utils::serialize_and_archive_snapshot_package(snapshot_package, &snapshot_mode)?;
 
     Ok(IncrementalSnapshotArchiveInfo::new(
         full_snapshot_slot,
@@ -1091,7 +1114,7 @@ mod tests {
             bank::{tests::create_simple_test_bank, BankTestConfig},
             bank_forks::BankForks,
             genesis_utils,
-            snapshot_config::SnapshotConfig,
+            snapshot_mode::{SnapshotLoadOnlyModeConfig, SnapshotMode},
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
                 get_bank_snapshot_dir, get_bank_snapshots, get_bank_snapshots_post,
@@ -2546,44 +2569,66 @@ mod tests {
     fn test_get_highest_loadable_bank_snapshot() {
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();
-
-        let snapshot_config = SnapshotConfig {
+        let load_config = SnapshotLoadConfig {
+            full_snapshot_config: SnapshotStorageConfig {
+                archives_dir: snapshot_archives_dir.as_ref().to_path_buf(),
+                ..SnapshotStorageConfig::default_full_snapshot_config()
+            },
+            incremental_snapshot_config: Some(SnapshotStorageConfig {
+                archives_dir: snapshot_archives_dir.as_ref().to_path_buf(),
+                ..SnapshotStorageConfig::default_incremental_snapshot_config()
+            }),
             bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
-            full_snapshot_archives_dir: snapshot_archives_dir.as_ref().to_path_buf(),
-            incremental_snapshot_archives_dir: snapshot_archives_dir.as_ref().to_path_buf(),
-            ..Default::default()
-        };
-        let load_only_snapshot_config = SnapshotConfig {
-            bank_snapshots_dir: snapshot_config.bank_snapshots_dir.clone(),
-            full_snapshot_archives_dir: snapshot_config.full_snapshot_archives_dir.clone(),
-            incremental_snapshot_archives_dir: snapshot_config
-                .incremental_snapshot_archives_dir
-                .clone(),
-            ..SnapshotConfig::new_load_only()
-        };
+            ..SnapshotLoadConfig::default_load_and_genarate()
+        }
+        .clone();
+
+        let snapshot_mode = SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+            load_config: load_config.clone(),
+            generate_config: SnapshotGenerateConfig::default_generate_config(),
+        })
+        .clone();
+
+        let load_only_snapshot_mode = SnapshotMode::LoadOnly(SnapshotLoadOnlyModeConfig {
+            load_config: load_config,
+        });
 
         let genesis_config = GenesisConfig::default();
         let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let mut full_snapshot_archive_info = None;
 
+        let load_config = match snapshot_mode.clone() {
+            SnapshotMode::Disabled => None,
+            SnapshotMode::LoadOnly(snapshot_load_only_mode_config) => {
+                Some(snapshot_load_only_mode_config.load_config)
+            }
+            SnapshotMode::LoadAndGenerate(snapshot_load_and_generate_mode_config) => {
+                Some(snapshot_load_and_generate_mode_config.load_config)
+            }
+        }
+        .unwrap();
+
+        let snapshot_archives_to_retain =
+            load_config.full_snapshot_config.archives_to_retain.get() + 1;
+
         // take some snapshots, and archive them
         // note the `+1` at the end; we'll turn it into a PRE afterwards
-        for _ in 0..snapshot_config
-            .maximum_full_snapshot_archives_to_retain
-            .get()
-            + 1
-        {
+        for _ in 0..snapshot_archives_to_retain {
             let slot = bank.slot() + 1;
             bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
             bank.fill_bank_with_ticks_for_tests();
             full_snapshot_archive_info = Some(
                 bank_to_full_snapshot_archive_with(
-                    &snapshot_config.bank_snapshots_dir,
+                    &load_config.bank_snapshots_dir,
                     &bank,
-                    snapshot_config.snapshot_version,
-                    &snapshot_config.full_snapshot_archives_dir,
-                    &snapshot_config.incremental_snapshot_archives_dir,
-                    snapshot_config.archive_format,
+                    load_config.snapshot_version,
+                    &load_config.full_snapshot_config.archives_dir,
+                    &load_config
+                        .clone()
+                        .incremental_snapshot_config
+                        .unwrap()
+                        .archives_dir,
+                    load_config.archive_format,
                 )
                 .unwrap(),
             );
@@ -2610,23 +2655,23 @@ mod tests {
         assert!(highest_bank_snapshot_pre.slot > highest_bank_snapshot_post.slot);
 
         // 1. call get_highest_loadable() but bad snapshot dir, so returns None
-        assert!(get_highest_loadable_bank_snapshot(&SnapshotConfig::default()).is_none());
+        assert!(get_highest_loadable_bank_snapshot(&SnapshotMode::default()).is_none());
 
         // 2. get_highest_loadable(), should return highest_bank_snapshot_post_slot
-        let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
+        let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_mode).unwrap();
         assert_eq!(bank_snapshot, highest_bank_snapshot_post);
 
         // 3. delete highest full snapshot archive, get_highest_loadable() should return NONE
         fs::remove_file(highest_full_snapshot_archive.path()).unwrap();
-        assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
+        assert!(get_highest_loadable_bank_snapshot(&snapshot_mode).is_none());
 
         // 4. get_highest_loadable(), but with a load-only snapshot config, should return Some()
-        let bank_snapshot = get_highest_loadable_bank_snapshot(&load_only_snapshot_config).unwrap();
+        let bank_snapshot = get_highest_loadable_bank_snapshot(&load_only_snapshot_mode).unwrap();
         assert_eq!(bank_snapshot, highest_bank_snapshot_post);
 
         // 5. delete highest bank snapshot, get_highest_loadable() should return Some() again, with slot-1
         fs::remove_dir_all(&highest_bank_snapshot_post.snapshot_dir).unwrap();
-        let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
+        let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_mode).unwrap();
         assert_eq!(bank_snapshot.slot, highest_bank_snapshot_post.slot - 1);
 
         // 6. delete the full snapshot slot file, get_highest_loadable() should return NONE
@@ -2636,11 +2681,10 @@ mod tests {
                 .join(SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME),
         )
         .unwrap();
-        assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
+        assert!(get_highest_loadable_bank_snapshot(&snapshot_mode).is_none());
 
         // 7. however, a load-only snapshot config should return Some() again
-        let bank_snapshot2 =
-            get_highest_loadable_bank_snapshot(&load_only_snapshot_config).unwrap();
+        let bank_snapshot2 = get_highest_loadable_bank_snapshot(&load_only_snapshot_mode).unwrap();
         assert_eq!(bank_snapshot2, bank_snapshot);
     }
 }

@@ -25,7 +25,10 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_archive_info::FullSnapshotArchiveInfo,
         snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
-        snapshot_config::SnapshotConfig,
+        snapshot_mode::{
+            SnapshotGenerateConfig, SnapshotLoadAndGenerateModeConfig, SnapshotLoadConfig,
+            SnapshotMode, SnapshotStorageConfig,
+        },
         snapshot_utils::{
             self,
             SnapshotVersion::{self, V1_2_0},
@@ -46,6 +49,7 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     std::{
+        num::NonZero,
         path::PathBuf,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -60,7 +64,7 @@ use {
 struct SnapshotTestConfig {
     bank_forks: Arc<RwLock<BankForks>>,
     genesis_config_info: GenesisConfigInfo,
-    snapshot_config: SnapshotConfig,
+    snapshot_mode: SnapshotMode,
     incremental_snapshot_archives_dir: TempDir,
     full_snapshot_archives_dir: TempDir,
     bank_snapshots_dir: TempDir,
@@ -104,22 +108,37 @@ impl SnapshotTestConfig {
         let mut bank_forks = bank_forks_arc.write().unwrap();
         bank_forks.accounts_hash_interval_slots = accounts_hash_interval_slots;
 
-        let snapshot_config = SnapshotConfig {
-            full_snapshot_archive_interval_slots,
-            incremental_snapshot_archive_interval_slots,
-            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
-            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
-                .path()
-                .to_path_buf(),
-            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
-            snapshot_version,
-            ..SnapshotConfig::default()
-        };
-        bank_forks.set_snapshot_config(Some(snapshot_config.clone()));
+        let snapshot_mode = SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+            load_config: SnapshotLoadConfig {
+                full_snapshot_config: SnapshotStorageConfig {
+                    archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+                    ..SnapshotStorageConfig::default_full_snapshot_config()
+                },
+                incremental_snapshot_config: Some(SnapshotStorageConfig {
+                    archives_dir: incremental_snapshot_archives_dir.path().to_path_buf(),
+                    ..SnapshotStorageConfig::default_incremental_snapshot_config()
+                }),
+                bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+                snapshot_version,
+                ..SnapshotLoadConfig::default_load_and_genarate()
+            },
+            generate_config: SnapshotGenerateConfig {
+                full_snapshot_archive_interval_slots: NonZero::new(
+                    full_snapshot_archive_interval_slots as usize,
+                )
+                .unwrap(),
+                incremental_snapshot_archive_interval_slots: NonZero::new(
+                    incremental_snapshot_archive_interval_slots as usize,
+                ),
+                ..SnapshotGenerateConfig::default_generate_config()
+            },
+        });
+
+        bank_forks.set_snapshot_mode(Some(snapshot_mode.clone()));
         SnapshotTestConfig {
             bank_forks: bank_forks_arc.clone(),
             genesis_config_info,
-            snapshot_config,
+            snapshot_mode,
             incremental_snapshot_archives_dir,
             full_snapshot_archives_dir,
             bank_snapshots_dir,
@@ -136,22 +155,25 @@ fn restore_from_snapshot(
     account_paths: &[PathBuf],
 ) {
     let old_bank_forks = old_bank_forks.read().unwrap();
-    let snapshot_config = old_bank_forks.snapshot_config.as_ref().unwrap();
+    let snapshot_mode = old_bank_forks.snapshot_mode.as_ref().unwrap();
     let old_last_bank = old_bank_forks.get(old_last_slot).unwrap();
 
     let check_hash_calculation = false;
     let full_snapshot_archive_path = snapshot_utils::build_full_snapshot_archive_path(
-        &snapshot_config.full_snapshot_archives_dir,
+        &snapshot_mode
+            .get_snapshot_load_config()
+            .full_snapshot_config
+            .archives_dir,
         old_last_bank.slot(),
         &old_last_bank.get_snapshot_hash(),
-        snapshot_config.archive_format,
+        snapshot_mode.get_snapshot_load_config().archive_format,
     );
     let full_snapshot_archive_info =
         FullSnapshotArchiveInfo::new_from_path(full_snapshot_archive_path).unwrap();
 
     let (deserialized_bank, _timing) = snapshot_bank_utils::bank_from_snapshot_archives(
         account_paths,
-        &snapshot_config.bank_snapshots_dir,
+        &snapshot_mode.get_snapshot_load_config().bank_snapshots_dir,
         &full_snapshot_archive_info,
         None,
         old_genesis_config,
@@ -204,7 +226,7 @@ fn run_bank_forks_snapshot_n<F>(
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
     let request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
     let snapshot_request_handler = SnapshotRequestHandler {
-        snapshot_config: snapshot_test_config.snapshot_config.clone(),
+        snapshot_mode: snapshot_test_config.snapshot_mode.clone(),
         snapshot_request_sender,
         snapshot_request_receiver,
         accounts_package_sender,
@@ -236,15 +258,19 @@ fn run_bank_forks_snapshot_n<F>(
     }
 
     // Generate a snapshot package for last bank
-    let snapshot_config = &snapshot_test_config.snapshot_config;
+    let snapshot_mode = &snapshot_test_config.snapshot_mode;
+    let load_config = snapshot_mode.get_snapshot_load_config();
     let last_bank = bank_forks.read().unwrap().get(last_slot).unwrap();
     snapshot_bank_utils::bank_to_full_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
+        &load_config.bank_snapshots_dir,
         &last_bank,
         Some(snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
+        &load_config.full_snapshot_config.archives_dir,
+        &load_config
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_dir,
+        load_config.archive_format,
     )
     .unwrap();
 
@@ -468,7 +494,7 @@ fn test_bank_forks_incremental_snapshot(
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
     let request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
     let snapshot_request_handler = SnapshotRequestHandler {
-        snapshot_config: snapshot_test_config.snapshot_config.clone(),
+        snapshot_mode: snapshot_test_config.snapshot_mode.clone(),
         snapshot_request_sender,
         snapshot_request_receiver,
         accounts_package_sender,
@@ -515,7 +541,7 @@ fn test_bank_forks_incremental_snapshot(
         // Since AccountsBackgroundService isn't running, manually make a full snapshot archive
         // at the right interval
         if snapshot_utils::should_take_full_snapshot(slot, FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS) {
-            make_full_snapshot_archive(&bank, &snapshot_test_config.snapshot_config).unwrap();
+            make_full_snapshot_archive(&bank, &snapshot_test_config.snapshot_mode).unwrap();
             latest_full_snapshot_slot = Some(slot);
         }
         // Similarly, make an incremental snapshot archive at the right interval, but only if
@@ -532,7 +558,7 @@ fn test_bank_forks_incremental_snapshot(
             make_incremental_snapshot_archive(
                 &bank,
                 latest_full_snapshot_slot.unwrap(),
-                &snapshot_test_config.snapshot_config,
+                &snapshot_test_config.snapshot_mode,
             )
             .unwrap();
 
@@ -542,7 +568,7 @@ fn test_bank_forks_incremental_snapshot(
             let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
             restore_from_snapshots_and_check_banks_are_equal(
                 &bank,
-                &snapshot_test_config.snapshot_config,
+                &snapshot_test_config.snapshot_mode,
                 temporary_accounts_dir,
                 &snapshot_test_config.genesis_config_info.genesis_config,
             )
@@ -553,19 +579,23 @@ fn test_bank_forks_incremental_snapshot(
 
 fn make_full_snapshot_archive(
     bank: &Bank,
-    snapshot_config: &SnapshotConfig,
+    snapshot_mode: &SnapshotMode,
 ) -> snapshot_utils::Result<()> {
     info!(
         "Making full snapshot archive from bank at slot: {}",
         bank.slot(),
     );
+    let load_config = snapshot_mode.get_snapshot_load_config();
     snapshot_bank_utils::bank_to_full_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
+        &load_config.bank_snapshots_dir,
         bank,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
+        Some(load_config.snapshot_version),
+        &load_config.full_snapshot_config.archives_dir,
+        &load_config
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_dir,
+        load_config.archive_format,
     )?;
     Ok(())
 }
@@ -573,35 +603,43 @@ fn make_full_snapshot_archive(
 fn make_incremental_snapshot_archive(
     bank: &Bank,
     incremental_snapshot_base_slot: Slot,
-    snapshot_config: &SnapshotConfig,
+    snapshot_mode: &SnapshotMode,
 ) -> snapshot_utils::Result<()> {
     info!(
         "Making incremental snapshot archive from bank at slot: {}, and base slot: {}",
         bank.slot(),
         incremental_snapshot_base_slot,
     );
+    let load_config = snapshot_mode.get_snapshot_load_config();
     snapshot_bank_utils::bank_to_incremental_snapshot_archive(
-        &snapshot_config.bank_snapshots_dir,
+        &load_config.bank_snapshots_dir,
         bank,
         incremental_snapshot_base_slot,
-        Some(snapshot_config.snapshot_version),
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
-        snapshot_config.archive_format,
+        Some(load_config.snapshot_version),
+        &load_config.full_snapshot_config.archives_dir,
+        &load_config
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_dir,
+        load_config.archive_format,
     )?;
     Ok(())
 }
 
 fn restore_from_snapshots_and_check_banks_are_equal(
     bank: &Bank,
-    snapshot_config: &SnapshotConfig,
+    snapshot_mode: &SnapshotMode,
     accounts_dir: PathBuf,
     genesis_config: &GenesisConfig,
 ) -> snapshot_utils::Result<()> {
+    let load_config = snapshot_mode.get_snapshot_load_config();
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
-        &snapshot_config.bank_snapshots_dir,
-        &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
+        &load_config.bank_snapshots_dir,
+        &load_config.full_snapshot_config.archives_dir,
+        &load_config
+            .incremental_snapshot_config
+            .unwrap()
+            .archives_dir,
         &[accounts_dir],
         genesis_config,
         &RuntimeConfig::default(),
@@ -712,7 +750,7 @@ fn test_snapshots_with_background_services(
 
     let abs_request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
     let snapshot_request_handler = SnapshotRequestHandler {
-        snapshot_config: snapshot_test_config.snapshot_config.clone(),
+        snapshot_mode: snapshot_test_config.snapshot_mode.clone(),
         snapshot_request_sender,
         snapshot_request_receiver,
         accounts_package_sender: accounts_package_sender.clone(),
@@ -731,7 +769,7 @@ fn test_snapshots_with_background_services(
         None,
         exit.clone(),
         cluster_info.clone(),
-        snapshot_test_config.snapshot_config.clone(),
+        snapshot_test_config.snapshot_mode.clone(),
         false,
     );
 
@@ -740,7 +778,7 @@ fn test_snapshots_with_background_services(
         accounts_package_receiver,
         pending_snapshot_packages,
         exit.clone(),
-        snapshot_test_config.snapshot_config.clone(),
+        snapshot_test_config.snapshot_mode.clone(),
     );
 
     let accounts_background_service = AccountsBackgroundService::new(
@@ -794,8 +832,10 @@ fn test_snapshots_with_background_services(
             let timer = Instant::now();
             while snapshot_utils::get_highest_full_snapshot_archive_slot(
                 &snapshot_test_config
-                    .snapshot_config
-                    .full_snapshot_archives_dir,
+                    .snapshot_mode
+                    .get_snapshot_load_config()
+                    .full_snapshot_config
+                    .archives_dir,
             ) != Some(slot)
             {
                 assert!(
@@ -810,10 +850,15 @@ fn test_snapshots_with_background_services(
             && latest_full_snapshot_slot.is_some()
         {
             let timer = Instant::now();
+            let load_config = &snapshot_test_config
+                .snapshot_mode
+                .get_snapshot_load_config();
             while snapshot_utils::get_highest_incremental_snapshot_archive_slot(
-                &snapshot_test_config
-                    .snapshot_config
-                    .incremental_snapshot_archives_dir,
+                &load_config
+                    .incremental_snapshot_config
+                    .clone()
+                    .unwrap()
+                    .archives_dir,
                 latest_full_snapshot_slot.unwrap(),
             ) != Some(slot)
             {
@@ -836,14 +881,17 @@ fn test_snapshots_with_background_services(
             == VerifySnapshotHashKind::Lattice,
         ..ACCOUNTS_DB_CONFIG_FOR_TESTING
     };
+    let load_config = &snapshot_test_config
+        .snapshot_mode
+        .get_snapshot_load_config();
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
-        &snapshot_test_config.snapshot_config.bank_snapshots_dir,
-        &snapshot_test_config
-            .snapshot_config
-            .full_snapshot_archives_dir,
-        &snapshot_test_config
-            .snapshot_config
-            .incremental_snapshot_archives_dir,
+        &load_config.bank_snapshots_dir,
+        &load_config.full_snapshot_config.archives_dir,
+        &load_config
+            .incremental_snapshot_config
+            .clone()
+            .unwrap()
+            .archives_dir,
         &[temporary_accounts_dir],
         &snapshot_test_config.genesis_config_info.genesis_config,
         &RuntimeConfig::default(),
