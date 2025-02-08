@@ -2152,7 +2152,6 @@ mod tests {
     #[test]
     fn test_consume_buffered_packets() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let (transactions, bank, _bank_forks, poh_recorder, _entry_receiver, _, poh_simulator) =
                 setup_conflicting_transactions(ledger_path.path());
             let recorder: TransactionRecorder = poh_recorder.read().unwrap().new_recorder();
@@ -2218,14 +2217,11 @@ mod tests {
                 .is_exited
                 .store(true, Ordering::Relaxed);
             let _ = poh_simulator.join();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
     fn test_consume_buffered_packets_sanitization_error() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let (
                 mut transactions,
                 bank,
@@ -2281,14 +2277,11 @@ mod tests {
                 .is_exited
                 .store(true, Ordering::Relaxed);
             let _ = poh_simulator.join();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
     fn test_consume_buffered_packets_retryable() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let (transactions, bank, _bank_forks, poh_recorder, _entry_receiver, _, poh_simulator) =
                 setup_conflicting_transactions(ledger_path.path());
             let recorder = poh_recorder.read().unwrap().new_recorder();
@@ -2377,14 +2370,11 @@ mod tests {
                 .is_exited
                 .store(true, Ordering::Relaxed);
             let _ = poh_simulator.join();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
     fn test_consume_buffered_packets_batch_priority_guard() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let (
                 _,
                 bank,
@@ -2487,8 +2477,6 @@ mod tests {
                 .is_exited
                 .store(true, Ordering::Relaxed);
             let _ = poh_simulator.join();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
