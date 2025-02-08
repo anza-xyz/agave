@@ -1897,35 +1897,6 @@ mod tests {
     }
 
     #[test]
-    fn repeat_these_tests() {
-        let handles: Vec<_> = (0..250)
-            .flat_map(|_| {
-                vec![
-                    std::thread::spawn(|| {
-                        test_write_persist_transaction_status();
-                    }),
-                    std::thread::spawn(|| {
-                        test_write_persist_loaded_addresses();
-                    }),
-                ]
-            })
-            .collect();
-
-        let mut pass_count = 0;
-        let mut fail_count = 0;
-
-        for handle in handles {
-            if handle.join().is_ok() {
-                pass_count += 1;
-            } else {
-                fail_count += 1;
-            }
-        }
-
-        println!("Pass: {}, Fail: {}", pass_count, fail_count);
-    }
-
-    #[test]
     fn test_write_persist_transaction_status() {
         solana_logger::setup();
         let GenesisConfigInfo {
