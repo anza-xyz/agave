@@ -40,7 +40,7 @@ solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-precompiles = { workspace = true }
-solana-program = { workspace = true, default-features = false }
+solana-program = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }

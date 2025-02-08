@@ -49,7 +49,7 @@ jsonrpc-core = { workspace = true }
 jsonrpc-http-server = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-keypair = { workspace = true }
-solana-program = { workspace = true, default-features = false }
+solana-program = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
