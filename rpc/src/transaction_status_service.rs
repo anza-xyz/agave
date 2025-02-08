@@ -53,11 +53,6 @@ impl TransactionStatusService {
                 let outstanding_thread_count = Arc::new(AtomicUsize::new(0));
                 loop {
                     if exit.load(Ordering::Relaxed) {
-                        // Wait for the outstanding worker threads to complete before
-                        // joining the main thread and shutting down the service.
-                        while outstanding_thread_count.load(Ordering::SeqCst) > 0 {
-                            sleep(Duration::from_millis(1));
-                        }
                         break;
                     }
 
@@ -103,6 +98,11 @@ impl TransactionStatusService {
                         }
                         outstanding_thread_count_handle.fetch_sub(1, Ordering::Relaxed);
                     });
+                }
+                // Wait for the outstanding worker threads to finish before
+                // letting the main thread finish
+                while outstanding_thread_count.load(Ordering::SeqCst) > 0 {
+                    sleep(Duration::from_millis(1));
                 }
                 info!("TransactionStatusService has stopped");
             })
