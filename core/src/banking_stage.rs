@@ -1236,15 +1236,15 @@ mod tests {
             .unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let blockstore = Arc::new(
+            Blockstore::open(ledger_path.path())
+                .expect("Expected to be able to open database ledger"),
+        );
 
+        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let entry_receiver = {
             // start a banking_stage to eat verified receiver
             let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-            let blockstore = Arc::new(
-                Blockstore::open(ledger_path.path())
-                    .expect("Expected to be able to open database ledger"),
-            );
             let poh_config = PohConfig {
                 // limit tick count to avoid clearing working_bank at
                 // PohRecord then PohRecorderError(MaxHeightReached) at BankingStage
