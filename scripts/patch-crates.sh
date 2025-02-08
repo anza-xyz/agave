@@ -26,8 +26,6 @@ update_solana_dependencies() {
     solana-entry
     solana-faucet
     solana-fee
-    solana-frozen-abi
-    solana-frozen-abi-macro
     agave-geyser-plugin-interface
     solana-geyser-plugin-manager
     solana-gossip
@@ -62,16 +60,12 @@ update_solana_dependencies() {
     solana-rpc-client-nonce-utils
     solana-runtime
     solana-runtime-transaction
-    solana-sdk
-    solana-sdk-macro
-    solana-program
     solana-send-transaction-service
     solana-storage-bigtable
     solana-storage-proto
     solana-streamer
     solana-svm-rent-collector
     solana-svm-transaction
-    solana-sysvar-id
     solana-test-validator
     solana-thin-client
     solana-tpu-client
@@ -81,47 +75,7 @@ update_solana_dependencies() {
     solana-version
     solana-zk-token-sdk
     solana-zk-sdk
-    solana-bn254
     solana-curve25519
-    solana-secp256k1-recover
-    solana-account
-    solana-account-info
-    solana-atomic-u64
-    solana-bincode
-    solana-borsh
-    solana-clock
-    solana-cpi
-    solana-decode-error
-    solana-define-syscall
-    solana-derivation-path
-    solana-epoch-schedule
-    solana-feature-set
-    solana-fee-calculator
-    solana-hash
-    solana-inflation
-    solana-instruction
-    solana-last-restart-slot
-    solana-msg
-    solana-native-token
-    solana-packet
-    solana-precompile-error
-    solana-program-entrypoint
-    solana-program-error
-    solana-program-memory
-    solana-program-option
-    solana-program-pack
-    solana-pubkey
-    solana-rent
-    solana-sanitize
-    solana-serde-varint
-    solana-serialize-utils
-    solana-sha256-hasher
-    solana-short-vec
-    solana-signature
-    solana-slot-hashes
-    solana-stable-layout
-    solana-timings
-    solana-transaction-error
   )
 
   set -x
@@ -197,16 +151,12 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-rpc-client-nonce-utils rpc-client-nonce-utils")
   crates_map+=("solana-runtime runtime")
   crates_map+=("solana-runtime-transaction runtime-transaction")
-  crates_map+=("solana-sdk sdk/sdk")
-  crates_map+=("solana-sdk-macro sdk/macro")
-  crates_map+=("solana-program sdk/program")
   crates_map+=("solana-send-transaction-service send-transaction-service")
   crates_map+=("solana-storage-bigtable storage-bigtable")
   crates_map+=("solana-storage-proto storage-proto")
   crates_map+=("solana-streamer streamer")
   crates_map+=("solana-svm-rent-collector svm-rent-collector")
   crates_map+=("solana-svm-transaction svm-transaction")
-  crates_map+=("solana-sysvar-id sdk/sysvar-id")
   crates_map+=("solana-test-validator test-validator")
   crates_map+=("solana-thin-client thin-client")
   crates_map+=("solana-tpu-client tpu-client")
@@ -219,47 +169,6 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-bn254 curves/bn254")
   crates_map+=("solana-curve25519 curves/curve25519")
   crates_map+=("solana-secp256k1-recover curves/secp256k1-recover")
-  crates_map+=("solana-account sdk/account")
-  crates_map+=("solana-account-info sdk/account-info")
-  crates_map+=("solana-atomic-u64 sdk/atomic-u64")
-  crates_map+=("solana-bincode sdk/bincode")
-  crates_map+=("solana-borsh sdk/borsh")
-  crates_map+=("solana-clock sdk/clock")
-  crates_map+=("solana-cpi sdk/cpi")
-  crates_map+=("solana-decode-error sdk/decode-error")
-  crates_map+=("solana-define-syscall sdk/define-syscall")
-  crates_map+=("solana-derivation-path sdk/derivation-path")
-  crates_map+=("solana-epoch-schedule sdk/epoch-schedule")
-  crates_map+=("solana-feature-set sdk/feature-set")
-  crates_map+=("solana-fee-calculator sdk/fee-calculator")
-  crates_map+=("solana-frozen-abi sdk/frozen-abi")
-  crates_map+=("solana-frozen-abi-macro sdk/frozen-abi/macro")
-  crates_map+=("solana-hash sdk/hash")
-  crates_map+=("solana-inflation sdk/inflation")
-  crates_map+=("solana-instruction sdk/instruction")
-  crates_map+=("solana-last-restart-slot sdk/last-restart-slot")
-  crates_map+=("solana-logger sdk/logger")
-  crates_map+=("solana-msg sdk/msg")
-  crates_map+=("solana-native-token sdk/native-token")
-  crates_map+=("solana-packet sdk/packet")
-  crates_map+=("solana-precompile-error sdk/precompile-error")
-  crates_map+=("solana-program-entrypoint sdk/program-entrypoint")
-  crates_map+=("solana-program-error sdk/program-error")
-  crates_map+=("solana-program-memory sdk/program-memory")
-  crates_map+=("solana-program-option sdk/program-option")
-  crates_map+=("solana-program-pack sdk/program-pack")
-  crates_map+=("solana-pubkey sdk/pubkey")
-  crates_map+=("solana-rent sdk/rent")
-  crates_map+=("solana-sanitize sdk/sanitize")
-  crates_map+=("solana-serde-varint sdk/serde-varint")
-  crates_map+=("solana-serialize-utils sdk/serialize-utils")
-  crates_map+=("solana-sha256-hasher sdk/sha256-hasher")
-  crates_map+=("solana-short-vec sdk/short-vec")
-  crates_map+=("solana-signature sdk/signature")
-  crates_map+=("solana-slot-hashes sdk/slot-hashes")
-  crates_map+=("solana-stable-layout sdk/stable-layout")
-  crates_map+=("solana-timings sdk/timings")
-  crates_map+=("solana-transaction-error sdk/transaction-error")
 
   patch_crates=()
   for map_entry in "${crates_map[@]}"; do

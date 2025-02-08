@@ -10,10 +10,10 @@ edition = "2021"
 publish = false
 
 [dependencies]
-solana-account-info= { path = "../../../../../sdk/account-info", version = "=2.2.0" }
-solana-program-entrypoint = { path = "../../../../../sdk/program-entrypoint", version = "=2.2.0" }
-solana-program-error= { path = "../../../../../sdk/program-error", version = "=2.2.0" }
-solana-pubkey = { path = "../../../../../sdk/pubkey", version = "=2.2.0" }
+solana-account-info = "=2.2.0"
+solana-program-entrypoint = "=2.2.0"
+solana-program-error = "=2.2.0"
+solana-pubkey = "=2.2.0"
 
 [lib]
 crate-type = ["cdylib"]
