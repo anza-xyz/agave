@@ -929,7 +929,6 @@ mod tests {
             gossip_vote_receiver,
         } = banking_tracer.create_channels(false);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Arc::new(
                 Blockstore::open(ledger_path.path())
                     .expect("Expected to be able to open database ledger"),
@@ -962,8 +961,6 @@ mod tests {
             exit.store(true, Ordering::Relaxed);
             banking_stage.join().unwrap();
             poh_service.join().unwrap();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test_case(TransactionStructure::Sdk)]
@@ -987,7 +984,6 @@ mod tests {
             gossip_vote_receiver,
         } = banking_tracer.create_channels(false);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Arc::new(
                 Blockstore::open(ledger_path.path())
                     .expect("Expected to be able to open database ledger"),
@@ -1036,8 +1032,6 @@ mod tests {
             assert!(entries.verify(&start_hash, &entry::thread_pool_for_tests()));
             assert_eq!(entries[entries.len() - 1].hash, bank.last_blockhash());
             banking_stage.join().unwrap();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     pub fn convert_from_old_verified(
@@ -1073,7 +1067,6 @@ mod tests {
             gossip_vote_receiver,
         } = banking_tracer.create_channels(false);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Arc::new(
                 Blockstore::open(ledger_path.path())
                     .expect("Expected to be able to open database ledger"),
@@ -1182,8 +1175,6 @@ mod tests {
             assert_eq!(bank.get_balance(&to2), 0);
 
             drop(entry_receiver);
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test_case(TransactionStructure::Sdk)]
@@ -1246,7 +1237,6 @@ mod tests {
             .unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
             let entry_receiver = {
@@ -1313,8 +1303,6 @@ mod tests {
             // entry, then one of the transactions will be rejected, because it drives
             // the account balance below zero before the credit is added.
             assert!(bank.get_balance(&alice.pubkey()) != 3);
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
@@ -1328,7 +1316,6 @@ mod tests {
         } = create_genesis_config(10_000);
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
@@ -1381,8 +1368,6 @@ mod tests {
                 .is_exited
                 .store(true, Ordering::Relaxed);
             let _ = poh_simulator.join();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     pub(crate) fn create_slow_genesis_config(lamports: u64) -> GenesisConfigInfo {
@@ -1447,7 +1432,6 @@ mod tests {
             gossip_vote_receiver,
         } = banking_tracer.create_channels(false);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Arc::new(
                 Blockstore::open(ledger_path.path())
                     .expect("Expected to be able to open database ledger"),
@@ -1564,7 +1548,5 @@ mod tests {
             banking_stage.join().unwrap();
             exit.store(true, Ordering::Relaxed);
             poh_service.join().unwrap();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 }
