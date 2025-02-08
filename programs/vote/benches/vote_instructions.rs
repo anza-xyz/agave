@@ -940,7 +940,7 @@ struct BenchTowerSync {
 }
 
 impl BenchTowerSync {
-    fn new() -> Self {
+    fn new(switch: bool) -> Self {
         let (vote_pubkey, vote_account) = create_test_account();
         let vote = Vote::new(vec![1], Hash::default());
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
@@ -964,7 +964,15 @@ impl BenchTowerSync {
         ];
         let tower_sync = TowerSync::from(vec![(1, 1)]);
 
-        let instruction_data = serialize(&VoteInstruction::TowerSync(tower_sync)).unwrap();
+        let instruction_data = if switch {
+            serialize(&VoteInstruction::TowerSyncSwitch(
+                tower_sync,
+                Hash::default(),
+            ))
+            .unwrap()
+        } else {
+            serialize(&VoteInstruction::TowerSync(tower_sync)).unwrap()
+        };
 
         let transaction_accounts = vec![
             (vote_pubkey, vote_account.clone()),
@@ -1087,8 +1095,15 @@ fn bench_compact_update_vote_state_switch(c: &mut Criterion) {
 }
 
 fn bench_tower_sync(c: &mut Criterion) {
-    let test_setup = BenchTowerSync::new();
+    let test_setup = BenchTowerSync::new(false);
     c.bench_function("vote_tower_sync", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
+fn bench_tower_sync_switch(c: &mut Criterion) {
+    let test_setup = BenchTowerSync::new(true);
+    c.bench_function("vote_tower_sync_switch", |bencher| {
         bencher.iter(|| test_setup.run())
     });
 }
@@ -1110,5 +1125,6 @@ criterion_group!(
     bench_compact_update_vote_state,
     bench_compact_update_vote_state_switch,
     bench_tower_sync,
+    bench_tower_sync_switch,
 );
 criterion_main!(benches);
