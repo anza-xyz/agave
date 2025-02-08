@@ -238,28 +238,36 @@ pub type SchedulerId = u64;
 #[derive(Clone, Debug)]
 pub struct SchedulingContext {
     mode: SchedulingMode,
-    bank: Arc<Bank>,
+    bank: Option<Arc<Bank>>,
 }
 
 impl SchedulingContext {
-    pub fn new(bank: Arc<Bank>) -> Self {
-        // mode will be configurable later
+    pub fn for_preallocation() -> Self {
         Self {
-            mode: SchedulingMode::BlockVerification,
-            bank,
+            mode: SchedulingMode::BlockProduction,
+            bank: None,
         }
     }
 
     pub fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
-        Self { mode, bank }
+        Self {
+            mode,
+            bank: Some(bank),
+        }
+    }
+
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn for_verification(bank: Arc<Bank>) -> Self {
+        Self::new_with_mode(SchedulingMode::BlockVerification, bank)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn for_production(bank: Arc<Bank>) -> Self {
-        Self {
-            mode: SchedulingMode::BlockProduction,
-            bank,
-        }
+        Self::new_with_mode(SchedulingMode::BlockProduction, bank)
+    }
+
+    pub fn is_preallocated(&self) -> bool {
+        self.bank.is_none()
     }
 
     pub fn mode(&self) -> SchedulingMode {
@@ -267,11 +275,11 @@ impl SchedulingContext {
     }
 
     pub fn bank(&self) -> &Arc<Bank> {
-        &self.bank
+        self.bank.as_ref().unwrap()
     }
 
-    pub fn slot(&self) -> Slot {
-        self.bank().slot()
+    pub fn slot(&self) -> Option<Slot> {
+        self.bank.as_ref().map(|bank| bank.slot())
     }
 }
 
@@ -570,7 +578,8 @@ impl BankWithSchedulerInner {
                 let pool = pool.clone();
                 drop(scheduler);
 
-                let context = SchedulingContext::new(self.bank.clone());
+                // Schedulers can be stale only if its mode is block-verification.
+                let context = SchedulingContext::for_verification(self.bank.clone());
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {:?}", scheduler);
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
@@ -773,7 +782,7 @@ mod tests {
         mock.expect_context()
             .times(1)
             .in_sequence(&mut seq.lock().unwrap())
-            .return_const(SchedulingContext::new(bank));
+            .return_const(SchedulingContext::for_verification(bank));
 
         for wait_reason in is_dropped_flags {
             let seq_cloned = seq.clone();

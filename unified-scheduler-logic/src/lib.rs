@@ -103,9 +103,10 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     static_assertions::const_assert_eq,
     std::{collections::VecDeque, mem, sync::Arc},
+    unwrap_none::UnwrapNone,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SchedulingMode {
     BlockVerification,
     BlockProduction,
@@ -668,11 +669,29 @@ impl SchedulingStateMachine {
     /// indicating the scheduled task is blocked currently.
     ///
     /// Note that this function takes ownership of the task to allow for future optimizations.
+    #[cfg(test)]
     #[must_use]
     pub fn schedule_task(&mut self, task: Task) -> Option<Task> {
+        self.schedule_or_buffer_task(task, false)
+    }
+
+    pub fn buffer_task(&mut self, task: Task) {
+        self.schedule_or_buffer_task(task, true).unwrap_none();
+    }
+
+    #[must_use]
+    pub fn schedule_or_buffer_task(&mut self, task: Task, force_buffering: bool) -> Option<Task> {
         self.total_task_count.increment_self();
         self.active_task_count.increment_self();
-        self.try_lock_usage_queues(task)
+        self.try_lock_usage_queues(task).and_then(|task| {
+            if !force_buffering {
+                Some(task)
+            } else {
+                self.unblocked_task_count.increment_self();
+                self.unblocked_task_queue.push_back(task);
+                None
+            }
+        })
     }
 
     #[must_use]
