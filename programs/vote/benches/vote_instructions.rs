@@ -877,7 +877,7 @@ struct BenchCompactUpdateVoteState {
 }
 
 impl BenchCompactUpdateVoteState {
-    fn new() -> Self {
+    fn new(switch: bool) -> Self {
         let (vote_pubkey, vote_account) = create_test_account();
         let vote = Vote::new(vec![1], Hash::default());
         let vote_state_update = VoteStateUpdate::from(vec![(1, 1)]);
@@ -901,8 +901,15 @@ impl BenchCompactUpdateVoteState {
             },
         ];
 
-        let instruction_data =
-            serialize(&VoteInstruction::CompactUpdateVoteState(vote_state_update)).unwrap();
+        let instruction_data = if switch {
+            serialize(&VoteInstruction::CompactUpdateVoteStateSwitch(
+                vote_state_update,
+                Hash::default(),
+            ))
+            .unwrap()
+        } else {
+            serialize(&VoteInstruction::CompactUpdateVoteState(vote_state_update)).unwrap()
+        };
 
         let transaction_accounts = vec![
             (vote_pubkey, vote_account.clone()),
@@ -1011,8 +1018,15 @@ fn bench_authorize_checked_with_seed(c: &mut Criterion) {
 }
 
 fn bench_compact_update_vote_state(c: &mut Criterion) {
-    let test_setup = BenchCompactUpdateVoteState::new();
+    let test_setup = BenchCompactUpdateVoteState::new(false);
     c.bench_function("vote_compact_update_vote_state", |bencher| {
+        bencher.iter(|| test_setup.run())
+    });
+}
+
+fn bench_compact_update_vote_state_switch(c: &mut Criterion) {
+    let test_setup = BenchCompactUpdateVoteState::new(true);
+    c.bench_function("vote_compact_update_vote_state_switch", |bencher| {
         bencher.iter(|| test_setup.run())
     });
 }
@@ -1032,5 +1046,6 @@ criterion_group!(
     bench_authorize_with_seed,
     bench_authorize_checked_with_seed,
     bench_compact_update_vote_state,
+    bench_compact_update_vote_state_switch,
 );
 criterion_main!(benches);
