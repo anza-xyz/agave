@@ -1092,7 +1092,6 @@ mod tests {
         )]);
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
@@ -1203,8 +1202,6 @@ mod tests {
             let _ = poh_simulator.join();
 
             assert_eq!(bank.get_balance(&pubkey), 1);
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
@@ -1242,7 +1239,6 @@ mod tests {
         )]);
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
@@ -1362,8 +1358,6 @@ mod tests {
             let expected_nonce_hash = expected_nonce.as_hash();
             let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
             assert!(verify_nonce_account(&nonce_account, expected_nonce_hash).is_some());
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
@@ -1386,7 +1380,6 @@ mod tests {
         };
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
@@ -1447,8 +1440,6 @@ mod tests {
                 .is_exited
                 .store(true, Ordering::Relaxed);
             let _ = poh_simulator.join();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
@@ -1465,7 +1456,6 @@ mod tests {
         let pubkey = solana_pubkey::new_rand();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
@@ -1605,8 +1595,6 @@ mod tests {
                 .is_exited
                 .store(true, Ordering::Relaxed);
             let _ = poh_simulator.join();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
@@ -1627,7 +1615,6 @@ mod tests {
         ]);
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
@@ -1686,8 +1673,6 @@ mod tests {
             );
             assert_eq!(retryable_transaction_indexes, vec![1]);
             assert!(commit_transactions_result.is_ok());
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
@@ -1835,7 +1820,6 @@ mod tests {
         )]);
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
@@ -1891,9 +1875,6 @@ mod tests {
 
             recorder.is_exited.store(true, Ordering::Relaxed);
             let _ = poh_simulator.join();
-        }
-
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
@@ -1936,7 +1917,6 @@ mod tests {
             .unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let blockstore = Arc::new(blockstore);
@@ -2026,8 +2006,6 @@ mod tests {
                 .is_exited
                 .store(true, Ordering::Relaxed);
             let _ = poh_simulator.join();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
@@ -2083,7 +2061,6 @@ mod tests {
         bank.transfer(1, &mint_keypair, &keypair.pubkey()).unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-        {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let blockstore = Arc::new(blockstore);
@@ -2171,8 +2148,6 @@ mod tests {
                 .is_exited
                 .store(true, Ordering::Relaxed);
             let _ = poh_simulator.join();
-        }
-        Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
     #[test]
