@@ -11,7 +11,9 @@ use {
         crds::{Crds, GossipRoute},
         crds_data::CrdsData,
         crds_gossip_error::CrdsGossipError,
-        crds_gossip_pull::{CrdsFilter, CrdsGossipPull, CrdsTimeouts, ProcessPullStats},
+        crds_gossip_pull::{
+            CrdsFilter, CrdsGossipPull, CrdsTimeouts, ProcessPullStats, PullRequest,
+        },
         crds_gossip_push::CrdsGossipPush,
         crds_value::CrdsValue,
         duplicate_shred::{self, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
@@ -231,7 +233,7 @@ impl CrdsGossip {
     pub fn generate_pull_responses(
         &self,
         thread_pool: &ThreadPool,
-        filters: &[(CrdsValue, CrdsFilter)],
+        requests: &[PullRequest],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
@@ -240,7 +242,7 @@ impl CrdsGossip {
         CrdsGossipPull::generate_pull_responses(
             thread_pool,
             &self.crds,
-            filters,
+            requests,
             output_size_limit,
             now,
             should_retain_crds_value,

@@ -24,7 +24,7 @@ use {
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
-            get_max_bloom_filter_bytes, CrdsFilter, CrdsTimeouts, ProcessPullStats,
+            get_max_bloom_filter_bytes, CrdsFilter, CrdsTimeouts, ProcessPullStats, PullRequest,
             CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         },
         crds_value::{CrdsValue, CrdsValueLabel},
@@ -156,12 +156,6 @@ pub struct ClusterInfo {
     contact_save_interval: u64,  // milliseconds, 0 = disabled
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
-}
-
-struct PullData {
-    from_addr: SocketAddr,
-    caller: CrdsValue,
-    filter: CrdsFilter,
 }
 
 // Returns false if the CRDS value should be discarded.
@@ -1621,41 +1615,13 @@ impl ClusterInfo {
 
     fn handle_batch_pull_requests(
         &self,
-        // from address, crds filter, caller contact info
-        requests: Vec<(SocketAddr, CrdsFilter, CrdsValue)>,
+        requests: Vec<PullRequest>,
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
         stakes: &HashMap<Pubkey, u64>,
         response_sender: &PacketBatchSender,
     ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_pull_requests_time);
-        if requests.is_empty() {
-            return;
-        }
-        let self_pubkey = self.id();
-        let requests: Vec<_> = thread_pool.install(|| {
-            requests
-                .into_par_iter()
-                .with_min_len(1024)
-                .filter(|(_, _, caller)| match caller.data() {
-                    CrdsData::LegacyContactInfo(_) | CrdsData::ContactInfo(_) => {
-                        if caller.pubkey() == self_pubkey {
-                            warn!("PullRequest ignored, I'm talking to myself");
-                            self.stats.window_request_loopback.add_relaxed(1);
-                            false
-                        } else {
-                            true
-                        }
-                    }
-                    _ => false,
-                })
-                .map(|(from_addr, filter, caller)| PullData {
-                    from_addr,
-                    caller,
-                    filter,
-                })
-                .collect()
-        });
         if !requests.is_empty() {
             self.stats
                 .pull_requests_count
@@ -1693,7 +1659,7 @@ impl ClusterInfo {
         now: Instant,
         rng: &'a mut R,
         packet_batch: &'a mut PacketBatch,
-    ) -> impl FnMut(&PullData) -> bool + 'a
+    ) -> impl FnMut(&PullRequest) -> bool + 'a
     where
         R: Rng + CryptoRng,
     {
@@ -1719,8 +1685,8 @@ impl ClusterInfo {
         // incoming pull-requests, pings are also sent to request.from_addr (as
         // opposed to caller.gossip address).
         move |request| {
-            ContactInfo::is_valid_address(&request.from_addr, &self.socket_addr_space) && {
-                let node = (request.caller.pubkey(), request.from_addr);
+            ContactInfo::is_valid_address(&request.addr, &self.socket_addr_space) && {
+                let node = (request.pubkey, request.addr);
                 *cache.entry(node).or_insert_with(|| hard_check(node))
             }
         }
@@ -1732,7 +1698,7 @@ impl ClusterInfo {
         &self,
         thread_pool: &ThreadPool,
         recycler: &PacketBatchRecycler,
-        requests: Vec<PullData>,
+        mut requests: Vec<PullRequest>,
         stakes: &HashMap<Pubkey, u64>,
     ) -> PacketBatch {
         const DEFAULT_EPOCH_DURATION_MS: u64 = DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT;
@@ -1741,22 +1707,17 @@ impl ClusterInfo {
         let mut packet_batch =
             PacketBatch::new_unpinned_with_recycler(recycler, 64, "handle_pull_requests");
         let mut rng = rand::thread_rng();
-        let (caller_and_filters, addrs): (Vec<_>, Vec<_>) = {
-            let check_pull_request =
-                self.check_pull_request(Instant::now(), &mut rng, &mut packet_batch);
-            requests
-                .into_iter()
-                .filter(check_pull_request)
-                .map(|r| ((r.caller, r.filter), r.from_addr))
-                .unzip()
-        };
+        requests.retain({
+            let now = Instant::now();
+            self.check_pull_request(now, &mut rng, &mut packet_batch)
+        });
         let now = timestamp();
         let self_id = self.id();
         let pull_responses = {
             let _st = ScopedTimer::from(&self.stats.generate_pull_responses);
             self.gossip.generate_pull_responses(
                 thread_pool,
-                &caller_and_filters,
+                &requests,
                 output_size_limit,
                 now,
                 |value| {
@@ -1787,10 +1748,10 @@ impl ClusterInfo {
             score
         };
         let mut num_crds_values = 0;
-        let (scores, mut pull_responses): (Vec<_>, Vec<_>) = addrs
+        let (scores, mut pull_responses): (Vec<_>, Vec<_>) = requests
             .iter()
             .zip(pull_responses)
-            .flat_map(|(addr, values)| {
+            .flat_map(|(PullRequest { addr, .. }, values)| {
                 num_crds_values += values.len();
                 split_gossip_messages(PULL_RESPONSE_MAX_PAYLOAD_SIZE, values).map(move |values| {
                     let score = values.iter().map(get_score).max().unwrap_or_default();
@@ -2085,6 +2046,7 @@ impl ClusterInfo {
         should_check_duplicate_instance: bool,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.process_gossip_packets_time);
+        let self_pubkey = self.id();
         // Filter out values if the shred-versions are different.
         let self_shred_version = self.my_shred_version();
         let packets = if self_shred_version == 0 {
@@ -2150,8 +2112,16 @@ impl ClusterInfo {
         for (from_addr, packet) in packets {
             match packet {
                 Protocol::PullRequest(filter, caller) => {
-                    if verify_gossip_addr(&caller) {
-                        pull_requests.push((from_addr, filter, caller))
+                    let request = PullRequest {
+                        pubkey: caller.pubkey(),
+                        addr: from_addr,
+                        wallclock: caller.wallclock(),
+                        filter,
+                    };
+                    if request.pubkey == self_pubkey {
+                        self.stats.window_request_loopback.add_relaxed(1);
+                    } else {
+                        pull_requests.push(request);
                     }
                 }
                 Protocol::PullResponse(_, mut data) => {

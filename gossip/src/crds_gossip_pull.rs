@@ -64,6 +64,14 @@ pub struct CrdsFilter {
     mask_bits: u32,
 }
 
+// Incoming gossip pull request from a remote node.
+pub struct PullRequest {
+    pub pubkey: Pubkey,   // remote node's pubkey
+    pub addr: SocketAddr, // socket-addr the request was received from
+    pub wallclock: u64,   // remote node's wallclock
+    pub filter: CrdsFilter,
+}
+
 impl Default for CrdsFilter {
     fn default() -> Self {
         CrdsFilter {
@@ -298,7 +306,7 @@ impl CrdsGossipPull {
     pub(crate) fn generate_pull_responses(
         thread_pool: &ThreadPool,
         crds: &RwLock<Crds>,
-        requests: &[(CrdsValue, CrdsFilter)],
+        requests: &[PullRequest],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
@@ -454,7 +462,7 @@ impl CrdsGossipPull {
     fn filter_crds_values(
         thread_pool: &ThreadPool,
         crds: &RwLock<Crds>,
-        filters: &[(CrdsValue, CrdsFilter)],
+        requests: &[PullRequest],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         // Predicate returning false if the CRDS value should be discarded.
@@ -471,11 +479,12 @@ impl CrdsGossipPull {
         let output_size_limit = output_size_limit.try_into().unwrap_or(i64::MAX);
         let output_size_limit = AtomicI64::new(output_size_limit);
         let crds = crds.read().unwrap();
-        let apply_filter = |caller: &CrdsValue, filter: &CrdsFilter| {
+        let apply_filter = |request: &PullRequest| {
             if output_size_limit.load(Ordering::Relaxed) <= 0 {
                 return Vec::default();
             }
-            let caller_wallclock = caller.wallclock();
+            let filter = &request.filter;
+            let caller_wallclock = request.wallclock;
             if !caller_wallclock_window.contains(&caller_wallclock) {
                 dropped_requests.fetch_add(1, Ordering::Relaxed);
                 return Vec::default();
@@ -501,12 +510,7 @@ impl CrdsGossipPull {
             output_size_limit.fetch_sub(out.len() as i64, Ordering::Relaxed);
             out
         };
-        let ret: Vec<_> = thread_pool.install(|| {
-            filters
-                .par_iter()
-                .map(|(caller, filter)| apply_filter(caller, filter))
-                .collect()
-        });
+        let ret: Vec<_> = thread_pool.install(|| requests.par_iter().map(apply_filter).collect());
         stats
             .filter_crds_values_dropped_requests
             .add_relaxed(dropped_requests.into_inner() as u64);
@@ -1059,11 +1063,18 @@ pub(crate) mod tests {
 
         let dest_crds = RwLock::<Crds>::default();
         let filters = req.unwrap().into_iter().flat_map(|(_, filters)| filters);
-        let mut filters: Vec<_> = filters.into_iter().map(|f| (caller.clone(), f)).collect();
+        let mut requests: Vec<_> = filters
+            .map(|filter| PullRequest {
+                pubkey: caller.pubkey(),
+                addr: SocketAddr::from(([0; 4], 0)),
+                wallclock: caller.wallclock(),
+                filter,
+            })
+            .collect();
         let rsp = CrdsGossipPull::generate_pull_responses(
             &thread_pool,
             &dest_crds,
-            &filters,
+            &requests,
             usize::MAX, // output_size_limit
             now,
             |_| true, // should_retain_crds_value
@@ -1087,28 +1098,33 @@ pub(crate) mod tests {
         let rsp = CrdsGossipPull::generate_pull_responses(
             &thread_pool,
             &dest_crds,
-            &filters,
+            &requests,
             usize::MAX, // output_size_limit
             now,
             |_| true, // should_retain_crds_value
             &GossipStats::default(),
         );
         assert_eq!(rsp[0].len(), 0);
-        assert_eq!(filters.len(), MIN_NUM_BLOOM_FILTERS);
-        filters.extend({
+        assert_eq!(requests.len(), MIN_NUM_BLOOM_FILTERS);
+        requests.extend({
             // Should return new value since caller is new.
             let now = now + 1;
             let caller = ContactInfo::new_localhost(&Pubkey::new_unique(), now);
             let caller = CrdsValue::new_unsigned(CrdsData::from(caller));
-            filters
+            requests
                 .iter()
-                .map(|(_, filter)| (caller.clone(), filter.clone()))
+                .map(|PullRequest { filter, .. }| PullRequest {
+                    pubkey: caller.pubkey(),
+                    addr: SocketAddr::from(([0; 4], 0)),
+                    wallclock: caller.wallclock(),
+                    filter: filter.clone(),
+                })
                 .collect::<Vec<_>>()
         });
         let rsp = CrdsGossipPull::generate_pull_responses(
             &thread_pool,
             &dest_crds,
-            &filters,
+            &requests,
             usize::MAX, // output_size_limit
             now,
             |_| true, // should_retain_crds_value
@@ -1190,11 +1206,18 @@ pub(crate) mod tests {
                 &SocketAddrSpace::Unspecified,
             );
             let filters = req.unwrap().into_iter().flat_map(|(_, filters)| filters);
-            let filters: Vec<_> = filters.into_iter().map(|f| (caller.clone(), f)).collect();
+            let requests: Vec<_> = filters
+                .map(|filter| PullRequest {
+                    pubkey: caller.pubkey(),
+                    addr: SocketAddr::from(([0; 4], 0)),
+                    wallclock: caller.wallclock(),
+                    filter,
+                })
+                .collect();
             let rsp = CrdsGossipPull::generate_pull_responses(
                 &thread_pool,
                 &dest_crds,
-                &filters,
+                &requests,
                 usize::MAX, // output_size_limit
                 0,          // now
                 |_| true,   // should_retain_crds_value

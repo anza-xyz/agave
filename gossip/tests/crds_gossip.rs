@@ -11,7 +11,9 @@ use {
         crds_data::CrdsData,
         crds_gossip::*,
         crds_gossip_error::CrdsGossipError,
-        crds_gossip_pull::{CrdsTimeouts, ProcessPullStats, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS},
+        crds_gossip_pull::{
+            CrdsTimeouts, ProcessPullStats, PullRequest, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
+        },
         crds_gossip_push::CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
         crds_value::{CrdsValue, CrdsValueLabel},
     },
@@ -25,7 +27,7 @@ use {
     solana_streamer::socket::SocketAddrSpace,
     std::{
         collections::{HashMap, HashSet},
-        net::Ipv4Addr,
+        net::{Ipv4Addr, SocketAddr},
         ops::Deref,
         sync::{Arc, Mutex},
         time::{Duration, Instant},
@@ -574,9 +576,14 @@ fn network_run_pull(
                     .map(|f| f.filter.bits.len() as usize / 8)
                     .sum::<usize>();
                 bytes += caller_info.bincode_serialized_size();
-                let filters: Vec<_> = filters
+                let requests: Vec<_> = filters
                     .into_iter()
-                    .map(|f| (caller_info.clone(), f))
+                    .map(|filter| PullRequest {
+                        pubkey: from,
+                        addr: SocketAddr::from(([0; 4], 0)),
+                        wallclock: now,
+                        filter,
+                    })
                     .collect();
                 let rsp: Vec<_> = network
                     .get(&to)
@@ -584,7 +591,7 @@ fn network_run_pull(
                         node.gossip
                             .generate_pull_responses(
                                 thread_pool,
-                                &filters,
+                                &requests,
                                 usize::MAX, // output_size_limit
                                 now,
                                 |_| true, // should_retain_crds_value
