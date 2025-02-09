@@ -68,11 +68,16 @@ impl Bank {
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
-        let lock_results = self.check_age(sanitized_txs, lock_results, max_age, error_counters);
+        let lock_results = self.check_age_and_compute_budget_limits(
+            sanitized_txs,
+            lock_results,
+            max_age,
+            error_counters,
+        );
         self.check_status_cache(sanitized_txs, lock_results, error_counters)
     }
 
-    fn check_age<Tx: TransactionWithMeta>(
+    fn check_age_and_compute_budget_limits<Tx: TransactionWithMeta>(
         &self,
         sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
