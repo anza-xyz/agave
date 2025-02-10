@@ -19,7 +19,7 @@ use {
     },
     solana_keypair::Keypair,
     solana_net_utils::bind_to_localhost,
-    solana_perf::packet::PacketBatch,
+    solana_perf::packet::Packet,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
@@ -78,7 +78,7 @@ impl Default for TestServerConfig {
 pub struct SpawnTestServerResult {
     pub join_handle: JoinHandle<()>,
     pub exit: Arc<AtomicBool>,
-    pub receiver: crossbeam_channel::Receiver<PacketBatch>,
+    pub receiver: crossbeam_channel::Receiver<Vec<Packet>>,
     pub server_address: SocketAddr,
     pub stats: Arc<StreamerStats>,
 }
@@ -190,7 +190,7 @@ pub async fn make_client_endpoint(
 }
 
 pub async fn check_multiple_streams(
-    receiver: Receiver<PacketBatch>,
+    receiver: Receiver<Vec<Packet>>,
     server_address: SocketAddr,
     client_keypair: Option<&Keypair>,
 ) {
@@ -226,7 +226,7 @@ pub async fn check_multiple_streams(
     }
     for batch in all_packets {
         for p in batch.iter() {
-            assert_eq!(p.meta().size, 1);
+            assert_eq!(p.len(), 1);
         }
     }
     assert_eq!(total_packets, num_expected_packets);

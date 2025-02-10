@@ -2,7 +2,7 @@ use {
     super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
     itertools::Itertools,
     rand::{thread_rng, Rng},
-    solana_perf::packet::Packet,
+    solana_perf::packet::{Packet, PacketRead},
     solana_runtime::{bank::Bank, epoch_stakes::EpochStakes},
     solana_sdk::{
         account::from_account,

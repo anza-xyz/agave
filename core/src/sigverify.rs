@@ -14,7 +14,7 @@ use {
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     crossbeam_channel::Sender,
-    solana_perf::{cuda_runtime::PinnedVec, packet::PacketBatch, recycler::Recycler, sigverify},
+    solana_perf::{cuda_runtime::PinnedVec, packet::Packet, recycler::Recycler, sigverify},
 };
 
 pub struct TransactionSigVerifier {
@@ -55,7 +55,7 @@ impl SigVerifier for TransactionSigVerifier {
 
     fn send_packets(
         &mut self,
-        packet_batches: Vec<PacketBatch>,
+        packet_batches: Vec<Vec<Packet>>,
     ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
         let banking_packet_batch = BankingPacketBatch::new(packet_batches);
         if let Some(forward_stage_sender) = &self.forward_stage_sender {
@@ -71,9 +71,9 @@ impl SigVerifier for TransactionSigVerifier {
 
     fn verify_batches(
         &self,
-        mut batches: Vec<PacketBatch>,
+        mut batches: Vec<Vec<Packet>>,
         valid_packets: usize,
-    ) -> Vec<PacketBatch> {
+    ) -> Vec<Vec<Packet>> {
         sigverify::ed25519_verify(
             &mut batches,
             &self.recycler,
