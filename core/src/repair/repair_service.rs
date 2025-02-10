@@ -1206,7 +1206,7 @@ mod test {
             signature::{Keypair, Signer},
             timing::timestamp,
         },
-        solana_streamer::socket::SocketAddrSpace,
+        solana_streamer::{packet::PacketRead, socket::SocketAddrSpace},
         std::collections::HashSet,
     };
 
@@ -1240,7 +1240,7 @@ mod test {
         );
 
         // Receive and translate repair packet
-        let mut packets = vec![solana_sdk::packet::Packet::default(); 1];
+        let mut packets = vec![solana_sdk::packet::PacketMut::default(); 1];
         let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
         let packet = &packets[0];
         let Some(bytes) = packet.data(..).map(Vec::from) else {

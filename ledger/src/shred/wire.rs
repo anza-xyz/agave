@@ -6,7 +6,7 @@ use {
         self, merkle::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
         ShredType, ShredVariant, SignedData, SIZE_OF_COMMON_SHRED_HEADER,
     },
-    solana_perf::packet::Packet,
+    solana_perf::packet::{Packet, PacketMut, PacketRead},
     solana_sdk::{
         clock::Slot,
         hash::Hash,
@@ -34,15 +34,18 @@ fn get_shred_size(shred: &[u8]) -> Option<usize> {
 }
 
 #[inline]
-pub fn get_shred(packet: &Packet) -> Option<&[u8]> {
+pub fn get_shred<P>(packet: &P) -> Option<&[u8]>
+where
+    P: PacketRead,
+{
     let data = packet.data(..)?;
     data.get(..get_shred_size(data)?)
 }
 
 #[inline]
-pub fn get_shred_mut(packet: &mut Packet) -> Option<&mut [u8]> {
-    let buffer = packet.buffer_mut();
-    buffer.get_mut(..get_shred_size(buffer)?)
+pub fn get_shred_mut(packet: &mut PacketMut) -> Option<&mut [u8]> {
+    let data = packet.data_mut(..)?;
+    data.get_mut(..get_shred_size(data)?)
 }
 
 #[inline]
@@ -360,10 +363,10 @@ pub fn resign_shred(shred: &mut [u8], keypair: &Keypair) -> Result<(), Error> {
 #[allow(clippy::indexing_slicing)]
 pub(crate) fn corrupt_packet<R: Rng>(
     rng: &mut R,
-    packet: &mut Packet,
+    packet: &mut PacketMut,
     keypairs: &HashMap<Slot, Keypair>,
 ) {
-    fn modify_packet<R: Rng>(rng: &mut R, packet: &mut Packet, offsets: Range<usize>) {
+    fn modify_packet<R: Rng>(rng: &mut R, packet: &mut PacketMut, offsets: Range<usize>) {
         let buffer = packet.buffer_mut();
         let byte = buffer[offsets].choose_mut(rng).unwrap();
         *byte = rng.gen::<u8>().max(1u8).wrapping_add(*byte);
@@ -403,7 +406,8 @@ pub(crate) fn corrupt_packet<R: Rng>(
         modify_packet(rng, packet, offsets.unwrap());
     }
     // Assert that the signature no longer verifies.
-    let shred = get_shred(packet).unwrap();
+    let packet = packet.clone().freeze();
+    let shred = get_shred(&packet).unwrap();
     let slot = get_slot(shred).unwrap();
     let signature = get_signature(shred).unwrap();
     if coin_flip {
@@ -431,8 +435,7 @@ mod tests {
         crate::shred::{tests::make_merkle_shreds_for_tests, traits::ShredData},
         assert_matches::assert_matches,
         rand::Rng,
-        solana_perf::packet::PacketFlags,
-        std::io::{Cursor, Write},
+        solana_perf::packet::{BufMut, PacketFlags, PACKET_DATA_SIZE},
         test_case::test_case,
     };
 
@@ -446,16 +449,14 @@ mod tests {
         rng: &mut R,
         shred: impl AsRef<[u8]>,
         nonce: Option<Nonce>,
-        packet: &mut Packet,
+        packet: &mut PacketMut,
     ) {
-        let buffer = packet.buffer_mut();
-        let capacity = buffer.len();
-        let mut cursor = Cursor::new(buffer);
-        cursor.write_all(shred.as_ref()).unwrap();
+        // let capacity = buffer.len();
+        packet.put_slice(shred.as_ref());
         // Write some random many bytes trailing shred payload.
         let mut bytes = {
-            let size = capacity
-                - cursor.position() as usize
+            let size = PACKET_DATA_SIZE
+                - packet.len()
                 - if nonce.is_some() {
                     std::mem::size_of::<Nonce>()
                 } else {
@@ -464,12 +465,11 @@ mod tests {
             vec![0u8; rng.gen_range(0..=size)]
         };
         rng.fill(&mut bytes[..]);
-        cursor.write_all(&bytes).unwrap();
+        packet.put_slice(&bytes);
         // Write nonce after random trailing bytes.
         if let Some(nonce) = nonce {
-            cursor.write_all(&nonce.to_le_bytes()).unwrap();
+            packet.put_slice(&nonce.to_le_bytes());
         }
-        packet.meta_mut().size = usize::try_from(cursor.position()).unwrap();
     }
 
     #[test_case(false, false, false)]
@@ -498,22 +498,20 @@ mod tests {
                 );
             }
         }
-        let mut packet = Packet::default();
+        let mut packet = PacketMut::default();
         if repaired {
             packet.meta_mut().flags |= PacketFlags::REPAIR;
         }
         for shred in &shreds {
+            let mut packet = packet.clone();
             let nonce = repaired.then(|| rng.gen::<Nonce>());
             write_shred(&mut rng, shred.payload(), nonce, &mut packet);
+            let packet = packet.clone().freeze();
             assert_eq!(
                 packet.data(..).map(get_shred_size).unwrap().unwrap(),
                 shred.payload().len()
             );
             assert_eq!(get_shred(&packet).unwrap(), shred.payload().as_ref());
-            assert_eq!(
-                get_shred_mut(&mut packet).unwrap(),
-                shred.payload().as_ref(),
-            );
             assert_eq!(
                 get_shred_and_repair_nonce(&packet).unwrap(),
                 (shred.payload().as_ref(), nonce),

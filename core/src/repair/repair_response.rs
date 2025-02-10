@@ -1,10 +1,14 @@
 use {
+    bytes::{BufMut, BytesMut},
     solana_ledger::{
         blockstore::Blockstore,
         shred::{Nonce, SIZE_OF_NONCE},
     },
-    solana_sdk::{clock::Slot, packet::Packet},
-    std::{io, net::SocketAddr},
+    solana_sdk::{
+        clock::Slot,
+        packet::{Meta, Packet},
+    },
+    std::{io::Write, net::SocketAddr},
 };
 
 pub fn repair_response_packet(
@@ -28,16 +32,21 @@ pub fn repair_response_packet_from_bytes(
     nonce: Nonce,
 ) -> Option<Packet> {
     let bytes = bytes.as_ref();
-    let mut packet = Packet::default();
-    let size = bytes.len() + SIZE_OF_NONCE;
-    if size > packet.buffer_mut().len() {
-        return None;
-    }
-    packet.meta_mut().size = size;
-    packet.meta_mut().set_socket_addr(dest);
-    packet.buffer_mut()[..bytes.len()].copy_from_slice(bytes);
-    let mut wr = io::Cursor::new(&mut packet.buffer_mut()[bytes.len()..]);
+    let mut meta = Meta::default();
+    meta.set_socket_addr(dest);
+    // NOTE(vadorovsky): It's a bummer that there is no (safe) way to convert
+    // a `Vec<u8>` into `BytesMut`, even though `BytesMut` is built on top of
+    // `Vec<u8>`. There is even an internal `BytesMut::from_vec`[0] method.
+    //
+    // For now, we make a copy here...
+    //
+    // [0] https://docs.rs/bytes/1.10.0/src/bytes/bytes_mut.rs.html#924
+    let mut wr = BytesMut::with_capacity(bytes.len() + SIZE_OF_NONCE).writer();
+    wr.write_all(bytes)
+        .expect("Buffer not large enough to fit the payload");
     bincode::serialize_into(&mut wr, &nonce).expect("Buffer not large enough to fit nonce");
+    let buffer = wr.into_inner().freeze();
+    let packet = Packet::new(buffer, meta);
     Some(packet)
 }
 

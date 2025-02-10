@@ -2,7 +2,7 @@ use {
     super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
     itertools::Itertools,
     rand::{thread_rng, Rng},
-    solana_perf::packet::Packet,
+    solana_perf::packet::{Packet, PacketRead},
     solana_runtime::{bank::Bank, epoch_stakes::EpochStakes},
     solana_sdk::{
         account::from_account,
@@ -458,7 +458,7 @@ mod tests {
         super::*,
         itertools::Itertools,
         rand::{thread_rng, Rng},
-        solana_perf::packet::{Packet, PacketBatch, PacketFlags},
+        solana_perf::packet::{Packet, PacketFlags},
         solana_runtime::{
             bank::Bank,
             genesis_utils::{self, ValidatorVoteKeypairs},
@@ -497,7 +497,7 @@ mod tests {
     }
 
     fn deserialize_packets<'a>(
-        packet_batch: &'a PacketBatch,
+        packet_batch: &'a [Packet],
         packet_indexes: &'a [usize],
         vote_source: VoteSource,
     ) -> impl Iterator<Item = LatestValidatorVotePacket> + 'a {
@@ -554,8 +554,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let packet_batch =
-            PacketBatch::new(vec![tower_sync, tower_sync_switch, random_transaction]);
+        let packet_batch = vec![tower_sync, tower_sync_switch, random_transaction];
 
         let deserialized_packets = deserialize_packets(
             &packet_batch,

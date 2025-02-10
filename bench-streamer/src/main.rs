@@ -5,7 +5,7 @@ use {
     crossbeam_channel::unbounded,
     solana_net_utils::{bind_to_unspecified, SocketConfig},
     solana_streamer::{
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PACKET_DATA_SIZE},
+        packet::{BufMut, PacketBatchRecycler, PacketMutBatch, PacketRead, PACKET_DATA_SIZE},
         streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
     },
     std::{
@@ -23,10 +23,9 @@ use {
 fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<()> {
     let send = bind_to_unspecified().unwrap();
     let batch_size = 10;
-    let mut packet_batch = PacketBatch::with_capacity(batch_size);
-    packet_batch.resize(batch_size, Packet::default());
+    let mut packet_batch = PacketMutBatch::with_len(batch_size);
     for w in packet_batch.iter_mut() {
-        w.meta_mut().size = PACKET_DATA_SIZE;
+        w.put_slice(&[0; PACKET_DATA_SIZE]);
         w.meta_mut().set_socket_addr(addr);
     }
     let packet_batch = Arc::new(packet_batch);
@@ -37,7 +36,7 @@ fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<()> {
         let mut num = 0;
         for p in packet_batch.iter() {
             let a = p.meta().socket_addr();
-            assert!(p.meta().size <= PACKET_DATA_SIZE);
+            assert!(p.len() <= PACKET_DATA_SIZE);
             let data = p.data(..).unwrap_or_default();
             send.send_to(data, a).unwrap();
             num += 1;
