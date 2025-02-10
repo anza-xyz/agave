@@ -19,6 +19,7 @@ use {
         accounts_db::{AccountStorageEntry, AccountsFileId, AtomicAccountsFileId},
         accounts_file::StorageAccess,
     },
+    solana_nohash_hasher::BuildNoHashHasher,
     solana_sdk::clock::Slot,
     std::{
         collections::HashMap,
@@ -118,7 +119,10 @@ impl SnapshotStorageRebuilder {
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
     ) -> Self {
-        let storage = DashMap::with_capacity(snapshot_storage_lengths.len());
+        let storage = DashMap::with_capacity_and_hasher(
+            snapshot_storage_lengths.len(),
+            BuildNoHashHasher::default(),
+        );
         let storage_paths: DashMap<_, _> = snapshot_storage_lengths
             .iter()
             .map(|(slot, storage_lengths)| {

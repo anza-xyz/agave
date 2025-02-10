@@ -31,6 +31,7 @@ mod tests {
             accounts_hash::{AccountsDeltaHash, AccountsHash},
             epoch_accounts_hash::EpochAccountsHash,
         },
+        solana_nohash_hasher::BuildNoHashHasher,
         solana_sdk::{
             epoch_schedule::EpochSchedule, genesis_config::create_genesis_config, hash::Hash,
             pubkey::Pubkey, stake::state::Stake,
@@ -53,7 +54,10 @@ mod tests {
         storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
-        let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
+        let storage: AccountStorageMap = AccountStorageMap::with_capacity_and_hasher(
+            storage_entries.len(),
+            BuildNoHashHasher::default(),
+        );
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
             // Copy file to new directory

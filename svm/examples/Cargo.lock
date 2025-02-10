@@ -7191,6 +7191,7 @@ dependencies = [
  "solana-lattice-hash",
  "solana-measure",
  "solana-metrics",
+ "solana-nohash-hasher",
  "solana-nonce-account",
  "solana-perf",
  "solana-program",
