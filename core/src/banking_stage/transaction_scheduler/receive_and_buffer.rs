@@ -7,7 +7,7 @@ use {
         },
     },
     crate::banking_stage::{
-        decision_maker::BufferedPacketsDecision,
+        consumer::Consumer, decision_maker::BufferedPacketsDecision,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         packet_deserializer::PacketDeserializer, packet_filter::MAX_ALLOWED_PRECOMPILE_SIGNATURES,
         scheduler_messages::MaxAge,
@@ -244,6 +244,10 @@ impl SanitizedTransactionReceiveAndBuffer {
                     .zip(fee_budget_limits_vec.drain(..))
                     .zip(check_results)
                     .filter(|(_, check_result)| check_result.is_ok())
+                    .filter(|((((_, tx), _), _), _)| {
+                        Consumer::check_fee_payer_unlocked(&working_bank, tx, &mut error_counts)
+                            .is_ok()
+                    })
             {
                 saturating_add_assign!(post_transaction_check_count, 1);
 
