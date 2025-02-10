@@ -617,6 +617,8 @@ mod tests {
         super::*,
         crossbeam_channel::{unbounded, Sender},
         futures::SinkExt,
+        rand::prelude::*,
+        rand_distr::{Distribution, Normal, Uniform, WeightedIndex},
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
@@ -624,10 +626,12 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_runtime::{bank_forks, genesis_utils::create_genesis_config},
         solana_sdk::{
-            account::AccountSharedData, genesis_config::GenesisConfig, hash::Hash,
-            message::Message, signer::Signer, system_instruction, transaction::Transaction,
+            account::AccountSharedData, compute_budget::ComputeBudgetInstruction,
+            genesis_config::GenesisConfig, hash::Hash, message::Message, signer::Signer,
+            system_instruction, transaction::Transaction,
         },
         std::{
+            ops::DerefMut,
             sync::Arc,
             thread,
             time::{Duration, Instant},
@@ -672,26 +676,184 @@ mod tests {
         account_keypairs
     }
 
+    pub trait DistributionSource {
+        fn sample<R: Rng>(&self, rng: &mut R) -> f64;
+    }
+
+    pub struct UniformDist {
+        dist: Uniform<f64>,
+    }
+
+    impl UniformDist {
+        pub fn new(min: f64, max: f64) -> Self {
+            Self {
+                dist: Uniform::new(min, max),
+            }
+        }
+    }
+
+    impl DistributionSource for UniformDist {
+        fn sample<R: Rng>(&self, rng: &mut R) -> f64 {
+            self.dist.sample(rng)
+        }
+    }
+
+    pub struct NormalDist {
+        dist: Normal<f64>,
+    }
+
+    impl NormalDist {
+        pub fn new(mean: f64, std_dev: f64) -> Self {
+            Self {
+                dist: Normal::new(mean, std_dev).unwrap(),
+            }
+        }
+    }
+
+    impl DistributionSource for NormalDist {
+        fn sample<R: Rng>(&self, rng: &mut R) -> f64 {
+            self.dist.sample(rng)
+        }
+    }
+
+    pub struct ConstantValue {
+        value: f64,
+    }
+
+    impl ConstantValue {
+        pub fn new(value: f64) -> Self {
+            Self { value }
+        }
+    }
+
+    impl DistributionSource for ConstantValue {
+        fn sample<R: Rng>(&self, _rng: &mut R) -> f64 {
+            self.value
+        }
+    }
+
+    /// Implementation of a discrete probability distribution
+    pub struct DiscreteDistribution {
+        values: Vec<f64>,
+        weights: WeightedIndex<f64>,
+    }
+
+    impl DiscreteDistribution {
+        pub fn new(values: Vec<f64>, probabilities: Vec<f64>) -> Self {
+            assert_eq!(
+                values.len(),
+                probabilities.len(),
+                "Values and probabilities must have the same length"
+            );
+            assert!(
+                probabilities.iter().all(|&p| p >= 0.0),
+                "Probabilities must be non-negative"
+            );
+
+            let weights = WeightedIndex::new(&probabilities)
+                .expect("Invalid probabilities (must sum to > 0)");
+
+            Self { values, weights }
+        }
+    }
+
+    impl DistributionSource for DiscreteDistribution {
+        fn sample<R: Rng>(&self, rng: &mut R) -> f64 {
+            let index = self.weights.sample(rng);
+            self.values[index]
+        }
+    }
+
+    /// Structure that returns correct provided blockhash or some incorrect hash
+    /// with given probability.
+    pub struct FaultyBlockhash {
+        blockhash: Hash,
+        probability_invalid_blockhash: f64,
+    }
+
+    impl FaultyBlockhash {
+        /// Create a new faulty hash generator
+        pub fn new(blockhash: Hash, probability_invalid_blockhash: f64) -> Self {
+            Self {
+                blockhash,
+                probability_invalid_blockhash,
+            }
+        }
+
+        pub fn get<R: Rng>(&self, rng: &mut R) -> Hash {
+            if rng.gen::<f64>() < self.probability_invalid_blockhash {
+                Hash::default()
+            } else {
+                self.blockhash
+            }
+        }
+    }
+
+    struct TransactionConfig {
+        //priority_fee: Box<dyn DistributionSource>,
+        transaction_cu_budget: u64,
+        /// This parameter specifies the size of consequent dependent
+        /// transaction clique. Assume that we generate a list of txs tx_1,
+        /// tx_2,.... For value 1 we have all txs to be independent, for value 2
+        /// tx_1 and tx_2 will share the same source account, but tx_3 will be
+        /// independent from them. for value 3, tx_1, tx_2, tx_3 will share the
+        /// same source, but tx4 will be independent from these 3, etc.
+        num_account_conflicts: u64,
+        probability_invalid_blockhash: f64,
+        probability_invalid_account: f64,
+    }
+
     fn generate_transactions(
         num_txs: usize,
         account_keypairs: &[Keypair],
         bank: Arc<Bank>,
         sender: Sender<Arc<Vec<PacketBatch>>>,
+        TransactionConfig {
+            transaction_cu_budget,
+            num_account_conflicts,
+            probability_invalid_blockhash,
+            probability_invalid_account,
+        }: TransactionConfig,
     ) {
-        let from_keypairs = account_keypairs.iter().cycle();
+        // We need to split accounts into two parts: from and to. To avoid
+        // undesired conflicts, the from part will be from 0 to
+        // `1/(num_account_conflicts+1)*num_txs`. And the
+        // requirement that `num_account_conflicts*num_txs >=
+        // (num_account_conflicts+1)*num_accounts`.
+        let num_accounts = account_keypairs.len() as u64;
+        assert!(
+            num_account_conflicts * num_txs as u64 >= (num_account_conflicts + 1) * num_accounts
+        );
+
+        let from_keypairs = account_keypairs
+            .iter()
+            .flat_map(|x| std::iter::repeat_with(move || x).take(num_account_conflicts as usize));
+
+        let split_point = num_accounts / (num_account_conflicts + 1);
         let to_keypairs = account_keypairs
             .iter()
-            .cycle()
-            .skip(account_keypairs.len() / 2)
+            .skip(split_point as usize)
             .map(|keypair| keypair.pubkey());
 
-        let recent_blockhash = bank.last_blockhash();
+        let mut rng = thread_rng();
+        let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
 
         let mut txs: Vec<Transaction> = Vec::with_capacity(num_txs);
-        for (from, to) in from_keypairs.zip(to_keypairs).take(num_txs) {
+        for (from, to) in from_keypairs.zip(to_keypairs) {
+            let from = if rng.gen_bool(probability_invalid_account) {
+                &Keypair::new()
+            } else {
+                from
+            };
             let transfer = system_instruction::transfer(&from.pubkey(), &to, 1);
-            let message = Message::new(&[transfer], Some(&from.pubkey()));
-            txs.push(Transaction::new(&vec![&from], message, recent_blockhash));
+            let set_cu_instruction =
+                ComputeBudgetInstruction::set_compute_unit_limit(transaction_cu_budget as u32);
+            let message = Message::new(&[set_cu_instruction, transfer], Some(&from.pubkey()));
+            txs.push(Transaction::new(
+                &vec![&from],
+                message,
+                blockhash.get(&mut rng),
+            ));
         }
 
         let packets_batches = BankingPacketBatch::new(to_packet_batches(&txs, NUM_PACKETS));
@@ -720,7 +882,18 @@ mod tests {
         };
 
         let (sender, receiver) = unbounded();
-        generate_transactions(num_txs, &account_keypairs, bank, sender);
+        generate_transactions(
+            num_txs,
+            &account_keypairs,
+            bank,
+            sender,
+            TransactionConfig {
+                transaction_cu_budget: 200,
+                num_account_conflicts: 1,
+                probability_invalid_blockhash: 0.5,
+                probability_invalid_account: 0.1,
+            },
+        );
 
         let mut rb = SanitizedTransactionReceiveAndBuffer::new(
             PacketDeserializer::new(receiver),
