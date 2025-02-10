@@ -432,7 +432,7 @@ impl PohRecorder {
         self.leader_bank_notifier.clone()
     }
 
-    fn is_same_fork_as_previous_leader(&self, slot: Slot) -> bool {
+    fn start_slot_was_mine_or_previous_leader(&self, slot: Slot) -> bool {
         (slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..slot).any(|slot| {
             // Check if the last slot PoH reset to was any of the
             // previous leader's slots.
@@ -484,7 +484,7 @@ impl PohRecorder {
             return true;
         }
 
-        if self.is_same_fork_as_previous_leader(next_slot) {
+        if self.start_slot_was_mine_or_previous_leader(next_slot) {
             // Planning to build off block produced by the leader previous to
             // me. Check if they've completed all of their slots.
             return self.building_off_previous_leader_last_block(my_pubkey, next_slot);
