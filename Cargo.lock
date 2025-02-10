@@ -9869,6 +9869,7 @@ dependencies = [
 name = "solana-streamer"
 version = "2.2.0"
 dependencies = [
+ "ahash 0.8.11",
  "assert_matches",
  "async-channel",
  "bytes",
