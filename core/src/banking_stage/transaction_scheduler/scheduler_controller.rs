@@ -8,6 +8,7 @@ use {
         scheduler_error::SchedulerError,
         scheduler_metrics::{
             SchedulerCountMetrics, SchedulerLeaderDetectionMetrics, SchedulerTimingMetrics,
+            SchedulingDetails,
         },
     },
     crate::banking_stage::{
@@ -49,6 +50,8 @@ where
     timing_metrics: SchedulerTimingMetrics,
     /// Metric report handles for the worker threads.
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
+    /// Detailed scheduling metrics.
+    scheduling_details: SchedulingDetails,
 }
 
 impl<R, S> SchedulerController<R, S>
@@ -73,6 +76,7 @@ where
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
             worker_metrics,
+            scheduling_details: SchedulingDetails::default(),
         }
     }
 
@@ -120,6 +124,7 @@ where
             self.worker_metrics
                 .iter()
                 .for_each(|metrics| metrics.maybe_report_and_reset());
+            self.scheduling_details.maybe_report();
         }
 
         Ok(())
@@ -171,6 +176,7 @@ where
                     );
                     saturating_add_assign!(timing_metrics.schedule_time_us, schedule_time_us);
                 });
+                self.scheduling_details.update(&scheduling_summary);
             }
             BufferedPacketsDecision::Forward => {
                 let (_, clear_time_us) = measure_us!(self.clear_container());
