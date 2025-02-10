@@ -42,6 +42,7 @@ qualifier_attr = { workspace = true }
 quinn = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+rand_distr = { workspace = true, optional = true }
 rayon = { workspace = true }
 rolling-file = { workspace = true }
 rustls = { workspace = true }
@@ -68,6 +69,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
+solana-keypair = { workspace = true, optional = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
@@ -110,7 +112,6 @@ trees = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 fs_extra = { workspace = true }
-rand_distr = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
@@ -128,7 +129,6 @@ solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
-solana-keypair ={ workspace =  true }
 solana-unified-scheduler-pool = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
@@ -146,6 +146,8 @@ dev-context-only-utils = [
     "solana-perf/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
     "solana-streamer/dev-context-only-utils",
+    "solana-keypair",
+    "rand_distr"
 ]
 frozen-abi = [
     "dep:solana-frozen-abi",

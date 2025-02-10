@@ -15,3 +15,6 @@ mod transaction_state;
 pub mod transaction_state_container;
 #[cfg(not(feature = "dev-context-only-utils"))]
 pub(crate) mod transaction_state_container;
+
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+pub mod scheduler_test_utils;
