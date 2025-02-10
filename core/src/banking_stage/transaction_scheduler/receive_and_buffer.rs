@@ -633,7 +633,7 @@ mod tests {
         std::{
             ops::DerefMut,
             sync::Arc,
-            thread,
+            thread::{self, Thread},
             time::{Duration, Instant},
         },
     };
@@ -677,15 +677,15 @@ mod tests {
     }
 
     pub trait DistributionSource {
-        fn sample<R: Rng>(&self, rng: &mut R) -> f64;
+        fn sample(&self, rng: &mut ThreadRng) -> u64;
     }
 
     pub struct UniformDist {
-        dist: Uniform<f64>,
+        dist: Uniform<u64>,
     }
 
     impl UniformDist {
-        pub fn new(min: f64, max: f64) -> Self {
+        pub fn new(min: u64, max: u64) -> Self {
             Self {
                 dist: Uniform::new(min, max),
             }
@@ -693,7 +693,7 @@ mod tests {
     }
 
     impl DistributionSource for UniformDist {
-        fn sample<R: Rng>(&self, rng: &mut R) -> f64 {
+        fn sample(&self, rng: &mut ThreadRng) -> u64 {
             self.dist.sample(rng)
         }
     }
@@ -711,7 +711,7 @@ mod tests {
     }
 
     impl DistributionSource for NormalDist {
-        fn sample<R: Rng>(&self, rng: &mut R) -> f64 {
+        fn sample(&self, rng: &mut ThreadRng) -> f64 {
             self.dist.sample(rng)
         }
     }
@@ -727,7 +727,7 @@ mod tests {
     }
 
     impl DistributionSource for ConstantValue {
-        fn sample<R: Rng>(&self, _rng: &mut R) -> f64 {
+        fn sample(&self, _rng: &mut ThreadRng) -> f64 {
             self.value
         }
     }
@@ -758,7 +758,7 @@ mod tests {
     }
 
     impl DistributionSource for DiscreteDistribution {
-        fn sample<R: Rng>(&self, rng: &mut R) -> f64 {
+        fn sample(&self, rng: &mut ThreadRng) -> f64 {
             let index = self.weights.sample(rng);
             self.values[index]
         }
@@ -790,44 +790,46 @@ mod tests {
     }
 
     struct TransactionConfig {
-        //priority_fee: Box<dyn DistributionSource>,
+        compute_unit_price: Box<dyn DistributionSource>,
         transaction_cu_budget: u64,
         /// This parameter specifies the size of consequent dependent
         /// transaction clique. Assume that we generate a list of txs tx_1,
         /// tx_2,.... For value 1 we have all txs to be independent, for value 2
         /// tx_1 and tx_2 will share the same source account, but tx_3 will be
-        /// independent from them. for value 3, tx_1, tx_2, tx_3 will share the
+        /// independent from them. For value 3, tx_1, tx_2, tx_3 will share the
         /// same source, but tx4 will be independent from these 3, etc.
-        num_account_conflicts: u64,
+        num_account_conflicts: usize,
         probability_invalid_blockhash: f64,
         probability_invalid_account: f64,
+        data_size_limit: u32,
     }
 
+    // TODO If this functionality generally sounds good, we can redo it with Iterator later.
     fn generate_transactions(
         num_txs: usize,
         account_keypairs: &[Keypair],
         bank: Arc<Bank>,
         sender: Sender<Arc<Vec<PacketBatch>>>,
         TransactionConfig {
+            compute_unit_price,
             transaction_cu_budget,
             num_account_conflicts,
             probability_invalid_blockhash,
             probability_invalid_account,
+            data_size_limit,
         }: TransactionConfig,
     ) {
         // We need to split accounts into two parts: from and to. To avoid
         // undesired conflicts, the from part will be from 0 to
         // `1/(num_account_conflicts+1)*num_txs`. And the
-        // requirement that `num_account_conflicts*num_txs >=
+        // requirement that `num_account_conflicts*num_txs <=
         // (num_account_conflicts+1)*num_accounts`.
-        let num_accounts = account_keypairs.len() as u64;
-        assert!(
-            num_account_conflicts * num_txs as u64 >= (num_account_conflicts + 1) * num_accounts
-        );
+        let num_accounts = account_keypairs.len();
+        assert!(num_account_conflicts * num_txs <= (num_account_conflicts + 1) * num_accounts);
 
         let from_keypairs = account_keypairs
             .iter()
-            .flat_map(|x| std::iter::repeat_with(move || x).take(num_account_conflicts as usize));
+            .flat_map(|x| std::iter::repeat_with(move || x).take(num_account_conflicts));
 
         let split_point = num_accounts / (num_account_conflicts + 1);
         let to_keypairs = account_keypairs
@@ -835,7 +837,7 @@ mod tests {
             .skip(split_point as usize)
             .map(|keypair| keypair.pubkey());
 
-        let mut rng = thread_rng();
+        let mut rng: ThreadRng = thread_rng();
         let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
 
         let mut txs: Vec<Transaction> = Vec::with_capacity(num_txs);
@@ -848,7 +850,20 @@ mod tests {
             let transfer = system_instruction::transfer(&from.pubkey(), &to, 1);
             let set_cu_instruction =
                 ComputeBudgetInstruction::set_compute_unit_limit(transaction_cu_budget as u32);
-            let message = Message::new(&[set_cu_instruction, transfer], Some(&from.pubkey()));
+            let set_data_size_limit =
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(data_size_limit);
+            let set_fee_instruction = ComputeBudgetInstruction::set_compute_unit_price(
+                compute_unit_price.sample(&mut rng),
+            );
+            let message = Message::new(
+                &[
+                    set_cu_instruction,
+                    set_data_size_limit,
+                    set_fee_instruction,
+                    transfer,
+                ],
+                Some(&from.pubkey()),
+            );
             txs.push(Transaction::new(
                 &vec![&from],
                 message,
@@ -872,7 +887,9 @@ mod tests {
             mut genesis_config, ..
         } = create_genesis_config(100_000);
         let num_txs = 1024;
-        let account_keypairs = create_accounts(num_txs, &mut genesis_config);
+        let num_account_conflicts = 1;
+        let num_accounts = ((num_account_conflicts + 1) * num_txs) / num_account_conflicts;
+        let account_keypairs = create_accounts(num_accounts, &mut genesis_config);
 
         let (bank, bank_forks) =
             Bank::new_for_benches(&genesis_config).wrap_with_bank_forks_for_tests();
@@ -888,10 +905,12 @@ mod tests {
             bank,
             sender,
             TransactionConfig {
-                transaction_cu_budget: 200,
-                num_account_conflicts: 1,
-                probability_invalid_blockhash: 0.5,
-                probability_invalid_account: 0.1,
+                compute_unit_price: Box::new(UniformDist::new(1, 10)),
+                transaction_cu_budget: 1, // No effect
+                num_account_conflicts,    // No effect for this benchmark
+                probability_invalid_blockhash: 0.0,
+                probability_invalid_account: 0.0, // No effect
+                data_size_limit: 1,               // No effect
             },
         );
 
