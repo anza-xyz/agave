@@ -450,7 +450,7 @@ impl PohRecorder {
 
     // Check if the last slot PoH reset onto was the previous leader's last slot.
     fn building_off_previous_leader_last_block(&self, my_pubkey: &Pubkey, next_slot: Slot) -> bool {
-        // Walk backwards from the next slot we want to build.
+        // Walk backwards from the slot before our next leader slot.
         for slot in (next_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_slot).rev() {
             // Identify which leader is responsible for building this slot.
             let leader_for_slot = self.leader_schedule_cache.slot_leader_at(slot, None);
