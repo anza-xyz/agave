@@ -1551,6 +1551,7 @@ impl Validator {
                     WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT,
                 snapshot_config: config.snapshot_config.clone(),
                 accounts_background_request_sender: accounts_background_request_sender.clone(),
+                abs_status: accounts_background_service.status().clone(),
                 genesis_config_hash: genesis_config.hash(),
                 exit: exit.clone(),
             })?;

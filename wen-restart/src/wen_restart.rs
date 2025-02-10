@@ -34,7 +34,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::{
-        accounts_background_service::AbsRequestSender,
+        accounts_background_service::{AbsRequestSender, AbsStatus},
         bank::Bank,
         bank_forks::BankForks,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
@@ -474,6 +474,7 @@ pub(crate) fn generate_snapshot(
     bank_forks: Arc<RwLock<BankForks>>,
     snapshot_config: &SnapshotConfig,
     accounts_background_request_sender: &AbsRequestSender,
+    abs_status: &AbsStatus,
     genesis_config_hash: Hash,
     my_heaviest_fork_slot: Slot,
 ) -> Result<GenerateSnapshotRecord> {
@@ -506,11 +507,34 @@ pub(crate) fn generate_snapshot(
             accounts_background_request_sender,
         )?;
     }
+
     // There can't be more than one EAH calculation in progress. If new_root is generated
     // within the EAH window (1/4 epoch to 3/4 epoch), the following function will wait for
     // EAH calculation to finish. So if we trigger another EAH when generating snapshots
     // we won't hit a panic.
     let _ = new_root_bank.get_epoch_accounts_hash_to_serialize();
+
+    // Snapshot generation calls AccountsDb background tasks (flush/clean/shrink).
+    // These cannot run conncurrent with each other, so we must shutdown
+    // AccountsBackgroundService before proceeding.
+    abs_status.stop();
+    info!("Waiting for AccountsBackgroundService to stop");
+    while abs_status.is_running() {
+        std::thread::yield_now();
+    }
+    // Similar to waiting for ABS to stop, we also wait for the initial startup
+    // verification to complete.  The startup verification runs in the background
+    // and verifies the snapshot's accounts are correct.  We only want a
+    // single accounts hash calculation to run at a time, and since snapshot
+    // creation below will calculate the accounts hash, we wait for the startup
+    // verification to complete before proceeding.
+    new_root_bank
+        .rc
+        .accounts
+        .accounts_db
+        .verify_accounts_hash_in_bg
+        .join_background_thread();
+
     let mut directory = &snapshot_config.full_snapshot_archives_dir;
     // Calculate the full_snapshot_slot an incremental snapshot should depend on. If the
     // validator is configured not the generate snapshot, it will only have the initial
@@ -973,6 +997,7 @@ pub struct WenRestartConfig {
     pub wait_for_supermajority_threshold_percent: u64,
     pub snapshot_config: SnapshotConfig,
     pub accounts_background_request_sender: AbsRequestSender,
+    pub abs_status: AbsStatus,
     pub genesis_config_hash: Hash,
     pub exit: Arc<AtomicBool>,
 }
@@ -1084,6 +1109,7 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                         config.bank_forks.clone(),
                         &config.snapshot_config,
                         &config.accounts_background_request_sender,
+                        &config.abs_status,
                         config.genesis_config_hash,
                         my_heaviest_fork_slot,
                     )?,
@@ -1686,6 +1712,7 @@ mod tests {
             wait_for_supermajority_threshold_percent: 80,
             snapshot_config: SnapshotConfig::default(),
             accounts_background_request_sender: AbsRequestSender::default(),
+            abs_status: AbsStatus::new_for_tests(),
             genesis_config_hash: test_state.genesis_config_hash,
             exit: exit.clone(),
         };
@@ -1757,6 +1784,7 @@ mod tests {
             wait_for_supermajority_threshold_percent: 80,
             snapshot_config,
             accounts_background_request_sender: AbsRequestSender::default(),
+            abs_status: AbsStatus::new_for_tests(),
             genesis_config_hash: test_state.genesis_config_hash,
             exit: exit.clone(),
         };
@@ -2111,6 +2139,7 @@ mod tests {
                 wait_for_supermajority_threshold_percent: 80,
                 snapshot_config: SnapshotConfig::default(),
                 accounts_background_request_sender: AbsRequestSender::default(),
+                abs_status: AbsStatus::new_for_tests(),
                 genesis_config_hash: test_state.genesis_config_hash,
                 exit: Arc::new(AtomicBool::new(false)),
             })
@@ -3238,6 +3267,7 @@ mod tests {
             test_state.bank_forks.clone(),
             &snapshot_config,
             &AbsRequestSender::default(),
+            &AbsStatus::new_for_tests(),
             test_state.genesis_config_hash,
             old_root_slot,
         )
@@ -3253,6 +3283,7 @@ mod tests {
             test_state.bank_forks.clone(),
             &snapshot_config,
             &AbsRequestSender::default(),
+            &AbsStatus::new_for_tests(),
             test_state.genesis_config_hash,
             new_root_slot,
         )
@@ -3302,6 +3333,7 @@ mod tests {
                 test_state.bank_forks.clone(),
                 &snapshot_config,
                 &AbsRequestSender::default(),
+                &AbsStatus::new_for_tests(),
                 test_state.genesis_config_hash,
                 old_root_slot,
             )
@@ -3323,6 +3355,7 @@ mod tests {
                 test_state.bank_forks.clone(),
                 &snapshot_config,
                 &AbsRequestSender::default(),
+                &AbsStatus::new_for_tests(),
                 test_state.genesis_config_hash,
                 older_slot,
             )
@@ -3345,6 +3378,7 @@ mod tests {
                 test_state.bank_forks.clone(),
                 &snapshot_config,
                 &AbsRequestSender::default(),
+                &AbsStatus::new_for_tests(),
                 test_state.genesis_config_hash,
                 empty_slot,
             )
@@ -3367,6 +3401,7 @@ mod tests {
             test_state.bank_forks.clone(),
             &snapshot_config,
             &AbsRequestSender::default(),
+            &AbsStatus::new_for_tests(),
             test_state.genesis_config_hash,
             test_state.last_voted_fork_slots[0],
         )
@@ -3397,6 +3432,7 @@ mod tests {
             wait_for_supermajority_threshold_percent: 80,
             snapshot_config: SnapshotConfig::default(),
             accounts_background_request_sender: AbsRequestSender::default(),
+            abs_status: AbsStatus::new_for_tests(),
             genesis_config_hash: test_state.genesis_config_hash,
             exit: Arc::new(AtomicBool::new(false)),
         };
@@ -3643,6 +3679,7 @@ mod tests {
             wait_for_supermajority_threshold_percent: 80,
             snapshot_config: SnapshotConfig::default(),
             accounts_background_request_sender: AbsRequestSender::default(),
+            abs_status: AbsStatus::new_for_tests(),
             genesis_config_hash: test_state.genesis_config_hash,
             exit: exit.clone(),
         };
