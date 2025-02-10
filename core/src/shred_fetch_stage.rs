@@ -8,9 +8,7 @@ use {
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
-    solana_perf::packet::{
-        Packet, PacketBatch, PacketBatchRecycler, PacketFlags, PACKETS_PER_BATCH,
-    },
+    solana_perf::packet::{Packet, PacketBatchRecycler, PacketFlags, PacketRead},
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT},
@@ -54,7 +52,7 @@ impl ShredFetchStage {
     // updates packets received on a channel and sends them on another channel
     fn modify_packets(
         recvr: PacketBatchReceiver,
-        sendr: Sender<PacketBatch>,
+        sendr: Sender<Vec<Packet>>,
         bank_forks: &RwLock<BankForks>,
         shred_version: u16,
         name: &'static str,
@@ -174,7 +172,7 @@ impl ShredFetchStage {
         modifier_thread_name: &'static str,
         sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
-        sender: Sender<PacketBatch>,
+        sender: Sender<Vec<Packet>>,
         recycler: PacketBatchRecycler,
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
@@ -226,7 +224,7 @@ impl ShredFetchStage {
         turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_socket: Arc<UdpSocket>,
-        sender: Sender<PacketBatch>,
+        sender: Sender<Vec<Packet>>,
         shred_version: u16,
         bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: Arc<ClusterInfo>,
@@ -278,7 +276,6 @@ impl ShredFetchStage {
         {
             let (packet_sender, packet_receiver) = unbounded();
             let bank_forks = bank_forks.clone();
-            let recycler = recycler.clone();
             let exit = exit.clone();
             let sender = sender.clone();
             let turbine_disabled = turbine_disabled.clone();
@@ -290,7 +287,6 @@ impl ShredFetchStage {
                             repair_response_quic_receiver,
                             PacketFlags::REPAIR,
                             packet_sender,
-                            recycler,
                             exit,
                         )
                     })
@@ -323,7 +319,6 @@ impl ShredFetchStage {
                         turbine_quic_endpoint_receiver,
                         PacketFlags::empty(),
                         packet_sender,
-                        recycler,
                         exit,
                     )
                 })
@@ -382,8 +377,7 @@ fn verify_repair_nonce(
 pub(crate) fn receive_quic_datagrams(
     quic_datagrams_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
     flags: PacketFlags,
-    sender: Sender<PacketBatch>,
-    recycler: PacketBatchRecycler,
+    sender: Sender<Vec<Packet>>,
     exit: Arc<AtomicBool>,
 ) {
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
@@ -393,31 +387,24 @@ pub(crate) fn receive_quic_datagrams(
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return,
         };
-        let mut packet_batch =
-            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "receive_quic_datagrams");
-        unsafe {
-            packet_batch.set_len(PACKETS_PER_BATCH);
-        };
+        // let mut packet_batch = Vec::with_capacity(PACKETS_PER_BATCH);
         let deadline = Instant::now() + PACKET_COALESCE_DURATION;
         let entries = std::iter::once(entry).chain(
             std::iter::repeat_with(|| quic_datagrams_receiver.recv_deadline(deadline).ok())
                 .while_some(),
         );
-        let size = entries
+        let packet_batch: Vec<_> = entries
             .filter(|(_, _, bytes)| bytes.len() <= PACKET_DATA_SIZE)
-            .zip(packet_batch.iter_mut())
-            .map(|((_pubkey, addr, bytes), packet)| {
-                *packet.meta_mut() = Meta {
-                    size: bytes.len(),
+            .map(|(_pubkey, addr, bytes)| {
+                let meta = Meta {
                     addr: addr.ip(),
                     port: addr.port(),
                     flags,
                 };
-                packet.buffer_mut()[..bytes.len()].copy_from_slice(&bytes);
+                Packet::new(bytes, meta)
             })
-            .count();
-        if size > 0 {
-            packet_batch.truncate(size);
+            .collect();
+        if !packet_batch.is_empty() {
             if sender.send(packet_batch).is_err() {
                 return; // The receiver end of the channel is disconnected.
             }

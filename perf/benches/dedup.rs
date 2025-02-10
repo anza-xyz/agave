@@ -7,7 +7,7 @@ use {
     rand::prelude::*,
     solana_perf::{
         deduper::{self, Deduper},
-        packet::{to_packet_batches, PacketBatch},
+        packet::{to_packet_batches, Packet},
     },
     std::time::Duration,
     test::Bencher,
@@ -22,7 +22,7 @@ fn test_packet_with_size(size: usize, rng: &mut ThreadRng) -> Vec<u8> {
         .collect()
 }
 
-fn do_bench_dedup_packets(bencher: &mut Bencher, mut batches: Vec<PacketBatch>) {
+fn do_bench_dedup_packets(bencher: &mut Bencher, mut batches: Vec<Vec<Packet>>) {
     // verify packets
     let mut rng = rand::thread_rng();
     let mut deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);

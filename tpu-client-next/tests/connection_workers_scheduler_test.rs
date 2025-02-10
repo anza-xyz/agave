@@ -11,7 +11,7 @@ use {
         nonblocking::testing_utilities::{
             make_client_endpoint, setup_quic_server, SpawnTestServerResult, TestServerConfig,
         },
-        packet::PacketBatch,
+        packet::{Packet, PacketRead},
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
@@ -235,7 +235,7 @@ async fn test_basic_transactions_sending() {
         for p in packets.iter() {
             let packet_id = p.data(0).expect("Data should not be lost by server.");
             received_data.push(*packet_id);
-            assert_eq!(p.meta().size, 1);
+            assert_eq!(p.len(), 1);
         }
     }
 
@@ -261,7 +261,7 @@ async fn test_basic_transactions_sending() {
 }
 
 async fn count_received_packets_for(
-    receiver: CrossbeamReceiver<PacketBatch>,
+    receiver: CrossbeamReceiver<Vec<Packet>>,
     expected_tx_size: usize,
     receive_duration: Duration,
 ) -> usize {
@@ -272,7 +272,7 @@ async fn count_received_packets_for(
         if let Ok(packets) = receiver.try_recv() {
             num_packets_received += packets.len();
             for p in packets.iter() {
-                assert_eq!(p.meta().size, expected_tx_size);
+                assert_eq!(p.len(), expected_tx_size);
             }
         } else {
             sleep(Duration::from_millis(100)).await;

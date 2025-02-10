@@ -47,8 +47,10 @@ mod tests {
     use {
         super::*,
         solana_net_utils::{bind_to_async, SocketConfig},
-        solana_packet::{Packet, PACKET_DATA_SIZE},
-        solana_streamer::nonblocking::recvmmsg::recv_mmsg,
+        solana_streamer::{
+            nonblocking::recvmmsg::recv_mmsg,
+            packet::{PacketMutBatch, PACKET_DATA_SIZE},
+        },
         std::net::{IpAddr, Ipv4Addr},
         tokio::net::UdpSocket,
     };
@@ -56,7 +58,7 @@ mod tests {
     async fn check_send_one(connection: &UdpClientConnection, reader: &UdpSocket) {
         let packet = vec![111u8; PACKET_DATA_SIZE];
         connection.send_data(&packet).await.unwrap();
-        let mut packets = vec![Packet::default(); 32];
+        let mut packets = PacketMutBatch::with_len(32);
         let recv = recv_mmsg(reader, &mut packets[..]).await.unwrap();
         assert_eq!(1, recv);
     }
@@ -64,7 +66,7 @@ mod tests {
     async fn check_send_batch(connection: &UdpClientConnection, reader: &UdpSocket) {
         let packets: Vec<_> = (0..32).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
         connection.send_data_batch(&packets).await.unwrap();
-        let mut packets = vec![Packet::default(); 32];
+        let mut packets = PacketMutBatch::with_len(32);
         let recv = recv_mmsg(reader, &mut packets[..]).await.unwrap();
         assert_eq!(32, recv);
     }

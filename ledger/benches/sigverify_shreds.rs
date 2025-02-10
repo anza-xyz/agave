@@ -7,10 +7,7 @@ use {
         shred::{Shred, ShredFlags, LEGACY_SHRED_DATA_CAPACITY},
         sigverify_shreds::{sign_shreds_cpu, sign_shreds_gpu, sign_shreds_gpu_pinned_keypair},
     },
-    solana_perf::{
-        packet::{Packet, PacketBatch},
-        recycler_cache::RecyclerCache,
-    },
+    solana_perf::{packet::PacketMut, recycler_cache::RecyclerCache},
     solana_rayon_threadlimit::get_thread_count,
     solana_sdk::signature::Keypair,
     std::sync::Arc,
@@ -27,8 +24,8 @@ fn bench_sigverify_shreds_sign_gpu(bencher: &mut Bencher) {
         .unwrap();
     let recycler_cache = RecyclerCache::default();
 
-    let mut packet_batch = PacketBatch::new_pinned_with_capacity(NUM_PACKETS);
-    packet_batch.resize(NUM_PACKETS, Packet::default());
+    let mut packet_batch = Vec::with_capacity(NUM_PACKETS);
+    packet_batch.resize(NUM_PACKETS, PacketMut::default());
     let slot = 0xdead_c0de;
     for p in packet_batch.iter_mut() {
         let shred = Shred::new_from_data(
@@ -74,9 +71,9 @@ fn bench_sigverify_shreds_sign_cpu(bencher: &mut Bencher) {
         .num_threads(get_thread_count())
         .build()
         .unwrap();
-    let mut packet_batch = PacketBatch::default();
+    let mut packet_batch = Vec::default();
     let slot = 0xdead_c0de;
-    packet_batch.resize(NUM_PACKETS, Packet::default());
+    packet_batch.resize(NUM_PACKETS, PacketMut::default());
     for p in packet_batch.iter_mut() {
         let shred = Shred::new_from_data(
             slot,

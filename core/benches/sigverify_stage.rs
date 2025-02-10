@@ -18,7 +18,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_perf::{
-        packet::{to_packet_batches, PacketBatch},
+        packet::{to_packet_batches, Packet, PacketRead},
         test_tx::test_tx,
     },
     solana_sdk::{
@@ -118,7 +118,7 @@ fn bench_packet_discard_mixed_senders(bencher: &mut Bencher) {
     });
 }
 
-fn gen_batches(use_same_tx: bool) -> Vec<PacketBatch> {
+fn gen_batches(use_same_tx: bool) -> Vec<Vec<Packet>> {
     let len = 4096;
     let chunk_size = 1024;
     if use_same_tx {
@@ -192,7 +192,7 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     stage.join().unwrap();
 }
 
-fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
+fn prepare_batches(discard_factor: i32) -> (Vec<Vec<Packet>>, usize) {
     let len = 10_000; // max batch size
     let chunk_size = 1024;
 
