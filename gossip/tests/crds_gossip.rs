@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     bincode::serialized_size,
+    itertools::Itertools,
     log::*,
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     serial_test::serial,
@@ -531,6 +532,14 @@ fn network_run_pull(
             }
         }
     }
+    let nodes: HashMap<SocketAddr, ContactInfo> = network
+        .nodes
+        .values()
+        .map(|node| {
+            let node = &node.contact_info;
+            (node.gossip().unwrap(), node.clone())
+        })
+        .collect();
     for t in start..end {
         let now = t as u64 * 100;
         let requests: Vec<_> = {
@@ -552,6 +561,15 @@ fn network_run_pull(
                             &mut pings,
                             &SocketAddrSpace::Unspecified,
                         )
+                        .map(|requests| {
+                            requests
+                                .into_group_map()
+                                .into_iter()
+                                .map(|(addr, filters)| {
+                                    (nodes.get(&addr).cloned().unwrap(), filters)
+                                })
+                                .collect::<Vec<_>>()
+                        })
                         .unwrap_or_default();
                     let from_pubkey = from.keypair.pubkey();
                     let label = CrdsValueLabel::ContactInfo(from_pubkey);
