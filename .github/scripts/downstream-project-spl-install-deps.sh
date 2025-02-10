@@ -2,4 +2,4 @@
 set -e
 
 sudo apt-get update
-sudo apt-get install libudev-dev protobuf-compiler -y
+sudo apt-get install libudev-dev libclang-dev protobuf-compiler -y
