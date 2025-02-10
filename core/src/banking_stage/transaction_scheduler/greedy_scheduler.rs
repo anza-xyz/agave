@@ -70,6 +70,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         _pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
+        let starting_queue_size = container.queue_size();
+        let starting_buffer_size = container.buffer_size();
+
         let num_threads = self.common.consume_work_senders.len();
         let target_cu_per_thread = self.config.target_scheduled_cus / num_threads as u64;
 
@@ -82,7 +85,11 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             }
         }
         if schedulable_threads.is_empty() {
-            return Ok(SchedulingSummary::default());
+            return Ok(SchedulingSummary {
+                starting_queue_size,
+                starting_buffer_size,
+                ..SchedulingSummary::default()
+            });
         }
 
         // Track metrics on filter.
@@ -197,6 +204,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         container.push_ids_into_queue(self.unschedulables.drain(..));
 
         Ok(SchedulingSummary {
+            starting_queue_size,
+            starting_buffer_size,
             num_scheduled,
             num_unschedulable_conflicts,
             num_unschedulable_threads,
