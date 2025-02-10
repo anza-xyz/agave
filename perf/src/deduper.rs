@@ -1,7 +1,7 @@
 //! Utility to deduplicate baches of incoming network packets.
 
 use {
-    crate::packet::PacketBatch,
+    crate::packet::{Packet, PacketRead},
     ahash::RandomState,
     rand::Rng,
     std::{
@@ -87,11 +87,11 @@ fn new_random_state<R: Rng>(rng: &mut R) -> RandomState {
 
 pub fn dedup_packets_and_count_discards<const K: usize>(
     deduper: &Deduper<K, [u8]>,
-    batches: &mut [PacketBatch],
+    batches: &mut [Vec<Packet>],
 ) -> u64 {
     batches
         .iter_mut()
-        .flat_map(PacketBatch::iter_mut)
+        .flat_map(|batch| batch.iter_mut())
         .map(|packet| {
             if !packet.meta().discard()
                 && packet
@@ -112,13 +112,14 @@ mod tests {
     use {
         super::*,
         crate::{
-            packet::{to_packet_batches, Packet},
+            packet::{to_packet_batches, Meta, Packet},
             sigverify,
             test_tx::test_tx,
         },
+        bytes::Bytes,
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
-        solana_packet::{Meta, PACKET_DATA_SIZE},
+        solana_packet::PACKET_DATA_SIZE,
         test_case::test_case,
     };
 
@@ -245,12 +246,13 @@ mod tests {
         let mut rng = ChaChaRng::from_seed(seed);
         let mut deduper = Deduper::<2, [u8]>::new(&mut rng, num_bits);
         assert_eq!(get_capacity::<2>(num_bits, FALSE_POSITIVE_RATE), capacity);
-        let mut packet = Packet::new([0u8; PACKET_DATA_SIZE], Meta::default());
         let mut dup_count = 0usize;
         for _ in 0..num_packets {
             let size = rng.gen_range(0..PACKET_DATA_SIZE);
-            packet.meta_mut().size = size;
-            rng.fill(&mut packet.buffer_mut()[0..size]);
+            let mut buf = vec![0_u8; size];
+            rng.fill(&mut buf[..]);
+            let buf = Bytes::from(buf);
+            let packet = Packet::new(buf, Meta::default());
             if deduper.dedup(packet.data(..).unwrap()) {
                 dup_count += 1;
             }

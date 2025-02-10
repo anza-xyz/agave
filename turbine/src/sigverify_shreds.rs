@@ -197,7 +197,7 @@ fn run_shred_sigverify<const K: usize>(
             .filter(|packet| !packet.meta().discard())
             .for_each(|packet| {
                 let repair = packet.meta().repair();
-                let Some(shred) = shred::layout::get_shred_mut(packet) else {
+                let Some(shred) = shred::layout::get_shred(packet) else {
                     packet.meta_mut().set_discard(true);
                     return;
                 };

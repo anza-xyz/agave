@@ -12,7 +12,7 @@ use {
     rustls::KeyLogFile,
     solana_keypair::Keypair,
     solana_packet::PACKET_DATA_SIZE,
-    solana_perf::packet::PacketBatch,
+    solana_perf::packet::Packet,
     solana_quic_definitions::{
         NotifyKeyUpdate, QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
     },
@@ -571,7 +571,7 @@ pub fn spawn_server(
     metrics_name: &'static str,
     socket: UdpSocket,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: Sender<Vec<Packet>>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
@@ -620,7 +620,7 @@ pub fn spawn_server_multi(
     metrics_name: &'static str,
     sockets: Vec<UdpSocket>,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: Sender<Vec<Packet>>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
@@ -669,7 +669,7 @@ mod test {
     fn setup_quic_server() -> (
         std::thread::JoinHandle<()>,
         Arc<AtomicBool>,
-        crossbeam_channel::Receiver<PacketBatch>,
+        crossbeam_channel::Receiver<Vec<Packet>>,
         SocketAddr,
     ) {
         let s = bind_to_localhost().unwrap();
