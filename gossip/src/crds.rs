@@ -48,6 +48,7 @@ use {
         ops::{Bound, Index, IndexMut},
         sync::Mutex,
     },
+    strum::EnumCount,
 };
 
 const CRDS_SHARDS_BITS: u32 = 12;
@@ -99,7 +100,7 @@ pub enum GossipRoute<'a> {
     PushMessage(/*from:*/ &'a Pubkey),
 }
 
-type CrdsCountsArray = [usize; 14];
+type CrdsCountsArray = [usize; CrdsData::COUNT];
 
 pub(crate) struct CrdsDataStats {
     pub(crate) counts: CrdsCountsArray,
@@ -728,23 +729,7 @@ impl CrdsDataStats {
     }
 
     fn ordinal(entry: &VersionedCrdsValue) -> usize {
-        match entry.value.data() {
-            CrdsData::LegacyContactInfo(_) => 0,
-            CrdsData::Vote(_, _) => 1,
-            CrdsData::LowestSlot(_, _) => 2,
-            CrdsData::LegacySnapshotHashes(_) => 3,
-            CrdsData::AccountsHashes(_) => 4,
-            CrdsData::EpochSlots(_, _) => 5,
-            CrdsData::LegacyVersion(_) => 6,
-            CrdsData::Version(_) => 7,
-            CrdsData::NodeInstance(_) => 8,
-            CrdsData::DuplicateShred(_, _) => 9,
-            CrdsData::SnapshotHashes(_) => 10,
-            CrdsData::ContactInfo(_) => 11,
-            CrdsData::RestartLastVotedForkSlots(_) => 12,
-            CrdsData::RestartHeaviestFork(_) => 13,
-            // Update CrdsCountsArray if new items are added here.
-        }
+        entry.value.data().ordinal()
     }
 }
 

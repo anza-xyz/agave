@@ -619,6 +619,7 @@ pub(crate) fn submit_gossip_stats(
             i64
         ),
     );
+
     datapoint_info!(
         "cluster_info_crds_stats",
         ("LegacyContactInfo-push", crds_stats.push.counts[0], i64),
