@@ -14,7 +14,6 @@ anyhow = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
 clap = { version = "3.1.5", features = ["cargo"], optional = true }
-crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["socket"] }
