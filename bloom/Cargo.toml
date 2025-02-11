@@ -12,7 +12,6 @@ edition = { workspace = true }
 [dependencies]
 bv = { workspace = true, features = ["serde"] }
 fnv = { workspace = true }
-log = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }

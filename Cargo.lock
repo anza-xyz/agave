@@ -6495,7 +6495,6 @@ version = "2.2.0"
 dependencies = [
  "bv",
  "fnv",
- "log",
  "rand 0.8.5",
  "rayon",
  "serde",
