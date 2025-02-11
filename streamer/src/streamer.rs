@@ -37,6 +37,34 @@ pub struct StakedNodes {
     min_stake: u64,
 }
 
+pub trait ChannelSend<T>: Send + 'static {
+    fn send(&self, msg: T) -> std::result::Result<(), SendError<T>>;
+
+    fn is_empty(&self) -> bool;
+
+    fn len(&self) -> usize;
+}
+
+impl<T> ChannelSend<T> for Sender<T>
+where
+    T: Send + 'static,
+{
+    #[inline]
+    fn send(&self, msg: T) -> std::result::Result<(), SendError<T>> {
+        self.send(msg)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
 pub type PacketBatchReceiver = Receiver<PacketBatch>;
 pub type PacketBatchSender = Sender<PacketBatch>;
 
@@ -106,7 +134,7 @@ pub type Result<T> = std::result::Result<T, StreamerError>;
 fn recv_loop(
     socket: &UdpSocket,
     exit: &AtomicBool,
-    packet_batch_sender: &PacketBatchSender,
+    packet_batch_sender: &impl ChannelSend<PacketBatch>,
     recycler: &PacketBatchRecycler,
     stats: &StreamerReceiveStats,
     coalesce: Duration,
@@ -166,7 +194,7 @@ pub fn receiver(
     thread_name: String,
     socket: Arc<UdpSocket>,
     exit: Arc<AtomicBool>,
-    packet_batch_sender: PacketBatchSender,
+    packet_batch_sender: impl ChannelSend<PacketBatch>,
     recycler: PacketBatchRecycler,
     stats: Arc<StreamerReceiveStats>,
     coalesce: Duration,
