@@ -54,7 +54,7 @@ pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
     tpu_address: SocketAddr,
     tpu_peers: Option<Vec<SocketAddr>>,
     leader_info_provider: Arc<Mutex<CurrentLeaderInfo<T>>>,
-    leader_fanout: u64,
+    leader_forward_count: u64,
 }
 
 // Manual implementation of Clone without requiring T to be Clone
@@ -68,7 +68,7 @@ where
             tpu_address: self.tpu_address,
             tpu_peers: self.tpu_peers.clone(),
             leader_info_provider: Arc::clone(&self.leader_info_provider),
-            leader_fanout: self.leader_fanout,
+            leader_forward_count: self.leader_forward_count,
         }
     }
 }
@@ -82,7 +82,7 @@ where
         tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_info: Option<T>,
-        leader_fanout: u64,
+        leader_forward_count: u64,
     ) -> Self {
         let leader_info_provider = Arc::new(Mutex::new(CurrentLeaderInfo::new(leader_info)));
         Self {
@@ -90,14 +90,15 @@ where
             tpu_address,
             tpu_peers,
             leader_info_provider,
-            leader_fanout,
+            leader_forward_count,
         }
     }
 
     fn get_tpu_addresses<'a>(&'a self, leader_info: Option<&'a T>) -> Vec<&'a SocketAddr> {
         leader_info
             .map(|leader_info| {
-                leader_info.get_leader_tpus(self.leader_fanout, self.connection_cache.protocol())
+                leader_info
+                    .get_leader_tpus(self.leader_forward_count, self.connection_cache.protocol())
             })
             .filter(|addresses| !addresses.is_empty())
             .unwrap_or_else(|| vec![&self.tpu_address])
@@ -239,7 +240,7 @@ where
     // method takes &self and thus we need to wrap with Mutex.
     join_and_cancel: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
     leader_updater: SendTransactionServiceLeaderUpdater<T>,
-    leader_fanout: u64,
+    leader_forward_count: u64,
 }
 
 type TpuClientJoinHandle =
@@ -254,7 +255,7 @@ where
         my_tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_info: Option<T>,
-        leader_fanout: u64,
+        leader_forward_count: u64,
         identity: Option<Keypair>,
     ) -> Self
     where
@@ -273,7 +274,7 @@ where
                 my_tpu_address,
                 tpu_peers,
             };
-        let config = Self::create_config(identity, leader_fanout as usize);
+        let config = Self::create_config(identity, leader_forward_count as usize);
         let handle = runtime_handle.spawn(ConnectionWorkersScheduler::run(
             config,
             Box::new(leader_updater.clone()),
@@ -286,13 +287,13 @@ where
             join_and_cancel: Arc::new(Mutex::new((Some(handle), cancel))),
             sender,
             leader_updater,
-            leader_fanout,
+            leader_forward_count,
         }
     }
 
     fn create_config(
         stake_identity: Option<Keypair>,
-        leader_fanout: usize,
+        leader_forward_count: usize,
     ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
             bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
@@ -303,8 +304,8 @@ where
             worker_channel_size: 64,
             max_reconnect_attempts: 4,
             leaders_fanout: Fanout {
-                connect: leader_fanout,
-                send: leader_fanout,
+                connect: leader_forward_count,
+                send: leader_forward_count,
             },
         }
     }
@@ -320,8 +321,10 @@ where
 
     async fn do_update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let runtime_handle = self.runtime_handle.clone();
-        let config =
-            Self::create_config(Some(identity.insecure_clone()), self.leader_fanout as usize);
+        let config = Self::create_config(
+            Some(identity.insecure_clone()),
+            self.leader_forward_count as usize,
+        );
         let leader_updater = self.leader_updater.clone();
         let handle = self.join_and_cancel.clone();
 
