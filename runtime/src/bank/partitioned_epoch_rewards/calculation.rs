@@ -346,6 +346,7 @@ impl Bank {
             // already have been cached in cached_vote_accounts; so the code
             // below is only for sanity checking, and can be removed once
             // the cache is deemed to be reliable.
+            metrics.vote_accounts_cache_miss_count.fetch_add(1, Relaxed);
             let account = self.get_account_with_fixed_root(vote_pubkey)?;
             VoteAccount::try_from(account).ok()
         };
