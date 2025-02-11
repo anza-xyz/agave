@@ -9960,7 +9960,6 @@ name = "solana-svm"
 version = "2.3.0"
 dependencies = [
  "ahash 0.8.11",
- "assert_matches",
  "bincode",
  "ed25519-dalek",
  "itertools 0.12.1",
