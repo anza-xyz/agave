@@ -10055,7 +10055,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-log-collector",
- "solana-logger",
  "solana-nonce",
  "solana-nonce-account",
  "solana-packet",
