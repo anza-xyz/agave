@@ -25,7 +25,6 @@ dir-diff = { workspace = true }
 flate2 = { workspace = true }
 fnv = { workspace = true }
 im = { workspace = true, features = ["rayon", "serde"] }
-index_list = { workspace = true }
 itertools = { workspace = true }
 lazy_static = { workspace = true }
 libc = { workspace = true }
