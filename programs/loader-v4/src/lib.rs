@@ -18,7 +18,9 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
+    solana_sdk_ids::{
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, system_program,
+    },
     solana_transaction_context::{BorrowedAccount, InstructionContext},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{cell::RefCell, rc::Rc},
@@ -334,13 +336,13 @@ fn process_instruction_deploy(invoke_context: &mut InvokeContext) -> Result<(), 
     );
 
     if let Some(mut source_program) = source_program {
-        let rent = invoke_context.get_sysvar_cache().get_rent()?;
-        let required_lamports = rent.minimum_balance(source_program.get_data().len());
-        let transfer_lamports = required_lamports.saturating_sub(program.get_lamports());
         program.set_data_from_slice(source_program.get_data())?;
         source_program.set_data_length(0)?;
-        source_program.checked_sub_lamports(transfer_lamports)?;
-        program.checked_add_lamports(transfer_lamports)?;
+        let dst_lamports = program.get_lamports();
+        let src_lamports = source_program.get_lamports();
+        source_program.set_lamports(dst_lamports)?;
+        program.set_lamports(src_lamports)?;
+        source_program.set_owner(&system_program::id().to_bytes())?;
     }
     let state = get_state_mut(program.get_data_mut()?)?;
     state.slot = current_slot;
@@ -1332,20 +1334,14 @@ mod tests {
             &[(0, false, true), (1, true, false), (2, false, true)],
             Ok(()),
         );
-        transaction_accounts[0].1 = accounts[0].clone();
         assert_eq!(
             accounts[0].data().len(),
             transaction_accounts[2].1.data().len(),
         );
         assert_eq!(accounts[2].data().len(), 0,);
-        assert_eq!(
-            accounts[2].lamports(),
-            transaction_accounts[2].1.lamports().saturating_sub(
-                accounts[0]
-                    .lamports()
-                    .saturating_sub(transaction_accounts[0].1.lamports())
-            ),
-        );
+        assert_eq!(accounts[0].lamports(), transaction_accounts[2].1.lamports());
+        assert_eq!(accounts[2].lamports(), transaction_accounts[0].1.lamports());
+        transaction_accounts[0].1 = accounts[0].clone();
 
         // Error: Program was deployed recently, cooldown still in effect
         process_instruction(
