@@ -1,5 +1,8 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs, new_spinner_progress_bar, println_name_value},
+    crate::{
+        admin_rpc_service, cli::DefaultArgs, commands::FromClapArgMatches,
+        new_spinner_progress_bar, println_name_value,
+    },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     console::style,
     solana_clap_utils::{
@@ -20,8 +23,31 @@ use {
     },
 };
 
+const COMMAND: &str = "wait-for-restart-window";
+
+#[derive(Debug, PartialEq)]
+pub struct WaitForRestartWindowArg {
+    pub min_idle_time: usize,
+    pub identity: Option<Pubkey>,
+    pub max_delinquent_stake: u8,
+    pub skip_new_snapshot_check: bool,
+    pub skip_health_check: bool,
+}
+
+impl FromClapArgMatches for WaitForRestartWindowArg {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+        Ok(WaitForRestartWindowArg {
+            min_idle_time: value_t_or_exit!(matches, "min_idle_time", usize),
+            identity: pubkey_of(matches, "identity"),
+            max_delinquent_stake: value_t_or_exit!(matches, "max_delinquent_stake", u8),
+            skip_new_snapshot_check: matches.is_present("skip_new_snapshot_check"),
+            skip_health_check: matches.is_present("skip_health_check"),
+        })
+    }
+}
+
 pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
-    SubCommand::with_name("wait-for-restart-window")
+    SubCommand::with_name(COMMAND)
         .about("Monitor the validator for a good time to restart")
         .arg(
             Arg::with_name("min_idle_time")
@@ -67,19 +93,15 @@ pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
 }
 
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
-    let min_idle_time = value_t_or_exit!(matches, "min_idle_time", usize);
-    let identity = pubkey_of(matches, "identity");
-    let max_delinquent_stake = value_t_or_exit!(matches, "max_delinquent_stake", u8);
-    let skip_new_snapshot_check = matches.is_present("skip_new_snapshot_check");
-    let skip_health_check = matches.is_present("skip_health_check");
+    let wait_for_restart_window_arg = WaitForRestartWindowArg::from_clap_arg_match(matches)?;
 
     wait_for_restart_window(
         ledger_path,
-        identity,
-        min_idle_time,
-        max_delinquent_stake,
-        skip_new_snapshot_check,
-        skip_health_check,
+        wait_for_restart_window_arg.identity,
+        wait_for_restart_window_arg.min_idle_time,
+        wait_for_restart_window_arg.max_delinquent_stake,
+        wait_for_restart_window_arg.skip_new_snapshot_check,
+        wait_for_restart_window_arg.skip_health_check,
     )
     .map_err(|err| format!("failed to wait for restart window: {err}"))
 }
@@ -334,4 +356,105 @@ pub fn wait_for_restart_window(
     drop(progress_bar);
     println!("{}", style("Ready to restart").green());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, crate::commands::tests::verify_args_struct_by_command, std::str::FromStr};
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_default() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec![COMMAND],
+            WaitForRestartWindowArg {
+                min_idle_time: 10,
+                identity: None,
+                max_delinquent_stake: 5,
+                skip_new_snapshot_check: false,
+                skip_health_check: false,
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_skip_new_snapshot_check() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec![COMMAND, "--skip-new-snapshot-check"],
+            WaitForRestartWindowArg {
+                min_idle_time: 10,
+                identity: None,
+                max_delinquent_stake: 5,
+                skip_new_snapshot_check: true,
+                skip_health_check: false,
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_skip_health_check() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec![COMMAND, "--skip-health-check"],
+            WaitForRestartWindowArg {
+                min_idle_time: 10,
+                identity: None,
+                max_delinquent_stake: 5,
+                skip_new_snapshot_check: false,
+                skip_health_check: true,
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_min_idle_time() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec![COMMAND, "--min-idle-time", "60"],
+            WaitForRestartWindowArg {
+                min_idle_time: 60,
+                identity: None,
+                max_delinquent_stake: 5,
+                skip_new_snapshot_check: false,
+                skip_health_check: false,
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_identity() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec![
+                COMMAND,
+                "--identity",
+                "ch1do11111111111111111111111111111111111111",
+            ],
+            WaitForRestartWindowArg {
+                min_idle_time: 10,
+                identity: Some(
+                    Pubkey::from_str("ch1do11111111111111111111111111111111111111").unwrap(),
+                ),
+                max_delinquent_stake: 5,
+                skip_new_snapshot_check: false,
+                skip_health_check: false,
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_max_delinquent_stake() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec![COMMAND, "--max-delinquent-stake", "10"],
+            WaitForRestartWindowArg {
+                min_idle_time: 10,
+                identity: None,
+                max_delinquent_stake: 10,
+                skip_new_snapshot_check: false,
+                skip_health_check: false,
+            },
+        );
+    }
 }
