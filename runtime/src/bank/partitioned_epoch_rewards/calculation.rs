@@ -238,11 +238,12 @@ impl Bank {
             .parent()
             .expect("Partitioned rewards calculation must still have access to parent Bank.")
             .last_blockhash();
-        let stake_rewards_by_partition = hash_rewards_into_partitions(
+        let (stake_rewards_by_partition, hash_us) = measure_us!(hash_rewards_into_partitions(
             std::mem::take(&mut stake_rewards.stake_rewards),
             &parent_blockhash,
             num_partitions as usize,
-        );
+        ));
+        metrics.hash_partition_rewards_us += hash_us;
 
         PartitionedRewardsCalculation {
             vote_account_rewards,
