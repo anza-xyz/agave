@@ -80,6 +80,7 @@ use {
     solana_vote::vote_parser,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
+        borrow::Borrow,
         collections::{HashMap, HashSet, VecDeque},
         fmt::Debug,
         fs::{self, File},
@@ -258,24 +259,10 @@ impl ClusterInfo {
             &mut pings,
             &self.socket_addr_space,
         );
-        self.stats
-            .new_pull_requests_pings_count
-            .add_relaxed(pings.len() as u64);
-        let pings: Vec<_> = pings
+        let pings = pings
             .into_iter()
-            .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)))
-            .collect();
-        if !pings.is_empty() {
-            self.stats
-                .packets_sent_gossip_requests_count
-                .add_relaxed(pings.len() as u64);
-            let packet_batch = PacketBatch::new_unpinned_with_recycler_data_and_dests(
-                recycler,
-                "refresh_push_active_set",
-                &pings,
-            );
-            let _ = sender.send(packet_batch);
-        }
+            .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)));
+        send_gossip_packets(pings, recycler, sender, &self.stats);
     }
 
     // TODO kill insert_info, only used by tests
@@ -1255,11 +1242,6 @@ impl ClusterInfo {
                 .unwrap_or_default()
         };
         self.append_entrypoint_to_pulls(thread_pool, max_bloom_filter_bytes, &mut pulls);
-        let num_requests = pulls
-            .iter()
-            .map(|(_, filters)| filters.len())
-            .sum::<usize>() as u64;
-        self.stats.new_pull_requests_count.add_relaxed(num_requests);
         let pulls = pulls
             .into_iter()
             .filter_map(|(peer, filters)| Some((peer.gossip()?, filters)))
@@ -1268,9 +1250,6 @@ impl ClusterInfo {
                 let request = Protocol::PullRequest(filter, self_info.clone());
                 (gossip_addr, request)
             });
-        self.stats
-            .new_pull_requests_pings_count
-            .add_relaxed(pings.len() as u64);
         (pings, pulls.collect())
     }
 
@@ -1314,18 +1293,14 @@ impl ClusterInfo {
                 })
                 .collect()
         };
-        let messages: Vec<_> = push_messages
+        push_messages
             .into_iter()
             .flat_map(|(peer, msgs)| {
                 let msgs = msgs.into_iter().map(|k| entries[k].clone());
                 split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, msgs)
                     .map(move |payload| (peer, Protocol::PushMessage(self_id, payload)))
             })
-            .collect();
-        self.stats
-            .new_push_requests_num
-            .add_relaxed(messages.len() as u64);
-        messages
+            .collect()
     }
 
     // Generate new push and pull requests
@@ -1342,15 +1317,9 @@ impl ClusterInfo {
         // same values back to the node itself. Note that packets will arrive
         // and are processed out of order.
         let mut out: Vec<_> = self.new_push_requests(stakes);
-        self.stats
-            .packets_sent_push_messages_count
-            .add_relaxed(out.len() as u64);
         if generate_pull_requests {
             let (pings, pull_requests) =
                 self.new_pull_requests(thread_pool, gossip_validators, stakes);
-            self.stats
-                .packets_sent_pull_requests_count
-                .add_relaxed(pull_requests.len() as u64);
             let pings = pings
                 .into_iter()
                 .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)));
@@ -1377,17 +1346,7 @@ impl ClusterInfo {
             stakes,
             generate_pull_requests,
         );
-        if !reqs.is_empty() {
-            let packet_batch = PacketBatch::new_unpinned_with_recycler_data_and_dests(
-                recycler,
-                "run_gossip",
-                &reqs,
-            );
-            self.stats
-                .packets_sent_gossip_requests_count
-                .add_relaxed(packet_batch.len() as u64);
-            sender.send(packet_batch)?;
-        }
+        send_gossip_packets(reqs, recycler, sender, &self.stats);
         self.stats
             .gossip_transmit_loop_iterations_since_last_report
             .add_relaxed(1);
@@ -1576,9 +1535,6 @@ impl ClusterInfo {
             return;
         }
         self.stats
-            .prune_message_count
-            .add_relaxed(messages.len() as u64);
-        self.stats
             .prune_message_len
             .add_relaxed(messages.iter().map(|data| data.prunes.len() as u64).sum());
         let mut prune_message_timeout = 0;
@@ -1657,14 +1613,8 @@ impl ClusterInfo {
                 .collect()
         });
         if !requests.is_empty() {
-            self.stats
-                .pull_requests_count
-                .add_relaxed(requests.len() as u64);
             let response = self.handle_pull_requests(thread_pool, recycler, requests, stakes);
             if !response.is_empty() {
-                self.stats
-                    .packets_sent_pull_responses_count
-                    .add_relaxed(response.len() as u64);
                 let _ = response_sender.send(response);
             }
         }
@@ -1703,10 +1653,9 @@ impl ClusterInfo {
             let (check, ping) = ping_cache.check(rng, &self.keypair(), now, node);
             if let Some(ping) = ping {
                 let ping = Protocol::PingMessage(ping);
-                match Packet::from_data(Some(&node.1), ping) {
-                    Ok(packet) => packet_batch.push(packet),
-                    Err(err) => error!("failed to write ping packet: {:?}", err),
-                };
+                if let Some(pkt) = make_gossip_packet(node.1, &ping, &self.stats) {
+                    packet_batch.push(pkt);
+                }
             }
             if !check {
                 self.stats
@@ -1798,36 +1747,30 @@ impl ClusterInfo {
                 })
             })
             .collect();
-        let (total_bytes, sent_crds_values, sent_pull_responses) =
-            WeightedShuffle::new("handle-pull-requests", scores)
-                .shuffle(&mut rng)
-                .filter_map(|k| {
-                    let (addr, values) = &mut pull_responses[k];
-                    let num_values = values.len();
-                    let response = Protocol::PullResponse(self_id, std::mem::take(values));
-                    let packet = Packet::from_data(Some(addr), response)
-                        .inspect_err(|err| error!("failed to write pull-response packet: {err:?}"))
-                        .ok()?;
-                    Some((packet, num_values))
-                })
-                .take_while(|(packet, _)| {
-                    if self.outbound_budget.take(packet.meta().size) {
-                        true
-                    } else {
-                        self.stats.gossip_pull_request_no_budget.add_relaxed(1);
-                        false
-                    }
-                })
-                .map(|(packet, num_values)| {
-                    let num_bytes = packet.meta().size;
-                    packet_batch.push(packet);
-                    (num_bytes, num_values)
-                })
-                .fold((0, 0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + 1));
+        let (total_bytes, sent_crds_values) = WeightedShuffle::new("handle-pull-requests", scores)
+            .shuffle(&mut rng)
+            .filter_map(|k| {
+                let (&addr, values) = &mut pull_responses[k];
+                let num_values = values.len();
+                let response = Protocol::PullResponse(self_id, std::mem::take(values));
+                let packet = make_gossip_packet(addr, &response, &self.stats)?;
+                Some((packet, num_values))
+            })
+            .take_while(|(packet, _)| {
+                if self.outbound_budget.take(packet.meta().size) {
+                    true
+                } else {
+                    self.stats.gossip_pull_request_no_budget.add_relaxed(1);
+                    false
+                }
+            })
+            .map(|(packet, num_values)| {
+                let num_bytes = packet.meta().size;
+                packet_batch.push(packet);
+                (num_bytes, num_values)
+            })
+            .fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
         let dropped_responses = num_crds_values.saturating_sub(sent_crds_values);
-        self.stats
-            .gossip_pull_request_sent_requests
-            .add_relaxed(sent_pull_responses as u64);
         self.stats
             .gossip_pull_request_dropped_requests
             .add_relaxed(dropped_responses as u64);
@@ -1898,46 +1841,19 @@ impl ClusterInfo {
         )
     }
 
-    fn handle_batch_ping_messages<I>(
+    fn handle_batch_ping_messages<S: Borrow<SocketAddr>>(
         &self,
-        pings: I,
+        pings: impl IntoIterator<Item = (S, Ping), IntoIter: ExactSizeIterator>,
         recycler: &PacketBatchRecycler,
         response_sender: &PacketBatchSender,
-    ) where
-        I: IntoIterator<Item = (SocketAddr, Ping)>,
-    {
+    ) {
         let _st = ScopedTimer::from(&self.stats.handle_batch_ping_messages_time);
-        if let Some(response) = self.handle_ping_messages(pings, recycler) {
-            let _ = response_sender.send(response);
-        }
-    }
-
-    fn handle_ping_messages<I>(
-        &self,
-        pings: I,
-        recycler: &PacketBatchRecycler,
-    ) -> Option<PacketBatch>
-    where
-        I: IntoIterator<Item = (SocketAddr, Ping)>,
-    {
-        let keypair = self.keypair();
-        let pongs_and_dests: Vec<_> = pings
-            .into_iter()
-            .map(|(addr, ping)| {
-                let pong = Pong::new(&ping, &keypair);
-                (addr, Protocol::PongMessage(pong))
-            })
-            .collect();
-        if pongs_and_dests.is_empty() {
-            None
-        } else {
-            let packet_batch = PacketBatch::new_unpinned_with_recycler_data_and_dests(
-                recycler,
-                "handle_ping_messages",
-                &pongs_and_dests,
-            );
-            Some(packet_batch)
-        }
+        let keypair: Arc<Keypair> = self.keypair().clone();
+        let pongs = pings.into_iter().map(|(addr, ping)| {
+            let pong = Pong::new(&ping, &keypair);
+            (addr, Protocol::PongMessage(pong))
+        });
+        send_gossip_packets(pongs, recycler, response_sender, &self.stats);
     }
 
     fn handle_batch_pong_messages<I>(&self, pongs: I, now: Instant)
@@ -1966,9 +1882,6 @@ impl ClusterInfo {
         if messages.is_empty() {
             return;
         }
-        self.stats
-            .push_message_count
-            .add_relaxed(messages.len() as u64);
         let num_crds_values: u64 = messages.iter().map(|(_, data)| data.len() as u64).sum();
         self.stats
             .push_message_value_count
@@ -1981,35 +1894,17 @@ impl ClusterInfo {
         };
         // Generate prune messages.
         let prune_messages = self.generate_prune_messages(thread_pool, origins, stakes);
-        let mut packet_batch = PacketBatch::new_unpinned_with_recycler_data_and_dests(
-            recycler,
-            "handle_batch_push_messages",
-            &prune_messages,
-        );
-        let num_prune_packets = packet_batch.len();
-        self.stats
-            .push_response_count
-            .add_relaxed(packet_batch.len() as u64);
+        let mut packet_batch = make_gossip_packet_batch(prune_messages, recycler, &self.stats);
         let new_push_requests = self.new_push_requests(stakes);
-        self.stats
-            .push_message_pushes
-            .add_relaxed(new_push_requests.len() as u64);
         for (address, request) in new_push_requests {
             if ContactInfo::is_valid_address(&address, &self.socket_addr_space) {
-                match Packet::from_data(Some(&address), &request) {
-                    Ok(packet) => packet_batch.push(packet),
-                    Err(err) => error!("failed to write push-request packet: {:?}", err),
+                if let Some(pkt) = make_gossip_packet(address, &request, &self.stats) {
+                    packet_batch.push(pkt);
                 }
             } else {
                 trace!("Dropping Gossip push response, as destination is unknown");
             }
         }
-        self.stats
-            .packets_sent_prune_messages_count
-            .add_relaxed(num_prune_packets as u64);
-        self.stats
-            .packets_sent_push_messages_count
-            .add_relaxed((packet_batch.len() - num_prune_packets) as u64);
         if !packet_batch.is_empty() {
             let _ = response_sender.send(packet_batch);
         }
@@ -2177,17 +2072,10 @@ impl ClusterInfo {
                 Protocol::PongMessage(pong) => pong_messages.push((from_addr, pong)),
             }
         }
-        if !pings.is_empty() {
-            self.stats
-                .packets_sent_gossip_requests_count
-                .add_relaxed(pings.len() as u64);
-            let packet_batch = PacketBatch::new_unpinned_with_recycler_data_and_dests(
-                recycler,
-                "ping_contact_infos",
-                &pings,
-            );
-            let _ = response_sender.send(packet_batch);
-        }
+        let pings = pings
+            .into_iter()
+            .map(|(addr, ping)| (addr, Protocol::PingMessage(ping)));
+        send_gossip_packets(pings, recycler, response_sender, &self.stats);
         self.handle_batch_ping_messages(ping_messages, recycler, response_sender);
         self.handle_batch_prune_messages(prune_messages, stakes);
         self.handle_batch_push_messages(
@@ -2992,10 +2880,10 @@ pub fn push_messages_to_peer_for_tests(
     let reqs: Vec<_> = split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, messages)
         .map(move |payload| (peer_gossip, Protocol::PushMessage(self_id, payload)))
         .collect();
-    let packet_batch = PacketBatch::new_unpinned_with_recycler_data_and_dests(
+    let packet_batch = make_gossip_packet_batch(
+        reqs,
         &PacketBatchRecycler::default(),
-        "push_messages_to_peer",
-        &reqs,
+        &GossipStats::default(),
     );
     let sock = bind_to_unspecified().unwrap();
     packet::send_to(&packet_batch, &sock, socket_addr_space)?;
@@ -3090,7 +2978,7 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     stakes: &HashMap<Pubkey, u64>,
     socket_addr_space: &SocketAddrSpace,
     ping_cache: &Mutex<PingCache>,
-    pings: &mut Vec<(SocketAddr, Protocol /* ::PingMessage */)>,
+    pings: &mut Vec<(SocketAddr, Ping)>,
 ) -> bool {
     let (pubkey, addr) = match value.data() {
         CrdsData::ContactInfo(node) => (node.pubkey(), node.gossip()),
@@ -3111,9 +2999,50 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
         ping_cache.check(rng, keypair, Instant::now(), node)
     };
     if let Some(ping) = ping {
-        pings.push((addr, Protocol::PingMessage(ping)));
+        pings.push((addr, ping));
     }
     out
+}
+
+fn send_gossip_packets<S: Borrow<SocketAddr>>(
+    pkts: impl IntoIterator<Item = (S, Protocol), IntoIter: ExactSizeIterator>,
+    recycler: &PacketBatchRecycler,
+    sender: &PacketBatchSender,
+    stats: &GossipStats,
+) {
+    let pkts = pkts.into_iter();
+    if pkts.len() != 0 {
+        let pkts = make_gossip_packet_batch(pkts, recycler, stats);
+        let _ = sender.send(pkts);
+    }
+}
+
+fn make_gossip_packet_batch<S: Borrow<SocketAddr>>(
+    pkts: impl IntoIterator<Item = (S, Protocol), IntoIter: ExactSizeIterator>,
+    recycler: &PacketBatchRecycler,
+    stats: &GossipStats,
+) -> PacketBatch {
+    let record_gossip_packet = |(_, pkt): &(_, Protocol)| stats.record_gossip_packet(pkt);
+    let pkts = pkts.into_iter().inspect(record_gossip_packet);
+    PacketBatch::new_unpinned_with_recycler_data_and_dests(recycler, "gossip_packet_batch", pkts)
+}
+
+#[inline]
+fn make_gossip_packet(
+    addr: impl Borrow<SocketAddr>,
+    pkt: &Protocol,
+    stats: &GossipStats,
+) -> Option<Packet> {
+    match Packet::from_data(Some(addr.borrow()), pkt) {
+        Err(err) => {
+            error!("failed to write gossip packet: {err:?}");
+            None
+        }
+        Ok(out) => {
+            stats.record_gossip_packet(pkt);
+            Some(out)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3262,12 +3191,15 @@ mod tests {
             .map(|ping| Pong::new(ping, &this_node))
             .collect();
         let recycler = PacketBatchRecycler::default();
-        let packets = cluster_info
-            .handle_ping_messages(
-                remote_nodes.iter().map(|(_, socket)| *socket).zip(pings),
+        let packets = {
+            let (sender, receiver) = crossbeam_channel::unbounded();
+            cluster_info.handle_batch_ping_messages(
+                remote_nodes.iter().map(|(_, socket)| socket).zip(pings),
                 &recycler,
-            )
-            .unwrap();
+                &sender,
+            );
+            receiver.recv().unwrap()
+        };
         assert_eq!(remote_nodes.len(), packets.len());
         for (packet, (_, socket), pong) in izip!(
             packets.into_iter(),
