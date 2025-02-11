@@ -194,7 +194,7 @@ Install Homebrew (if not already installed), check "Install Homebrew" at
 Install the necessary tools and libraries using Homebrew:
 
 ```bash
-brew install rust pkg-config libudev protobuf llvm coreutils
+brew install pkg-config libudev protobuf llvm coreutils
 ```
 
 Follow the instructions given at the end of the brew install command about
