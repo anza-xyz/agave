@@ -184,14 +184,9 @@ Replace `apt` with your distribution's package manager (e.g., `yum`, `dnf`,
 
 #### For macOS:
 
-Install Homebrew (if not already installed), check "Install Homebrew" at
-[https://brew.sh/](https://brew.sh/), which recommends the following command:
+Check "Install Homebrew" at https://brew.sh/](https://brew.sh/) for the latest installation instruction for Homebrew if not already installed.
 
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-Install the necessary tools and libraries using Homebrew:
+Then, install build dependencies with `brew`:
 
 ```bash
 brew install pkg-config libudev protobuf llvm coreutils
