@@ -352,7 +352,7 @@ impl CrdsGossipPull {
             } else if now <= response.wallclock().saturating_add(timeout) {
                 active_values.push(response);
                 None
-            } else if crds.get::<&ContactInfo>(owner).is_some() {
+            } else if crds.get::<&ContactInfo<_>>(owner).is_some() {
                 // Silently insert this old value without bumping record
                 // timestamps
                 expired_values.push(response);
@@ -939,7 +939,7 @@ pub(crate) mod tests {
             &SocketAddrSpace::Unspecified,
         );
         let peers: Vec<_> = req.unwrap().into_iter().map(|(node, _)| node).collect();
-        assert_eq!(peers, vec![new.contact_info().unwrap().clone()]);
+        assert_eq!(peers, vec![new.contact_info().unwrap().into()]);
 
         let offline = ContactInfo::new_localhost(&solana_pubkey::new_rand(), now);
         let offline = CrdsValue::new_unsigned(CrdsData::from(offline));
@@ -963,7 +963,7 @@ pub(crate) mod tests {
         // Even though the offline node should have higher weight, we shouldn't request from it
         // until we receive a ping.
         let peers: Vec<_> = req.unwrap().into_iter().map(|(node, _)| node).collect();
-        assert_eq!(peers, vec![new.contact_info().unwrap().clone()]);
+        assert_eq!(peers, vec![new.contact_info().unwrap().into()]);
     }
 
     #[test]
@@ -1018,7 +1018,7 @@ pub(crate) mod tests {
         })
         .flatten()
         .take(100)
-        .filter(|peer| peer != old)
+        .filter(|peer| peer != &ContactInfo::from(old))
         .count();
         assert!(count < 75, "count of peer != old: {count}");
     }
@@ -1517,7 +1517,7 @@ pub(crate) mod tests {
         }
         let node = LegacyContactInfo::try_from(&node).unwrap();
         {
-            let caller = CrdsValue::new(CrdsData::LegacyContactInfo(node), &keypair);
+            let caller = CrdsValue::new(CrdsData::LegacyContactInfo(Box::new(node)), &keypair);
             assert_eq!(get_max_bloom_filter_bytes(&caller), 1136);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
@@ -1535,7 +1535,7 @@ pub(crate) mod tests {
         }
         let node = LegacyContactInfo::try_from(&node).unwrap();
         {
-            let caller = CrdsValue::new(CrdsData::LegacyContactInfo(node), &keypair);
+            let caller = CrdsValue::new(CrdsData::LegacyContactInfo(Box::new(node)), &keypair);
             assert_eq!(get_max_bloom_filter_bytes(&caller), 992);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }

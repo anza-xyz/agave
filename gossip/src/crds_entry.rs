@@ -1,6 +1,6 @@
 use {
     crate::{
-        contact_info::ContactInfo,
+        contact_info::{self, SocketAddrCache},
         crds::VersionedCrdsValue,
         crds_data::{CrdsData, LowestSlot, SnapshotHashes},
         crds_value::{CrdsValue, CrdsValueLabel},
@@ -10,6 +10,7 @@ use {
 };
 
 type CrdsTable = IndexMap<CrdsValueLabel, VersionedCrdsValue>;
+type ContactInfo = contact_info::ContactInfo<Box<SocketAddrCache>>;
 
 /// Represents types which can be looked up from crds table given a key. e.g.
 ///   CrdsValueLabel -> VersionedCrdsValue, CrdsValue, CrdsData
@@ -24,6 +25,7 @@ macro_rules! impl_crds_entry (
     ($name:ident, |$entry:ident| $body:expr) => (
         impl<'a, 'b> CrdsEntry<'a, 'b> for &'a $name {
             type Key = &'b CrdsValueLabel;
+            #[inline]
             fn get_entry(table:&'a CrdsTable, key: Self::Key) -> Option<Self> {
                 let $entry = table.get(key);
                 $body
@@ -34,6 +36,7 @@ macro_rules! impl_crds_entry (
     ($name:ident, $pat:pat, $expr:expr) => (
         impl<'a, 'b> CrdsEntry<'a, 'b> for &'a $name {
             type Key = Pubkey;
+            #[inline]
             fn get_entry(table:&'a CrdsTable, key: Self::Key) -> Option<Self> {
                 let key = CrdsValueLabel::$name(key);
                 match table.get(&key)?.value.data() {

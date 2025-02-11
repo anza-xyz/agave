@@ -359,7 +359,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
                     None => true,
                 }
         })
-        .cloned()
+        .map(ContactInfo::from)
         .collect()
 }
 

@@ -1,6 +1,6 @@
 use {
     crate::{
-        contact_info::ContactInfo,
+        contact_info::{ContactInfo, SocketAddrCache},
         crds_data::{CrdsData, EpochSlotsIndex, VoteIndex},
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
@@ -185,7 +185,7 @@ impl CrdsValue {
         }
     }
 
-    pub(crate) fn contact_info(&self) -> Option<&ContactInfo> {
+    pub(crate) fn contact_info(&self) -> Option<&ContactInfo<Box<SocketAddrCache>>> {
         let CrdsData::ContactInfo(node) = &self.data else {
             return None;
         };

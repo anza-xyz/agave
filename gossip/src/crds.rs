@@ -27,7 +27,7 @@
 
 use {
     crate::{
-        contact_info::ContactInfo,
+        contact_info::{ContactInfo, SocketAddrCache},
         crds_data::CrdsData,
         crds_entry::CrdsEntry,
         crds_gossip_pull::CrdsTimeouts,
@@ -347,7 +347,9 @@ impl Crds {
     }
 
     /// Returns ContactInfo of all known nodes.
-    pub(crate) fn get_nodes_contact_info(&self) -> impl Iterator<Item = &ContactInfo> {
+    pub(crate) fn get_nodes_contact_info(
+        &self,
+    ) -> impl Iterator<Item = &ContactInfo<Box<SocketAddrCache>>> {
         self.get_nodes().map(|v| match v.value.data() {
             CrdsData::ContactInfo(info) => info,
             _ => panic!("this should not happen!"),
@@ -1379,7 +1381,7 @@ mod tests {
         // Remove contact-info. Shred version should stay there since there
         // are still values associated with the pubkey.
         crds.remove(&CrdsValueLabel::ContactInfo(pubkey), timestamp());
-        assert_eq!(crds.get::<&ContactInfo>(pubkey), None);
+        assert_eq!(crds.get::<&ContactInfo<_>>(pubkey), None);
         assert_eq!(crds.get_shred_version(&pubkey), Some(8));
         // Remove the remaining entry with the same pubkey.
         crds.remove(&CrdsValueLabel::AccountsHashes(pubkey), timestamp());
