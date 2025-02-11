@@ -132,7 +132,6 @@ solana-unified-scheduler-pool = { workspace = true, features = [
 solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
 spl-memo = { workspace = true, features = ["no-entrypoint"] }
 static_assertions = { workspace = true }
-systemstat = { workspace = true }
 test-case = { workspace = true }
 
 [target."cfg(unix)".dependencies]

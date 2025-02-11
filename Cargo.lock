@@ -7281,7 +7281,6 @@ dependencies = [
  "strum_macros",
  "sys-info",
  "sysctl",
- "systemstat",
  "tempfile",
  "test-case",
  "thiserror 2.0.11",
