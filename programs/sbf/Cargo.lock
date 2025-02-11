@@ -7309,7 +7309,6 @@ name = "solana-runtime"
 version = "2.2.0"
 dependencies = [
  "ahash 0.8.11",
- "aquamarine",
  "arrayref",
  "base64 0.22.1",
  "bincode",
@@ -7323,7 +7322,6 @@ dependencies = [
  "flate2",
  "fnv",
  "im",
- "index_list",
  "itertools 0.12.1",
  "lazy_static",
  "libc",

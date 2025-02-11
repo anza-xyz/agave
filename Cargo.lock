@@ -9246,7 +9246,6 @@ version = "2.2.0"
 dependencies = [
  "agave-transaction-view",
  "ahash 0.8.11",
- "aquamarine",
  "arrayref",
  "assert_matches",
  "base64 0.22.1",
@@ -9262,7 +9261,6 @@ dependencies = [
  "flate2",
  "fnv",
  "im",
- "index_list",
  "itertools 0.12.1",
  "lazy_static",
  "libc",
