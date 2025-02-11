@@ -18,7 +18,9 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
+    solana_sdk_ids::{
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, system_program,
+    },
     solana_transaction_context::{BorrowedAccount, InstructionContext},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{cell::RefCell, rc::Rc},
@@ -341,6 +343,7 @@ fn process_instruction_deploy(invoke_context: &mut InvokeContext) -> Result<(), 
         source_program.set_data_length(0)?;
         source_program.checked_sub_lamports(transfer_lamports)?;
         program.checked_add_lamports(transfer_lamports)?;
+        source_program.set_owner(&system_program::id().to_bytes())?;
     }
     let state = get_state_mut(program.get_data_mut()?)?;
     state.slot = current_slot;
