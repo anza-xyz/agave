@@ -624,7 +624,7 @@ mod tests {
         solana_runtime::genesis_utils::create_genesis_config,
         std::{
             sync::Arc,
-            thread::{self, Thread},
+            thread::{self},
             time::{Duration, Instant},
         },
     };

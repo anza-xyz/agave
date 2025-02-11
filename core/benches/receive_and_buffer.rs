@@ -13,6 +13,9 @@ use {
                 TransactionViewReceiveAndBuffer,
             },
             scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
+            scheduler_test_utils::{
+                create_accounts, generate_transactions, TransactionConfig, UniformDist,
+            },
             transaction_state_container::StateContainer,
         },
     },
@@ -82,47 +85,38 @@ fn bench_transaction_serialization(c: &mut Criterion) {
 // So in theory one thread should be able to generate 10 batches per second. Which sounds to be enough.
 
 fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
-    let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100_000);
+    let GenesisConfigInfo {
+        mut genesis_config, ..
+    } = create_genesis_config(100_000);
+    let num_txs = 1024;
+    let num_account_conflicts = 1;
+    let num_accounts = ((num_account_conflicts + 1) * num_txs) / num_account_conflicts;
+    let account_keypairs = create_accounts(num_accounts, &mut genesis_config);
+
     let (bank, bank_forks) =
         Bank::new_for_benches(&genesis_config).wrap_with_bank_forks_for_tests();
     let bank_start = BankStart {
-        working_bank: bank,
+        working_bank: bank.clone(),
         bank_creation_time: Arc::new(Instant::now()),
     };
 
-    // TODO maybe use `let bank = Arc::new(Bank::default_for_tests());`?
-
-    // Need to create all the accounts used in the transactions?
-    // Need to create a thread that takes sender and these accounts to produce transactions
-    // Do I need to properly fund these txs?
-
     let (sender, receiver) = unbounded();
-    let handle = thread::spawn(move || {
-        // Can we just generate random bytes?
-        // prepare keypairs
-        let num_txs = NUM_PACKETS;
-        let from_keypairs: Vec<Keypair> = (0..num_txs).map(|_| Keypair::new()).collect();
-        let to_pubkeys: Vec<Pubkey> = (0..num_txs).map(|_| Pubkey::new_unique()).collect();
-        let recent_blockhash = Hash::new_unique();
-
-        let txs: Vec<Transaction> = (0..num_txs)
-            .map(|i| {
-                let transfer =
-                    system_instruction::transfer(&from_keypairs[i].pubkey(), &to_pubkeys[i], 1);
-                let message = Message::new(&[transfer], Some(&from_keypairs[i].pubkey()));
-                Transaction::new(&vec![&from_keypairs[i]], message, recent_blockhash)
-            })
-            .collect();
-
-        let packets_batches = BankingPacketBatch::new(to_packet_batches(&txs, NUM_PACKETS));
-        //TODO Is it ok we put the same txs again? Do we check for duplicates on this stage?
-        loop {
-            if sender.send(packets_batches.clone()).is_err() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-    });
+    //let handle = thread::spawn(move || {
+    generate_transactions(
+        num_txs,
+        &account_keypairs,
+        bank,
+        sender.clone(),
+        TransactionConfig {
+            compute_unit_price: Box::new(UniformDist::new(1, 10)),
+            transaction_cu_budget: 1, // No effect
+            num_account_conflicts,    // No effect for this benchmark
+            probability_invalid_blockhash: 0.0,
+            probability_invalid_account: 0.0, // No effect
+            data_size_limit: 1,               // No effect
+        },
+    );
+    //});
 
     let mut rb = SanitizedTransactionReceiveAndBuffer::new(
         PacketDeserializer::new(receiver),
@@ -143,18 +137,21 @@ fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
     //  b.iter_batched(|| data.clone(), |mut data| sort(&mut data), BatchSize::SmallInput)
     c.bench_function("sanitized_transaction_receive_and_buffer", |bencher| {
         bencher.iter(|| {
-            rb.receive_and_buffer_packets(
+            let res = rb.receive_and_buffer_packets(
                 &mut container,
                 &mut timing_metrics,
                 &mut count_metrics,
                 &decision,
             );
+            println!("{res:?}");
+            assert!(res.unwrap() > 0);
+            black_box(sender.clone());
             // clear to have the same situation on every iteration
             container.clear();
         })
     });
-    drop(rb);
-    assert!(handle.join().is_ok());
+    //drop(rb);
+    //assert!(handle.join().is_ok());
 }
 
 criterion_group!(
