@@ -9808,7 +9808,6 @@ dependencies = [
  "solana-genesis-config",
  "solana-instruction",
  "solana-log-collector",
- "solana-logger",
  "solana-native-token",
  "solana-packet",
  "solana-program-runtime",
