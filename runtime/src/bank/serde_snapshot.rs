@@ -22,7 +22,7 @@ mod tests {
             stakes::{SerdeStakesToStakeFormat, Stakes, StakesEnum},
         },
         solana_accounts_db::{
-            account_storage::{AccountStorageMap, AccountStorageReference},
+            account_storage::AccountStorageMap,
             accounts_db::{
                 get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AccountsDbConfig,
                 AtomicAccountsFileId, ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -79,13 +79,7 @@ mod tests {
                 num_accounts,
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
-            storage.insert(
-                new_storage_entry.slot(),
-                AccountStorageReference {
-                    id: new_storage_entry.id(),
-                    storage: Arc::new(new_storage_entry),
-                },
-            );
+            storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));
         }
 
         Ok(StorageAndNextAccountsFileId {

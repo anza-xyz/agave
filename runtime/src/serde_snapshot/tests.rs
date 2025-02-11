@@ -13,7 +13,7 @@ mod serde_snapshot_tests {
         log::info,
         rand::{thread_rng, Rng},
         solana_accounts_db::{
-            account_storage::{AccountStorageMap, AccountStorageReference},
+            account_storage::AccountStorageMap,
             accounts::Accounts,
             accounts_db::{
                 get_temp_accounts_paths, test_utils::create_test_accounts, AccountStorageEntry,
@@ -159,13 +159,7 @@ mod serde_snapshot_tests {
                 num_accounts,
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
-            storage.insert(
-                new_storage_entry.slot(),
-                AccountStorageReference {
-                    id: new_storage_entry.id(),
-                    storage: Arc::new(new_storage_entry),
-                },
-            );
+            storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));
         }
 
         Ok(StorageAndNextAccountsFileId {
