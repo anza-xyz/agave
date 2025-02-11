@@ -202,7 +202,6 @@ borsh0-10 = { package = "borsh", version = "0.10.3" }
 bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 byte-unit = "4.0.19"
-bytecount = "0.6.8"
 bytemuck = "1.21.0"
 bytemuck_derive = "1.8.1"
 bytes = "1.10"
