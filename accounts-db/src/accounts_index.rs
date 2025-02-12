@@ -480,20 +480,20 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
     start_bound: Bound<Pubkey>,
     end_bound: Bound<Pubkey>,
     is_finished: bool,
-    collect_all_unsorted: bool,
+    returns_items: AccountsIndexIteratorReturnsItems,
 }
 
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIterator<'a, T, U> {
     fn range<R>(
         map: &AccountMaps<T, U>,
         range: R,
-        collect_all_unsorted: bool,
+        returns_items: AccountsIndexIteratorReturnsItems,
     ) -> Vec<(Pubkey, AccountMapEntry<T>)>
     where
         R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
         let mut result = map.items(&range);
-        if !collect_all_unsorted {
+        if returns_items == AccountsIndexIteratorReturnsItems::Sorted {
             result.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         }
         result
@@ -545,7 +545,7 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
     pub fn new<R>(
         index: &'a AccountsIndex<T, U>,
         range: Option<&R>,
-        collect_all_unsorted: bool,
+        returns_items: AccountsIndexIteratorReturnsItems,
     ) -> Self
     where
         R: RangeBounds<Pubkey>,
@@ -562,7 +562,7 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
             account_maps: &index.account_maps,
             is_finished: false,
             bin_calculator: &index.bin_calculator,
-            collect_all_unsorted,
+            returns_items,
         }
     }
 
@@ -594,12 +594,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
         let (start_bin, bin_range) = self.bin_start_and_range();
         let mut chunk = Vec::with_capacity(ITER_BATCH_SIZE);
         'outer: for i in self.account_maps.iter().skip(start_bin).take(bin_range) {
-            for (pubkey, account_map_entry) in Self::range(
-                &i,
-                (self.start_bound, self.end_bound),
-                self.collect_all_unsorted,
-            ) {
-                if chunk.len() >= ITER_BATCH_SIZE && !self.collect_all_unsorted {
+            for (pubkey, account_map_entry) in
+                Self::range(&i, (self.start_bound, self.end_bound), self.returns_items)
+            {
+                if chunk.len() >= ITER_BATCH_SIZE
+                    && self.returns_items == AccountsIndexIteratorReturnsItems::Sorted
+                {
                     break 'outer;
                 }
                 let item = (pubkey, account_map_entry);
@@ -610,13 +610,25 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
         if chunk.is_empty() {
             self.is_finished = true;
             return None;
-        } else if self.collect_all_unsorted {
+        } else if self.returns_items == AccountsIndexIteratorReturnsItems::Unsorted {
             self.is_finished = true;
         }
 
         self.start_bound = Excluded(chunk.last().unwrap().0);
         Some(chunk)
     }
+}
+
+/// Specify how the accounts index iterator should return items
+///
+/// Users should prefer `Unsorted`, unless required otherwise,
+/// as sorting incurs additional runtime cost.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum AccountsIndexIteratorReturnsItems {
+    /// Returns items *not* sorted
+    Unsorted,
+    /// Returns items *sorted*
+    Sorted,
 }
 
 pub trait ZeroLamport {
@@ -760,11 +772,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         (account_maps, bin_calculator, storage)
     }
 
-    fn iter<R>(&self, range: Option<&R>, collect_all_unsorted: bool) -> AccountsIndexIterator<T, U>
+    fn iter<R>(
+        &self,
+        range: Option<&R>,
+        returns_items: AccountsIndexIteratorReturnsItems,
+    ) -> AccountsIndexIterator<T, U>
     where
         R: RangeBounds<Pubkey>,
     {
-        AccountsIndexIterator::new(self, range, collect_all_unsorted)
+        AccountsIndexIterator::new(self, range, returns_items)
     }
 
     /// is the accounts index using disk as a backing store
@@ -1037,6 +1053,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         F: FnMut(&Pubkey, (&T, Slot)),
         R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
+        let returns_items = if config.collect_all_unsorted {
+            AccountsIndexIteratorReturnsItems::Unsorted
+        } else {
+            AccountsIndexIteratorReturnsItems::Sorted
+        };
+
         // TODO: expand to use mint index to find the `pubkey_list` below more efficiently
         // instead of scanning the entire range
         let mut total_elapsed_timer = Measure::start("total");
@@ -1046,7 +1068,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let mut read_lock_elapsed = 0;
         let mut iterator_elapsed = 0;
         let mut iterator_timer = Measure::start("iterator_elapsed");
-        for pubkey_list in self.iter(range.as_ref(), config.collect_all_unsorted) {
+        for pubkey_list in self.iter(range.as_ref(), returns_items) {
             iterator_timer.stop();
             iterator_elapsed += iterator_timer.as_us();
             for (pubkey, list) in pubkey_list {
@@ -1385,7 +1407,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     where
         R: RangeBounds<Pubkey> + Debug + Sync,
     {
-        let iter = self.iter(Some(range), true);
+        let iter = self.iter(Some(range), AccountsIndexIteratorReturnsItems::Unsorted);
         iter.hold_range_in_memory(range, start_holding, thread_pool);
     }
 
@@ -2159,8 +2181,6 @@ pub mod tests {
             }
         }
     }
-
-    const COLLECT_ALL_UNSORTED_FALSE: bool = false;
 
     #[test]
     fn test_get_empty() {
@@ -3033,7 +3053,10 @@ pub mod tests {
     #[test]
     fn test_accounts_iter_finished() {
         let (index, _) = setup_accounts_index_keys(0);
-        let mut iter = index.iter(None::<&Range<Pubkey>>, COLLECT_ALL_UNSORTED_FALSE);
+        let mut iter = index.iter(
+            None::<&Range<Pubkey>>,
+            AccountsIndexIteratorReturnsItems::Sorted,
+        );
         assert!(iter.next().is_none());
         let mut gc = vec![];
         index.upsert(
@@ -3877,7 +3900,7 @@ pub mod tests {
         let iter = AccountsIndexIterator::new(
             &index,
             None::<&RangeInclusive<Pubkey>>,
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert_eq!((0, usize::MAX), iter.bin_start_and_range());
 
@@ -3887,26 +3910,26 @@ pub mod tests {
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&RangeInclusive::new(key_0, key_ff)),
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         let bins = index.bins();
         assert_eq!((0, bins), iter.bin_start_and_range());
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&RangeInclusive::new(key_ff, key_0)),
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert_eq!((bins - 1, 0), iter.bin_start_and_range());
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&(Included(key_0), Unbounded)),
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert_eq!((0, usize::MAX), iter.bin_start_and_range());
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&(Included(key_ff), Unbounded)),
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert_eq!((bins - 1, usize::MAX), iter.bin_start_and_range());
 
@@ -4154,7 +4177,7 @@ pub mod tests {
         let iter = AccountsIndexIterator::new(
             &index,
             None::<&RangeInclusive<Pubkey>>,
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert_eq!(iter.start_bin(), 0); // no range, so 0
         assert_eq!(iter.end_bin_inclusive(), usize::MAX); // no range, so max
@@ -4163,21 +4186,21 @@ pub mod tests {
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&RangeInclusive::new(key, key)),
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert_eq!(iter.start_bin(), 0); // start at pubkey 0, so 0
         assert_eq!(iter.end_bin_inclusive(), 0); // end at pubkey 0, so 0
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&(Included(key), Excluded(key))),
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert_eq!(iter.start_bin(), 0); // start at pubkey 0, so 0
         assert_eq!(iter.end_bin_inclusive(), 0); // end at pubkey 0, so 0
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&(Excluded(key), Excluded(key))),
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert_eq!(iter.start_bin(), 0); // start at pubkey 0, so 0
         assert_eq!(iter.end_bin_inclusive(), 0); // end at pubkey 0, so 0
@@ -4186,7 +4209,7 @@ pub mod tests {
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&RangeInclusive::new(key, key)),
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         let bins = index.bins();
         assert_eq!(iter.start_bin(), bins - 1); // start at highest possible pubkey, so bins - 1
@@ -4194,14 +4217,14 @@ pub mod tests {
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&(Included(key), Excluded(key))),
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert_eq!(iter.start_bin(), bins - 1); // start at highest possible pubkey, so bins - 1
         assert_eq!(iter.end_bin_inclusive(), bins - 1);
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&(Excluded(key), Excluded(key))),
-            COLLECT_ALL_UNSORTED_FALSE,
+            AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert_eq!(iter.start_bin(), bins - 1); // start at highest possible pubkey, so bins - 1
         assert_eq!(iter.end_bin_inclusive(), bins - 1);
