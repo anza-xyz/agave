@@ -158,7 +158,9 @@ Before building from source, make sure to install the following prerequisites:
 
 #### Rust
 
-For all platforms, check "Install Rust" at [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install) for the latest installation instructions.
+For all platforms, check "Install Rust" at
+[https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
+for the latest installation instructions.
 
 #### For Debian and Other Linux Distributions:
 
@@ -184,7 +186,8 @@ Replace `apt` with your distribution's package manager (e.g., `yum`, `dnf`,
 
 #### For macOS:
 
-Check "Install Homebrew" at [https://brew.sh/](https://brew.sh/) for the latest installation instruction for Homebrew if not already installed.
+Check "Install Homebrew" at [https://brew.sh/](https://brew.sh/) for the latest
+installation instruction for Homebrew if not already installed.
 
 Then, install build dependencies with `brew`:
 
