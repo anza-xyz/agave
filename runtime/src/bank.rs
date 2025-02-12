@@ -95,7 +95,7 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_cost_model::{block_cost_limits::simd_0207_block_limits, cost_tracker::CostTracker},
-    solana_feature_set::{self as feature_set, reward_full_priority_fee, FeatureSet},
+    solana_feature_set::{self as feature_set, FeatureSet},
     solana_fee::FeeFeatures,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_time, measure_us},
@@ -2593,11 +2593,7 @@ impl Bank {
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
-            if self.feature_set.is_active(&reward_full_priority_fee::id()) {
-                self.distribute_transaction_fee_details();
-            } else {
-                self.distribute_transaction_fees();
-            }
+            self.distribute_transaction_fee_details();
             self.distribute_rent_fees();
             self.update_slot_history();
             self.run_incinerator();
@@ -3615,21 +3611,6 @@ impl Bank {
         self.update_accounts_data_size_delta_off_chain(data_size_delta);
     }
 
-    fn filter_program_errors_and_collect_fee(
-        &self,
-        processing_results: &[TransactionProcessingResult],
-    ) {
-        let mut fees = 0;
-
-        processing_results.iter().for_each(|processing_result| {
-            if let Ok(processed_tx) = processing_result {
-                fees += processed_tx.fee_details().total_fee();
-            }
-        });
-
-        self.collector_fees.fetch_add(fees, Relaxed);
-    }
-
     // Note: this function is not yet used; next PR will call it behind a feature gate
     fn filter_program_errors_and_collect_fee_details(
         &self,
@@ -3765,11 +3746,7 @@ impl Bank {
         let ((), update_transaction_statuses_us) =
             measure_us!(self.update_transaction_statuses(sanitized_txs, &processing_results));
 
-        if self.feature_set.is_active(&reward_full_priority_fee::id()) {
-            self.filter_program_errors_and_collect_fee_details(&processing_results)
-        } else {
-            self.filter_program_errors_and_collect_fee(&processing_results)
-        };
+        self.filter_program_errors_and_collect_fee_details(&processing_results);
 
         timings.saturating_add_in_place(ExecuteTimingType::StoreUs, store_accounts_us);
         timings.saturating_add_in_place(
