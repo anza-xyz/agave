@@ -24,7 +24,9 @@ use {
     },
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult},
+        accounts_index::{
+            AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanOrder, ScanResult,
+        },
     },
     solana_client::connection_cache::Protocol,
     solana_entry::entry::Entry,
@@ -301,6 +303,11 @@ impl JsonRpcRequestProcessor {
         filters: Vec<RpcFilterType>,
         sort_results: bool,
     ) -> ScanResult<Vec<TransactionAccount>> {
+        let scan_order = if sort_results {
+            ScanOrder::Sorted
+        } else {
+            ScanOrder::Unsorted
+        };
         let bank = Arc::clone(bank);
         let index_key = index_key.to_owned();
         let program_id = program_id.to_owned();
@@ -319,7 +326,7 @@ impl JsonRpcRequestProcessor {
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
                     },
-                    &ScanConfig::new(!sort_results),
+                    &ScanConfig::new(scan_order),
                     bank.byte_limit_for_scans(),
                 )
             })
@@ -2230,6 +2237,11 @@ impl JsonRpcRequestProcessor {
             })
         } else {
             // this path does not need to provide a mb limit because we only want to support secondary indexes
+            let scan_order = if sort_results {
+                ScanOrder::Sorted
+            } else {
+                ScanOrder::Unsorted
+            };
             self.runtime
                 .spawn_blocking(move || {
                     bank.get_filtered_program_accounts(
@@ -2239,7 +2251,7 @@ impl JsonRpcRequestProcessor {
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
                         },
-                        &ScanConfig::new(!sort_results),
+                        &ScanConfig::new(scan_order),
                     )
                     .map_err(|e| RpcCustomError::ScanError {
                         message: e.to_string(),

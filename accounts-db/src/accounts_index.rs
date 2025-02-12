@@ -126,13 +126,7 @@ impl Default for ScanConfig {
 }
 
 impl ScanConfig {
-    pub fn new(collect_all_unsorted: bool) -> Self {
-        let scan_order = if collect_all_unsorted {
-            ScanOrder::Unsorted
-        } else {
-            ScanOrder::Sorted
-        };
-
+    pub fn new(scan_order: ScanOrder) -> Self {
         Self {
             scan_order,
             ..Default::default()
@@ -4258,8 +4252,7 @@ pub mod tests {
     #[test]
     fn test_scan_config() {
         for scan_order in [ScanOrder::Sorted, ScanOrder::Unsorted] {
-            let collect_all_unsorted = scan_order == ScanOrder::Unsorted;
-            let config = ScanConfig::new(collect_all_unsorted);
+            let config = ScanConfig::new(scan_order);
             assert_eq!(config.scan_order, scan_order);
             assert!(config.abort.is_none()); // not allocated
             assert!(!config.is_aborted());
@@ -4267,7 +4260,7 @@ pub mod tests {
             assert!(!config.is_aborted());
         }
 
-        let config = ScanConfig::new(false);
+        let config = ScanConfig::new(ScanOrder::Sorted);
         assert_eq!(config.scan_order, ScanOrder::Sorted);
         assert!(config.abort.is_none());
 
