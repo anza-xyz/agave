@@ -332,57 +332,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Use DIR as file tower storage location [default: --ledger value]"),
     )
     .arg(
-        Arg::with_name("tower_storage")
-            .long("tower-storage")
-            .possible_values(&["file", "etcd"])
-            .default_value(&default_args.tower_storage)
-            .takes_value(true)
-            .help("Where to store the tower"),
-    )
-    .arg(
-        Arg::with_name("etcd_endpoint")
-            .long("etcd-endpoint")
-            .required_if("tower_storage", "etcd")
-            .value_name("HOST:PORT")
-            .takes_value(true)
-            .multiple(true)
-            .validator(solana_net_utils::is_host_port)
-            .help("etcd gRPC endpoint to connect with"),
-    )
-    .arg(
-        Arg::with_name("etcd_domain_name")
-            .long("etcd-domain-name")
-            .required_if("tower_storage", "etcd")
-            .value_name("DOMAIN")
-            .default_value(&default_args.etcd_domain_name)
-            .takes_value(true)
-            .help("domain name against which to verify the etcd server’s TLS certificate"),
-    )
-    .arg(
-        Arg::with_name("etcd_cacert_file")
-            .long("etcd-cacert-file")
-            .required_if("tower_storage", "etcd")
-            .value_name("FILE")
-            .takes_value(true)
-            .help("verify the TLS certificate of the etcd endpoint using this CA bundle"),
-    )
-    .arg(
-        Arg::with_name("etcd_key_file")
-            .long("etcd-key-file")
-            .required_if("tower_storage", "etcd")
-            .value_name("FILE")
-            .takes_value(true)
-            .help("TLS key file to use when establishing a connection to the etcd endpoint"),
-    )
-    .arg(
-        Arg::with_name("etcd_cert_file")
-            .long("etcd-cert-file")
-            .required_if("tower_storage", "etcd")
-            .value_name("FILE")
-            .takes_value(true)
-            .help("TLS certificate to use when establishing a connection to the etcd endpoint"),
-    )
-    .arg(
         Arg::with_name("gossip_port")
             .long("gossip-port")
             .value_name("PORT")
