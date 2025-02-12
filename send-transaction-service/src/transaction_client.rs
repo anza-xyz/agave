@@ -410,18 +410,20 @@ where
             error!("Failed to stop scheduler: TpuClientNext task panicked.");
             return;
         };
-        let (handle, token) = std::mem::take(&mut *lock);
+        let (cancel, token) = std::mem::take(&mut *lock);
         token.cancel();
-        if let Some(handle) = handle {
-            match self.runtime_handle.block_on(handle) {
-                Ok(result) => match result {
-                    Ok(stats) => {
-                        debug!("tpu-client-next statistics over all the connections: {stats:?}");
-                    }
-                    Err(error) => error!("tpu-client-next exits with error {error}."),
-                },
-                Err(error) => error!("Failed to join task {error}."),
-            }
+        let Some(handle) = cancel else {
+            error!("Client task handle was not set.");
+            return;
+        };
+        match self.runtime_handle.block_on(handle) {
+            Ok(result) => match result {
+                Ok(stats) => {
+                    debug!("tpu-client-next statistics over all the connections: {stats:?}");
+                }
+                Err(error) => error!("tpu-client-next exits with error {error}."),
+            },
+            Err(error) => error!("Failed to join task {error}."),
         }
     }
 }
