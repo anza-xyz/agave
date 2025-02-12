@@ -10,8 +10,6 @@
 //! For Entries:
 //! * recorded entry must be >= WorkingBank::min_tick_height && entry must be < WorkingBank::max_tick_height
 //!
-#[cfg(feature = "dev-context-only-utils")]
-use solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo};
 use {
     crate::{leader_bank_notifier::LeaderBankNotifier, poh_service::PohService},
     crossbeam_channel::{
@@ -69,14 +67,6 @@ pub struct BankStart {
 }
 
 impl BankStart {
-    fn get_working_bank_if_not_expired(&self) -> Option<&Bank> {
-        if self.should_working_bank_still_be_processing_txs() {
-            Some(&self.working_bank)
-        } else {
-            None
-        }
-    }
-
     pub fn should_working_bank_still_be_processing_txs(&self) -> bool {
         Bank::should_bank_still_be_processing_txs(
             &self.bank_creation_time,
@@ -234,27 +224,6 @@ impl TransactionRecorder {
                     return result;
                 }
             }
-        }
-    }
-}
-
-pub enum PohRecorderBank {
-    WorkingBank(BankStart),
-    LastResetBank(Arc<Bank>),
-}
-
-impl PohRecorderBank {
-    pub fn bank(&self) -> &Bank {
-        match self {
-            PohRecorderBank::WorkingBank(bank_start) => &bank_start.working_bank,
-            PohRecorderBank::LastResetBank(last_reset_bank) => last_reset_bank,
-        }
-    }
-
-    pub fn working_bank_start(&self) -> Option<&BankStart> {
-        match self {
-            PohRecorderBank::WorkingBank(bank_start) => Some(bank_start),
-            PohRecorderBank::LastResetBank(_last_reset_bank) => None,
         }
     }
 }
@@ -759,10 +728,6 @@ impl PohRecorder {
             .map(|leader| (leader, target_slot))
     }
 
-    pub fn next_slot_leader(&self) -> Option<Pubkey> {
-        self.leader_after_n_slots(1)
-    }
-
     pub fn bank(&self) -> Option<Arc<Bank>> {
         self.working_bank.as_ref().map(|w| w.bank.clone())
     }
@@ -774,7 +739,7 @@ impl PohRecorder {
         })
     }
 
-    pub fn working_bank_end_slot(&self) -> Option<Slot> {
+    fn working_bank_end_slot(&self) -> Option<Slot> {
         self.working_bank.as_ref().and_then(|w| {
             if w.max_tick_height == self.tick_height {
                 Some(w.bank.slot())
@@ -784,7 +749,7 @@ impl PohRecorder {
         })
     }
 
-    pub fn working_slot(&self) -> Option<Slot> {
+    fn working_slot(&self) -> Option<Slot> {
         self.working_bank.as_ref().map(|w| w.bank.slot())
     }
 
@@ -1120,33 +1085,6 @@ impl PohRecorder {
             self.last_metric = Instant::now();
         }
     }
-
-    pub fn get_poh_recorder_bank(&self) -> PohRecorderBank {
-        let bank_start = self.bank_start();
-        if let Some(bank_start) = bank_start {
-            PohRecorderBank::WorkingBank(bank_start)
-        } else {
-            PohRecorderBank::LastResetBank(self.start_bank.clone())
-        }
-    }
-
-    // Filters the return result of PohRecorder::bank_start(), returns the bank
-    // if it's still processing transactions
-    pub fn get_working_bank_if_not_expired<'a>(
-        bank_start: &Option<&'a BankStart>,
-    ) -> Option<&'a Bank> {
-        bank_start
-            .as_ref()
-            .and_then(|bank_start| bank_start.get_working_bank_if_not_expired())
-    }
-
-    // Used in tests
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn schedule_dummy_max_height_reached_failure(&mut self) {
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        self.reset(bank, None);
-    }
 }
 
 fn do_create_test_recorder(
@@ -1234,7 +1172,10 @@ mod tests {
         crossbeam_channel::bounded,
         solana_clock::DEFAULT_TICKS_PER_SLOT,
         solana_ledger::{
-            blockstore::Blockstore, blockstore_meta::SlotMeta, get_tmp_ledger_path_auto_delete,
+            blockstore::Blockstore,
+            blockstore_meta::SlotMeta,
+            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            get_tmp_ledger_path_auto_delete,
         },
         solana_perf::test_tx::test_tx,
         solana_sha256_hasher::hash,
