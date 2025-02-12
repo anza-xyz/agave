@@ -2118,6 +2118,26 @@ mod tests {
         let bob_keypair = Keypair::new();
         let bob_pubkey = bob_keypair.pubkey();
         let identity_keypair = Keypair::new();
+        let vote_account_info_response = json!(Response {
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None
+            },
+            value: json!({
+                "data": ["", "base64"],
+                "lamports": 50,
+                "owner": "11111111111111111111111111111111",
+                "executable": false,
+                "rentEpoch": 1,
+            }),
+        });
+        let mut mocks = HashMap::new();
+        mocks.insert(RpcRequest::GetAccountInfo, vote_account_info_response);
+        let rpc_client = Some(Arc::new(RpcClient::new_mock_with_mocks(
+            "".to_string(),
+            mocks,
+        )));
+        config.rpc_client = rpc_client;
         config.command = CliCommand::CreateVoteAccount {
             vote_account: 1,
             seed: None,
@@ -2201,6 +2221,26 @@ mod tests {
         let bob_keypair = Keypair::new();
         let bob_pubkey = bob_keypair.pubkey();
         let custodian = solana_pubkey::new_rand();
+        let vote_account_info_response = json!(Response {
+            context: RpcResponseContext {
+                slot: 1,
+                api_version: None
+            },
+            value: json!({
+                "data": ["", "base64"],
+                "lamports": 50,
+                "owner": "11111111111111111111111111111111",
+                "executable": false,
+                "rentEpoch": 1,
+            }),
+        });
+        let mut mocks = HashMap::new();
+        mocks.insert(RpcRequest::GetAccountInfo, vote_account_info_response);
+        let rpc_client = Some(Arc::new(RpcClient::new_mock_with_mocks(
+            "".to_string(),
+            mocks,
+        )));
+        config.rpc_client = rpc_client;
         config.command = CliCommand::CreateStakeAccount {
             stake_account: 1,
             seed: None,
