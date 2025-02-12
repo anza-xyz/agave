@@ -112,24 +112,29 @@ pub struct ScanConfig {
     /// checked by the scan. When true, abort scan.
     pub abort: Option<Arc<AtomicBool>>,
 
-    /// true to allow return of all matching items and allow them to be unsorted.
-    /// This is more efficient.
-    pub collect_all_unsorted: bool,
+    /// In what order should items be scanned?
+    pub scan_order: ScanOrder,
 }
 
 impl Default for ScanConfig {
     fn default() -> Self {
         Self {
             abort: None,
-            collect_all_unsorted: true,
+            scan_order: ScanOrder::Unsorted,
         }
     }
 }
 
 impl ScanConfig {
     pub fn new(collect_all_unsorted: bool) -> Self {
+        let scan_order = if collect_all_unsorted {
+            ScanOrder::Unsorted
+        } else {
+            ScanOrder::Sorted
+        };
+
         Self {
-            collect_all_unsorted,
+            scan_order,
             ..Default::default()
         }
     }
@@ -145,7 +150,7 @@ impl ScanConfig {
     pub fn recreate_with_abort(&self) -> Self {
         ScanConfig {
             abort: Some(self.abort.clone().unwrap_or_default()),
-            collect_all_unsorted: self.collect_all_unsorted,
+            scan_order: self.scan_order,
         }
     }
 
@@ -157,6 +162,18 @@ impl ScanConfig {
             false
         }
     }
+}
+
+/// In what order should items be scanned?
+///
+/// Users should prefer `Unsorted`, unless required otherwise,
+/// as sorting incurs additional runtime cost.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum ScanOrder {
+    /// Scan items in any order
+    Unsorted,
+    /// Scan items in sorted order
+    Sorted,
 }
 
 pub(crate) type AccountMapEntry<T> = Arc<AccountMapEntryInner<T>>;
@@ -1053,10 +1070,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         F: FnMut(&Pubkey, (&T, Slot)),
         R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
-        let returns_items = if config.collect_all_unsorted {
-            AccountsIndexIteratorReturnsItems::Unsorted
-        } else {
-            AccountsIndexIteratorReturnsItems::Sorted
+        let returns_items = match config.scan_order {
+            ScanOrder::Unsorted => AccountsIndexIteratorReturnsItems::Unsorted,
+            ScanOrder::Sorted => AccountsIndexIteratorReturnsItems::Sorted,
         };
 
         // TODO: expand to use mint index to find the `pubkey_list` below more efficiently
@@ -4241,9 +4257,10 @@ pub mod tests {
 
     #[test]
     fn test_scan_config() {
-        for collect_all_unsorted in [false, true] {
+        for scan_order in [ScanOrder::Sorted, ScanOrder::Unsorted] {
+            let collect_all_unsorted = scan_order == ScanOrder::Unsorted;
             let config = ScanConfig::new(collect_all_unsorted);
-            assert_eq!(config.collect_all_unsorted, collect_all_unsorted);
+            assert_eq!(config.scan_order, scan_order);
             assert!(config.abort.is_none()); // not allocated
             assert!(!config.is_aborted());
             config.abort(); // has no effect
@@ -4251,11 +4268,11 @@ pub mod tests {
         }
 
         let config = ScanConfig::new(false);
-        assert!(!config.collect_all_unsorted);
+        assert_eq!(config.scan_order, ScanOrder::Sorted);
         assert!(config.abort.is_none());
 
         let config = ScanConfig::default();
-        assert!(config.collect_all_unsorted);
+        assert_eq!(config.scan_order, ScanOrder::Unsorted);
         assert!(config.abort.is_none());
 
         let config = config.recreate_with_abort();
