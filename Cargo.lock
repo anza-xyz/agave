@@ -10816,7 +10816,6 @@ dependencies = [
  "protobuf-src",
  "rand 0.8.5",
  "rayon",
- "serial_test",
  "solana-accounts-db",
  "solana-clock",
  "solana-entry",
