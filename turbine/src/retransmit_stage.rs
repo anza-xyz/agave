@@ -4,6 +4,7 @@ use {
     crate::cluster_nodes::{self, ClusterNodes, ClusterNodesCache, Error, MAX_NUM_TURBINE_HOPS},
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvError},
+    dashmap::DashMap,
     lru::LruCache,
     rand::Rng,
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
@@ -177,198 +178,225 @@ impl<const K: usize> ShredDeduper<K> {
     }
 }
 
-// pull the shreds from the shreds_receiver until empty, then retransmit them.
-// uses a thread_pool to parallelize work if there are enough shreds to justify that
-#[allow(clippy::too_many_arguments)]
-fn retransmit(
-    thread_pool: &ThreadPool,
-    bank_forks: &RwLock<BankForks>,
-    leader_schedule_cache: &LeaderScheduleCache,
-    cluster_info: &ClusterInfo,
-    retransmit_receiver: &Receiver<Vec<shred::Payload>>,
-    retransmit_sockets: &[UdpSocket],
-    quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
-    stats: &mut RetransmitStats,
-    cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
-    shred_deduper: &mut ShredDeduper,
-    max_slots: &MaxSlots,
-    rpc_subscriptions: Option<&RpcSubscriptions>,
-    slot_status_notifier: Option<&SlotStatusNotifier>,
-) -> Result<(), RecvError> {
-    // wait for something on the channel
-    let mut shreds = retransmit_receiver.recv()?;
-    // now the batch has started
-    let mut timer_start = Measure::start("retransmit");
-    // drain the channel until it is empty to form a batch
-    shreds.extend(retransmit_receiver.try_iter().flatten());
-    stats.num_shreds += shreds.len();
-    stats.total_batches += 1;
+struct RetransmitWorker {
+    set_of_slots: HashSet<Slot>,
+    slot_info_map: HashMap<Slot, (Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
+    slot_stats: DashMap<Slot, RetransmitSlotStats>,
+    thread_pool: ThreadPool,
+}
 
-    let mut epoch_fetch = Measure::start("retransmit_epoch_fetch");
-    let (working_bank, root_bank) = {
-        let bank_forks = bank_forks.read().unwrap();
-        (bank_forks.working_bank(), bank_forks.root_bank())
-    };
-    epoch_fetch.stop();
-    stats.epoch_fetch += epoch_fetch.as_us();
+struct RetransmitShredStatus {
+    slot: Slot,           // Shred slot.
+    root_distance: usize, // This node's distance from the turbine root.
+    num_nodes: usize,     // Number of nodes the shred was retransmitted to.
+}
+impl RetransmitWorker {
+    // pull the shreds from the shreds_receiver until empty, then retransmit them.
+    // uses a thread_pool to parallelize work if there are enough shreds to justify that
+    #[allow(clippy::too_many_arguments)]
+    fn retransmit(
+        &mut self,
+        bank_forks: &RwLock<BankForks>,
+        leader_schedule_cache: &LeaderScheduleCache,
+        cluster_info: &ClusterInfo,
+        retransmit_receiver: &Receiver<Vec<shred::Payload>>,
+        retransmit_sockets: &[UdpSocket],
+        quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
+        stats: &mut RetransmitStats,
+        cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+        shred_deduper: &mut ShredDeduper,
+        max_slots: &MaxSlots,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
+        slot_status_notifier: Option<&SlotStatusNotifier>,
+    ) -> Result<(), RecvError> {
+        // wait for something on the channel
+        let mut shreds = retransmit_receiver.recv()?;
+        // now the batch has started
+        let mut timer_start = Measure::start("retransmit");
+        // drain the channel until it is empty to form a batch
+        shreds.extend(retransmit_receiver.try_iter().flatten());
+        stats.num_shreds += shreds.len();
+        stats.total_batches += 1;
 
-    let mut epoch_cache_update = Measure::start("retransmit_epoch_cache_update");
-    shred_deduper.maybe_reset(
-        &mut rand::thread_rng(),
-        DEDUPER_FALSE_POSITIVE_RATE,
-        DEDUPER_RESET_CYCLE,
-    );
-    epoch_cache_update.stop();
-    stats.epoch_cache_update += epoch_cache_update.as_us();
-    // Lookup slot leader and cluster nodes for each slot.
-    let cache: HashMap<Slot, _> = shreds
-        .iter()
-        .filter_map(|shred| shred::layout::get_slot(shred))
-        .collect::<HashSet<Slot>>()
-        .into_iter()
-        .filter_map(|slot: Slot| {
-            max_slots.retransmit.fetch_max(slot, Ordering::Relaxed);
-            // TODO: consider using root-bank here for leader lookup!
-            // Shreds' signatures should be verified before they reach here,
-            // and if the leader is unknown they should fail signature check.
-            // So here we should expect to know the slot leader and otherwise
-            // skip the shred.
-            let Some(slot_leader) = leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))
-            else {
-                stats.unknown_shred_slot_leader += shreds.len();
-                return None;
-            };
-            let cluster_nodes =
-                cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
-            Some((slot, (slot_leader, cluster_nodes)))
-        })
-        .collect();
-    let socket_addr_space = cluster_info.socket_addr_space();
-    let record = |mut stats: HashMap<Slot, RetransmitSlotStats>,
-                  (slot, root_distance, num_nodes)| {
-        let now = timestamp();
-        let entry = stats.entry(slot).or_default();
-        entry.record(now, root_distance, num_nodes);
-        stats
-    };
-    let slot_stats = if shreds.len() < PAR_ITER_MIN_NUM_SHREDS {
-        stats.num_small_batches += 1;
-        shreds
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, shred)| {
-                retransmit_shred(
-                    shred,
-                    &root_bank,
-                    shred_deduper,
-                    &cache,
-                    socket_addr_space,
-                    &retransmit_sockets[index % retransmit_sockets.len()],
-                    quic_endpoint_sender,
-                    stats,
-                )
-            })
-            .fold(HashMap::new(), record)
-    } else {
-        thread_pool.install(|| {
+        let mut epoch_fetch = Measure::start("retransmit_epoch_fetch");
+        let (working_bank, root_bank) = {
+            let bank_forks = bank_forks.read().unwrap();
+            (bank_forks.working_bank(), bank_forks.root_bank())
+        };
+        epoch_fetch.stop();
+        stats.epoch_fetch += epoch_fetch.as_us();
+
+        let mut epoch_cache_update = Measure::start("retransmit_epoch_cache_update");
+        shred_deduper.maybe_reset(
+            &mut rand::thread_rng(),
+            DEDUPER_FALSE_POSITIVE_RATE,
+            DEDUPER_RESET_CYCLE,
+        );
+        epoch_cache_update.stop();
+        stats.epoch_cache_update += epoch_cache_update.as_us();
+        self.set_of_slots.clear();
+        self.set_of_slots.extend(
             shreds
-                .into_par_iter()
-                .filter_map(|shred| {
-                    let index = thread_pool.current_thread_index().unwrap();
-                    retransmit_shred(
+                .iter()
+                .filter_map(|shred| shred::layout::get_slot(shred)),
+        );
+        // Lookup slot leader and cluster nodes for each slot.
+        self.slot_info_map.clear();
+        self.slot_info_map
+            .extend(self.set_of_slots.iter().filter_map(|&slot| {
+                max_slots.retransmit.fetch_max(slot, Ordering::Relaxed);
+                // TODO: consider using root-bank here for leader lookup!
+                // Shreds' signatures should be verified before they reach here,
+                // and if the leader is unknown they should fail signature check.
+                // So here we should expect to know the slot leader and otherwise
+                // skip the shred.
+                let Some(slot_leader) =
+                    leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))
+                else {
+                    stats.unknown_shred_slot_leader += shreds.len();
+                    return None;
+                };
+                let cluster_nodes =
+                    cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
+                Some((slot, (slot_leader, cluster_nodes)))
+            }));
+
+        let socket_addr_space = cluster_info.socket_addr_space();
+        let record = |RetransmitShredStatus {
+                          slot,
+                          root_distance,
+                          num_nodes,
+                      }| {
+            let now = timestamp();
+            let mut entry = self.slot_stats.entry(slot).or_default();
+            entry.record(now, root_distance, num_nodes);
+        };
+        self.slot_stats.clear();
+        if shreds.len() < PAR_ITER_MIN_NUM_SHREDS {
+            stats.num_small_batches += 1;
+            shreds
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, shred)| {
+                    self.retransmit_shred(
                         shred,
                         &root_bank,
                         shred_deduper,
-                        &cache,
                         socket_addr_space,
                         &retransmit_sockets[index % retransmit_sockets.len()],
                         quic_endpoint_sender,
                         stats,
                     )
                 })
-                .fold(HashMap::new, record)
-                .reduce(HashMap::new, RetransmitSlotStats::merge)
-        })
-    };
-    stats.upsert_slot_stats(
-        slot_stats,
-        root_bank.slot(),
-        rpc_subscriptions,
-        slot_status_notifier,
-    );
-    timer_start.stop();
-    stats.total_time += timer_start.as_us();
-    stats.maybe_submit(&root_bank, &working_bank, cluster_info, cluster_nodes_cache);
-    Ok(())
-}
+                .for_each(record);
+        } else {
+            self.thread_pool.install(|| {
+                shreds
+                    .into_par_iter()
+                    .filter_map(|shred| {
+                        let index = self.thread_pool.current_thread_index().unwrap();
+                        self.retransmit_shred(
+                            shred,
+                            &root_bank,
+                            shred_deduper,
+                            socket_addr_space,
+                            &retransmit_sockets[index % retransmit_sockets.len()],
+                            quic_endpoint_sender,
+                            stats,
+                        )
+                    })
+                    .for_each(record);
+            })
+        };
 
-// Retransmit a single shred to all downstream nodes
-fn retransmit_shred(
-    shred: shred::Payload,
-    root_bank: &Bank,
-    shred_deduper: &ShredDeduper,
-    cache: &HashMap<Slot, (/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
-    socket_addr_space: &SocketAddrSpace,
-    socket: &UdpSocket,
-    quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
-    stats: &RetransmitStats,
-) -> Option<(
-    Slot,  // Shred slot.
-    usize, // This node's distance from the turbine root.
-    usize, // Number of nodes the shred was retransmitted to.
-)> {
-    let key = shred::layout::get_shred_id(shred.as_ref())?;
-    let (slot_leader, cluster_nodes) = cache.get(&key.slot())?;
-    if shred_deduper.dedup(key, shred.as_ref(), MAX_DUPLICATE_COUNT) {
-        stats.num_shreds_skipped.fetch_add(1, Ordering::Relaxed);
-        return None;
-    }
-    let mut compute_turbine_peers = Measure::start("turbine_start");
-    let data_plane_fanout = cluster_nodes::get_data_plane_fanout(key.slot(), root_bank);
-    let (root_distance, addrs) = cluster_nodes
-        .get_retransmit_addrs(slot_leader, &key, data_plane_fanout, socket_addr_space)
-        .inspect_err(|err| match err {
-            Error::Loopback { .. } => {
-                error!("retransmit_shred: {err}");
-                stats.num_loopback_errs.fetch_add(1, Ordering::Relaxed);
+        //drain the dashmap into slot stats structure
+        for shard in self.slot_stats.shards_mut() {
+            for (k, v) in shard.write().drain() {
+                stats.upsert_slot_stats(
+                    k,
+                    v.into_inner(),
+                    root_bank.slot(),
+                    rpc_subscriptions,
+                    slot_status_notifier,
+                );
             }
-        })
-        .ok()?;
-    compute_turbine_peers.stop();
-    stats
-        .compute_turbine_peers_total
-        .fetch_add(compute_turbine_peers.as_us(), Ordering::Relaxed);
-
-    let mut retransmit_time = Measure::start("retransmit_to");
-    let num_addrs = addrs.len();
-    let num_nodes = match cluster_nodes::get_broadcast_protocol(&key) {
-        Protocol::QUIC => {
-            let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred));
-            addrs
-                .into_iter()
-                .filter_map(|addr| quic_endpoint_sender.try_send((addr, shred.clone())).ok())
-                .count()
         }
-        Protocol::UDP => match multi_target_send(socket, shred, &addrs) {
-            Ok(()) => addrs.len(),
-            Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                error!(
+
+        stats.finalize_update();
+        timer_start.stop();
+        stats.total_time += timer_start.as_us();
+        stats.maybe_submit(&root_bank, &working_bank, cluster_info, cluster_nodes_cache);
+        Ok(())
+    }
+
+    // Retransmit a single shred to all downstream nodes
+    fn retransmit_shred(
+        &self,
+        shred: shred::Payload,
+        root_bank: &Bank,
+        shred_deduper: &ShredDeduper,
+        socket_addr_space: &SocketAddrSpace,
+        socket: &UdpSocket,
+        quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
+        stats: &RetransmitStats,
+    ) -> Option<RetransmitShredStatus> {
+        let key = shred::layout::get_shred_id(shred.as_ref())?;
+        let (slot_leader, cluster_nodes) = self.slot_info_map.get(&key.slot())?;
+        if shred_deduper.dedup(key, shred.as_ref(), MAX_DUPLICATE_COUNT) {
+            stats.num_shreds_skipped.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        let mut compute_turbine_peers = Measure::start("turbine_start");
+        let data_plane_fanout = cluster_nodes::get_data_plane_fanout(key.slot(), root_bank);
+        let (root_distance, addrs) = cluster_nodes
+            .get_retransmit_addrs(slot_leader, &key, data_plane_fanout, socket_addr_space)
+            .inspect_err(|err| match err {
+                Error::Loopback { .. } => {
+                    error!("retransmit_shred: {err}");
+                    stats.num_loopback_errs.fetch_add(1, Ordering::Relaxed);
+                }
+            })
+            .ok()?;
+        compute_turbine_peers.stop();
+        stats
+            .compute_turbine_peers_total
+            .fetch_add(compute_turbine_peers.as_us(), Ordering::Relaxed);
+
+        let mut retransmit_time = Measure::start("retransmit_to");
+        let num_addrs = addrs.len();
+        let num_nodes = match cluster_nodes::get_broadcast_protocol(&key) {
+            Protocol::QUIC => {
+                let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred));
+                addrs
+                    .into_iter()
+                    .filter_map(|addr| quic_endpoint_sender.try_send((addr, shred.clone())).ok())
+                    .count()
+            }
+            Protocol::UDP => match multi_target_send(socket, shred, &addrs) {
+                Ok(()) => addrs.len(),
+                Err(SendPktsError::IoError(ioerr, num_failed)) => {
+                    error!(
                     "retransmit_to multi_target_send error: {ioerr:?}, {num_failed}/{} packets failed",
                     addrs.len(),
                 );
-                addrs.len() - num_failed
-            }
-        },
-    };
-    retransmit_time.stop();
-    stats
-        .num_addrs_failed
-        .fetch_add(num_addrs - num_nodes, Ordering::Relaxed);
-    stats.num_nodes.fetch_add(num_nodes, Ordering::Relaxed);
-    stats
-        .retransmit_total
-        .fetch_add(retransmit_time.as_us(), Ordering::Relaxed);
-    Some((key.slot(), root_distance, num_nodes))
+                    addrs.len() - num_failed
+                }
+            },
+        };
+        retransmit_time.stop();
+        stats
+            .num_addrs_failed
+            .fetch_add(num_addrs - num_nodes, Ordering::Relaxed);
+        stats.num_nodes.fetch_add(num_nodes, Ordering::Relaxed);
+        stats
+            .retransmit_total
+            .fetch_add(retransmit_time.as_us(), Ordering::Relaxed);
+        Some(RetransmitShredStatus {
+            slot: key.slot(),
+            root_distance,
+            num_nodes,
+        })
+    }
 }
 
 /// Service to retransmit messages received from other peers in turbine.
@@ -417,26 +445,32 @@ impl RetransmitStage {
                 .build()
                 .unwrap()
         };
+        let mut worker = RetransmitWorker {
+            thread_pool,
+            set_of_slots: HashSet::new(),
+            slot_info_map: HashMap::new(),
+            slot_stats: DashMap::with_shard_amount(8),
+        };
 
         let retransmit_thread_handle = Builder::new()
             .name("solRetransmittr".to_string())
             .spawn(move || {
-                while retransmit(
-                    &thread_pool,
-                    &bank_forks,
-                    &leader_schedule_cache,
-                    &cluster_info,
-                    &retransmit_receiver,
-                    &retransmit_sockets,
-                    &quic_endpoint_sender,
-                    &mut stats,
-                    &cluster_nodes_cache,
-                    &mut shred_deduper,
-                    &max_slots,
-                    rpc_subscriptions.as_deref(),
-                    slot_status_notifier.as_ref(),
-                )
-                .is_ok()
+                while worker
+                    .retransmit(
+                        &bank_forks,
+                        &leader_schedule_cache,
+                        &cluster_info,
+                        &retransmit_receiver,
+                        &retransmit_sockets,
+                        &quic_endpoint_sender,
+                        &mut stats,
+                        &cluster_nodes_cache,
+                        &mut shred_deduper,
+                        &max_slots,
+                        rpc_subscriptions.as_deref(),
+                        slot_status_notifier.as_ref(),
+                    )
+                    .is_ok()
                 {}
             })
             .unwrap();
@@ -496,45 +530,48 @@ impl RetransmitStats {
         }
     }
 
-    fn upsert_slot_stats<I>(
+    // update/insert stats for a given slot.
+    // After calling this for all relevant slots, do not forget to call
+    // self.finalize_update()
+    fn upsert_slot_stats(
         &mut self,
-        feed: I,
+        slot: Slot,
+        stats: RetransmitSlotStats,
         root: Slot,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: Option<&SlotStatusNotifier>,
-    ) where
-        I: IntoIterator<Item = (Slot, RetransmitSlotStats)>,
-    {
-        for (slot, slot_stats) in feed {
-            match self.slot_stats.get_mut(&slot) {
-                None => {
-                    if let Some(rpc_subscriptions) = rpc_subscriptions {
-                        if slot > root {
-                            let slot_update = SlotUpdate::FirstShredReceived {
-                                slot,
-                                timestamp: slot_stats.outset,
-                            };
-                            rpc_subscriptions.notify_slot_update(slot_update);
-                            datapoint_info!("retransmit-first-shred", ("slot", slot, i64));
-                        }
+    ) {
+        match self.slot_stats.get_mut(&slot) {
+            None => {
+                if let Some(rpc_subscriptions) = rpc_subscriptions {
+                    if slot > root {
+                        let slot_update = SlotUpdate::FirstShredReceived {
+                            slot,
+                            timestamp: stats.outset,
+                        };
+                        rpc_subscriptions.notify_slot_update(slot_update);
+                        datapoint_info!("retransmit-first-shred", ("slot", slot, i64));
                     }
+                }
 
-                    if let Some(slot_status_notifier) = slot_status_notifier {
-                        if slot > root {
-                            slot_status_notifier
-                                .read()
-                                .unwrap()
-                                .notify_first_shred_received(slot);
-                        }
+                if let Some(slot_status_notifier) = slot_status_notifier {
+                    if slot > root {
+                        slot_status_notifier
+                            .read()
+                            .unwrap()
+                            .notify_first_shred_received(slot);
                     }
+                }
 
-                    self.slot_stats.put(slot, slot_stats);
-                }
-                Some(entry) => {
-                    *entry += slot_stats;
-                }
+                self.slot_stats.put(slot, stats);
+            }
+            Some(entry) => {
+                *entry += stats;
             }
         }
+    }
+
+    fn finalize_update(&mut self) {
         while self.slot_stats.len() > Self::SLOT_STATS_CACHE_CAPACITY {
             // Pop and submit metrics for the slot which was updated least
             // recently. At this point the node most likely will not receive
@@ -557,16 +594,6 @@ impl RetransmitSlotStats {
         self.asof = self.asof.max(now);
         self.num_shreds_received[root_distance] += 1;
         self.num_shreds_sent[root_distance] += num_nodes;
-    }
-
-    fn merge(mut acc: HashMap<Slot, Self>, other: HashMap<Slot, Self>) -> HashMap<Slot, Self> {
-        if acc.len() < other.len() {
-            return Self::merge(other, acc);
-        }
-        for (key, value) in other {
-            *acc.entry(key).or_default() += value;
-        }
-        acc
     }
 
     fn submit(&self, slot: Slot) {
