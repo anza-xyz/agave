@@ -110,6 +110,7 @@ use {
             create_account_shared_data_with_fields as create_account, from_account, Account,
             AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
         },
+        account_utils::StateMut,
         bpf_loader_upgradeable,
         clock::{
             BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_HASHES_PER_TICK,
@@ -143,7 +144,7 @@ use {
         slot_hashes::SlotHashes,
         slot_history::{Check, SlotHistory},
         stake::state::Delegation,
-        system_transaction,
+        system_program, system_transaction,
         sysvar::{self, last_restart_slot::LastRestartSlot, Sysvar, SysvarId},
         timing::years_as_slots,
         transaction::{
@@ -6540,6 +6541,96 @@ impl Bank {
                 vote_cost_limit,
             );
         }
+
+        // placeholder until https://github.com/anza-xyz/solana-sdk/pull/23 is published
+        if new_feature_activations.contains(&feature_set::drop_unchained_merkle_shreds::id()) {
+            self.enshrine_slashing_program();
+        }
+    }
+
+    fn enshrine_slashing_program(&mut self) {
+        const SLASHING_PROGRAM_KEY: Pubkey =
+            Pubkey::from_str_const("S1ashing11111111111111111111111111111111111");
+        const BUFFER_PROGRAM_KEY: Pubkey =
+            Pubkey::from_str_const("S1asHs4je6wPb2kWiHqNNdpNRiDaBEDQyfyCThhsrgv");
+        // placeholder until spl-slashing v1.0 is cut and published
+        const VERIFIED_BUILD_HASH: Hash = Hash::new_from_array([0; 32]);
+
+        let slashing_program_data_key =
+            bpf_loader_upgradeable::get_program_data_address(&SLASHING_PROGRAM_KEY);
+        let buffer_program_data_key =
+            bpf_loader_upgradeable::get_program_data_address(&BUFFER_PROGRAM_KEY);
+
+        if self
+            .get_account(&SLASHING_PROGRAM_KEY)
+            .map(|acc| !acc.data().is_empty())
+            .unwrap_or(false)
+        {
+            error!("Slashing program account is already populated");
+            return;
+        }
+
+        if self
+            .get_account(&slashing_program_data_key)
+            .map(|acc| !acc.data().is_empty())
+            .unwrap_or(false)
+        {
+            error!("Slashing program data account is already populated");
+            return;
+        }
+
+        let Some(buffer_program_account) = self.get_account(&BUFFER_PROGRAM_KEY) else {
+            error!("Buffer program account {} is missing", BUFFER_PROGRAM_KEY);
+            return;
+        };
+
+        let Some(buffer_program_data_account) = self.get_account(&buffer_program_data_key) else {
+            error!(
+                "Buffer program data account {} is missing",
+                buffer_program_data_key
+            );
+            return;
+        };
+
+        let offset = bpf_loader_upgradeable::UpgradeableLoaderState::size_of_programdata_metadata();
+        let end_offset = buffer_program_data_account
+            .data()
+            .iter()
+            .rposition(|&x| x != 0)
+            .map_or(0, |i| i + 1);
+        let buffer_program_data = &buffer_program_data_account.data()[offset..end_offset];
+        let build_hash = solana_sha256_hasher::hash(buffer_program_data);
+        if build_hash != VERIFIED_BUILD_HASH {
+            error!(
+                "Buffer verified build hash {} does not match expected {}",
+                build_hash, VERIFIED_BUILD_HASH
+            );
+            return;
+        }
+
+        let mut slashing_program_account = buffer_program_account.clone();
+        slashing_program_account.set_owner(bpf_loader_upgradeable::id());
+        slashing_program_account
+            .set_state(&bpf_loader_upgradeable::UpgradeableLoaderState::Program {
+                programdata_address: slashing_program_data_key,
+            })
+            .unwrap();
+        slashing_program_account.set_executable(true);
+
+        let mut slashing_program_data_account = buffer_program_data_account.clone();
+        slashing_program_data_account
+            .set_state(
+                &bpf_loader_upgradeable::UpgradeableLoaderState::ProgramData {
+                    slot: self.slot,
+                    upgrade_authority_address: Some(system_program::id()),
+                },
+            )
+            .unwrap();
+        slashing_program_data_account.data_as_mut_slice()[offset..end_offset]
+            .copy_from_slice(buffer_program_data);
+
+        self.store_account(&SLASHING_PROGRAM_KEY, &slashing_program_account);
+        self.store_account(&slashing_program_data_key, &slashing_program_data_account);
     }
 
     fn apply_updated_hashes_per_tick(&mut self, hashes_per_tick: u64) {

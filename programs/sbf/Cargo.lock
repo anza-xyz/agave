@@ -7369,6 +7369,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-runtime-transaction",
  "solana-sdk",
+ "solana-sha256-hasher",
  "solana-stake-program",
  "solana-svm",
  "solana-svm-rent-collector",
