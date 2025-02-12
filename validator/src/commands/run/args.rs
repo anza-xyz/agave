@@ -1373,8 +1373,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("no_skip_initial_accounts_db_clean")
             .long("no-skip-initial-accounts-db-clean")
             .help("Do not skip the initial cleaning of accounts when verifying snapshot bank")
-            .hidden(hidden_unless_forced())
-            .conflicts_with("accounts_db_skip_shrink"),
+            .hidden(hidden_unless_forced()),
     )
     .arg(
         Arg::with_name("accounts_db_squash_storages_method")

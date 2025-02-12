@@ -131,12 +131,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         (@into-option $v:expr) => { Some($v) };
     }
 
-    add_arg!(
-        Arg::with_name("accounts_db_skip_shrink")
-            .long("accounts-db-skip-shrink")
-            .help("Enables faster starting of validators by skipping startup clean and shrink."),
-        usage_warning: "Enabled by default",
-    );
     add_arg!(Arg::with_name("accounts_hash_interval_slots")
         .long("accounts-hash-interval-slots")
         .value_name("NUMBER")
