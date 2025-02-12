@@ -154,7 +154,7 @@ installed on your system.
 
 ### Prerequisites
 
-Before building from source, make sure to install the following prerequisites:
+Install the following prerequisites before building from source or developing Solana programs:
 
 #### For Debian and Other Linux Distributions:
 
@@ -198,7 +198,7 @@ Install Homebrew (if not already installed), check "Install Homebrew" at
 Install the necessary tools and libraries using Homebrew:
 
 ```bash
-brew install rust pkg-config libudev protobuf llvm coreutils
+brew install rust pkg-config libudev protobuf llvm coreutils rustup
 ```
 
 Follow the instructions given at the end of the brew install command about
