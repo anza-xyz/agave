@@ -928,8 +928,8 @@ pub fn execute(
                 (_, 0) => {
                     // snapshots are disabled
                     warn!(
-                        "Snapshots generation was disabled with `--snapshot-interval-slots 0`, \
-                        which is now deprecated. Use `--no-snapshots` instead.",
+                        "Snapshot generation was disabled with `--snapshot-interval-slots 0`, \
+                         which is now deprecated. Use `--no-snapshots` instead.",
                     );
                     (
                         DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
