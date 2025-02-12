@@ -15,11 +15,16 @@ those blocks' transactions through the runtime.
 
 ![Retransmit Block Diagram](/img/retransmit_stage.svg)
 
-
 ## TVU sockets
 
-Externally, TVU appears to bind to one port, typically 8002 UDP. Internally, TVU is actually bound with multiple sockets
-to improve kernel's handling of the packet queues. It is setup so that a node can advertise one external ip/port for TVU/TPU. We're binding multiple sockets to the same port using SO_REUSEPORT:
+Externally, TVU UDP receiver appears to bind to one port, typically 8002 UDP.
+Internally, TVU is actually bound with multiple sockets
+to improve kernel's handling of the packet queues.
+
+> **NOTE:** TPU sockets use similar logic
+
+It is setup so that a node can advertise one external ip/port for TVU.
+ We're binding multiple sockets to the same port using SO_REUSEPORT:
 
 ```rust
 let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
@@ -33,12 +38,14 @@ let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
 
  `multi_bind_in_range_with_config` sets `SO_REUSEPORT`. This means that other nodes only need to know about the one ip/port pair for TVU (similar principle applies in the case of TPU UDP sockets). The kernel distributes the incoming packets to all sockets bound to that port, and each socket can be serviced by a different thread.
 
+> **NOTE:** TVU QUIC socket does not use `SO_REUSEPORT`, but otherwise works similarly to UDP
 
 The TVU socket information is published via Gossip and is available in `ContactInfo` struct.
 To set a TVU socket, the node calls `set_tvu(...)`. The `set_tvu()` method is created by the macro `set_socket!`. For example:
 
 ```rust
 info.set_tvu(QUIC, (addr, tvu_quic_port)).unwrap();
+info.set_tvu(UDP, (addr, tvu_udp_port)).unwrap();
 ```
 
 Under the hood, `set_tvu()` calls `set_socket()`.
@@ -61,3 +68,4 @@ cache: [SocketAddr; SOCKET_CACHE_SIZE]
 For example, to retrieve the TVU ports of the remote node, the peer node calls:
 ```rust
 get_socket!(tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
+```
