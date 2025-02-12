@@ -533,6 +533,7 @@ pub struct Validator {
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
+    send_transaction_service_client_runtime: Option<TokioRuntime>,
 }
 
 impl Validator {
@@ -1078,6 +1079,7 @@ impl Validator {
             optimistically_confirmed_bank_tracker,
             bank_notification_sender,
             client_updater,
+            send_transaction_service_client_runtime,
         ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
             assert_eq!(
                 node.info
@@ -1097,97 +1099,101 @@ impl Validator {
             };
 
             let leader_info = ClusterTpuInfo::new(cluster_info.clone(), poh_recorder.clone());
-            let (json_rpc_service, client_updater) = if config.use_tpu_client_next {
-                let tpu_client_next_runtime = runtime::Builder::new_multi_thread()
+            let (json_rpc_service, client_updater, send_transaction_service_client_runtime) =
+                if config.use_tpu_client_next {
+                    let tpu_client_next_runtime = runtime::Builder::new_multi_thread()
                     .enable_all()
                     .thread_name("solSTSQuic")
                     .build()
                     .expect(
                         "Should be possible to create tokio runtime for SendTransactionService.",
                     );
-                let my_tpu_address = cluster_info
-                    .my_contact_info()
-                    .tpu(Protocol::QUIC)
-                    .map_err(|err| ValidatorError::Other(format!("{err}")))?;
+                    let my_tpu_address = cluster_info
+                        .my_contact_info()
+                        .tpu(Protocol::QUIC)
+                        .map_err(|err| ValidatorError::Other(format!("{err}")))?;
 
-                let client = TpuClientNextClient::new(
-                    tpu_client_next_runtime.handle().clone(),
-                    my_tpu_address,
-                    config.send_transaction_service_config.tpu_peers.clone(),
-                    Some(leader_info),
-                    config.send_transaction_service_config.leader_forward_count,
-                    Some(identity_keypair.insecure_clone()),
-                );
+                    info!("CREATE TPU_CLIENT_NEXT");
+                    let client = TpuClientNextClient::new(
+                        tpu_client_next_runtime.handle().clone(),
+                        my_tpu_address,
+                        config.send_transaction_service_config.tpu_peers.clone(),
+                        Some(leader_info),
+                        config.send_transaction_service_config.leader_forward_count,
+                        Some(identity_keypair.insecure_clone()),
+                    );
 
-                let json_rpc_service = JsonRpcService::new(
-                    rpc_addr,
-                    config.rpc_config.clone(),
-                    Some(config.snapshot_config.clone()),
-                    bank_forks.clone(),
-                    block_commitment_cache.clone(),
-                    blockstore.clone(),
-                    cluster_info.clone(),
-                    genesis_config.hash(),
-                    ledger_path,
-                    config.validator_exit.clone(),
-                    exit.clone(),
-                    rpc_override_health_check.clone(),
-                    startup_verification_complete,
-                    optimistically_confirmed_bank.clone(),
-                    config.send_transaction_service_config.clone(),
-                    max_slots.clone(),
-                    leader_schedule_cache.clone(),
-                    client.clone(),
-                    max_complete_transaction_status_slot,
-                    max_complete_rewards_slot,
-                    prioritization_fee_cache.clone(),
-                )
-                .map_err(ValidatorError::Other)?;
-                (
-                    json_rpc_service,
-                    Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
-                )
-            } else {
-                let my_tpu_address = cluster_info
-                    .my_contact_info()
-                    .tpu(connection_cache.protocol())
-                    .map_err(|err| ValidatorError::Other(format!("{err}")))?;
-                let client = ConnectionCacheClient::new(
-                    connection_cache.clone(),
-                    my_tpu_address,
-                    config.send_transaction_service_config.tpu_peers.clone(),
-                    Some(leader_info),
-                    config.send_transaction_service_config.leader_forward_count,
-                );
-                let json_rpc_service = JsonRpcService::new(
-                    rpc_addr,
-                    config.rpc_config.clone(),
-                    Some(config.snapshot_config.clone()),
-                    bank_forks.clone(),
-                    block_commitment_cache.clone(),
-                    blockstore.clone(),
-                    cluster_info.clone(),
-                    genesis_config.hash(),
-                    ledger_path,
-                    config.validator_exit.clone(),
-                    exit.clone(),
-                    rpc_override_health_check.clone(),
-                    startup_verification_complete,
-                    optimistically_confirmed_bank.clone(),
-                    config.send_transaction_service_config.clone(),
-                    max_slots.clone(),
-                    leader_schedule_cache.clone(),
-                    client.clone(),
-                    max_complete_transaction_status_slot,
-                    max_complete_rewards_slot,
-                    prioritization_fee_cache.clone(),
-                )
-                .map_err(ValidatorError::Other)?;
-                (
-                    json_rpc_service,
-                    Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
-                )
-            };
+                    let json_rpc_service = JsonRpcService::new(
+                        rpc_addr,
+                        config.rpc_config.clone(),
+                        Some(config.snapshot_config.clone()),
+                        bank_forks.clone(),
+                        block_commitment_cache.clone(),
+                        blockstore.clone(),
+                        cluster_info.clone(),
+                        genesis_config.hash(),
+                        ledger_path,
+                        config.validator_exit.clone(),
+                        exit.clone(),
+                        rpc_override_health_check.clone(),
+                        startup_verification_complete,
+                        optimistically_confirmed_bank.clone(),
+                        config.send_transaction_service_config.clone(),
+                        max_slots.clone(),
+                        leader_schedule_cache.clone(),
+                        client.clone(),
+                        max_complete_transaction_status_slot,
+                        max_complete_rewards_slot,
+                        prioritization_fee_cache.clone(),
+                    )
+                    .map_err(ValidatorError::Other)?;
+                    (
+                        json_rpc_service,
+                        Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+                        Some(tpu_client_next_runtime),
+                    )
+                } else {
+                    let my_tpu_address = cluster_info
+                        .my_contact_info()
+                        .tpu(connection_cache.protocol())
+                        .map_err(|err| ValidatorError::Other(format!("{err}")))?;
+                    let client = ConnectionCacheClient::new(
+                        connection_cache.clone(),
+                        my_tpu_address,
+                        config.send_transaction_service_config.tpu_peers.clone(),
+                        Some(leader_info),
+                        config.send_transaction_service_config.leader_forward_count,
+                    );
+                    let json_rpc_service = JsonRpcService::new(
+                        rpc_addr,
+                        config.rpc_config.clone(),
+                        Some(config.snapshot_config.clone()),
+                        bank_forks.clone(),
+                        block_commitment_cache.clone(),
+                        blockstore.clone(),
+                        cluster_info.clone(),
+                        genesis_config.hash(),
+                        ledger_path,
+                        config.validator_exit.clone(),
+                        exit.clone(),
+                        rpc_override_health_check.clone(),
+                        startup_verification_complete,
+                        optimistically_confirmed_bank.clone(),
+                        config.send_transaction_service_config.clone(),
+                        max_slots.clone(),
+                        leader_schedule_cache.clone(),
+                        client.clone(),
+                        max_complete_transaction_status_slot,
+                        max_complete_rewards_slot,
+                        prioritization_fee_cache.clone(),
+                    )
+                    .map_err(ValidatorError::Other)?;
+                    (
+                        json_rpc_service,
+                        Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+                        None,
+                    )
+                };
 
             let pubsub_service = if !config.rpc_config.full_api {
                 None
@@ -1264,9 +1270,10 @@ impl Validator {
                 optimistically_confirmed_bank_tracker,
                 bank_notification_sender_config,
                 Some(client_updater),
+                send_transaction_service_client_runtime,
             )
         } else {
-            (None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None, None)
         };
 
         if config.halt_at_slot.is_some() {
@@ -1688,6 +1695,7 @@ impl Validator {
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
+            send_transaction_service_client_runtime,
         })
     }
 
