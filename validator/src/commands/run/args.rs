@@ -430,7 +430,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "Number of slots between generating snapshots. \
                  If incremental snapshots are enabled, this sets the incremental snapshot interval. \
                  If incremental snapshots are disabled, this sets the full snapshot interval. \
-                 Setting this to 0 disables all snapshots, but prefer --no-snapshots instead.",
+                 To disable all snapshot generation, see --no-snapshots.",
             ),
     )
     .arg(
