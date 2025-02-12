@@ -39,7 +39,6 @@ proptest = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-logger = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-sysvar-id = { workspace = true }
 solana-vote-program = { workspace = true, default-features = false }
