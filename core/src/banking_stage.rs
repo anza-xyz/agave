@@ -534,63 +534,51 @@ impl BankingStage {
             )
         }
 
+        // Macro to spawn the scheduler. Different type on `scheduler` and thus
+        // scheduler_controller mean we cannot have an easy if for `scheduler`
+        // assignment without introducing `dyn`.
+        macro_rules! spawn_scheduler {
+            ($scheduler:ident) => {
+                bank_thread_hdls.push(
+                    Builder::new()
+                        .name("solBnkTxSched".to_string())
+                        .spawn(move || {
+                            let scheduler_controller = SchedulerController::new(
+                                decision_maker.clone(),
+                                receive_and_buffer,
+                                bank_forks,
+                                $scheduler,
+                                worker_metrics,
+                            );
+
+                            match scheduler_controller.run() {
+                                Ok(_) => {}
+                                Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
+                                Err(SchedulerError::DisconnectedSendChannel(_)) => {
+                                    warn!("Unexpected worker disconnect from scheduler")
+                                }
+                            }
+                        })
+                        .unwrap(),
+                );
+            };
+        }
+
         // Spawn the central scheduler thread
         if use_greedy_scheduler {
-            bank_thread_hdls.push(
-                Builder::new()
-                    .name("solBnkTxSched".to_string())
-                    .spawn(move || {
-                        let scheduler = GreedyScheduler::new(
-                            work_senders,
-                            finished_work_receiver,
-                            GreedySchedulerConfig::default(),
-                        );
-                        let scheduler_controller = SchedulerController::new(
-                            decision_maker.clone(),
-                            receive_and_buffer,
-                            bank_forks,
-                            scheduler,
-                            worker_metrics,
-                        );
-
-                        match scheduler_controller.run() {
-                            Ok(_) => {}
-                            Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
-                            Err(SchedulerError::DisconnectedSendChannel(_)) => {
-                                warn!("Unexpected worker disconnect from scheduler")
-                            }
-                        }
-                    })
-                    .unwrap(),
+            let scheduler = GreedyScheduler::new(
+                work_senders,
+                finished_work_receiver,
+                GreedySchedulerConfig::default(),
             );
+            spawn_scheduler!(scheduler);
         } else {
-            bank_thread_hdls.push(
-                Builder::new()
-                    .name("solBnkTxSched".to_string())
-                    .spawn(move || {
-                        let scheduler = PrioGraphScheduler::new(
-                            work_senders,
-                            finished_work_receiver,
-                            PrioGraphSchedulerConfig::default(),
-                        );
-                        let scheduler_controller = SchedulerController::new(
-                            decision_maker.clone(),
-                            receive_and_buffer,
-                            bank_forks,
-                            scheduler,
-                            worker_metrics,
-                        );
-
-                        match scheduler_controller.run() {
-                            Ok(_) => {}
-                            Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
-                            Err(SchedulerError::DisconnectedSendChannel(_)) => {
-                                warn!("Unexpected worker disconnect from scheduler")
-                            }
-                        }
-                    })
-                    .unwrap(),
+            let scheduler = PrioGraphScheduler::new(
+                work_senders,
+                finished_work_receiver,
+                PrioGraphSchedulerConfig::default(),
             );
+            spawn_scheduler!(scheduler);
         }
     }
 
