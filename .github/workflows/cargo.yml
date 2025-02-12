@@ -13,6 +13,9 @@ on:
       - "**.rs"
       - "**/Cargo.toml"
       - "**/Cargo.lock"
+      - ".github/scripts/install-all-deps.sh"
+      - ".github/scripts/install-openssl.sh"
+      - ".github/scripts/install-proto.sh"
       - ".github/scripts/cargo-clippy-before-script.sh"
       - ".github/workflows/cargo.yml"
 
