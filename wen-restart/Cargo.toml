@@ -33,7 +33,6 @@ solana-vote-program = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 rand = { workspace = true }
-serial_test = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-entry = { workspace = true }
 solana-keypair = { workspace = true }
