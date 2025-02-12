@@ -410,7 +410,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("no-snapshots")
             .takes_value(false)
             .conflicts_with_all(&["no_incremental_snapshots", "snapshot_interval_slots", "full_snapshot_interval_slots"])
-            .help("Disable all snapshots")
+            .help("Disable all snapshot generation")
     )
     .arg(
         Arg::with_name("no_incremental_snapshots")
