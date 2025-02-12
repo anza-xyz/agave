@@ -184,7 +184,7 @@ Replace `apt` with your distribution's package manager (e.g., `yum`, `dnf`,
 
 #### For macOS:
 
-Check "Install Homebrew" at https://brew.sh/](https://brew.sh/) for the latest installation instruction for Homebrew if not already installed.
+Check "Install Homebrew" at [https://brew.sh/](https://brew.sh/) for the latest installation instruction for Homebrew if not already installed.
 
 Then, install build dependencies with `brew`:
 
