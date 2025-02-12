@@ -67,6 +67,20 @@ pub(crate) struct PrioGraphScheduler<Tx> {
     config: PrioGraphSchedulerConfig,
 }
 
+impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
+    pub(crate) fn new(
+        consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
+        finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
+        config: PrioGraphSchedulerConfig,
+    ) -> Self {
+        Self {
+            common: SchedulingCommon::new(consume_work_senders, finished_consume_work_receiver),
+            prio_graph: PrioGraph::new(passthrough_priority),
+            config,
+        }
+    }
+}
+
 impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
     /// Schedule transactions from the given `StateContainer` to be
     /// consumed by the worker threads. Returns summary of scheduling, or an
@@ -320,18 +334,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
 }
 
 impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
-    pub(crate) fn new(
-        consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
-        finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
-        config: PrioGraphSchedulerConfig,
-    ) -> Self {
-        Self {
-            common: SchedulingCommon::new(consume_work_senders, finished_consume_work_receiver),
-            prio_graph: PrioGraph::new(passthrough_priority),
-            config,
-        }
-    }
-
     /// Gets accessed accounts (resources) for use in `PrioGraph`.
     fn get_transaction_account_access(
         transaction: &SanitizedTransactionTTL<impl SVMMessage>,

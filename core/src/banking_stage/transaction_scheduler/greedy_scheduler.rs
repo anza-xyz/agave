@@ -48,6 +48,21 @@ pub struct GreedyScheduler<Tx: TransactionWithMeta> {
     config: GreedySchedulerConfig,
 }
 
+impl<Tx: TransactionWithMeta> GreedyScheduler<Tx> {
+    pub(crate) fn new(
+        consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
+        finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
+        config: GreedySchedulerConfig,
+    ) -> Self {
+        Self {
+            common: SchedulingCommon::new(consume_work_senders, finished_consume_work_receiver),
+            working_account_set: ReadWriteAccountSet::default(),
+            unschedulables: Vec::with_capacity(config.max_scanned_transactions_per_scheduling_pass),
+            config,
+        }
+    }
+}
+
 impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
     fn schedule<S: StateContainer<Tx>>(
         &mut self,
@@ -187,21 +202,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
     fn scheduling_common_mut(&mut self) -> &mut SchedulingCommon<Tx> {
         &mut self.common
-    }
-}
-
-impl<Tx: TransactionWithMeta> GreedyScheduler<Tx> {
-    pub(crate) fn new(
-        consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
-        finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
-        config: GreedySchedulerConfig,
-    ) -> Self {
-        Self {
-            common: SchedulingCommon::new(consume_work_senders, finished_consume_work_receiver),
-            working_account_set: ReadWriteAccountSet::default(),
-            unschedulables: Vec::with_capacity(config.max_scanned_transactions_per_scheduling_pass),
-            config,
-        }
     }
 }
 
