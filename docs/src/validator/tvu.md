@@ -35,32 +35,29 @@ let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
 
 
 The TVU socket information is published via Gossip and is available in `ContactInfo` struct.
-To set a tvu socket, the node can call set_tvu() which is created by the macro `set_socket!`. For example:
+To set a TVU socket, the node calls `set_tvu(...)`. The `set_tvu()` method is created by the macro `set_socket!`. For example:
 
 ```rust
 info.set_tvu(QUIC, (addr, tvu_quic_port)).unwrap();
 ```
 
-`set_tvu()` will call `set_socket()`
+Under the hood, `set_tvu()` calls `set_socket()`.
 
-under the hood in the actual `ContactInfo` CRDS all sockets are identified by a tag/key like these:
+In the `ContactInfo` struct, all sockets are identified by a tag/key, e.g.:
 
 ```rust
 const SOCKET_TAG_TVU: u8 = 10;       // For UDP
 const SOCKET_TAG_TVU_QUIC: u8 = 11;  // For QUIC
-```
 
- * `set_socket()` will create a `SocketEntry` and store that into `ContactInfo::sockets`
- * `set_socket()` will also update the `ContactInfo::cache`
+ * `set_socket()` creates a `SocketEntry` and stores that into `ContactInfo::sockets`
+ * `set_socket()` updates `ContactInfo::cache`
 
 ```rust
 cache: [SocketAddr; SOCKET_CACHE_SIZE]
 ```
 
-the cache is purely for quick lookups and optimization. it is not serialized and sent to peer nodes.
-But, `SocketEntry` will be serialized and sent to peer nodes in the `ContactInfo` CRDS. On the receiving end, the `get_socket!` macro will return the TVU port.
-so you can call:
+`cache` is purely for quick lookups and optimization; it is not serialized and sent to peer nodes.
+`SocketEntry` is serialized and sent to peer nodes within the gossip message type `CrdsData::ContactInfo`. Upon receiving the `ContactInfo`, the peer node calls the `get_socket!` macro to retrieve the TVU port associated with the node..
+For example, to retrieve the TVU ports of the remote node, the peer node calls:
 ```rust
 get_socket!(tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
-```
-to retrieve the TVU ports of the remote node.
