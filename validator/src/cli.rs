@@ -131,18 +131,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         (@into-option $v:expr) => { Some($v) };
     }
 
-    add_arg!(Arg::with_name("accounts_hash_interval_slots")
-        .long("accounts-hash-interval-slots")
-        .value_name("NUMBER")
-        .takes_value(true)
-        .help("Number of slots between verifying accounts hash.")
-        .validator(|val| {
-            if val.eq("0") {
-                Err(String::from("Accounts hash interval cannot be zero"))
-            } else {
-                Ok(())
-            }
-        }));
     // deprecated in v2.1 by PR #2721
     add_arg!(Arg::with_name("accounts_index_memory_limit_mb")
         .long("accounts-index-memory-limit-mb")
