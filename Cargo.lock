@@ -9688,6 +9688,7 @@ dependencies = [
  "solana-runtime-transaction",
  "solana-sdk",
  "solana-sdk-ids",
+ "solana-sha256-hasher",
  "solana-stake-program",
  "solana-svm",
  "solana-svm-callback",

@@ -79,6 +79,7 @@ solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk = { workspace = true }
+solana-sha256-hasher = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
