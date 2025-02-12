@@ -8256,7 +8256,6 @@ name = "solana-unified-scheduler-pool"
 version = "2.3.0"
 dependencies = [
  "agave-banking-stage-ingress-types",
- "aquamarine",
  "assert_matches",
  "crossbeam-channel",
  "dashmap",
