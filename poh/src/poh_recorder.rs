@@ -432,20 +432,28 @@ impl PohRecorder {
         self.leader_bank_notifier.clone()
     }
 
-    fn start_slot_was_mine_or_previous_leader(&self, slot: Slot) -> bool {
-        (slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..slot).any(|slot| {
-            // Check if the last slot PoH reset to was any of the
-            // previous leader's slots.
-            // If so, PoH is currently building on the previous leader's blocks
-            // If not, PoH is building on a different fork
-            slot == self.start_slot()
-        })
+    fn start_slot_was_mine_or_previous_leader(&self, next_leader_slot: Slot) -> bool {
+        (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_leader_slot).any(
+            |slot| {
+                // Check if the last slot PoH reset to was any of the
+                // previous leader's slots.
+                // If so, PoH is currently building on the previous leader's blocks
+                // If not, PoH is building on a different fork
+                slot == self.start_slot()
+            },
+        )
     }
 
     // Check if the last slot PoH reset onto was the previous leader's last slot.
-    fn building_off_previous_leader_last_block(&self, my_pubkey: &Pubkey, next_slot: Slot) -> bool {
+    fn building_off_previous_leader_last_block(
+        &self,
+        my_pubkey: &Pubkey,
+        next_leader_slot: Slot,
+    ) -> bool {
         // Walk backwards from the slot before our next leader slot.
-        for slot in (next_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_slot).rev() {
+        for slot in
+            (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_leader_slot).rev()
+        {
             // Identify which leader is responsible for building this slot.
             let leader_for_slot = self.leader_schedule_cache.slot_leader_at(slot, None);
             let Some(leader_for_slot) = leader_for_slot else {
@@ -469,34 +477,34 @@ impl PohRecorder {
 
     // Active descendants of the last reset bank that are smaller than the
     // next leader slot could soon become the new reset bank.
-    fn is_new_reset_bank_pending(&self, next_slot: Slot) -> bool {
+    fn is_new_reset_bank_pending(&self, next_leader_slot: Slot) -> bool {
         self.start_bank_active_descendants
             .iter()
-            .any(|pending_slot| *pending_slot < next_slot)
+            .any(|pending_slot| *pending_slot < next_leader_slot)
     }
 
     fn can_skip_grace_ticks(&self, my_pubkey: &Pubkey) -> bool {
         let next_tick_height = self.tick_height.saturating_add(1);
-        let next_slot = self.slot_for_tick_height(next_tick_height);
+        let next_leader_slot = self.slot_for_tick_height(next_tick_height);
 
         if self.start_slot_was_mine(my_pubkey) {
             // Building off my own block. No need to wait.
             return true;
         }
 
-        if self.start_slot_was_mine_or_previous_leader(next_slot) {
+        if self.start_slot_was_mine_or_previous_leader(next_leader_slot) {
             // Planning to build off block produced by the leader previous to
             // me. Check if they've completed all of their slots.
-            return self.building_off_previous_leader_last_block(my_pubkey, next_slot);
+            return self.building_off_previous_leader_last_block(my_pubkey, next_leader_slot);
         }
 
-        if !self.is_new_reset_bank_pending(next_slot) {
+        if !self.is_new_reset_bank_pending(next_leader_slot) {
             // No pending blocks from previous leader have been observed. No
             // need to wait.
             return true;
         }
 
-        self.report_pending_fork_was_detected(next_slot);
+        self.report_pending_fork_was_detected(next_leader_slot);
         if !self.delay_leader_block_for_pending_fork {
             // Not configured to wait for pending blocks from previous leader.
             return true;
@@ -529,18 +537,18 @@ impl PohRecorder {
 
     // Report metrics when poh recorder detects a pending fork that could
     // soon lead to poh reset.
-    fn report_pending_fork_was_detected(&self, next_slot: Slot) {
+    fn report_pending_fork_was_detected(&self, next_leader_slot: Slot) {
         // Only report once per next leader slot to avoid spamming metrics. It's
         // enough to know that a leader decided to delay or not once per slot
         let mut last_slot = self.last_reported_slot_for_pending_fork.lock().unwrap();
-        if *last_slot == next_slot {
+        if *last_slot == next_leader_slot {
             return;
         }
-        *last_slot = next_slot;
+        *last_slot = next_leader_slot;
 
         datapoint_info!(
             "poh_recorder-detected_pending_fork",
-            ("next_leader_slot", next_slot, i64),
+            ("next_leader_slot", next_leader_slot, i64),
             (
                 "did_delay_leader_slot",
                 self.delay_leader_block_for_pending_fork,
