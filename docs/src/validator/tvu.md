@@ -14,3 +14,53 @@ those blocks' transactions through the runtime.
 ## Retransmit Stage
 
 ![Retransmit Block Diagram](/img/retransmit_stage.svg)
+
+
+## TVU sockets
+
+Externally, TVU appears to bind to one port, typically 8002 UDP. Internally, TVU is actually bound with multiple sockets
+to improve kernel's handling of the packet queues. It is setup so that a node can advertise one external ip/port for TVU/TPU. We're binding multiple sockets to the same port using SO_REUSEPORT:
+
+```rust
+let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
+            bind_ip_addr,
+            port_range,
+            socket_config_reuseport,
+            num_tvu_sockets.get(),
+        )
+        .expect("tvu multi_bind");
+```
+
+ `multi_bind_in_range_with_config` sets `SO_REUSEPORT`. This means that other nodes only need to know about the one ip/port pair for TVU (similar principle applies in the case of TPU UDP sockets). The kernel distributes the incoming packets to all sockets bound to that port, and each socket can be serviced by a different thread.
+
+
+The TVU socket information is published via Gossip and is available in `ContactInfo` struct.
+To set a tvu socket, the node can call set_tvu() which is created by the macro `set_socket!`. For example:
+
+```rust
+info.set_tvu(QUIC, (addr, tvu_quic_port)).unwrap();
+```
+
+`set_tvu()` will call `set_socket()`
+
+under the hood in the actual `ContactInfo` CRDS all sockets are identified by a tag/key like these:
+
+```rust
+const SOCKET_TAG_TVU: u8 = 10;       // For UDP
+const SOCKET_TAG_TVU_QUIC: u8 = 11;  // For QUIC
+```
+
+ * `set_socket()` will create a `SocketEntry` and store that into `ContactInfo::sockets`
+ * `set_socket()` will also update the `ContactInfo::cache`
+
+```rust
+cache: [SocketAddr; SOCKET_CACHE_SIZE]
+```
+
+the cache is purely for quick lookups and optimization. it is not serialized and sent to peer nodes.
+But, `SocketEntry` will be serialized and sent to peer nodes in the `ContactInfo` CRDS. On the receiving end, the `get_socket!` macro will return the TVU port.
+so you can call:
+```rust
+get_socket!(tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
+```
+to retrieve the TVU ports of the remote node.
