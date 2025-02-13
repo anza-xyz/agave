@@ -8,7 +8,7 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::packet::PACKET_DATA_SIZE,
+    solana_sdk::{clock::Slot, packet::PACKET_DATA_SIZE},
     std::sync::Arc,
 };
 
@@ -67,10 +67,16 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 
     /// Retries a transaction - inserts transaction back into map.
     /// This transitions the transaction to `Unprocessed` state.
-    fn retry_transaction(&mut self, transaction_id: TransactionId, transaction: Tx) {
+    fn retry_transaction(
+        &mut self,
+        tried_slot: Option<Slot>,
+        transaction_id: TransactionId,
+        transaction: Tx,
+    ) {
         let transaction_state = self
             .get_mut_transaction_state(transaction_id)
             .expect("transaction must exist");
+        transaction_state.set_last_tried_slot(tried_slot);
         let priority_id = TransactionPriorityId::new(transaction_state.priority(), transaction_id);
         transaction_state.retry_transaction(transaction);
         self.push_ids_into_queue(std::iter::once(priority_id));

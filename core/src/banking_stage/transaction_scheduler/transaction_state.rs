@@ -1,4 +1,4 @@
-use crate::banking_stage::scheduler_messages::MaxAge;
+use {crate::banking_stage::scheduler_messages::MaxAge, solana_sdk::clock::Slot};
 
 /// TransactionState is used to track the state of a transaction in the transaction scheduler
 /// and banking stage as a whole.
@@ -20,6 +20,8 @@ pub(crate) struct TransactionState<Tx> {
     priority: u64,
     /// Estimated cost of the transaction.
     cost: u64,
+    /// Last slot transaction attempted execution on.
+    last_tried_slot: Option<Slot>,
 }
 
 impl<Tx> TransactionState<Tx> {
@@ -30,6 +32,7 @@ impl<Tx> TransactionState<Tx> {
             max_age,
             priority,
             cost,
+            last_tried_slot: None,
         }
     }
 
@@ -56,6 +59,16 @@ impl<Tx> TransactionState<Tx> {
             .take()
             .expect("transaction not already pending");
         (tx, self.max_age)
+    }
+
+    /// Return the last tried slot.
+    pub(crate) fn last_tried_slot(&self) -> Option<Slot> {
+        self.last_tried_slot
+    }
+
+    /// Set a new last tried slot.
+    pub(crate) fn set_last_tried_slot(&mut self, slot: Option<Slot>) {
+        self.last_tried_slot = slot;
     }
 
     /// Intended to be called when a transaction is retried. This method will
