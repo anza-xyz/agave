@@ -22,14 +22,18 @@ pub trait LeaderScheduleVariant:
     std::fmt::Debug + Send + Sync + Index<u64, Output = Pubkey>
 {
     fn get_slot_leaders(&self) -> &[Pubkey];
-    fn get_index(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>>;
+    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>>;
 
     fn get_indices(
         &self,
         pubkey: &Pubkey,
         offset: usize, // Starting index.
     ) -> Box<dyn Iterator<Item = usize>> {
-        let index = self.get_index().get(pubkey).cloned().unwrap_or_default();
+        let index = self
+            .get_leader_slots_map()
+            .get(pubkey)
+            .cloned()
+            .unwrap_or_default();
         let num_slots = self.num_slots();
         let size = index.len();
         #[allow(clippy::reversed_empty_ranges)]

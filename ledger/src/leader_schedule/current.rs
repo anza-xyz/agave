@@ -10,7 +10,7 @@ use {
 pub struct LeaderSchedule {
     slot_leaders: Vec<Pubkey>,
     // Inverted index from pubkeys to indices where they are the leader.
-    index: HashMap<Pubkey, Arc<Vec<usize>>>,
+    leader_slots_map: HashMap<Pubkey, Arc<Vec<usize>>>,
 }
 
 impl LeaderSchedule {
@@ -31,12 +31,12 @@ impl LeaderSchedule {
 
     pub fn new_from_schedule(slot_leaders: Vec<Pubkey>) -> Self {
         Self {
-            index: Self::index_from_slot_leaders(&slot_leaders),
+            leader_slots_map: Self::invert_slot_leaders(&slot_leaders),
             slot_leaders,
         }
     }
 
-    fn index_from_slot_leaders(slot_leaders: &[Pubkey]) -> HashMap<Pubkey, Arc<Vec<usize>>> {
+    fn invert_slot_leaders(slot_leaders: &[Pubkey]) -> HashMap<Pubkey, Arc<Vec<usize>>> {
         slot_leaders
             .iter()
             .enumerate()
@@ -57,8 +57,8 @@ impl LeaderScheduleVariant for LeaderSchedule {
         &self.slot_leaders
     }
 
-    fn get_index(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>> {
-        &self.index
+    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>> {
+        &self.leader_slots_map
     }
 }
 
