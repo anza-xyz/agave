@@ -6,8 +6,9 @@ pagination_label: Validator's Transaction Validation Unit (TVU)
 ---
 
 TVU (Transaction Validation Unit) is the logic of the validator
-responsible for validating and propagating blocks and processing
-those blocks' transactions through the runtime.
+responsible for propagating blocks between validators and ensuring that
+those blocks' transactions reach the replay stage. Its principal external
+interface is the turbine protocol.
 
 ![TVU Block Diagram](/img/tvu.svg)
 
@@ -53,6 +54,7 @@ In the `ContactInfo` struct, all sockets are identified by a tag/key, e.g.:
 ```rust
 const SOCKET_TAG_TVU: u8 = 10;       // For UDP
 const SOCKET_TAG_TVU_QUIC: u8 = 11;  // For QUIC
+```
 
  * `set_socket()` creates a `SocketEntry` and stores that into `ContactInfo::sockets`
  * `set_socket()` updates `ContactInfo::cache`
