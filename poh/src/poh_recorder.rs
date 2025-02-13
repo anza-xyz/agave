@@ -309,6 +309,290 @@ pub struct PohRecorder {
 }
 
 impl PohRecorder {
+    /// A recorder to synchronize PoH with the following data structures
+    /// * bank - the LastId's queue is updated on `tick` and `record` events
+    /// * sender - the Entry channel that outputs to the ledger
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        tick_height: u64,
+        last_entry_hash: Hash,
+        start_bank: Arc<Bank>,
+        next_leader_slot: Option<(Slot, Slot)>,
+        ticks_per_slot: u64,
+        blockstore: Arc<Blockstore>,
+        leader_schedule_cache: &Arc<LeaderScheduleCache>,
+        poh_config: &PohConfig,
+        is_exited: Arc<AtomicBool>,
+    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
+        let delay_leader_block_for_pending_fork = false;
+        Self::new_with_clear_signal(
+            tick_height,
+            last_entry_hash,
+            start_bank,
+            next_leader_slot,
+            ticks_per_slot,
+            delay_leader_block_for_pending_fork,
+            blockstore,
+            None,
+            leader_schedule_cache,
+            poh_config,
+            None,
+            is_exited,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_clear_signal(
+        tick_height: u64,
+        last_entry_hash: Hash,
+        start_bank: Arc<Bank>,
+        next_leader_slot: Option<(Slot, Slot)>,
+        ticks_per_slot: u64,
+        delay_leader_block_for_pending_fork: bool,
+        blockstore: Arc<Blockstore>,
+        clear_bank_signal: Option<Sender<bool>>,
+        leader_schedule_cache: &Arc<LeaderScheduleCache>,
+        poh_config: &PohConfig,
+        poh_timing_point_sender: Option<PohTimingSender>,
+        is_exited: Arc<AtomicBool>,
+    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
+        let tick_number = 0;
+        let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
+            last_entry_hash,
+            poh_config.hashes_per_tick,
+            tick_number,
+        )));
+
+        let target_ns_per_tick = PohService::target_ns_per_tick(
+            ticks_per_slot,
+            poh_config.target_tick_duration.as_nanos() as u64,
+        );
+        let (working_bank_sender, working_bank_receiver) = unbounded();
+        let (record_sender, record_receiver) = unbounded();
+        let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
+            Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
+        (
+            Self {
+                poh,
+                tick_height,
+                tick_cache: vec![],
+                working_bank: None,
+                working_bank_sender,
+                poh_timing_point_sender,
+                clear_bank_signal,
+                start_bank,
+                start_bank_active_descendants: vec![],
+                start_tick_height: tick_height + 1,
+                leader_first_tick_height,
+                leader_last_tick_height,
+                grace_ticks,
+                blockstore,
+                leader_schedule_cache: leader_schedule_cache.clone(),
+                ticks_per_slot,
+                target_ns_per_tick,
+                record_lock_contention_us: 0,
+                flush_cache_tick_us: 0,
+                flush_cache_no_tick_us: 0,
+                send_entry_us: 0,
+                tick_lock_contention_us: 0,
+                record_us: 0,
+                report_metrics_us: 0,
+                total_sleep_us: 0,
+                ticks_from_record: 0,
+                last_metric: Instant::now(),
+                record_sender,
+                leader_bank_notifier: Arc::default(),
+                delay_leader_block_for_pending_fork,
+                last_reported_slot_for_pending_fork: Arc::default(),
+                is_exited,
+            },
+            working_bank_receiver,
+            record_receiver,
+        )
+    }
+
+    // synchronize PoH with a bank
+    pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
+        self.clear_bank();
+        self.reset_poh(reset_bank, true);
+
+        if let Some(ref sender) = self.poh_timing_point_sender {
+            // start_slot() is the parent slot. current slot is start_slot() + 1.
+            send_poh_timing_point(
+                sender,
+                SlotPohTimingInfo::new_slot_start_poh_time_point(
+                    self.start_slot() + 1,
+                    None,
+                    solana_time_utils::timestamp(),
+                ),
+            );
+        }
+
+        let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
+            Self::compute_leader_slot_tick_heights(next_leader_slot, self.ticks_per_slot);
+        self.grace_ticks = grace_ticks;
+        self.leader_first_tick_height = leader_first_tick_height;
+        self.leader_last_tick_height = leader_last_tick_height;
+    }
+
+    // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
+    pub fn record(
+        &mut self,
+        bank_slot: Slot,
+        mixin: Hash,
+        transactions: Vec<VersionedTransaction>,
+    ) -> Result<Option<usize>> {
+        // Entries without transactions are used to track real-time passing in the ledger and
+        // cannot be generated by `record()`
+        assert!(!transactions.is_empty(), "No transactions provided");
+
+        let ((), report_metrics_us) = measure_us!(self.report_metrics(bank_slot));
+        self.report_metrics_us += report_metrics_us;
+
+        loop {
+            let (flush_cache_res, flush_cache_us) = measure_us!(self.flush_cache(false));
+            self.flush_cache_no_tick_us += flush_cache_us;
+            flush_cache_res?;
+
+            let working_bank = self
+                .working_bank
+                .as_mut()
+                .ok_or(PohRecorderError::MaxHeightReached)?;
+            if bank_slot != working_bank.bank.slot() {
+                return Err(PohRecorderError::MaxHeightReached);
+            }
+
+            let (mut poh_lock, poh_lock_us) = measure_us!(self.poh.lock().unwrap());
+            self.record_lock_contention_us += poh_lock_us;
+
+            let (record_mixin_res, record_mixin_us) = measure_us!(poh_lock.record(mixin));
+            self.record_us += record_mixin_us;
+
+            drop(poh_lock);
+
+            if let Some(poh_entry) = record_mixin_res {
+                let num_transactions = transactions.len();
+                let (send_entry_res, send_entry_us) = measure_us!({
+                    let entry = Entry {
+                        num_hashes: poh_entry.num_hashes,
+                        hash: poh_entry.hash,
+                        transactions,
+                    };
+                    let bank_clone = working_bank.bank.clone();
+                    self.working_bank_sender
+                        .send((bank_clone, (entry, self.tick_height)))
+                });
+                self.send_entry_us += send_entry_us;
+                send_entry_res?;
+                let starting_transaction_index =
+                    working_bank.transaction_index.inspect(|transaction_index| {
+                        let next_starting_transaction_index =
+                            transaction_index.saturating_add(num_transactions);
+                        working_bank.transaction_index = Some(next_starting_transaction_index);
+                    });
+                return Ok(starting_transaction_index);
+            }
+
+            // record() might fail if the next PoH hash needs to be a tick.  But that's ok, tick()
+            // and re-record()
+            self.ticks_from_record += 1;
+            self.tick();
+        }
+    }
+
+    pub fn tick(&mut self) {
+        let ((poh_entry, target_time), tick_lock_contention_us) = measure_us!({
+            let mut poh_l = self.poh.lock().unwrap();
+            let poh_entry = poh_l.tick();
+            let target_time = if poh_entry.is_some() {
+                Some(poh_l.target_poh_time(self.target_ns_per_tick))
+            } else {
+                None
+            };
+            (poh_entry, target_time)
+        });
+        self.tick_lock_contention_us += tick_lock_contention_us;
+
+        if let Some(poh_entry) = poh_entry {
+            self.tick_height += 1;
+            trace!("tick_height {}", self.tick_height);
+            self.report_poh_timing_point();
+
+            if self.leader_first_tick_height.is_none() {
+                return;
+            }
+
+            self.tick_cache.push((
+                Entry {
+                    num_hashes: poh_entry.num_hashes,
+                    hash: poh_entry.hash,
+                    transactions: vec![],
+                },
+                self.tick_height,
+            ));
+
+            let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true));
+            self.flush_cache_tick_us += flush_cache_and_tick_us;
+
+            let (_, sleep_us) = measure_us!({
+                let target_time = target_time.unwrap();
+                // sleep is not accurate enough to get a predictable time.
+                // Kernel can not schedule the thread for a while.
+                while Instant::now() < target_time {
+                    // TODO: a caller could possibly desire to reset or record while we're spinning here
+                    std::hint::spin_loop();
+                }
+            });
+            self.total_sleep_us += sleep_us;
+        }
+    }
+
+    pub fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
+        assert!(self.working_bank.is_none());
+        self.leader_bank_notifier.set_in_progress(&bank);
+        let working_bank = WorkingBank {
+            min_tick_height: bank.tick_height(),
+            max_tick_height: bank.max_tick_height(),
+            bank,
+            start: Arc::new(Instant::now()),
+            transaction_index: track_transaction_indexes.then_some(0),
+        };
+        trace!("new working bank");
+        assert_eq!(working_bank.bank.ticks_per_slot(), self.ticks_per_slot());
+        if let Some(hashes_per_tick) = *working_bank.bank.hashes_per_tick() {
+            if self.poh.lock().unwrap().hashes_per_tick() != hashes_per_tick {
+                // We must clear/reset poh when changing hashes per tick because it's
+                // possible there are ticks in the cache created with the old hashes per
+                // tick value that would get flushed later. This would corrupt the leader's
+                // block and it would be disregarded by the network.
+                info!(
+                    "resetting poh due to hashes per tick change detected at {}",
+                    working_bank.bank.slot()
+                );
+                self.reset_poh(working_bank.bank.clone(), false);
+            }
+        }
+        self.working_bank = Some(working_bank);
+
+        // send poh slot start timing point
+        if let Some(ref sender) = self.poh_timing_point_sender {
+            if let Some(slot) = self.working_slot() {
+                send_poh_timing_point(
+                    sender,
+                    SlotPohTimingInfo::new_slot_start_poh_time_point(
+                        slot,
+                        None,
+                        solana_time_utils::timestamp(),
+                    ),
+                );
+            }
+        }
+
+        // TODO: adjust the working_bank.start time based on number of ticks
+        // that have already elapsed based on current tick height.
+        let _ = self.flush_cache(false);
+    }
+
     fn clear_bank(&mut self) {
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
             self.leader_bank_notifier.set_completed(bank.slot());
@@ -344,6 +628,98 @@ impl PohRecorder {
                 }
             }
         }
+    }
+
+    fn reset_poh(&mut self, reset_bank: Arc<Bank>, reset_start_bank: bool) {
+        let blockhash = reset_bank.last_blockhash();
+        let poh_hash = {
+            let mut poh = self.poh.lock().unwrap();
+            poh.reset(blockhash, *reset_bank.hashes_per_tick());
+            poh.hash
+        };
+        info!(
+            "reset poh from: {},{},{} to: {},{}",
+            poh_hash,
+            self.tick_height,
+            self.start_slot(),
+            blockhash,
+            reset_bank.slot()
+        );
+
+        self.tick_cache = vec![];
+        if reset_start_bank {
+            self.start_bank = reset_bank;
+            self.start_bank_active_descendants = vec![];
+        }
+        self.tick_height = (self.start_slot() + 1) * self.ticks_per_slot;
+        self.start_tick_height = self.tick_height + 1;
+    }
+
+    // Flush cache will delay flushing the cache for a bank until it past the WorkingBank::min_tick_height
+    // On a record flush will flush the cache at the WorkingBank::min_tick_height, since a record
+    // occurs after the min_tick_height was generated
+    fn flush_cache(&mut self, tick: bool) -> Result<()> {
+        // check_tick_height is called before flush cache, so it cannot overrun the bank
+        // so a bank that is so late that it's slot fully generated before it starts recording
+        // will fail instead of broadcasting any ticks
+        let working_bank = self
+            .working_bank
+            .as_ref()
+            .ok_or(PohRecorderError::MaxHeightReached)?;
+        if self.tick_height < working_bank.min_tick_height {
+            return Err(PohRecorderError::MinHeightNotReached);
+        }
+        if tick && self.tick_height == working_bank.min_tick_height {
+            return Err(PohRecorderError::MinHeightNotReached);
+        }
+
+        let entry_count = self
+            .tick_cache
+            .iter()
+            .take_while(|x| x.1 <= working_bank.max_tick_height)
+            .count();
+        let mut send_result: std::result::Result<(), SendError<WorkingBankEntry>> = Ok(());
+
+        if entry_count > 0 {
+            trace!(
+                "flush_cache: bank_slot: {} tick_height: {} max: {} sending: {}",
+                working_bank.bank.slot(),
+                working_bank.bank.tick_height(),
+                working_bank.max_tick_height,
+                entry_count,
+            );
+
+            for tick in &self.tick_cache[..entry_count] {
+                working_bank.bank.register_tick(&tick.0.hash);
+                send_result = self
+                    .working_bank_sender
+                    .send((working_bank.bank.clone(), tick.clone()));
+                if send_result.is_err() {
+                    break;
+                }
+            }
+        }
+        if self.tick_height >= working_bank.max_tick_height {
+            info!(
+                "poh_record: max_tick_height {} reached, clearing working_bank {}",
+                working_bank.max_tick_height,
+                working_bank.bank.slot()
+            );
+            self.start_bank = working_bank.bank.clone();
+            let working_slot = self.start_slot();
+            self.start_tick_height = working_slot * self.ticks_per_slot + 1;
+            self.clear_bank();
+        }
+        if send_result.is_err() {
+            info!("WorkingBank::sender disconnected {:?}", send_result);
+            // revert the cache, but clear the working bank
+            self.clear_bank();
+        } else {
+            // commit the flush
+            let _ = self.tick_cache.drain(..entry_count);
+        }
+
+        Ok(())
     }
 
     pub fn would_be_leader(&self, within_next_n_ticks: u64) -> bool {
@@ -432,6 +808,105 @@ impl PohRecorder {
         self.leader_bank_notifier.clone()
     }
 
+    pub fn start_slot(&self) -> Slot {
+        self.start_bank.slot()
+    }
+
+    /// Returns if the leader slot has been reached along with the current poh
+    /// slot and the parent slot (could be a few slots ago if any previous
+    /// leaders needed to be skipped).
+    pub fn reached_leader_slot(&self, my_pubkey: &Pubkey) -> PohLeaderStatus {
+        trace!(
+            "tick_height {}, start_tick_height {}, leader_first_tick_height {:?}, grace_ticks {}, has_bank {}",
+            self.tick_height,
+            self.start_tick_height,
+            self.leader_first_tick_height,
+            self.grace_ticks,
+            self.has_bank()
+        );
+
+        let next_tick_height = self.tick_height + 1;
+        let next_poh_slot = self.slot_for_tick_height(next_tick_height);
+        let Some(leader_first_tick_height) = self.leader_first_tick_height else {
+            // No next leader slot, so no leader slot has been reached.
+            return PohLeaderStatus::NotReached;
+        };
+
+        if !self.reached_leader_tick(my_pubkey, leader_first_tick_height) {
+            // PoH hasn't ticked far enough yet.
+            return PohLeaderStatus::NotReached;
+        }
+
+        if self.blockstore.has_existing_shreds_for_slot(next_poh_slot) {
+            // We already have existing shreds for this slot. This can happen when this block was previously
+            // created and added to BankForks, however a recent PoH reset caused this bank to be removed
+            // as it was not part of the rooted fork. If this slot is not the first slot for this leader,
+            // and the first slot was previously ticked over, the check in `leader_schedule_cache::next_leader_slot`
+            // will not suffice, as it only checks if there are shreds for the first slot.
+            return PohLeaderStatus::NotReached;
+        }
+
+        assert!(next_tick_height >= self.start_tick_height);
+        let poh_slot = next_poh_slot;
+        let parent_slot = self.start_slot();
+        PohLeaderStatus::Reached {
+            poh_slot,
+            parent_slot,
+        }
+    }
+
+    fn reached_leader_tick(&self, my_pubkey: &Pubkey, leader_first_tick_height: u64) -> bool {
+        if self.start_tick_height == leader_first_tick_height {
+            // PoH was reset to run immediately.
+            return true;
+        }
+
+        let ideal_target_tick_height = leader_first_tick_height.saturating_sub(1);
+        if self.tick_height < ideal_target_tick_height {
+            // We haven't ticked to our leader slot yet.
+            return false;
+        }
+
+        if self.tick_height >= ideal_target_tick_height.saturating_add(self.grace_ticks) {
+            // We have finished waiting for grace ticks.
+            return true;
+        }
+
+        // We're in the grace tick zone. Check if we can skip grace ticks.
+        self.can_skip_grace_ticks(my_pubkey)
+    }
+
+    fn can_skip_grace_ticks(&self, my_pubkey: &Pubkey) -> bool {
+        let next_tick_height = self.tick_height.saturating_add(1);
+        let next_leader_slot = self.slot_for_tick_height(next_tick_height);
+
+        if self.start_slot_was_mine(my_pubkey) {
+            // Building off my own block. No need to wait.
+            return true;
+        }
+
+        if self.start_slot_was_mine_or_previous_leader(next_leader_slot) {
+            // Planning to build off block produced by the leader previous to
+            // me. Check if they've completed all of their slots.
+            return self.building_off_previous_leader_last_block(my_pubkey, next_leader_slot);
+        }
+
+        if !self.is_new_reset_bank_pending(next_leader_slot) {
+            // No pending blocks from previous leader have been observed. No
+            // need to wait.
+            return true;
+        }
+
+        self.report_pending_fork_was_detected(next_leader_slot);
+        if !self.delay_leader_block_for_pending_fork {
+            // Not configured to wait for pending blocks from previous leader.
+            return true;
+        }
+
+        // Wait for grace ticks
+        false
+    }
+
     fn start_slot_was_mine_or_previous_leader(&self, next_leader_slot: Slot) -> bool {
         (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_leader_slot).any(
             |slot| {
@@ -483,58 +958,6 @@ impl PohRecorder {
             .any(|pending_slot| *pending_slot < next_leader_slot)
     }
 
-    fn can_skip_grace_ticks(&self, my_pubkey: &Pubkey) -> bool {
-        let next_tick_height = self.tick_height.saturating_add(1);
-        let next_leader_slot = self.slot_for_tick_height(next_tick_height);
-
-        if self.start_slot_was_mine(my_pubkey) {
-            // Building off my own block. No need to wait.
-            return true;
-        }
-
-        if self.start_slot_was_mine_or_previous_leader(next_leader_slot) {
-            // Planning to build off block produced by the leader previous to
-            // me. Check if they've completed all of their slots.
-            return self.building_off_previous_leader_last_block(my_pubkey, next_leader_slot);
-        }
-
-        if !self.is_new_reset_bank_pending(next_leader_slot) {
-            // No pending blocks from previous leader have been observed. No
-            // need to wait.
-            return true;
-        }
-
-        self.report_pending_fork_was_detected(next_leader_slot);
-        if !self.delay_leader_block_for_pending_fork {
-            // Not configured to wait for pending blocks from previous leader.
-            return true;
-        }
-
-        // Wait for grace ticks
-        false
-    }
-
-    fn reached_leader_tick(&self, my_pubkey: &Pubkey, leader_first_tick_height: u64) -> bool {
-        if self.start_tick_height == leader_first_tick_height {
-            // PoH was reset to run immediately.
-            return true;
-        }
-
-        let ideal_target_tick_height = leader_first_tick_height.saturating_sub(1);
-        if self.tick_height < ideal_target_tick_height {
-            // We haven't ticked to our leader slot yet.
-            return false;
-        }
-
-        if self.tick_height >= ideal_target_tick_height.saturating_add(self.grace_ticks) {
-            // We have finished waiting for grace ticks.
-            return true;
-        }
-
-        // We're in the grace tick zone. Check if we can skip grace ticks.
-        self.can_skip_grace_ticks(my_pubkey)
-    }
-
     // Report metrics when poh recorder detects a pending fork that could
     // soon lead to poh reset.
     fn report_pending_fork_was_detected(&self, next_leader_slot: Slot) {
@@ -555,53 +978,6 @@ impl PohRecorder {
                 bool
             ),
         );
-    }
-
-    pub fn start_slot(&self) -> Slot {
-        self.start_bank.slot()
-    }
-
-    /// Returns if the leader slot has been reached along with the current poh
-    /// slot and the parent slot (could be a few slots ago if any previous
-    /// leaders needed to be skipped).
-    pub fn reached_leader_slot(&self, my_pubkey: &Pubkey) -> PohLeaderStatus {
-        trace!(
-            "tick_height {}, start_tick_height {}, leader_first_tick_height {:?}, grace_ticks {}, has_bank {}",
-            self.tick_height,
-            self.start_tick_height,
-            self.leader_first_tick_height,
-            self.grace_ticks,
-            self.has_bank()
-        );
-
-        let next_tick_height = self.tick_height + 1;
-        let next_poh_slot = self.slot_for_tick_height(next_tick_height);
-        let Some(leader_first_tick_height) = self.leader_first_tick_height else {
-            // No next leader slot, so no leader slot has been reached.
-            return PohLeaderStatus::NotReached;
-        };
-
-        if !self.reached_leader_tick(my_pubkey, leader_first_tick_height) {
-            // PoH hasn't ticked far enough yet.
-            return PohLeaderStatus::NotReached;
-        }
-
-        if self.blockstore.has_existing_shreds_for_slot(next_poh_slot) {
-            // We already have existing shreds for this slot. This can happen when this block was previously
-            // created and added to BankForks, however a recent PoH reset caused this bank to be removed
-            // as it was not part of the rooted fork. If this slot is not the first slot for this leader,
-            // and the first slot was previously ticked over, the check in `leader_schedule_cache::next_leader_slot`
-            // will not suffice, as it only checks if there are shreds for the first slot.
-            return PohLeaderStatus::NotReached;
-        }
-
-        assert!(next_tick_height >= self.start_tick_height);
-        let poh_slot = next_poh_slot;
-        let parent_slot = self.start_slot();
-        PohLeaderStatus::Reached {
-            poh_slot,
-            parent_slot,
-        }
     }
 
     // returns (leader_first_tick_height, leader_last_tick_height, grace_ticks) given the next
@@ -635,105 +1011,10 @@ impl PohRecorder {
             ))
     }
 
-    fn reset_poh(&mut self, reset_bank: Arc<Bank>, reset_start_bank: bool) {
-        let blockhash = reset_bank.last_blockhash();
-        let poh_hash = {
-            let mut poh = self.poh.lock().unwrap();
-            poh.reset(blockhash, *reset_bank.hashes_per_tick());
-            poh.hash
-        };
-        info!(
-            "reset poh from: {},{},{} to: {},{}",
-            poh_hash,
-            self.tick_height,
-            self.start_slot(),
-            blockhash,
-            reset_bank.slot()
-        );
-
-        self.tick_cache = vec![];
-        if reset_start_bank {
-            self.start_bank = reset_bank;
-            self.start_bank_active_descendants = vec![];
-        }
-        self.tick_height = (self.start_slot() + 1) * self.ticks_per_slot;
-        self.start_tick_height = self.tick_height + 1;
-    }
-
     // update the list of active descendants of the start bank to make a better
     // decision about whether to use grace ticks
     pub fn update_start_bank_active_descendants(&mut self, active_descendants: &[Slot]) {
         self.start_bank_active_descendants = active_descendants.to_vec();
-    }
-
-    // synchronize PoH with a bank
-    pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
-        self.clear_bank();
-        self.reset_poh(reset_bank, true);
-
-        if let Some(ref sender) = self.poh_timing_point_sender {
-            // start_slot() is the parent slot. current slot is start_slot() + 1.
-            send_poh_timing_point(
-                sender,
-                SlotPohTimingInfo::new_slot_start_poh_time_point(
-                    self.start_slot() + 1,
-                    None,
-                    solana_time_utils::timestamp(),
-                ),
-            );
-        }
-
-        let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
-            Self::compute_leader_slot_tick_heights(next_leader_slot, self.ticks_per_slot);
-        self.grace_ticks = grace_ticks;
-        self.leader_first_tick_height = leader_first_tick_height;
-        self.leader_last_tick_height = leader_last_tick_height;
-    }
-
-    pub fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
-        assert!(self.working_bank.is_none());
-        self.leader_bank_notifier.set_in_progress(&bank);
-        let working_bank = WorkingBank {
-            min_tick_height: bank.tick_height(),
-            max_tick_height: bank.max_tick_height(),
-            bank,
-            start: Arc::new(Instant::now()),
-            transaction_index: track_transaction_indexes.then_some(0),
-        };
-        trace!("new working bank");
-        assert_eq!(working_bank.bank.ticks_per_slot(), self.ticks_per_slot());
-        if let Some(hashes_per_tick) = *working_bank.bank.hashes_per_tick() {
-            if self.poh.lock().unwrap().hashes_per_tick() != hashes_per_tick {
-                // We must clear/reset poh when changing hashes per tick because it's
-                // possible there are ticks in the cache created with the old hashes per
-                // tick value that would get flushed later. This would corrupt the leader's
-                // block and it would be disregarded by the network.
-                info!(
-                    "resetting poh due to hashes per tick change detected at {}",
-                    working_bank.bank.slot()
-                );
-                self.reset_poh(working_bank.bank.clone(), false);
-            }
-        }
-        self.working_bank = Some(working_bank);
-
-        // send poh slot start timing point
-        if let Some(ref sender) = self.poh_timing_point_sender {
-            if let Some(slot) = self.working_slot() {
-                send_poh_timing_point(
-                    sender,
-                    SlotPohTimingInfo::new_slot_start_poh_time_point(
-                        slot,
-                        None,
-                        solana_time_utils::timestamp(),
-                    ),
-                );
-            }
-        }
-
-        // TODO: adjust the working_bank.start time based on number of ticks
-        // that have already elapsed based on current tick height.
-        let _ = self.flush_cache(false);
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -749,73 +1030,6 @@ impl PohRecorder {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn clear_bank_for_test(&mut self) {
         self.clear_bank();
-    }
-
-    // Flush cache will delay flushing the cache for a bank until it past the WorkingBank::min_tick_height
-    // On a record flush will flush the cache at the WorkingBank::min_tick_height, since a record
-    // occurs after the min_tick_height was generated
-    fn flush_cache(&mut self, tick: bool) -> Result<()> {
-        // check_tick_height is called before flush cache, so it cannot overrun the bank
-        // so a bank that is so late that it's slot fully generated before it starts recording
-        // will fail instead of broadcasting any ticks
-        let working_bank = self
-            .working_bank
-            .as_ref()
-            .ok_or(PohRecorderError::MaxHeightReached)?;
-        if self.tick_height < working_bank.min_tick_height {
-            return Err(PohRecorderError::MinHeightNotReached);
-        }
-        if tick && self.tick_height == working_bank.min_tick_height {
-            return Err(PohRecorderError::MinHeightNotReached);
-        }
-
-        let entry_count = self
-            .tick_cache
-            .iter()
-            .take_while(|x| x.1 <= working_bank.max_tick_height)
-            .count();
-        let mut send_result: std::result::Result<(), SendError<WorkingBankEntry>> = Ok(());
-
-        if entry_count > 0 {
-            trace!(
-                "flush_cache: bank_slot: {} tick_height: {} max: {} sending: {}",
-                working_bank.bank.slot(),
-                working_bank.bank.tick_height(),
-                working_bank.max_tick_height,
-                entry_count,
-            );
-
-            for tick in &self.tick_cache[..entry_count] {
-                working_bank.bank.register_tick(&tick.0.hash);
-                send_result = self
-                    .working_bank_sender
-                    .send((working_bank.bank.clone(), tick.clone()));
-                if send_result.is_err() {
-                    break;
-                }
-            }
-        }
-        if self.tick_height >= working_bank.max_tick_height {
-            info!(
-                "poh_record: max_tick_height {} reached, clearing working_bank {}",
-                working_bank.max_tick_height,
-                working_bank.bank.slot()
-            );
-            self.start_bank = working_bank.bank.clone();
-            let working_slot = self.start_slot();
-            self.start_tick_height = working_slot * self.ticks_per_slot + 1;
-            self.clear_bank();
-        }
-        if send_result.is_err() {
-            info!("WorkingBank::sender disconnected {:?}", send_result);
-            // revert the cache, but clear the working bank
-            self.clear_bank();
-        } else {
-            // commit the flush
-            let _ = self.tick_cache.drain(..entry_count);
-        }
-
-        Ok(())
     }
 
     fn report_poh_timing_point_by_tick(&self) {
@@ -874,53 +1088,6 @@ impl PohRecorder {
         }
     }
 
-    pub fn tick(&mut self) {
-        let ((poh_entry, target_time), tick_lock_contention_us) = measure_us!({
-            let mut poh_l = self.poh.lock().unwrap();
-            let poh_entry = poh_l.tick();
-            let target_time = if poh_entry.is_some() {
-                Some(poh_l.target_poh_time(self.target_ns_per_tick))
-            } else {
-                None
-            };
-            (poh_entry, target_time)
-        });
-        self.tick_lock_contention_us += tick_lock_contention_us;
-
-        if let Some(poh_entry) = poh_entry {
-            self.tick_height += 1;
-            trace!("tick_height {}", self.tick_height);
-            self.report_poh_timing_point();
-
-            if self.leader_first_tick_height.is_none() {
-                return;
-            }
-
-            self.tick_cache.push((
-                Entry {
-                    num_hashes: poh_entry.num_hashes,
-                    hash: poh_entry.hash,
-                    transactions: vec![],
-                },
-                self.tick_height,
-            ));
-
-            let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true));
-            self.flush_cache_tick_us += flush_cache_and_tick_us;
-
-            let (_, sleep_us) = measure_us!({
-                let target_time = target_time.unwrap();
-                // sleep is not accurate enough to get a predictable time.
-                // Kernel can not schedule the thread for a while.
-                while Instant::now() < target_time {
-                    // TODO: a caller could possibly desire to reset or record while we're spinning here
-                    std::hint::spin_loop();
-                }
-            });
-            self.total_sleep_us += sleep_us;
-        }
-    }
-
     fn report_metrics(&mut self, bank_slot: Slot) {
         if self.last_metric.elapsed().as_millis() > 1000 {
             datapoint_info!(
@@ -952,173 +1119,6 @@ impl PohRecorder {
             self.report_metrics_us = 0;
             self.last_metric = Instant::now();
         }
-    }
-
-    // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
-    pub fn record(
-        &mut self,
-        bank_slot: Slot,
-        mixin: Hash,
-        transactions: Vec<VersionedTransaction>,
-    ) -> Result<Option<usize>> {
-        // Entries without transactions are used to track real-time passing in the ledger and
-        // cannot be generated by `record()`
-        assert!(!transactions.is_empty(), "No transactions provided");
-
-        let ((), report_metrics_us) = measure_us!(self.report_metrics(bank_slot));
-        self.report_metrics_us += report_metrics_us;
-
-        loop {
-            let (flush_cache_res, flush_cache_us) = measure_us!(self.flush_cache(false));
-            self.flush_cache_no_tick_us += flush_cache_us;
-            flush_cache_res?;
-
-            let working_bank = self
-                .working_bank
-                .as_mut()
-                .ok_or(PohRecorderError::MaxHeightReached)?;
-            if bank_slot != working_bank.bank.slot() {
-                return Err(PohRecorderError::MaxHeightReached);
-            }
-
-            let (mut poh_lock, poh_lock_us) = measure_us!(self.poh.lock().unwrap());
-            self.record_lock_contention_us += poh_lock_us;
-
-            let (record_mixin_res, record_mixin_us) = measure_us!(poh_lock.record(mixin));
-            self.record_us += record_mixin_us;
-
-            drop(poh_lock);
-
-            if let Some(poh_entry) = record_mixin_res {
-                let num_transactions = transactions.len();
-                let (send_entry_res, send_entry_us) = measure_us!({
-                    let entry = Entry {
-                        num_hashes: poh_entry.num_hashes,
-                        hash: poh_entry.hash,
-                        transactions,
-                    };
-                    let bank_clone = working_bank.bank.clone();
-                    self.working_bank_sender
-                        .send((bank_clone, (entry, self.tick_height)))
-                });
-                self.send_entry_us += send_entry_us;
-                send_entry_res?;
-                let starting_transaction_index =
-                    working_bank.transaction_index.inspect(|transaction_index| {
-                        let next_starting_transaction_index =
-                            transaction_index.saturating_add(num_transactions);
-                        working_bank.transaction_index = Some(next_starting_transaction_index);
-                    });
-                return Ok(starting_transaction_index);
-            }
-
-            // record() might fail if the next PoH hash needs to be a tick.  But that's ok, tick()
-            // and re-record()
-            self.ticks_from_record += 1;
-            self.tick();
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_clear_signal(
-        tick_height: u64,
-        last_entry_hash: Hash,
-        start_bank: Arc<Bank>,
-        next_leader_slot: Option<(Slot, Slot)>,
-        ticks_per_slot: u64,
-        delay_leader_block_for_pending_fork: bool,
-        blockstore: Arc<Blockstore>,
-        clear_bank_signal: Option<Sender<bool>>,
-        leader_schedule_cache: &Arc<LeaderScheduleCache>,
-        poh_config: &PohConfig,
-        poh_timing_point_sender: Option<PohTimingSender>,
-        is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
-        let tick_number = 0;
-        let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
-            last_entry_hash,
-            poh_config.hashes_per_tick,
-            tick_number,
-        )));
-
-        let target_ns_per_tick = PohService::target_ns_per_tick(
-            ticks_per_slot,
-            poh_config.target_tick_duration.as_nanos() as u64,
-        );
-        let (working_bank_sender, working_bank_receiver) = unbounded();
-        let (record_sender, record_receiver) = unbounded();
-        let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
-            Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
-        (
-            Self {
-                poh,
-                tick_height,
-                tick_cache: vec![],
-                working_bank: None,
-                working_bank_sender,
-                poh_timing_point_sender,
-                clear_bank_signal,
-                start_bank,
-                start_bank_active_descendants: vec![],
-                start_tick_height: tick_height + 1,
-                leader_first_tick_height,
-                leader_last_tick_height,
-                grace_ticks,
-                blockstore,
-                leader_schedule_cache: leader_schedule_cache.clone(),
-                ticks_per_slot,
-                target_ns_per_tick,
-                record_lock_contention_us: 0,
-                flush_cache_tick_us: 0,
-                flush_cache_no_tick_us: 0,
-                send_entry_us: 0,
-                tick_lock_contention_us: 0,
-                record_us: 0,
-                report_metrics_us: 0,
-                total_sleep_us: 0,
-                ticks_from_record: 0,
-                last_metric: Instant::now(),
-                record_sender,
-                leader_bank_notifier: Arc::default(),
-                delay_leader_block_for_pending_fork,
-                last_reported_slot_for_pending_fork: Arc::default(),
-                is_exited,
-            },
-            working_bank_receiver,
-            record_receiver,
-        )
-    }
-
-    /// A recorder to synchronize PoH with the following data structures
-    /// * bank - the LastId's queue is updated on `tick` and `record` events
-    /// * sender - the Entry channel that outputs to the ledger
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        tick_height: u64,
-        last_entry_hash: Hash,
-        start_bank: Arc<Bank>,
-        next_leader_slot: Option<(Slot, Slot)>,
-        ticks_per_slot: u64,
-        blockstore: Arc<Blockstore>,
-        leader_schedule_cache: &Arc<LeaderScheduleCache>,
-        poh_config: &PohConfig,
-        is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
-        let delay_leader_block_for_pending_fork = false;
-        Self::new_with_clear_signal(
-            tick_height,
-            last_entry_hash,
-            start_bank,
-            next_leader_slot,
-            ticks_per_slot,
-            delay_leader_block_for_pending_fork,
-            blockstore,
-            None,
-            leader_schedule_cache,
-            poh_config,
-            None,
-            is_exited,
-        )
     }
 
     pub fn get_poh_recorder_bank(&self) -> PohRecorderBank {
