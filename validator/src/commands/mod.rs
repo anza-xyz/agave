@@ -20,13 +20,13 @@ pub trait FromClapArgMatches {
 pub mod tests {
     use std::fmt::Debug;
 
-    pub fn verify_args_struct_by_command<T>(app: clap::App, vec: Vec<&str>, arg: T)
+    pub fn verify_args_struct_by_command<T>(app: clap::App, vec: Vec<&str>, expected_arg: T)
     where
         T: crate::commands::FromClapArgMatches + PartialEq + Debug,
     {
         let matches = app.get_matches_from(vec);
         let result = T::from_clap_arg_match(&matches);
-        assert_eq!(result, arg);
+        assert_eq!(result, expected_arg);
     }
 
     pub fn verify_args_struct_by_command_is_error<T>(app: clap::App, vec: Vec<&str>)
