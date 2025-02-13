@@ -3291,13 +3291,15 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     let c_validator_to_slots = vec![(validator_b_pubkey, DEFAULT_SLOTS_PER_EPOCH as usize)];
 
     let c_leader_schedule = create_custom_leader_schedule(c_validator_to_slots.into_iter());
-    let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
+    let leader_schedule = Arc::new(create_custom_leader_schedule(
+        validator_to_slots.into_iter(),
+    ));
     for slot in 0..=validator_b_last_leader_slot {
         assert_eq!(leader_schedule[slot], validator_b_pubkey);
     }
 
     default_config.fixed_leader_schedule = Some(FixedSchedule {
-        leader_schedule: Arc::new(leader_schedule.clone()),
+        leader_schedule: leader_schedule.clone(),
     });
     let mut validator_configs =
         make_identical_validator_configs(&default_config, node_stakes.len());
@@ -3419,9 +3421,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     info!("Restart validator C again!!!");
     validator_c_info.config.voting_disabled = false;
     // C should now produce blocks
-    validator_c_info.config.fixed_leader_schedule = Some(FixedSchedule {
-        leader_schedule: Arc::new(leader_schedule),
-    });
+    validator_c_info.config.fixed_leader_schedule = Some(FixedSchedule { leader_schedule });
     cluster.restart_node(
         &validator_c_pubkey,
         validator_c_info,
