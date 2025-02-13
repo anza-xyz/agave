@@ -89,6 +89,10 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Returns `true` if a packet was dropped due to capacity limits.
     fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool;
 
+    /// A transaction ID was retrieved for scheduling, when it's not scheduled, put it back into
+    /// priority queue. "put back" shall never need to push out other tx (os is it?)
+    fn put_id_back_into_queue(&mut self, priority_id: TransactionPriorityId);
+
     /// Remove transaction by id.
     fn remove_by_id(&mut self, id: TransactionId);
 
@@ -135,6 +139,10 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 
     fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
         self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
+    }
+
+    fn put_id_back_into_queue(&mut self, priority_id: TransactionPriorityId) {
+        self.priority_queue.push(priority_id);
     }
 
     fn remove_by_id(&mut self, id: TransactionId) {
@@ -309,6 +317,11 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     #[inline]
     fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
         self.inner.push_id_into_queue(priority_id)
+    }
+
+    #[inline]
+    fn put_id_back_into_queue(&mut self, priority_id: TransactionPriorityId) {
+        self.inner.put_id_back_into_queue(priority_id);
     }
 
     #[inline]
