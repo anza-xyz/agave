@@ -9155,12 +9155,28 @@ name = "solana-rpc-client-api"
 version = "2.2.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
- "bs58",
- "const_format",
  "jsonrpc-core",
  "reqwest",
  "reqwest-middleware",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "solana-account-decoder-client-types",
+ "solana-clock",
+ "solana-rpc-client-api-core",
+ "solana-signer",
+ "solana-transaction-error",
+ "solana-transaction-status-client-types",
+ "thiserror 2.0.11",
+]
+
+[[package]]
+name = "solana-rpc-client-api-core"
+version = "2.2.0"
+dependencies = [
+ "base64 0.22.1",
+ "bs58",
+ "const_format",
  "semver 1.0.25",
  "serde",
  "serde_derive",
@@ -9173,7 +9189,6 @@ dependencies = [
  "solana-inflation",
  "solana-inline-spl",
  "solana-pubkey",
- "solana-signer",
  "solana-transaction-error",
  "solana-transaction-status-client-types",
  "solana-version",
