@@ -284,6 +284,13 @@ impl JsonRpcRequestProcessor {
         Ok(bank)
     }
 
+    fn check_if_transaction_history_enabled(&self) -> Result<()> {
+        if !self.config.enable_rpc_transaction_history {
+            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
+        }
+        Ok(())
+    }
+
     async fn calculate_non_circulating_supply(
         &self,
         bank: &Arc<Bank>,
