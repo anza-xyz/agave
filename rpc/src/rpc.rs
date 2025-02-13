@@ -1299,116 +1299,114 @@ impl JsonRpcRequestProcessor {
     ) -> Result<Option<UiConfirmedBlock>> {
         self.check_if_transaction_history_enabled()?;
 
-            let config = config
-                .map(|config| config.convert_to_current())
-                .unwrap_or_default();
-            let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json);
-            let encoding_options = BlockEncodingOptions {
-                transaction_details: config.transaction_details.unwrap_or_default(),
-                show_rewards: config.rewards.unwrap_or(true),
-                max_supported_transaction_version: config.max_supported_transaction_version,
-            };
-            let commitment = config.commitment.unwrap_or_default();
-            check_is_at_least_confirmed(commitment)?;
+        let config = config
+            .map(|config| config.convert_to_current())
+            .unwrap_or_default();
+        let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json);
+        let encoding_options = BlockEncodingOptions {
+            transaction_details: config.transaction_details.unwrap_or_default(),
+            show_rewards: config.rewards.unwrap_or(true),
+            max_supported_transaction_version: config.max_supported_transaction_version,
+        };
+        let commitment = config.commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
 
-            // Block is old enough to be finalized
-            if slot
-                <= self
-                    .block_commitment_cache
-                    .read()
-                    .unwrap()
-                    .highest_super_majority_root()
-            {
+        // Block is old enough to be finalized
+        if slot
+            <= self
+                .block_commitment_cache
+                .read()
+                .unwrap()
+                .highest_super_majority_root()
+        {
+            self.check_blockstore_writes_complete(slot)?;
+            let result = self
+                .runtime
+                .spawn_blocking({
+                    let blockstore = Arc::clone(&self.blockstore);
+                    move || blockstore.get_rooted_block(slot, true)
+                })
+                .await
+                .expect("Failed to spawn blocking task");
+            self.check_blockstore_root(&result, slot)?;
+            let encode_block = |confirmed_block: ConfirmedBlock| async move {
+                let mut encoded_block = self
+                    .runtime
+                    .spawn_blocking(move || {
+                        confirmed_block
+                            .encode_with_options(encoding, encoding_options)
+                            .map_err(RpcCustomError::from)
+                    })
+                    .await
+                    .expect("Failed to spawn blocking task")?;
+                if slot == 0 {
+                    encoded_block.block_time = Some(self.genesis_creation_time());
+                    encoded_block.block_height = Some(0);
+                }
+                Ok::<UiConfirmedBlock, Error>(encoded_block)
+            };
+            if result.is_err() {
+                if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                    let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
+                    self.check_bigtable_result(&bigtable_result)?;
+                    let encoded_block_future: OptionFuture<_> =
+                        bigtable_result.ok().map(encode_block).into();
+                    return encoded_block_future.await.transpose();
+                }
+            }
+            self.check_slot_cleaned_up(&result, slot)?;
+            let encoded_block_future: OptionFuture<_> = result
+                .ok()
+                .map(ConfirmedBlock::from)
+                .map(encode_block)
+                .into();
+            return encoded_block_future.await.transpose();
+        } else if commitment.is_confirmed() {
+            // Check if block is confirmed
+            let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+            if confirmed_bank.status_cache_ancestors().contains(&slot) {
                 self.check_blockstore_writes_complete(slot)?;
                 let result = self
                     .runtime
                     .spawn_blocking({
                         let blockstore = Arc::clone(&self.blockstore);
-                        move || blockstore.get_rooted_block(slot, true)
+                        move || blockstore.get_complete_block(slot, true)
                     })
                     .await
                     .expect("Failed to spawn blocking task");
-                self.check_blockstore_root(&result, slot)?;
-                let encode_block = |confirmed_block: ConfirmedBlock| async move {
-                    let mut encoded_block = self
-                        .runtime
-                        .spawn_blocking(move || {
-                            confirmed_block
-                                .encode_with_options(encoding, encoding_options)
-                                .map_err(RpcCustomError::from)
-                        })
-                        .await
-                        .expect("Failed to spawn blocking task")?;
-                    if slot == 0 {
-                        encoded_block.block_time = Some(self.genesis_creation_time());
-                        encoded_block.block_height = Some(0);
-                    }
-                    Ok::<UiConfirmedBlock, Error>(encoded_block)
-                };
-                if result.is_err() {
-                    if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                        let bigtable_result =
-                            bigtable_ledger_storage.get_confirmed_block(slot).await;
-                        self.check_bigtable_result(&bigtable_result)?;
-                        let encoded_block_future: OptionFuture<_> =
-                            bigtable_result.ok().map(encode_block).into();
-                        return encoded_block_future.await.transpose();
-                    }
-                }
-                self.check_slot_cleaned_up(&result, slot)?;
                 let encoded_block_future: OptionFuture<_> = result
                     .ok()
                     .map(ConfirmedBlock::from)
-                    .map(encode_block)
-                    .into();
-                return encoded_block_future.await.transpose();
-            } else if commitment.is_confirmed() {
-                // Check if block is confirmed
-                let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
-                if confirmed_bank.status_cache_ancestors().contains(&slot) {
-                    self.check_blockstore_writes_complete(slot)?;
-                    let result = self
-                        .runtime
-                        .spawn_blocking({
-                            let blockstore = Arc::clone(&self.blockstore);
-                            move || blockstore.get_complete_block(slot, true)
-                        })
-                        .await
-                        .expect("Failed to spawn blocking task");
-                    let encoded_block_future: OptionFuture<_> = result
-                        .ok()
-                        .map(ConfirmedBlock::from)
-                        .map(|mut confirmed_block| async move {
-                            if confirmed_block.block_time.is_none()
-                                || confirmed_block.block_height.is_none()
-                            {
-                                let r_bank_forks = self.bank_forks.read().unwrap();
-                                if let Some(bank) = r_bank_forks.get(slot) {
-                                    if confirmed_block.block_time.is_none() {
-                                        confirmed_block.block_time =
-                                            Some(bank.clock().unix_timestamp);
-                                    }
-                                    if confirmed_block.block_height.is_none() {
-                                        confirmed_block.block_height = Some(bank.block_height());
-                                    }
+                    .map(|mut confirmed_block| async move {
+                        if confirmed_block.block_time.is_none()
+                            || confirmed_block.block_height.is_none()
+                        {
+                            let r_bank_forks = self.bank_forks.read().unwrap();
+                            if let Some(bank) = r_bank_forks.get(slot) {
+                                if confirmed_block.block_time.is_none() {
+                                    confirmed_block.block_time = Some(bank.clock().unix_timestamp);
+                                }
+                                if confirmed_block.block_height.is_none() {
+                                    confirmed_block.block_height = Some(bank.block_height());
                                 }
                             }
-                            let encoded_block = self
-                                .runtime
-                                .spawn_blocking(move || {
-                                    confirmed_block
-                                        .encode_with_options(encoding, encoding_options)
-                                        .map_err(RpcCustomError::from)
-                                })
-                                .await
-                                .expect("Failed to spawn blocking task")?;
+                        }
+                        let encoded_block = self
+                            .runtime
+                            .spawn_blocking(move || {
+                                confirmed_block
+                                    .encode_with_options(encoding, encoding_options)
+                                    .map_err(RpcCustomError::from)
+                            })
+                            .await
+                            .expect("Failed to spawn blocking task")?;
 
-                            Ok(encoded_block)
-                        })
-                        .into();
-                    return encoded_block_future.await.transpose();
-                }
+                        Ok(encoded_block)
+                    })
+                    .into();
+                return encoded_block_future.await.transpose();
             }
+        }
 
         Err(RpcCustomError::BlockNotAvailable { slot }.into())
     }
