@@ -256,7 +256,7 @@ where
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_info: Option<T>,
         leader_forward_count: u64,
-        identity: Option<Keypair>,
+        identity: Option<&Keypair>,
     ) -> Self
     where
         T: TpuInfoWithSendStatic + Clone,
@@ -292,12 +292,12 @@ where
     }
 
     fn create_config(
-        stake_identity: Option<Keypair>,
+        stake_identity: Option<&Keypair>,
         leader_forward_count: usize,
     ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
             bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
-            stake_identity,
+            stake_identity: stake_identity.map(Into::into),
             num_connections: MAX_CONNECTIONS,
             skip_check_transaction_age: true,
             // experimentally found parameter values
@@ -321,10 +321,7 @@ where
 
     async fn do_update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let runtime_handle = self.runtime_handle.clone();
-        let config = Self::create_config(
-            Some(identity.insecure_clone()),
-            self.leader_forward_count as usize,
-        );
+        let config = Self::create_config(Some(identity), self.leader_forward_count as usize);
         let leader_updater = self.leader_updater.clone();
         let handle = self.join_and_cancel.clone();
 
