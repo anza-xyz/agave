@@ -187,6 +187,9 @@ pub fn parse_bpf_upgradeable_loader(
                 }),
             })
         }
+        UpgradeableLoaderInstruction::Migrate => Err(
+            ParseInstructionError::InstructionNotParsable(ParsableProgram::BpfUpgradeableLoader),
+        ),
     }
 }
 
