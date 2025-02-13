@@ -156,15 +156,13 @@ installed on your system.
 
 Before building from source, make sure to install the following prerequisites:
 
+#### Rust
+
+For all platforms, check "Install Rust" at
+[https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
+for the latest installation instructions.
+
 #### For Debian and Other Linux Distributions:
-
-Rust Programming Language: Check "Install Rust" at
-[https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install),
-which recommends the following command.
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
 
 Install build dependencies:
 
@@ -188,31 +186,19 @@ Replace `apt` with your distribution's package manager (e.g., `yum`, `dnf`,
 
 #### For macOS:
 
-Install Homebrew (if not already installed), check "Install Homebrew" at
-[https://brew.sh/](https://brew.sh/), which recommends the following command:
+Check "Install Homebrew" at [https://brew.sh/](https://brew.sh/) for the latest
+installation instruction for Homebrew if not already installed.
+
+Then, install build dependencies with `brew`:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-Install the necessary tools and libraries using Homebrew:
-
-```bash
-brew install rust pkg-config libudev protobuf llvm coreutils
+brew install pkg-config libudev protobuf llvm coreutils
 ```
 
 Follow the instructions given at the end of the brew install command about
 `PATH` configurations.
 
 #### For Windows:
-
-Rust Programming Language: Check "Install Rust" at
-[https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install),
-which recommends the following command.
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
 
 - Download and install the Build Tools for Visual Studio (2019 or later) from
   the
