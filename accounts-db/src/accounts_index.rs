@@ -621,15 +621,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
                 }
                 _ => {
                     // else load the new bin
-                    Self::range(
-                        &map,
-                        (self.start_bound, self.end_bound),
-                        self.collect_all_unsorted,
-                    )
+                    Self::range(&map, (self.start_bound, self.end_bound), self.returns_items)
                 }
             };
             for (count, (pubkey, account_map_entry)) in range.iter().enumerate() {
-                if chunk.len() >= ITER_BATCH_SIZE && !self.collect_all_unsorted {
+                if chunk.len() >= ITER_BATCH_SIZE && self.returns_items.is_sorted() {
                     range.drain(0..count);
                     self.last_bin_range = Some((bin, range));
                     break 'outer;
@@ -661,6 +657,12 @@ pub enum AccountsIndexIteratorReturnsItems {
     Unsorted,
     /// Returns items *sorted*
     Sorted,
+}
+
+impl AccountsIndexIteratorReturnsItems {
+    pub fn is_sorted(&self) -> bool {
+        *self == AccountsIndexIteratorReturnsItems::Sorted
+    }
 }
 
 pub trait ZeroLamport {
@@ -3952,7 +3954,10 @@ pub mod tests {
         }
 
         // Create an iterator for the whole pubkey range.
-        let mut iter = index.iter(None::<&Range<Pubkey>>, COLLECT_ALL_UNSORTED_FALSE);
+        let mut iter = index.iter(
+            None::<&Range<Pubkey>>,
+            AccountsIndexIteratorReturnsItems::Sorted,
+        );
         // First iter.next() should return the first batch of pubkeys (1000
         // pubkeys) out of the 2000 pubkeys in the first bin. And the remaining
         // 1000 pubkeys from the first bin should be cached in
