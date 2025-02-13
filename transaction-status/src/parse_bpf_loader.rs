@@ -187,6 +187,7 @@ pub fn parse_bpf_upgradeable_loader(
                 }),
             })
         }
+        UpgradeableLoaderInstruction::Migrate => unimplemented!(),
     }
 }
 

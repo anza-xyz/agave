@@ -1336,6 +1336,7 @@ fn process_loader_upgradeable_instruction(
                 additional_bytes
             );
         }
+        UpgradeableLoaderInstruction::Migrate => unimplemented!(),
     }
 
     Ok(())
