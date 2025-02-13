@@ -4,6 +4,8 @@ use {
     std::{path::Path, process::exit},
 };
 
+const COMMAND: &str = "contact-info";
+
 #[derive(Debug, PartialEq)]
 pub struct ContactInfoArgs {
     pub output: Option<String>,
@@ -18,7 +20,7 @@ impl FromClapArgMatches for ContactInfoArgs {
 }
 
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
-    SubCommand::with_name("contact-info")
+    SubCommand::with_name(COMMAND)
         .about("Display the validator's contact info")
         .arg(
             Arg::with_name("output")
@@ -64,7 +66,7 @@ mod tests {
     fn verify_args_struct_by_command_contact_info_output_json() {
         verify_args_struct_by_command(
             command(&DefaultArgs::default()),
-            vec!["contact-info", "--output", "json"],
+            vec![COMMAND, "--output", "json"],
             ContactInfoArgs {
                 output: Some("json".to_string()),
             },
@@ -75,7 +77,7 @@ mod tests {
     fn verify_args_struct_by_command_contact_info_output_json_compact() {
         verify_args_struct_by_command(
             command(&DefaultArgs::default()),
-            vec!["contact-info", "--output", "json-compact"],
+            vec![COMMAND, "--output", "json-compact"],
             ContactInfoArgs {
                 output: Some("json-compact".to_string()),
             },
@@ -86,7 +88,7 @@ mod tests {
     fn verify_args_struct_by_command_contact_info_output_invalid() {
         verify_args_struct_by_command_is_error::<ContactInfoArgs>(
             command(&DefaultArgs::default()),
-            vec!["contact-info", "--output", "xxx"],
+            vec![COMMAND, "--output", "xxx"],
         );
     }
 }
