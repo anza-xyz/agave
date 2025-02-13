@@ -18,13 +18,11 @@ those blocks' transactions through the runtime.
 ## TVU sockets
 
 Externally, TVU UDP receiver appears to bind to one port, typically 8002 UDP.
-Internally, TVU is actually bound with multiple sockets
-to improve kernel's handling of the packet queues.
+Internally, TVU is actually bound with multiple sockets to improve kernel's handling of the packet queues.
 
 > **NOTE:** TPU sockets use similar logic
 
-It is setup so that a node can advertise one external ip/port for TVU.
- We're binding multiple sockets to the same port using SO_REUSEPORT:
+A node advertises one external ip/port for TVU while binding multiple sockets to that same port using SO_REUSEPORT:
 
 ```rust
 let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
@@ -64,7 +62,7 @@ cache: [SocketAddr; SOCKET_CACHE_SIZE]
 ```
 
 `cache` is purely for quick lookups and optimization; it is not serialized and sent to peer nodes.
-`SocketEntry` is serialized and sent to peer nodes within the gossip message type `CrdsData::ContactInfo`. Upon receiving the `ContactInfo`, the peer node calls the `get_socket!` macro to retrieve the TVU port associated with the node..
+`SocketEntry` is serialized and sent to peer nodes within the gossip message type `CrdsData::ContactInfo`. Upon receiving the `ContactInfo`, the peer node calls the `get_socket!` macro to retrieve the TVU port associated with the node.
 For example, to retrieve the TVU ports of the remote node, the peer node calls:
 ```rust
 get_socket!(tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
