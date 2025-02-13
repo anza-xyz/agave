@@ -5,13 +5,13 @@ use {
 };
 
 #[derive(Debug, PartialEq)]
-pub struct ContactInfoArg {
+pub struct ContactInfoArgs {
     pub output: Option<String>,
 }
 
-impl FromClapArgMatches for ContactInfoArg {
+impl FromClapArgMatches for ContactInfoArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Self {
-        ContactInfoArg {
+        ContactInfoArgs {
             output: matches.value_of("output").map(String::from),
         }
     }
@@ -31,7 +31,7 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
 }
 
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
-    let contact_info_arg = ContactInfoArg::from_clap_arg_match(matches);
+    let contact_info_args = ContactInfoArgs::from_clap_arg_match(matches);
 
     let admin_client = admin_rpc_service::connect(ledger_path);
     let contact_info = admin_rpc_service::runtime()
@@ -40,7 +40,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
             eprintln!("Contact info query failed: {err}");
             exit(1);
         });
-    if let Some(mode) = contact_info_arg.output {
+    if let Some(mode) = contact_info_args.output {
         match mode.as_str() {
             "json" => println!("{}", serde_json::to_string_pretty(&contact_info).unwrap()),
             "json-compact" => print!("{}", serde_json::to_string(&contact_info).unwrap()),
@@ -65,7 +65,7 @@ mod tests {
         verify_args_struct_by_command(
             command(&DefaultArgs::default()),
             vec!["contact-info", "--output", "json"],
-            ContactInfoArg {
+            ContactInfoArgs {
                 output: Some("json".to_string()),
             },
         );
@@ -76,7 +76,7 @@ mod tests {
         verify_args_struct_by_command(
             command(&DefaultArgs::default()),
             vec!["contact-info", "--output", "json-compact"],
-            ContactInfoArg {
+            ContactInfoArgs {
                 output: Some("json-compact".to_string()),
             },
         );
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_contact_info_output_invalid() {
-        verify_args_struct_by_command_is_error::<ContactInfoArg>(
+        verify_args_struct_by_command_is_error::<ContactInfoArgs>(
             command(&DefaultArgs::default()),
             vec!["contact-info", "--output", "xxx"],
         );
