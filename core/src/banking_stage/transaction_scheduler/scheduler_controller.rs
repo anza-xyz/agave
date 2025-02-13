@@ -542,6 +542,7 @@ mod tests {
 
         finished_consume_work_sender
             .send(FinishedConsumeWork {
+                slot: None,
                 work: ConsumeWork {
                     batch_id: TransactionBatchId::new(0),
                     ids: vec![],
@@ -880,6 +881,7 @@ mod tests {
         // Complete the batch - marking the second transaction as retryable
         finished_consume_work_sender
             .send(FinishedConsumeWork {
+                slot: None,
                 work: consume_work,
                 retryable_indexes: vec![1],
             })

@@ -198,6 +198,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                         max_ages: _,
                     },
                 retryable_indexes,
+                slot: _,
             }) => {
                 let num_transactions = ids.len();
                 let num_retryable = retryable_indexes.len();

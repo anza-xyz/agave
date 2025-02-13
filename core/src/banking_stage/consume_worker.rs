@@ -122,6 +122,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         self.metrics.has_data.store(true, Ordering::Relaxed);
 
         self.consumed_sender.send(FinishedConsumeWork {
+            slot: Some(bank.slot()),
             work,
             retryable_indexes: output
                 .execute_and_commit_transactions_output
@@ -164,6 +165,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             .fetch_add(num_retryable, Ordering::Relaxed);
         self.metrics.has_data.store(true, Ordering::Relaxed);
         self.consumed_sender.send(FinishedConsumeWork {
+            slot: None,
             work,
             retryable_indexes,
         })?;

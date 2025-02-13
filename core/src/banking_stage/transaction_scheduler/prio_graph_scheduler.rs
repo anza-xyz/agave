@@ -694,6 +694,7 @@ mod tests {
         // Complete batch on thread 0. Remaining txs can be scheduled onto thread 1
         finished_work_sender
             .send(FinishedConsumeWork {
+                slot: None,
                 work: thread_0_work.into_iter().next().unwrap(),
                 retryable_indexes: vec![],
             })
