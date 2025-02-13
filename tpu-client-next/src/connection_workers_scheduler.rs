@@ -71,7 +71,7 @@ pub struct ConnectionWorkersSchedulerConfig {
 
     /// Optional stake identity keypair used in the endpoint certificate for
     /// identifying the sender.
-    pub stake_identity: Option<Keypair>,
+    pub stake_identity: Option<StakeIdentity>,
 
     /// The number of connections to be maintained by the scheduler.
     pub num_connections: usize,
@@ -89,6 +89,26 @@ pub struct ConnectionWorkersSchedulerConfig {
 
     /// Configures the number of leaders to connect to and send transactions to.
     pub leaders_fanout: Fanout,
+}
+
+pub struct StakeIdentity(QuicClientCertificate);
+
+impl From<Keypair> for StakeIdentity {
+    fn from(keypair: Keypair) -> Self {
+        Self(QuicClientCertificate::new(Some(&keypair)))
+    }
+}
+
+impl From<&Keypair> for StakeIdentity {
+    fn from(keypair: &Keypair) -> Self {
+        Self(QuicClientCertificate::new(Some(keypair)))
+    }
+}
+
+impl From<StakeIdentity> for QuicClientCertificate {
+    fn from(identity: StakeIdentity) -> Self {
+        identity.0
+    }
 }
 
 /// The [`WorkersBroadcaster`] trait defines a customizable mechanism for
@@ -169,7 +189,7 @@ impl ConnectionWorkersScheduler {
         mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
         cancel: CancellationToken,
     ) -> Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError> {
-        let endpoint = Self::setup_endpoint(bind, stake_identity.as_ref())?;
+        let endpoint = Self::setup_endpoint(bind, stake_identity)?;
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
         let mut send_stats_per_addr = SendTransactionStatsPerAddr::new();
@@ -233,9 +253,12 @@ impl ConnectionWorkersScheduler {
     /// Sets up the QUIC endpoint for the scheduler to handle connections.
     fn setup_endpoint(
         bind: SocketAddr,
-        stake_identity: Option<&Keypair>,
+        stake_identity: Option<StakeIdentity>,
     ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
-        let client_certificate = QuicClientCertificate::new(stake_identity);
+        let client_certificate = match stake_identity {
+            Some(identity) => identity.into(),
+            None => QuicClientCertificate::new(None),
+        };
         let client_config = create_client_config(client_certificate);
         let endpoint = create_client_endpoint(bind, client_config)?;
         Ok(endpoint)
