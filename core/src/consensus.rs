@@ -39,8 +39,8 @@ use {
         vote_error::VoteError,
         vote_instruction,
         vote_state::{
-            process_slot_vote_unchecked, BlockTimestamp, Lockout, TowerSync, Vote,
-            VoteState1_14_11, VoteStateUpdate, MAX_LOCKOUT_HISTORY,
+            BlockTimestamp, Lockout, TowerSync, Vote, VoteState1_14_11, VoteStateUpdate,
+            MAX_LOCKOUT_HISTORY,
         },
     },
     std::{
@@ -406,10 +406,10 @@ impl Tower {
                 continue;
             }
             trace!("{} {} with stake {}", vote_account_pubkey, key, voted_stake);
-            let mut vote_state = account.vote_state().clone();
+            let mut vote_state = TowerVoteState::from(account.vote_state().clone());
             for vote in &vote_state.votes {
                 lockout_intervals
-                    .entry(vote.lockout.last_locked_out_slot())
+                    .entry(vote.last_locked_out_slot())
                     .or_default()
                     .push((vote.slot(), key));
             }
@@ -450,7 +450,7 @@ impl Tower {
                 );
             }
 
-            process_slot_vote_unchecked(&mut vote_state, bank_slot);
+            vote_state.process_next_vote_slot(bank_slot);
 
             for vote in &vote_state.votes {
                 vote_slots.insert(vote.slot());
@@ -1795,7 +1795,7 @@ pub mod test {
         },
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{
-            Vote, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            process_slot_vote_unchecked, Vote, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
         std::{
             collections::{HashMap, VecDeque},
