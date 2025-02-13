@@ -198,7 +198,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                         max_ages: _,
                     },
                 retryable_indexes,
-                slot: _,
+                slot,
             }) => {
                 let num_transactions = ids.len();
                 let num_retryable = retryable_indexes.len();
@@ -211,7 +211,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                 for (index, (id, transaction)) in izip!(ids, transactions).enumerate() {
                     if let Some(retryable_index) = retryable_iter.peek() {
                         if *retryable_index == index {
-                            container.retry_transaction(id, transaction);
+                            container.retry_transaction(slot, id, transaction);
                             retryable_iter.next();
                             continue;
                         }
