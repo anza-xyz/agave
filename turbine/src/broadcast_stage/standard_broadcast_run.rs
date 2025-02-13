@@ -409,9 +409,9 @@ impl StandardBroadcastRun {
     ) -> Result<()> {
         trace!("Broadcasting {:?} shreds", shreds.len());
         let mut transmit_stats = TransmitShredsStats::default();
+
         // Broadcast the shreds
         let mut transmit_time = Measure::start("broadcast_shreds");
-
         broadcast_shreds(
             sock,
             &shreds,
