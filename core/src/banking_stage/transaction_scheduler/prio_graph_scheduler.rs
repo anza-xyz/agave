@@ -931,4 +931,107 @@ mod tests {
         assert_eq!(scheduling_summary.num_unschedulable, 0);
         assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![2], vec![0]]);
     }
+
+    fn create_container_with_capacity(
+        capacity: usize,
+        tx_infos: impl IntoIterator<
+            Item = (
+                impl Borrow<Keypair>,
+                impl IntoIterator<Item = impl Borrow<Pubkey>>,
+                u64,
+                u64,
+            ),
+        >,
+    ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
+        let mut container = TransactionStateContainer::with_capacity(capacity);
+        for (from_keypair, to_pubkeys, lamports, compute_unit_price) in tx_infos.into_iter() {
+            let transaction = prioritized_tranfers(
+                from_keypair.borrow(),
+                to_pubkeys,
+                lamports,
+                compute_unit_price,
+            );
+            let packet = Arc::new(
+                ImmutableDeserializedPacket::new(
+                    Packet::from_data(None, transaction.to_versioned_transaction()).unwrap(),
+                )
+                .unwrap(),
+            );
+            let transaction_ttl = SanitizedTransactionTTL {
+                transaction,
+                max_age: MaxAge::MAX,
+            };
+            const TEST_TRANSACTION_COST: u64 = 5000;
+            container.insert_new_transaction(
+                transaction_ttl,
+                packet,
+                compute_unit_price,
+                TEST_TRANSACTION_COST,
+            );
+        }
+
+        container
+    }
+
+    fn test_schedulling(
+        capacity: usize,
+        mut scheduler: PrioGraphScheduler<RuntimeTransaction<SanitizedTransaction>>,
+    ) {
+        let txs = (0..capacity)
+            .map(|_| (Keypair::new(), [Pubkey::new_unique()], 1, 1))
+            .collect_vec();
+        let mut container = create_container_with_capacity(capacity, txs.into_iter());
+
+        let scheduling_summary = scheduler
+            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .unwrap();
+        // for each pass, it'd schedule no more than configured max_scanned_transactions_per_scheduling_pass
+        let expected_num_scheduled = std::cmp::min(
+            capacity,
+            scheduler
+                .config
+                .max_scanned_transactions_per_scheduling_pass,
+        );
+        assert_eq!(scheduling_summary.num_scheduled, expected_num_scheduled);
+        assert_eq!(scheduling_summary.num_unschedulable, 0);
+
+        let mut post_schedule_remaining_ids = 0;
+        while let Some(_p) = container.pop() {
+            post_schedule_remaining_ids += 1;
+        }
+
+        // unscheduled ids should remain in the container
+        assert_eq!(
+            post_schedule_remaining_ids,
+            capacity - expected_num_scheduled
+        );
+    }
+
+    #[test]
+    fn test_schedulling_full_container_small() {
+        // container is same size of max_scanned_transactions_per_scheduling_pass,
+        // all transactions will be scheduled in single pass.
+        let (scheduler, _work_receivers, _finished_work_sender) = create_test_frame(1);
+        test_schedulling(
+            scheduler
+                .config
+                .max_scanned_transactions_per_scheduling_pass,
+            scheduler,
+        );
+    }
+
+    #[test]
+    fn test_schedulling_full_container_large() {
+        // container has size larger than max_scanned_transactions_per_scheduling_pass,
+        // after one pass of scheduling, container should stay as full (since no
+        // finished_work_receiver), and additional IDs shall remain in Conatiner
+        let (scheduler, _work_receivers, _finished_work_sender) = create_test_frame(1);
+        test_schedulling(
+            scheduler
+                .config
+                .max_scanned_transactions_per_scheduling_pass
+                + 2,
+            scheduler,
+        );
+    }
 }
