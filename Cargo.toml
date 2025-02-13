@@ -414,7 +414,7 @@ solana-example-mocks = "=2.2.1"
 solana-faucet = { path = "faucet", version = "=2.2.0" }
 solana-feature-gate-client = "0.0.2"
 solana-feature-gate-interface = "=2.2.1"
-solana-feature-set = "=2.2.1"
+solana-feature-set = "=2.2.4"
 solana-fee-calculator = "=2.2.1"
 solana-fee = { path = "fee", version = "=2.2.0" }
 solana-fee-structure = "=2.2.1"

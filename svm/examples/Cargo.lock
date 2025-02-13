@@ -5888,9 +5888,9 @@ dependencies = [
 
 [[package]]
 name = "solana-feature-set"
-version = "2.2.1"
+version = "2.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89e1d3b52b4a014efeaaab67f14e40af3972a4be61c523d612860db8e3145529"
+checksum = "92f6c09cc41059c0e03ccbee7f5d4cc0a315d68ef0d59b67eb90246adfd8cc35"
 dependencies = [
  "ahash 0.8.11",
  "lazy_static",
