@@ -43,10 +43,10 @@ impl KeyUpdateNotifier {
 }
 
 impl NotifyKeyUpdate for KeyUpdateNotifier {
-    fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+    fn update_key(&self, key: Arc<Keypair>) -> Result<(), Box<dyn std::error::Error>> {
         let updaters = self.key_updaters.lock().unwrap();
         for updater in updaters.iter() {
-            updater.update_key(key)?
+            updater.update_key(key.clone())?
         }
         Ok(())
     }

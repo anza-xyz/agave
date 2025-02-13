@@ -137,8 +137,8 @@ pub struct EndpointKeyUpdater {
 }
 
 impl NotifyKeyUpdate for EndpointKeyUpdater {
-    fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let (config, _) = configure_server(key)?;
+    fn update_key(&self, key: Arc<Keypair>) -> Result<(), Box<dyn std::error::Error>> {
+        let (config, _) = configure_server(key.as_ref())?;
         for endpoint in &self.endpoints {
             endpoint.set_server_config(Some(config.clone()));
         }

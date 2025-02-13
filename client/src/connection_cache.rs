@@ -46,10 +46,10 @@ pub enum NonblockingClientConnection {
 }
 
 impl NotifyKeyUpdate for ConnectionCache {
-    fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+    fn update_key(&self, key: Arc<Keypair>) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             Self::Udp(_) => Ok(()),
-            Self::Quic(backend) => backend.update_key(key),
+            Self::Quic(backend) => backend.update_key(key.as_ref()),
         }
     }
 }

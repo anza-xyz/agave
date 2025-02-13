@@ -718,16 +718,15 @@ impl AdminRpcImpl {
                     })?;
             }
 
+            let identity_keypair = Arc::new(identity_keypair);
             for n in post_init.notifies.iter() {
-                if let Err(err) = n.update_key(&identity_keypair) {
+                if let Err(err) = n.update_key(identity_keypair.clone()) {
                     error!("Error updating network layer keypair: {err}");
                 }
             }
 
             solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
-            post_init
-                .cluster_info
-                .set_keypair(Arc::new(identity_keypair));
+            post_init.cluster_info.set_keypair(identity_keypair);
             warn!("Identity set to {}", post_init.cluster_info.id());
             Ok(())
         })
