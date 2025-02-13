@@ -1297,7 +1297,8 @@ impl JsonRpcRequestProcessor {
         slot: Slot,
         config: Option<RpcEncodingConfigWrapper<RpcBlockConfig>>,
     ) -> Result<Option<UiConfirmedBlock>> {
-        if self.config.enable_rpc_transaction_history {
+        self.check_if_transaction_history_enabled()?;
+
             let config = config
                 .map(|config| config.convert_to_current())
                 .unwrap_or_default();
@@ -1408,9 +1409,7 @@ impl JsonRpcRequestProcessor {
                     return encoded_block_future.await.transpose();
                 }
             }
-        } else {
-            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
-        }
+
         Err(RpcCustomError::BlockNotAvailable { slot }.into())
     }
 
