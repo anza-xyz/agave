@@ -134,7 +134,7 @@ impl LeaderScheduleCache {
                 let num_slots = bank.get_slots_in_epoch(k) as usize;
                 let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(k);
                 leader_schedule
-                    .get_indices(pubkey, offset)
+                    .get_leader_upcoming_slots(pubkey, offset)
                     .take_while(move |i| *i < num_slots)
                     .map(move |i| i as Slot + first_slot)
             })

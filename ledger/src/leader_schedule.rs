@@ -24,7 +24,7 @@ pub trait LeaderScheduleVariant:
     fn get_slot_leaders(&self) -> &[Pubkey];
     fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>>;
 
-    fn get_indices(
+    fn get_leader_upcoming_slots(
         &self,
         pubkey: &Pubkey,
         offset: usize, // Starting index.
@@ -103,7 +103,7 @@ mod tests {
     use {super::*, itertools::Itertools, rand::Rng, std::iter::repeat_with};
 
     #[test]
-    fn test_get_indices() {
+    fn test_get_leader_upcoming_slots() {
         const NUM_SLOTS: usize = 97;
         let mut rng = rand::thread_rng();
         let pubkeys: Vec<_> = repeat_with(Pubkey::new_unique).take(4).collect();
@@ -118,7 +118,7 @@ mod tests {
             let index = leaders.get(pubkey).cloned().unwrap_or_default();
             for offset in 0..NUM_SLOTS {
                 let schedule: Vec<_> = schedule
-                    .get_indices(pubkey, offset)
+                    .get_leader_upcoming_slots(pubkey, offset)
                     .take_while(|s| *s < NUM_SLOTS)
                     .collect();
                 let index: Vec<_> = index.iter().copied().skip_while(|s| *s < offset).collect();
