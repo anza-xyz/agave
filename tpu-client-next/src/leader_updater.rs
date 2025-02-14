@@ -1,5 +1,5 @@
 //! This module provides [`LeaderUpdater`] trait along with
-//! `create_leader_updater` function to create an instance of this trait.
+//! [`create_leader_updater`] function to create an instance of this trait.
 //!
 //! Currently, the main purpose of [`LeaderUpdater`] is to abstract over leader
 //! updates, hiding the details of how leaders are retrieved and which

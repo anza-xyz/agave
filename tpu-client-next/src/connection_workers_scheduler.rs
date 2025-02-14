@@ -45,7 +45,7 @@ pub enum ConnectionWorkersSchedulerError {
 /// be targeted when sending transactions and connecting.
 ///
 /// Note, that the unit is number of leaders per
-/// [`NUM_CONSECUTIVE_LEADER_SLOTS`]. It means that if the leader schedule is
+/// [`solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS`]. It means that if the leader schedule is
 /// [L1, L1, L1, L1, L1, L1, L1, L1, L2, L2, L2, L2], the leaders per
 /// consecutive leader slots are [L1, L1, L2], so there are 3 of them.
 ///
@@ -71,7 +71,7 @@ pub struct ConnectionWorkersSchedulerConfig {
 
     /// Optional stake identity keypair used in the endpoint certificate for
     /// identifying the sender.
-    pub stake_identity: Option<Keypair>,
+    pub stake_identity: Option<StakeIdentity>,
 
     /// The number of connections to be maintained by the scheduler.
     pub num_connections: usize,
@@ -89,6 +89,32 @@ pub struct ConnectionWorkersSchedulerConfig {
 
     /// Configures the number of leaders to connect to and send transactions to.
     pub leaders_fanout: Fanout,
+}
+
+/// The [`StakeIdentity`] structure provides a convenient abstraction for handling
+/// [`Keypair`] when creating a QUIC certificate. Since `Keypair` does not implement
+/// [`Clone`], it cannot be moved in situations where [`ConnectionWorkersSchedulerConfig`]
+/// needs to be transferred. This wrapper structure allows the use of either a `Keypair`
+/// or a `&Keypair` to create a certificate, which is stored internally and later
+/// consumed by [`ConnectionWorkersScheduler`] to create an endpoint.
+pub struct StakeIdentity(QuicClientCertificate);
+
+impl From<Keypair> for StakeIdentity {
+    fn from(keypair: Keypair) -> Self {
+        Self(QuicClientCertificate::new(Some(&keypair)))
+    }
+}
+
+impl From<&Keypair> for StakeIdentity {
+    fn from(keypair: &Keypair) -> Self {
+        Self(QuicClientCertificate::new(Some(keypair)))
+    }
+}
+
+impl From<StakeIdentity> for QuicClientCertificate {
+    fn from(identity: StakeIdentity) -> Self {
+        identity.0
+    }
 }
 
 /// The [`WorkersBroadcaster`] trait defines a customizable mechanism for
@@ -122,7 +148,7 @@ impl ConnectionWorkersScheduler {
     ///
     /// This method is a shorthand for
     /// [`ConnectionWorkersScheduler::run_with_broadcaster`] using
-    /// [`NonblockingBroadcaster`] strategy.
+    /// `NonblockingBroadcaster` strategy.
     ///
     /// Transactions that fail to be delivered to workers due to full channels
     /// will be dropped. The same for transactions that failed to be delivered
@@ -169,7 +195,7 @@ impl ConnectionWorkersScheduler {
         mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
         cancel: CancellationToken,
     ) -> Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError> {
-        let endpoint = Self::setup_endpoint(bind, stake_identity.as_ref())?;
+        let endpoint = Self::setup_endpoint(bind, stake_identity)?;
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
         let mut send_stats_per_addr = SendTransactionStatsPerAddr::new();
@@ -233,9 +259,12 @@ impl ConnectionWorkersScheduler {
     /// Sets up the QUIC endpoint for the scheduler to handle connections.
     fn setup_endpoint(
         bind: SocketAddr,
-        stake_identity: Option<&Keypair>,
+        stake_identity: Option<StakeIdentity>,
     ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
-        let client_certificate = QuicClientCertificate::new(stake_identity);
+        let client_certificate = match stake_identity {
+            Some(identity) => identity.into(),
+            None => QuicClientCertificate::new(None),
+        };
         let client_config = create_client_config(client_certificate);
         let endpoint = create_client_endpoint(bind, client_config)?;
         Ok(endpoint)
