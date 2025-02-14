@@ -6129,9 +6129,12 @@ dependencies = [
  "log",
  "rayon",
  "solana-accounts-db",
+ "solana-clock",
+ "solana-epoch-schedule",
  "solana-logger",
  "solana-measure",
- "solana-sdk",
+ "solana-pubkey",
+ "solana-rent-collector",
  "solana-version",
 ]
 
