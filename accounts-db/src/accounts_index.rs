@@ -185,7 +185,10 @@ pub trait DiskIndexValue:
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum ScanError {
-    #[error("Node detected it replayed bad version of slot {slot:?} with id {bank_id:?}, thus the scan on said slot was aborted")]
+    #[error(
+        "Node detected it replayed bad version of slot {slot:?} with id {bank_id:?}, thus the \
+         scan on said slot was aborted"
+    )]
     SlotRemoved { slot: Slot, bank_id: BankId },
     #[error("scan aborted: {0}")]
     Aborted(String),
@@ -1512,7 +1515,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                             AccountsIndexScanResult::UnrefLog0 => {
                                 let old_ref = locked_entry.unref();
                                 if old_ref != 1 {
-                                    info!("Unexpected unref {pubkey} with {old_ref} {:?}, expect old_ref to be 1", locked_entry.slot_list.read().unwrap());
+                                    info!(
+                                        "Unexpected unref {pubkey} with {old_ref} {:?}, expect \
+                                         old_ref to be 1",
+                                        locked_entry.slot_list.read().unwrap()
+                                    );
                                     datapoint_warn!(
                                         "accounts_db-unexpected-unref-zero",
                                         ("old_ref", old_ref, i64),

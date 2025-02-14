@@ -357,7 +357,8 @@ impl BankForks {
             .collect();
         assert!(
             eah_banks.len() <= 1,
-            "At most one bank should request an epoch accounts hash calculation! num banks: {}, bank slots: {:?}",
+            "At most one bank should request an epoch accounts hash calculation! num banks: {}, \
+             bank slots: {:?}",
             eah_banks.len(),
             eah_banks.iter().map(|bank| bank.slot()).collect::<Vec<_>>(),
         );
@@ -478,7 +479,11 @@ impl BankForks {
                         );
                     }
                 } else {
-                    info!("Not sending snapshot request for bank: {}, startup verification is incomplete", bank_slot);
+                    info!(
+                        "Not sending snapshot request for bank: {}, startup verification is \
+                         incomplete",
+                        bank_slot
+                    );
                 }
             }
             snapshot_time.stop();

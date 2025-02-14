@@ -333,7 +333,10 @@ pub enum SnapshotError {
     #[error("could not parse snapshot archive's file name '{0}'")]
     ParseSnapshotArchiveFileNameError(String),
 
-    #[error("snapshots are incompatible: full snapshot slot ({0}) and incremental snapshot base slot ({1}) do not match")]
+    #[error(
+        "snapshots are incompatible: full snapshot slot ({0}) and incremental snapshot base slot \
+         ({1}) do not match"
+    )]
     MismatchedBaseSlot(Slot, Slot),
 
     #[error("no snapshot archives to load from '{0}'")]
@@ -785,7 +788,8 @@ pub fn serialize_and_archive_snapshot_package(
     write_full_snapshot_slot_file(&bank_snapshot_info.snapshot_dir, full_snapshot_archive_slot)
         .map_err(|err| {
             IoError::other(format!(
-                "failed to serialize snapshot slot {snapshot_slot}, block height {block_height}, kind {snapshot_kind:?}: {err}",
+                "failed to serialize snapshot slot {snapshot_slot}, block height {block_height}, \
+                 kind {snapshot_kind:?}: {err}",
             ))
         })?;
 
@@ -1384,7 +1388,8 @@ fn check_deserialize_file_consumed(
 
     if consumed_size != file_size {
         let error_message = format!(
-            "invalid snapshot data file: '{}' has {} bytes, however consumed {} bytes to deserialize",
+            "invalid snapshot data file: '{}' has {} bytes, however consumed {} bytes to \
+             deserialize",
             file_path.as_ref().display(),
             file_size,
             consumed_size,

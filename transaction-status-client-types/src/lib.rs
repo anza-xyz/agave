@@ -761,47 +761,21 @@ mod test {
             assert_eq!(reserialized_value, expected_json_output_value);
         }
 
-        let json_input = "{\
-            \"err\":null,\
-            \"status\":{\"Ok\":null},\
-            \"fee\":1234,\
-            \"preBalances\":[1,2,3],\
-            \"postBalances\":[4,5,6]\
-        }";
-        let expected_json_output = "{\
-            \"err\":null,\
-            \"status\":{\"Ok\":null},\
-            \"fee\":1234,\
-            \"preBalances\":[1,2,3],\
-            \"postBalances\":[4,5,6],\
-            \"innerInstructions\":null,\
-            \"logMessages\":null,\
-            \"preTokenBalances\":null,\
-            \"postTokenBalances\":null,\
-            \"rewards\":null\
-        }";
+        let json_input = "{\"err\":null,\"status\":{\"Ok\":null},\"fee\":1234,\"preBalances\":[1,\
+                          2,3],\"postBalances\":[4,5,6]}";
+        let expected_json_output =
+            "{\"err\":null,\"status\":{\"Ok\":null},\"fee\":1234,\"preBalances\":[1,2,3],\"\
+             postBalances\":[4,5,6],\"innerInstructions\":null,\"logMessages\":null,\"\
+             preTokenBalances\":null,\"postTokenBalances\":null,\"rewards\":null}";
         test_serde::<UiTransactionStatusMeta>(json_input, expected_json_output);
 
-        let json_input = "{\
-            \"accountIndex\":5,\
-            \"mint\":\"DXM2yVSouSg1twmQgHLKoSReqXhtUroehWxrTgPmmfWi\",\
-            \"uiTokenAmount\": {
-                \"amount\": \"1\",\
-                \"decimals\": 0,\
-                \"uiAmount\": 1.0,\
-                \"uiAmountString\": \"1\"\
-            }\
-        }";
-        let expected_json_output = "{\
-            \"accountIndex\":5,\
-            \"mint\":\"DXM2yVSouSg1twmQgHLKoSReqXhtUroehWxrTgPmmfWi\",\
-            \"uiTokenAmount\": {
-                \"amount\": \"1\",\
-                \"decimals\": 0,\
-                \"uiAmount\": 1.0,\
-                \"uiAmountString\": \"1\"\
-            }\
-        }";
+        let json_input = "{\"accountIndex\":5,\"mint\":\"\
+                          DXM2yVSouSg1twmQgHLKoSReqXhtUroehWxrTgPmmfWi\",\"uiTokenAmount\": {
+                \"amount\": \"1\",\"decimals\": 0,\"uiAmount\": 1.0,\"uiAmountString\": \"1\"}}";
+        let expected_json_output = "{\"accountIndex\":5,\"mint\":\"\
+                                    DXM2yVSouSg1twmQgHLKoSReqXhtUroehWxrTgPmmfWi\",\"\
+                                    uiTokenAmount\": {
+                \"amount\": \"1\",\"decimals\": 0,\"uiAmount\": 1.0,\"uiAmountString\": \"1\"}}";
         test_serde::<UiTransactionTokenBalance>(json_input, expected_json_output);
     }
 }

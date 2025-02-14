@@ -1081,10 +1081,13 @@ async fn handle_connection(
                 STREAM_THROTTLING_INTERVAL.saturating_sub(throttle_interval_start.elapsed());
 
             if !throttle_duration.is_zero() {
-                debug!("Throttling stream from {remote_addr:?}, peer type: {:?}, total stake: {}, \
-                                    max_streams_per_interval: {max_streams_per_throttling_interval}, read_interval_streams: {streams_read_in_throttle_interval} \
-                                    throttle_duration: {throttle_duration:?}",
-                                    peer_type, total_stake);
+                debug!(
+                    "Throttling stream from {remote_addr:?}, peer type: {:?}, total stake: {}, \
+                     max_streams_per_interval: {max_streams_per_throttling_interval}, \
+                     read_interval_streams: {streams_read_in_throttle_interval} \
+                     throttle_duration: {throttle_duration:?}",
+                    peer_type, total_stake
+                );
                 stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
                 match peer_type {
                     ConnectionPeerType::Unstaked => {

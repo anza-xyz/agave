@@ -4462,7 +4462,10 @@ mod tests {
                     );
                     assert!(destination_stake.delegation.stake >= minimum_delegation,);
                 } else {
-                    panic!("destination state must be StakeStake::Stake after successful split when source is also StakeStateV2::Stake!");
+                    panic!(
+                        "destination state must be StakeStake::Stake after successful split when \
+                         source is also StakeStateV2::Stake!"
+                    );
                 }
             }
         }

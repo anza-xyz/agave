@@ -943,8 +943,11 @@ impl Validator {
             config.accounts_db_test_hash_calculation,
         );
         info!(
-            "Using: block-verification-method: {}, block-production-method: {}, transaction-structure: {}",
-            config.block_verification_method, config.block_production_method, config.transaction_struct
+            "Using: block-verification-method: {}, block-production-method: {}, \
+             transaction-structure: {}",
+            config.block_verification_method,
+            config.block_production_method,
+            config.transaction_struct
         );
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
@@ -2355,7 +2358,7 @@ fn should_cleanup_blockstore_incorrect_shred_versions(
     let blockstore_min_slot = blockstore.lowest_slot();
     info!(
         "Blockstore contains data from slot {blockstore_min_slot} to {blockstore_max_slot}, the \
-        latest hard fork is {latest_hard_fork}"
+         latest hard fork is {latest_hard_fork}"
     );
 
     if latest_hard_fork < blockstore_min_slot {

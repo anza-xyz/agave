@@ -877,8 +877,8 @@ pub fn execute(
         .any(|account_path| account_path == &snapshots_dir)
     {
         eprintln!(
-            "Failed: The --accounts and --snapshots paths must be unique since they \
-             both create 'snapshots' subdirectories, otherwise there may be collisions",
+            "Failed: The --accounts and --snapshots paths must be unique since they both create \
+             'snapshots' subdirectories, otherwise there may be collisions",
         );
         exit(1);
     }
@@ -967,9 +967,9 @@ pub fn execute(
             // also warn if --full-snapshot-interval-slots was specified
             if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
                 warn!(
-                    "Incremental snapshots are disabled, yet --full-snapshot-interval-slots was specified! \
-                     Note that --full-snapshot-interval-slots is *ignored* when incremental snapshots are disabled. \
-                     Use --snapshot-interval-slots instead.",
+                    "Incremental snapshots are disabled, yet --full-snapshot-interval-slots was \
+                     specified! Note that --full-snapshot-interval-slots is *ignored* when \
+                     incremental snapshots are disabled. Use --snapshot-interval-slots instead.",
                 );
             }
             (
@@ -1005,7 +1005,8 @@ pub fn execute(
     );
 
     info!(
-        "Snapshot configuration: full snapshot interval: {} slots, incremental snapshot interval: {} slots",
+        "Snapshot configuration: full snapshot interval: {} slots, incremental snapshot interval: \
+         {} slots",
         if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
             "disabled".to_string()
         } else {
@@ -1024,8 +1025,8 @@ pub fn execute(
         && full_snapshot_archive_interval_slots != DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
     {
         warn!(
-            "The full snapshot interval is excessively large: {}! This will negatively \
-            impact the background cleanup tasks in accounts-db. Consider a smaller value.",
+            "The full snapshot interval is excessively large: {}! This will negatively impact the \
+             background cleanup tasks in accounts-db. Consider a smaller value.",
             full_snapshot_archive_interval_slots,
         );
     }
@@ -1035,11 +1036,10 @@ pub fn execute(
         validator_config.accounts_hash_interval_slots,
     ) {
         eprintln!(
-            "Invalid snapshot configuration provided: snapshot intervals are incompatible. \
-             \n\t- full snapshot interval MUST be a multiple of incremental snapshot interval \
-             (if enabled) \
-             \n\t- full snapshot interval MUST be larger than incremental snapshot interval \
-             (if enabled)",
+            "Invalid snapshot configuration provided: snapshot intervals are incompatible. \n\t- \
+             full snapshot interval MUST be a multiple of incremental snapshot interval (if \
+             enabled) \n\t- full snapshot interval MUST be larger than incremental snapshot \
+             interval (if enabled)",
         );
         exit(1);
     }
@@ -1351,7 +1351,10 @@ pub fn execute(
         Ok(validator) => validator,
         Err(err) => match err.downcast_ref() {
             Some(ValidatorError::WenRestartFinished) => {
-                error!("Please remove --wen_restart and use --wait_for_supermajority as instructed above");
+                error!(
+                    "Please remove --wen_restart and use --wait_for_supermajority as instructed \
+                     above"
+                );
                 exit(200);
             }
             _ => {

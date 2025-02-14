@@ -501,15 +501,16 @@ impl BankingStage {
             ));
         }
 
-        let transaction_struct =
-            if enable_forwarding && !matches!(transaction_struct, TransactionStructure::Sdk) {
-                warn!(
+        let transaction_struct = if enable_forwarding
+            && !matches!(transaction_struct, TransactionStructure::Sdk)
+        {
+            warn!(
                 "Forwarding only supported for `Sdk` transaction struct. Overriding to use `Sdk`."
             );
-                TransactionStructure::Sdk
-            } else {
-                transaction_struct
-            };
+            TransactionStructure::Sdk
+        } else {
+            transaction_struct
+        };
 
         match transaction_struct {
             TransactionStructure::Sdk => {

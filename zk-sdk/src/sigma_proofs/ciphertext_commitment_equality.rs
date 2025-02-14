@@ -444,7 +444,8 @@ mod test {
         let pod_pubkey = PodElGamalPubkey::from_str(pubkey_str).unwrap();
         let pubkey: ElGamalPubkey = pod_pubkey.try_into().unwrap();
 
-        let ciphertext_str = "RAXnbQ/DPRlYAWmD+iHRNqMDv7oQcPgQ7OejRzj4bxVy2qOJNziqqDOC7VP3iTW1+z/jckW4smA3EUF7i/r8Rw==";
+        let ciphertext_str = "RAXnbQ/DPRlYAWmD+iHRNqMDv7oQcPgQ7OejRzj4bxVy2qOJNziqqDOC7VP3iTW1+z/\
+                              jckW4smA3EUF7i/r8Rw==";
         let pod_ciphertext = PodElGamalCiphertext::from_str(ciphertext_str).unwrap();
         let ciphertext: ElGamalCiphertext = pod_ciphertext.try_into().unwrap();
 

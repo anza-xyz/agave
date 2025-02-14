@@ -102,7 +102,8 @@ impl<T: Serialize + Clone> StatusCache<T> {
                             }
                         } else {
                             panic!(
-                                "Map for key must exist if key exists in self.slot_deltas, slot: {slot}"
+                                "Map for key must exist if key exists in self.slot_deltas, slot: \
+                                 {slot}"
                             )
                         }
                     }

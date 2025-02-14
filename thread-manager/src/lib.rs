@@ -172,8 +172,9 @@ impl ThreadManager {
     pub fn destroy(self) {
         let Ok(mut inner) = Arc::try_unwrap(self.inner) else {
             error!(
-                      "References to Thread Manager are still active, clean shutdown may not be possible!"
-                  );
+                "References to Thread Manager are still active, clean shutdown may not be \
+                 possible!"
+            );
             return;
         };
 

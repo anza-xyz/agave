@@ -403,7 +403,8 @@ mod tests {
                     assert_eq!(
                         tx.get_recent_blockhash(),
                         expected_blockhash,
-                        "Unexpected blockhash, tx: {tx:?}, expected blockhash: {expected_blockhash}."
+                        "Unexpected blockhash, tx: {tx:?}, expected blockhash: \
+                         {expected_blockhash}."
                     );
                 }
             } else {

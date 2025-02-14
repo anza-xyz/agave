@@ -2678,7 +2678,8 @@ impl ReplayStage {
             last_vote_refresh_time.last_print_time = Instant::now();
             warn!(
                 "Last landed vote for slot {} in bank {} is greater than the current last vote \
-                 for slot: {} tracked by tower. This indicates a bug in the on chain adoption logic",
+                 for slot: {} tracked by tower. This indicates a bug in the on chain adoption \
+                 logic",
                 latest_landed_vote_slot,
                 heaviest_bank_on_same_fork.slot(),
                 last_voted_slot

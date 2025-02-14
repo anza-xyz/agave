@@ -548,7 +548,9 @@ impl ClusterInfo {
                 }
 
                 let node_version = self.get_node_version(node.pubkey());
-                if my_shred_version != 0 && (node.shred_version() != 0 && node.shred_version() != my_shred_version) {
+                if my_shred_version != 0
+                    && (node.shred_version() != 0 && node.shred_version() != my_shred_version)
+                {
                     different_shred_nodes = different_shred_nodes.saturating_add(1);
                     None
                 } else {
@@ -557,7 +559,8 @@ impl ClusterInfo {
                     }
                     let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
                     Some(format!(
-                        "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}|  {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {}\n",
+                        "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}|  {:5}| {:5}| {:5}| {:5}| {:5}| \
+                         {:5}| {}\n",
                         node.gossip()
                             .filter(|addr| self.socket_addr_space.check(addr))
                             .as_ref()
@@ -565,7 +568,11 @@ impl ClusterInfo {
                             .as_ref()
                             .map(IpAddr::to_string)
                             .unwrap_or_else(|| String::from("none")),
-                        if node.pubkey() == &my_pubkey { "me" } else { "" },
+                        if node.pubkey() == &my_pubkey {
+                            "me"
+                        } else {
+                            ""
+                        },
                         now.saturating_sub(last_updated),
                         node.pubkey().to_string(),
                         if let Some(node_version) = node_version {
@@ -576,10 +583,16 @@ impl ClusterInfo {
                         self.addr_to_string(&ip_addr, &node.gossip()),
                         self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
                         self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::UDP)),
-                        self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::UDP)),
+                        self.addr_to_string(
+                            &ip_addr,
+                            &node.tpu_forwards(contact_info::Protocol::UDP)
+                        ),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::QUIC)),
-                        self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP)),
+                        self.addr_to_string(
+                            &ip_addr,
+                            &node.serve_repair(contact_info::Protocol::UDP)
+                        ),
                         node.shred_version(),
                     ))
                 }

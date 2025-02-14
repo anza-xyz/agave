@@ -719,11 +719,11 @@ pub fn parse_command(
         ("delegate-stake", Some(matches)) => {
             parse_stake_delegate_stake(matches, default_signer, wallet_manager)
         }
-        ("redelegate-stake", _) => {
-            Err(CliError::CommandNotRecognized(
-                "`redelegate-stake` no longer exists and will be completely removed in a future release".to_string(),
-            ))
-        }
+        ("redelegate-stake", _) => Err(CliError::CommandNotRecognized(
+            "`redelegate-stake` no longer exists and will be completely removed in a future \
+             release"
+                .to_string(),
+        )),
         ("withdraw-stake", Some(matches)) => {
             parse_stake_withdraw_stake(matches, default_signer, wallet_manager)
         }

@@ -37,7 +37,8 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
         matches.value_of(arg_name).map(|host_port| {
             solana_net_utils::parse_host_port(host_port).unwrap_or_else(|err| {
                 eprintln!(
-                    "Failed to parse --{arg_long} address. It must be in the HOST:PORT format. {err}"
+                    "Failed to parse --{arg_long} address. It must be in the HOST:PORT format. \
+                     {err}"
                 );
                 exit(1);
             })

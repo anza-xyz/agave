@@ -71,7 +71,10 @@ fn main() -> Result<()> {
                 .value_name("KEYPAIR")
                 .takes_value(true)
                 .validator(is_keypair_or_ask_keyword)
-                .help("Identity keypair for the QUIC endpoint when '--use-quic' is set true. If it is not specified a dynamic key is created."),
+                .help(
+                    "Identity keypair for the QUIC endpoint when '--use-quic' is set true. If it \
+                     is not specified a dynamic key is created.",
+                ),
         )
         .arg(
             Arg::with_name("num-recv-sockets")
@@ -107,7 +110,10 @@ fn main() -> Result<()> {
                 .value_name("HOST:PORT")
                 .takes_value(true)
                 .validator(|arg| solana_net_utils::is_host_port(arg.to_string()))
-                .help("The destination streamer address to which the client will send transactions to"),
+                .help(
+                    "The destination streamer address to which the client will send transactions \
+                     to",
+                ),
         )
         .arg(
             Arg::with_name("use-connection-cache")
@@ -156,10 +162,15 @@ fn main() -> Result<()> {
     let ip_addr = destination.map_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED), |addr| addr.ip());
 
     let quic_params = vote_use_quic.then(|| {
-        let identity_keypair = keypair_of(&matches, "identity").or_else(|| {
-            println!("--identity is not specified when --use-quic is on. Will generate a key dynamically.");
-            Some(Keypair::new())
-        }).unwrap();
+        let identity_keypair = keypair_of(&matches, "identity")
+            .or_else(|| {
+                println!(
+                    "--identity is not specified when --use-quic is on. Will generate a key \
+                     dynamically."
+                );
+                Some(Keypair::new())
+            })
+            .unwrap();
 
         let stake: u64 = 1024;
         let total_stake: u64 = 1024;
@@ -175,7 +186,7 @@ fn main() -> Result<()> {
 
         QuicParams {
             identity_keypair,
-            staked_nodes
+            staked_nodes,
         }
     });
 

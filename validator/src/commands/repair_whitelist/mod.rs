@@ -37,14 +37,16 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
                         .help("Set the validator's repair protocol whitelist"),
                 )
                 .after_help(
-                    "Note: repair protocol whitelist changes only apply to the currently running validator instance",
+                    "Note: repair protocol whitelist changes only apply to the currently running \
+                     validator instance",
                 ),
         )
         .subcommand(
             SubCommand::with_name("remove-all")
                 .about("Clear the validator's repair protocol whitelist")
                 .after_help(
-                    "Note: repair protocol whitelist changes only apply to the currently running validator instance",
+                    "Note: repair protocol whitelist changes only apply to the currently running \
+                     validator instance",
                 ),
         )
 }

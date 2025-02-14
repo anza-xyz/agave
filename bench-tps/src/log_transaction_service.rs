@@ -92,7 +92,10 @@ impl LogTransactionService {
         Client: 'static + TpsClient + Send + Sync + ?Sized,
     {
         if !data_file_provided(block_data_file, transaction_data_file) {
-            panic!("Expect block-data-file or transaction-data-file is specified, must have been verified by callee.");
+            panic!(
+                "Expect block-data-file or transaction-data-file is specified, must have been \
+                 verified by callee."
+            );
         }
 
         let client = client.clone();
@@ -126,8 +129,10 @@ impl LogTransactionService {
         };
         let block_processing_timer_receiver = tick(Duration::from_millis(PROCESS_BLOCKS_EVERY_MS));
 
-        let mut start_slot = get_slot_with_retry(&client, commitment)
-            .expect("get_slot_with_retry should have succeed, cannot proceed without having slot. Must be a problem with RPC.");
+        let mut start_slot = get_slot_with_retry(&client, commitment).expect(
+            "get_slot_with_retry should have succeed, cannot proceed without having slot. Must be \
+             a problem with RPC.",
+        );
 
         let mut sender_stopped = false;
         let mut signature_to_tx_info = MapSignatureToTxInfo::new();

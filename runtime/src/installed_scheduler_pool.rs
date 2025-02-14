@@ -576,7 +576,8 @@ impl BankWithSchedulerInner {
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
                     let scheduler = pool.take_resumed_scheduler(context, result_with_timings);
                     info!(
-                        "with_active_scheduler: bank (slot: {}) got active, taking scheduler (id: {})",
+                        "with_active_scheduler: bank (slot: {}) got active, taking scheduler (id: \
+                         {})",
                         self.bank.slot(),
                         scheduler.id(),
                     );
@@ -696,7 +697,8 @@ impl BankWithSchedulerInner {
             SchedulerStatus::Unavailable => (true, None),
         };
         debug!(
-            "wait_for_scheduler_termination(slot: {}, reason: {:?}): noop: {:?}, result: {:?} at {:?}...",
+            "wait_for_scheduler_termination(slot: {}, reason: {:?}): noop: {:?}, result: {:?} at \
+             {:?}...",
             bank.slot(),
             reason,
             was_noop,
@@ -714,7 +716,8 @@ impl BankWithSchedulerInner {
     fn drop_scheduler(&self) {
         if thread::panicking() {
             error!(
-                "BankWithSchedulerInner::drop_scheduler(): slot: {} skipping due to already panicking...",
+                "BankWithSchedulerInner::drop_scheduler(): slot: {} skipping due to already \
+                 panicking...",
                 self.bank.slot(),
             );
             return;
@@ -726,7 +729,8 @@ impl BankWithSchedulerInner {
             .map(|(result, _timings)| result)
         {
             warn!(
-                "BankWithSchedulerInner::drop_scheduler(): slot: {} discarding error from scheduler: {:?}",
+                "BankWithSchedulerInner::drop_scheduler(): slot: {} discarding error from \
+                 scheduler: {:?}",
                 self.bank.slot(),
                 err,
             );

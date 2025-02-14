@@ -1145,7 +1145,8 @@ impl RpcSubscriptions {
         let total_ms = total_time.as_ms();
         if total_notified > 0 || total_ms > 10 {
             debug!(
-                "notified({}): accounts: {} / {} logs: {} / {} programs: {} / {} signatures: {} / {}",
+                "notified({}): accounts: {} / {} logs: {} / {} programs: {} / {} signatures: {} / \
+                 {}",
                 source,
                 num_accounts_found.load(Ordering::Relaxed),
                 num_accounts_notified.load(Ordering::Relaxed),

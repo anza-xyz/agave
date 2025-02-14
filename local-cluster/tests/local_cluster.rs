@@ -594,12 +594,14 @@ fn test_incremental_snapshot_download() {
         .snapshot_config
         .incremental_snapshot_archives_dir;
 
-    debug!("snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}\n\taccounts hash interval: {}",
-           full_snapshot_interval,
-           incremental_snapshot_interval,
-           accounts_hash_interval);
     debug!(
-        "leader config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: {}\n\tincremental snapshot archives dir: {}",
+        "snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: \
+         {}\n\taccounts hash interval: {}",
+        full_snapshot_interval, incremental_snapshot_interval, accounts_hash_interval
+    );
+    debug!(
+        "leader config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: \
+         {}\n\tincremental snapshot archives dir: {}",
         leader_snapshot_test_config
             .bank_snapshots_dir
             .path()
@@ -614,7 +616,8 @@ fn test_incremental_snapshot_download() {
             .display(),
     );
     debug!(
-        "validator config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: {}\n\tincremental snapshot archives dir: {}",
+        "validator config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: \
+         {}\n\tincremental snapshot archives dir: {}",
         validator_snapshot_test_config
             .bank_snapshots_dir
             .path()
@@ -762,12 +765,14 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
-    info!("snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}\n\taccounts hash interval: {}",
-           full_snapshot_interval,
-           incremental_snapshot_interval,
-           accounts_hash_interval);
+    info!(
+        "snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: \
+         {}\n\taccounts hash interval: {}",
+        full_snapshot_interval, incremental_snapshot_interval, accounts_hash_interval
+    );
     debug!(
-        "leader config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: {}\n\tincremental snapshot archives dir: {}",
+        "leader config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: \
+         {}\n\tincremental snapshot archives dir: {}",
         leader_snapshot_test_config
             .bank_snapshots_dir
             .path()
@@ -782,7 +787,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
             .display(),
     );
     debug!(
-        "validator config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: {}\n\tincremental snapshot archives dir: {}",
+        "validator config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: \
+         {}\n\tincremental snapshot archives dir: {}",
         validator_snapshot_test_config
             .bank_snapshots_dir
             .path()
@@ -996,7 +1002,10 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     // that cross a full snapshot interval.
     let starting_slot = incremental_snapshot_archive.slot();
     let next_full_snapshot_slot = starting_slot + full_snapshot_interval;
-    info!("Waiting for the validator to see enough slots to cross a full snapshot interval ({next_full_snapshot_slot})...");
+    info!(
+        "Waiting for the validator to see enough slots to cross a full snapshot interval \
+         ({next_full_snapshot_slot})..."
+    );
     let timer = Instant::now();
     loop {
         let validator_current_slot = cluster
@@ -1016,7 +1025,9 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         std::thread::yield_now();
     }
     info!(
-        "Waited {:?} for the validator to see enough slots to cross a full snapshot interval... DONE", timer.elapsed()
+        "Waited {:?} for the validator to see enough slots to cross a full snapshot interval... \
+         DONE",
+        timer.elapsed()
     );
 
     // Get the highest full snapshot archive info for the validator, now that it has crossed the
@@ -1056,7 +1067,10 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
         leader_full_snapshot.clone()
     };
-    info!("leader full snapshot archive for comparison: {leader_full_snapshot_archive_for_comparison:#?}");
+    info!(
+        "leader full snapshot archive for comparison: \
+         {leader_full_snapshot_archive_for_comparison:#?}"
+    );
 
     // Stop the validator before we reset its snapshots
     info!("Stopping the validator...");
@@ -1087,7 +1101,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
             .path(),
     );
     info!(
-        "Delete all the snapshots on the validator and restore the originals from the backup... DONE"
+        "Delete all the snapshots on the validator and restore the originals from the backup... \
+         DONE"
     );
 
     // Get the highest full snapshot slot *before* restarting, as a comparison
@@ -1117,7 +1132,10 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     let validator_next_incremental_snapshot_slot =
         validator_next_full_snapshot_slot + incremental_snapshot_interval;
     info!("Waiting for validator next full snapshot slot: {validator_next_full_snapshot_slot}");
-    info!("Waiting for validator next incremental snapshot slot: {validator_next_incremental_snapshot_slot}");
+    info!(
+        "Waiting for validator next incremental snapshot slot: \
+         {validator_next_incremental_snapshot_slot}"
+    );
     let timer = Instant::now();
     loop {
         if let Some(full_snapshot_slot) = snapshot_utils::get_highest_full_snapshot_archive_slot(
@@ -1137,9 +1155,9 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
                     if incremental_snapshot_slot >= validator_next_incremental_snapshot_slot {
                         // specific incremental snapshot is not important, just that one was created
                         info!(
-                             "Validator made new snapshots, full snapshot slot: {}, incremental snapshot slot: {}",
-                             full_snapshot_slot,
-                             incremental_snapshot_slot,
+                            "Validator made new snapshots, full snapshot slot: {}, incremental \
+                             snapshot slot: {}",
+                            full_snapshot_slot, incremental_snapshot_slot,
                         );
                         break;
                     }
@@ -1149,7 +1167,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
         assert!(
             timer.elapsed() < Duration::from_secs(30),
-            "It should not take longer than 30 seconds to cross the next incremental snapshot interval."
+            "It should not take longer than 30 seconds to cross the next incremental snapshot \
+             interval."
         );
         std::thread::yield_now();
     }
@@ -1173,7 +1192,10 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
                 == leader_full_snapshot_archive_for_comparison.slot()
         })
         .expect("validator created an unexpected full snapshot");
-    info!("Validator full snapshot archive for comparison: {validator_full_snapshot_archive_for_comparison:#?}");
+    info!(
+        "Validator full snapshot archive for comparison: \
+         {validator_full_snapshot_archive_for_comparison:#?}"
+    );
     assert_eq!(
         validator_full_snapshot_archive_for_comparison.hash(),
         leader_full_snapshot_archive_for_comparison.hash(),
@@ -1689,7 +1711,10 @@ fn test_optimistic_confirmation_violation_detection() {
         }
         if start.elapsed() > Duration::from_secs(max_wait_time_seconds) {
             cluster.exit();
-            panic!("Didn't get optimistcally confirmed slot > {target_slot} within {max_wait_time_seconds} seconds");
+            panic!(
+                "Didn't get optimistcally confirmed slot > {target_slot} within \
+                 {max_wait_time_seconds} seconds"
+            );
         }
         sleep(Duration::from_millis(100));
     }
@@ -3497,9 +3522,15 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
             panic!("Violation expected because of removed persisted tower!");
         }
     } else if bad_vote_detected {
-        info!("THIS TEST expected violations. And indeed, there was some, because of removed persisted tower.");
+        info!(
+            "THIS TEST expected violations. And indeed, there was some, because of removed \
+             persisted tower."
+        );
     } else {
-        info!("THIS TEST expected no violation. And indeed, there was none, thanks to persisted tower.");
+        info!(
+            "THIS TEST expected no violation. And indeed, there was none, thanks to persisted \
+             tower."
+        );
     }
 }
 
@@ -3684,7 +3715,13 @@ fn test_fork_choice_refresh_old_votes() {
                     assert!(heavier_ancestors.len() > last_common_ancestor_index + 4);
                     context.first_slot_in_lighter_partition = *different_ancestor;
                     distance_from_tip = lighter_ancestors.len() - different_ancestor_index - 1;
-                    info!("Distance in number of blocks between earliest slot {} and latest slot {} on lighter partition is {}", context.first_slot_in_lighter_partition, lighter_fork_latest_vote, distance_from_tip);
+                    info!(
+                        "Distance in number of blocks between earliest slot {} and latest slot {} \
+                         on lighter partition is {}",
+                        context.first_slot_in_lighter_partition,
+                        lighter_fork_latest_vote,
+                        distance_from_tip
+                    );
 
                     if distance_from_tip > MAX_PROCESSING_AGE {
                         // Must have been updated in the above loop
@@ -5039,7 +5076,10 @@ fn test_boot_from_local_state() {
             &validator1_config.incremental_snapshot_archives_dir,
             Some(Duration::from_secs(5 * 60)),
         );
-    debug!("snapshot archives:\n\tfull: {full_snapshot_archive:?}\n\tincr: {incremental_snapshot_archive:?}");
+    debug!(
+        "snapshot archives:\n\tfull: {full_snapshot_archive:?}\n\tincr: \
+         {incremental_snapshot_archive:?}"
+    );
     info!("Waiting for validator1 to create snapshots... DONE");
 
     info!("Copying snapshots to validator2...");
@@ -5111,7 +5151,10 @@ fn test_boot_from_local_state() {
             &validator2_config.incremental_snapshot_archives_dir,
             Some(Duration::from_secs(5 * 60)),
         );
-    debug!("snapshot archives:\n\tfull: {full_snapshot_archive:?}\n\tincr: {incremental_snapshot_archive:?}");
+    debug!(
+        "snapshot archives:\n\tfull: {full_snapshot_archive:?}\n\tincr: \
+         {incremental_snapshot_archive:?}"
+    );
     info!("Waiting for validator2 to create snapshots... DONE");
 
     info!("Copying snapshots to validator3...");
@@ -5153,7 +5196,10 @@ fn test_boot_from_local_state() {
             &validator3_config.incremental_snapshot_archives_dir,
             Some(Duration::from_secs(5 * 60)),
         );
-    debug!("snapshot archives:\n\tfull: {full_snapshot_archive:?}\n\tincr: {incremental_snapshot_archive:?}");
+    debug!(
+        "snapshot archives:\n\tfull: {full_snapshot_archive:?}\n\tincr: \
+         {incremental_snapshot_archive:?}"
+    );
     info!("Waiting for validator3 to create snapshots... DONE");
 
     // Ensure that all validators have the correct state by comparing snapshots.
@@ -5176,7 +5222,10 @@ fn test_boot_from_local_state() {
             &validator1_config.incremental_snapshot_archives_dir,
             Some(Duration::from_secs(5 * 60)),
         );
-    debug!("snapshot archives:\n\tfull: {full_snapshot_archive:?}\n\tincr: {incremental_snapshot_archive:?}");
+    debug!(
+        "snapshot archives:\n\tfull: {full_snapshot_archive:?}\n\tincr: \
+         {incremental_snapshot_archive:?}"
+    );
     info!("Waiting for validator1 to create snapshots... DONE");
 
     // These structs are used to provide better error logs if the asserts below are violated.
@@ -5257,7 +5306,8 @@ fn test_boot_from_local_state() {
                         && other_incremental_snapshot_archive.hash()
                             == incremental_snapshot_archive.hash()
                 ),
-            "incremental snapshot archive does not match!\n  validator1: {:?}\n  validator{i}: {:?}",
+            "incremental snapshot archive does not match!\n  validator1: {:?}\n  validator{i}: \
+             {:?}",
             (
                 BaseSlot(incremental_snapshot_archive.base_slot()),
                 SnapshotSlot(incremental_snapshot_archive.slot()),
@@ -5819,10 +5869,8 @@ fn test_duplicate_shreds_switch_failure() {
 fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
     // tailored logging just to see two block verification methods are working correctly
     solana_logger::setup_with_default(
-        "solana_metrics::metrics=warn,\
-         solana_core=warn,\
-         solana_runtime::installed_scheduler_pool=trace,\
-         solana_ledger::blockstore_processor=debug,\
+        "solana_metrics::metrics=warn,solana_core=warn,\
+         solana_runtime::installed_scheduler_pool=trace,solana_ledger::blockstore_processor=debug,\
          info",
     );
 

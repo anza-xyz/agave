@@ -359,11 +359,14 @@ mod test {
         let pod_second_pubkey = PodElGamalPubkey::from_str(second_pubkey_str).unwrap();
         let second_pubkey: ElGamalPubkey = pod_second_pubkey.try_into().unwrap();
 
-        let first_ciphertext_str = "oKv6zxN051MXdk2cISD+CUsH2+FINoH1iB4WZyuy6nNkE7Q+eLiY9JB8itJhgKHJEA/1sAzDvpnRlLL06OXvIg==";
+        let first_ciphertext_str =
+            "oKv6zxN051MXdk2cISD+CUsH2+FINoH1iB4WZyuy6nNkE7Q+eLiY9JB8itJhgKHJEA/\
+             1sAzDvpnRlLL06OXvIg==";
         let pod_first_ciphertext = PodElGamalCiphertext::from_str(first_ciphertext_str).unwrap();
         let first_ciphertext: ElGamalCiphertext = pod_first_ciphertext.try_into().unwrap();
 
-        let second_ciphertext_str = "ooSA2cQDqutgyCBoMiQktM1Cu4NDNEbphF010gjG4iF0iMK1N+u/Qxqk0wwO/+w+5S6RiicwPs4mEKRJpFiHEw==";
+        let second_ciphertext_str = "ooSA2cQDqutgyCBoMiQktM1Cu4NDNEbphF010gjG4iF0iMK1N+u/Qxqk0wwO/\
+                                     +w+5S6RiicwPs4mEKRJpFiHEw==";
         let pod_second_ciphertext = PodElGamalCiphertext::from_str(second_ciphertext_str).unwrap();
         let second_ciphertext: ElGamalCiphertext = pod_second_ciphertext.try_into().unwrap();
 

@@ -308,8 +308,7 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
     vec![
         SubCommand::with_name("analyze-storage")
             .about(
-                "Output statistics in JSON format about all column families in the ledger \
-                rocksdb",
+                "Output statistics in JSON format about all column families in the ledger rocksdb",
             )
             .settings(&hidden),
         SubCommand::with_name("bounds")
@@ -347,8 +346,8 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
             .arg(&starting_slot_arg),
         SubCommand::with_name("latest-optimistic-slots")
             .about(
-                "Output up to the most recent <num-slots> optimistic slots with their hashes \
-                 and timestamps.",
+                "Output up to the most recent <num-slots> optimistic slots with their hashes and \
+                 timestamps.",
             )
             // This command is important in cluster restart scenarios, so do not hide it ever
             // such that the subcommand will be visible as the top level of agave-ledger-tool
@@ -394,8 +393,8 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .required(false)
                     .takes_value(true)
                     .help(
-                        "The location of the output YAML file. A list of rollback slot \
-                         heights and hashes will be written to the file",
+                        "The location of the output YAML file. A list of rollback slot heights \
+                         and hashes will be written to the file",
                     ),
             )
             .arg(
@@ -454,8 +453,8 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .takes_value(true)
                     .value_name("SST_FILE_NAME")
                     .help(
-                        "The ledger file name (e.g. 011080.sst.) If no file name is \
-                         specified, it will print the metadata of all ledger files.",
+                        "The ledger file name (e.g. 011080.sst.) If no file name is specified, it \
+                         will print the metadata of all ledger files.",
                     ),
             ),
         SubCommand::with_name("purge")
@@ -470,8 +469,7 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .help("Start slot to purge from (inclusive)"),
             )
             .arg(Arg::with_name("end_slot").index(2).value_name("SLOT").help(
-                "Ending slot to stop purging (inclusive) \
-                [default: the highest slot in the ledger]",
+                "Ending slot to stop purging (inclusive) [default: the highest slot in the ledger]",
             ))
             .arg(
                 Arg::with_name("batch_size")
@@ -487,8 +485,8 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .required(false)
                     .takes_value(false)
                     .help(
-                        "--no-compaction is deprecated, ledger compaction after purge is \
-                         disabled by default",
+                        "--no-compaction is deprecated, ledger compaction after purge is disabled \
+                         by default",
                     )
                     .conflicts_with("enable_compaction")
                     .hidden(hidden_unless_forced()),
@@ -499,8 +497,8 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .required(false)
                     .takes_value(false)
                     .help(
-                        "Perform ledger compaction after purge. Compaction will optimize \
-                         storage space, but may take a long time to complete.",
+                        "Perform ledger compaction after purge. Compaction will optimize storage \
+                         space, but may take a long time to complete.",
                     )
                     .conflicts_with("no_compaction"),
             )
@@ -878,14 +876,14 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             };
             if end_slot < start_slot {
                 return Err(LedgerToolError::BadArgument(format!(
-                    "starting slot {start_slot} should be less than or equal to \
-                    ending slot {end_slot}"
+                    "starting slot {start_slot} should be less than or equal to ending slot \
+                     {end_slot}"
                 )));
             }
 
             info!(
-                "Purging data from slots {} to {} ({} slots) (do compaction: {}) \
-                (dead slot only: {})",
+                "Purging data from slots {} to {} ({} slots) (do compaction: {}) (dead slot only: \
+                 {})",
                 start_slot,
                 end_slot,
                 end_slot - start_slot,
@@ -949,7 +947,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             if arg_matches.is_present("end_root") && num_slots > max_slots {
                 return Err(LedgerToolError::BadArgument(format!(
                     "Requested range {num_slots} too large, max {max_slots}. Either adjust \
-                    `--until` value, or pass a larger `--repair-limit` to override the limit",
+                     `--until` value, or pass a larger `--repair-limit` to override the limit",
                 )));
             }
 

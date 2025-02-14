@@ -1723,8 +1723,8 @@ impl Bank {
             Some(account)
         })
         .expect(
-            "Stakes cache is inconsistent with accounts-db. This can indicate \
-            a corrupted snapshot or bugs in cached accounts or accounts-db.",
+            "Stakes cache is inconsistent with accounts-db. This can indicate a corrupted \
+             snapshot or bugs in cached accounts or accounts-db.",
         ));
         info!("Loading Stakes took: {stakes_time}");
         let stakes_accounts_load_duration = now.elapsed();
@@ -1865,8 +1865,8 @@ impl Bank {
                 calculate_accounts_lt_hash_duration = Some(duration);
                 *bank.accounts_lt_hash.get_mut().unwrap() = accounts_lt_hash;
                 info!(
-                    "Calculating the accounts lt hash for slot {}... \
-                     Done in {duration:?}, accounts_lt_hash checksum: {}",
+                    "Calculating the accounts lt hash for slot {}... Done in {duration:?}, \
+                     accounts_lt_hash checksum: {}",
                     bank.slot(),
                     bank.accounts_lt_hash.get_mut().unwrap().0.checksum(),
                 );
@@ -1879,8 +1879,8 @@ impl Bank {
         // from the passed in genesis_config instead (as new()/new_with_paths() already do)
         assert_eq!(
             bank.genesis_creation_time, genesis_config.creation_time,
-            "Bank snapshot genesis creation time does not match genesis.bin creation time. \
-             The snapshot and genesis.bin might pertain to different clusters"
+            "Bank snapshot genesis creation time does not match genesis.bin creation time. The \
+             snapshot and genesis.bin might pertain to different clusters"
         );
         assert_eq!(bank.ticks_per_slot, genesis_config.ticks_per_slot);
         assert_eq!(
@@ -2630,11 +2630,15 @@ impl Bank {
                     assert_eq!(
                         calculated_accounts_lt_hash,
                         *actual_accounts_lt_hash,
-                        "Verifying the accounts lt hash for slot {slot} failed! calculated checksum: {}, actual checksum: {}",
+                        "Verifying the accounts lt hash for slot {slot} failed! calculated \
+                         checksum: {}, actual checksum: {}",
                         calculated_accounts_lt_hash.0.checksum(),
                         actual_accounts_lt_hash.0.checksum(),
                     );
-                    info!("Verifying the accounts lt hash for slot {slot}... Done successfully in {duration:?}");
+                    info!(
+                        "Verifying the accounts lt hash for slot {slot}... Done successfully in \
+                         {duration:?}"
+                    );
                 }
             }
             *hash = self.hash_internal_state();
@@ -2810,8 +2814,9 @@ impl Bank {
 
         assert!(
             !self.freeze_started(),
-            "Can't change frozen bank by adding not-existing new precompiled program ({program_id}). \
-                Maybe, inconsistent program activation is detected on snapshot restore?"
+            "Can't change frozen bank by adding not-existing new precompiled program \
+             ({program_id}). Maybe, inconsistent program activation is detected on snapshot \
+             restore?"
         );
 
         // Add a bogus executable account, which will be loaded and ignored.
@@ -3668,7 +3673,8 @@ impl Bank {
     ) -> Vec<TransactionCommitResult> {
         assert!(
             !self.freeze_started(),
-            "commit_transactions() working on a bank that is already frozen or is undergoing freezing!"
+            "commit_transactions() working on a bank that is already frozen or is undergoing \
+             freezing!"
         );
 
         let ProcessedTransactionCounts {
@@ -4171,8 +4177,8 @@ impl Bank {
                                 ("partition_from_pubkey", partition_from_pubkey, i64)
                             );
                             warn!(
-                                "Collecting rent from unexpected pubkey: {}, slot: {}, parent_slot: {:?}, \
-                                partition_index: {}, partition_from_pubkey: {}",
+                                "Collecting rent from unexpected pubkey: {}, slot: {}, \
+                                 parent_slot: {:?}, partition_index: {}, partition_from_pubkey: {}",
                                 pubkey,
                                 self.slot(),
                                 self.parent().map(|bank| bank.slot()),
@@ -4941,14 +4947,14 @@ impl Bank {
         let bank_frozen = *lock != Hash::default();
         if new_hard_fork_slot < bank_slot {
             warn!(
-                "Hard fork at slot {new_hard_fork_slot} ignored, the hard fork is older \
-                than the bank at slot {bank_slot} that attempted to register it."
+                "Hard fork at slot {new_hard_fork_slot} ignored, the hard fork is older than the \
+                 bank at slot {bank_slot} that attempted to register it."
             );
         } else if (new_hard_fork_slot == bank_slot) && bank_frozen {
             warn!(
-                "Hard fork at slot {new_hard_fork_slot} ignored, the hard fork is the same \
-                slot as the bank at slot {bank_slot} that attempted to register it, but that \
-                bank is already frozen."
+                "Hard fork at slot {new_hard_fork_slot} ignored, the hard fork is the same slot \
+                 as the bank at slot {bank_slot} that attempted to register it, but that bank is \
+                 already frozen."
             );
         } else {
             self.hard_forks
@@ -5331,7 +5337,8 @@ impl Bank {
             ("accounts_delta_hash_us", accounts_delta_hash_us, Option<i64>),
         );
         info!(
-            "bank frozen: {slot} hash: {hash}{} signature_count: {} last_blockhash: {} capitalization: {}{}, stats: {bank_hash_stats:?}",
+            "bank frozen: {slot} hash: {hash}{} signature_count: {} last_blockhash: {} \
+             capitalization: {}{}, stats: {bank_hash_stats:?}",
             accounts_delta_hash_log.unwrap_or_default(),
             self.signature_count(),
             self.last_blockhash(),
@@ -5512,8 +5519,8 @@ impl Bank {
                                     let expected = expected_accounts_lt_hash.0.checksum();
                                     let calculated = calculated_accounts_lt_hash.0.checksum();
                                     error!(
-                                        "Verifying accounts failed: accounts lattice hashes do not \
-                                         match, expected: {expected}, calculated: {calculated}",
+                                        "Verifying accounts failed: accounts lattice hashes do \
+                                         not match, expected: {expected}, calculated: {calculated}",
                                     );
                                 }
                                 lattice_verify_time = Some(duration);
@@ -5589,8 +5596,8 @@ impl Bank {
                         let expected = expected_accounts_lt_hash.0.checksum();
                         let calculated = calculated_accounts_lt_hash.0.checksum();
                         error!(
-                            "Verifying accounts failed: accounts lattice hashes do not \
-                             match, expected: {expected}, calculated: {calculated}",
+                            "Verifying accounts failed: accounts lattice hashes do not match, \
+                             expected: {expected}, calculated: {calculated}",
                         );
                     }
                     is_ok
@@ -5837,7 +5844,11 @@ impl Bank {
         let accounts_hash = self.get_accounts_hash();
         let incremental_accounts_hash = self.get_incremental_accounts_hash();
         let accounts_hash_kind = match (accounts_hash, incremental_accounts_hash) {
-            (Some(_), Some(_)) => panic!("Both full and incremental accounts hashes are present for slot {}; it is ambiguous which one to use for the snapshot hash!", self.slot()),
+            (Some(_), Some(_)) => panic!(
+                "Both full and incremental accounts hashes are present for slot {}; it is \
+                 ambiguous which one to use for the snapshot hash!",
+                self.slot()
+            ),
             (Some(accounts_hash), None) => accounts_hash.into(),
             (None, Some(incremental_accounts_hash)) => incremental_accounts_hash.into(),
             (None, None) => panic!("accounts hash is required to get snapshot hash"),
@@ -6510,8 +6521,8 @@ impl Bank {
             } else {
                 let parent_slot = self.parent_slot;
                 info!(
-                    "Calculating the accounts lt hash for slot {parent_slot} \
-                     as part of feature activation; this may take some time...",
+                    "Calculating the accounts lt hash for slot {parent_slot} as part of feature \
+                     activation; this may take some time...",
                 );
                 // We must calculate the accounts lt hash now as part of feature activation.
                 // Note, this bank is *not* frozen yet, which means it will later call
@@ -6533,8 +6544,8 @@ impl Bank {
                 });
                 *self.accounts_lt_hash.get_mut().unwrap() = parent_accounts_lt_hash;
                 info!(
-                    "Calculating the accounts lt hash for slot {parent_slot} \
-                     completed in {duration:?}, accounts_lt_hash checksum: {}",
+                    "Calculating the accounts lt hash for slot {parent_slot} completed in \
+                     {duration:?}, accounts_lt_hash checksum: {}",
                     self.accounts_lt_hash.get_mut().unwrap().0.checksum(),
                 );
             }
@@ -6894,8 +6905,9 @@ impl TransactionProcessingCallback for Bank {
 
         assert!(
             !self.freeze_started(),
-            "Can't change frozen bank by adding not-existing new builtin program ({name}, {program_id}). \
-            Maybe, inconsistent program activation is detected on snapshot restore?"
+            "Can't change frozen bank by adding not-existing new builtin program ({name}, \
+             {program_id}). Maybe, inconsistent program activation is detected on snapshot \
+             restore?"
         );
 
         // Add a bogus executable builtin account, which will be loaded and ignored.

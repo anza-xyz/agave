@@ -2277,8 +2277,8 @@ impl AccountsDb {
                 } else {
                     // a pubkey we were planning to remove is not removing all stores that contain the account
                     debug!(
-                        "calc_delete_dependencies(), pubkey: {pubkey}, slot list len: {}, \
-                         ref count: {ref_count}, slot list: {slot_list:?}",
+                        "calc_delete_dependencies(), pubkey: {pubkey}, slot list len: {}, ref \
+                         count: {ref_count}, slot list: {slot_list:?}",
                         slot_list.len(),
                     );
                 }
@@ -3871,9 +3871,9 @@ impl AccountsDb {
                         // entry for `pubkey`. Log a warning for now. In future,
                         // we will panic when this happens.
                         warn!(
-                        "pubkey {pubkey} in slot {slot} was NOT found in accounts index during \
-                         shrink"
-                    );
+                            "pubkey {pubkey} in slot {slot} was NOT found in accounts index \
+                             during shrink"
+                        );
                         datapoint_warn!(
                             "accounts_db-shink_pubkey_missing_from_index",
                             ("store_slot", slot, i64),

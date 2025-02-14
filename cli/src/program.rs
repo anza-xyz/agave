@@ -226,9 +226,10 @@ impl ProgramSubCommands for App<'_, '_> {
                             Arg::with_name("program_id")
                                 .long("program-id")
                                 .value_name("PROGRAM_ID"),
-                            "Executable program; must be a signer for initial deploys, \
-                             can be an address for upgrades [default: address of keypair at \
-                             /path/to/program-keypair.json if present, otherwise a random address]."
+                            "Executable program; must be a signer for initial deploys, can be an \
+                             address for upgrades [default: address of keypair at \
+                             /path/to/program-keypair.json if present, otherwise a random \
+                             address]."
                         ))
                         .arg(
                             Arg::with_name("final")
@@ -242,8 +243,8 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .required(false)
                                 .help(
-                                    "Maximum length of the upgradeable program \
-                                    [default: the length of the original deployed program]",
+                                    "Maximum length of the upgradeable program [default: the \
+                                     length of the original deployed program]",
                                 ),
                         )
                         .arg(
@@ -264,20 +265,20 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .default_value("5")
                                 .help(
                                     "Maximum number of attempts to sign or resign transactions \
-                                    after blockhash expiration. \
-                                    If any transactions sent during the program deploy are still \
-                                    unconfirmed after the initially chosen recent blockhash \
-                                    expires, those transactions will be resigned with a new \
-                                    recent blockhash and resent. Use this setting to adjust \
-                                    the maximum number of transaction signing iterations. Each \
-                                    blockhash is valid for about 60 seconds, which means using \
-                                    the default value of 5 will lead to sending transactions \
-                                    for at least 5 minutes or until all transactions are confirmed,\
-                                    whichever comes first.",
+                                     after blockhash expiration. If any transactions sent during \
+                                     the program deploy are still unconfirmed after the initially \
+                                     chosen recent blockhash expires, those transactions will be \
+                                     resigned with a new recent blockhash and resent. Use this \
+                                     setting to adjust the maximum number of transaction signing \
+                                     iterations. Each blockhash is valid for about 60 seconds, \
+                                     which means using the default value of 5 will lead to \
+                                     sending transactions for at least 5 minutes or until all \
+                                     transactions are confirmed,whichever comes first.",
                                 ),
                         )
                         .arg(Arg::with_name("use_rpc").long("use-rpc").help(
-                            "Send write transactions to the configured RPC instead of validator TPUs",
+                            "Send write transactions to the configured RPC instead of validator \
+                             TPUs",
                         ))
                         .arg(compute_unit_price_arg())
                         .arg(
@@ -290,9 +291,12 @@ impl ProgramSubCommands for App<'_, '_> {
                             Arg::with_name("skip_feature_verify")
                                 .long("skip-feature-verify")
                                 .takes_value(false)
-                                .help("Don't verify program against the activated feature set. \
-                                This setting means a program containing a syscall not yet active on \
-                                mainnet will succeed local verification, but fail during the last step of deployment.")
+                                .help(
+                                    "Don't verify program against the activated feature set. This \
+                                     setting means a program containing a syscall not yet active \
+                                     on mainnet will succeed local verification, but fail during \
+                                     the last step of deployment.",
+                                ),
                         ),
                 )
                 .subcommand(
@@ -327,9 +331,12 @@ impl ProgramSubCommands for App<'_, '_> {
                             Arg::with_name("skip_feature_verify")
                                 .long("skip-feature-verify")
                                 .takes_value(false)
-                                .help("Don't verify program against the activated feature set. \
-                                This setting means a program containing a syscall not yet active on \
-                                mainnet will succeed local verification, but fail during the last step of deployment.")
+                                .help(
+                                    "Don't verify program against the activated feature set. This \
+                                     setting means a program containing a syscall not yet active \
+                                     on mainnet will succeed local verification, but fail during \
+                                     the last step of deployment.",
+                                ),
                         )
                         .offline_args(),
                 )
@@ -370,8 +377,8 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .required(false)
                                 .help(
-                                    "Maximum length of the upgradeable program \
-                                    [default: the length of the original deployed program]",
+                                    "Maximum length of the upgradeable program [default: the \
+                                     length of the original deployed program]",
                                 ),
                         )
                         .arg(
@@ -382,16 +389,15 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .default_value("5")
                                 .help(
                                     "Maximum number of attempts to sign or resign transactions \
-                                    after blockhash expiration. \
-                                    If any transactions sent during the program deploy are still \
-                                    unconfirmed after the initially chosen recent blockhash \
-                                    expires, those transactions will be resigned with a new \
-                                    recent blockhash and resent. Use this setting to adjust \
-                                    the maximum number of transaction signing iterations. Each \
-                                    blockhash is valid for about 60 seconds, which means using \
-                                    the default value of 5 will lead to sending transactions \
-                                    for at least 5 minutes or until all transactions are confirmed,\
-                                    whichever comes first.",
+                                     after blockhash expiration. If any transactions sent during \
+                                     the program deploy are still unconfirmed after the initially \
+                                     chosen recent blockhash expires, those transactions will be \
+                                     resigned with a new recent blockhash and resent. Use this \
+                                     setting to adjust the maximum number of transaction signing \
+                                     iterations. Each blockhash is valid for about 60 seconds, \
+                                     which means using the default value of 5 will lead to \
+                                     sending transactions for at least 5 minutes or until all \
+                                     transactions are confirmed,whichever comes first.",
                                 ),
                         )
                         .arg(Arg::with_name("use_rpc").long("use-rpc").help(
@@ -402,9 +408,12 @@ impl ProgramSubCommands for App<'_, '_> {
                             Arg::with_name("skip_feature_verify")
                                 .long("skip-feature-verify")
                                 .takes_value(false)
-                                .help("Don't verify program against the activated feature set. \
-                                This setting means a program containing a syscall not yet active on \
-                                mainnet will succeed local verification, but fail during the last step of deployment.")
+                                .help(
+                                    "Don't verify program against the activated feature set. This \
+                                     setting means a program containing a syscall not yet active \
+                                     on mainnet will succeed local verification, but fail during \
+                                     the last step of deployment.",
+                                ),
                         ),
                 )
                 .subcommand(
@@ -590,8 +599,8 @@ impl ProgramSubCommands for App<'_, '_> {
                             Arg::with_name("recipient_account")
                                 .long("recipient")
                                 .value_name("RECIPIENT_ADDRESS"),
-                            "Recipient of closed account's lamports \
-                             [default: the default configured keypair]."
+                            "Recipient of closed account's lamports [default: the default \
+                             configured keypair]."
                         ))
                         .arg(
                             Arg::with_name("lamports")
@@ -1323,7 +1332,11 @@ fn process_program_deploy(
         if do_initial_deploy
             && feature_set.is_active(&solana_feature_set::disable_new_loader_v3_deployments::id())
         {
-            return Err("No new programs can be deployed on loader-v3. Please use the program-v4 subcommand instead.".into());
+            return Err(
+                "No new programs can be deployed on loader-v3. Please use the program-v4 \
+                 subcommand instead."
+                    .into(),
+            );
         }
     }
 
@@ -2822,8 +2835,8 @@ fn extend_program_data_if_needed(
         let max_program_len = max_permitted_data_length
             .saturating_sub(UpgradeableLoaderState::size_of_programdata(0));
         return Err(format!(
-            "New program ({program_id}) data account is too big: {required_len}.\n\
-             Maximum program size: {max_program_len}.",
+            "New program ({program_id}) data account is too big: {required_len}.\nMaximum program \
+             size: {max_program_len}.",
         )
         .into());
     }

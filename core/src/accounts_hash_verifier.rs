@@ -245,14 +245,14 @@ impl AccountsHashVerifier {
         match accounts_package.accounts_hash_algorithm {
             AccountsHashAlgorithm::Merkle => {
                 debug!(
-                    "calculate_and_verify_accounts_hash(): snapshots lt hash is disabled, \
-                     DO merkle-based accounts hash calculation",
+                    "calculate_and_verify_accounts_hash(): snapshots lt hash is disabled, DO \
+                     merkle-based accounts hash calculation",
                 );
             }
             AccountsHashAlgorithm::Lattice => {
                 debug!(
-                    "calculate_and_verify_accounts_hash(): snapshots lt hash is enabled, \
-                     SKIP merkle-based accounts hash calculation",
+                    "calculate_and_verify_accounts_hash(): snapshots lt hash is enabled, SKIP \
+                     merkle-based accounts hash calculation",
                 );
                 return Ok((MerkleOrLatticeAccountsHash::Lattice, None));
             }
@@ -286,12 +286,9 @@ impl AccountsHashVerifier {
                     else {
                         panic!(
                             "incremental snapshot requires accounts hash and capitalization from \
-                             the full snapshot it is based on\n\
-                             package: {accounts_package:?}\n\
-                             accounts hashes: {:?}\n\
-                             incremental accounts hashes: {:?}\n\
-                             full snapshot archives: {:?}\n\
-                             bank snapshots: {:?}",
+                             the full snapshot it is based on\npackage: \
+                             {accounts_package:?}\naccounts hashes: {:?}\nincremental accounts \
+                             hashes: {:?}\nfull snapshot archives: {:?}\nbank snapshots: {:?}",
                             accounts_db.get_accounts_hashes(),
                             accounts_db.get_incremental_accounts_hashes(),
                             snapshot_utils::get_full_snapshot_archives(
@@ -441,7 +438,10 @@ impl AccountsHashVerifier {
             let MerkleOrLatticeAccountsHash::Merkle(AccountsHashKind::Full(accounts_hash)) =
                 merkle_or_lattice_accounts_hash
             else {
-                panic!("EAH requires a full accounts hash, but was given {merkle_or_lattice_accounts_hash:?}");
+                panic!(
+                    "EAH requires a full accounts hash, but was given \
+                     {merkle_or_lattice_accounts_hash:?}"
+                );
             };
             info!(
                 "saving epoch accounts hash, slot: {}, hash: {}",

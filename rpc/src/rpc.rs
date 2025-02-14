@@ -2542,7 +2542,10 @@ fn encode_account<T: ReadableAccount>(
             .unwrap_or(account.data().len())
             > MAX_BASE58_BYTES
     {
-        let message = format!("Encoded binary (base 58) data should be less than {MAX_BASE58_BYTES} bytes, please use Base64 encoding.");
+        let message = format!(
+            "Encoded binary (base 58) data should be less than {MAX_BASE58_BYTES} bytes, please \
+             use Base64 encoding."
+        );
         Err(error::Error {
             code: error::ErrorCode::InvalidRequest,
             message,
@@ -7064,9 +7067,9 @@ pub mod tests {
         let expected = (
             JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION,
             String::from(
-                "Transaction version (0) is not supported by the requesting client. \
-                Please try the request again with the following configuration parameter: \
-                \"maxSupportedTransactionVersion\": 0",
+                "Transaction version (0) is not supported by the requesting client. Please try \
+                 the request again with the following configuration parameter: \
+                 \"maxSupportedTransactionVersion\": 0",
             ),
         );
         assert_eq!(response, expected);
@@ -7093,7 +7096,8 @@ pub mod tests {
         {
             assert_eq!(
                 version, None,
-                "requests which don't set max_supported_transaction_version shouldn't receive a version"
+                "requests which don't set max_supported_transaction_version shouldn't receive a \
+                 version"
             );
             if let EncodedTransaction::Json(transaction) = transaction {
                 if transaction.signatures[0] == confirmed_block_signatures[0].to_string() {
@@ -7137,7 +7141,8 @@ pub mod tests {
         {
             assert_eq!(
                 version, None,
-                "requests which don't set max_supported_transaction_version shouldn't receive a version"
+                "requests which don't set max_supported_transaction_version shouldn't receive a \
+                 version"
             );
             if let EncodedTransaction::LegacyBinary(transaction) = transaction {
                 let decoded_transaction: Transaction =
@@ -8770,9 +8775,10 @@ pub mod tests {
             decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
                 .unwrap_err(),
             Error::invalid_params(format!(
-                "base58 encoded solana_transaction::Transaction too large: {tx58_len} bytes (max: encoded/raw {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
-            )
-        ));
+                "base58 encoded solana_transaction::Transaction too large: {tx58_len} bytes (max: \
+                 encoded/raw {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
+            ))
+        );
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         let tx64_len = tx64.len();
@@ -8780,9 +8786,10 @@ pub mod tests {
             decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
                 .unwrap_err(),
             Error::invalid_params(format!(
-                "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: encoded/raw {MAX_BASE64_SIZE}/{PACKET_DATA_SIZE})",
-            )
-        ));
+                "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
+                 encoded/raw {MAX_BASE64_SIZE}/{PACKET_DATA_SIZE})",
+            ))
+        );
 
         let too_big = PACKET_DATA_SIZE + 1;
         let tx_ser = vec![0x00u8; too_big];
@@ -8791,7 +8798,8 @@ pub mod tests {
             decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
                 .unwrap_err(),
             Error::invalid_params(format!(
-                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: {PACKET_DATA_SIZE} bytes)"
+                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: \
+                 {PACKET_DATA_SIZE} bytes)"
             ))
         );
 
@@ -8800,7 +8808,8 @@ pub mod tests {
             decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
                 .unwrap_err(),
             Error::invalid_params(format!(
-                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: {PACKET_DATA_SIZE} bytes)"
+                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: \
+                 {PACKET_DATA_SIZE} bytes)"
             ))
         );
 
@@ -8810,8 +8819,8 @@ pub mod tests {
             decode_and_deserialize::<Transaction>(tx64.clone(), TransactionBinaryEncoding::Base64)
                 .unwrap_err(),
             Error::invalid_params(
-                "failed to deserialize solana_transaction::Transaction: invalid value: \
-                continue signal on byte-three, expected a terminal signal on or before byte-three"
+                "failed to deserialize solana_transaction::Transaction: invalid value: continue \
+                 signal on byte-three, expected a terminal signal on or before byte-three"
                     .to_string()
             )
         );
@@ -8828,8 +8837,8 @@ pub mod tests {
             decode_and_deserialize::<Transaction>(tx58.clone(), TransactionBinaryEncoding::Base58)
                 .unwrap_err(),
             Error::invalid_params(
-                "failed to deserialize solana_transaction::Transaction: invalid value: \
-                continue signal on byte-three, expected a terminal signal on or before byte-three"
+                "failed to deserialize solana_transaction::Transaction: invalid value: continue \
+                 signal on byte-three, expected a terminal signal on or before byte-three"
                     .to_string()
             )
         );

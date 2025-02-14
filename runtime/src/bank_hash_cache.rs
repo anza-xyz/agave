@@ -78,8 +78,8 @@ impl BankHashCache {
         let prev_hash = self.hashes.insert(slot, hash);
         debug_assert!(
             prev_hash.is_none(),
-            "Programmer error, this indicates we have dumped and replayed \
-             a block however the cache was not invalidated"
+            "Programmer error, this indicates we have dumped and replayed a block however the \
+             cache was not invalidated"
         );
         Some(hash)
     }

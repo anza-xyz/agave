@@ -1463,7 +1463,11 @@ pub mod tests {
                     NonZeroU64::new(ideal_size).unwrap(),
                 );
                 let storages_needed = result.len();
-                assert_eq!(storages_needed, expected_storages, "num_slots: {num_slots}, expected_storages: {expected_storages}, storages_needed: {storages_needed}, ideal_size: {ideal_size}");
+                assert_eq!(
+                    storages_needed, expected_storages,
+                    "num_slots: {num_slots}, expected_storages: {expected_storages}, \
+                     storages_needed: {storages_needed}, ideal_size: {ideal_size}"
+                );
                 compare_all_accounts(
                     &packed_to_compare(&result, &db)[..],
                     &original_results_all_accounts,
@@ -1584,13 +1588,17 @@ pub mod tests {
                             largest_account_size
                         );
                     }
+                    assert!(packed.bytes > 0, "packed size of zero");
                     assert!(
-                        packed.bytes > 0,
-                        "packed size of zero"
-                    );
-                    assert!(
-                        packed.bytes <= ideal_size || packed.accounts.iter().map(|(_slot, accounts)| accounts.len()).sum::<usize>() == 1,
-                        "packed size too large: bytes: {}, ideal_size: {}, data_size: {}, num_slots: {}, # accounts: {}",
+                        packed.bytes <= ideal_size
+                            || packed
+                                .accounts
+                                .iter()
+                                .map(|(_slot, accounts)| accounts.len())
+                                .sum::<usize>()
+                                == 1,
+                        "packed size too large: bytes: {}, ideal_size: {}, data_size: {}, \
+                         num_slots: {}, # accounts: {}",
                         packed.bytes,
                         ideal_size,
                         data_size,
@@ -1816,13 +1824,20 @@ pub mod tests {
                                 assert!(slots[i] < slots[i + 1]);
                             });
 
-                        log::debug!("output slots: {:?}, num_slots: {num_slots}, two_refs: {two_refs}, many_refs: {many_ref_slots:?}, expected accounts to combine: {expected_accounts_to_combine}, target slots: {:?}, accounts_to_combine: {}", accounts_to_combine.target_slots_sorted,
-                        accounts_to_combine.target_slots_sorted,
-                        accounts_to_combine.accounts_to_combine.len(),);
+                        log::debug!(
+                            "output slots: {:?}, num_slots: {num_slots}, two_refs: {two_refs}, \
+                             many_refs: {many_ref_slots:?}, expected accounts to combine: \
+                             {expected_accounts_to_combine}, target slots: {:?}, \
+                             accounts_to_combine: {}",
+                            accounts_to_combine.target_slots_sorted,
+                            accounts_to_combine.target_slots_sorted,
+                            accounts_to_combine.accounts_to_combine.len(),
+                        );
                         assert_eq!(
                             accounts_to_combine.accounts_to_combine.len(),
                             expected_accounts_to_combine,
-                            "num_slots: {num_slots}, two_refs: {two_refs}, many_refs: {many_ref_slots:?}"
+                            "num_slots: {num_slots}, two_refs: {two_refs}, many_refs: \
+                             {many_ref_slots:?}"
                         );
                     }
                 }
@@ -1927,7 +1942,8 @@ pub mod tests {
                                 assert_eq!(
                                     accounts_to_combine.accounts_to_combine.len(),
                                     expected_number_accounts_to_combine,
-                                    "method: {method:?}, num_slots: {num_slots}, two_refs: {two_refs}, many_refs: {many_ref_slots:?}"
+                                    "method: {method:?}, num_slots: {num_slots}, two_refs: \
+                                     {two_refs}, many_refs: {many_ref_slots:?}"
                                 );
 
                                 if add_dead_account {
@@ -3498,8 +3514,13 @@ pub mod tests {
                     assert_eq!(
                         expected_infos,
                         count,
-                        "percent_of_alive_shrunk_data: {percent_of_alive_shrunk_data}, infos: {expected_infos}, method: {method:?}, swap: {swap}, data: {:?}",
-                        infos.all_infos.iter().map(|info| (info.slot, info.capacity, info.alive_bytes)).collect::<Vec<_>>()
+                        "percent_of_alive_shrunk_data: {percent_of_alive_shrunk_data}, infos: \
+                         {expected_infos}, method: {method:?}, swap: {swap}, data: {:?}",
+                        infos
+                            .all_infos
+                            .iter()
+                            .map(|info| (info.slot, info.capacity, info.alive_bytes))
+                            .collect::<Vec<_>>()
                     );
                 }
             }

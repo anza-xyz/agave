@@ -663,12 +663,9 @@ fn test_snapshots_with_background_services(
 
     info!("Running snapshots with background services test...");
     trace!(
-        "Test configuration parameters:\
-         \n\tfull snapshot archive interval: {} slots\
-         \n\tincremental snapshot archive interval: {} slots\
-         \n\tbank snapshot interval: {} slots\
-         \n\tset root interval: {} slots\
-         \n\tlast slot: {}",
+        "Test configuration parameters:\n\tfull snapshot archive interval: {} \
+         slots\n\tincremental snapshot archive interval: {} slots\n\tbank snapshot interval: {} \
+         slots\n\tset root interval: {} slots\n\tlast slot: {}",
         FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
         INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
         BANK_SNAPSHOT_INTERVAL_SLOTS,

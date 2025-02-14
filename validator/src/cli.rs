@@ -148,10 +148,7 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .value_name("HOST")
         .takes_value(true)
         .validator(solana_net_utils::is_host)
-        .help(
-            "IP address to bind the AccountsDb Replication port [default: use \
-                     --bind-address]",
-        ));
+        .help("IP address to bind the AccountsDb Replication port [default: use --bind-address]",));
     add_arg!(Arg::with_name("accountsdb_repl_port")
         .long("accountsdb-repl-port")
         .value_name("PORT")
@@ -282,9 +279,9 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .takes_value(true)
         .validator(is_parsable::<usize>)
         .help(
-            "The maximum number of connections that RPC PubSub will support. This is a \
-             hard limit and no new connections beyond this limit can be made until an old \
-             connection is dropped."
+            "The maximum number of connections that RPC PubSub will support. This is a hard limit \
+             and no new connections beyond this limit can be made until an old connection is \
+             dropped."
         ));
     add_arg!(Arg::with_name("rpc_pubsub_max_fragment_size")
         .long("rpc-pubsub-max-fragment-size")
@@ -292,8 +289,8 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .takes_value(true)
         .validator(is_parsable::<usize>)
         .help(
-            "The maximum length in bytes of acceptable incoming frames. Messages longer \
-             than this will be rejected"
+            "The maximum length in bytes of acceptable incoming frames. Messages longer than this \
+             will be rejected"
         ));
     add_arg!(Arg::with_name("rpc_pubsub_max_in_buffer_capacity")
         .long("rpc-pubsub-max-in-buffer-capacity")
@@ -608,8 +605,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): \
-                     [mainnet-beta, testnet, devnet, localhost]",
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                     testnet, devnet, localhost]",
                 ),
         )
         .arg(
@@ -620,8 +617,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .help(
                     "Address of the mint account that will receive tokens created at genesis. If \
-                     the ledger already exists then this parameter is silently ignored \
-                     [default: client keypair]",
+                     the ledger already exists then this parameter is silently ignored [default: \
+                     client keypair]",
                 ),
         )
         .arg(
@@ -1031,9 +1028,9 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(false)
                 .requires("json_rpc_url")
                 .help(
-                    "Copy a feature set from the cluster referenced by the --url \
-                     argument in the genesis configuration. If the ledger \
-                     already exists then this parameter is silently ignored",
+                    "Copy a feature set from the cluster referenced by the --url argument in the \
+                     genesis configuration. If the ledger already exists then this parameter is \
+                     silently ignored",
                 ),
         )
 }

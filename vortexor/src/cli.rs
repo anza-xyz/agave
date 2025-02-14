@@ -136,7 +136,9 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .default_value(&default_args.max_fwd_unstaked_connections)
                 .validator(is_parsable::<u32>)
-                .help("Controls the max concurrent connections for TPU-forward from unstaked nodes."),
+                .help(
+                    "Controls the max concurrent connections for TPU-forward from unstaked nodes.",
+                ),
         )
         .arg(
             Arg::with_name("max_connections_per_ipaddr_per_minute")
@@ -152,9 +154,11 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .default_value(&default_args.num_quic_endpoints)
                 .validator(is_parsable::<usize>)
-                .help("The number of QUIC endpoints used for TPU and TPU-Forward. It can be increased to \
-                       increase network ingest throughput, at the expense of higher CPU and general \
-                       validator load."),
+                .help(
+                    "The number of QUIC endpoints used for TPU and TPU-Forward. It can be \
+                     increased to increase network ingest throughput, at the expense of higher \
+                     CPU and general validator load.",
+                ),
         )
         .arg(
             Arg::with_name("max_streams_per_ms")

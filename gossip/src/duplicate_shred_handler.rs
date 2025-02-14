@@ -60,9 +60,15 @@ impl DuplicateShredHandlerTrait for DuplicateShredHandler {
         let pubkey = shred_data.from;
         if let Err(error) = self.handle_shred_data(shred_data) {
             if error.is_non_critical() {
-                info!("Received invalid duplicate shred proof from {pubkey} for slot {slot}: {error:?}");
+                info!(
+                    "Received invalid duplicate shred proof from {pubkey} for slot {slot}: \
+                     {error:?}"
+                );
             } else {
-                error!("Unable to process duplicate shred proof from {pubkey} for slot {slot}: {error:?}");
+                error!(
+                    "Unable to process duplicate shred proof from {pubkey} for slot {slot}: \
+                     {error:?}"
+                );
             }
         }
     }

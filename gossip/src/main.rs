@@ -43,8 +43,8 @@ fn parse_matches() -> ArgMatches<'static> {
         .takes_value(true)
         .validator(solana_net_utils::is_host)
         .help(
-            "Gossip DNS name or IP address for the node to advertise in gossip \
-                [default: ask --entrypoint, or 127.0.0.1 when --entrypoint is not provided]",
+            "Gossip DNS name or IP address for the node to advertise in gossip [default: ask \
+             --entrypoint, or 127.0.0.1 when --entrypoint is not provided]",
         );
 
     App::new(crate_name!())

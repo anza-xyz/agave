@@ -5151,7 +5151,9 @@ fn test_banks_leak() {
     let pid = std::process::id();
     #[cfg(not(target_os = "linux"))]
     error!(
-        "\nYou can run this to watch RAM:\n   while read -p 'banks: '; do echo $(( $(ps -o vsize= -p {})/$REPLY));done", pid
+        "\nYou can run this to watch RAM:\n   while read -p 'banks: '; do echo $(( $(ps -o vsize= \
+         -p {})/$REPLY));done",
+        pid
     );
     loop {
         num_banks += 1;
@@ -7024,9 +7026,9 @@ fn test_add_builtin_account_squatted_while_not_replacing() {
 
 #[test]
 #[should_panic(
-    expected = "Can't change frozen bank by adding not-existing new builtin \
-                program (mock_program, CiXgo2KHKSDmDnV1F6B69eWFgNAPiSBjjYvfB4cvRNre). \
-                Maybe, inconsistent program activation is detected on snapshot restore?"
+    expected = "Can't change frozen bank by adding not-existing new builtin program \
+                (mock_program, CiXgo2KHKSDmDnV1F6B69eWFgNAPiSBjjYvfB4cvRNre). Maybe, inconsistent \
+                program activation is detected on snapshot restore?"
 )]
 fn test_add_builtin_account_after_frozen() {
     let slot = 123;
@@ -7152,9 +7154,9 @@ fn test_add_precompiled_account_squatted_while_not_replacing() {
 
 #[test]
 #[should_panic(
-    expected = "Can't change frozen bank by adding not-existing new precompiled \
-                program (CiXgo2KHKSDmDnV1F6B69eWFgNAPiSBjjYvfB4cvRNre). \
-                Maybe, inconsistent program activation is detected on snapshot restore?"
+    expected = "Can't change frozen bank by adding not-existing new precompiled program \
+                (CiXgo2KHKSDmDnV1F6B69eWFgNAPiSBjjYvfB4cvRNre). Maybe, inconsistent program \
+                activation is detected on snapshot restore?"
 )]
 fn test_add_precompiled_account_after_frozen() {
     let slot = 123;

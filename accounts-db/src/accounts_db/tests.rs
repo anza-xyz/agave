@@ -3603,8 +3603,8 @@ fn run_test_flush_accounts_cache_if_needed(num_roots: usize, num_unrooted: usize
                     db.accounts_cache
                         .slot_cache(unrooted_slot as Slot)
                         .is_some(),
-                    "unrooted_slot: {unrooted_slot}, total_slots: {total_slots}, \
-                     expected_size: {expected_size}"
+                    "unrooted_slot: {unrooted_slot}, total_slots: {total_slots}, expected_size: \
+                     {expected_size}"
                 );
             }
         }
@@ -6853,12 +6853,11 @@ fn test_shrink_collect_simple() {
                             }
                             debug!(
                                 "space: {space}, lamports: {lamports}, alive: {alive}, \
-                                 account_count: {account_count}, \
-                                 append_opposite_alive_account: \
+                                 account_count: {account_count}, append_opposite_alive_account: \
                                  {append_opposite_alive_account}, \
                                  append_opposite_zero_lamport_account: \
-                                 {append_opposite_zero_lamport_account}, \
-                                 normal_account_count: {normal_account_count}"
+                                 {append_opposite_zero_lamport_account}, normal_account_count: \
+                                 {normal_account_count}"
                             );
                             let db = AccountsDb::new_single_for_tests();
                             let slot5 = 5;

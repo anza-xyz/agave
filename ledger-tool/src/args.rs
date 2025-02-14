@@ -34,8 +34,8 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .value_name("PATHS")
             .takes_value(true)
             .help(
-                "Persistent accounts location. May be specified multiple times. \
-                [default: <LEDGER>/accounts]",
+                "Persistent accounts location. May be specified multiple times. [default: \
+                 <LEDGER>/accounts]",
             ),
         Arg::with_name("accounts_index_path")
             .long("accounts-index-path")
@@ -43,8 +43,8 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .multiple(true)
             .help(
-                "Persistent accounts-index location. May be specified multiple times. \
-                [default: <LEDGER>/accounts_index]",
+                "Persistent accounts-index location. May be specified multiple times. [default: \
+                 <LEDGER>/accounts_index]",
             ),
         Arg::with_name("accounts_hash_cache_path")
             .long("accounts-hash-cache-path")
@@ -69,13 +69,13 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .long("accounts-db-skip-shrink")
             .help(
                 "Enables faster starting of ledger-tool by skipping shrink. This option is for \
-                use during testing.",
+                 use during testing.",
             ),
         Arg::with_name("accounts_db_verify_refcounts")
             .long("accounts-db-verify-refcounts")
             .help(
                 "Debug option to scan all AppendVecs and verify account index refcounts prior to \
-                clean",
+                 clean",
             )
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_scan_filter_for_shrinking")
@@ -84,12 +84,13 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .possible_values(&["all", "only-abnormal", "only-abnormal-with-verify"])
             .help(
                 "Debug option to use different type of filtering for accounts index scan in \
-                shrinking. \"all\" will scan both in-memory and on-disk accounts index, which is the default. \
-                \"only-abnormal\" will scan in-memory accounts index only for abnormal entries and \
-                skip scanning on-disk accounts index by assuming that on-disk accounts index contains \
-                only normal accounts index entry. \"only-abnormal-with-verify\" is similar to \
-                \"only-abnormal\", which will scan in-memory index for abnormal entries, but will also \
-                verify that on-disk account entries are indeed normal.",
+                 shrinking. \"all\" will scan both in-memory and on-disk accounts index, which is \
+                 the default. \"only-abnormal\" will scan in-memory accounts index only for \
+                 abnormal entries and skip scanning on-disk accounts index by assuming that \
+                 on-disk accounts index contains only normal accounts index entry. \
+                 \"only-abnormal-with-verify\" is similar to \"only-abnormal\", which will scan \
+                 in-memory index for abnormal entries, but will also verify that on-disk account \
+                 entries are indeed normal.",
             )
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_test_skip_rewrites")
