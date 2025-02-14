@@ -196,7 +196,11 @@ pub fn lamports_of_sol(matches: &ArgMatches<'_>, name: &str) -> Option<u64> {
             } else {
                 format!("{:0<9}", lamports)[..9].parse().unwrap()
             };
-            Some(sol * LAMPORTS_PER_SOL + lamports)
+            Some(
+                LAMPORTS_PER_SOL
+                    .saturating_mul(sol)
+                    .saturating_add(lamports),
+            )
         }
     })
 }
