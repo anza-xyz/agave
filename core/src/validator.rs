@@ -2460,7 +2460,8 @@ fn cleanup_blockstore_incorrect_shred_versions(
             let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
             for (slot, _meta) in slot_meta_iterator {
                 let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
-                let _ = backup_blockstore.insert_shreds(shreds, None, true);
+                let shreds = shreds.into_iter().map(Cow::Owned);
+                let _ = backup_blockstore.insert_cow_shreds(shreds, None, true);
                 num_slots_copied += 1;
 
                 if print_timer.elapsed() > PRINT_INTERVAL {

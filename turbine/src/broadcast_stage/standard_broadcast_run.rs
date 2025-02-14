@@ -12,7 +12,7 @@ use {
         shred::{shred_code, ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder},
     },
     solana_sdk::{hash::Hash, signature::Keypair, timing::AtomicInterval},
-    std::{sync::RwLock, time::Duration},
+    std::{borrow::Cow, sync::RwLock, time::Duration},
     tokio::sync::mpsc::Sender as AsyncSender,
 };
 
@@ -276,8 +276,8 @@ impl StandardBroadcastRun {
         if let Some(shred) = shreds.iter().find(|shred| shred.is_data()) {
             if shred.index() == 0 {
                 blockstore
-                    .insert_shreds(
-                        [shred.clone()],
+                    .insert_cow_shreds(
+                        [Cow::Borrowed(shred)],
                         None, // leader_schedule
                         true, // is_trusted
                     )
@@ -331,17 +331,17 @@ impl StandardBroadcastRun {
     ) {
         // Insert shreds into blockstore
         let insert_shreds_start = Instant::now();
-        let mut shreds = Arc::unwrap_or_clone(shreds);
         // The first data shred is inserted synchronously.
         // https://github.com/solana-labs/solana/blob/92a0b310c/turbine/src/broadcast_stage/standard_broadcast_run.rs#L268-L283
-        if let Some(shred) = shreds.first() {
-            if shred.is_data() && shred.index() == 0 {
-                shreds.swap_remove(0);
-            }
-        }
+        let offset = shreds
+            .first()
+            .map(|shred| shred.is_data() && shred.index() == 0)
+            .map(usize::from)
+            .unwrap_or_default();
         let num_shreds = shreds.len();
+        let shreds = shreds.iter().skip(offset).map(Cow::Borrowed);
         blockstore
-            .insert_shreds(
+            .insert_cow_shreds(
                 shreds, /*leader_schedule:*/ None, /*is_trusted:*/ true,
             )
             .expect("Failed to insert shreds in blockstore");
