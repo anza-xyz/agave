@@ -6,7 +6,7 @@ use {
     solana_sdk::clock::DEFAULT_MS_PER_SLOT,
 };
 use {
-    super::serve_repair::RepairPeers, crate::{
+    crate::{
         cluster_info_vote_listener::VerifiedVoteReceiver,
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{
@@ -17,21 +17,33 @@ use {
             outstanding_requests::OutstandingRequests,
             repair_weight::RepairWeight,
             serve_repair::{
-                self, RepairProtocol, RepairRequestHeader, ServeRepair, ShredRepairType,
-                REPAIR_PEERS_CACHE_CAPACITY,
+                self, RepairPeers, RepairProtocol, RepairRequestHeader, ServeRepair,
+                ShredRepairType, REPAIR_PEERS_CACHE_CAPACITY,
             },
         },
-    }, bytes::Bytes, crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender}, lru::LruCache, rand::seq::SliceRandom, solana_client::connection_cache::Protocol, solana_gossip::cluster_info::ClusterInfo, solana_ledger::{
+    },
+    bytes::Bytes,
+    crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
+    lru::LruCache,
+    rand::seq::SliceRandom,
+    solana_client::connection_cache::Protocol,
+    solana_gossip::cluster_info::ClusterInfo,
+    solana_ledger::{
         blockstore::{Blockstore, SlotMeta},
         shred,
-    }, solana_measure::measure::Measure, solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache}, solana_sdk::{
+    },
+    solana_measure::measure::Measure,
+    solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
+    solana_sdk::{
         clock::{Slot, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
         epoch_schedule::EpochSchedule,
         hash::Hash,
         pubkey::Pubkey,
         signer::keypair::Keypair,
         timing::timestamp,
-    }, solana_streamer::sendmmsg::{batch_send, SendPktsError}, std::{
+    },
+    solana_streamer::sendmmsg::{batch_send, SendPktsError},
+    std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         iter::Iterator,
         net::{SocketAddr, UdpSocket},
@@ -41,7 +53,8 @@ use {
         },
         thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
-    }, tokio::sync::mpsc::Sender as AsyncSender
+    },
+    tokio::sync::mpsc::Sender as AsyncSender,
 };
 
 // Time to defer repair requests to allow for turbine propagation
@@ -512,134 +525,121 @@ impl RepairService {
             outstanding_repairs,
         } = repair_tracker;
 
-        let mut set_root_elapsed;
-        let mut dump_slots_elapsed;
-        let mut get_votes_elapsed;
-        let mut add_votes_elapsed;
-        let mut purge_outstanding_repairs;
-        let mut handle_popular_pruned_forks;
-
         let root_bank = root_bank_cache.root_bank();
         let repair_protocol = serve_repair::get_repair_protocol(root_bank.cluster_type());
-        let repairs = {
-            let new_root = root_bank.slot();
+        let new_root = root_bank.slot();
 
-            // Purge outdated slots from the weighting heuristic
-            set_root_elapsed = Measure::start("set_root_elapsed");
-            repair_weight.set_root(new_root);
-            set_root_elapsed.stop();
+        // Purge outdated slots from the weighting heuristic
+        let mut set_root_elapsed = Measure::start("set_root_elapsed");
+        repair_weight.set_root(new_root);
+        set_root_elapsed.stop();
 
-            // Remove dumped slots from the weighting heuristic
-            dump_slots_elapsed = Measure::start("dump_slots_elapsed");
-            dumped_slots_receiver
-                .try_iter()
-                .for_each(|slot_hash_keys_to_dump| {
-                    // Currently we don't use the correct_hash in repair. Since this dumped
-                    // slot is DuplicateConfirmed, we have a >= 52% chance on receiving the
-                    // correct version.
-                    for (slot, _correct_hash) in slot_hash_keys_to_dump {
-                        // `slot` is dumped in blockstore wanting to be repaired, we orphan it along with
-                        // descendants while copying the weighting heuristic so that it can be
-                        // repaired with correct ancestor information
-                        //
-                        // We still check to see if this slot is too old, as bank forks root
-                        // might have been updated in between the send and our receive. If that
-                        // is the case we can safely ignore this dump request as the slot in
-                        // question would have already been purged in `repair_weight.set_root`
-                        // and there is no chance of it being part of the rooted path.
-                        if slot >= repair_weight.root() {
-                            let dumped_slots = repair_weight.split_off(slot);
-                            // Remove from outstanding ancestor hashes requests. Also clean any
-                            // requests that might have been since fixed
-                            popular_pruned_forks_requests.retain(|slot| {
-                                !dumped_slots.contains(slot) && repair_weight.is_pruned(*slot)
-                            });
-                        }
+        // Remove dumped slots from the weighting heuristic
+        let mut dump_slots_elapsed = Measure::start("dump_slots_elapsed");
+        dumped_slots_receiver
+            .try_iter()
+            .for_each(|slot_hash_keys_to_dump| {
+                // Currently we don't use the correct_hash in repair. Since this dumped
+                // slot is DuplicateConfirmed, we have a >= 52% chance on receiving the
+                // correct version.
+                for (slot, _correct_hash) in slot_hash_keys_to_dump {
+                    // `slot` is dumped in blockstore wanting to be repaired, we orphan it along with
+                    // descendants while copying the weighting heuristic so that it can be
+                    // repaired with correct ancestor information
+                    //
+                    // We still check to see if this slot is too old, as bank forks root
+                    // might have been updated in between the send and our receive. If that
+                    // is the case we can safely ignore this dump request as the slot in
+                    // question would have already been purged in `repair_weight.set_root`
+                    // and there is no chance of it being part of the rooted path.
+                    if slot >= repair_weight.root() {
+                        let dumped_slots = repair_weight.split_off(slot);
+                        // Remove from outstanding ancestor hashes requests. Also clean any
+                        // requests that might have been since fixed
+                        popular_pruned_forks_requests.retain(|slot| {
+                            !dumped_slots.contains(slot) && repair_weight.is_pruned(*slot)
+                        });
                     }
-                });
-            dump_slots_elapsed.stop();
-
-            // Add new votes to the weighting heuristic
-            get_votes_elapsed = Measure::start("get_votes_elapsed");
-            let mut slot_to_vote_pubkeys: HashMap<Slot, Vec<Pubkey>> = HashMap::new();
-            verified_vote_receiver
-                .try_iter()
-                .for_each(|(vote_pubkey, vote_slots)| {
-                    for slot in vote_slots {
-                        slot_to_vote_pubkeys
-                            .entry(slot)
-                            .or_default()
-                            .push(vote_pubkey);
-                    }
-                });
-            get_votes_elapsed.stop();
-
-            add_votes_elapsed = Measure::start("add_votes");
-            repair_weight.add_votes(
-                blockstore,
-                slot_to_vote_pubkeys.into_iter(),
-                root_bank.epoch_stakes_map(),
-                root_bank.epoch_schedule(),
-            );
-            add_votes_elapsed.stop();
-
-            purge_outstanding_repairs = Measure::start("purge_outstanding_repairs");
-            // Purge old entries. They've either completed or need to be retried.
-            outstanding_repairs.retain(|_repair_request, time| {
-                timestamp().saturating_sub(*time) < REPAIR_REQUEST_TIMEOUT_MS
-            });
-            purge_outstanding_repairs.stop();
-
-            let repairs = match repair_info.wen_restart_repair_slots.clone() {
-                Some(slots_to_repair) => Self::generate_repairs_for_wen_restart(
-                    blockstore,
-                    MAX_REPAIR_LENGTH,
-                    &slots_to_repair.read().unwrap(),
-                    outstanding_repairs,
-                ),
-                None => repair_weight.get_best_weighted_repairs(
-                    blockstore,
-                    root_bank.epoch_stakes_map(),
-                    root_bank.epoch_schedule(),
-                    MAX_ORPHANS,
-                    MAX_REPAIR_LENGTH,
-                    MAX_UNKNOWN_LAST_INDEX_REPAIRS,
-                    MAX_CLOSEST_COMPLETION_REPAIRS,
-                    repair_metrics,
-                    outstanding_repairs,
-                ),
-            };
-
-            handle_popular_pruned_forks = Measure::start("handle_popular_pruned_forks");
-            let mut popular_pruned_forks = repair_weight.get_popular_pruned_forks(
-                root_bank.epoch_stakes_map(),
-                root_bank.epoch_schedule(),
-            );
-            // Check if we've already sent a request along this pruned fork
-            popular_pruned_forks.retain(|slot| {
-                if popular_pruned_forks_requests
-                    .iter()
-                    .any(|prev_req_slot| repair_weight.same_tree(*slot, *prev_req_slot))
-                {
-                    false
-                } else {
-                    popular_pruned_forks_requests.insert(*slot);
-                    true
                 }
             });
-            if !popular_pruned_forks.is_empty() {
-                warn!(
-                    "Notifying repair of popular pruned forks {:?}",
-                    popular_pruned_forks
-                );
-                popular_pruned_forks_sender
-                    .send(popular_pruned_forks)
-                    .unwrap_or_else(|err| error!("failed to send popular pruned forks {err}"));
-            }
-            handle_popular_pruned_forks.stop();
+        dump_slots_elapsed.stop();
 
-            repairs
+        // Add new votes to the weighting heuristic
+        let mut get_votes_elapsed = Measure::start("get_votes_elapsed");
+        let mut slot_to_vote_pubkeys: HashMap<Slot, Vec<Pubkey>> = HashMap::new();
+        verified_vote_receiver
+            .try_iter()
+            .for_each(|(vote_pubkey, vote_slots)| {
+                for slot in vote_slots {
+                    slot_to_vote_pubkeys
+                        .entry(slot)
+                        .or_default()
+                        .push(vote_pubkey);
+                }
+            });
+        get_votes_elapsed.stop();
+
+        let mut add_votes_elapsed = Measure::start("add_votes");
+        repair_weight.add_votes(
+            blockstore,
+            slot_to_vote_pubkeys.into_iter(),
+            root_bank.epoch_stakes_map(),
+            root_bank.epoch_schedule(),
+        );
+        add_votes_elapsed.stop();
+
+        let mut purge_outstanding_repairs = Measure::start("purge_outstanding_repairs");
+        // Purge old entries. They've either completed or need to be retried.
+        outstanding_repairs.retain(|_repair_request, time| {
+            timestamp().saturating_sub(*time) < REPAIR_REQUEST_TIMEOUT_MS
+        });
+        purge_outstanding_repairs.stop();
+
+        let repairs = match repair_info.wen_restart_repair_slots.clone() {
+            Some(slots_to_repair) => Self::generate_repairs_for_wen_restart(
+                blockstore,
+                MAX_REPAIR_LENGTH,
+                &slots_to_repair.read().unwrap(),
+                outstanding_repairs,
+            ),
+            None => repair_weight.get_best_weighted_repairs(
+                blockstore,
+                root_bank.epoch_stakes_map(),
+                root_bank.epoch_schedule(),
+                MAX_ORPHANS,
+                MAX_REPAIR_LENGTH,
+                MAX_UNKNOWN_LAST_INDEX_REPAIRS,
+                MAX_CLOSEST_COMPLETION_REPAIRS,
+                repair_metrics,
+                outstanding_repairs,
+            ),
         };
+
+        let mut handle_popular_pruned_forks = Measure::start("handle_popular_pruned_forks");
+        let mut popular_pruned_forks = repair_weight
+            .get_popular_pruned_forks(root_bank.epoch_stakes_map(), root_bank.epoch_schedule());
+        // Check if we've already sent a request along this pruned fork
+        popular_pruned_forks.retain(|slot| {
+            if popular_pruned_forks_requests
+                .iter()
+                .any(|prev_req_slot| repair_weight.same_tree(*slot, *prev_req_slot))
+            {
+                false
+            } else {
+                popular_pruned_forks_requests.insert(*slot);
+                true
+            }
+        });
+        if !popular_pruned_forks.is_empty() {
+            warn!(
+                "Notifying repair of popular pruned forks {:?}",
+                popular_pruned_forks
+            );
+            popular_pruned_forks_sender
+                .send(popular_pruned_forks)
+                .unwrap_or_else(|err| error!("failed to send popular pruned forks {err}"));
+        }
+        handle_popular_pruned_forks.stop();
 
         let identity_keypair: &Keypair = &repair_info.cluster_info.keypair().clone();
 
@@ -704,9 +704,10 @@ impl RepairService {
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
     ) {
         let mut root_bank_cache = RootBankCache::new(repair_info.bank_forks.clone());
+        let root_bank_slot = root_bank_cache.root_bank().slot();
         let mut repair_tracker = RepairTracker {
-            root_bank_cache: RootBankCache::new(repair_info.bank_forks.clone()),
-            repair_weight: RepairWeight::new(root_bank_cache.root_bank().slot()),
+            root_bank_cache,
+            repair_weight: RepairWeight::new(root_bank_slot),
             serve_repair: ServeRepair::new(
                 repair_info.cluster_info.clone(),
                 repair_info.bank_forks.clone(),
