@@ -1759,66 +1759,66 @@ impl JsonRpcRequestProcessor {
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
-            let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
-            let confirmed_transaction = self
-                .runtime
-                .spawn_blocking({
-                    let blockstore = Arc::clone(&self.blockstore);
-                    let confirmed_bank = Arc::clone(&confirmed_bank);
-                    move || {
-                        if commitment.is_confirmed() {
-                            let highest_confirmed_slot = confirmed_bank.slot();
-                            blockstore.get_complete_transaction(signature, highest_confirmed_slot)
-                        } else {
-                            blockstore.get_rooted_transaction(signature)
-                        }
+        let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+        let confirmed_transaction = self
+            .runtime
+            .spawn_blocking({
+                let blockstore = Arc::clone(&self.blockstore);
+                let confirmed_bank = Arc::clone(&confirmed_bank);
+                move || {
+                    if commitment.is_confirmed() {
+                        let highest_confirmed_slot = confirmed_bank.slot();
+                        blockstore.get_complete_transaction(signature, highest_confirmed_slot)
+                    } else {
+                        blockstore.get_rooted_transaction(signature)
                     }
-                })
-                .await
-                .expect("Failed to spawn blocking task");
+                }
+            })
+            .await
+            .expect("Failed to spawn blocking task");
 
-            let encode_transaction =
+        let encode_transaction =
                 |confirmed_tx_with_meta: ConfirmedTransactionWithStatusMeta| -> Result<EncodedConfirmedTransactionWithStatusMeta> {
                     Ok(confirmed_tx_with_meta.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from)?)
                 };
 
-            match confirmed_transaction.unwrap_or(None) {
-                Some(mut confirmed_transaction) => {
-                    if commitment.is_confirmed()
-                        && confirmed_bank // should be redundant
-                            .status_cache_ancestors()
-                            .contains(&confirmed_transaction.slot)
-                    {
-                        if confirmed_transaction.block_time.is_none() {
-                            let r_bank_forks = self.bank_forks.read().unwrap();
-                            confirmed_transaction.block_time = r_bank_forks
-                                .get(confirmed_transaction.slot)
-                                .map(|bank| bank.clock().unix_timestamp);
-                        }
-                        return Ok(Some(encode_transaction(confirmed_transaction)?));
+        match confirmed_transaction.unwrap_or(None) {
+            Some(mut confirmed_transaction) => {
+                if commitment.is_confirmed()
+                    && confirmed_bank // should be redundant
+                        .status_cache_ancestors()
+                        .contains(&confirmed_transaction.slot)
+                {
+                    if confirmed_transaction.block_time.is_none() {
+                        let r_bank_forks = self.bank_forks.read().unwrap();
+                        confirmed_transaction.block_time = r_bank_forks
+                            .get(confirmed_transaction.slot)
+                            .map(|bank| bank.clock().unix_timestamp);
                     }
-
-                    if confirmed_transaction.slot
-                        <= self
-                            .block_commitment_cache
-                            .read()
-                            .unwrap()
-                            .highest_super_majority_root()
-                    {
-                        return Ok(Some(encode_transaction(confirmed_transaction)?));
-                    }
+                    return Ok(Some(encode_transaction(confirmed_transaction)?));
                 }
-                None => {
-                    if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                        return bigtable_ledger_storage
-                            .get_confirmed_transaction(&signature)
-                            .await
-                            .unwrap_or(None)
-                            .map(encode_transaction)
-                            .transpose();
-                    }
+
+                if confirmed_transaction.slot
+                    <= self
+                        .block_commitment_cache
+                        .read()
+                        .unwrap()
+                        .highest_super_majority_root()
+                {
+                    return Ok(Some(encode_transaction(confirmed_transaction)?));
                 }
             }
+            None => {
+                if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                    return bigtable_ledger_storage
+                        .get_confirmed_transaction(&signature)
+                        .await
+                        .unwrap_or(None)
+                        .map(encode_transaction)
+                        .transpose();
+                }
+            }
+        }
 
         Ok(None)
     }
