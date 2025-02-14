@@ -7,12 +7,12 @@ use {
 const COMMAND: &str = "set-public-address";
 
 #[derive(Debug, PartialEq)]
-pub struct SetPublicAddressArg {
+pub struct SetPublicAddressArgs {
     pub tpu_addr: Option<SocketAddr>,
     pub tpu_forwards_addr: Option<SocketAddr>,
 }
 
-impl FromClapArgMatches for SetPublicAddressArg {
+impl FromClapArgMatches for SetPublicAddressArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
         let parse_arg_addr = |arg_name: &str,
                               arg_long: &str|
@@ -26,7 +26,7 @@ impl FromClapArgMatches for SetPublicAddressArg {
             })
             .transpose()
         };
-        Ok(SetPublicAddressArg {
+        Ok(SetPublicAddressArgs {
             tpu_addr: parse_arg_addr("tpu_addr", "tpu")?,
             tpu_forwards_addr: parse_arg_addr("tpu_forwards_addr", "tpu-forwards")?,
         })
@@ -62,7 +62,7 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
 }
 
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
-    let set_public_address_arg = SetPublicAddressArg::from_clap_arg_match(matches)?;
+    let set_public_address_args = SetPublicAddressArgs::from_clap_arg_match(matches)?;
 
     macro_rules! set_public_address {
         ($public_addr:expr, $set_public_address:ident, $request:literal) => {
@@ -79,12 +79,12 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
         };
     }
     set_public_address!(
-        set_public_address_arg.tpu_addr,
+        set_public_address_args.tpu_addr,
         set_public_tpu_address,
         "setPublicTpuAddress"
     )?;
     set_public_address!(
-        set_public_address_arg.tpu_forwards_addr,
+        set_public_address_args.tpu_forwards_addr,
         set_public_tpu_forwards_address,
         "set public tpu forwards address"
     )?;
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_set_public_default() {
-        verify_args_struct_by_command_is_error::<SetPublicAddressArg>(
+        verify_args_struct_by_command_is_error::<SetPublicAddressArgs>(
             command(&DefaultArgs::default()),
             vec![COMMAND],
         );
@@ -113,7 +113,7 @@ mod tests {
         verify_args_struct_by_command(
             command(&DefaultArgs::default()),
             vec![COMMAND, "--tpu", "127.0.0.1:8080"],
-            SetPublicAddressArg {
+            SetPublicAddressArgs {
                 tpu_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8080))),
                 tpu_forwards_addr: None,
             },
@@ -125,7 +125,7 @@ mod tests {
         verify_args_struct_by_command(
             command(&DefaultArgs::default()),
             vec![COMMAND, "--tpu-forwards", "127.0.0.1:8081"],
-            SetPublicAddressArg {
+            SetPublicAddressArgs {
                 tpu_addr: None,
                 tpu_forwards_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8081))),
             },
@@ -143,7 +143,7 @@ mod tests {
                 "--tpu-forwards",
                 "127.0.0.1:8081",
             ],
-            SetPublicAddressArg {
+            SetPublicAddressArgs {
                 tpu_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8080))),
                 tpu_forwards_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8081))),
             },
