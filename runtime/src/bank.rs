@@ -4868,6 +4868,14 @@ impl Bank {
             );
         }
 
+        // If the accounts delta hash is still in use, start the background account hasher
+        if !self
+            .feature_set
+            .is_active(&feature_set::remove_accounts_delta_hash::id())
+        {
+            self.rc.accounts.accounts_db.start_background_hasher();
+        }
+
         if !debug_do_not_add_builtins {
             for builtin in BUILTINS
                 .iter()
@@ -6539,6 +6547,12 @@ impl Bank {
                 block_cost_limit,
                 vote_cost_limit,
             );
+        }
+
+        if new_feature_activations.contains(&feature_set::remove_accounts_delta_hash::id()) {
+            // If the accounts delta hash has been removed, then we no longer need to compute the
+            // AccountHash for modified accounts, and can stop the background account hasher.
+            self.rc.accounts.accounts_db.stop_background_hasher();
         }
     }
 
