@@ -1051,6 +1051,18 @@ pub fn execute(
         BlockVerificationMethod
     )
     .unwrap_or_default();
+    match validator_config.block_verification_method {
+        BlockVerificationMethod::BlockstoreProcessor => {
+            warn!(
+                "The value \"blockstore-processor\" for --block-verification-method has been \
+                deprecated. The value \"blockstore-processor\" is still allowed for now, but \
+                is planned for removal in the near future. To update, either set the value \
+                \"unified-scheduler\" or remove the --block-verification-method argument"
+            );
+        }
+        BlockVerificationMethod::UnifiedScheduler => {}
+    }
+
     validator_config.block_production_method = value_t!(
         matches, // comment to align formatting...
         "block_production_method",
