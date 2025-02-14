@@ -235,6 +235,9 @@ pub type SchedulerId = u64;
 /// expected to be used by a particular scheduler only for that duration of the time and to be
 /// disposed by the scheduler. Then, the scheduler may work on different banks with new
 /// `SchedulingContext`s.
+///
+/// There's a special construction only used for scheduler preallocation, which has no bank. Panics
+/// will be triggered when tried to be used normally across code-base.
 #[derive(Clone, Debug)]
 pub struct SchedulingContext {
     mode: SchedulingMode,
@@ -274,8 +277,8 @@ impl SchedulingContext {
         self.mode
     }
 
-    pub fn bank(&self) -> &Arc<Bank> {
-        self.bank.as_ref().unwrap()
+    pub fn bank(&self) -> Option<&Arc<Bank>> {
+        self.bank.as_ref()
     }
 
     pub fn slot(&self) -> Option<Slot> {
@@ -432,11 +435,19 @@ pub struct BankWithSchedulerInner {
 pub type InstalledSchedulerRwLock = RwLock<SchedulerStatus>;
 
 impl BankWithScheduler {
+    /// Creates a new `BankWithScheduler` from bank and its associated scheduler.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `scheduler`'s scheduling context is unmatched to given bank or for scheduler
+    /// preallocation.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(bank: Arc<Bank>, scheduler: Option<InstalledSchedulerBox>) -> Self {
+        // Avoid the fatal situation in which bank is being associated with a scheduler associated
+        // to a different bank!
         if let Some(bank_in_context) = scheduler
             .as_ref()
-            .map(|scheduler| scheduler.context().bank())
+            .map(|scheduler| scheduler.context().bank().unwrap())
         {
             assert!(Arc::ptr_eq(&bank, bank_in_context));
         }

@@ -722,7 +722,7 @@ impl TaskHandler for DefaultTaskHandler {
     ) {
         // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
         // responsible for locking.
-        let bank = scheduling_context.bank();
+        let bank = scheduling_context.bank().unwrap();
         let transaction = task.transaction();
         let index = task.task_index();
 
@@ -2612,7 +2612,7 @@ mod tests {
 
         let scheduler = pool.take_scheduler(new_context.clone());
         assert_eq!(scheduler_id, scheduler.id());
-        assert!(Arc::ptr_eq(scheduler.context().bank(), new_bank));
+        assert!(Arc::ptr_eq(scheduler.context().bank().unwrap(), new_bank));
     }
 
     #[test]
@@ -3060,7 +3060,7 @@ mod tests {
                 _handler_context: &HandlerContext,
             ) {
                 // The task index must always be matched to the slot.
-                assert_eq!(task.task_index() as Slot, context.bank().slot());
+                assert_eq!(task.task_index() as Slot, context.slot().unwrap());
             }
         }
 
