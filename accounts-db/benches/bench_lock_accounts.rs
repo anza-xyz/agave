@@ -2,11 +2,12 @@ use {
     criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
     itertools::iproduct,
     solana_accounts_db::{accounts::Accounts, accounts_db::AccountsDb},
+    solana_instruction::{AccountMeta, Instruction},
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        instruction::{AccountMeta, Instruction},
-        system_program,
-        transaction::{SanitizedTransaction, Transaction, MAX_TX_ACCOUNT_LOCKS},
+    solana_sdk_ids::system_program,
+    solana_transaction::{
+        sanitized::{SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
+        Transaction,
     },
     std::sync::Arc,
 };

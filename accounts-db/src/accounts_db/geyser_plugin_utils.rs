@@ -1,9 +1,11 @@
 use {
     crate::{account_storage::meta::StoredAccountMeta, accounts_db::AccountsDb},
+    solana_account::AccountSharedData,
+    solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::*,
     solana_pubkey::Pubkey,
-    solana_sdk::{account::AccountSharedData, clock::Slot, transaction::SanitizedTransaction},
+    solana_transaction::sanitized::SanitizedTransaction,
     std::collections::{HashMap, HashSet},
 };
 
@@ -171,12 +173,10 @@ pub mod tests {
             },
         },
         dashmap::DashMap,
+        solana_account::{AccountSharedData, ReadableAccount},
+        solana_clock::Slot,
         solana_pubkey::Pubkey,
-        solana_sdk::{
-            account::{AccountSharedData, ReadableAccount},
-            clock::Slot,
-            transaction::SanitizedTransaction,
-        },
+        solana_transaction::sanitized::SanitizedTransaction,
         std::sync::{
             atomic::{AtomicBool, Ordering},
             Arc,

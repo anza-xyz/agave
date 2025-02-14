@@ -1,6 +1,6 @@
 use {
     crate::{accounts_index::AccountsIndexRootsStats, append_vec::APPEND_VEC_STATS},
-    solana_sdk::timing::AtomicInterval,
+    solana_time_utils::AtomicInterval,
     std::{
         num::Saturating,
         sync::atomic::{AtomicU64, AtomicUsize, Ordering},

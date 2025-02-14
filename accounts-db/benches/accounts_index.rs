@@ -4,6 +4,7 @@ extern crate test;
 
 use {
     rand::{thread_rng, Rng},
+    solana_account::AccountSharedData,
     solana_accounts_db::{
         account_info::AccountInfo,
         accounts_index::{
@@ -11,7 +12,6 @@ use {
             ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS,
         },
     },
-    solana_sdk::account::AccountSharedData,
     std::sync::Arc,
     test::Bencher,
 };

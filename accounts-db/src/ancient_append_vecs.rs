@@ -1237,11 +1237,9 @@ pub mod tests {
             storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
         },
         rand::seq::SliceRandom as _,
+        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+        solana_hash::Hash,
         solana_pubkey::Pubkey,
-        solana_sdk::{
-            account::{AccountSharedData, ReadableAccount, WritableAccount},
-            hash::Hash,
-        },
         std::{collections::HashSet, ops::Range},
         strum::IntoEnumIterator,
         strum_macros::EnumIter,
