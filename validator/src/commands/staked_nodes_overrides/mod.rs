@@ -7,13 +7,13 @@ use {
 const COMMAND: &str = "staked-nodes-overrides";
 
 #[derive(Debug, PartialEq)]
-pub struct StakedNodesOverridesArg {
+pub struct StakedNodesOverridesArgs {
     pub path: String,
 }
 
-impl FromClapArgMatches for StakedNodesOverridesArg {
+impl FromClapArgMatches for StakedNodesOverridesArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
-        Ok(StakedNodesOverridesArg {
+        Ok(StakedNodesOverridesArgs {
             path: matches
                 .value_of("path")
                 .expect("path is required")
@@ -40,14 +40,14 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
 }
 
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
-    let staked_nodes_overrides_arg = StakedNodesOverridesArg::from_clap_arg_match(matches)?;
+    let staked_nodes_overrides_args = StakedNodesOverridesArgs::from_clap_arg_match(matches)?;
 
     let admin_client = admin_rpc_service::connect(ledger_path);
     admin_rpc_service::runtime()
         .block_on(async move {
             admin_client
                 .await?
-                .set_staked_nodes_overrides(staked_nodes_overrides_arg.path)
+                .set_staked_nodes_overrides(staked_nodes_overrides_args.path)
                 .await
         })
         .map_err(|err| format!("set staked nodes override request failed: {err}"))
@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_staked_nodes_overrides_default() {
-        verify_args_struct_by_command_is_error::<StakedNodesOverridesArg>(
+        verify_args_struct_by_command_is_error::<StakedNodesOverridesArgs>(
             command(&DefaultArgs::default()),
             vec![COMMAND],
         );
@@ -75,7 +75,7 @@ mod tests {
         verify_args_struct_by_command(
             command(&DefaultArgs::default()),
             vec![COMMAND, "test.json"],
-            StakedNodesOverridesArg {
+            StakedNodesOverridesArgs {
                 path: "test.json".to_string(),
             },
         );
