@@ -1,4 +1,4 @@
-//! This module defines `WorkersCache` along with aux struct `WorkerInfo`. These
+//! This module defines [`WorkersCache`] along with aux struct [`WorkerInfo`]. These
 //! structures provide mechanisms for caching workers, sending transaction
 //! batches, and gathering send transaction statistics.
 

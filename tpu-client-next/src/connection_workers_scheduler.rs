@@ -45,7 +45,7 @@ pub enum ConnectionWorkersSchedulerError {
 /// be targeted when sending transactions and connecting.
 ///
 /// Note, that the unit is number of leaders per
-/// [`NUM_CONSECUTIVE_LEADER_SLOTS`]. It means that if the leader schedule is
+/// [`solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS`]. It means that if the leader schedule is
 /// [L1, L1, L1, L1, L1, L1, L1, L1, L2, L2, L2, L2], the leaders per
 /// consecutive leader slots are [L1, L1, L2], so there are 3 of them.
 ///
@@ -91,6 +91,12 @@ pub struct ConnectionWorkersSchedulerConfig {
     pub leaders_fanout: Fanout,
 }
 
+/// The [`StakeIdentity`] structure provides a convenient abstraction for handling
+/// [`Keypair`] when creating a QUIC certificate. Since `Keypair` does not implement
+/// [`Clone`], it cannot be moved in situations where [`ConnectionWorkersSchedulerConfig`]
+/// needs to be transferred. This wrapper structure allows the use of either a `Keypair`
+/// or a `&Keypair` to create a certificate, which is stored internally and later
+/// consumed by [`ConnectionWorkersScheduler`] to create an endpoint.
 pub struct StakeIdentity(QuicClientCertificate);
 
 impl From<Keypair> for StakeIdentity {
@@ -142,7 +148,7 @@ impl ConnectionWorkersScheduler {
     ///
     /// This method is a shorthand for
     /// [`ConnectionWorkersScheduler::run_with_broadcaster`] using
-    /// [`NonblockingBroadcaster`] strategy.
+    /// `NonblockingBroadcaster` strategy.
     ///
     /// Transactions that fail to be delivered to workers due to full channels
     /// will be dropped. The same for transactions that failed to be delivered
