@@ -327,9 +327,8 @@ where
         }
 
         if hold {
-            for priority_id in ids_to_add_back {
-                self.container.push_id_into_queue(priority_id);
-            }
+            self.container
+                .push_ids_into_queue(ids_to_add_back.into_iter());
         } else {
             for priority_id in ids_to_add_back {
                 self.container.remove_by_id(priority_id.id);
@@ -393,14 +392,22 @@ where
                 &mut error_counters,
             );
 
-            for (result, id) in check_results.into_iter().zip(chunk.iter()) {
+            // Remove errored transactions
+            for (result, id) in check_results.iter().zip(chunk.iter()) {
                 if result.is_err() {
                     saturating_add_assign!(num_dropped_on_age_and_status, 1);
                     self.container.remove_by_id(id.id);
-                } else {
-                    self.container.push_id_into_queue(*id);
                 }
             }
+
+            // Push non-errored transaction into queue.
+            self.container.push_ids_into_queue(
+                check_results
+                    .into_iter()
+                    .zip(chunk.iter())
+                    .filter(|(r, _)| r.is_ok())
+                    .map(|(_, id)| *id),
+            );
         }
 
         self.count_metrics.update(|count_metrics| {

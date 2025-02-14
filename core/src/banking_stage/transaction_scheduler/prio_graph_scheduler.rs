@@ -297,14 +297,13 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         saturating_add_assign!(num_sent, self.send_batches(&mut batches)?);
 
         // Push unschedulable ids back into the container
-        for id in unschedulable_ids {
-            container.push_id_into_queue(id);
-        }
+        container.push_ids_into_queue(unschedulable_ids.into_iter());
 
         // Push remaining transactions back into the container
-        while let Some((id, _)) = self.prio_graph.pop_and_unblock() {
-            container.push_id_into_queue(id);
-        }
+        container.push_ids_into_queue(std::iter::from_fn(|| {
+            self.prio_graph.pop_and_unblock().map(|(id, _)| id)
+        }));
+
         // No more remaining items in the queue.
         // Clear here to make sure the next scheduling pass starts fresh
         // without detecting any conflicts.
