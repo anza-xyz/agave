@@ -110,6 +110,7 @@ rand0-7 = { package = "rand", version = "0.7" }
 rand_chacha = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
+solana-loader-v3-interface = { workspace = true }
 solana-logger = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["dev-context-only-utils"] }
