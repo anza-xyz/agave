@@ -85,6 +85,15 @@ mod tests {
     }
 
     #[test]
+    fn verify_args_struct_by_command_contact_info_output_default() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec![COMMAND],
+            ContactInfoArgs { output: None },
+        );
+    }
+
+    #[test]
     fn verify_args_struct_by_command_contact_info_output_invalid() {
         verify_args_struct_by_command_is_error::<ContactInfoArgs>(
             command(&DefaultArgs::default()),
