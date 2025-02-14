@@ -31,6 +31,7 @@ use {
         hash::Hash,
     },
     std::{
+        borrow::Cow,
         collections::{BTreeMap, BTreeSet, HashMap},
         fs::File,
         io::{stdout, BufRead, BufReader, Write},
@@ -676,7 +677,8 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     break;
                 }
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
-                if target.insert_shreds(shreds, None, true).is_err() {
+                let shreds = shreds.into_iter().map(Cow::Owned);
+                if target.insert_cow_shreds(shreds, None, true).is_err() {
                     warn!("error inserting shreds for slot {}", slot);
                 }
             }
