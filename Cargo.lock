@@ -345,6 +345,7 @@ dependencies = [
  "solana-accounts-db",
  "solana-clap-utils",
  "solana-cli-config",
+ "solana-cli-output",
  "solana-core",
  "solana-download-utils",
  "solana-entry",

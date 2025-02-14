@@ -133,6 +133,8 @@ impl Display for AdminRpcContactInfo {
         writeln!(f, "Shred Version: {}", self.shred_version)
     }
 }
+impl solana_cli_output::VerboseDisplay for AdminRpcContactInfo {}
+impl solana_cli_output::QuietDisplay for AdminRpcContactInfo {}
 
 impl Display for AdminRpcRepairWhitelist {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

@@ -1,6 +1,7 @@
 use {
     crate::{admin_rpc_service, cli::DefaultArgs, commands::FromClapArgMatches},
     clap::{App, Arg, ArgMatches, SubCommand},
+    solana_cli_output::OutputFormat,
     std::{path::Path, process::exit},
 };
 
@@ -8,13 +9,13 @@ const COMMAND: &str = "contact-info";
 
 #[derive(Debug, PartialEq)]
 pub struct ContactInfoArgs {
-    pub output: Option<String>,
+    pub output: OutputFormat,
 }
 
 impl FromClapArgMatches for ContactInfoArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Self {
         ContactInfoArgs {
-            output: matches.value_of("output").map(String::from),
+            output: OutputFormat::from_matches(matches, "output", false),
         }
     }
 }
@@ -42,15 +43,8 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
             eprintln!("Contact info query failed: {err}");
             exit(1);
         });
-    if let Some(mode) = contact_info_args.output {
-        match mode.as_str() {
-            "json" => println!("{}", serde_json::to_string_pretty(&contact_info).unwrap()),
-            "json-compact" => print!("{}", serde_json::to_string(&contact_info).unwrap()),
-            _ => unreachable!(),
-        }
-    } else {
-        print!("{contact_info}");
-    }
+
+    println!("{}", contact_info_args.output.formatted_string(&contact_info));
 }
 
 #[cfg(test)]
@@ -68,7 +62,7 @@ mod tests {
             command(&DefaultArgs::default()),
             vec![COMMAND, "--output", "json"],
             ContactInfoArgs {
-                output: Some("json".to_string()),
+                output: OutputFormat::Json,
             },
         );
     }
@@ -79,7 +73,7 @@ mod tests {
             command(&DefaultArgs::default()),
             vec![COMMAND, "--output", "json-compact"],
             ContactInfoArgs {
-                output: Some("json-compact".to_string()),
+                output: OutputFormat::JsonCompact,
             },
         );
     }
@@ -89,7 +83,7 @@ mod tests {
         verify_args_struct_by_command(
             command(&DefaultArgs::default()),
             vec![COMMAND],
-            ContactInfoArgs { output: None },
+            ContactInfoArgs { output: OutputFormat::Display },
         );
     }
 
