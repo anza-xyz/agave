@@ -14,7 +14,8 @@ Release channels have their own copy of this changelog:
 
 <a name="edge-channel"></a>
 ## 2.3.0 - Unreleased
-
+* Breaking:
+  * Removed `--block-verification-method blockstore-processor` option from validator.
 
 ## 2.2.0
 * Breaking:
