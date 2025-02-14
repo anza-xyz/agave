@@ -1749,6 +1749,8 @@ impl JsonRpcRequestProcessor {
         signature: Signature,
         config: Option<RpcEncodingConfigWrapper<RpcTransactionConfig>>,
     ) -> Result<Option<EncodedConfirmedTransactionWithStatusMeta>> {
+        self.check_if_transaction_history_enabled()?;
+
         let config = config
             .map(|config| config.convert_to_current())
             .unwrap_or_default();
@@ -1757,7 +1759,6 @@ impl JsonRpcRequestProcessor {
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
-        if self.config.enable_rpc_transaction_history {
             let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
             let confirmed_transaction = self
                 .runtime
@@ -1818,9 +1819,7 @@ impl JsonRpcRequestProcessor {
                     }
                 }
             }
-        } else {
-            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
-        }
+
         Ok(None)
     }
 
