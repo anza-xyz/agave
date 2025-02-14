@@ -8934,6 +8934,7 @@ dependencies = [
  "solana-packet",
  "solana-pubkey",
  "solana-sdk-ids",
+ "solana-serialize-utils",
  "solana-signature",
  "solana-signer",
  "solana-svm-transaction",
