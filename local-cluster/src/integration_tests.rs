@@ -273,7 +273,7 @@ pub fn create_custom_leader_schedule(
     }
 
     info!("leader_schedule: {}", leader_schedule.len());
-    LeaderSchedule::new_from_schedule(leader_schedule)
+    LeaderSchedule::new_identity_keyed_with_schedule(leader_schedule)
 }
 
 pub fn create_custom_leader_schedule_with_random_keys(

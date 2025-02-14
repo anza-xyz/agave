@@ -94,6 +94,7 @@ features = ["lz4"]
 bs58 = { workspace = true }
 criterion = { workspace = true }
 solana-account-decoder = { workspace = true }
+solana-ledger = { path = ".", features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 spl-pod = { workspace = true }
