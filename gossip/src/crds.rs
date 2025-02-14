@@ -41,7 +41,10 @@ use {
     },
     lru::LruCache,
     rayon::{prelude::*, ThreadPool},
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signature},
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
     std::{
         cmp::Ordering,
         collections::{hash_map, BTreeMap, HashMap, VecDeque},
@@ -785,10 +788,9 @@ mod tests {
         rand::{thread_rng, Rng, SeedableRng},
         rand_chacha::ChaChaRng,
         rayon::ThreadPoolBuilder,
-        solana_sdk::{
-            signature::{Keypair, Signer},
-            timing::timestamp,
-        },
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        solana_time_utils::timestamp,
         std::{collections::HashSet, iter::repeat_with, net::Ipv4Addr, time::Duration},
     };
 

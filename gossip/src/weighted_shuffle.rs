@@ -280,7 +280,7 @@ mod tests {
         itertools::Itertools,
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
-        solana_sdk::hash::Hash,
+        solana_hash::Hash,
         std::{
             convert::TryInto,
             iter::{repeat_with, successors, Sum},
@@ -564,7 +564,7 @@ mod tests {
             .map(usize::to_le_bytes)
             .collect::<Vec<_>>();
         let bytes = bytes.iter().map(AsRef::as_ref).collect::<Vec<_>>();
-        assert_eq!(solana_sdk::hash::hashv(&bytes[..]), expected_hash);
+        assert_eq!(solana_sha256_hasher::hashv(&bytes[..]), expected_hash);
     }
 
     #[test]

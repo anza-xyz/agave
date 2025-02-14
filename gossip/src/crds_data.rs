@@ -9,14 +9,12 @@ use {
     },
     rand::Rng,
     serde::de::{Deserialize, Deserializer},
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_pubkey::{self, Pubkey},
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        pubkey::{self, Pubkey},
-        timing::timestamp,
-        transaction::Transaction,
-    },
+    solana_time_utils::timestamp,
+    solana_transaction::Transaction,
     solana_vote::vote_parser,
     std::{cmp::Ordering, collections::BTreeSet},
 };
@@ -245,7 +243,7 @@ impl AccountsHashes {
         .take(num_hashes)
         .collect();
         Self {
-            from: pubkey.unwrap_or_else(pubkey::new_rand),
+            from: pubkey.unwrap_or_else(solana_pubkey::new_rand),
             hashes,
             wallclock: new_rand_timestamp(rng),
         }
@@ -307,7 +305,7 @@ impl LowestSlot {
     /// New random LowestSlot for tests and benchmarks.
     fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         Self {
-            from: pubkey.unwrap_or_else(pubkey::new_rand),
+            from: pubkey.unwrap_or_else(solana_pubkey::new_rand),
             root: rng.gen(),
             lowest: rng.gen(),
             slots: BTreeSet::default(),
@@ -368,7 +366,7 @@ impl Vote {
     /// New random Vote for tests and benchmarks.
     fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         Self {
-            from: pubkey.unwrap_or_else(pubkey::new_rand),
+            from: pubkey.unwrap_or_else(solana_pubkey::new_rand),
             transaction: Transaction::default(),
             wallclock: new_rand_timestamp(rng),
             slot: None,
@@ -503,11 +501,10 @@ mod test {
         super::*,
         crate::crds_value::CrdsValue,
         bincode::Options,
+        solana_keypair::Keypair,
         solana_perf::test_tx::new_test_vote_tx,
-        solana_sdk::{
-            signature::{Keypair, Signer},
-            timing::timestamp,
-        },
+        solana_signer::Signer,
+        solana_time_utils::timestamp,
         solana_vote_program::{vote_instruction, vote_state},
     };
 

@@ -3,8 +3,10 @@ use {
     bv::BitVec,
     itertools::Itertools,
     rand::Rng,
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
     solana_serde_varint as serde_varint,
     thiserror::Error,
 };
@@ -223,7 +225,9 @@ mod test {
             protocol::MAX_CRDS_OBJECT_SIZE,
         },
         bincode::serialized_size,
-        solana_sdk::{signature::Signer, signer::keypair::Keypair, timing::timestamp},
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        solana_time_utils::timestamp,
         std::iter::repeat_with,
     };
 

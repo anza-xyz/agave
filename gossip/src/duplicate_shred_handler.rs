@@ -5,12 +5,10 @@ use {
     },
     crossbeam_channel::Sender,
     log::error,
+    solana_clock::{Epoch, Slot},
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
+    solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        pubkey::Pubkey,
-    },
     std::{
         cmp::Reverse,
         collections::HashMap,
@@ -232,16 +230,15 @@ mod tests {
         },
         crossbeam_channel::unbounded,
         itertools::Itertools,
+        solana_keypair::Keypair,
         solana_ledger::{
             genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
             shred::Shredder,
         },
         solana_runtime::{accounts_background_service::AbsRequestSender, bank::Bank},
-        solana_sdk::{
-            signature::{Keypair, Signer},
-            timing::timestamp,
-        },
+        solana_signer::Signer,
+        solana_time_utils::timestamp,
     };
 
     fn create_duplicate_proof(
