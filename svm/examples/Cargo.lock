@@ -5180,6 +5180,7 @@ version = "2.2.0"
 dependencies = [
  "bincode",
  "libsecp256k1",
+ "num-traits",
  "qualifier_attr",
  "scopeguard",
  "solana-account",
@@ -5204,7 +5205,6 @@ dependencies = [
  "solana-poseidon",
  "solana-precompiles",
  "solana-program-entrypoint",
- "solana-program-memory",
  "solana-program-runtime",
  "solana-pubkey",
  "solana-sbpf",
