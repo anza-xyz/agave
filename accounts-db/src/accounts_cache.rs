@@ -3,12 +3,10 @@ use {
     ahash::RandomState as AHashRandomState,
     dashmap::DashMap,
     seqlock::SeqLock,
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_clock::Slot,
     solana_nohash_hasher::BuildNoHashHasher,
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Slot,
-    },
     std::{
         collections::BTreeSet,
         ops::Deref,

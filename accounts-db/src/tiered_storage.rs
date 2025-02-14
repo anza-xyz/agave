@@ -178,12 +178,10 @@ mod tests {
         file::TieredStorageMagicNumber,
         footer::TieredStorageFooter,
         hot::HOT_FORMAT,
+        solana_account::{AccountSharedData, ReadableAccount},
+        solana_clock::Slot,
         solana_pubkey::Pubkey,
-        solana_sdk::{
-            account::{AccountSharedData, ReadableAccount},
-            clock::Slot,
-            system_instruction::MAX_PERMITTED_DATA_LENGTH,
-        },
+        solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
         std::{
             collections::{HashMap, HashSet},
             mem::ManuallyDrop,

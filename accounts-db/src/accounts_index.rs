@@ -17,12 +17,10 @@ use {
         iter::{IntoParallelIterator, ParallelIterator},
         ThreadPool,
     },
+    solana_account::ReadableAccount,
+    solana_clock::{BankId, Slot},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::ReadableAccount,
-        clock::{BankId, Slot},
-    },
     std::{
         collections::{btree_map::BTreeMap, HashSet},
         fmt::Debug,
@@ -2113,9 +2111,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 pub mod tests {
     use {
         super::*,
+        solana_account::{AccountSharedData, WritableAccount},
         solana_inline_spl::token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
         solana_pubkey::PUBKEY_BYTES,
-        solana_sdk::account::{AccountSharedData, WritableAccount},
         std::ops::RangeInclusive,
     };
 

@@ -82,21 +82,18 @@ use {
     rayon::{prelude::*, ThreadPool},
     seqlock::SeqLock,
     smallvec::SmallVec,
+    solana_account::{Account, AccountSharedData, ReadableAccount},
+    solana_clock::{BankId, Epoch, Slot},
+    solana_epoch_schedule::EpochSchedule,
+    solana_genesis_config::GenesisConfig,
+    solana_hash::Hash,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount},
-        clock::{BankId, Epoch, Slot},
-        epoch_schedule::EpochSchedule,
-        genesis_config::GenesisConfig,
-        hash::Hash,
-        rent_collector::RentCollector,
-        saturating_add_assign,
-        transaction::SanitizedTransaction,
-    },
+    solana_rent_collector::RentCollector,
+    solana_transaction::sanitized::SanitizedTransaction,
     std::{
         borrow::Cow,
         boxed::Box,
@@ -6527,7 +6524,7 @@ impl AccountsDb {
                         pubkey,
                         current_write_version,
                     );
-                    saturating_add_assign!(current_write_version, 1);
+                    current_write_version = current_write_version.saturating_add(1);
 
                     let cached_account =
                         self.accounts_cache.store(slot, pubkey, account_shared_data);

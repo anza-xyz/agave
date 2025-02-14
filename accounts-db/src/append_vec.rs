@@ -20,13 +20,11 @@ use {
     },
     log::*,
     memmap2::MmapMut,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_clock::Epoch,
+    solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        hash::Hash,
-        stake_history::Epoch,
-        system_instruction::MAX_PERMITTED_DATA_LENGTH,
-    },
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
         convert::TryFrom,
         fs::{remove_file, File, OpenOptions},
@@ -44,7 +42,7 @@ use {
 
 pub mod test_utils;
 #[cfg(test)]
-use solana_sdk::account::accounts_equal;
+use solana_account::accounts_equal;
 
 /// size of the fixed sized fields in an append vec
 /// we need to add data len and align it to get the actual stored size
@@ -850,7 +848,7 @@ impl AppendVec {
     pub fn get_account_test(
         &self,
         offset: usize,
-    ) -> Option<(StoredMeta, solana_sdk::account::AccountSharedData)> {
+    ) -> Option<(StoredMeta, solana_account::AccountSharedData)> {
         let sizes = self.get_account_sizes(&[offset]);
         let result = self.get_stored_account_meta_callback(offset, |r_callback| {
             let r2 = self.get_account_shared_data(offset);
@@ -1235,10 +1233,8 @@ pub mod tests {
         assert_matches::assert_matches,
         memoffset::offset_of,
         rand::{thread_rng, Rng},
-        solana_sdk::{
-            account::{Account, AccountSharedData},
-            clock::Slot,
-        },
+        solana_account::{Account, AccountSharedData},
+        solana_clock::Slot,
         std::{mem::ManuallyDrop, time::Instant},
         test_case::test_case,
     };

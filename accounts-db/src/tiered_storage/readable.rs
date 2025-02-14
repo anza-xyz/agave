@@ -11,8 +11,8 @@ use {
             TieredStorageResult,
         },
     },
+    solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
-    solana_sdk::account::AccountSharedData,
     std::path::Path,
 };
 
