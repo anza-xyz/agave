@@ -251,7 +251,7 @@ impl CostModel {
         // will not be executed by `bank`, therefore it should be considered
         // as no execution cost by cost model.
         match meta
-            .compute_budget_instruction_details()
+            .instruction_details()
             .sanitize_and_convert_to_compute_budget_limits(feature_set)
         {
             Ok(compute_budget_limits) => {
@@ -293,7 +293,7 @@ impl CostModel {
         // if failed to process compute_budget instructions, the transaction will not be executed
         // by `bank`, therefore it should be considered as no execution cost by cost model.
         let (programs_execution_costs, loaded_accounts_data_size_cost) = match transaction
-            .compute_budget_instruction_details()
+            .instruction_details()
             .sanitize_and_convert_to_compute_budget_limits(feature_set)
         {
             Ok(compute_budget_limits) => (

@@ -1,5 +1,5 @@
 use {
-    super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
+    super::{InstructionDetails, RuntimeTransaction},
     crate::{
         signature_details::get_precompile_signature_details,
         transaction_meta::{StaticMeta, TransactionMeta},
@@ -48,7 +48,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
             precompile_signature_details.num_ed25519_instruction_signatures,
             precompile_signature_details.num_secp256r1_instruction_signatures,
         );
-        let compute_budget_instruction_details = ComputeBudgetInstructionDetails::try_from(
+        let instruction_details = InstructionDetails::try_from(
             sanitized_versioned_tx
                 .get_message()
                 .program_instructions_iter()
@@ -61,7 +61,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
                 message_hash,
                 is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
-                compute_budget_instruction_details,
+                instruction_details,
             },
         })
     }
@@ -328,7 +328,7 @@ mod tests {
 
         for feature_set in [FeatureSet::default(), FeatureSet::all_enabled()] {
             let compute_budget_limits = runtime_transaction_static
-                .compute_budget_instruction_details()
+                .instruction_details()
                 .sanitize_and_convert_to_compute_budget_limits(&feature_set)
                 .unwrap();
             assert_eq!(compute_unit_limit, compute_budget_limits.compute_unit_limit);
