@@ -20,7 +20,7 @@ solana-account-decoder-client-types = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-message = { workspace = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
-solana-signature = { workspace = true, default-features = false }
+solana-signature = { workspace = true }
 solana-transaction = { workspace = true, features = ["serde"] }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true, features = ["serde"] }
