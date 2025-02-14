@@ -201,6 +201,7 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
                 let Some(packet_data) = packet.data(..) else {
                     // should never occur since we've already checked the
                     // packet is not marked for discard.
+                    datapoint_error!("forward_stage_packet_discard_error", ("count", 1, i64));
                     continue;
                 };
 
