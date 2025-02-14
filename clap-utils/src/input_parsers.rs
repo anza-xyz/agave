@@ -9,7 +9,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_keypair::{read_keypair_file, Keypair},
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_signature::Signature,
@@ -181,7 +181,24 @@ pub fn resolve_signer(
 }
 
 pub fn lamports_of_sol(matches: &ArgMatches<'_>, name: &str) -> Option<u64> {
-    value_of(matches, name).map(sol_to_lamports)
+    matches.value_of(name).and_then(|value| {
+        if value == "." {
+            None
+        } else {
+            let (sol, lamports) = value.split_once('.').unwrap_or((value, ""));
+            let sol = if sol.is_empty() {
+                0
+            } else {
+                sol.parse().unwrap()
+            };
+            let lamports = if lamports.is_empty() {
+                0
+            } else {
+                format!("{:0<9}", lamports)[..9].parse().unwrap()
+            };
+            Some(sol * LAMPORTS_PER_SOL + lamports)
+        }
+    })
 }
 
 pub fn cluster_type_of(matches: &ArgMatches<'_>, name: &str) -> Option<ClusterType> {
@@ -330,6 +347,38 @@ mod tests {
     }
 
     #[test]
+    fn test_lamports_of_sol_origin() {
+        use solana_native_token::sol_to_lamports;
+        pub fn lamports_of_sol(matches: &ArgMatches<'_>, name: &str) -> Option<u64> {
+            value_of(matches, name).map(sol_to_lamports)
+        }
+
+        let matches = app().get_matches_from(vec!["test", "--single", "50"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(50_000_000_000));
+        assert_eq!(lamports_of_sol(&matches, "multiple"), None);
+        let matches = app().get_matches_from(vec!["test", "--single", "1.5"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(1_500_000_000));
+        assert_eq!(lamports_of_sol(&matches, "multiple"), None);
+        let matches = app().get_matches_from(vec!["test", "--single", "0.03"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(30_000_000));
+        let matches = app().get_matches_from(vec!["test", "--single", ".03"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(30_000_000));
+        let matches = app().get_matches_from(vec!["test", "--single", "1."]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(1_000_000_000));
+        let matches = app().get_matches_from(vec!["test", "--single", ".0"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(0));
+        let matches = app().get_matches_from(vec!["test", "--single", "."]);
+        assert_eq!(lamports_of_sol(&matches, "single"), None);
+        // NOT EQ
+        let matches = app().get_matches_from(vec!["test", "--single", "1.000000015"]);
+        assert_ne!(lamports_of_sol(&matches, "single"), Some(1_000_000_015));
+        let matches = app().get_matches_from(vec!["test", "--single", "0.0157"]);
+        assert_ne!(lamports_of_sol(&matches, "single"), Some(15_700_000));
+        let matches = app().get_matches_from(vec!["test", "--single", "0.5025"]);
+        assert_ne!(lamports_of_sol(&matches, "single"), Some(502_500_000));
+    }
+
+    #[test]
     fn test_lamports_of_sol() {
         let matches = app().get_matches_from(vec!["test", "--single", "50"]);
         assert_eq!(lamports_of_sol(&matches, "single"), Some(50_000_000_000));
@@ -339,5 +388,20 @@ mod tests {
         assert_eq!(lamports_of_sol(&matches, "multiple"), None);
         let matches = app().get_matches_from(vec!["test", "--single", "0.03"]);
         assert_eq!(lamports_of_sol(&matches, "single"), Some(30_000_000));
+        let matches = app().get_matches_from(vec!["test", "--single", ".03"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(30_000_000));
+        let matches = app().get_matches_from(vec!["test", "--single", "1."]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(1_000_000_000));
+        let matches = app().get_matches_from(vec!["test", "--single", ".0"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(0));
+        let matches = app().get_matches_from(vec!["test", "--single", "."]);
+        assert_eq!(lamports_of_sol(&matches, "single"), None);
+        // EQ
+        let matches = app().get_matches_from(vec!["test", "--single", "1.000000015"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(1_000_000_015));
+        let matches = app().get_matches_from(vec!["test", "--single", "0.0157"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(15_700_000));
+        let matches = app().get_matches_from(vec!["test", "--single", "0.5025"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), Some(502_500_000));
     }
 }
