@@ -31,11 +31,11 @@ solana-account-decoder = { path = "../../account-decoder" }
 solana-bpf-loader-program = { path = "../../programs/bpf_loader" }
 solana-client = { path = "../../client" }
 solana-compute-budget = { path = "../../compute-budget" }
-solana-logger = "=2.2.0"
+solana-logger = "=2.2.1"
 solana-perf = { path = "../../perf" }
 solana-program-runtime = { path = "../../program-runtime" }
 solana-rpc-client-api = { path = "../../rpc-client-api" }
-solana-sdk = "=2.2.0"
+solana-sdk = "=2.2.1"
 solana-svm = { path = "../" }
 solana-system-program = { path = "../../programs/system" }
 solana-version = { path = "../../version" }
