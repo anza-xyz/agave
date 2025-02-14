@@ -466,7 +466,7 @@ impl RepairService {
                         &blockstore,
                         &exit,
                         &repair_socket,
-                        &repair_service_channels.repair_channels,
+                        repair_service_channels.repair_channels,
                         repair_info,
                         &outstanding_requests,
                     )
@@ -492,7 +492,7 @@ impl RepairService {
         blockstore: &Blockstore,
         exit: &AtomicBool,
         repair_socket: &UdpSocket,
-        repair_channels: &RepairChannels,
+        repair_channels: RepairChannels,
         repair_info: RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
     ) {
@@ -666,7 +666,7 @@ impl RepairService {
                                 &repair_info.repair_validators,
                                 &mut outstanding_requests,
                                 identity_keypair,
-                                repair_request_quic_sender,
+                                &repair_request_quic_sender,
                                 repair_protocol,
                             )
                             .ok()??;
