@@ -3997,6 +3997,13 @@ impl Bank {
             return;
         }
 
+        if self
+            .feature_set
+            .is_active(&feature_set::disable_partitioned_rent_collection::id())
+        {
+            return;
+        }
+
         let mut measure = Measure::start("collect_rent_eagerly-ms");
         let partitions = self.rent_collection_partitions();
         let count = partitions.len();

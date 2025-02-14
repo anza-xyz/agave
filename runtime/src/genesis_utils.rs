@@ -9,6 +9,7 @@ use {
         native_token::sol_to_lamports,
         pubkey::Pubkey,
         rent::Rent,
+        rent_collector::RENT_EXEMPT_RENT_EPOCH,
         signature::{Keypair, Signer},
         signer::SeedDerivable,
         stake::state::StakeStateV2,
@@ -287,7 +288,12 @@ pub fn create_genesis_config_with_leader_ex_no_features(
 
     initial_accounts.push((
         *mint_pubkey,
-        AccountSharedData::new(mint_lamports, 0, &system_program::id()),
+        AccountSharedData::new_rent_epoch(
+            mint_lamports,
+            0,
+            &system_program::id(),
+            RENT_EXEMPT_RENT_EPOCH,
+        ),
     ));
     initial_accounts.push((
         *validator_pubkey,
