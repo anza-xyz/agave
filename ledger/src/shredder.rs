@@ -109,7 +109,6 @@ impl Shredder {
                 stats,
             )
             .unwrap()
-            .into_iter()
             .partition(Shred::is_data);
         }
         let data_shreds =
