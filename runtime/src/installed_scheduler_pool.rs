@@ -578,7 +578,8 @@ impl BankWithSchedulerInner {
                 let pool = pool.clone();
                 drop(scheduler);
 
-                // Schedulers can be stale only if its mode is block-verification.
+                // Schedulers can be stale only if its mode is block-verification. So,
+                // unconditional context construction for verification is okay here.
                 let context = SchedulingContext::for_verification(self.bank.clone());
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {:?}", scheduler);

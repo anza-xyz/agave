@@ -138,8 +138,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProdutionSchedulerInner<S,
         match self {
             Self::NotSpawned => false,
             Self::Pooled(inner) => {
-                // `returned` must be a block-verification scheduler if there's already a block-
-                // production scheduler. So, return false with following assert_ne!().
+                // the given `returned` inner must be a block-verification scheduler if there's
+                // already a pooled block-production scheduler inner here. So, return `false` after
+                // sanity check to detect double `put` intention with following `assert_ne!()`.
                 assert_ne!(inner.id(), returned.id());
                 false
             }
@@ -497,9 +498,10 @@ where
             // the availability of pooled block production scheduler by re-spawning one.
             if block_production_scheduler_inner.can_put(&scheduler) {
                 block_production_scheduler_inner.trash_taken();
-                // To prevent block-production scheduler is taken from do_take_resumed_scheduler()
-                // by different thread at this very moment, `.trash_taken()` and `.put_spawned()`
-                // must be done atomically.  That's why we pass around MutexGuard into
+                // To prevent block-production scheduler from being taken in
+                // do_take_resumed_scheduler() by different thread at this very moment, the
+                // preceding `.trash_taken()` and following `.put_spawned()` must be done
+                // atomically. That's why we pass around MutexGuard into
                 // spawn_block_production_scheduler().
                 self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
             }
@@ -3537,6 +3539,7 @@ mod tests {
             mint_keypair,
             ..
         } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
@@ -3557,6 +3560,7 @@ mod tests {
             );
         pool.register_banking_stage(
             banking_packet_receiver,
+            // we don't use the banking packet channel in this test. so, pass panicking handler.
             Box::new(|_, _| unreachable!()),
             poh_recorder.read().unwrap().new_recorder(),
         );
@@ -3618,7 +3622,7 @@ mod tests {
             .unwrap();
         assert_eq!(banking_packet_sender.len(), 1);
 
-        // A dummy handler which unconditionally sends tx0 back to the scheduler thread
+        // Create a dummy handler which unconditionally sends tx0 back to the scheduler thread
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
@@ -3634,13 +3638,13 @@ mod tests {
             fixed_banking_packet_handler,
             poh_recorder.read().unwrap().new_recorder(),
         );
-        let context = SchedulingContext::for_production(bank.clone());
 
         // Confirm the banking packet channel is cleared, even before taking scheduler
         sleepless_testing::at(TestCheckPoint::AfterNewBufferedTask);
         assert_eq!(banking_packet_sender.len(), 0);
 
         assert_eq!(bank.transaction_count(), 0);
+        let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
@@ -3655,7 +3659,7 @@ mod tests {
         solana_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedTask(17),
+            &CheckPoint::NewBufferedTask(18),
             &TestCheckPoint::AfterNewBufferedTask,
         ]);
 
@@ -3682,7 +3686,7 @@ mod tests {
                 Some(leader_schedule_cache),
             );
 
-        // A dummy handler which unconditionally sends tx0 back to the scheduler thread
+        // Create a dummy handler which unconditionally sends tx0 back to the scheduler thread
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
@@ -3691,7 +3695,7 @@ mod tests {
         ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                helper.send_new_task(helper.create_new_task(tx0.clone(), 17))
+                helper.send_new_task(helper.create_new_task(tx0.clone(), 18))
             });
 
         let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
@@ -3700,10 +3704,10 @@ mod tests {
             fixed_banking_packet_handler,
             poh_recorder.read().unwrap().new_recorder(),
         );
-        let context = SchedulingContext::for_production(bank.clone());
 
         // Quickly take and return the scheduler so that this test can test the behavior while
         // waiting for new session...
+        let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context.clone());
         let bank_tmp = BankWithScheduler::new(bank.clone(), Some(scheduler));
         assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
@@ -3772,8 +3776,8 @@ mod tests {
             Box::new(|_, _| {}),
             poh_recorder.read().unwrap().new_recorder(),
         );
-        let context = SchedulingContext::for_production(bank.clone());
 
+        let context = SchedulingContext::for_production(bank.clone());
         let scheduler1 = pool.do_take_scheduler(context.clone());
         let scheduler2 = pool.do_take_scheduler(context);
 
@@ -3841,6 +3845,7 @@ mod tests {
         let respawned_new_scheduler_id = scheduler.id();
         Box::new(scheduler.into_inner().1).return_to_pool();
 
+        // id should be different
         assert_ne!(trashed_old_scheduler_id, respawned_new_scheduler_id);
 
         exit.store(true, Ordering::Relaxed);
@@ -3855,6 +3860,7 @@ mod tests {
             solana_ledger::genesis_utils::create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
