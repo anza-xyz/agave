@@ -1653,16 +1653,15 @@ impl JsonRpcRequestProcessor {
         signatures: Vec<Signature>,
         config: Option<RpcSignatureStatusConfig>,
     ) -> Result<RpcResponse<Vec<Option<TransactionStatus>>>> {
-        let mut statuses: Vec<Option<TransactionStatus>> = vec![];
-
         let search_transaction_history = config
             .map(|x| x.search_transaction_history)
             .unwrap_or(false);
-        let bank = self.bank(Some(CommitmentConfig::processed()));
-
         if search_transaction_history {
             self.check_if_transaction_history_enabled()?;
         }
+
+        let bank = self.bank(Some(CommitmentConfig::processed()));
+        let mut statuses: Vec<Option<TransactionStatus>> = vec![];
 
         for signature in signatures {
             let status = if let Some(status) = self.get_transaction_status(signature, &bank) {
