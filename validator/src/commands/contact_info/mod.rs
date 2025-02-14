@@ -44,7 +44,10 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
             exit(1);
         });
 
-    println!("{}", contact_info_args.output.formatted_string(&contact_info));
+    println!(
+        "{}",
+        contact_info_args.output.formatted_string(&contact_info)
+    );
 }
 
 #[cfg(test)]
@@ -83,7 +86,9 @@ mod tests {
         verify_args_struct_by_command(
             command(&DefaultArgs::default()),
             vec![COMMAND],
-            ContactInfoArgs { output: OutputFormat::Display },
+            ContactInfoArgs {
+                output: OutputFormat::Display,
+            },
         );
     }
 

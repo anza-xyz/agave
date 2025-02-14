@@ -141,6 +141,8 @@ impl Display for AdminRpcRepairWhitelist {
         writeln!(f, "Repair whitelist: {:?}", &self.whitelist)
     }
 }
+impl solana_cli_output::VerboseDisplay for AdminRpcRepairWhitelist {}
+impl solana_cli_output::QuietDisplay for AdminRpcRepairWhitelist {}
 
 #[rpc]
 pub trait AdminRpc {

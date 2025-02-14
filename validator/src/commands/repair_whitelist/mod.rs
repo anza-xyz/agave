@@ -2,6 +2,7 @@ use {
     crate::{admin_rpc_service, cli::DefaultArgs},
     clap::{values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::is_pubkey,
+    solana_cli_output::OutputFormat,
     solana_sdk::pubkey::Pubkey,
     std::{collections::HashSet, path::Path, process::exit},
 };
@@ -52,7 +53,7 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
     match matches.subcommand() {
         ("get", Some(subcommand_matches)) => {
-            let output_mode = subcommand_matches.value_of("output");
+            let output = OutputFormat::from_matches(subcommand_matches, "output", false);
             let admin_client = admin_rpc_service::connect(ledger_path);
             let repair_whitelist = admin_rpc_service::runtime()
                 .block_on(async move { admin_client.await?.repair_whitelist().await })
@@ -60,20 +61,8 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
                     eprintln!("Repair whitelist query failed: {err}");
                     exit(1);
                 });
-            if let Some(mode) = output_mode {
-                match mode {
-                    "json" => println!(
-                        "{}",
-                        serde_json::to_string_pretty(&repair_whitelist).unwrap()
-                    ),
-                    "json-compact" => {
-                        print!("{}", serde_json::to_string(&repair_whitelist).unwrap())
-                    }
-                    _ => unreachable!(),
-                }
-            } else {
-                print!("{repair_whitelist}");
-            }
+
+            println!("{}", output.formatted_string(&repair_whitelist));
         }
         ("set", Some(subcommand_matches)) => {
             let whitelist = if subcommand_matches.is_present("whitelist") {
