@@ -3,7 +3,6 @@ use {
         policy::{apply_policy, parse_policy, CoreAllocation},
         MAX_THREAD_NAME_CHARS,
     },
-    anyhow::Ok,
     serde::{Deserialize, Serialize},
     std::{
         ops::Deref,
@@ -38,6 +37,7 @@ impl Default for RayonConfig {
 pub struct RayonRuntimeInner {
     pub rayon_pool: rayon::ThreadPool,
     pub config: RayonConfig,
+    pub name: String,
 }
 impl Deref for RayonRuntimeInner {
     type Target = rayon::ThreadPool;
@@ -49,7 +49,7 @@ impl Deref for RayonRuntimeInner {
 
 #[derive(Debug, Clone)]
 pub struct RayonRuntime {
-    inner: Arc<RayonRuntimeInner>,
+    pub(crate) inner: Arc<RayonRuntimeInner>,
 }
 
 impl Deref for RayonRuntime {
@@ -69,14 +69,21 @@ impl RayonRuntime {
         let policy = parse_policy(&config.policy);
         let rayon_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(config.worker_threads)
-            .thread_name(move |i| format!("{}_{}", &name, i))
+            .thread_name({
+                let name = name.clone();
+                move |i| format!("{}_{}", &name, i)
+            })
             .stack_size(config.stack_size_bytes)
             .start_handler(move |_idx| {
                 apply_policy(&core_allocation, policy, priority, &chosen_cores_mask);
             })
             .build()?;
         Ok(Self {
-            inner: Arc::new(RayonRuntimeInner { rayon_pool, config }),
+            inner: Arc::new(RayonRuntimeInner {
+                rayon_pool,
+                config,
+                name,
+            }),
         })
     }
 
