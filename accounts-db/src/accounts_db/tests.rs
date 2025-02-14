@@ -80,7 +80,7 @@ where
     }
 }
 
-pub fn create_loadable_account_with_fields(
+fn create_loadable_account_with_fields(
     name: &str,
     (lamports, rent_epoch): InheritableAccountFields,
 ) -> AccountSharedData {
@@ -93,7 +93,7 @@ pub fn create_loadable_account_with_fields(
     })
 }
 
-pub fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
+fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
     create_loadable_account_with_fields(name, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
 }
 
