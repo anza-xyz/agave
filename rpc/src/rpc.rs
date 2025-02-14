@@ -1660,14 +1660,14 @@ impl JsonRpcRequestProcessor {
             .unwrap_or(false);
         let bank = self.bank(Some(CommitmentConfig::processed()));
 
-        if search_transaction_history && !self.config.enable_rpc_transaction_history {
-            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
+        if search_transaction_history {
+            self.check_if_transaction_history_enabled()?;
         }
 
         for signature in signatures {
             let status = if let Some(status) = self.get_transaction_status(signature, &bank) {
                 Some(status)
-            } else if self.config.enable_rpc_transaction_history && search_transaction_history {
+            } else if search_transaction_history {
                 if let Some(status) = self
                     .blockstore
                     .get_rooted_transaction_status(signature)
