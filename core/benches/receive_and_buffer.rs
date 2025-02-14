@@ -82,13 +82,11 @@ fn bench_transaction_serialization(c: &mut Criterion) {
     });
 }
 
-// So in theory one thread should be able to generate 10 batches per second. Which sounds to be enough.
-
 fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
     let GenesisConfigInfo {
         mut genesis_config, ..
     } = create_genesis_config(100_000);
-    let num_txs = 1024;
+    let num_txs = 1024 * 64;
     let num_account_conflicts = 1;
     let num_accounts = ((num_account_conflicts + 1) * num_txs) / num_account_conflicts;
     let account_keypairs = create_accounts(num_accounts, &mut genesis_config);
@@ -101,22 +99,6 @@ fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
     };
 
     let (sender, receiver) = unbounded();
-    //let handle = thread::spawn(move || {
-    generate_transactions(
-        num_txs,
-        &account_keypairs,
-        bank,
-        sender.clone(),
-        TransactionConfig {
-            compute_unit_price: Box::new(UniformDist::new(1, 10)),
-            transaction_cu_budget: 1, // No effect
-            num_account_conflicts,    // No effect for this benchmark
-            probability_invalid_blockhash: 0.0,
-            probability_invalid_account: 0.0, // No effect
-            data_size_limit: 1,               // No effect
-        },
-    );
-    //});
 
     let mut rb = SanitizedTransactionReceiveAndBuffer::new(
         PacketDeserializer::new(receiver),
@@ -125,33 +107,45 @@ fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
     );
 
     const TOTAL_BUFFERED_PACKETS: usize = 100_000;
-    let mut container =
-        <SanitizedTransactionReceiveAndBuffer as ReceiveAndBuffer>::Container::with_capacity(
-            TOTAL_BUFFERED_PACKETS,
-        );
     let mut count_metrics = SchedulerCountMetrics::default();
     let mut timing_metrics = SchedulerTimingMetrics::default();
     let decision = BufferedPacketsDecision::Consume(bank_start);
 
-    // TODO use this construction instead to use always new container
-    //  b.iter_batched(|| data.clone(), |mut data| sort(&mut data), BatchSize::SmallInput)
     c.bench_function("sanitized_transaction_receive_and_buffer", |bencher| {
-        bencher.iter(|| {
-            let res = rb.receive_and_buffer_packets(
-                &mut container,
-                &mut timing_metrics,
-                &mut count_metrics,
-                &decision,
-            );
-            println!("{res:?}");
-            assert!(res.unwrap() > 0);
-            black_box(sender.clone());
-            // clear to have the same situation on every iteration
-            container.clear();
-        })
+        bencher.iter_with_setup(
+            || {
+                generate_transactions(
+                    num_txs,
+                    &account_keypairs,
+                    bank.clone(),
+                    sender.clone(),
+                    TransactionConfig {
+                        compute_unit_price: Box::new(UniformDist::new(1, 100)),
+                        transaction_cu_budget: 1, // No effect
+                        num_account_conflicts,    // No effect for this benchmark
+                        probability_invalid_blockhash: 0.0,
+                        probability_invalid_account: 0.0, // No effect
+                        data_size_limit: 1,               // No effect
+                    },
+                );
+                let container =
+        <SanitizedTransactionReceiveAndBuffer as ReceiveAndBuffer>::Container::with_capacity(
+            TOTAL_BUFFERED_PACKETS,
+        );
+                container
+            },
+            |mut container| {
+                let res = rb.receive_and_buffer_packets(
+                    &mut container,
+                    &mut timing_metrics,
+                    &mut count_metrics,
+                    &decision,
+                );
+                assert!(res.unwrap() == 2 * num_txs && !container.is_empty());
+                black_box(container);
+            },
+        )
     });
-    //drop(rb);
-    //assert!(handle.join().is_ok());
 }
 
 criterion_group!(
