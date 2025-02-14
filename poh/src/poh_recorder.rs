@@ -255,6 +255,23 @@ struct PohRecorderMetrics {
     last_metric: Instant,
 }
 
+impl Default for PohRecorderMetrics {
+    fn default() -> Self {
+        Self {
+            flush_cache_tick_us: 0,
+            flush_cache_no_tick_us: 0,
+            record_us: 0,
+            record_lock_contention_us: 0,
+            report_metrics_us: 0,
+            send_entry_us: 0,
+            tick_lock_contention_us: 0,
+            ticks_from_record: 0,
+            total_sleep_us: 0,
+            last_metric: Instant::now(),
+        }
+    }
+}
+
 impl PohRecorderMetrics {
     fn report(&mut self, bank_slot: Slot) {
         if self.last_metric.elapsed().as_millis() > 1000 {
@@ -276,16 +293,7 @@ impl PohRecorderMetrics {
                 ("total_sleep_us", self.total_sleep_us, i64),
             );
 
-            self.flush_cache_tick_us = 0;
-            self.flush_cache_no_tick_us = 0;
-            self.record_us = 0;
-            self.record_lock_contention_us = 0;
-            self.report_metrics_us = 0;
-            self.send_entry_us = 0;
-            self.tick_lock_contention_us = 0;
-            self.ticks_from_record = 0;
-            self.total_sleep_us = 0;
-            self.last_metric = Instant::now();
+            *self = Self::default();
         }
     }
 }
@@ -398,18 +406,7 @@ impl PohRecorder {
                 leader_schedule_cache: leader_schedule_cache.clone(),
                 ticks_per_slot,
                 target_ns_per_tick,
-                metrics: PohRecorderMetrics {
-                    flush_cache_tick_us: 0,
-                    flush_cache_no_tick_us: 0,
-                    record_us: 0,
-                    record_lock_contention_us: 0,
-                    report_metrics_us: 0,
-                    send_entry_us: 0,
-                    tick_lock_contention_us: 0,
-                    ticks_from_record: 0,
-                    total_sleep_us: 0,
-                    last_metric: Instant::now(),
-                },
+                metrics: PohRecorderMetrics::default(),
                 record_sender,
                 leader_bank_notifier: Arc::default(),
                 delay_leader_block_for_pending_fork,
