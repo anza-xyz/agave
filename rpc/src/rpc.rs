@@ -1831,12 +1831,10 @@ impl JsonRpcRequestProcessor {
         mut limit: usize,
         config: RpcContextConfig,
     ) -> Result<Vec<RpcConfirmedTransactionStatusWithSignature>> {
+        self.check_if_transaction_history_enabled()?;
+
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
-
-        if !self.config.enable_rpc_transaction_history {
-            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
-        }
 
         let highest_super_majority_root = self
             .block_commitment_cache
