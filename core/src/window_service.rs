@@ -36,6 +36,7 @@ use {
     },
     solana_turbine::cluster_nodes,
     std::{
+        borrow::Cow,
         net::{SocketAddr, UdpSocket},
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -221,7 +222,7 @@ where
             debug_assert_matches!(shred, shred::Payload::Shared(_));
         }
         let shred = Shred::new_from_serialized_shred(shred).ok()?;
-        Some((shred, repair))
+        Some((Cow::Owned(shred), repair))
     };
     let now = Instant::now();
     let shreds: Vec<_> = thread_pool.install(|| {
@@ -601,9 +602,9 @@ mod test {
             };
             assert_eq!(duplicate_shred.slot(), slot);
             // Simulate storing both duplicate shreds in the same batch
-            let shreds = [original_shred.clone(), duplicate_shred.clone()]
+            let shreds = [&original_shred, &duplicate_shred]
                 .into_iter()
-                .map(|shred| (shred, /*is_repaired:*/ false));
+                .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
             blockstore
                 .insert_shreds_handle_duplicate(
                     shreds,
