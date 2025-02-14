@@ -65,7 +65,7 @@ mod tests {
         super::*,
         crate::{
             crds::{Crds, GossipRoute},
-            crds_data::new_rand_timestamp,
+            testing_fixtures::*,
         },
         rand::seq::SliceRandom,
         solana_sdk::signature::Keypair,

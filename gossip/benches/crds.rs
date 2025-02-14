@@ -9,6 +9,7 @@ use {
         crds::{Crds, GossipRoute},
         crds_gossip_pull::{CrdsTimeouts, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS},
         crds_value::CrdsValue,
+        testing_fixtures::FormatValidation,
     },
     solana_pubkey::Pubkey,
     std::{collections::HashMap, time::Duration},

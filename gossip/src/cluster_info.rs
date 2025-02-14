@@ -3034,6 +3034,7 @@ mod tests {
             duplicate_shred::tests::new_rand_shred,
             protocol::tests::new_rand_remote_node,
             socketaddr,
+            testing_fixtures::{new_insecure_keypair, FormatValidation},
         },
         bincode::serialize,
         itertools::izip,
@@ -3729,7 +3730,8 @@ mod tests {
     #[test]
     fn test_append_entrypoint_to_pulls() {
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
-        let node_keypair = Arc::new(Keypair::new());
+        let mut rng = rand::thread_rng();
+        let node_keypair = Arc::new(new_insecure_keypair(&mut rng));
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
             node_keypair,
