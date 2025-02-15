@@ -553,6 +553,41 @@ impl RepairService {
         repair_metrics.timing.add_votes_elapsed += add_votes_elapsed.as_us();
     }
 
+    fn handle_popular_pruned_forks(
+        root_bank: Arc<Bank>,
+        repair_weight: &mut RepairWeight,
+        popular_pruned_forks_requests: &mut HashSet<Slot>,
+        popular_pruned_forks_sender: &PopularPrunedForksSender,
+        repair_metrics: &mut RepairMetrics,
+    ) {
+        let mut handle_popular_pruned_forks = Measure::start("handle_popular_pruned_forks");
+        let mut popular_pruned_forks = repair_weight
+            .get_popular_pruned_forks(root_bank.epoch_stakes_map(), root_bank.epoch_schedule());
+        // Check if we've already sent a request along this pruned fork
+        popular_pruned_forks.retain(|slot| {
+            if popular_pruned_forks_requests
+                .iter()
+                .any(|prev_req_slot| repair_weight.same_tree(*slot, *prev_req_slot))
+            {
+                false
+            } else {
+                popular_pruned_forks_requests.insert(*slot);
+                true
+            }
+        });
+        if !popular_pruned_forks.is_empty() {
+            warn!(
+                "Notifying repair of popular pruned forks {:?}",
+                popular_pruned_forks
+            );
+            popular_pruned_forks_sender
+                .send(popular_pruned_forks)
+                .unwrap_or_else(|err| error!("failed to send popular pruned forks {err}"));
+        }
+        handle_popular_pruned_forks.stop();
+        repair_metrics.timing.handle_popular_pruned_forks = handle_popular_pruned_forks.as_us();
+    }
+
     fn run_repair_iteration(
         blockstore: &Blockstore,
         repair_channels: &RepairChannels,
@@ -619,31 +654,13 @@ impl RepairService {
             ),
         };
 
-        let mut handle_popular_pruned_forks = Measure::start("handle_popular_pruned_forks");
-        let mut popular_pruned_forks = repair_weight
-            .get_popular_pruned_forks(root_bank.epoch_stakes_map(), root_bank.epoch_schedule());
-        // Check if we've already sent a request along this pruned fork
-        popular_pruned_forks.retain(|slot| {
-            if popular_pruned_forks_requests
-                .iter()
-                .any(|prev_req_slot| repair_weight.same_tree(*slot, *prev_req_slot))
-            {
-                false
-            } else {
-                popular_pruned_forks_requests.insert(*slot);
-                true
-            }
-        });
-        if !popular_pruned_forks.is_empty() {
-            warn!(
-                "Notifying repair of popular pruned forks {:?}",
-                popular_pruned_forks
-            );
-            popular_pruned_forks_sender
-                .send(popular_pruned_forks)
-                .unwrap_or_else(|err| error!("failed to send popular pruned forks {err}"));
-        }
-        handle_popular_pruned_forks.stop();
+        Self::handle_popular_pruned_forks(
+            root_bank.clone(),
+            repair_weight,
+            popular_pruned_forks_requests,
+            popular_pruned_forks_sender,
+            repair_metrics,
+        );
 
         let identity_keypair: &Keypair = &repair_info.cluster_info.keypair().clone();
 
@@ -688,7 +705,6 @@ impl RepairService {
         batch_send_repairs_elapsed.stop();
 
         repair_metrics.timing.purge_outstanding_repairs = purge_outstanding_repairs.as_us();
-        repair_metrics.timing.handle_popular_pruned_forks = handle_popular_pruned_forks.as_us();
         repair_metrics.timing.build_repairs_batch_elapsed = build_repairs_batch_elapsed.as_us();
         repair_metrics.timing.batch_send_repairs_elapsed = batch_send_repairs_elapsed.as_us();
     }
