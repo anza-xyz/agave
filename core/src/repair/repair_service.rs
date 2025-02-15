@@ -33,7 +33,7 @@ use {
         shred,
     },
     solana_measure::measure::Measure,
-    solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
+    solana_runtime::{bank::Bank, bank_forks::BankForks, root_bank_cache::RootBankCache},
     solana_sdk::{
         clock::{Slot, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
         epoch_schedule::EpochSchedule,
@@ -214,28 +214,6 @@ pub struct RepairTiming {
 }
 
 impl RepairTiming {
-    fn update(
-        &mut self,
-        set_root_elapsed: u64,
-        dump_slots_elapsed: u64,
-        get_votes_elapsed: u64,
-        add_votes_elapsed: u64,
-        purge_outstanding_repairs: u64,
-        handle_popular_pruned_forks: u64,
-        build_repairs_batch_elapsed: u64,
-        batch_send_repairs_elapsed: u64,
-    ) {
-        self.set_root_elapsed += set_root_elapsed;
-        self.dump_slots_elapsed += dump_slots_elapsed;
-        self.get_votes_elapsed += get_votes_elapsed;
-        self.add_votes_elapsed += add_votes_elapsed;
-        self.purge_outstanding_repairs += purge_outstanding_repairs;
-        self.handle_popular_pruned_forks += handle_popular_pruned_forks;
-        self.build_repairs_batch_elapsed += build_repairs_batch_elapsed;
-        self.batch_send_repairs_elapsed += batch_send_repairs_elapsed;
-        self.send_repairs_elapsed += build_repairs_batch_elapsed + batch_send_repairs_elapsed;
-    }
-
     fn report(&self) {
         datapoint_info!(
             "repair_service-repair_timing",
@@ -499,34 +477,15 @@ impl RepairService {
         }
     }
 
-    fn run_repair_iteration(
+    fn update_weighting_heuristic(
         blockstore: &Blockstore,
-        repair_channels: &RepairChannels,
-        repair_info: &RepairInfo,
-        repair_tracker: &mut RepairTracker,
-        outstanding_requests: &RwLock<OutstandingShredRepairs>,
-        repair_socket: &UdpSocket,
+        root_bank: Arc<Bank>,
+        repair_weight: &mut RepairWeight,
+        popular_pruned_forks_requests: &mut HashSet<Slot>,
+        dumped_slots_receiver: &DumpedSlotsReceiver,
+        verified_vote_receiver: &VerifiedVoteReceiver,
+        repair_metrics: &mut RepairMetrics,
     ) {
-        let RepairChannels {
-            repair_request_quic_sender,
-            verified_vote_receiver,
-            dumped_slots_receiver,
-            popular_pruned_forks_sender,
-            ..
-        } = repair_channels;
-
-        let RepairTracker {
-            root_bank_cache,
-            repair_weight,
-            serve_repair,
-            repair_metrics,
-            peers_cache,
-            popular_pruned_forks_requests,
-            outstanding_repairs,
-        } = repair_tracker;
-
-        let root_bank = root_bank_cache.root_bank();
-        let repair_protocol = serve_repair::get_repair_protocol(root_bank.cluster_type());
         let new_root = root_bank.slot();
 
         // Purge outdated slots from the weighting heuristic
@@ -587,6 +546,51 @@ impl RepairService {
             root_bank.epoch_schedule(),
         );
         add_votes_elapsed.stop();
+
+        repair_metrics.timing.set_root_elapsed += set_root_elapsed.as_us();
+        repair_metrics.timing.dump_slots_elapsed += dump_slots_elapsed.as_us();
+        repair_metrics.timing.get_votes_elapsed += get_votes_elapsed.as_us();
+        repair_metrics.timing.add_votes_elapsed += add_votes_elapsed.as_us();
+    }
+
+    fn run_repair_iteration(
+        blockstore: &Blockstore,
+        repair_channels: &RepairChannels,
+        repair_info: &RepairInfo,
+        repair_tracker: &mut RepairTracker,
+        outstanding_requests: &RwLock<OutstandingShredRepairs>,
+        repair_socket: &UdpSocket,
+    ) {
+        let RepairChannels {
+            repair_request_quic_sender,
+            verified_vote_receiver,
+            dumped_slots_receiver,
+            popular_pruned_forks_sender,
+            ..
+        } = repair_channels;
+
+        let RepairTracker {
+            root_bank_cache,
+            repair_weight,
+            serve_repair,
+            repair_metrics,
+            peers_cache,
+            popular_pruned_forks_requests,
+            outstanding_repairs,
+        } = repair_tracker;
+
+        let root_bank = root_bank_cache.root_bank();
+        let repair_protocol = serve_repair::get_repair_protocol(root_bank.cluster_type());
+
+        Self::update_weighting_heuristic(
+            blockstore,
+            root_bank.clone(),
+            repair_weight,
+            popular_pruned_forks_requests,
+            dumped_slots_receiver,
+            verified_vote_receiver,
+            repair_metrics,
+        );
 
         let mut purge_outstanding_repairs = Measure::start("purge_outstanding_repairs");
         // Purge old entries. They've either completed or need to be retried.
@@ -683,16 +687,10 @@ impl RepairService {
         }
         batch_send_repairs_elapsed.stop();
 
-        repair_metrics.timing.update(
-            set_root_elapsed.as_us(),
-            dump_slots_elapsed.as_us(),
-            get_votes_elapsed.as_us(),
-            add_votes_elapsed.as_us(),
-            purge_outstanding_repairs.as_us(),
-            handle_popular_pruned_forks.as_us(),
-            build_repairs_batch_elapsed.as_us(),
-            batch_send_repairs_elapsed.as_us(),
-        );
+        repair_metrics.timing.purge_outstanding_repairs = purge_outstanding_repairs.as_us();
+        repair_metrics.timing.handle_popular_pruned_forks = handle_popular_pruned_forks.as_us();
+        repair_metrics.timing.build_repairs_batch_elapsed = build_repairs_batch_elapsed.as_us();
+        repair_metrics.timing.batch_send_repairs_elapsed = batch_send_repairs_elapsed.as_us();
     }
 
     fn run(
