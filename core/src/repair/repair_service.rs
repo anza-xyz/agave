@@ -553,6 +553,43 @@ impl RepairService {
         repair_metrics.timing.add_votes_elapsed += add_votes_elapsed.as_us();
     }
 
+    fn identify_repairs(
+        blockstore: &Blockstore,
+        root_bank: Arc<Bank>,
+        repair_info: &RepairInfo,
+        repair_weight: &mut RepairWeight,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
+        repair_metrics: &mut RepairMetrics,
+    ) -> Vec<ShredRepairType> {
+        let mut purge_outstanding_repairs = Measure::start("purge_outstanding_repairs");
+        // Purge old entries. They've either completed or need to be retried.
+        outstanding_repairs.retain(|_repair_request, time| {
+            timestamp().saturating_sub(*time) < REPAIR_REQUEST_TIMEOUT_MS
+        });
+        purge_outstanding_repairs.stop();
+        repair_metrics.timing.purge_outstanding_repairs = purge_outstanding_repairs.as_us();
+
+        match repair_info.wen_restart_repair_slots.clone() {
+            Some(slots_to_repair) => Self::generate_repairs_for_wen_restart(
+                blockstore,
+                MAX_REPAIR_LENGTH,
+                &slots_to_repair.read().unwrap(),
+                outstanding_repairs,
+            ),
+            None => repair_weight.get_best_weighted_repairs(
+                blockstore,
+                root_bank.epoch_stakes_map(),
+                root_bank.epoch_schedule(),
+                MAX_ORPHANS,
+                MAX_REPAIR_LENGTH,
+                MAX_UNKNOWN_LAST_INDEX_REPAIRS,
+                MAX_CLOSEST_COMPLETION_REPAIRS,
+                repair_metrics,
+                outstanding_repairs,
+            ),
+        }
+    }
+
     fn handle_popular_pruned_forks(
         root_bank: Arc<Bank>,
         repair_weight: &mut RepairWeight,
@@ -658,7 +695,6 @@ impl RepairService {
             verified_vote_receiver,
             dumped_slots_receiver,
             popular_pruned_forks_sender,
-            ..
         } = repair_channels;
         let RepairTracker {
             root_bank_cache,
@@ -681,32 +717,14 @@ impl RepairService {
             repair_metrics,
         );
 
-        let mut purge_outstanding_repairs = Measure::start("purge_outstanding_repairs");
-        // Purge old entries. They've either completed or need to be retried.
-        outstanding_repairs.retain(|_repair_request, time| {
-            timestamp().saturating_sub(*time) < REPAIR_REQUEST_TIMEOUT_MS
-        });
-        purge_outstanding_repairs.stop();
-
-        let repairs = match repair_info.wen_restart_repair_slots.clone() {
-            Some(slots_to_repair) => Self::generate_repairs_for_wen_restart(
-                blockstore,
-                MAX_REPAIR_LENGTH,
-                &slots_to_repair.read().unwrap(),
-                outstanding_repairs,
-            ),
-            None => repair_weight.get_best_weighted_repairs(
-                blockstore,
-                root_bank.epoch_stakes_map(),
-                root_bank.epoch_schedule(),
-                MAX_ORPHANS,
-                MAX_REPAIR_LENGTH,
-                MAX_UNKNOWN_LAST_INDEX_REPAIRS,
-                MAX_CLOSEST_COMPLETION_REPAIRS,
-                repair_metrics,
-                outstanding_repairs,
-            ),
-        };
+        let repairs = Self::identify_repairs(
+            blockstore,
+            root_bank.clone(),
+            repair_info,
+            repair_weight,
+            outstanding_repairs,
+            repair_metrics,
+        );
 
         Self::handle_popular_pruned_forks(
             root_bank.clone(),
@@ -727,8 +745,6 @@ impl RepairService {
             serve_repair::get_repair_protocol(root_bank.cluster_type()),
             repair_metrics,
         );
-
-        repair_metrics.timing.purge_outstanding_repairs = purge_outstanding_repairs.as_us();
     }
 
     fn run(
