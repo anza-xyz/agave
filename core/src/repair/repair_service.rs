@@ -588,6 +588,63 @@ impl RepairService {
         repair_metrics.timing.handle_popular_pruned_forks = handle_popular_pruned_forks.as_us();
     }
 
+    fn build_and_send_repair_batch(
+        serve_repair: &mut ServeRepair,
+        peers_cache: &mut LruCache<u64, RepairPeers>,
+        repair_request_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
+        repairs: Vec<ShredRepairType>,
+        repair_info: &RepairInfo,
+        outstanding_requests: &RwLock<OutstandingShredRepairs>,
+        repair_socket: &UdpSocket,
+        repair_protocol: Protocol,
+        repair_metrics: &mut RepairMetrics,
+    ) {
+        let identity_keypair: &Keypair = &repair_info.cluster_info.keypair().clone();
+
+        let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
+        let batch: Vec<(Vec<u8>, SocketAddr)> = {
+            let mut outstanding_requests = outstanding_requests.write().unwrap();
+            repairs
+                .into_iter()
+                .filter_map(|repair_request| {
+                    let (to, req) = serve_repair
+                        .repair_request(
+                            &repair_info.cluster_slots,
+                            repair_request,
+                            peers_cache,
+                            &mut repair_metrics.stats,
+                            &repair_info.repair_validators,
+                            &mut outstanding_requests,
+                            identity_keypair,
+                            repair_request_quic_sender,
+                            repair_protocol,
+                        )
+                        .ok()??;
+                    Some((req, to))
+                })
+                .collect()
+        };
+        build_repairs_batch_elapsed.stop();
+
+        let mut batch_send_repairs_elapsed = Measure::start("batch_send_repairs_elapsed");
+        if !batch.is_empty() {
+            let num_pkts = batch.len();
+            let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
+            match batch_send(repair_socket, batch) {
+                Ok(()) => (),
+                Err(SendPktsError::IoError(err, num_failed)) => {
+                    error!(
+                        "{} batch_send failed to send {num_failed}/{num_pkts} packets first error {err:?}", repair_info.cluster_info.id()
+                    );
+                }
+            }
+        }
+        batch_send_repairs_elapsed.stop();
+
+        repair_metrics.timing.build_repairs_batch_elapsed = build_repairs_batch_elapsed.as_us();
+        repair_metrics.timing.batch_send_repairs_elapsed = batch_send_repairs_elapsed.as_us();
+    }
+
     fn run_repair_iteration(
         blockstore: &Blockstore,
         repair_channels: &RepairChannels,
@@ -603,7 +660,6 @@ impl RepairService {
             popular_pruned_forks_sender,
             ..
         } = repair_channels;
-
         let RepairTracker {
             root_bank_cache,
             repair_weight,
@@ -613,9 +669,7 @@ impl RepairService {
             popular_pruned_forks_requests,
             outstanding_repairs,
         } = repair_tracker;
-
         let root_bank = root_bank_cache.root_bank();
-        let repair_protocol = serve_repair::get_repair_protocol(root_bank.cluster_type());
 
         Self::update_weighting_heuristic(
             blockstore,
@@ -662,51 +716,19 @@ impl RepairService {
             repair_metrics,
         );
 
-        let identity_keypair: &Keypair = &repair_info.cluster_info.keypair().clone();
-
-        let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
-        let batch: Vec<(Vec<u8>, SocketAddr)> = {
-            let mut outstanding_requests = outstanding_requests.write().unwrap();
-            repairs
-                .into_iter()
-                .filter_map(|repair_request| {
-                    let (to, req) = serve_repair
-                        .repair_request(
-                            &repair_info.cluster_slots,
-                            repair_request,
-                            peers_cache,
-                            &mut repair_metrics.stats,
-                            &repair_info.repair_validators,
-                            &mut outstanding_requests,
-                            identity_keypair,
-                            repair_request_quic_sender,
-                            repair_protocol,
-                        )
-                        .ok()??;
-                    Some((req, to))
-                })
-                .collect()
-        };
-        build_repairs_batch_elapsed.stop();
-
-        let mut batch_send_repairs_elapsed = Measure::start("batch_send_repairs_elapsed");
-        if !batch.is_empty() {
-            let num_pkts = batch.len();
-            let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
-            match batch_send(repair_socket, batch) {
-                Ok(()) => (),
-                Err(SendPktsError::IoError(err, num_failed)) => {
-                    error!(
-                        "{} batch_send failed to send {num_failed}/{num_pkts} packets first error {err:?}", repair_info.cluster_info.id()
-                    );
-                }
-            }
-        }
-        batch_send_repairs_elapsed.stop();
+        Self::build_and_send_repair_batch(
+            serve_repair,
+            peers_cache,
+            repair_request_quic_sender,
+            repairs,
+            repair_info,
+            outstanding_requests,
+            repair_socket,
+            serve_repair::get_repair_protocol(root_bank.cluster_type()),
+            repair_metrics,
+        );
 
         repair_metrics.timing.purge_outstanding_repairs = purge_outstanding_repairs.as_us();
-        repair_metrics.timing.build_repairs_batch_elapsed = build_repairs_batch_elapsed.as_us();
-        repair_metrics.timing.batch_send_repairs_elapsed = batch_send_repairs_elapsed.as_us();
     }
 
     fn run(
