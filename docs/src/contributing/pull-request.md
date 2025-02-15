@@ -99,6 +99,9 @@ version = { workspace = true }
 
 ## Squash the unnecessary commits{#pr-squash-commits}
 
+Squashing can be useful when committing early and often as it can make changes easier to review and remove unnecessary commits.
+However, commits that have already been pushed to an active pull request should never be squashed, as this makes reviewing the incremental change more difficult.
+
 1. You may want to set your `EDITOR` environment variable to the editor of choice prior to starting this.
 2. `git rebase -i <commit-right-before-your-first-commit>`
 3. You'll then see all of your commits from oldest to newest like this:
