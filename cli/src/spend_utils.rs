@@ -135,16 +135,16 @@ where
                 false,
                 None,
             )?;
-            let mut sub_rent_exempt = false;
+            let mut subtract_rent_exempt_minimum = false;
             if let Some(active_stake) = state.active_stake {
                 from_balance = from_balance.saturating_sub(active_stake);
-                sub_rent_exempt = true;
+                subtract_rent_exempt_minimum = true;
             }
             if let Some(activating_stake) = state.activating_stake {
                 from_balance = from_balance.saturating_sub(activating_stake);
-                sub_rent_exempt = true;
+                subtract_rent_exempt_minimum = true;
             }
-            if sub_rent_exempt {
+            if subtract_rent_exempt_minimum {
                 from_balance = from_balance.saturating_sub(from_rent_exempt_minimum);
             }
         }
