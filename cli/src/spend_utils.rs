@@ -190,7 +190,7 @@ fn resolve_spend_message<F>(
     rpc_client: &RpcClient,
     amount: SpendAmount,
     blockhash: Option<&Hash>,
-    from_balance: u64,
+    from_account_transferable_balance: u64,
     from_pubkey: &Pubkey,
     fee_pubkey: &Pubkey,
     from_rent_exempt_minimum: u64,
@@ -225,9 +225,9 @@ where
                     SpendAmount::Some(lamports) => lamports,
                     SpendAmount::AllForAccountCreation { .. }
                     | SpendAmount::All
-                    | SpendAmount::Available => from_balance,
+                    | SpendAmount::Available => from_account_transferable_balance,
                     SpendAmount::RentExempt => {
-                        from_balance.saturating_sub(from_rent_exempt_minimum)
+                        from_account_transferable_balance.saturating_sub(from_rent_exempt_minimum)
                     }
                 }
             };
@@ -264,9 +264,9 @@ where
         ),
         SpendAmount::All | SpendAmount::AllForAccountCreation { .. } | SpendAmount::Available => {
             let lamports = if from_pubkey == fee_pubkey {
-                from_balance.saturating_sub(fee)
+                from_account_transferable_balance.saturating_sub(fee)
             } else {
-                from_balance
+                from_account_transferable_balance
             };
             (
                 build_message(lamports),
@@ -278,9 +278,9 @@ where
         }
         SpendAmount::RentExempt => {
             let mut lamports = if from_pubkey == fee_pubkey {
-                from_balance.saturating_sub(fee)
+                from_account_transferable_balance.saturating_sub(fee)
             } else {
-                from_balance
+                from_account_transferable_balance
             };
             lamports = lamports.saturating_sub(from_rent_exempt_minimum);
             (
