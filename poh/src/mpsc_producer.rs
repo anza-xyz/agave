@@ -11,6 +11,14 @@ impl<T> Producer<T> {
     pub fn bank_slot(&self) -> u64 { self.ring_buffer.working_bank() }
     pub fn set_bank(&self, bank_id: u64) { self.ring_buffer.set_bank(bank_id); }
     pub fn empty(&self) -> bool { self.ring_buffer.empty() }
+
+    pub fn shut_off_producers(&self) {
+        self.ring_buffer.shut_off_producers();
+    }
+
+    pub fn enable_producers(&self) {
+        self.ring_buffer.enable_producers();
+    }
 }
 
 // Explicitly implement Clone to account for types that don't implement Clone.

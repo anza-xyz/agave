@@ -269,6 +269,8 @@ pub struct PohRecorder {
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
     working_bank: Option<WorkingBank>,
     sender: Sender<WorkingBankEntry>,
+    //TODO (if necessary) new_bank_sender: Sender<WorkingBankEntry>,
+    //new_bank_receiver: Receiver<WorkingBankEntry>,
     poh_timing_point_sender: Option<PohTimingSender>,
     leader_first_tick_height_including_grace_ticks: Option<u64>,
     leader_last_tick_height: u64, // zero if none
@@ -643,7 +645,9 @@ impl PohRecorder {
 
     // synchronize PoH with a bank
     pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
+        self.record_sender.shut_off_producers();
         self.clear_bank();
+        let slot = reset_bank.slot();
         self.reset_poh(reset_bank, true);
 
         if let Some(ref sender) = self.poh_timing_point_sender {
@@ -664,10 +668,18 @@ impl PohRecorder {
         self.leader_first_tick_height_including_grace_ticks =
             leader_first_tick_height_including_grace_ticks;
         self.leader_last_tick_height = leader_last_tick_height;
+
+        while !self.record_sender.empty() {
+            std::hint::spin_loop();
+            continue;
+        }
+        self.record_sender.set_bank(slot);
+        self.record_sender.enable_producers();
     }
 
     pub fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
         assert!(self.working_bank.is_none());
+        self.record_sender.shut_off_producers();
         self.leader_bank_notifier.set_in_progress(&bank);
         let working_bank = WorkingBank {
             min_tick_height: bank.tick_height(),
@@ -695,6 +707,7 @@ impl PohRecorder {
             assert!(self.record_sender.empty(), "Bank capacity: {}", self.record_sender.ring_buffer.capacity());
             if !self.record_sender.empty() {
                 println!("Bank capacity: {}", self.record_sender.ring_buffer.capacity());
+                std::hint::spin_loop();
                 continue;
             }
             self.record_sender.set_bank(working_bank.bank.slot());
