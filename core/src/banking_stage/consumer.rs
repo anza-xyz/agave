@@ -1277,7 +1277,7 @@ mod tests {
                             poh_recorder.write().unwrap().tick();
                             // TODO: Where should we send the starting transaction index now?
                             if record_response.is_err() {
-                                panic!("Error returning mixin hash");
+                                panic!("Test: Error returning mixin hash");
                             }
                         }
                         if is_exited.load(Ordering::Relaxed) {

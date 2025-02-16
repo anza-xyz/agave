@@ -192,14 +192,22 @@ impl PohService {
         if let Some(record) = record {
             if record.slot == record_receiver.working_bank() {
                 // TODO: Where should we send the starting transaction index now?
-                if poh_recorder
+                match poh_recorder
                     .write()
                     .unwrap()
-                    .record(record.slot, record.mixin, record.transactions)
-                    .is_err()
-                {
-                    panic!("Error returning mixin hash");
+                    .record(record.slot, record.mixin, record.transactions) {
+                    Ok(Some(u)) => {
+                        dbg!("Recorded {}", u);
+                    },
+                    Ok(None) => {
+                        panic!("Successful write must return a valid tx index");
+                    }
+                    Err(e) => {
+                        panic!("Error recording {} mixin hash {:#?}", record.slot, e);
+                    }
                 }
+            } else {
+                panic!("Error record slot belongs to a different bank.");
             }
         }
     }
