@@ -125,7 +125,7 @@ where
             } else {
                 0
             };
-        if amount == SpendAmount::Available && account.owner == solana_sdk::stake::program::id() {
+        if amount == SpendAmount::Available && account.owner == solana_sdk_ids::stake::id() {
             let state = stake::get_account_stake_state(
                 rpc_client,
                 from_pubkey,

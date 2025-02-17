@@ -2639,7 +2639,7 @@ pub fn process_show_stake_account(
 pub fn get_account_stake_state(
     rpc_client: &RpcClient,
     stake_account_address: &Pubkey,
-    stake_account: solana_sdk::account::Account,
+    stake_account: solana_account::Account,
     use_lamports_unit: bool,
     with_rewards: Option<usize>,
     use_csv: bool,
