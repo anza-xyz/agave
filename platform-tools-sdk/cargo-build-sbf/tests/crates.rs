@@ -1,4 +1,5 @@
 use {
+    assert_cmd::assert::Assert,
     predicates::prelude::*,
     std::{
         env, fs,
@@ -141,11 +142,8 @@ fn test_generate_child_script_on_failure() {
     clean_target("fail");
 }
 
-#[test]
-#[ignore]
-#[serial]
-fn test_sbfv2() {
-    run_cargo_build("noop", &["--arch", "sbfv2"], false);
+fn build_noop_and_readelf(arch: &str) -> Assert {
+    run_cargo_build("noop", &["--arch", arch], false);
     let cwd = env::current_dir().expect("Unable to get current working directory");
     let bin = cwd
         .join("tests")
@@ -168,11 +166,53 @@ fn test_sbfv2() {
         .join("llvm")
         .join("bin")
         .join("llvm-readelf");
-    assert_cmd::Command::new(readelf)
-        .args(["-h", bin])
-        .assert()
+
+    assert_cmd::Command::new(readelf).args(["-h", bin]).assert()
+}
+
+#[test]
+#[serial]
+fn test_sbpfv0() {
+    let assert_v0 = build_noop_and_readelf("v0");
+    assert_v0
         .stdout(predicate::str::contains(
-            "Flags:                             0x20",
+            "Flags:                             0x0",
+        ))
+        .success();
+    clean_target("noop");
+}
+
+#[test]
+#[serial]
+fn test_sbpfv1() {
+    let assert_v1 = build_noop_and_readelf("v1");
+    assert_v1
+        .stdout(predicate::str::contains(
+            "Flags:                             0x1",
+        ))
+        .success();
+    clean_target("noop");
+}
+
+#[test]
+#[serial]
+fn test_sbpfv2() {
+    let assert_v1 = build_noop_and_readelf("v2");
+    assert_v1
+        .stdout(predicate::str::contains(
+            "Flags:                             0x2",
+        ))
+        .success();
+    clean_target("noop");
+}
+
+#[test]
+#[serial]
+fn test_sbpfv3() {
+    let assert_v1 = build_noop_and_readelf("v3");
+    assert_v1
+        .stdout(predicate::str::contains(
+            "Flags:                             0x3",
         ))
         .success();
     clean_target("noop");

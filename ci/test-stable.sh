@@ -56,7 +56,7 @@ test-stable-sbf)
   _ platform-tools-sdk/sbf/scripts/install.sh
 
   # SBF program tests
-  export SBF_OUT_DIR=target/sbf-solana-solana/release
+  export SBF_OUT_DIR=target/sbpf-solana-solana/release
   _ make -C programs/sbf test
 
   # SBF program instruction count assertion
@@ -69,7 +69,7 @@ test-stable-sbf)
 
   sbf_dump_archive="sbf-dumps.tar.bz2"
   rm -f "$sbf_dump_archive"
-  tar cjvf "$sbf_dump_archive" $sbf_target_path/{deploy/*.txt,sbf-solana-solana/release/*.so}
+  tar cjvf "$sbf_dump_archive" $sbf_target_path/{deploy/*.txt,sbpf-solana-solana/release/*.so}
   exit 0
   ;;
 test-docs)
