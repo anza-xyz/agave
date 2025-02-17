@@ -703,17 +703,8 @@ impl PohRecorder {
                 self.reset_poh(working_bank.bank.clone(), false);
             }
         }
-        loop {
-            assert!(self.record_sender.empty(), "Bank capacity: {}", self.record_sender.ring_buffer.capacity());
-            if !self.record_sender.empty() {
-                println!("Bank capacity: {}", self.record_sender.ring_buffer.capacity());
-                std::hint::spin_loop();
-                continue;
-            }
-            self.record_sender.set_bank(working_bank.bank.slot());
-            break;
-        }
 
+        let slot = working_bank.bank.slot();
         self.working_bank = Some(working_bank);
 
         // send poh slot start timing point
@@ -733,6 +724,12 @@ impl PohRecorder {
         // TODO: adjust the working_bank.start time based on number of ticks
         // that have already elapsed based on current tick height.
         let _ = self.flush_cache(false);
+        while !self.record_sender.empty() {
+            std::hint::spin_loop();
+            continue;
+        }
+        self.record_sender.set_bank(slot);
+        self.record_sender.enable_producers();
     }
 
     #[cfg(feature = "dev-context-only-utils")]

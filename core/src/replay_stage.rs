@@ -2225,7 +2225,7 @@ impl ReplayStage {
             poh_recorder
                 .write()
                 .unwrap()
-                .set_bank(tpu_bank, track_transaction_indexes);
+                .set_bank(tpu_bank, track_transaction_indexes); // poh setbank.
             true
         } else {
             error!("{} No next leader found", my_pubkey);
