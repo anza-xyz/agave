@@ -10,7 +10,7 @@ edition = "2021"
 publish = false
 
 [package.metadata.solana]
-tools-version = "v1.43"
+tools-version = "v1.44"
 program-id = "MyProgram1111111111111111111111111111111111"
 
 [dependencies]
