@@ -208,6 +208,9 @@ impl Drop for CacheHashData {
     }
 }
 
+/// The suffix to append to a cache hash data filename to indicate that the file is being written.
+const IN_PROGRESS_SUFFIX: &str = ".in-progress";
+
 impl CacheHashData {
     pub(crate) fn new(cache_dir: PathBuf, deletion_policy: DeletionPolicy) -> CacheHashData {
         std::fs::create_dir_all(&cache_dir).unwrap_or_else(|err| {
@@ -269,6 +272,12 @@ impl CacheHashData {
             if let Ok(dir) = dir {
                 let mut pre_existing = self.pre_existing_cache_files.lock().unwrap();
                 for entry in dir.flatten() {
+                    if entry.path().ends_with(IN_PROGRESS_SUFFIX) {
+                        // ignore in-progress files and delete them
+                        let _ = fs::remove_file(entry.path());
+                        continue;
+                    }
+
                     if let Some(name) = entry.path().file_name() {
                         pre_existing.insert(PathBuf::from(name));
                     }
@@ -320,7 +329,30 @@ impl CacheHashData {
         file_name: impl AsRef<Path>,
         data: &SavedTypeSlice,
     ) -> Result<(), std::io::Error> {
-        self.save_internal(file_name, data)
+        // Append ".in-progress" to the filename to indicate that the file is
+        // being written
+        let work_in_progress_file_name = Self::get_work_in_progress_file_name(file_name.as_ref());
+        self.save_internal(work_in_progress_file_name, data)?;
+        // Rename the file to remove the ".in-progress" suffix after the file
+        // has been successfully written. This is done to ensure that the file is
+        // not read before it has been completely written. For example, if the
+        // validator was stopped or crashed in the middle of writing the file, the file
+        // would be incomplete and would not be read by the validator on next restart.
+        self.rename_in_progress_file(file_name)
+    }
+
+    fn get_work_in_progress_file_name(file_name: impl AsRef<Path>) -> PathBuf {
+        let mut s = PathBuf::from(file_name.as_ref()).into_os_string();
+        s.push(IN_PROGRESS_SUFFIX);
+        s.into()
+    }
+
+    fn rename_in_progress_file(&self, file_name: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        let work_in_progress_file_name = Self::get_work_in_progress_file_name(&file_name);
+        let work_in_progress_file_full_path = self.cache_dir.join(&work_in_progress_file_name);
+        let file_full_path = self.cache_dir.join(&file_name);
+        fs::rename(&work_in_progress_file_full_path, file_full_path)?;
+        Ok(())
     }
 
     fn save_internal(
@@ -625,5 +657,12 @@ mod tests {
         for bad_filename in bad_filenames {
             assert!(parse_filename(bad_filename).is_none());
         }
+    }
+
+    #[test]
+    fn tet_get_work_in_progress_file_name() {
+        let filename = "test";
+        let work_in_progress_filename = CacheHashData::get_work_in_progress_file_name(filename);
+        assert_eq!(work_in_progress_filename.as_os_str(), "test.in-progress");
     }
 }
