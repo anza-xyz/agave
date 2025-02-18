@@ -155,7 +155,7 @@ mod test {
         );
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let (poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             bank.last_blockhash(),
             bank.clone(),
@@ -217,7 +217,7 @@ mod test {
         );
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let (poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             bank.last_blockhash(),
             bank.clone(),

@@ -270,7 +270,7 @@ pub struct PohRecorder {
     working_bank: Option<WorkingBank>,
     sender: Sender<WorkingBankEntry>,
     //TODO (if necessary) new_bank_sender: Sender<WorkingBankEntry>,
-    //new_bank_receiver: Receiver<WorkingBankEntry>,
+    new_bank_receiver: Receiver<Arc<Bank>>,
     poh_timing_point_sender: Option<PohTimingSender>,
     leader_first_tick_height_including_grace_ticks: Option<u64>,
     leader_last_tick_height: u64, // zero if none
@@ -1030,7 +1030,7 @@ impl PohRecorder {
         poh_config: &PohConfig,
         poh_timing_point_sender: Option<PohTimingSender>,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, Consumer<Record>) {
+    ) -> (Self, Receiver<WorkingBankEntry>, Consumer<Record>, Sender<Arc<Bank>>) {
         let tick_number = 0;
         let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
             last_entry_hash,
@@ -1045,6 +1045,8 @@ impl PohRecorder {
         let (sender, receiver) = unbounded();
         let (record_sender, record_receiver) =
             mpsc::with_capacity::<Record>(MPSC_RECORD_QUEUE_CAPACITY, start_bank.bank_id());
+        let (new_bank_sender, new_bank_receiver) = crossbeam_channel::bounded(1);
+
         let (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
         (
@@ -1054,6 +1056,7 @@ impl PohRecorder {
                 tick_cache: vec![],
                 working_bank: None,
                 sender,
+                new_bank_receiver,
                 poh_timing_point_sender,
                 clear_bank_signal,
                 start_bank,
@@ -1084,6 +1087,7 @@ impl PohRecorder {
             },
             receiver,
             record_receiver,
+            new_bank_sender,
         )
     }
 
@@ -1101,7 +1105,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, Consumer<Record>) {
+    ) -> (Self, Receiver<WorkingBankEntry>, Consumer<Record>, Sender<Arc<Bank>>) {
         let delay_leader_block_for_pending_fork = false;
         Self::new_with_clear_signal(
             tick_height,
@@ -1157,6 +1161,7 @@ pub fn create_test_recorder(
     Arc<RwLock<PohRecorder>>,
     PohService,
     Receiver<WorkingBankEntry>,
+    Sender<Arc<Bank>>,
 ) {
     let leader_schedule_cache = match leader_schedule_cache {
         Some(provided_cache) => provided_cache,
@@ -1164,7 +1169,7 @@ pub fn create_test_recorder(
     };
     let exit = Arc::new(AtomicBool::new(false));
     let poh_config = poh_config.unwrap_or_default();
-    let (mut poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+    let (mut poh_recorder, entry_receiver, record_receiver, new_bank_sender) = PohRecorder::new(
         bank.tick_height(),
         bank.last_blockhash(),
         bank.clone(),
@@ -1189,7 +1194,7 @@ pub fn create_test_recorder(
         record_receiver,
     );
 
-    (exit, poh_recorder, poh_service, entry_receiver)
+    (exit, poh_recorder, poh_service, entry_receiver, new_bank_sender)
 }
 
 #[cfg(test)]
@@ -1216,7 +1221,7 @@ mod tests {
 
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank,
@@ -1242,7 +1247,7 @@ mod tests {
 
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank,
@@ -1267,7 +1272,7 @@ mod tests {
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             Hash::default(),
             bank0.clone(),
@@ -1292,7 +1297,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank.last_blockhash();
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank.clone(),
@@ -1318,7 +1323,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank0.last_blockhash();
-        let (mut poh_recorder, entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank0.clone(),
@@ -1377,7 +1382,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank.last_blockhash();
-        let (mut poh_recorder, entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank.clone(),
@@ -1422,7 +1427,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank0.last_blockhash();
-        let (mut poh_recorder, entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank0.clone(),
@@ -1461,7 +1466,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank.last_blockhash();
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank.clone(),
@@ -1499,7 +1504,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank0.last_blockhash();
-        let (mut poh_recorder, entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank0.clone(),
@@ -1551,7 +1556,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank.last_blockhash();
-        let (mut poh_recorder, entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank.clone(),
@@ -1587,7 +1592,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank.last_blockhash();
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank.clone(),
@@ -1655,7 +1660,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank0.last_blockhash();
-        let (mut poh_recorder, entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank0.clone(),
@@ -1706,7 +1711,7 @@ mod tests {
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             Hash::default(),
             bank.clone(),
@@ -1731,7 +1736,7 @@ mod tests {
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             Hash::default(),
             bank.clone(),
@@ -1758,7 +1763,7 @@ mod tests {
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             Hash::default(),
             bank.clone(),
@@ -1788,7 +1793,7 @@ mod tests {
             .expect("Expected to be able to open database ledger");
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             Hash::default(),
             bank.clone(),
@@ -1814,7 +1819,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let (sender, receiver) = bounded(1);
-        let (mut poh_recorder, _entry_receiver, _record_receiver) =
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) =
             PohRecorder::new_with_clear_signal(
                 0,
                 Hash::default(),
@@ -1848,7 +1853,7 @@ mod tests {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
         let prev_hash = bank.last_blockhash();
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank.clone(),
@@ -1917,7 +1922,7 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank.clone(),
@@ -2017,7 +2022,7 @@ mod tests {
         } = create_genesis_config(2);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank0.last_blockhash();
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank0.clone(),
@@ -2241,7 +2246,7 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let prev_hash = bank.last_blockhash();
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             prev_hash,
             bank.clone(),
@@ -2290,7 +2295,7 @@ mod tests {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let genesis_hash = bank.last_blockhash();
 
-        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+        let (mut poh_recorder, _entry_receiver, _record_receiver, _new_bank_sender) = PohRecorder::new(
             0,
             bank.last_blockhash(),
             bank.clone(),

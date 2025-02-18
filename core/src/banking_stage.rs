@@ -892,7 +892,7 @@ mod tests {
                 Blockstore::open(ledger_path.path())
                     .expect("Expected to be able to open database ledger"),
             );
-            let (exit, poh_recorder, poh_service, _entry_receiever) =
+            let (exit, poh_recorder, poh_service, _entry_receiever, _new_bank_sender) =
                 create_test_recorder(bank, blockstore, None, None);
             let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
             let cluster_info = Arc::new(cluster_info);
@@ -948,7 +948,7 @@ mod tests {
                 target_tick_count: Some(bank.max_tick_height() + num_extra_ticks),
                 ..PohConfig::default()
             };
-            let (exit, poh_recorder, poh_service, entry_receiver) =
+            let (exit, poh_recorder, poh_service, entry_receiver, _new_bank_sender) =
                 create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
             let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
             let cluster_info = Arc::new(cluster_info);
@@ -1028,7 +1028,7 @@ mod tests {
                 target_tick_count: Some(bank.max_tick_height() - 1),
                 ..PohConfig::default()
             };
-            let (exit, poh_recorder, poh_service, entry_receiver) =
+            let (exit, poh_recorder, poh_service, entry_receiver, _new_bank_sender) =
                 create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
             let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
             let cluster_info = Arc::new(cluster_info);
@@ -1201,7 +1201,7 @@ mod tests {
                     target_tick_count: Some(bank.max_tick_height() - 1),
                     ..PohConfig::default()
                 };
-                let (exit, poh_recorder, poh_service, entry_receiver) =
+                let (exit, poh_recorder, poh_service, entry_receiver, _new_bank_sender) =
                     create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
                 let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
                 let cluster_info = Arc::new(cluster_info);
@@ -1268,7 +1268,7 @@ mod tests {
         {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
-            let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+            let (poh_recorder, entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
                 // TODO use record_receiver
                 bank.tick_height(),
                 bank.last_blockhash(),
@@ -1386,7 +1386,7 @@ mod tests {
                 target_tick_count: Some(bank.max_tick_height() - 1),
                 ..PohConfig::default()
             };
-            let (exit, poh_recorder, poh_service, _entry_receiver) =
+            let (exit, poh_recorder, poh_service, _entry_receiver, _new_bank_sender) =
                 create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
             let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
             let cluster_info = Arc::new(cluster_info);

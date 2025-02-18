@@ -427,7 +427,7 @@ fn main() {
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-    let (exit, poh_recorder, poh_service, signal_receiver) = create_test_recorder(
+    let (exit, poh_recorder, poh_service, signal_receiver, _new_bank_sender) = create_test_recorder(
         bank.clone(),
         blockstore.clone(),
         None,

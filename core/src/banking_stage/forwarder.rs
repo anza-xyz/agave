@@ -370,7 +370,7 @@ mod tests {
             ..PohConfig::default()
         };
 
-        let (exit, poh_recorder, poh_service, _entry_receiver) =
+        let (exit, poh_recorder, poh_service, _entry_receiver, _new_bank_sender) =
             create_test_recorder(bank, blockstore, Some(poh_config), None);
 
         let (local_node, cluster_info) = new_test_cluster_info(Some(validator_keypair));

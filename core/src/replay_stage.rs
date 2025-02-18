@@ -290,6 +290,7 @@ pub struct ReplaySenders {
     pub drop_bank_sender: Sender<Vec<BankWithScheduler>>,
     pub block_metadata_notifier: Option<BlockMetadataNotifierArc>,
     pub dumped_slots_sender: Sender<Vec<(u64, Hash)>>,
+    pub new_bank_sender: Sender<Arc<Bank>>,
 }
 
 pub struct ReplayReceivers {
@@ -582,6 +583,7 @@ impl ReplayStage {
             drop_bank_sender,
             block_metadata_notifier,
             dumped_slots_sender,
+            new_bank_sender,
         } = senders;
 
         let ReplayReceivers {
@@ -693,6 +695,7 @@ impl ReplayStage {
                 working_bank,
                 &poh_recorder,
                 &leader_schedule_cache,
+                &new_bank_sender,
             );
 
             loop {
@@ -1095,6 +1098,7 @@ impl ReplayStage {
                             reset_bank.clone(),
                             &poh_recorder,
                             &leader_schedule_cache,
+                            &new_bank_sender,
                         );
                         last_reset = reset_bank.last_blockhash();
                         last_reset_bank_descendants = vec![];
@@ -2811,6 +2815,7 @@ impl ReplayStage {
         bank: Arc<Bank>,
         poh_recorder: &RwLock<PohRecorder>,
         leader_schedule_cache: &LeaderScheduleCache,
+        new_bank_sender: &Sender<Arc<Bank>>,
     ) {
         let slot = bank.slot();
         let tick_height = bank.tick_height();
@@ -2823,6 +2828,7 @@ impl ReplayStage {
             GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
         );
 
+        new_bank_sender.send(bank.clone());
         poh_recorder.write().unwrap().reset(bank, next_leader_slot);
 
         let next_leader_msg = if let Some(next_leader_slot) = next_leader_slot {
@@ -4327,6 +4333,7 @@ pub(crate) mod tests {
         cluster_info: ClusterInfo,
         pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
         poh_recorder: RwLock<PohRecorder>,
+        new_bank_sender: Sender<Arc<Bank>>,
         tower: Tower,
         rpc_subscriptions: Arc<RpcSubscriptions>,
         pub vote_simulator: VoteSimulator,
@@ -4377,7 +4384,7 @@ pub(crate) mod tests {
 
         // PohRecorder
         let working_bank = bank_forks.read().unwrap().working_bank();
-        let poh_recorder = RwLock::new(
+        let (poh_recorder, _, _, new_bank_sender) =
             PohRecorder::new(
                 working_bank.tick_height(),
                 working_bank.last_blockhash(),
@@ -4388,9 +4395,8 @@ pub(crate) mod tests {
                 &leader_schedule_cache,
                 &PohConfig::default(),
                 Arc::new(AtomicBool::new(false)),
-            )
-            .0,
-        );
+            );
+        let poh_recorder = RwLock::new(poh_recorder);
 
         // Tower
         let my_vote_pubkey = my_keypairs.vote_keypair.pubkey();
@@ -4422,6 +4428,7 @@ pub(crate) mod tests {
             cluster_info,
             leader_schedule_cache,
             poh_recorder,
+            new_bank_sender,
             tower,
             rpc_subscriptions,
             vote_simulator,
@@ -9051,6 +9058,7 @@ pub(crate) mod tests {
             my_pubkey,
             leader_schedule_cache,
             poh_recorder,
+            new_bank_sender,
             vote_simulator,
             rpc_subscriptions,
             ..
@@ -9086,6 +9094,7 @@ pub(crate) mod tests {
             working_bank.clone(),
             &poh_recorder,
             &leader_schedule_cache,
+            &new_bank_sender,
         );
 
         // Register just over one slot worth of ticks directly with PoH recorder

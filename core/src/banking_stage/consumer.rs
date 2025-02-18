@@ -919,7 +919,7 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
             bank.tick_height(),
             bank.last_blockhash(),
             bank.clone(),
@@ -1026,7 +1026,7 @@ mod tests {
             Blockstore::open(ledger_path).expect("Expected to be able to open database ledger");
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(genesis_config);
         let exit = Arc::new(AtomicBool::default());
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
             bank.tick_height(),
             bank.last_blockhash(),
             bank.clone(),
@@ -1095,7 +1095,7 @@ mod tests {
         {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
-            let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+            let (poh_recorder, entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
                 bank.tick_height(),
                 bank.last_blockhash(),
                 bank.clone(),
@@ -1245,7 +1245,7 @@ mod tests {
         {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
-            let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+            let (poh_recorder, entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
                 bank.tick_height(),
                 bank.last_blockhash(),
                 bank.clone(),
@@ -1389,7 +1389,7 @@ mod tests {
         {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
-            let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
+            let (poh_recorder, _entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
                 bank.tick_height(),
                 bank.last_blockhash(),
                 bank.clone(),
@@ -1468,7 +1468,7 @@ mod tests {
         {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
-            let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
+            let (poh_recorder, _entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
                 bank.tick_height(),
                 bank.last_blockhash(),
                 bank.clone(),
@@ -1630,7 +1630,7 @@ mod tests {
         {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
-            let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
+            let (poh_recorder, _entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
                 bank.tick_height(),
                 bank.last_blockhash(),
                 bank.clone(),
@@ -1838,7 +1838,7 @@ mod tests {
         {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
-            let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
+            let (poh_recorder, _entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
                 bank.tick_height(),
                 bank.last_blockhash(),
                 bank.clone(),
@@ -1940,7 +1940,7 @@ mod tests {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let blockstore = Arc::new(blockstore);
-            let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
+            let (poh_recorder, _entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
                 bank.tick_height(),
                 bank.last_blockhash(),
                 bank.clone(),
@@ -2085,7 +2085,7 @@ mod tests {
             let blockstore = Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger");
             let blockstore = Arc::new(blockstore);
-            let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
+            let (poh_recorder, _entry_receiver, record_receiver, _new_bank_sender) = PohRecorder::new(
                 bank.tick_height(),
                 bank.last_blockhash(),
                 bank.clone(),

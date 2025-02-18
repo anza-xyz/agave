@@ -428,7 +428,7 @@ mod tests {
         let ticks_per_slot = bank.ticks_per_slot();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let blockstore = Arc::new(blockstore);
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver, record_receiver, new_bank_sender) = PohRecorder::new(
             bank.tick_height(),
             prev_hash,
             bank.clone(),
