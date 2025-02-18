@@ -364,17 +364,17 @@ impl CacheHashData {
 
     fn save_internal(
         &self,
-        cache_path_full_path: impl AsRef<Path>,
+        in_progress_cache_file_full_path: impl AsRef<Path>,
         data: &SavedTypeSlice,
     ) -> Result<(), std::io::Error> {
         let mut m = Measure::start("save");
-        let _ignored = remove_file(&cache_path_full_path);
+        let _ignored = remove_file(&in_progress_cache_file_full_path);
         let cell_size = std::mem::size_of::<EntryType>() as u64;
         let mut m1 = Measure::start("create save");
         let entries = data.iter().map(Vec::len).sum::<usize>();
         let capacity = cell_size * (entries as u64) + std::mem::size_of::<Header>() as u64;
 
-        let mmap = CacheHashDataFile::new_map(&cache_path_full_path, capacity)?;
+        let mmap = CacheHashDataFile::new_map(&in_progress_cache_file_full_path, capacity)?;
         m1.stop();
         self.stats
             .create_save_us
