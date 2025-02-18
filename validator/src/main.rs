@@ -60,7 +60,10 @@ pub fn main() {
             commands::exit::execute(subcommand_matches, &ledger_path);
         }
         ("monitor", _) => {
-            commands::monitor::execute(&matches, &ledger_path);
+            commands::monitor::execute(&matches, &ledger_path).unwrap_or_else(|err| {
+                println!("Error: {err}");
+                exit(1);
+            });
         }
         ("staked-nodes-overrides", Some(subcommand_matches)) => {
             commands::staked_nodes_overrides::execute(subcommand_matches, &ledger_path);
