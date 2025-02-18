@@ -338,7 +338,7 @@ impl CacheHashData {
         let work_in_progress_file_full_path = self
             .cache_dir
             .join(Self::get_work_in_progress_file_name(file_name.as_ref()));
-        Self::save_internal(&work_in_progress_file_full_path, data, self.stats.clone())?;
+        Self::save_internal(&work_in_progress_file_full_path, data, &self.stats)?;
         // Rename the file to remove the ".in-progress" suffix after the file
         // has been successfully written. This is done to ensure that the file is
         // not read before it has been completely written. For example, if the
@@ -356,7 +356,7 @@ impl CacheHashData {
     fn save_internal(
         in_progress_cache_file_full_path: impl AsRef<Path>,
         data: &SavedTypeSlice,
-        stats: Arc<CacheHashDataStats>,
+        stats: &CacheHashDataStats,
     ) -> Result<(), std::io::Error> {
         let mut m = Measure::start("save");
         let _ignored = remove_file(&in_progress_cache_file_full_path);
