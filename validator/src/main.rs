@@ -7,7 +7,7 @@ use {
         commands,
     },
     solana_streamer::socket::SocketAddrSpace,
-    std::path::PathBuf,
+    std::{path::PathBuf, process::exit},
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
@@ -44,7 +44,11 @@ pub fn main() {
             );
         }
         ("authorized-voter", Some(authorized_voter_subcommand_matches)) => {
-            commands::authorized_voter::execute(authorized_voter_subcommand_matches, &ledger_path);
+            commands::authorized_voter::execute(authorized_voter_subcommand_matches, &ledger_path)
+                .unwrap_or_else(|err| {
+                    println!("Error: {err}");
+                    exit(1);
+                });
         }
         ("plugin", Some(plugin_subcommand_matches)) => {
             commands::plugin::execute(plugin_subcommand_matches, &ledger_path);
