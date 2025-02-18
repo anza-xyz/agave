@@ -3,7 +3,7 @@ use {
     clap::{value_t, App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::is_keypair,
     solana_sdk::signature::{read_keypair, Signer},
-    std::{fs, path::Path, process::exit},
+    std::{fs, path::Path},
 };
 
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
@@ -29,14 +29,13 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     let require_tower = matches.is_present("require_tower");
 
     if let Ok(identity_keypair) = value_t!(matches, "identity", String) {
-        let identity_keypair = fs::canonicalize(&identity_keypair).unwrap_or_else(|err| {
-            println!("Unable to access path: {identity_keypair}: {err:?}");
-            exit(1);
-        });
+        let identity_keypair = fs::canonicalize(&identity_keypair)
+            .map_err(|err| format!("unable to access path {identity_keypair}: {err:?}"))?;
+
         println!(
             "New validator identity path: {}",
             identity_keypair.display()
@@ -50,16 +49,12 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
                     .set_identity(identity_keypair.display().to_string(), require_tower)
                     .await
             })
-            .unwrap_or_else(|err| {
-                println!("setIdentity request failed: {err}");
-                exit(1);
-            });
+            .map_err(|err| format!("set identity request failed: {err}"))
     } else {
         let mut stdin = std::io::stdin();
-        let identity_keypair = read_keypair(&mut stdin).unwrap_or_else(|err| {
-            println!("Unable to read JSON keypair from stdin: {err:?}");
-            exit(1);
-        });
+        let identity_keypair = read_keypair(&mut stdin)
+            .map_err(|err| format!("unable to read json keypair from stdin: {err:?}"))?;
+
         println!("New validator identity: {}", identity_keypair.pubkey());
 
         let admin_client = admin_rpc_service::connect(ledger_path);
@@ -70,9 +65,6 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
                     .set_identity_from_bytes(Vec::from(identity_keypair.to_bytes()), require_tower)
                     .await
             })
-            .unwrap_or_else(|err| {
-                println!("setIdentityFromBytes request failed: {err}");
-                exit(1);
-            });
-    };
+            .map_err(|err| format!("set identity request failed: {err}"))
+    }
 }
