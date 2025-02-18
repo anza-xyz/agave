@@ -52,8 +52,7 @@ pub fn main() {
             commands::plugin::execute(plugin_subcommand_matches, &ledger_path)
         }
         ("contact-info", Some(subcommand_matches)) => {
-            commands::contact_info::execute(subcommand_matches, &ledger_path);
-            Ok(())
+            commands::contact_info::execute(subcommand_matches, &ledger_path)
         }
         ("exit", Some(subcommand_matches)) => {
             commands::exit::execute(subcommand_matches, &ledger_path)

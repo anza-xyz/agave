@@ -2,7 +2,7 @@ use {
     crate::{admin_rpc_service, cli::DefaultArgs, commands::FromClapArgMatches},
     clap::{App, Arg, ArgMatches, SubCommand},
     solana_cli_output::OutputFormat,
-    std::{path::Path, process::exit},
+    std::path::Path,
 };
 
 const COMMAND: &str = "contact-info";
@@ -33,21 +33,20 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     let contact_info_args = ContactInfoArgs::from_clap_arg_match(matches);
 
     let admin_client = admin_rpc_service::connect(ledger_path);
     let contact_info = admin_rpc_service::runtime()
         .block_on(async move { admin_client.await?.contact_info().await })
-        .unwrap_or_else(|err| {
-            eprintln!("Contact info query failed: {err}");
-            exit(1);
-        });
+        .map_err(|err| format!("contact info request failed: {err}"))?;
 
     println!(
         "{}",
         contact_info_args.output.formatted_string(&contact_info)
     );
+
+    Ok(())
 }
 
 #[cfg(test)]
