@@ -367,15 +367,6 @@ pub fn load_and_process_ledger(
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
     match block_verification_method {
-        BlockVerificationMethod::BlockstoreProcessor => {
-            info!("no scheduler pool is installed for block verification...");
-            if let Some(count) = unified_scheduler_handler_threads {
-                warn!(
-                    "--unified-scheduler-handler-threads={count} is ignored because unified \
-                     scheduler isn't enabled"
-                );
-            }
-        }
         BlockVerificationMethod::UnifiedScheduler => {
             let no_replay_vote_sender = None;
             let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
