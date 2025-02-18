@@ -25,13 +25,22 @@ use {
     },
     solana_sdk::{fee::FeeBudgetLimits, packet, transaction::MessageHash, vote},
     solana_streamer::sendmmsg::batch_send,
-    solana_tpu_client_next::leader_updater::LeaderUpdater,
+    solana_tpu_client_next::{
+        connection_workers_scheduler::{
+            ConnectionWorkersSchedulerConfig, Fanout, TransactionStatsAndReceiver,
+        },
+        leader_updater::LeaderUpdater,
+        transaction_batch::TransactionBatch,
+        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
+    },
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::{Ipv4Addr, SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    tokio::{sync::mpsc, task::JoinHandle as TokioJoinHandle},
+    tokio_util::sync::CancellationToken,
 };
 
 mod packet_container;
@@ -182,6 +191,11 @@ impl<F: ForwardAddressGetter> LeaderUpdater for ForwardingStageLeaderUpdater<F> 
     async fn stop(&mut self) {}
 }
 
+struct TpuClientNextClient {
+    sender: mpsc::Sender<TransactionBatch>,
+    handle: TokioJoinHandle<Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>>,
+}
+
 impl<F: ForwardAddressGetter> ForwardingStage<F> {
     pub fn spawn_with_connection_cache(
         receiver: Receiver<(BankingPacketBatch, bool)>,
@@ -206,51 +220,51 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
             .unwrap()
     }
 
-    /*
+    // TODO this client should be introduced on a level up to use proper identity
     fn spawn_tpu_client_next(
         handle: tokio::runtime::Handle,
         forward_address_getter: F,
-    ) -> Sender<TransactionBatch> {
-        let (transaction_sender, transaction_receiver) = mpsc::channel(16); // random number of now
+    ) -> TpuClientNextClient {
+        let (sender, receiver) = mpsc::channel(16); // random number of now
         let validator_identity = None;
-        handle.spawn(async move {
+        let handle = handle.spawn(async move {
             let cancel = CancellationToken::new();
             let leader_updater = ForwardingStageLeaderUpdater {
-                poh_recorder,
-                cluster_info,
+                forward_address_getter,
             };
             let config = ConnectionWorkersSchedulerConfig {
-                bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
+                bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
                 stake_identity: validator_identity, // In CC, do we send with identity?
                 num_connections: 1,
                 skip_check_transaction_age: false,
                 worker_channel_size: 2,
                 max_reconnect_attempts: 4,
-                lookahead_slots: 1,
+                leaders_fanout: Fanout {
+                    send: 2,
+                    connect: 4,
+                },
             };
-            let _scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
+            ConnectionWorkersScheduler::run(
                 config,
                 Box::new(leader_updater),
-                transaction_receiver,
+                receiver,
                 cancel.clone(),
-            ));
+            )
+            .await
         });
-        transaction_sender
+        TpuClientNextClient { sender, handle }
     }
 
-    pub fn spawn_with_tpu_client_next(
+    /*pub fn spawn_with_tpu_client_next(
         receiver: Receiver<(BankingPacketBatch, bool)>,
         tokio_runtime: tokio::runtime::Handle,
         root_bank_cache: RootBankCache,
         forward_address_getter: F,
     ) -> JoinHandle<()> {
-        let transaction_client = Box::new(ConnectionCacheClient::new(
-            connection_cache,
-            forward_address_getter.clone(),
-        ));
+        let transaction_client = spawn_tpu_client_next(forward_address_getter);
         let vote_client = VoteClient::new(forward_address_getter);
         let forwarding_stage =
-            Self::new(receiver, transaction_client, vote_client, root_bank_cache);
+            Self::new(receiver, vote_client, transaction_client, root_bank_cache);
         Builder::new()
             .name("solFwdStage".to_string())
             .spawn(move || forwarding_stage.run())
