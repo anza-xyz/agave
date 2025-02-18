@@ -6,7 +6,7 @@ use {
     solana_runtime::{
         snapshot_hash::SnapshotHash,
         snapshot_package::SnapshotKind,
-        snapshot_utils::{self, ArchiveFormat},
+        snapshot_utils::{self, ArchiveFormat, ZstdConfig},
     },
     solana_sdk::{clock::Slot, genesis_config::DEFAULT_GENESIS_ARCHIVE},
     std::{
@@ -284,7 +284,9 @@ pub fn download_snapshot_archive(
     fs::create_dir_all(&snapshot_archives_remote_dir).unwrap();
 
     for archive_format in [
-        ArchiveFormat::TarZstd,
+        ArchiveFormat::TarZstd {
+            config: ZstdConfig::default(),
+        },
         ArchiveFormat::TarGzip,
         ArchiveFormat::TarBzip2,
         ArchiveFormat::TarLz4,
