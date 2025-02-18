@@ -1,11 +1,26 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs},
-    clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
+    crate::{admin_rpc_service, cli::DefaultArgs, commands::FromClapArgMatches},
+    clap::{App, Arg, ArgMatches, SubCommand},
     std::{path::Path, process::exit},
 };
 
+const COMMAND: &str = "set-log-filter";
+
+#[derive(Debug, PartialEq)]
+pub struct SetLogFilterArgs {
+    pub filter: Option<String>,
+}
+
+impl FromClapArgMatches for SetLogFilterArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Self {
+        SetLogFilterArgs {
+            filter: matches.value_of("filter").map(|s| s.to_string()),
+        }
+    }
+}
+
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
-    SubCommand::with_name("set-log-filter")
+    SubCommand::with_name(COMMAND)
         .about("Adjust the validator log filter")
         .arg(
             Arg::with_name("filter")
@@ -17,7 +32,13 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
 }
 
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
-    let filter = value_t_or_exit!(matches, "filter", String);
+    let set_log_filter_args = SetLogFilterArgs::from_clap_arg_match(matches);
+    if set_log_filter_args.filter.is_none() {
+        eprintln!("filter is required");
+        exit(1);
+    }
+    let filter = set_log_filter_args.filter.unwrap();
+
     let admin_client = admin_rpc_service::connect(ledger_path);
     admin_rpc_service::runtime()
         .block_on(async move { admin_client.await?.set_log_filter(filter).await })
@@ -25,4 +46,29 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
             println!("set log filter failed: {err}");
             exit(1);
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, crate::commands::tests::verify_args_struct_by_command};
+
+    #[test]
+    fn verify_args_struct_by_command_set_log_filter_default() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec![COMMAND],
+            SetLogFilterArgs { filter: None },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_set_log_filter_with_filter() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec![COMMAND, "expected_filter_value"],
+            SetLogFilterArgs {
+                filter: Some("expected_filter_value".to_string()),
+            },
+        );
+    }
 }
