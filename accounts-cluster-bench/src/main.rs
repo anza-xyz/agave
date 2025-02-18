@@ -1014,7 +1014,8 @@ fn run_accounts_bench(
             || max_accounts_met
         {
             info!(
-                "total_accounts_created: {} total_accounts_closed: {} tx_sent_count: {} loop_count: {} balance(s): {:?}",
+                "total_accounts_created: {} total_accounts_closed: {} tx_sent_count: {} \
+                 loop_count: {} balance(s): {:?}",
                 total_accounts_created, total_accounts_closed, tx_sent_count, count, balances
             );
             last_log = Instant::now();
@@ -1146,8 +1147,8 @@ fn main() {
                 .validator(is_url_or_moniker)
                 .conflicts_with("entrypoint")
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): \
-                       [mainnet-beta, testnet, devnet, localhost]",
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                     testnet, devnet, localhost]",
                 ),
         )
         .arg(
@@ -1204,9 +1205,8 @@ fn main() {
                 .help(
                     "Every `n` batches, create a batch of close transactions for
                     the earliest remaining batch of accounts created.
-                    Note: Should be > 1 to avoid situations where the close \
-                    transactions will be submitted before the corresponding \
-                    create transactions have been confirmed",
+                    Note: Should be > 1 to avoid situations where the close transactions will be \
+                     submitted before the corresponding create transactions have been confirmed",
                 ),
         )
         .arg(
@@ -1228,7 +1228,10 @@ fn main() {
                 .long("max-accounts")
                 .takes_value(true)
                 .value_name("NUM_ACCOUNTS")
-                .help("Halt after client has created this number of accounts. Does not count closed accounts."),
+                .help(
+                    "Halt after client has created this number of accounts. Does not count closed \
+                     accounts.",
+                ),
         )
         .arg(
             Arg::with_name("check_gossip")
@@ -1261,10 +1264,7 @@ fn main() {
                 .takes_value(true)
                 .value_name("RPC_BENCH_TYPE(S)")
                 .multiple(true)
-                .requires_ifs(&[
-                    ("supply", "mint"),
-                    ("token-accounts-by-owner", "mint"),
-                ])
+                .requires_ifs(&[("supply", "mint"), ("token-accounts-by-owner", "mint")])
                 .help("Spawn a thread which calls a specific RPC method in a loop to benchmark it"),
         )
         .get_matches();

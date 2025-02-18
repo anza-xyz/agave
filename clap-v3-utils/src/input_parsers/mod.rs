@@ -18,7 +18,8 @@ use {
 pub mod signer;
 #[deprecated(
     since = "1.17.0",
-    note = "Please use the functions in `solana_clap_v3_utils::input_parsers::signer` directly instead"
+    note = "Please use the functions in `solana_clap_v3_utils::input_parsers::signer` directly \
+            instead"
 )]
 #[allow(deprecated)]
 pub use signer::{

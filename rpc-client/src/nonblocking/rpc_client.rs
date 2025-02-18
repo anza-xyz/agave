@@ -636,9 +636,8 @@ impl RpcClient {
         }
 
         Err(RpcError::ForUser(
-            "unable to confirm transaction. \
-             This can happen in situations such as transaction expiration \
-             and insufficient fee-payer funds"
+            "unable to confirm transaction. This can happen in situations such as transaction \
+             expiration and insufficient fee-payer funds"
                 .to_string(),
         )
         .into())
@@ -1101,9 +1100,8 @@ impl RpcClient {
             }
         } else {
             return Err(RpcError::ForUser(
-                "unable to confirm transaction. \
-                                      This can happen in situations such as transaction expiration \
-                                      and insufficient fee-payer funds"
+                "unable to confirm transaction. This can happen in situations such as transaction \
+                 expiration and insufficient fee-payer funds"
                     .to_string(),
             )
             .into());
@@ -1134,11 +1132,12 @@ impl RpcClient {
                 .await
                 .unwrap_or(confirmations);
             if now.elapsed().as_secs() >= MAX_HASH_AGE_IN_SECONDS as u64 {
-                return Err(
-                    RpcError::ForUser("transaction not finalized. \
-                                      This can happen when a transaction lands in an abandoned fork. \
-                                      Please retry.".to_string()).into(),
-                );
+                return Err(RpcError::ForUser(
+                    "transaction not finalized. This can happen when a transaction lands in an \
+                     abandoned fork. Please retry."
+                        .to_string(),
+                )
+                .into());
             }
         }
     }
@@ -4347,8 +4346,7 @@ impl RpcClient {
         })
         .map_err(|_| {
             RpcError::ForUser(
-                "airdrop request failed. \
-                    This can happen when the rate limit is reached."
+                "airdrop request failed. This can happen when the rate limit is reached."
                     .to_string(),
             )
             .into()

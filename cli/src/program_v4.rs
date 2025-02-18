@@ -140,9 +140,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .value_name("PROGRAM_SIGNER")
                                 .takes_value(true)
                                 .validator(is_valid_signer)
-                                .help(
-                                    "Program account signer for deploying a new program",
-                                ),
+                                .help("Program account signer for deploying a new program"),
                         )
                         .arg(
                             Arg::with_name("program-id")
@@ -157,9 +155,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .value_name("BUFFER_SIGNER")
                                 .takes_value(true)
                                 .validator(is_valid_signer)
-                                .help(
-                                    "Optional intermediate buffer account to write data to",
-                                ),
+                                .help("Optional intermediate buffer account to write data to"),
                         )
                         .arg(
                             Arg::with_name("authority")
@@ -213,7 +209,8 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_valid_signer)
                                 .help(
-                                    "Current program authority [default: the default configured keypair]",
+                                    "Current program authority [default: the default configured \
+                                     keypair]",
                                 ),
                         )
                         .arg(
@@ -223,9 +220,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .required(true)
                                 .validator(is_valid_signer)
-                                .help(
-                                    "New program authority",
-                                ),
+                                .help("New program authority"),
                         ),
                 )
                 .subcommand(
@@ -255,7 +250,9 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_valid_signer)
                                 .help(
-                                    "Reserves the address and links it as the programs next-version, which is a hint that frontends can show to users",
+                                    "Reserves the address and links it as the programs \
+                                     next-version, which is a hint that frontends can show to \
+                                     users",
                                 ),
                         ),
                 )
@@ -679,12 +676,20 @@ pub fn process_deploy_program(
     if buffer_signer.is_none() || &buffer_address != program_address {
         // Redeploy an existing program
         if !program_account_exists {
-            return Err("Program account does not exist. Did you perhaps intent to deploy a new program instead? Then use --program-keypair instead of --program-id.".into());
+            return Err(
+                "Program account does not exist. Did you perhaps intent to deploy a new program \
+                 instead? Then use --program-keypair instead of --program-id."
+                    .into(),
+            );
         }
     } else {
         // Deploy new program
         if program_account_exists {
-            return Err("Program account does exist already. Did you perhaps intent to redeploy an existing program instead? Then use --program-id instead of --program-keypair.".into());
+            return Err(
+                "Program account does exist already. Did you perhaps intent to redeploy an \
+                 existing program instead? Then use --program-id instead of --program-keypair."
+                    .into(),
+            );
         }
     }
 

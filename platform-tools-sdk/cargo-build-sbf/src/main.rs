@@ -136,7 +136,11 @@ pub fn is_version_string(arg: &str) -> Result<(), String> {
     if semver_re.is_match(arg) {
         return Ok(());
     }
-    Err("a version string may start with 'v' and contains major and minor version numbers separated by a dot, e.g. v1.32 or 1.32".to_string())
+    Err(
+        "a version string may start with 'v' and contains major and minor version numbers \
+         separated by a dot, e.g. v1.32 or 1.32"
+            .to_string(),
+    )
 }
 
 fn home_dir() -> PathBuf {
@@ -635,15 +639,27 @@ fn build_solana_package(
     });
 
     let platform_tools_version = config.platform_tools_version.unwrap_or_else(|| {
-        let workspace_tools_version = metadata.workspace_metadata.get("solana").and_then(|v| v.get("tools-version")).and_then(|v| v.as_str());
-        let package_tools_version = package.metadata.get("solana").and_then(|v| v.get("tools-version")).and_then(|v| v.as_str());
+        let workspace_tools_version = metadata
+            .workspace_metadata
+            .get("solana")
+            .and_then(|v| v.get("tools-version"))
+            .and_then(|v| v.as_str());
+        let package_tools_version = package
+            .metadata
+            .get("solana")
+            .and_then(|v| v.get("tools-version"))
+            .and_then(|v| v.as_str());
         match (workspace_tools_version, package_tools_version) {
             (Some(workspace_version), Some(package_version)) => {
                 if workspace_version != package_version {
-                    warn!("Workspace and package specify conflicting tools versions, {workspace_version} and {package_version}, using package version {package_version}");
+                    warn!(
+                        "Workspace and package specify conflicting tools versions, \
+                         {workspace_version} and {package_version}, using package version \
+                         {package_version}"
+                    );
                 }
                 package_version
-            },
+            }
             (Some(workspace_version), None) => workspace_version,
             (None, Some(package_version)) => package_version,
             (None, None) => DEFAULT_PLATFORM_TOOLS_VERSION,
@@ -717,7 +733,8 @@ fn build_solana_package(
         // this by removing RUSTC from the child process environment.
         if env::var("RUSTC").is_ok() {
             warn!(
-                "Removed RUSTC from cargo environment, because it overrides +solana cargo command line option."
+                "Removed RUSTC from cargo environment, because it overrides +solana cargo command \
+                 line option."
             );
             env::remove_var("RUSTC")
         }
@@ -870,12 +887,17 @@ fn build_solana_package(
             let dump_script = config.sbf_sdk.join("scripts").join("dump.sh");
             #[cfg(windows)]
             {
-                error!("Using Bash scripts from within a program is not supported on Windows, skipping `--dump`.");
                 error!(
-                    "Please run \"{} {} {}\" from a Bash-supporting shell, then re-run this command to see the processed program dump.",
+                    "Using Bash scripts from within a program is not supported on Windows, \
+                     skipping `--dump`."
+                );
+                error!(
+                    "Please run \"{} {} {}\" from a Bash-supporting shell, then re-run this \
+                     command to see the processed program dump.",
                     &dump_script.display(),
                     &program_unstripped_so.display(),
-                    &program_dump.display());
+                    &program_dump.display()
+                );
             }
             #[cfg(not(windows))]
             {
@@ -928,7 +950,11 @@ fn check_solana_target_installed(target: &str) {
     let rustc = PathBuf::from(rustc);
     let output = spawn(&rustc, ["--print", "target-list"], false);
     if !output.contains(target) {
-        error!("Provided {:?} does not have {} target. The Solana rustc must be available in $PATH or the $RUSTC environment variable for the build to succeed.", rustc, target);
+        error!(
+            "Provided {:?} does not have {} target. The Solana rustc must be available in $PATH \
+             or the $RUSTC environment variable for the build to succeed.",
+            rustc, target
+        );
         exit(1);
     }
 }
@@ -1068,14 +1094,21 @@ fn main() {
                 .long("skip-tools-install")
                 .takes_value(false)
                 .conflicts_with("force_tools_install")
-                .help("Skip downloading and installing platform-tools, assuming they are properly mounted"),
-            )
-            .arg(
-                Arg::new("no_rustup_override")
+                .help(
+                    "Skip downloading and installing platform-tools, assuming they are properly \
+                     mounted",
+                ),
+        )
+        .arg(
+            Arg::new("no_rustup_override")
                 .long("no-rustup-override")
                 .takes_value(false)
                 .conflicts_with("force_tools_install")
-                .help("Do not use rustup to manage the toolchain. By default, cargo-build-sbf invokes rustup to find the Solana rustc using a `+solana` toolchain override. This flag disables that behavior."),
+                .help(
+                    "Do not use rustup to manage the toolchain. By default, cargo-build-sbf \
+                     invokes rustup to find the Solana rustc using a `+solana` toolchain \
+                     override. This flag disables that behavior.",
+                ),
         )
         .arg(
             Arg::new("generate_child_script_on_failure")

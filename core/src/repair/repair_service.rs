@@ -684,7 +684,8 @@ impl RepairService {
                     Ok(()) => (),
                     Err(SendPktsError::IoError(err, num_failed)) => {
                         error!(
-                            "{id} batch_send failed to send {num_failed}/{num_pkts} packets first error {err:?}"
+                            "{id} batch_send failed to send {num_failed}/{num_pkts} packets first \
+                             error {err:?}"
                         );
                     }
                 }

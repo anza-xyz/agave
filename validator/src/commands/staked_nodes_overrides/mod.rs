@@ -13,11 +13,13 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
                 .takes_value(true)
                 .required(true)
                 .help(
-                    "Provide path to a file with custom overrides for stakes of specific validator identities.",
+                    "Provide path to a file with custom overrides for stakes of specific \
+                     validator identities.",
                 ),
         )
         .after_help(
-            "Note: the new staked nodes overrides only applies to the currently running validator instance",
+            "Note: the new staked nodes overrides only applies to the currently running validator \
+             instance",
         )
 }
 

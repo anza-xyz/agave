@@ -353,7 +353,8 @@ fn retransmit_shred(
             Ok(()) => addrs.len(),
             Err(SendPktsError::IoError(ioerr, num_failed)) => {
                 error!(
-                    "retransmit_to multi_target_send error: {ioerr:?}, {num_failed}/{} packets failed",
+                    "retransmit_to multi_target_send error: {ioerr:?}, {num_failed}/{} packets \
+                     failed",
                     addrs.len(),
                 );
                 addrs.len() - num_failed

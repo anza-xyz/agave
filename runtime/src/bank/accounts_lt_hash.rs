@@ -62,7 +62,8 @@ impl Bank {
             .is_active(&feature_set::accounts_lt_hash::id())
         {
             log::info!(
-                "updated accounts lattice hash for slot {}, delta_lt_hash checksum: {}, accounts_lt_hash checksum: {}",
+                "updated accounts lattice hash for slot {}, delta_lt_hash checksum: {}, \
+                 accounts_lt_hash checksum: {}",
                 self.slot(),
                 delta_lt_hash.checksum(),
                 accounts_lt_hash.0.checksum(),

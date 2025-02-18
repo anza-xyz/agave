@@ -43,7 +43,8 @@ fn get_config() -> Config {
     let matches = App::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
-        .after_help("ADDITIONAL HELP:
+        .after_help(
+            "ADDITIONAL HELP:
         To receive a Slack, Discord, PagerDuty and/or Telegram notification on sanity failure,
         define environment variables before running `agave-watchtower`:
 
@@ -55,7 +56,8 @@ fn get_config() -> Config {
         export TELEGRAM_BOT_TOKEN=...
         export TELEGRAM_CHAT_ID=...
 
-        PagerDuty requires an Integration Key from the Events API v2 (Add this integration to your PagerDuty service to get this)
+        PagerDuty requires an Integration Key from the Events API v2 (Add this integration to your \
+             PagerDuty service to get this)
 
         export PAGERDUTY_INTEGRATION_KEY=...
 
@@ -63,7 +65,10 @@ fn get_config() -> Config {
         and a sending number owned by that account,
         define environment variable before running `agave-watchtower`:
 
-        export TWILIO_CONFIG='ACCOUNT=<account>,TOKEN=<securityToken>,TO=<receivingNumber>,FROM=<sendingNumber>'")
+        export \
+             TWILIO_CONFIG='ACCOUNT=<account>,TOKEN=<securityToken>,TO=<receivingNumber>,\
+             FROM=<sendingNumber>'",
+        )
         .arg({
             let arg = Arg::with_name("config_file")
                 .short("C")
@@ -108,7 +113,7 @@ fn get_config() -> Config {
                 .value_name("COUNT")
                 .takes_value(true)
                 .default_value("1")
-                .help("How many consecutive failures must occur to trigger a notification")
+                .help("How many consecutive failures must occur to trigger a notification"),
         )
         .arg(
             Arg::with_name("validator_identities")
@@ -117,7 +122,7 @@ fn get_config() -> Config {
                 .takes_value(true)
                 .validator(is_pubkey_or_keypair)
                 .multiple(true)
-                .help("Validator identities to monitor for delinquency")
+                .help("Validator identities to monitor for delinquency"),
         )
         .arg(
             Arg::with_name("minimum_validator_identity_balance")
@@ -126,19 +131,22 @@ fn get_config() -> Config {
                 .takes_value(true)
                 .default_value("10")
                 .validator(is_parsable::<f64>)
-                .help("Alert when the validator identity balance is less than this amount of SOL")
+                .help("Alert when the validator identity balance is less than this amount of SOL"),
         )
         .arg(
             // Deprecated parameter, now always enabled
             Arg::with_name("no_duplicate_notifications")
                 .long("no-duplicate-notifications")
-                .hidden(hidden_unless_forced())
+                .hidden(hidden_unless_forced()),
         )
         .arg(
             Arg::with_name("monitor_active_stake")
                 .long("monitor-active-stake")
                 .takes_value(false)
-                .help("Alert when the current stake for the cluster drops below the amount specified by --active-stake-alert-threshold"),
+                .help(
+                    "Alert when the current stake for the cluster drops below the amount \
+                     specified by --active-stake-alert-threshold",
+                ),
         )
         .arg(
             Arg::with_name("active_stake_alert_threshold")
@@ -153,10 +161,11 @@ fn get_config() -> Config {
             Arg::with_name("ignore_http_bad_gateway")
                 .long("ignore-http-bad-gateway")
                 .takes_value(false)
-                .help("Ignore HTTP 502 Bad Gateway errors from the JSON RPC URL. \
-                    This flag can help reduce false positives, at the expense of \
-                    no alerting should a Bad Gateway error be a side effect of \
-                    the real problem")
+                .help(
+                    "Ignore HTTP 502 Bad Gateway errors from the JSON RPC URL. This flag can help \
+                     reduce false positives, at the expense of no alerting should a Bad Gateway \
+                     error be a side effect of the real problem",
+                ),
         )
         .arg(
             Arg::with_name("name_suffix")
@@ -164,7 +173,7 @@ fn get_config() -> Config {
                 .value_name("SUFFIX")
                 .takes_value(true)
                 .default_value("")
-                .help("Add this string into all notification messages after \"agave-watchtower\"")
+                .help("Add this string into all notification messages after \"agave-watchtower\""),
         )
         .get_matches();
 
@@ -298,7 +307,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     failures.push((
                         "transaction-count",
                         format!(
-                            "Transaction count is not advancing: {transaction_count} <= {last_transaction_count}"
+                            "Transaction count is not advancing: {transaction_count} <= \
+                             {last_transaction_count}"
                         ),
                     ));
                 }

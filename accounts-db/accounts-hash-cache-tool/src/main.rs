@@ -51,8 +51,8 @@ fn main() -> Result<()> {
         .subcommand(
             SubCommand::with_name(CMD_INSPECT)
                 .about(
-                    "Inspect an accounts hash cache file and display \
-                     each account's address, hash, and balance",
+                    "Inspect an accounts hash cache file and display each account's address, \
+                     hash, and balance",
                 )
                 .arg(
                     Arg::with_name("force")
@@ -80,11 +80,11 @@ fn main() -> Result<()> {
                 )
                 .arg(
                     Arg::with_name("addresses")
-                    .index(2)
-                    .takes_value(true)
-                    .value_name("PUBKEYS")
-                    .value_delimiter(",")
-                    .help("Search for the entries of one or more pubkeys, delimited by commas"),
+                        .index(2)
+                        .takes_value(true)
+                        .value_name("PUBKEYS")
+                        .value_delimiter(",")
+                        .help("Search for the entries of one or more pubkeys, delimited by commas"),
                 ),
         )
         .subcommand(
@@ -129,16 +129,19 @@ fn main() -> Result<()> {
                             Arg::with_name("then_diff_files")
                                 .long("then-diff-files")
                                 .takes_value(false)
-                                .help("After diff-ing the directories, diff the files that were found to have mismatches"),
+                                .help(
+                                    "After diff-ing the directories, diff the files that were \
+                                     found to have mismatches",
+                                ),
                         ),
                 )
                 .subcommand(
                     SubCommand::with_name(CMD_DIFF_STATE)
                         .about("Diff the final state of two accounts hash cache directories")
                         .long_about(
-                            "Diff the final state of two accounts hash cache directories. \
-                             Load all the latest entries from each directory, then compare \
-                             the final states for anything missing or mismatching."
+                            "Diff the final state of two accounts hash cache directories. Load \
+                             all the latest entries from each directory, then compare the final \
+                             states for anything missing or mismatching.",
                         )
                         .arg(
                             Arg::with_name("path1")
@@ -162,10 +165,10 @@ fn main() -> Result<()> {
                                 .default_value(DEFAULT_BINS)
                                 .help("Sets the number of bins to split the entries into")
                                 .long_help(
-                                    "Sets the number of bins to split the entries into. \
-                                     The binning is based on each entry's pubkey. \
-                                     Must be a power of two, greater than 0, \
-                                     and less-than-or-equal-to 16,777,216 (2^24)"
+                                    "Sets the number of bins to split the entries into. The \
+                                     binning is based on each entry's pubkey. Must be a power of \
+                                     two, greater than 0, and less-than-or-equal-to 16,777,216 \
+                                     (2^24)",
                                 ),
                         )
                         .arg(
@@ -180,13 +183,12 @@ fn main() -> Result<()> {
                                 .multiple(false)
                                 .help("Specifies bins to diff")
                                 .long_help(
-                                    "Specifies bins to diff. \
-                                     When diffing large state that does not fit in memory, \
-                                     it may be necessary to diff a subset at a time. \
-                                     Use this arg to limit the state to bins of interest. \
-                                     This arg takes either a single bin or a bin range. \
-                                     A bin range is specified as \"start-end\", where \
-                                     \"start\" is inclusive, and \"end\" is exclusive."
+                                    "Specifies bins to diff. When diffing large state that does \
+                                     not fit in memory, it may be necessary to diff a subset at a \
+                                     time. Use this arg to limit the state to bins of interest. \
+                                     This arg takes either a single bin or a bin range. A bin \
+                                     range is specified as \"start-end\", where \"start\" is \
+                                     inclusive, and \"end\" is exclusive.",
                                 ),
                         ),
                 ),
@@ -353,8 +355,14 @@ fn do_diff_files(file1: impl AsRef<Path>, file2: impl AsRef<Path>) -> Result<()>
         let width2 = width10(capitalization2);
         cmp::max(width1, width2)
     };
-    println!("File 1: number of accounts: {num_accounts1:num_accounts_width$}, capitalization: {capitalization1:lamports_width$} lamports");
-    println!("File 2: number of accounts: {num_accounts2:num_accounts_width$}, capitalization: {capitalization2:lamports_width$} lamports");
+    println!(
+        "File 1: number of accounts: {num_accounts1:num_accounts_width$}, capitalization: \
+         {capitalization1:lamports_width$} lamports"
+    );
+    println!(
+        "File 2: number of accounts: {num_accounts2:num_accounts_width$}, capitalization: \
+         {capitalization2:lamports_width$} lamports"
+    );
 
     // compute the differences between the files
     let do_compute = |lhs: &HashMap<_, (_, _)>, rhs: &HashMap<_, (_, _)>| {
@@ -673,8 +681,14 @@ fn do_diff_state(
         cmp::max(width1, width2)
     };
 
-    println!("State 1: total number of accounts: {num_accounts1:num_accounts_width$}, total capitalization: {capitalization1:lamports_width$} lamports");
-    println!("State 2: total number of accounts: {num_accounts2:num_accounts_width$}, total capitalization: {capitalization2:lamports_width$} lamports");
+    println!(
+        "State 1: total number of accounts: {num_accounts1:num_accounts_width$}, total \
+         capitalization: {capitalization1:lamports_width$} lamports"
+    );
+    println!(
+        "State 2: total number of accounts: {num_accounts2:num_accounts_width$}, total \
+         capitalization: {capitalization2:lamports_width$} lamports"
+    );
 
     println!("Unique entries in state 1:");
     print_unique_entries(&unique_entries1, lamports_width);
@@ -808,8 +822,10 @@ fn extract_binned_latest_entries_in(
 
         if num_entries != header.count {
             return Err(anyhow!(
-                "mismatched number of entries when scanning '{}': expected: {}, actual: {num_entries}",
-                file.as_ref().display(), header.count,
+                "mismatched number of entries when scanning '{}': expected: {}, actual: \
+                 {num_entries}",
+                file.as_ref().display(),
+                header.count,
             ));
         }
     }
@@ -855,8 +871,8 @@ fn scan_file(
                     break;
                 } else {
                     return Err(anyhow!(
-                        "failed to read file entry {num_entries_actual}, \
-                         expected {num_entries_expected} entries: {err}",
+                        "failed to read file entry {num_entries_actual}, expected \
+                         {num_entries_expected} entries: {err}",
                     ));
                 }
             }
@@ -899,8 +915,8 @@ fn open_file(
         .saturating_add(size_of::<CacheHashDataFileEntry>().saturating_mul(header.count));
     if actual_file_size != expected_file_size as u64 {
         let err_msg = format!(
-            "failed sanitization: actual file size does not match expected file size! \
-             actual: {actual_file_size}, expected: {expected_file_size}",
+            "failed sanitization: actual file size does not match expected file size! actual: \
+             {actual_file_size}, expected: {expected_file_size}",
         );
         if force {
             eprintln!("Warning: {err_msg}\nForced. Continuing... Results may be incorrect.");

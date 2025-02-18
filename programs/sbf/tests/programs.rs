@@ -249,9 +249,8 @@ fn test_program_sbf_loader_deprecated() {
 
 #[test]
 #[cfg(feature = "sbf_rust")]
-#[should_panic(
-    expected = "called `Result::unwrap()` on an `Err` value: TransactionError(InstructionError(0, InvalidAccountData))"
-)]
+#[should_panic(expected = "called `Result::unwrap()` on an `Err` value: \
+                           TransactionError(InstructionError(0, InvalidAccountData))")]
 fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     solana_logger::setup();
 
@@ -884,7 +883,10 @@ fn test_program_sbf_invoke_sanity() {
                 format!("Program log: invoke {program_lang} program"),
                 "Program log: Test max instruction data len exceeded".into(),
                 "skip".into(), // don't compare compute consumption logs
-                format!("Program {invoke_program_id} failed: Invoked an instruction with data that is too large (10241 > 10240)"),
+                format!(
+                    "Program {invoke_program_id} failed: Invoked an instruction with data that is \
+                     too large (10241 > 10240)"
+                ),
             ]),
         );
 
@@ -897,7 +899,10 @@ fn test_program_sbf_invoke_sanity() {
                 format!("Program log: invoke {program_lang} program"),
                 "Program log: Test max instruction accounts exceeded".into(),
                 "skip".into(), // don't compare compute consumption logs
-                format!("Program {invoke_program_id} failed: Invoked an instruction with too many accounts (256 > 255)"),
+                format!(
+                    "Program {invoke_program_id} failed: Invoked an instruction with too many \
+                     accounts (256 > 255)"
+                ),
             ]),
         );
 
@@ -910,7 +915,10 @@ fn test_program_sbf_invoke_sanity() {
                 format!("Program log: invoke {program_lang} program"),
                 "Program log: Test max account infos exceeded".into(),
                 "skip".into(), // don't compare compute consumption logs
-                format!("Program {invoke_program_id} failed: Invoked an instruction with too many account info's (129 > 128)"),
+                format!(
+                    "Program {invoke_program_id} failed: Invoked an instruction with too many \
+                     account info's (129 > 128)"
+                ),
             ]),
         );
 
@@ -4852,7 +4860,10 @@ fn test_clone_account_data() {
     let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
     let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
     assert!(result.is_err(), "{result:?}");
-    let error = format!("Program {invoke_program_id} failed: instruction modified data of an account it does not own");
+    let error = format!(
+        "Program {invoke_program_id} failed: instruction modified data of an account it does not \
+         own"
+    );
     assert!(logs.iter().any(|log| log.contains(&error)), "{logs:?}");
 
     // II. clone data, modify and then CPI
@@ -4882,7 +4893,10 @@ fn test_clone_account_data() {
     let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
     let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
     assert!(result.is_err(), "{result:?}");
-    let error = format!("Program {invoke_program_id} failed: instruction modified data of an account it does not own");
+    let error = format!(
+        "Program {invoke_program_id} failed: instruction modified data of an account it does not \
+         own"
+    );
     assert!(logs.iter().any(|log| log.contains(&error)), "{logs:?}");
 
     // II. Clone data, call, modifiy in callee and then make the same change in the caller - transaction succeeds
@@ -5179,7 +5193,10 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
             bank.store_account(&account_keypair.pubkey(), &account);
 
             for instr in 0..=15 {
-                println!("Testing deprecated:{deprecated} direct_mapping:{direct_mapping} instruction:{instr}");
+                println!(
+                    "Testing deprecated:{deprecated} direct_mapping:{direct_mapping} \
+                     instruction:{instr}"
+                );
                 let instruction =
                     Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
 

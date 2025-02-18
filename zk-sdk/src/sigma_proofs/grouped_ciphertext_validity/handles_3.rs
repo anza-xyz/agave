@@ -488,7 +488,11 @@ mod test {
         let pod_third_handle_str = PodDecryptHandle::from_str(third_handle_str).unwrap();
         let third_handle: DecryptHandle = pod_third_handle_str.try_into().unwrap();
 
-        let proof_str = "8NoqOM40+fvPY2aHzO0SdWZM6lvSoaqI7KpaFuE4wQUaqewILtQV8IMHeHmpevxt/GTErJsdcV8kY3HDZ1GHbMoDujYpstUhyubX1voJh/DstYAL1SQqlRpNLG+kWEUZYvCudTur7i5R+zqZQY3sRMEAxW458V+1GmyCWbWP3FZEz5gX/Pa28/ZNLBvmSPpJBZapXRI5Ra0dKPskFmQ0CH0gBWo6pxj/PH9sgNEkLrbVZB7jpVtdmNzivwgFeb4M";
+        let proof_str = "8NoqOM40+fvPY2aHzO0SdWZM6lvSoaqI7KpaFuE4wQUaqewILtQV8IMHeHmpevxt/\
+                         GTErJsdcV8kY3HDZ1GHbMoDujYpstUhyubX1voJh/\
+                         DstYAL1SQqlRpNLG+kWEUZYvCudTur7i5R+zqZQY3sRMEAxW458V+1GmyCWbWP3FZEz5gX/\
+                         Pa28/ZNLBvmSPpJBZapXRI5Ra0dKPskFmQ0CH0gBWo6pxj/\
+                         PH9sgNEkLrbVZB7jpVtdmNzivwgFeb4M";
         let pod_proof = PodGroupedCiphertext3HandlesValidityProof::from_str(proof_str).unwrap();
         let proof: GroupedCiphertext3HandlesValidityProof = pod_proof.try_into().unwrap();
 

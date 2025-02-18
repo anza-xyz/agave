@@ -173,9 +173,10 @@ impl DefaultSigner {
                     std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!(
-                        "No default signer found, run \"solana-keygen new -o {}\" to create a new one",
-                        self.path
-                    ),
+                            "No default signer found, run \"solana-keygen new -o {}\" to create a \
+                             new one",
+                            self.path
+                        ),
                     )
                 })?;
             *self.is_path_checked.borrow_mut() = true;
@@ -654,7 +655,10 @@ pub fn signer_from_source_with_config(
         SignerSourceKind::Filepath(path) => match read_keypair_file(path) {
             Err(e) => Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("could not read keypair file \"{path}\". Run \"solana-keygen new\" to create a keypair file: {e}"),
+                format!(
+                    "could not read keypair file \"{path}\". Run \"solana-keygen new\" to create \
+                     a keypair file: {e}"
+                ),
             )
             .into()),
             Ok(file) => Ok(Box::new(file)),
@@ -797,8 +801,8 @@ pub fn resolve_signer_from_source(
             Err(e) => Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!(
-                    "could not read keypair file \"{path}\". \
-                    Run \"solana-keygen new\" to create a keypair file: {e}"
+                    "could not read keypair file \"{path}\". Run \"solana-keygen new\" to create \
+                     a keypair file: {e}"
                 ),
             )
             .into()),
@@ -839,7 +843,8 @@ pub const ASK_KEYWORD: &str = "ASK";
 pub const SKIP_SEED_PHRASE_VALIDATION_ARG: ArgConstant<'static> = ArgConstant {
     long: "skip-seed-phrase-validation",
     name: "skip_seed_phrase_validation",
-    help: "Skip validation of seed phrases. Use this if your phrase does not use the BIP39 official English word list",
+    help: "Skip validation of seed phrases. Use this if your phrase does not use the BIP39 \
+           official English word list",
 };
 
 /// Prompts user for a passphrase and then asks for confirmirmation to check for mistakes
@@ -1074,8 +1079,8 @@ fn encodable_key_from_source<K: EncodableKey + SeedDerivable>(
             Err(e) => Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!(
-                    "could not read keypair file \"{path}\". \
-                    Run \"solana-keygen new\" to create a keypair file: {e}"
+                    "could not read keypair file \"{path}\". Run \"solana-keygen new\" to create \
+                     a keypair file: {e}"
                 ),
             )
             .into()),
@@ -1155,7 +1160,8 @@ fn encodable_key_from_seed_phrase<K: EncodableKey + SeedDerivable>(
     let seed_phrase = prompt_password(format!("[{key_name}] seed phrase: "))?;
     let seed_phrase = seed_phrase.trim();
     let passphrase_prompt = format!(
-        "[{key_name}] If this seed phrase has an associated passphrase, enter it now. Otherwise, press ENTER to continue: ",
+        "[{key_name}] If this seed phrase has an associated passphrase, enter it now. Otherwise, \
+         press ENTER to continue: ",
     );
 
     let key = if skip_validation {

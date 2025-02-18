@@ -71,8 +71,9 @@ pub fn report_target_features() {
                 info!("AVX detected");
             } else {
                 error!(
-                "Incompatible CPU detected: missing AVX support. Please build from source on the target"
-            );
+                    "Incompatible CPU detected: missing AVX support. Please build from source on \
+                     the target"
+                );
                 std::process::abort();
             }
         }
@@ -86,7 +87,8 @@ pub fn report_target_features() {
                 info!("AVX2 detected");
             } else {
                 error!(
-                    "Incompatible CPU detected: missing AVX2 support. Please build from source on the target"
+                    "Incompatible CPU detected: missing AVX2 support. Please build from source on \
+                     the target"
                 );
                 std::process::abort();
             }

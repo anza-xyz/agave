@@ -296,11 +296,14 @@ mod test {
         let pod_pubkey = PodElGamalPubkey::from_str(pubkey_str).unwrap();
         let pubkey: ElGamalPubkey = pod_pubkey.try_into().unwrap();
 
-        let ciphertext_str = "wps5X1mou5PUdPD+llxiJ+aoX4YWrR/S6/U2MUC2LjLS7wDu6S9nOG92VMnlngQaP4irBY0OqlsGdXS4j8DROg==";
+        let ciphertext_str = "wps5X1mou5PUdPD+llxiJ+aoX4YWrR/S6/\
+                              U2MUC2LjLS7wDu6S9nOG92VMnlngQaP4irBY0OqlsGdXS4j8DROg==";
         let pod_ciphertext = PodElGamalCiphertext::from_str(ciphertext_str).unwrap();
         let ciphertext: ElGamalCiphertext = pod_ciphertext.try_into().unwrap();
 
-        let proof_str = "qMDiQ5zPcTYFhchYBZzRS81UGIt2QRNce2/ULEqDBXBQEnGRI0u0G1HzRJfpIbOWCHBwMaNgsT1jTZwTOTWyMBE/2UjHI4x9IFpAM6ccGuexo/HjSECPDgL+85zrfA8L";
+        let proof_str = "qMDiQ5zPcTYFhchYBZzRS81UGIt2QRNce2/\
+                         ULEqDBXBQEnGRI0u0G1HzRJfpIbOWCHBwMaNgsT1jTZwTOTWyMBE/\
+                         2UjHI4x9IFpAM6ccGuexo/HjSECPDgL+85zrfA8L";
         let pod_proof = PodZeroCiphertextProof::from_str(proof_str).unwrap();
         let proof: ZeroCiphertextProof = pod_proof.try_into().unwrap();
 

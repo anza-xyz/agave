@@ -120,7 +120,8 @@ impl HeaviestForkAggregate {
         }
         if received_heaviest_fork.shred_version != self.my_shred_version {
             warn!(
-                "Gossip should not accept RestartLastVotedFork with different shred version {} from {:?}",
+                "Gossip should not accept RestartLastVotedFork with different shred version {} \
+                 from {:?}",
                 received_heaviest_fork.shred_version, from
             );
             return HeaviestForkAggregateResult::Malformed;

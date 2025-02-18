@@ -550,8 +550,8 @@ impl<T: 'static> ClusterNodesCache<T> {
                 .find_map(|bank| bank.epoch_staked_nodes(epoch))
                 .unwrap_or_else(|| {
                     error!(
-                        "ClusterNodesCache::get: unknown Bank::epoch_staked_nodes \
-                    for epoch: {epoch}, slot: {shred_slot}"
+                        "ClusterNodesCache::get: unknown Bank::epoch_staked_nodes for epoch: \
+                         {epoch}, slot: {shred_slot}"
                     );
                     inc_new_counter_error!("cluster_nodes-unknown_epoch_staked_nodes", 1);
                     Arc::<HashMap<Pubkey, /*stake:*/ u64>>::default()

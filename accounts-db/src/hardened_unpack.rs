@@ -469,8 +469,8 @@ pub fn open_genesis_config(
         Ok(genesis_config) => Ok(genesis_config),
         Err(load_err) => {
             warn!(
-                "Failed to load genesis_config at {ledger_path:?}: {load_err}. \
-                Will attempt to unpack genesis archive and then retry loading."
+                "Failed to load genesis_config at {ledger_path:?}: {load_err}. Will attempt to \
+                 unpack genesis archive and then retry loading."
             );
 
             let genesis_package = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);

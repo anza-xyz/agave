@@ -2159,8 +2159,8 @@ mod tests {
         let starting_balance = transaction_fee + priority_fee;
         assert!(
             starting_balance > min_balance,
-            "we're testing that a rent exempt fee payer can be fully drained, \
-        so ensure that the starting balance is more than the min balance"
+            "we're testing that a rent exempt fee payer can be fully drained, so ensure that the \
+             starting balance is more than the min balance"
         );
 
         let fee_payer_rent_epoch = current_epoch;

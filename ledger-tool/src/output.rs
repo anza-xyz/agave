@@ -126,7 +126,8 @@ impl Display for SlotBankHash {
 fn writeln_entry(f: &mut dyn fmt::Write, i: usize, entry: &CliEntry, prefix: &str) -> fmt::Result {
     writeln!(
         f,
-        "{prefix}Entry {} - num_hashes: {}, hash: {}, transactions: {}, starting_transaction_index: {}",
+        "{prefix}Entry {} - num_hashes: {}, hash: {}, transactions: {}, \
+         starting_transaction_index: {}",
         i, entry.num_hashes, entry.hash, entry.num_transactions, entry.starting_transaction_index,
     )
 }
@@ -370,8 +371,8 @@ impl CliDuplicateShred {
     fn write_common(&self, w: &mut dyn std::fmt::Write) -> std::fmt::Result {
         writeln!(
             w,
-            "fec_set_index {}, index {}, shred_type {:?}\n       \
-             version {}, merkle_root {:?}, chained_merkle_root {:?}, last_in_slot {}",
+            "fec_set_index {}, index {}, shred_type {:?}\n       version {}, merkle_root {:?}, \
+             chained_merkle_root {:?}, last_in_slot {}",
             self.fec_set_index,
             self.index,
             self.shred_type,
@@ -630,8 +631,8 @@ pub fn output_slot(
             // Given that Blockstore::get_complete_block_with_entries() returned Ok(_), we know
             // that we have a full block so meta.consumed is the number of shreds in the block
             println!(
-                "  num_shreds: {}, parent_slot: {:?}, next_slots: {:?}, num_entries: {}, \
-                 is_full: {}",
+                "  num_shreds: {}, parent_slot: {:?}, next_slots: {:?}, num_entries: {}, is_full: \
+                 {}",
                 meta.consumed,
                 meta.parent_slot,
                 meta.next_slots,

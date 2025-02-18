@@ -379,15 +379,13 @@ impl SnapshotRequestHandler {
         let snapshot_storages = snapshot_bank_utils::get_snapshot_storages(&snapshot_root_bank);
         let accounts_package = match request_kind {
             SnapshotRequestKind::Snapshot => match &accounts_package_kind {
-                AccountsPackageKind::Snapshot(_) => {
-                    AccountsPackage::new_for_snapshot(
-                        accounts_package_kind,
-                        &snapshot_root_bank,
-                        snapshot_storages,
-                        status_cache_slot_deltas,
-                        accounts_hash_for_testing,
-                    )
-                }
+                AccountsPackageKind::Snapshot(_) => AccountsPackage::new_for_snapshot(
+                    accounts_package_kind,
+                    &snapshot_root_bank,
+                    snapshot_storages,
+                    status_cache_slot_deltas,
+                    accounts_hash_for_testing,
+                ),
                 AccountsPackageKind::AccountsHashVerifier => {
                     AccountsPackage::new_for_accounts_hash_verifier(
                         accounts_package_kind,
@@ -396,16 +394,17 @@ impl SnapshotRequestHandler {
                         accounts_hash_for_testing,
                     )
                 }
-                AccountsPackageKind::EpochAccountsHash => panic!("Illegal account package type: EpochAccountsHash packages must be from an EpochAccountsHash request!"),
+                AccountsPackageKind::EpochAccountsHash => panic!(
+                    "Illegal account package type: EpochAccountsHash packages must be from an \
+                     EpochAccountsHash request!"
+                ),
             },
-            SnapshotRequestKind::EpochAccountsHash => {
-                AccountsPackage::new_for_epoch_accounts_hash(
-                    accounts_package_kind,
-                    &snapshot_root_bank,
-                    snapshot_storages,
-                    accounts_hash_for_testing,
-                )
-            }
+            SnapshotRequestKind::EpochAccountsHash => AccountsPackage::new_for_epoch_accounts_hash(
+                accounts_package_kind,
+                &snapshot_root_bank,
+                snapshot_storages,
+                accounts_hash_for_testing,
+            ),
         };
         let send_result = self.accounts_package_sender.send(accounts_package);
         if let Err(err) = send_result {
@@ -663,7 +662,10 @@ impl AccountsBackgroundService {
                                     last_cleaned_block_height = snapshot_block_height;
                                 }
                                 Err(err) => {
-                                    error!("Stopping AccountsBackgroundService! Fatal error while handling snapshot requests: {err}");
+                                    error!(
+                                        "Stopping AccountsBackgroundService! Fatal error while \
+                                         handling snapshot requests: {err}"
+                                    );
                                     exit.store(true, Ordering::Relaxed);
                                     break;
                                 }
@@ -700,7 +702,8 @@ impl AccountsBackgroundService {
                     }
                     info!("AccountsBackgroundService has stopped");
                     is_running.store(false, Ordering::Relaxed);
-            }})
+                }
+            })
             .unwrap();
 
         Self {

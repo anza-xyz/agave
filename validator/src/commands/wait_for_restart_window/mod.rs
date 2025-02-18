@@ -31,9 +31,7 @@ pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .validator(is_parsable::<usize>)
                 .value_name("MINUTES")
                 .default_value(&default_args.wait_for_restart_window_min_idle_time)
-                .help(
-                    "Minimum time that the validator should not be leader before restarting",
-                ),
+                .help("Minimum time that the validator should not be leader before restarting"),
         )
         .arg(
             Arg::with_name("identity")
@@ -63,7 +61,8 @@ pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .help("Skip health check"),
         )
         .after_help(
-            "Note: If this command exits with a non-zero status then this not a good time for a restart",
+            "Note: If this command exits with a non-zero status then this not a good time for a \
+             restart",
         )
 }
 
@@ -200,7 +199,7 @@ pub fn wait_for_restart_window(
                 if !leader_schedule.is_empty() && upcoming_idle_windows.is_empty() {
                     return Err(format!(
                         "Validator has no idle window of at least {} slots. Largest idle window \
-                       for epoch {} is {} slots",
+                         for epoch {} is {} slots",
                         min_idle_slots, epoch_info.epoch, max_idle_window
                     )
                     .into());
@@ -255,7 +254,7 @@ pub fn wait_for_restart_window(
                                     }
                                     None => format!(
                                         "Validator will be leader soon. Next leader slot is \
-                                       {next_leader_slot}"
+                                         {next_leader_slot}"
                                     ),
                                 })
                             }

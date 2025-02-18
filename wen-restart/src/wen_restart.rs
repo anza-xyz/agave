@@ -139,7 +139,8 @@ impl std::fmt::Display for WenRestartError {
             WenRestartError::FutureSnapshotExists(slot, highest_slot, directory) => {
                 write!(
                     f,
-                    "Future snapshot exists for slot: {slot} highest slot: {highest_slot} in directory: {directory}",
+                    "Future snapshot exists for slot: {slot} highest slot: {highest_slot} in \
+                     directory: {directory}",
                 )
             }
             WenRestartError::GenerateSnapshotWhenOneExists(slot, directory) => {
@@ -154,7 +155,8 @@ impl std::fmt::Display for WenRestartError {
             ) => {
                 write!(
                     f,
-                    "Heaviest fork on coordinator on different fork: heaviest: {coordinator_heaviest_slot} does not include: {should_include_slot}",
+                    "Heaviest fork on coordinator on different fork: heaviest: \
+                     {coordinator_heaviest_slot} does not include: {should_include_slot}",
                 )
             }
             WenRestartError::MalformedLastVotedForkSlotsProtobuf(record) => {
@@ -288,7 +290,10 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
                     old_record,
                     new_record,
                 ) => {
-                    info!("Different LastVotedForkSlots message exists from {from}: {old_record:#?} vs {new_record:#?}");
+                    info!(
+                        "Different LastVotedForkSlots message exists from {from}: {old_record:#?} \
+                         vs {new_record:#?}"
+                    );
                     progress.conflict_message.insert(
                         from,
                         ConflictMessage {
@@ -403,11 +408,15 @@ pub(crate) fn find_heaviest_fork(
         if let Ok(Some(block_meta)) = blockstore.meta(*slot) {
             if block_meta.parent_slot != Some(expected_parent) {
                 if expected_parent == root_slot {
-                    error!("First block {} in repair list not linked to local root {}, this could mean our root is too old",
-                        slot, root_slot);
+                    error!(
+                        "First block {} in repair list not linked to local root {}, this could \
+                         mean our root is too old",
+                        slot, root_slot
+                    );
                 } else {
                     error!(
-                        "Block {} in blockstore is not linked to expected parent from Wen Restart {} but to Block {:?}",
+                        "Block {} in blockstore is not linked to expected parent from Wen Restart \
+                         {} but to Block {:?}",
                         slot, expected_parent, block_meta.parent_slot
                     );
                 }
@@ -756,7 +765,10 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                         .push(record);
                 }
                 HeaviestForkAggregateResult::DifferentVersionExists(old_record, new_record) => {
-                    warn!("Different version from {from} exists old {old_record:#?} vs new {new_record:#?}");
+                    warn!(
+                        "Different version from {from} exists old {old_record:#?} vs new \
+                         {new_record:#?}"
+                    );
                     progress.conflict_message.insert(
                         from,
                         ConflictMessage {
@@ -1127,8 +1139,8 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
             } => {
                 error!(
                     "Wen start finished, please remove --wen_restart and restart with \
-                    --wait-for-supermajority {} --expected-bank-hash {} --expected-shred-version {} \
-                    --no-snapshot-fetch",
+                     --wait-for-supermajority {} --expected-bank-hash {} --expected-shred-version \
+                     {} --no-snapshot-fetch",
                     slot, hash, shred_version,
                 );
                 if config.cluster_info.id() == config.wen_restart_coordinator {
@@ -1305,12 +1317,16 @@ pub(crate) fn initialize(
                                 .take(RestartLastVotedForkSlots::MAX_SLOTS)
                                 .collect();
                     } else {
-                        error!("
-                            Cannot find last voted slot in the tower storage, it either means that this node has never \
-                            voted or the tower storage is corrupted. Unfortunately, since WenRestart is a consensus protocol \
-                            depending on each participant to send their last voted fork slots, your validator cannot participate.\
-                            Please check discord for the conclusion of the WenRestart protocol, then generate a snapshot and use \
-                            --wait-for-supermajority to restart the validator.");
+                        error!(
+                            "
+                            Cannot find last voted slot in the tower storage, it either means that \
+                             this node has never voted or the tower storage is corrupted. \
+                             Unfortunately, since WenRestart is a consensus protocol depending on \
+                             each participant to send their last voted fork slots, your validator \
+                             cannot participate.Please check discord for the conclusion of the \
+                             WenRestart protocol, then generate a snapshot and use \
+                             --wait-for-supermajority to restart the validator."
+                        );
                         return Err(WenRestartError::MissingLastVotedForkSlots.into());
                     }
                 }
@@ -1684,9 +1700,9 @@ mod tests {
                     expected_progress.last_voted_fork_slots_aggregate
                 );
                 panic!(
-                    "wait_on_expected_progress_with_timeout failed to get expected progress {:?} expected {:?}",
-                    &progress,
-                    expected_progress
+                    "wait_on_expected_progress_with_timeout failed to get expected progress {:?} \
+                     expected {:?}",
+                    &progress, expected_progress
                 );
             }
             sleep(Duration::from_millis(10));
@@ -2230,10 +2246,12 @@ mod tests {
                 &test_state.wen_restart_proto_path,
                 VoteTransaction::from(Vote::new(last_voted_fork_slots.clone(), last_vote_bankhash)),
                 test_state.blockstore.clone()
-            ).err()
+            )
+            .err()
             .unwrap()
             .to_string(),
-            "Malformed progress: HeaviestFork missing final_result in last_voted_fork_slots_aggregate",
+            "Malformed progress: HeaviestFork missing final_result in \
+             last_voted_fork_slots_aggregate",
         );
         let progress_missing_my_heaviestfork = WenRestartProgress {
             state: RestartState::GenerateSnapshot.into(),

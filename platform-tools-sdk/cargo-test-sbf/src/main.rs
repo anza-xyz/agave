@@ -108,7 +108,11 @@ pub fn is_version_string(arg: &str) -> Result<(), String> {
     if semver_re.is_match(arg) {
         return Ok(());
     }
-    Err("a version string may start with 'v' and contains major and minor version numbers separated by a dot, e.g. v1.32 or 1.32".to_string())
+    Err(
+        "a version string may start with 'v' and contains major and minor version numbers \
+         separated by a dot, e.g. v1.32 or 1.32"
+            .to_string(),
+    )
 }
 
 fn test_solana_package(

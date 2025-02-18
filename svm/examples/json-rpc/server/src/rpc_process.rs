@@ -887,7 +887,10 @@ fn encode_account<T: ReadableAccount>(
             .unwrap_or(account.data().len())
             > MAX_BASE58_BYTES
     {
-        let message = format!("Encoded binary (base 58) data should be less than {MAX_BASE58_BYTES} bytes, please use Base64 encoding.");
+        let message = format!(
+            "Encoded binary (base 58) data should be less than {MAX_BASE58_BYTES} bytes, please \
+             use Base64 encoding."
+        );
         Err(error::Error {
             code: error::ErrorCode::InvalidRequest,
             message,

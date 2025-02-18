@@ -98,12 +98,20 @@ fn parse_response(
         [b'H', b'T', b'T', b'P'] => {
             let http_response = std::str::from_utf8(body);
             match http_response {
-                Ok(r) => bail!("Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port replying with {r}"),
-                Err(_) => bail!("Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port."),
+                Ok(r) => bail!(
+                    "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port \
+                     replying with {r}"
+                ),
+                Err(_) => bail!(
+                    "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port."
+                ),
             }
         }
         _ => {
-            bail!("Invalid gossip entrypoint. {ip_echo_server_addr} provided unexpected header bytes {response_header:?} ");
+            bail!(
+                "Invalid gossip entrypoint. {ip_echo_server_addr} provided unexpected header \
+                 bytes {response_header:?} "
+            );
         }
     };
     Ok(payload)

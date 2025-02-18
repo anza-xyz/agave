@@ -1060,22 +1060,54 @@ pub mod tests {
     #[test]
     fn test_debug_formatter() {
         let mut bitfield = RollingBitField::new(1);
-        assert_eq!("RollingBitField { max_width: 1, min: 0, max_exclusive: 0, count: 0, bits: \"[false]\", excess: {} }", format!("{bitfield:?}"));
+        assert_eq!(
+            "RollingBitField { max_width: 1, min: 0, max_exclusive: 0, count: 0, bits: \
+             \"[false]\", excess: {} }",
+            format!("{bitfield:?}")
+        );
         bitfield.insert(0);
-        assert_eq!("RollingBitField { max_width: 1, min: 0, max_exclusive: 1, count: 1, bits: \"[true]\", excess: {} }", format!("{bitfield:?}"));
+        assert_eq!(
+            "RollingBitField { max_width: 1, min: 0, max_exclusive: 1, count: 1, bits: \
+             \"[true]\", excess: {} }",
+            format!("{bitfield:?}")
+        );
         let mut bitfield = RollingBitField::new(2);
-        assert_eq!("RollingBitField { max_width: 2, min: 0, max_exclusive: 0, count: 0, bits: \"[false;2]\", excess: {} }", format!("{bitfield:?}"));
+        assert_eq!(
+            "RollingBitField { max_width: 2, min: 0, max_exclusive: 0, count: 0, bits: \
+             \"[false;2]\", excess: {} }",
+            format!("{bitfield:?}")
+        );
         bitfield.insert(0);
-        assert_eq!("RollingBitField { max_width: 2, min: 0, max_exclusive: 1, count: 1, bits: \"[true, false]\", excess: {} }", format!("{bitfield:?}"));
+        assert_eq!(
+            "RollingBitField { max_width: 2, min: 0, max_exclusive: 1, count: 1, bits: \"[true, \
+             false]\", excess: {} }",
+            format!("{bitfield:?}")
+        );
         bitfield.insert(1);
-        assert_eq!("RollingBitField { max_width: 2, min: 0, max_exclusive: 2, count: 2, bits: \"[true;2]\", excess: {} }", format!("{bitfield:?}"));
+        assert_eq!(
+            "RollingBitField { max_width: 2, min: 0, max_exclusive: 2, count: 2, bits: \
+             \"[true;2]\", excess: {} }",
+            format!("{bitfield:?}")
+        );
         let mut bitfield = RollingBitField::new(4096);
-        assert_eq!("RollingBitField { max_width: 4096, min: 0, max_exclusive: 0, count: 0, bits: \"[false;4096]\", excess: {} }", format!("{bitfield:?}"));
+        assert_eq!(
+            "RollingBitField { max_width: 4096, min: 0, max_exclusive: 0, count: 0, bits: \
+             \"[false;4096]\", excess: {} }",
+            format!("{bitfield:?}")
+        );
         bitfield.insert(4095);
-        assert_eq!("RollingBitField { max_width: 4096, min: 4095, max_exclusive: 4096, count: 1, bits: \"[false;4095, true]\", excess: {} }", format!("{bitfield:?}"));
+        assert_eq!(
+            "RollingBitField { max_width: 4096, min: 4095, max_exclusive: 4096, count: 1, bits: \
+             \"[false;4095, true]\", excess: {} }",
+            format!("{bitfield:?}")
+        );
         bitfield.clear();
         bitfield.insert(2);
         bitfield.insert(3);
-        assert_eq!("RollingBitField { max_width: 4096, min: 2, max_exclusive: 4, count: 2, bits: \"[false;2, true;2, false;4092]\", excess: {} }", format!("{bitfield:?}"));
+        assert_eq!(
+            "RollingBitField { max_width: 4096, min: 2, max_exclusive: 4, count: 2, bits: \
+             \"[false;2, true;2, false;4092]\", excess: {} }",
+            format!("{bitfield:?}")
+        );
     }
 }

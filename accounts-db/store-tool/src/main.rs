@@ -130,7 +130,8 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
             println!("{account:?}");
         } else {
             println!(
-                "{:#0offset_width$x}: {:44}, owner: {:44}, data size: {:data_size_width$}, lamports: {}",
+                "{:#0offset_width$x}: {:44}, owner: {:44}, data size: {:data_size_width$}, \
+                 lamports: {}",
                 account.offset(),
                 account.pubkey().to_string(),
                 account.owner().to_string(),
@@ -197,7 +198,8 @@ fn do_search(
                     println!("storage: {}, {account:?}", file_name.display());
                 } else {
                     println!(
-                        "storage: {}, offset: {}, pubkey: {}, owner: {}, data size: {}, lamports: {}",
+                        "storage: {}, offset: {}, pubkey: {}, owner: {}, data size: {}, lamports: \
+                         {}",
                         file_name.display(),
                         account.offset(),
                         account.pubkey(),

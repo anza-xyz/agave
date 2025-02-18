@@ -218,17 +218,17 @@ fn get_shred_config_from_ledger(
         let ending_epoch = epoch_schedule.get_epoch(ending_slot);
         if starting_epoch != ending_epoch {
             eprintln!(
-                "The specified --starting-slot and --ending-slot must be in the\
-                same epoch. --starting-slot {starting_slot} is in epoch {starting_epoch},\
-                but --ending-slot {ending_slot} is in epoch {ending_epoch}."
+                "The specified --starting-slot and --ending-slot must be in thesame epoch. \
+                 --starting-slot {starting_slot} is in epoch {starting_epoch},but --ending-slot \
+                 {ending_slot} is in epoch {ending_epoch}."
             );
             exit(1);
         }
         if starting_epoch != working_bank_epoch {
             eprintln!(
-                "The range of slots between --starting-slot and --ending-slot are in a \
-                different epoch than the working bank. The specified range is in epoch \
-                {starting_epoch}, but the working bank is in {working_bank_epoch}."
+                "The range of slots between --starting-slot and --ending-slot are in a different \
+                 epoch than the working bank. The specified range is in epoch {starting_epoch}, \
+                 but the working bank is in {working_bank_epoch}."
             );
             exit(1);
         }
@@ -1090,9 +1090,9 @@ impl BigTableSubCommand for App<'_, '_> {
                 .subcommand(
                     SubCommand::with_name("shreds")
                         .about(
-                            "Get confirmed blocks from BigTable, reassemble the transactions \
-                            and entries, shred the block and then insert the shredded blocks into \
-                            the local Blockstore",
+                            "Get confirmed blocks from BigTable, reassemble the transactions and \
+                             entries, shred the block and then insert the shredded blocks into \
+                             the local Blockstore",
                         )
                         .arg(load_genesis_arg())
                         .args(&snapshot_args())
@@ -1120,9 +1120,9 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .takes_value(false)
                                 .help(
                                     "For slots where PoH entries are unavailable, allow the \
-                                    generation of mock PoH entries. The mock PoH entries enable \
-                                    the shredded block(s) to be replayable if PoH verification is \
-                                    disabled.",
+                                     generation of mock PoH entries. The mock PoH entries enable \
+                                     the shredded block(s) to be replayable if PoH verification \
+                                     is disabled.",
                                 ),
                         )
                         .arg(
@@ -1133,7 +1133,7 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .conflicts_with("allow_mock_poh")
                                 .help(
                                     "The version to encode in created shreds. Specifying this \
-                                    value will avoid determining the value from a rebuilt Bank.",
+                                     value will avoid determining the value from a rebuilt Bank.",
                                 ),
                         ),
                 )
@@ -1182,9 +1182,9 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .validator(is_slot)
                                 .default_value("1000")
                                 .help(
-                                    "Number of transaction signatures to query at once. \
-                                     Smaller: more responsive/lower throughput. \
-                                     Larger: less responsive/higher throughput",
+                                    "Number of transaction signatures to query at once. Smaller: \
+                                     more responsive/lower throughput. Larger: less \
+                                     responsive/higher throughput",
                                 ),
                         )
                         .arg(
@@ -1437,7 +1437,7 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
             if starting_slot > ending_slot {
                 eprintln!(
                     "The specified --starting-slot {starting_slot} must be less than or equal to \
-                    the specified --ending-slot {ending_slot}."
+                     the specified --ending-slot {ending_slot}."
                 );
                 exit(1);
             }

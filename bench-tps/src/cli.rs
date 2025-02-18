@@ -123,7 +123,8 @@ impl Default for Config {
 
 /// Defines and builds the CLI args for a run of the benchmark
 pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
-    App::new(crate_name!()).about(crate_description!())
+    App::new(crate_name!())
+        .about(crate_description!())
         .version(version)
         .arg({
             let arg = Arg::with_name("config_file")
@@ -148,8 +149,8 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .global(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): \
-                       [mainnet-beta, testnet, devnet, localhost]",
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                     testnet, devnet, localhost]",
                 ),
         )
         .arg(
@@ -169,9 +170,10 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .conflicts_with("rpc_client")
                 .requires("tpu_addr")
                 .hidden(hidden_unless_forced())
-                .help("Specify custom rpc_addr to create thin_client. \
-                    Note: ThinClient is deprecated. Argument will not be used. \
-                    Use tpc_client or rpc_client instead"),
+                .help(
+                    "Specify custom rpc_addr to create thin_client. Note: ThinClient is \
+                     deprecated. Argument will not be used. Use tpc_client or rpc_client instead",
+                ),
         )
         .arg(
             Arg::with_name("tpu_addr")
@@ -181,9 +183,10 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .takes_value(true)
                 .requires("rpc_addr")
                 .hidden(hidden_unless_forced())
-                .help("Specify custom tpu_addr to create thin_client. \
-                    Note: ThinClient is deprecated. Argument will not be used. \
-                    Use tpc_client or rpc_client instead"),
+                .help(
+                    "Specify custom tpu_addr to create thin_client. Note: ThinClient is \
+                     deprecated. Argument will not be used. Use tpc_client or rpc_client instead",
+                ),
         )
         .arg(
             Arg::with_name("entrypoint")
@@ -192,9 +195,11 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .value_name("HOST:PORT")
                 .takes_value(true)
                 .hidden(hidden_unless_forced())
-                .help("Rendezvous with the cluster at this entry point; defaults to 127.0.0.1:8001. \
-                    Note: ThinClient is deprecated. Argument will not be used. \
-                    Use tpc_client or rpc_client instead"),
+                .help(
+                    "Rendezvous with the cluster at this entry point; defaults to 127.0.0.1:8001. \
+                     Note: ThinClient is deprecated. Argument will not be used. Use tpc_client or \
+                     rpc_client instead",
+                ),
         )
         .arg(
             Arg::with_name("faucet")
@@ -213,7 +218,6 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .takes_value(true)
                 .hidden(hidden_unless_forced())
                 .help("Deprecated. Use --authority instead"),
-
         )
         .arg(
             Arg::with_name("authority")
@@ -221,7 +225,9 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .long("authority")
                 .value_name("PATH")
                 .takes_value(true)
-                .help("File containing a client authority (keypair) to fund participating accounts"),
+                .help(
+                    "File containing a client authority (keypair) to fund participating accounts",
+                ),
         )
         .arg(
             Arg::with_name("num-nodes")
@@ -230,9 +236,10 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .value_name("NUM")
                 .takes_value(true)
                 .hidden(hidden_unless_forced())
-                .help("Wait for NUM nodes to converge. \
-                    Note: ThinClient is deprecated. Argument will not be used. \
-                    Use tpc_client or rpc_client instead"),
+                .help(
+                    "Wait for NUM nodes to converge. Note: ThinClient is deprecated. Argument \
+                     will not be used. Use tpc_client or rpc_client instead",
+                ),
         )
         .arg(
             Arg::with_name("threads")
@@ -249,18 +256,19 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .takes_value(true)
                 .help("Seconds to run benchmark, then exit; default is forever"),
         )
-        .arg(
-            Arg::with_name("sustained")
-                .long("sustained")
-                .help("Use sustained performance mode vs. peak mode. This overlaps the tx generation with transfers."),
-        )
+        .arg(Arg::with_name("sustained").long("sustained").help(
+            "Use sustained performance mode vs. peak mode. This overlaps the tx generation with \
+             transfers.",
+        ))
         .arg(
             Arg::with_name("no-multi-client")
                 .long("no-multi-client")
                 .hidden(hidden_unless_forced())
-                .help("Disable multi-client support, only transact with the entrypoint. \
-                    Note: ThinClient is deprecated. Flag will not be used. \
-                    Use tpc_client or rpc_client instead"),
+                .help(
+                    "Disable multi-client support, only transact with the entrypoint. Note: \
+                     ThinClient is deprecated. Flag will not be used. Use tpc_client or \
+                     rpc_client instead",
+                ),
         )
         .arg(
             Arg::with_name("target_node")
@@ -269,9 +277,10 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .takes_value(true)
                 .value_name("PUBKEY")
                 .hidden(hidden_unless_forced())
-                .help("Specify an exact node to send transactions to. \
-                    Note: ThinClient is deprecated. Argument will not be used. \
-                    Use tpc_client or rpc_client instead"),
+                .help(
+                    "Specify an exact node to send transactions to. Note: ThinClient is \
+                     deprecated. Argument will not be used. Use tpc_client or rpc_client instead",
+                ),
         )
         .arg(
             Arg::with_name("tx_count")
@@ -279,14 +288,14 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .alias("tx_count")
                 .value_name("NUM")
                 .takes_value(true)
-                .help("Number of transactions to send per batch")
+                .help("Number of transactions to send per batch"),
         )
         .arg(
             Arg::with_name("keypair_multiplier")
                 .long("keypair-multiplier")
                 .value_name("NUM")
                 .takes_value(true)
-                .help("Multiply by transaction count to determine number of keypairs to create")
+                .help("Multiply by transaction count to determine number of keypairs to create"),
         )
         .arg(
             Arg::with_name("thread-batch-sleep-ms")
@@ -316,8 +325,8 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .value_name("LAMPORTS")
                 .takes_value(true)
                 .help(
-                    "The cost in lamports that the cluster will charge for signature \
-                     verification when the cluster is operating at target-signatures-per-slot",
+                    "The cost in lamports that the cluster will charge for signature verification \
+                     when the cluster is operating at target-signatures-per-slot",
                 ),
         )
         .arg(
@@ -325,51 +334,52 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .long("num-lamports-per-account")
                 .value_name("LAMPORTS")
                 .takes_value(true)
-                .help(
-                    "Number of lamports per account.",
-                ),
+                .help("Number of lamports per account."),
         )
         .arg(
             Arg::with_name("target_slots_per_epoch")
                 .long("target-slots-per-epoch")
                 .value_name("SLOTS")
                 .takes_value(true)
-                .help(
-                    "Wait until epochs are this many slots long.",
-                ),
+                .help("Wait until epochs are this many slots long."),
         )
         .arg(
             Arg::with_name("rpc_client")
                 .long("use-rpc-client")
                 .conflicts_with("tpu_client")
                 .takes_value(false)
-                .help("Submit transactions with a RpcClient")
+                .help("Submit transactions with a RpcClient"),
         )
         .arg(
             Arg::with_name("tpu_client")
                 .long("use-tpu-client")
                 .conflicts_with("rpc_client")
                 .takes_value(false)
-                .help("Submit transactions with a TpuClient")
+                .help("Submit transactions with a TpuClient"),
         )
         .arg(
             Arg::with_name("tpu_disable_quic")
                 .long("tpu-disable-quic")
                 .takes_value(false)
-                .help("Do not submit transactions via QUIC; only affects TpuClient (default) sends"),
+                .help(
+                    "Do not submit transactions via QUIC; only affects TpuClient (default) sends",
+                ),
         )
         .arg(
             Arg::with_name("tpu_connection_pool_size")
                 .long("tpu-connection-pool-size")
                 .takes_value(true)
-                .help("Controls the connection pool size per remote address; only affects TpuClient (default) sends"),
+                .help(
+                    "Controls the connection pool size per remote address; only affects TpuClient \
+                     (default) sends",
+                ),
         )
         .arg(
             Arg::with_name("compute_unit_price")
-            .long("compute-unit-price")
-            .takes_value(true)
-            .validator(|s| is_within_range(s, 0..))
-            .help("Sets constant compute-unit-price to transfer transactions"),
+                .long("compute-unit-price")
+                .takes_value(true)
+                .validator(|s| is_within_range(s, 0..))
+                .help("Sets constant compute-unit-price to transfer transactions"),
         )
         .arg(
             Arg::with_name("use_randomized_compute_unit_price")
@@ -396,20 +406,29 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .requires("instruction_padding_data_size")
                 .takes_value(true)
                 .value_name("PUBKEY")
-                .help("If instruction data is padded, optionally specify the padding program id to target"),
+                .help(
+                    "If instruction data is padded, optionally specify the padding program id to \
+                     target",
+                ),
         )
         .arg(
             Arg::with_name("instruction_padding_data_size")
                 .long("instruction-padding-data-size")
                 .takes_value(true)
-                .help("If set, wraps all instructions in the instruction padding program, with the given amount of padding bytes in instruction data."),
+                .help(
+                    "If set, wraps all instructions in the instruction padding program, with the \
+                     given amount of padding bytes in instruction data.",
+                ),
         )
         .arg(
             Arg::with_name("num_conflict_groups")
                 .long("num-conflict-groups")
                 .takes_value(true)
                 .validator(|arg| is_within_range(arg, 1..))
-                .help("The number of unique destination accounts per transactions 'chunk'. Lower values will result in more transaction conflicts.")
+                .help(
+                    "The number of unique destination accounts per transactions 'chunk'. Lower \
+                     values will result in more transaction conflicts.",
+                ),
         )
         .arg(
             Arg::with_name("bind_address")
@@ -427,7 +446,10 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .takes_value(true)
                 .requires("json_rpc_url")
                 .validator(is_keypair)
-                .help("File containing the node identity (keypair) of a validator with active stake. This allows communicating with network using staked connection"),
+                .help(
+                    "File containing the node identity (keypair) of a validator with active \
+                     stake. This allows communicating with network using staked connection",
+                ),
         )
         .arg(
             Arg::with_name("commitment_config")
@@ -450,8 +472,8 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .value_name("FILENAME")
                 .takes_value(true)
                 .help(
-                    "File to save details about all the submitted transactions.\
-                    This option is useful for debug purposes."
+                    "File to save details about all the submitted transactions.This option is \
+                     useful for debug purposes.",
                 ),
         )
 }

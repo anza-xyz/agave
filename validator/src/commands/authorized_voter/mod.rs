@@ -22,11 +22,13 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
                         .takes_value(true)
                         .validator(is_keypair)
                         .help(
-                            "Path to keypair of the authorized voter to add [default: read JSON keypair from stdin]",
+                            "Path to keypair of the authorized voter to add [default: read JSON \
+                             keypair from stdin]",
                         ),
                 )
                 .after_help(
-                    "Note: the new authorized voter only applies to the currently running validator instance",
+                    "Note: the new authorized voter only applies to the currently running \
+                     validator instance",
                 ),
         )
         .subcommand(

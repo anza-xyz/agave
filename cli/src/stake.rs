@@ -755,8 +755,8 @@ impl StakeSubCommands for App<'_, '_> {
                         .default_value_if("with_rewards", None, "1")
                         .requires("with_rewards")
                         .help(
-                            "Display rewards for NUM recent epochs, max 10 \
-                            [default: latest epoch only]",
+                            "Display rewards for NUM recent epochs, max 10 [default: latest epoch \
+                             only]",
                         ),
                 ),
         )
@@ -2003,8 +2003,8 @@ pub fn process_split_stake(
             let lamports = Sol(lamports);
             let stake_minimum_delegation = Sol(stake_minimum_delegation);
             return Err(CliError::BadParameter(format!(
-                "need at least {stake_minimum_delegation} for minimum stake delegation, \
-                 provided: {lamports}"
+                "need at least {stake_minimum_delegation} for minimum stake delegation, provided: \
+                 {lamports}"
             ))
             .into());
         }
@@ -2017,7 +2017,8 @@ pub fn process_split_stake(
                 owner if owner == system_program::id() => {
                     if !account.data.is_empty() {
                         Err(CliError::BadParameter(format!(
-                            "Account {split_stake_account_address} has data and cannot be used to split stake"
+                            "Account {split_stake_account_address} has data and cannot be used to \
+                             split stake"
                         )))
                     } else {
                         // if `stake_account`'s owner is the system_program and its data is
@@ -2026,8 +2027,9 @@ pub fn process_split_stake(
                     }
                 }
                 _ => Err(CliError::BadParameter(format!(
-                    "Account {split_stake_account_address} already exists and cannot be used to split stake"
-                )))
+                    "Account {split_stake_account_address} already exists and cannot be used to \
+                     split stake"
+                ))),
             }
         };
         let current_balance =

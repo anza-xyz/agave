@@ -191,7 +191,8 @@ fn check_and_filter_proposed_vote_state(
                         root_to_check = None;
                     } else {
                         proposed_lockouts_index = proposed_lockouts_index.checked_add(1).expect(
-                            "`proposed_lockouts_index` is bounded by `MAX_LOCKOUT_HISTORY` when `proposed_vote_slot` is too old to be in SlotHashes history",
+                            "`proposed_lockouts_index` is bounded by `MAX_LOCKOUT_HISTORY` when \
+                             `proposed_vote_slot` is too old to be in SlotHashes history",
                         );
                     }
                     continue;
@@ -208,9 +209,10 @@ fn check_and_filter_proposed_vote_state(
             }
             Ordering::Greater => {
                 // Decrement `slot_hashes_index` to find newer slots in the SlotHashes history
-                slot_hashes_index = slot_hashes_index
-                    .checked_sub(1)
-                    .expect("`slot_hashes_index` is positive when finding newer slots in SlotHashes history");
+                slot_hashes_index = slot_hashes_index.checked_sub(1).expect(
+                    "`slot_hashes_index` is positive when finding newer slots in SlotHashes \
+                     history",
+                );
                 continue;
             }
             Ordering::Equal => {
@@ -220,9 +222,10 @@ fn check_and_filter_proposed_vote_state(
                 if root_to_check.is_some() {
                     root_to_check = None;
                 } else {
-                    proposed_lockouts_index = proposed_lockouts_index
-                        .checked_add(1)
-                        .expect("`proposed_lockouts_index` is bounded by `MAX_LOCKOUT_HISTORY` when match is found in SlotHashes history");
+                    proposed_lockouts_index = proposed_lockouts_index.checked_add(1).expect(
+                        "`proposed_lockouts_index` is bounded by `MAX_LOCKOUT_HISTORY` when match \
+                         is found in SlotHashes history",
+                    );
                     slot_hashes_index = slot_hashes_index.checked_sub(1).expect(
                         "`slot_hashes_index` is positive when match is found in SlotHashes history",
                     );
@@ -291,9 +294,10 @@ fn check_and_filter_proposed_vote_state(
             true
         };
 
-        proposed_lockouts_index = proposed_lockouts_index
-            .checked_add(1)
-            .expect("`proposed_lockouts_index` is bounded by `MAX_LOCKOUT_HISTORY` when filtering out irrelevant votes");
+        proposed_lockouts_index = proposed_lockouts_index.checked_add(1).expect(
+            "`proposed_lockouts_index` is bounded by `MAX_LOCKOUT_HISTORY` when filtering out \
+             irrelevant votes",
+        );
         should_retain
     });
 
@@ -501,9 +505,10 @@ pub fn process_new_vote_state(
                 earned_credits = earned_credits
                     .checked_add(vote_state.credits_for_vote_at_index(current_vote_state_index))
                     .expect("`earned_credits` does not overflow");
-                current_vote_state_index = current_vote_state_index
-                    .checked_add(1)
-                    .expect("`current_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when processing new root");
+                current_vote_state_index = current_vote_state_index.checked_add(1).expect(
+                    "`current_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when \
+                     processing new root",
+                );
                 continue;
             }
 
@@ -544,9 +549,10 @@ pub fn process_new_vote_state(
                 if current_vote.lockout.last_locked_out_slot() >= new_vote.slot() {
                     return Err(VoteError::LockoutConflict);
                 }
-                current_vote_state_index = current_vote_state_index
-                    .checked_add(1)
-                    .expect("`current_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when slot is less than proposed");
+                current_vote_state_index = current_vote_state_index.checked_add(1).expect(
+                    "`current_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when slot is \
+                     less than proposed",
+                );
             }
             Ordering::Equal => {
                 // The new vote state should never have less lockout than
@@ -558,17 +564,20 @@ pub fn process_new_vote_state(
                 // Copy the vote slot latency in from the current state to the new state
                 new_vote.latency = vote_state.votes[current_vote_state_index].latency;
 
-                current_vote_state_index = current_vote_state_index
-                    .checked_add(1)
-                    .expect("`current_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when slot is equal to proposed");
-                new_vote_state_index = new_vote_state_index
-                    .checked_add(1)
-                    .expect("`new_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when slot is equal to proposed");
+                current_vote_state_index = current_vote_state_index.checked_add(1).expect(
+                    "`current_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when slot is \
+                     equal to proposed",
+                );
+                new_vote_state_index = new_vote_state_index.checked_add(1).expect(
+                    "`new_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when slot is \
+                     equal to proposed",
+                );
             }
             Ordering::Greater => {
-                new_vote_state_index = new_vote_state_index
-                    .checked_add(1)
-                    .expect("`new_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when slot is greater than proposed");
+                new_vote_state_index = new_vote_state_index.checked_add(1).expect(
+                    "`new_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when slot is \
+                     greater than proposed",
+                );
             }
         }
     }

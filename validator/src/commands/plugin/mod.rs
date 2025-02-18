@@ -12,17 +12,14 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
         .subcommand(SubCommand::with_name("list").about("List all current running gesyer plugins"))
         .subcommand(
             SubCommand::with_name("unload")
-                .about(
-                    "Unload a particular gesyer plugin. You must specify the gesyer \
-               plugin name",
-                )
+                .about("Unload a particular gesyer plugin. You must specify the gesyer plugin name")
                 .arg(Arg::with_name("name").required(true).takes_value(true)),
         )
         .subcommand(
             SubCommand::with_name("reload")
                 .about(
-                    "Reload a particular gesyer plugin. You must specify the gesyer \
-               plugin name and the new config path",
+                    "Reload a particular gesyer plugin. You must specify the gesyer plugin name \
+                     and the new config path",
                 )
                 .arg(Arg::with_name("name").required(true).takes_value(true))
                 .arg(Arg::with_name("config").required(true).takes_value(true)),
@@ -31,7 +28,7 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
             SubCommand::with_name("load")
                 .about(
                     "Load a new gesyer plugin. You must specify the config path. Fails if \
-               overwriting (use reload)",
+                     overwriting (use reload)",
                 )
                 .arg(Arg::with_name("config").required(true).takes_value(true)),
         )

@@ -1878,8 +1878,7 @@ impl Blockstore {
                 shred.clone().into_payload(),
             ) {
                 warn!(
-                    "Unable to store conflicting merkle root duplicate proof for {slot} \
-                     {:?} {e}",
+                    "Unable to store conflicting merkle root duplicate proof for {slot} {:?} {e}",
                     shred.erasure_set(),
                 );
             }
@@ -2026,10 +2025,10 @@ impl Blockstore {
                 .map(Cow::into_owned)
         else {
             warn!(
-                "Shred {prev_shred_id:?} indicated by the erasure meta {prev_erasure_meta:?} \
-                 is missing from blockstore. This can happen if you have recently upgraded \
-                 from a version < v1.18.13, or if blockstore cleanup has caught up to the root. \
-                 Skipping the backwards chained merkle root consistency check"
+                "Shred {prev_shred_id:?} indicated by the erasure meta {prev_erasure_meta:?} is \
+                 missing from blockstore. This can happen if you have recently upgraded from a \
+                 version < v1.18.13, or if blockstore cleanup has caught up to the root. Skipping \
+                 the backwards chained merkle root consistency check"
             );
             return true;
         };
@@ -2040,7 +2039,8 @@ impl Blockstore {
             warn!(
                 "Received conflicting chained merkle roots for slot: {slot}, shred {:?} type {:?} \
                  chains to merkle root {chained_merkle_root:?}, however previous fec set coding \
-                 shred {prev_erasure_set:?} has merkle root {merkle_root:?}. Reporting as duplicate",
+                 shred {prev_erasure_set:?} has merkle root {merkle_root:?}. Reporting as \
+                 duplicate",
                 shred.erasure_set(),
                 shred.shred_type(),
             );
@@ -3856,7 +3856,11 @@ impl Blockstore {
         #[cfg(test)]
         const_assert_eq!(MINIMUM_INDEX, 31);
         let Some(start_index) = last_shred_index.checked_sub(MINIMUM_INDEX) else {
-            warn!("Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} required", last_shred_index + 1);
+            warn!(
+                "Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} \
+                 required",
+                last_shred_index + 1
+            );
             return Ok(LastFECSetCheckResults {
                 last_fec_set_merkle_root: None,
                 is_retransmitter_signed: false,
