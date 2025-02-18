@@ -76,8 +76,7 @@ pub fn main() {
             Ok(())
         }
         ("repair-shred-from-peer", Some(subcommand_matches)) => {
-            commands::repair_shred_from_peer::execute(subcommand_matches, &ledger_path);
-            Ok(())
+            commands::repair_shred_from_peer::execute(subcommand_matches, &ledger_path)
         }
         ("repair-whitelist", Some(repair_whitelist_subcommand_matches)) => {
             commands::repair_whitelist::execute(repair_whitelist_subcommand_matches, &ledger_path);

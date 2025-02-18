@@ -3,7 +3,7 @@ use {
     clap::{value_t, value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::{is_parsable, is_pubkey},
     solana_sdk::pubkey::Pubkey,
-    std::{path::Path, process::exit},
+    std::path::Path,
 };
 
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
@@ -36,7 +36,7 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     let pubkey = value_t!(matches, "pubkey", Pubkey).ok();
     let slot = value_t_or_exit!(matches, "slot", u64);
     let shred_index = value_t_or_exit!(matches, "shred", u64);
@@ -48,8 +48,5 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
                 .repair_shred_from_peer(pubkey, slot, shred_index)
                 .await
         })
-        .unwrap_or_else(|err| {
-            println!("repair shred from peer failed: {err}");
-            exit(1);
-        });
+        .map_err(|err| format!("repair shred from peer request failed: {err}"))
 }
