@@ -1,0 +1,13 @@
+[package]
+name = "solana-url-moniker"
+description = "Solana cluster URL moniker definitions"
+documentation = "https://docs.rs/solana-url-moniker"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

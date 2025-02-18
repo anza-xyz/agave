@@ -6743,9 +6743,11 @@ dependencies = [
  "solana-pubkey",
  "solana-remote-wallet",
  "solana-seed-phrase",
+ "solana-sign-only",
  "solana-signature",
  "solana-signer",
  "solana-system-interface",
+ "solana-url-moniker",
  "tempfile",
  "thiserror 2.0.11",
  "tiny-bip39",
@@ -6774,9 +6776,11 @@ dependencies = [
  "solana-remote-wallet",
  "solana-seed-derivable",
  "solana-seed-phrase",
+ "solana-sign-only",
  "solana-signature",
  "solana-signer",
  "solana-system-interface",
+ "solana-url-moniker",
  "solana-zk-token-sdk",
  "tempfile",
  "thiserror 2.0.11",
@@ -6889,8 +6893,8 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_yaml 0.9.34+deprecated",
- "solana-clap-utils",
  "solana-commitment-config",
+ "solana-url-moniker",
  "url 2.5.4",
 ]
 
@@ -6913,7 +6917,6 @@ dependencies = [
  "solana-account",
  "solana-account-decoder",
  "solana-bincode",
- "solana-clap-utils",
  "solana-cli-config",
  "solana-clock",
  "solana-epoch-info",
@@ -6927,6 +6930,7 @@ dependencies = [
  "solana-reserved-account-keys",
  "solana-rpc-client-api",
  "solana-sdk-ids",
+ "solana-sign-only",
  "solana-signature",
  "solana-signer",
  "solana-system-interface",
@@ -9663,6 +9667,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sign-only"
+version = "2.2.0"
+dependencies = [
+ "solana-hash",
+ "solana-presigner",
+ "solana-pubkey",
+ "solana-signature",
+]
+
+[[package]]
 name = "solana-signature"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10659,6 +10673,10 @@ dependencies = [
  "serde_json",
  "solana-metrics",
 ]
+
+[[package]]
+name = "solana-url-moniker"
+version = "2.2.0"
 
 [[package]]
 name = "solana-validator-exit"

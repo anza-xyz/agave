@@ -5463,8 +5463,10 @@ dependencies = [
  "solana-pubkey",
  "solana-remote-wallet",
  "solana-seed-phrase",
+ "solana-sign-only",
  "solana-signature",
  "solana-signer",
+ "solana-url-moniker",
  "thiserror 2.0.11",
  "tiny-bip39",
  "uriparse",
@@ -5480,8 +5482,8 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_yaml",
- "solana-clap-utils",
  "solana-commitment-config",
+ "solana-url-moniker",
  "url 2.5.4",
 ]
 
@@ -5503,7 +5505,6 @@ dependencies = [
  "solana-account",
  "solana-account-decoder",
  "solana-bincode",
- "solana-clap-utils",
  "solana-cli-config",
  "solana-clock",
  "solana-epoch-info",
@@ -5516,6 +5517,7 @@ dependencies = [
  "solana-reserved-account-keys",
  "solana-rpc-client-api",
  "solana-sdk-ids",
+ "solana-sign-only",
  "solana-signature",
  "solana-system-interface",
  "solana-sysvar",
@@ -8186,6 +8188,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sign-only"
+version = "2.2.0"
+dependencies = [
+ "solana-hash",
+ "solana-presigner",
+ "solana-pubkey",
+ "solana-signature",
+]
+
+[[package]]
 name = "solana-signature"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8915,6 +8927,10 @@ dependencies = [
  "trait-set",
  "vec_extract_if_polyfill",
 ]
+
+[[package]]
+name = "solana-url-moniker"
+version = "2.2.0"
 
 [[package]]
 name = "solana-validator-exit"

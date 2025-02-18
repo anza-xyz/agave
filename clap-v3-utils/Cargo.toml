@@ -27,8 +27,10 @@ solana-pubkey = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-seed-derivable = { workspace = true }
 solana-seed-phrase = { workspace = true }
+solana-sign-only = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
+solana-url-moniker = { workspace = true }
 solana-zk-token-sdk = { workspace = true }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }

@@ -24,7 +24,6 @@ serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-bincode = { workspace = true }
-solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-info = { workspace = true, features = ["serde"] }
@@ -37,6 +36,7 @@ solana-pubkey = { workspace = true }
 solana-reserved-account-keys = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-sign-only = { workspace = true }
 solana-signature = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }

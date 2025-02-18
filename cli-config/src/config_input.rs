@@ -1,6 +1,6 @@
 use {
-    crate::Config, solana_clap_utils::input_validators::normalize_to_url_if_moniker,
-    solana_commitment_config::CommitmentConfig, std::str::FromStr,
+    crate::Config, solana_commitment_config::CommitmentConfig,
+    solana_url_moniker::normalize_to_url_if_moniker, std::str::FromStr,
 };
 
 pub enum SettingType {
