@@ -338,13 +338,13 @@ impl CacheHashData {
         let work_in_progress_file_full_path = self
             .cache_dir
             .join(Self::get_work_in_progress_file_name(file_name.as_ref()));
-        Self::save_internal(work_in_progress_file_full_path, data, &self.stats)?;
+        Self::save_internal(&work_in_progress_file_full_path, data, self.stats.clone())?;
         // Rename the file to remove the ".in-progress" suffix after the file
         // has been successfully written. This is done to ensure that the file is
         // not read before it has been completely written. For example, if the
         // validator was stopped or crashed in the middle of writing the file, the file
         // would be incomplete and would not be read by the validator on next restart.
-        self.rename_in_progress_file(file_name)
+        fs::rename(work_in_progress_file_full_path, cache_path)
     }
 
     fn get_work_in_progress_file_name(file_name: impl AsRef<Path>) -> PathBuf {
@@ -353,19 +353,10 @@ impl CacheHashData {
         s.into()
     }
 
-    fn rename_in_progress_file(&self, file_name: impl AsRef<Path>) -> Result<(), std::io::Error> {
-        let work_in_progress_file_full_path = self
-            .cache_dir
-            .join(Self::get_work_in_progress_file_name(&file_name));
-        let complete_file_full_path = self.cache_dir.join(&file_name);
-        fs::rename(&work_in_progress_file_full_path, complete_file_full_path)?;
-        Ok(())
-    }
-
     fn save_internal(
         in_progress_cache_file_full_path: impl AsRef<Path>,
         data: &SavedTypeSlice,
-        stats: &Arc<CacheHashDataStats>,
+        stats: Arc<CacheHashDataStats>,
     ) -> Result<(), std::io::Error> {
         let mut m = Measure::start("save");
         let _ignored = remove_file(&in_progress_cache_file_full_path);
