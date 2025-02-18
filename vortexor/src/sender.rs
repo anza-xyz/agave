@@ -125,10 +125,14 @@ impl PacketBatchSender {
 
         while let Ok(message) = packet_batch_receiver.try_recv() {
             let packet_batches = &message;
+<<<<<<< HEAD
             trace!(
                 "Got more packet batches in packet receiver: {}",
                 packet_batches.len()
             );
+=======
+            trace!("got more packet batches in packet receiver");
+>>>>>>> 4528f3bb00 (clippy issue)
             num_packets_received
                 .checked_add(
                     packet_batches
