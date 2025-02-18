@@ -111,7 +111,7 @@ impl PacketBatchSender {
 
         let message = packet_batch_receiver.recv_timeout(recv_timeout)?;
         let packet_batches = &message;
-        let mut num_packets_received = packet_batches
+        let num_packets_received = packet_batches
             .iter()
             .map(|batch| batch.len())
             .sum::<usize>();
@@ -120,10 +120,14 @@ impl PacketBatchSender {
         while let Ok(message) = packet_batch_receiver.try_recv() {
             let packet_batches = &message;
             trace!("got more packet batches in packet receiver");
-            num_packets_received += packet_batches
-                .iter()
-                .map(|batch| batch.len())
-                .sum::<usize>();
+            num_packets_received
+                .checked_add(
+                    packet_batches
+                        .iter()
+                        .map(|batch| batch.len())
+                        .sum::<usize>(),
+                )
+                .unwrap();
             messages.push(message);
 
             if start.elapsed() >= recv_timeout || num_packets_received >= batch_size {
