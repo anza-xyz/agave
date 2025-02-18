@@ -1,7 +1,7 @@
 use {
     crate::{admin_rpc_service, cli::DefaultArgs},
     clap::{App, Arg, ArgMatches, SubCommand},
-    std::{path::Path, process::exit},
+    std::path::Path,
 };
 
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
@@ -21,13 +21,8 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
-    if !matches.is_present("path") {
-        println!("staked-nodes-overrides requires argument of location of the configuration");
-        exit(1);
-    }
-
-    let path = matches.value_of("path").unwrap();
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+    let path = matches.value_of("path").expect("path is required");
 
     let admin_client = admin_rpc_service::connect(ledger_path);
     admin_rpc_service::runtime()
@@ -37,8 +32,5 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
                 .set_staked_nodes_overrides(path.to_string())
                 .await
         })
-        .unwrap_or_else(|err| {
-            println!("setStakedNodesOverrides request failed: {err}");
-            exit(1);
-        });
+        .map_err(|err| format!("set staked nodes override request failed: {err}"))
 }
