@@ -410,14 +410,11 @@ fn main() {
         },
     );
     let dashboard = if output == Output::Dashboard {
-        Some(
-            Dashboard::new(
-                &ledger_path,
-                Some(&validator_log_symlink),
-                Some(&mut genesis.validator_exit.write().unwrap()),
-            )
-            .unwrap(),
-        )
+        Some(Dashboard::new(
+            &ledger_path,
+            Some(&validator_log_symlink),
+            Some(&mut genesis.validator_exit.write().unwrap()),
+        ))
     } else {
         None
     };

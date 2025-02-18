@@ -1,7 +1,7 @@
 use {
     crate::{cli::DefaultArgs, dashboard::Dashboard},
     clap::{App, ArgMatches, SubCommand},
-    std::{path::Path, process::exit, time::Duration},
+    std::{path::Path, time::Duration},
 };
 
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
@@ -13,13 +13,6 @@ pub fn execute(_matches: &ArgMatches, ledger_path: &Path) {
 }
 
 pub fn monitor_validator(ledger_path: &Path) {
-    let dashboard = Dashboard::new(ledger_path, None, None).unwrap_or_else(|err| {
-        println!(
-            "Error: Unable to connect to validator at {}: {:?}",
-            ledger_path.display(),
-            err,
-        );
-        exit(1);
-    });
+    let dashboard = Dashboard::new(ledger_path, None, None);
     dashboard.run(Duration::from_secs(2));
 }
