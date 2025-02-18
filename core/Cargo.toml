@@ -14,6 +14,7 @@ edition = { workspace = true }
 codecov = { repository = "solana-labs/solana", branch = "master", service = "github" }
 
 [dependencies]
+async-trait = { workspace = true }
 agave-banking-stage-ingress-types = { workspace = true }
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
@@ -71,6 +72,7 @@ solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
+solana-tpu-client-next = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
