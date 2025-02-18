@@ -1,7 +1,7 @@
 use {
     crate::{admin_rpc_service, cli::DefaultArgs},
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
-    std::{path::Path, process::exit},
+    std::path::Path,
 };
 
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
@@ -37,16 +37,13 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     match matches.subcommand() {
         ("list", _) => {
             let admin_client = admin_rpc_service::connect(ledger_path);
             let plugins = admin_rpc_service::runtime()
                 .block_on(async move { admin_client.await?.list_plugins().await })
-                .unwrap_or_else(|err| {
-                    println!("Failed to list plugins: {err}");
-                    exit(1);
-                });
+                .map_err(|err| format!("list plugins request failed: {err}"))?;
             if !plugins.is_empty() {
                 println!("Currently the following plugins are loaded:");
                 for (plugin, i) in plugins.into_iter().zip(1..) {
@@ -61,10 +58,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
                 let admin_client = admin_rpc_service::connect(ledger_path);
                 admin_rpc_service::runtime()
                     .block_on(async { admin_client.await?.unload_plugin(name.clone()).await })
-                    .unwrap_or_else(|err| {
-                        println!("Failed to unload plugin {name}: {err:?}");
-                        exit(1);
-                    });
+                    .map_err(|err| format!("unload plugin request failed: {err:?}"))?;
                 println!("Successfully unloaded plugin: {name}");
             }
         }
@@ -73,10 +67,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
                 let admin_client = admin_rpc_service::connect(ledger_path);
                 let name = admin_rpc_service::runtime()
                     .block_on(async { admin_client.await?.load_plugin(config.clone()).await })
-                    .unwrap_or_else(|err| {
-                        println!("Failed to load plugin {config}: {err:?}");
-                        exit(1);
-                    });
+                    .map_err(|err| format!("load plugin request failed {config}: {err:?}"))?;
                 println!("Successfully loaded plugin: {name}");
             }
         }
@@ -91,14 +82,13 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
                                 .reload_plugin(name.clone(), config.clone())
                                 .await
                         })
-                        .unwrap_or_else(|err| {
-                            println!("Failed to reload plugin {name}: {err:?}");
-                            exit(1);
-                        });
+                        .map_err(|err| format!("reload plugin request failed {name}: {err:?}"))?;
                     println!("Successfully reloaded plugin: {name}");
                 }
             }
         }
         _ => unreachable!(),
     }
+
+    Ok(())
 }

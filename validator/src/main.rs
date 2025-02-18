@@ -49,8 +49,7 @@ pub fn main() {
             commands::authorized_voter::execute(authorized_voter_subcommand_matches, &ledger_path)
         }
         ("plugin", Some(plugin_subcommand_matches)) => {
-            commands::plugin::execute(plugin_subcommand_matches, &ledger_path);
-            Ok(())
+            commands::plugin::execute(plugin_subcommand_matches, &ledger_path)
         }
         ("contact-info", Some(subcommand_matches)) => {
             commands::contact_info::execute(subcommand_matches, &ledger_path);
