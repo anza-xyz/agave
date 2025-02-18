@@ -4,7 +4,7 @@ use {
     solana_clap_utils::input_validators::is_pubkey,
     solana_cli_output::OutputFormat,
     solana_sdk::pubkey::Pubkey,
-    std::{collections::HashSet, path::Path, process::exit},
+    std::{collections::HashSet, path::Path},
 };
 
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
@@ -50,17 +50,14 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     match matches.subcommand() {
         ("get", Some(subcommand_matches)) => {
             let output = OutputFormat::from_matches(subcommand_matches, "output", false);
             let admin_client = admin_rpc_service::connect(ledger_path);
             let repair_whitelist = admin_rpc_service::runtime()
                 .block_on(async move { admin_client.await?.repair_whitelist().await })
-                .unwrap_or_else(|err| {
-                    eprintln!("Repair whitelist query failed: {err}");
-                    exit(1);
-                });
+                .map_err(|err| format!("get repair whitelist request failed: {err}"))?;
 
             println!("{}", output.formatted_string(&repair_whitelist));
         }
@@ -72,35 +69,22 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
                         .collect();
                 validators_set.into_iter().collect::<Vec<_>>()
             } else {
-                return;
+                return Ok(());
             };
-            set_repair_whitelist(ledger_path, whitelist).unwrap_or_else(|err| {
-                eprintln!("{err}");
-                exit(1);
-            });
+            set_repair_whitelist(ledger_path, whitelist)?;
         }
         ("remove-all", _) => {
-            set_repair_whitelist(ledger_path, Vec::default()).unwrap_or_else(|err| {
-                eprintln!("{err}");
-                exit(1);
-            });
+            set_repair_whitelist(ledger_path, Vec::default())?;
         }
         _ => unreachable!(),
     }
+
+    Ok(())
 }
 
-fn set_repair_whitelist(
-    ledger_path: &Path,
-    whitelist: Vec<Pubkey>,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn set_repair_whitelist(ledger_path: &Path, whitelist: Vec<Pubkey>) -> Result<(), String> {
     let admin_client = admin_rpc_service::connect(ledger_path);
     admin_rpc_service::runtime()
         .block_on(async move { admin_client.await?.set_repair_whitelist(whitelist).await })
-        .map_err(|err| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("setRepairWhitelist request failed: {err}"),
-            )
-        })?;
-    Ok(())
+        .map_err(|err| format!("set repair whitelist request failed: {err}"))
 }

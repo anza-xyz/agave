@@ -79,8 +79,7 @@ pub fn main() {
             commands::repair_shred_from_peer::execute(subcommand_matches, &ledger_path)
         }
         ("repair-whitelist", Some(repair_whitelist_subcommand_matches)) => {
-            commands::repair_whitelist::execute(repair_whitelist_subcommand_matches, &ledger_path);
-            Ok(())
+            commands::repair_whitelist::execute(repair_whitelist_subcommand_matches, &ledger_path)
         }
         ("set-public-address", Some(subcommand_matches)) => {
             commands::set_public_address::execute(subcommand_matches, &ledger_path);
