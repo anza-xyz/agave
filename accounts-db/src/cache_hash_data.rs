@@ -338,7 +338,7 @@ impl CacheHashData {
         let work_in_progress_file_full_path = self
             .cache_dir
             .join(Self::get_work_in_progress_file_name(file_name.as_ref()));
-        self.save_internal(work_in_progress_file_full_path, data)?;
+        Self::save_internal(work_in_progress_file_full_path, data, &self.stats)?;
         // Rename the file to remove the ".in-progress" suffix after the file
         // has been successfully written. This is done to ensure that the file is
         // not read before it has been completely written. For example, if the
@@ -363,9 +363,9 @@ impl CacheHashData {
     }
 
     fn save_internal(
-        &self,
         in_progress_cache_file_full_path: impl AsRef<Path>,
         data: &SavedTypeSlice,
+        stats: &Arc<CacheHashDataStats>,
     ) -> Result<(), std::io::Error> {
         let mut m = Measure::start("save");
         let _ignored = remove_file(&in_progress_cache_file_full_path);
@@ -376,7 +376,7 @@ impl CacheHashData {
 
         let mmap = CacheHashDataFile::new_map(&in_progress_cache_file_full_path, capacity)?;
         m1.stop();
-        self.stats
+        stats
             .create_save_us
             .fetch_add(m1.as_us(), Ordering::Relaxed);
         let mut cache_file = CacheHashDataFile {
@@ -388,12 +388,10 @@ impl CacheHashData {
         let header = cache_file.get_header_mut();
         header.count = entries;
 
-        self.stats
+        stats
             .cache_file_size
             .fetch_add(capacity as usize, Ordering::Relaxed);
-        self.stats
-            .total_entries
-            .fetch_add(entries, Ordering::Relaxed);
+        stats.total_entries.fetch_add(entries, Ordering::Relaxed);
 
         let mut m2 = Measure::start("write_to_mmap");
         let mut i = 0;
@@ -411,14 +409,14 @@ impl CacheHashData {
         // entries will *not* be visible when the reader comes along.
         let (_, measure_flush_us) = measure_us!(cache_file.mmap.flush()?);
         m.stop();
-        self.stats
+        stats
             .write_to_mmap_us
             .fetch_add(m2.as_us(), Ordering::Relaxed);
-        self.stats
+        stats
             .flush_mmap_us
             .fetch_add(measure_flush_us, Ordering::Relaxed);
-        self.stats.save_us.fetch_add(m.as_us(), Ordering::Relaxed);
-        self.stats.saved_to_cache.fetch_add(1, Ordering::Relaxed);
+        stats.save_us.fetch_add(m.as_us(), Ordering::Relaxed);
+        stats.saved_to_cache.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 }
