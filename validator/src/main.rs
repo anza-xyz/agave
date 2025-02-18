@@ -57,7 +57,10 @@ pub fn main() {
             commands::contact_info::execute(subcommand_matches, &ledger_path);
         }
         ("exit", Some(subcommand_matches)) => {
-            commands::exit::execute(subcommand_matches, &ledger_path);
+            commands::exit::execute(subcommand_matches, &ledger_path).unwrap_or_else(|err| {
+                println!("Error: {err}");
+                exit(1);
+            });
         }
         ("monitor", _) => {
             commands::monitor::execute(&matches, &ledger_path).unwrap_or_else(|err| {
