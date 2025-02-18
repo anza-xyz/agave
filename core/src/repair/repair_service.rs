@@ -3,7 +3,7 @@
 #[cfg(test)]
 use {
     crate::repair::duplicate_repair_status::DuplicateSlotRepairStatus,
-    solana_sdk::clock::DEFAULT_MS_PER_SLOT,
+    solana_sdk::{clock::DEFAULT_MS_PER_SLOT, signer::keypair::Keypair},
 };
 use {
     crate::{
@@ -39,7 +39,6 @@ use {
         epoch_schedule::EpochSchedule,
         hash::Hash,
         pubkey::Pubkey,
-        signer::keypair::Keypair,
         timing::timestamp,
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
@@ -486,11 +485,9 @@ impl RepairService {
         verified_vote_receiver: &VerifiedVoteReceiver,
         repair_metrics: &mut RepairMetrics,
     ) {
-        let new_root = root_bank.slot();
-
         // Purge outdated slots from the weighting heuristic
         let mut set_root_elapsed = Measure::start("set_root_elapsed");
-        repair_weight.set_root(new_root);
+        repair_weight.set_root(root_bank.slot());
         set_root_elapsed.stop();
 
         // Remove dumped slots from the weighting heuristic
@@ -636,8 +633,6 @@ impl RepairService {
         repair_protocol: Protocol,
         repair_metrics: &mut RepairMetrics,
     ) {
-        let identity_keypair: &Keypair = &repair_info.cluster_info.keypair().clone();
-
         let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
         let batch: Vec<(Vec<u8>, SocketAddr)> = {
             let mut outstanding_requests = outstanding_requests.write().unwrap();
@@ -652,7 +647,7 @@ impl RepairService {
                             &mut repair_metrics.stats,
                             &repair_info.repair_validators,
                             &mut outstanding_requests,
-                            identity_keypair,
+                            &repair_info.cluster_info.keypair(),
                             repair_request_quic_sender,
                             repair_protocol,
                         )
