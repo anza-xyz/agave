@@ -33,6 +33,7 @@ pub fn main() {
                 &ledger_path,
                 commands::run::execute::Operation::Initialize,
             );
+            Ok(())
         }
         ("", _) | ("run", _) => {
             commands::run::execute(
@@ -42,53 +43,55 @@ pub fn main() {
                 &ledger_path,
                 commands::run::execute::Operation::Run,
             );
+            Ok(())
         }
         ("authorized-voter", Some(authorized_voter_subcommand_matches)) => {
             commands::authorized_voter::execute(authorized_voter_subcommand_matches, &ledger_path)
-                .unwrap_or_else(|err| {
-                    println!("Error: {err}");
-                    exit(1);
-                });
         }
         ("plugin", Some(plugin_subcommand_matches)) => {
             commands::plugin::execute(plugin_subcommand_matches, &ledger_path);
+            Ok(())
         }
         ("contact-info", Some(subcommand_matches)) => {
             commands::contact_info::execute(subcommand_matches, &ledger_path);
+            Ok(())
         }
         ("exit", Some(subcommand_matches)) => {
-            commands::exit::execute(subcommand_matches, &ledger_path).unwrap_or_else(|err| {
-                println!("Error: {err}");
-                exit(1);
-            });
+            commands::exit::execute(subcommand_matches, &ledger_path)
         }
-        ("monitor", _) => {
-            commands::monitor::execute(&matches, &ledger_path).unwrap_or_else(|err| {
-                println!("Error: {err}");
-                exit(1);
-            });
-        }
+        ("monitor", _) => commands::monitor::execute(&matches, &ledger_path),
         ("staked-nodes-overrides", Some(subcommand_matches)) => {
             commands::staked_nodes_overrides::execute(subcommand_matches, &ledger_path);
+            Ok(())
         }
         ("set-identity", Some(subcommand_matches)) => {
             commands::set_identity::execute(subcommand_matches, &ledger_path);
+            Ok(())
         }
         ("set-log-filter", Some(subcommand_matches)) => {
             commands::set_log_filter::execute(subcommand_matches, &ledger_path);
+            Ok(())
         }
         ("wait-for-restart-window", Some(subcommand_matches)) => {
             commands::wait_for_restart_window::execute(subcommand_matches, &ledger_path);
+            Ok(())
         }
         ("repair-shred-from-peer", Some(subcommand_matches)) => {
             commands::repair_shred_from_peer::execute(subcommand_matches, &ledger_path);
+            Ok(())
         }
         ("repair-whitelist", Some(repair_whitelist_subcommand_matches)) => {
             commands::repair_whitelist::execute(repair_whitelist_subcommand_matches, &ledger_path);
+            Ok(())
         }
         ("set-public-address", Some(subcommand_matches)) => {
             commands::set_public_address::execute(subcommand_matches, &ledger_path);
+            Ok(())
         }
         _ => unreachable!(),
-    };
+    }
+    .unwrap_or_else(|err| {
+        println!("Error: {err}");
+        exit(1);
+    })
 }
