@@ -68,8 +68,7 @@ pub fn main() {
             commands::set_log_filter::execute(subcommand_matches, &ledger_path)
         }
         ("wait-for-restart-window", Some(subcommand_matches)) => {
-            commands::wait_for_restart_window::execute(subcommand_matches, &ledger_path);
-            Ok(())
+            commands::wait_for_restart_window::execute(subcommand_matches, &ledger_path)
         }
         ("repair-shred-from-peer", Some(subcommand_matches)) => {
             commands::repair_shred_from_peer::execute(subcommand_matches, &ledger_path)

@@ -16,7 +16,6 @@ use {
     std::{
         collections::VecDeque,
         path::Path,
-        process::exit,
         time::{Duration, SystemTime},
     },
 };
@@ -67,7 +66,7 @@ pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     let min_idle_time = value_t_or_exit!(matches, "min_idle_time", usize);
     let identity = pubkey_of(matches, "identity");
     let max_delinquent_stake = value_t_or_exit!(matches, "max_delinquent_stake", u8);
@@ -82,10 +81,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
         skip_new_snapshot_check,
         skip_health_check,
     )
-    .unwrap_or_else(|err| {
-        println!("{err}");
-        exit(1);
-    });
+    .map_err(|err| format!("failed to wait for restart window: {err}"))
 }
 
 pub fn wait_for_restart_window(
@@ -103,11 +99,9 @@ pub fn wait_for_restart_window(
     let admin_client = admin_rpc_service::connect(ledger_path);
     let rpc_addr = admin_rpc_service::runtime()
         .block_on(async move { admin_client.await?.rpc_addr().await })
-        .map_err(|err| format!("Unable to get validator RPC address: {err}"))?;
-
-    let Some(rpc_client) = rpc_addr.map(RpcClient::new_socket) else {
-        return Err("RPC not available".into());
-    };
+        .map_err(|err| format!("validator RPC address request failed: {err}"))?
+        .ok_or("validator RPC is unavailable".to_string())?;
+    let rpc_client = RpcClient::new_socket(rpc_addr);
 
     let my_identity = rpc_client.get_identity()?;
     let identity = identity.unwrap_or(my_identity);
