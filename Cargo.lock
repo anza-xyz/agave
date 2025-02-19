@@ -6728,6 +6728,7 @@ dependencies = [
  "solana-version",
  "spl-generic-token",
  "spl-token",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -6818,6 +6819,7 @@ dependencies = [
  "tempfile",
  "test-case",
  "thiserror 2.0.12",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -6968,6 +6970,7 @@ dependencies = [
  "solana-net-utils",
  "solana-streamer",
  "solana-version",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -7034,6 +7037,7 @@ dependencies = [
  "spl-instruction-padding",
  "tempfile",
  "thiserror 2.0.12",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -7057,6 +7061,7 @@ dependencies = [
  "solana-transaction",
  "solana-version",
  "solana-vote-program",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -9258,6 +9263,7 @@ dependencies = [
  "solana-vote",
  "solana-vote-program",
  "test-case",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -9291,6 +9297,7 @@ dependencies = [
  "solana-time-utils",
  "solana-transaction",
  "thiserror 2.0.12",
+ "tikv-jemallocator",
 ]
 
 [[package]]

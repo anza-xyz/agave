@@ -31,6 +31,10 @@ use {
     test::Bencher,
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
     AccountsDb::new_with_config(
         account_paths,
