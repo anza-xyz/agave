@@ -6,6 +6,7 @@ use {
         cli::{app, warn_for_deprecated_arguments, DefaultArgs},
         commands,
     },
+    log::error,
     solana_streamer::socket::SocketAddrSpace,
     std::{path::PathBuf, process::exit},
 };
@@ -25,26 +26,22 @@ pub fn main() {
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
     match matches.subcommand() {
-        ("init", _) => {
-            commands::run::execute(
-                &matches,
-                solana_version,
-                socket_addr_space,
-                &ledger_path,
-                commands::run::execute::Operation::Initialize,
-            );
-            Ok(())
-        }
-        ("", _) | ("run", _) => {
-            commands::run::execute(
-                &matches,
-                solana_version,
-                socket_addr_space,
-                &ledger_path,
-                commands::run::execute::Operation::Run,
-            );
-            Ok(())
-        }
+        ("init", _) => commands::run::execute(
+            &matches,
+            solana_version,
+            socket_addr_space,
+            &ledger_path,
+            commands::run::execute::Operation::Initialize,
+        )
+        .inspect_err(|err| error!("Failed to initialize validator: {err}")),
+        ("", _) | ("run", _) => commands::run::execute(
+            &matches,
+            solana_version,
+            socket_addr_space,
+            &ledger_path,
+            commands::run::execute::Operation::Run,
+        )
+        .inspect_err(|err| error!("Failed to start validator: {err}")),
         ("authorized-voter", Some(authorized_voter_subcommand_matches)) => {
             commands::authorized_voter::execute(authorized_voter_subcommand_matches, &ledger_path)
         }
@@ -83,7 +80,7 @@ pub fn main() {
         _ => unreachable!(),
     }
     .unwrap_or_else(|err| {
-        println!("Error: {err}");
+        println!("Validator command failed: {err}");
         exit(1);
     })
 }
