@@ -1699,7 +1699,7 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
             let (result, _, _, _) = process_transaction_and_record_inner(&bank, tx);
             assert_eq!(
                 result.unwrap_err(),
-                TransactionError::InstructionError(38, InstructionError::UnsupportedProgramId),
+                TransactionError::InstructionError(37, InstructionError::UnsupportedProgramId),
             );
         }
     }
@@ -3956,7 +3956,7 @@ fn test_cpi_deprecated_loader_realloc() {
         if direct_mapping {
             assert_eq!(
                 result.unwrap_err().unwrap(),
-                TransactionError::InstructionError(0, InstructionError::InvalidRealloc)
+                TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
             );
         } else {
             assert_eq!(

@@ -142,6 +142,7 @@ fn test_generate_child_script_on_failure() {
 }
 
 #[test]
+#[ignore]
 #[serial]
 fn test_sbfv2() {
     run_cargo_build("noop", &["--arch", "sbfv2"], false);

@@ -21,4 +21,4 @@ crate-type = ["cdylib"]
 [workspace]
 
 [workspace.metadata.solana]
-tools-version = "v1.43"
+tools-version = "v1.44"
