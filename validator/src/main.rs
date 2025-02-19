@@ -74,8 +74,7 @@ pub fn main() {
             commands::repair_whitelist::execute(repair_whitelist_subcommand_matches, &ledger_path)
         }
         ("set-public-address", Some(subcommand_matches)) => {
-            commands::set_public_address::execute(subcommand_matches, &ledger_path);
-            Ok(())
+            commands::set_public_address::execute(subcommand_matches, &ledger_path)
         }
         _ => unreachable!(),
     }

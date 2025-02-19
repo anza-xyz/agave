@@ -1,7 +1,7 @@
 use {
     crate::{admin_rpc_service, cli::DefaultArgs},
     clap::{App, Arg, ArgGroup, ArgMatches, SubCommand},
-    std::{net::SocketAddr, path::Path, process::exit},
+    std::{net::SocketAddr, path::Path},
 };
 
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
@@ -32,19 +32,19 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
         .after_help("Note: At least one arg must be used. Using multiple is ok")
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
-    let parse_arg_addr = |arg_name: &str, arg_long: &str| -> Option<SocketAddr> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+    let parse_arg_addr = |arg_name: &str, arg_long: &str| -> Result<Option<SocketAddr>, String> {
         matches.value_of(arg_name).map(|host_port| {
-            solana_net_utils::parse_host_port(host_port).unwrap_or_else(|err| {
-                eprintln!(
-                    "Failed to parse --{arg_long} address. It must be in the HOST:PORT format. {err}"
-                );
-                exit(1);
+            solana_net_utils::parse_host_port(host_port).map_err(|err| {
+                format!(
+                    "failed to parse --{arg_long} address. It must be in the HOST:PORT format. {err}"
+                )
             })
         })
+        .transpose()
     };
-    let tpu_addr = parse_arg_addr("tpu_addr", "tpu");
-    let tpu_forwards_addr = parse_arg_addr("tpu_forwards_addr", "tpu-forwards");
+    let tpu_addr = parse_arg_addr("tpu_addr", "tpu")?;
+    let tpu_forwards_addr = parse_arg_addr("tpu_forwards_addr", "tpu-forwards")?;
 
     macro_rules! set_public_address {
         ($public_addr:expr, $set_public_address:ident, $request:literal) => {
@@ -54,17 +54,16 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
                     .block_on(
                         async move { admin_client.await?.$set_public_address(public_addr).await },
                     )
-                    .unwrap_or_else(|err| {
-                        eprintln!("{} request failed: {err}", $request);
-                        exit(1);
-                    });
+                    .map_err(|err| format!("{} request failed: {err}", $request))
+            } else {
+                Ok(())
             }
         };
     }
-    set_public_address!(tpu_addr, set_public_tpu_address, "setPublicTpuAddress");
+    set_public_address!(tpu_addr, set_public_tpu_address, "set public tpu address")?;
     set_public_address!(
         tpu_forwards_addr,
         set_public_tpu_forwards_address,
-        "setPublicTpuForwardsAddress"
-    );
+        "set public tpu forwards address"
+    )
 }
