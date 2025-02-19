@@ -57,7 +57,7 @@ pub fn redirect_stderr_to_file(logfile: Option<String>) -> Option<JoinHandle<()>
                     signal_hook::iterator::Signals::new([signal_hook::consts::SIGUSR1])
                         .unwrap_or_else(|err| {
                             eprintln!("Unable to register SIGUSR1 handler: {err:?}");
-                            exit(1);
+                            std::process::exit(1);
                         });
 
                 solana_logger::setup_with_default_filter();
