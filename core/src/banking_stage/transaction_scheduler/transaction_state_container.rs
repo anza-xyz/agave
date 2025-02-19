@@ -44,6 +44,7 @@ use {
 /// The container maintains a fixed capacity. If the queue is full when pushing
 /// a new transaction, the lowest priority transaction will be dropped.
 pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
+    capacity: usize,
     priority_queue: MinMaxHeap<TransactionPriorityId>,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
 }
@@ -54,9 +55,6 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 
     /// Returns true if the queue is empty.
     fn is_empty(&self) -> bool;
-
-    /// Returns the remaining capacity of the container
-    fn remaining_capacity(&self) -> usize;
 
     /// Get the top transaction id in the priority queue.
     fn pop(&mut self) -> Option<TransactionPriorityId>;
@@ -81,13 +79,19 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
             .expect("transaction must exist");
         let priority_id = TransactionPriorityId::new(transaction_state.priority(), transaction_id);
         transaction_state.transition_to_unprocessed(transaction_ttl);
-        self.push_id_into_queue(priority_id);
+        self.push_ids_into_queue(std::iter::once(priority_id));
     }
 
-    /// Pushes a transaction id into the priority queue. If the queue is full, the lowest priority
-    /// transaction will be dropped (removed from the queue and map).
-    /// Returns `true` if a packet was dropped due to capacity limits.
-    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool;
+    /// Pushes transaction ids into the priority queue. If the queue if full,
+    /// the lowest priority transactions will be dropped (removed from the
+    /// queue and map) **after** all ids have been pushed.
+    /// To avoid allocating, the caller should not push more than
+    /// [`EXTRA_CAPACITY`] ids in a call.
+    /// Returns the number of dropped transactions.
+    fn push_ids_into_queue(
+        &mut self,
+        priority_ids: impl Iterator<Item = TransactionPriorityId>,
+    ) -> usize;
 
     /// Remove transaction by id.
     fn remove_by_id(&mut self, id: TransactionId);
@@ -95,25 +99,21 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     fn get_min_max_priority(&self) -> MinMaxResult<u64>;
 }
 
+// Extra capacity is added because some additional space is needed when
+// pushing a new transaction into the container to avoid reallocation.
+pub(crate) const EXTRA_CAPACITY: usize = 64;
+
 impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
     fn with_capacity(capacity: usize) -> Self {
-        // Extra capacity is added because some additional space is needed when
-        // pushing a new transaction into the container to avoid reallocation.
-        const EXTRA_CAPACITY: usize = 64;
         Self {
-            priority_queue: MinMaxHeap::with_capacity(capacity),
+            capacity,
+            priority_queue: MinMaxHeap::with_capacity(capacity + EXTRA_CAPACITY),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
         }
     }
 
     fn is_empty(&self) -> bool {
         self.priority_queue.is_empty()
-    }
-
-    fn remaining_capacity(&self) -> usize {
-        self.priority_queue
-            .capacity()
-            .saturating_sub(self.id_to_transaction_state.len())
     }
 
     fn pop(&mut self) -> Option<TransactionPriorityId> {
@@ -133,8 +133,29 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             .map(|state| state.transaction_ttl())
     }
 
-    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
-        self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
+    fn push_ids_into_queue(
+        &mut self,
+        priority_ids: impl Iterator<Item = TransactionPriorityId>,
+    ) -> usize {
+        for id in priority_ids {
+            self.priority_queue.push(id);
+        }
+
+        // The number of items in the `id_to_transaction_state` map is
+        // greater than or equal to the number of elements in the queue.
+        // To avoid the map going over capacity, we use the length of the
+        // map here instead of the queue.
+        let num_dropped = self
+            .id_to_transaction_state
+            .len()
+            .saturating_sub(self.capacity);
+
+        for _ in 0..num_dropped {
+            let priority_id = self.priority_queue.pop_min().expect("queue is not empty");
+            self.id_to_transaction_state.remove(priority_id.id);
+        }
+
+        num_dropped
     }
 
     fn remove_by_id(&mut self, id: TransactionId) {
@@ -162,9 +183,6 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         priority: u64,
         cost: u64,
     ) -> bool {
-        // cache the remaining capacity **before** we take ownership of
-        // the next vacant entry. i.e. get the size before we insert.
-        let remaining_capacity = self.remaining_capacity();
         let priority_id = {
             let entry = self.get_vacant_map_entry();
             let transaction_id = entry.key();
@@ -177,22 +195,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
             TransactionPriorityId::new(priority, transaction_id)
         };
 
-        self.push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
-    }
-
-    fn push_id_into_queue_with_remaining_capacity(
-        &mut self,
-        priority_id: TransactionPriorityId,
-        remaining_capacity: usize,
-    ) -> bool {
-        if remaining_capacity == 0 {
-            let popped_id = self.priority_queue.push_pop_min(priority_id);
-            self.remove_by_id(popped_id.id);
-            true
-        } else {
-            self.priority_queue.push(priority_id);
-            false
-        }
+        self.push_ids_into_queue(std::iter::once(priority_id)) > 0
     }
 
     fn get_vacant_map_entry(&mut self) -> VacantEntry<TransactionState<Tx>> {
@@ -214,15 +217,13 @@ pub struct TransactionViewStateContainer {
 }
 
 impl TransactionViewStateContainer {
-    /// Returns true if packet was dropped due to capacity limits.
-    pub(crate) fn try_insert_with_data(
+    /// Insert into the map, but NOT into the priority queue.
+    /// Returns the id of the transaction if it was inserted.
+    pub(crate) fn try_insert_map_only_with_data(
         &mut self,
         data: &[u8],
         f: impl FnOnce(SharedBytes) -> Result<TransactionState<RuntimeTransactionView>, ()>,
-    ) -> bool {
-        // Get remaining capacity before inserting.
-        let remaining_capacity = self.remaining_capacity();
-
+    ) -> Option<usize> {
         // Get a vacant entry in the slab.
         let vacant_entry = self.inner.get_vacant_map_entry();
         let transaction_id = vacant_entry.key();
@@ -248,16 +249,11 @@ impl TransactionViewStateContainer {
         }
 
         // Attempt to insert the transaction.
-        match f(Arc::clone(bytes_entry)) {
-            Ok(state) => {
-                let priority_id = TransactionPriorityId::new(state.priority(), transaction_id);
-                vacant_entry.insert(state);
-
-                // Push the transaction into the queue.
-                self.inner
-                    .push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
-            }
-            Err(_) => false,
+        if let Ok(state) = f(Arc::clone(bytes_entry)) {
+            vacant_entry.insert(state);
+            Some(transaction_id)
+        } else {
+            None
         }
     }
 }
@@ -278,11 +274,6 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     #[inline]
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
-    }
-
-    #[inline]
-    fn remaining_capacity(&self) -> usize {
-        self.inner.remaining_capacity()
     }
 
     #[inline]
@@ -307,8 +298,11 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     }
 
     #[inline]
-    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
-        self.inner.push_id_into_queue(priority_id)
+    fn push_ids_into_queue(
+        &mut self,
+        priority_ids: impl Iterator<Item = TransactionPriorityId>,
+    ) -> usize {
+        self.inner.push_ids_into_queue(priority_ids)
     }
 
     #[inline]
@@ -327,6 +321,7 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::scheduler_messages::MaxAge,
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
@@ -336,8 +331,9 @@ mod tests {
             signature::Keypair,
             signer::Signer,
             system_instruction,
-            transaction::{SanitizedTransaction, Transaction},
+            transaction::{MessageHash, SanitizedTransaction, Transaction},
         },
+        std::collections::HashSet,
     };
 
     /// Returns (transaction_ttl, priority, cost)
@@ -423,5 +419,86 @@ mod tests {
         assert!(container
             .get_mut_transaction_state(non_existing_id)
             .is_none());
+    }
+
+    #[test]
+    fn test_view_push_ids_to_queue() {
+        let mut container = TransactionViewStateContainer::with_capacity(2);
+
+        let reserved_addresses = HashSet::default();
+        let packet_parser = |data, priority, cost| {
+            let view = SanitizedTransactionView::try_new_sanitized(data).unwrap();
+            let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                view,
+                MessageHash::Compute,
+                None,
+            )
+            .unwrap();
+            let view = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+                view,
+                None,
+                &reserved_addresses,
+            )
+            .unwrap();
+
+            Ok(TransactionState::new(
+                SanitizedTransactionTTL {
+                    transaction: view,
+                    max_age: MaxAge::MAX,
+                },
+                None,
+                priority,
+                cost,
+            ))
+        };
+
+        // Push 2 transactions into the queue so buffer is full.
+        for priority in [4, 5] {
+            let (_transaction_ttl, packet, priority, cost) = test_transaction(priority);
+            let id = container
+                .try_insert_map_only_with_data(packet.original_packet().data(..).unwrap(), |data| {
+                    packet_parser(data, priority, cost)
+                })
+                .unwrap();
+            let priority_id = TransactionPriorityId::new(priority, id);
+            assert_eq!(
+                container.push_ids_into_queue(std::iter::once(priority_id)),
+                0
+            );
+        }
+
+        // Push 5 additional packets in. 5 should be dropped.
+        let mut priority_ids = Vec::with_capacity(5);
+        for priority in [10, 11, 12, 1, 2] {
+            let (_transaction_ttl, packet, priority, cost) = test_transaction(priority);
+            let id = container
+                .try_insert_map_only_with_data(packet.original_packet().data(..).unwrap(), |data| {
+                    packet_parser(data, priority, cost)
+                })
+                .unwrap();
+            let priority_id = TransactionPriorityId::new(priority, id);
+            priority_ids.push(priority_id);
+        }
+        assert_eq!(container.push_ids_into_queue(priority_ids.into_iter()), 5);
+        assert_eq!(container.pop().unwrap().priority, 12);
+        assert_eq!(container.pop().unwrap().priority, 11);
+        assert!(container.pop().is_none());
+
+        // Container now has no items in the queue, but still has 5 items in the map.
+        // If we attempt to push additional transactions to the queue, they
+        // are rejected regardless of their priority.
+        let priority = u64::MAX;
+        let (_transaction_ttl, packet, priority, cost) = test_transaction(priority);
+        let id = container
+            .try_insert_map_only_with_data(packet.original_packet().data(..).unwrap(), |data| {
+                packet_parser(data, priority, cost)
+            })
+            .unwrap();
+        let priority_id = TransactionPriorityId::new(priority, id);
+        assert_eq!(
+            container.push_ids_into_queue(std::iter::once(priority_id)),
+            1
+        );
+        assert!(container.pop().is_none());
     }
 }
