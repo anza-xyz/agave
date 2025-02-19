@@ -31,6 +31,11 @@ Release channels have their own copy of this changelog:
 * SBFPv1 and SBPFv2 are also available for Anza's C compiler toolchain.
 * SBPFv3 will be only available for the Rust toolchain. The C toolchain will no longer be supported for SBPFv3 onwards.
 
+### CLI
+
+#### Changes
+* `withdraw-stake` now accepts the `AVAILABLE` keyword for the amount, allowing withdrawal of unstaked lamports (#4483)
+
 ## 2.2.0
 
 ### CLI
