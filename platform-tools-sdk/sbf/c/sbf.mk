@@ -41,10 +41,10 @@ C_FLAGS := \
   $(addprefix -I,$(STD_INC_DIRS)) \
   $(addprefix -I,$(INC_DIRS)) \
 
-ifeq ($(SOL_SBFV2),1)
+ifeq ($(SOL_SBPFV3),1)
 C_FLAGS := \
   $(C_FLAGS) \
-  -DSOL_SBFV2=1
+  -DSOL_SBPFV3=1
 endif
 
 CXX_FLAGS := \
@@ -74,7 +74,7 @@ SBF_LLD_FLAGS := \
   -L $(STD_LIB_DIRS) \
   -lc \
 
-ifeq ($(SOL_SBFV2),1)
+ifeq ($(SOL_SBPFV3),1)
 SBF_LLD_FLAGS := \
   $(SBF_LLD_FLAGS) \
   --pack-dyn-relocs=relr
