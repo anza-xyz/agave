@@ -79,7 +79,7 @@ pub fn main() {
         _ => unreachable!(),
     }
     .unwrap_or_else(|err| {
-        println!("Validator command failed: {err}");
+        eprintln!("Validator command failed: {err}");
         exit(1);
     })
 }
