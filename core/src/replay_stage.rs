@@ -2559,17 +2559,18 @@ impl ReplayStage {
             }
             Some(vote_account) => vote_account,
         };
-        let vote_state = vote_account.vote_state();
-        if vote_state.node_pubkey != node_keypair.pubkey() {
+        let vote_state_view = vote_account.vote_state_view();
+        if vote_state_view.node_pubkey() != &node_keypair.pubkey() {
             info!(
                 "Vote account node_pubkey mismatch: {} (expected: {}).  Unable to vote",
-                vote_state.node_pubkey,
+                vote_state_view.node_pubkey(),
                 node_keypair.pubkey()
             );
             return GenerateVoteTxResult::HotSpare;
         }
 
-        let Some(authorized_voter_pubkey) = vote_state.get_authorized_voter(bank.epoch()) else {
+        let Some(authorized_voter_pubkey) = vote_state_view.get_authorized_voter(bank.epoch())
+        else {
             warn!(
                 "Vote account {} has no authorized voter for epoch {}.  Unable to vote",
                 vote_account_pubkey,
@@ -2580,7 +2581,7 @@ impl ReplayStage {
 
         let authorized_voter_keypair = match authorized_voter_keypairs
             .iter()
-            .find(|keypair| keypair.pubkey() == authorized_voter_pubkey)
+            .find(|keypair| &keypair.pubkey() == authorized_voter_pubkey)
         {
             None => {
                 warn!(
@@ -3624,7 +3625,7 @@ impl ReplayStage {
         let Some(vote_account) = bank.get_vote_account(my_vote_pubkey) else {
             return;
         };
-        let mut bank_vote_state = vote_account.vote_state().clone();
+        let mut bank_vote_state = TowerVoteState::from(vote_account.vote_state_view());
         if bank_vote_state.last_voted_slot() <= tower.vote_state.last_voted_slot() {
             return;
         }
@@ -3673,8 +3674,8 @@ impl ReplayStage {
             }
         }
 
-        tower.vote_state.root_slot = bank_vote_state.root_slot;
-        tower.vote_state.votes = bank_vote_state.votes.into_iter().map(Into::into).collect();
+        // adopt the bank vote state
+        tower.vote_state = bank_vote_state;
 
         let last_voted_slot = tower.vote_state.last_voted_slot().unwrap_or(
             // If our local root is higher than the highest slot in `bank_vote_state` due to
@@ -7915,7 +7916,14 @@ pub(crate) mod tests {
         let vote_account = expired_bank_child
             .get_vote_account(&my_vote_pubkey)
             .unwrap();
-        assert_eq!(vote_account.vote_state().tower(), vec![0, 1]);
+        assert_eq!(
+            vote_account
+                .vote_state_view()
+                .votes_iter()
+                .map(|lockout| lockout.slot())
+                .collect_vec(),
+            vec![0, 1]
+        );
         expired_bank_child.fill_bank_with_ticks_for_tests();
         expired_bank_child.freeze();
 
