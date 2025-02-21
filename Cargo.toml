@@ -603,7 +603,7 @@ winreg = "0.50"
 x509-parser = "0.14.0"
 # See "zeroize versioning issues" below if you are updating this version.
 zeroize = { version = "1.7", default-features = false }
-zstd = "0.13.2"
+zstd = "0.13.3"
 
 # curve25519-dalek uses the simd backend by default in v4 if possible,
 # which has very slow performance on some platforms with opt-level 0,
