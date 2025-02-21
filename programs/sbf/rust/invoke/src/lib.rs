@@ -1523,22 +1523,24 @@ fn process_instruction<'a>(
             .unwrap();
         }
         TEST_ACCOUNT_INFO_LAMPORTS_RC => {
-            msg!("TEST_ACCOUNT_INFO_LAMPORTS_RC_IN_ACCOUNT");
+            msg!("TEST_ACCOUNT_INFO_LAMPORTS_RC");
 
-            let mut account0 = accounts[0].clone();
-            let account1 = accounts[1].clone();
+            let account0 = accounts[0].clone();
+            let mut account1 = accounts[1].clone();
             let account2 = accounts[2].clone();
 
-            account0.lamports = unsafe {
-                let dst = account1.data.borrow_mut().as_mut_ptr();
-                // 32 = size_of::<RcBox>()
+            account1.lamports = unsafe {
+                let dst = account0.data.borrow_mut().as_mut_ptr();
+                // 32 = size_of::<Rc<RefCell<&mut u64>()
                 std::ptr::copy(
-                    std::mem::transmute::<Rc<RefCell<&mut u64>>, *const u8>(account0.lamports),
+                    std::mem::transmute::<Rc<RefCell<&mut u64>>, *const u8>(account1.lamports),
                     dst,
                     32,
                 );
                 std::mem::transmute::<*mut u8, Rc<RefCell<&mut u64>>>(dst)
             };
+
+            account0.realloc(account1.data_len() + 102, false)?;
 
             let mut instruction_data = vec![TEST_WRITE_ACCOUNT, 1];
             instruction_data.extend_from_slice(&1u64.to_le_bytes());
@@ -1549,8 +1551,8 @@ fn process_instruction<'a>(
                     *program_id,
                     &[
                         (program_id, false, false),
-                        (accounts[1].key, true, false),
-                        (accounts[0].key, false, false),
+                        (accounts[0].key, true, false),
+                        (accounts[1].key, false, false),
                     ],
                     instruction_data.to_vec(),
                 ),
@@ -1559,19 +1561,19 @@ fn process_instruction<'a>(
             .unwrap();
         }
         TEST_ACCOUNT_INFO_DATA_RC => {
-            msg!("TEST_ACCOUNT_INFO_DATA_RC_IN_ACCOUNT");
+            msg!("TEST_ACCOUNT_INFO_DATA_RC");
 
-            let mut account0 = accounts[0].clone();
-            let account1 = accounts[1].clone();
+            let account0 = accounts[0].clone();
+            let mut account1 = accounts[1].clone();
             let account2 = accounts[2].clone();
 
-            account0.data = unsafe {
-                let dst = account1.data.borrow_mut().as_mut_ptr();
-                // 32 = size_of::<RcBox>()
+            account1.data = unsafe {
+                let dst = account0.data.borrow_mut().as_mut_ptr();
+                // 40 = size_of::<Rc<RefCell<&[u8]>()
                 std::ptr::copy(
-                    std::mem::transmute::<Rc<RefCell<&mut [u8]>>, *const u8>(account0.data),
+                    std::mem::transmute::<Rc<RefCell<&mut [u8]>>, *const u8>(account1.data),
                     dst,
-                    32,
+                    40,
                 );
                 std::mem::transmute::<*mut u8, Rc<RefCell<&mut [u8]>>>(dst)
             };
@@ -1585,8 +1587,8 @@ fn process_instruction<'a>(
                     *program_id,
                     &[
                         (program_id, false, false),
-                        (accounts[1].key, true, false),
-                        (accounts[0].key, false, false),
+                        (accounts[0].key, true, false),
+                        (accounts[1].key, false, false),
                     ],
                     instruction_data.to_vec(),
                 ),
