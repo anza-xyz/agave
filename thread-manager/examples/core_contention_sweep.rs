@@ -106,7 +106,7 @@ fn main() -> anyhow::Result<()> {
                 let jh = match regime {
                     Regime::Single => s.spawn(|| {
                         rx1.blocking_recv().unwrap();
-                        workload_runtime.block_on(workload_main(&[8888, 8888], 3000))
+                        workload_runtime.block_on(workload_main(&[8888, 8888], 200))
                     }),
                     _ => {
                         s.spawn(|| {
@@ -116,7 +116,7 @@ fn main() -> anyhow::Result<()> {
                         s.spawn(|| {
                             rx1.blocking_recv().unwrap();
                             rx2.blocking_recv().unwrap();
-                            workload_runtime.block_on(workload_main(&[8888, 8889], 3000))
+                            workload_runtime.block_on(workload_main(&[8888, 8889], 200))
                         })
                     }
                 };
