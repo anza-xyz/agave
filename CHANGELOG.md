@@ -17,6 +17,8 @@ Release channels have their own copy of this changelog:
 * Changes:
   * Platform tools SDK:
     * `cargo-build-sbf` and `cargo-test-sbf` now accept `v0`, `v1`, `v2` and `v3` for the `--arch` argument. These parameters specify the SBPF version to build for.
+  * CLI:
+    * `withdraw-stake` now accepts the `AVAILABLE` keyword for the amount, allowing withdrawal of unstaked lamports (#4483)
 
 ## 2.2.0
 * Breaking:
