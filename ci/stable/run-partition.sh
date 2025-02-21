@@ -33,7 +33,6 @@ ARGS=(
   --jobs "$JOBS"
   --partition hash:"$((INDEX + 1))/$LIMIT"
   --verbose
-  --exclude solana-local-cluster
   --no-tests=warn
 )
 
