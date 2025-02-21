@@ -48,6 +48,9 @@ use {
     itertools::{Either, Itertools},
     rand::{seq::SliceRandom, CryptoRng, Rng},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT, DEFAULT_SLOTS_PER_EPOCH},
+    solana_hash::Hash,
+    solana_keypair::{signable::Signable, Keypair},
     solana_ledger::shred::Shred,
     solana_net_utils::{
         bind_common_in_range_with_config, bind_common_with_config, bind_in_range,
@@ -59,24 +62,21 @@ use {
         data_budget::DataBudget,
         packet::{Packet, PacketBatch, PacketBatchRecycler, PACKET_DATA_SIZE},
     },
+    solana_pubkey::Pubkey,
+    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::BankForks,
     solana_sanitize::Sanitize,
-    solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT, DEFAULT_SLOTS_PER_EPOCH},
-        hash::Hash,
-        pubkey::Pubkey,
-        quic::QUIC_PORT_OFFSET,
-        signature::{Keypair, Signable, Signature, Signer},
-        timing::timestamp,
-        transaction::Transaction,
-    },
+    solana_signature::Signature,
+    solana_signer::Signer,
     solana_streamer::{
         packet,
         quic::DEFAULT_QUIC_ENDPOINTS,
         socket::SocketAddrSpace,
         streamer::{PacketBatchReceiver, PacketBatchSender},
     },
+    solana_time_utils::timestamp,
+    solana_transaction::Transaction,
     solana_vote::vote_parser,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
@@ -119,7 +119,7 @@ pub const DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS: u64 = 60_000;
 pub(crate) const CRDS_UNIQUE_PUBKEY_CAPACITY: usize = 8192;
 /// Minimum stake that a node should have so that its CRDS values are
 /// propagated through gossip (few types are exempted).
-const MIN_STAKE_FOR_GOSSIP: u64 = solana_sdk::native_token::LAMPORTS_PER_SOL;
+const MIN_STAKE_FOR_GOSSIP: u64 = solana_native_token::LAMPORTS_PER_SOL;
 /// Minimum number of staked nodes for enforcing stakes in gossip.
 const MIN_NUM_STAKED_NODES: usize = 500;
 
@@ -3037,9 +3037,10 @@ mod tests {
         },
         bincode::serialize,
         itertools::izip,
+        solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
         solana_net_utils::bind_to,
-        solana_sdk::signature::{Keypair, Signer},
+        solana_signer::Signer,
         solana_vote_program::{vote_instruction, vote_state::Vote},
         std::{
             iter::repeat_with,

@@ -1,8 +1,9 @@
 use {
     crate::{crds_gossip::CrdsGossip, protocol::Protocol},
     itertools::Itertools,
+    solana_clock::Slot,
     solana_measure::measure::Measure,
-    solana_sdk::{clock::Slot, pubkey::Pubkey},
+    solana_pubkey::Pubkey,
     std::{
         cmp::Reverse,
         collections::HashMap,

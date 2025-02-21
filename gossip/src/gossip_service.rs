@@ -5,14 +5,13 @@ use {
     crossbeam_channel::{unbounded, Sender},
     rand::{thread_rng, Rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
+    solana_keypair::Keypair,
     solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS,
     solana_perf::recycler::Recycler,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
+    solana_signer::Signer,
     solana_streamer::{
         socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},

@@ -22,12 +22,11 @@ use {
         received_cache::ReceivedCache,
     },
     itertools::Itertools,
-    solana_sdk::{
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        timing::timestamp,
-    },
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_time_utils::timestamp,
     std::{
         collections::{HashMap, HashSet},
         iter::repeat,

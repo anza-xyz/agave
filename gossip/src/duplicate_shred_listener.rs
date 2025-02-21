@@ -72,8 +72,9 @@ mod tests {
             cluster_info::Node, duplicate_shred::tests::new_rand_shred,
             duplicate_shred_listener::DuplicateShredHandlerTrait,
         },
+        solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
-        solana_sdk::signature::{Keypair, Signer},
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
         std::sync::{
             atomic::{AtomicU32, Ordering},

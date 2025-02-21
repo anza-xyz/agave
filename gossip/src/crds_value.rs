@@ -8,12 +8,12 @@ use {
     bincode::serialize,
     rand::Rng,
     serde::de::{Deserialize, Deserializer},
+    solana_hash::Hash,
+    solana_keypair::{signable::Signable, Keypair},
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signable, Signature, Signer},
-    },
+    solana_signature::Signature,
+    solana_signer::Signer,
     std::borrow::{Borrow, Cow},
 };
 
@@ -102,7 +102,7 @@ impl CrdsValue {
     pub fn new(data: CrdsData, keypair: &Keypair) -> Self {
         let bincode_serialized_data = bincode::serialize(&data).unwrap();
         let signature = keypair.sign_message(&bincode_serialized_data);
-        let hash = solana_sdk::hash::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &bincode_serialized_data]);
         Self {
             signature,
             data,
@@ -114,7 +114,7 @@ impl CrdsValue {
     pub(crate) fn new_unsigned(data: CrdsData) -> Self {
         let bincode_serialized_data = bincode::serialize(&data).unwrap();
         let signature = Signature::default();
-        let hash = solana_sdk::hash::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &bincode_serialized_data]);
         Self {
             signature,
             data,
@@ -228,7 +228,7 @@ impl<'de> Deserialize<'de> for CrdsValue {
         }
         let CrdsValue { signature, data } = CrdsValue::deserialize(deserializer)?;
         let bincode_serialized_data = bincode::serialize(&data).unwrap();
-        let hash = solana_sdk::hash::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &bincode_serialized_data]);
         Ok(Self {
             signature,
             data,
@@ -245,13 +245,12 @@ mod test {
         bincode::deserialize,
         rand0_7::{Rng, SeedableRng},
         rand_chacha0_2::ChaChaRng,
+        solana_keypair::Keypair,
         solana_perf::test_tx::new_test_vote_tx,
-        solana_sdk::{
-            signature::{Keypair, Signer},
-            timing::timestamp,
-            vote::state::TowerSync,
-        },
+        solana_signer::Signer,
+        solana_time_utils::timestamp,
         solana_vote::vote_transaction::new_tower_sync_transaction,
+        solana_vote_interface::state::TowerSync,
         solana_vote_program::vote_state::Lockout,
         std::str::FromStr,
     };
@@ -430,7 +429,7 @@ mod test {
         let bytes = bincode::serialize(&values).unwrap();
         // Serialized bytes are fixed and should never change.
         assert_eq!(
-            solana_sdk::hash::hash(&bytes),
+            solana_sha256_hasher::hash(&bytes),
             Hash::from_str("7gtcoafccWE964njbs2bA1QuVFeV34RaoY781yLx2A8N").unwrap()
         );
         // serialize -> deserialize should round trip.
