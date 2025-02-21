@@ -384,7 +384,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let account_keys_in_batch = sanitized_txs.iter().map(|tx| tx.account_keys().len()).sum();
 
         // Create the account loader, which wraps all external account fetching.
-        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+        let account_loader = AccountLoader::new_with_account_cache_capacity(
             config.account_overrides,
             callbacks,
             environment.feature_set.clone(),
@@ -405,7 +405,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             let (validate_result, single_validate_fees_us) =
                 measure_us!(check_result.and_then(|tx_details| {
                     Self::validate_transaction_nonce_and_fee_payer(
-                        &mut account_loader,
+                        &account_loader,
                         tx,
                         tx_details,
                         &environment.blockhash,
@@ -420,7 +420,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             validate_fees_us = validate_fees_us.saturating_add(single_validate_fees_us);
 
             let (load_result, single_load_us) = measure_us!(load_transaction(
-                &mut account_loader,
+                &account_loader,
                 tx,
                 validate_result,
                 &mut error_metrics,
@@ -510,7 +510,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     fn validate_transaction_nonce_and_fee_payer<CB: TransactionProcessingCallback>(
-        account_loader: &mut AccountLoader<CB>,
+        account_loader: &AccountLoader<CB>,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         environment_blockhash: &Hash,
@@ -555,7 +555,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     // transaction fees, and deducts them from the fee payer balance. If the
     // account is not found or has insufficient funds, an error is returned.
     fn validate_transaction_fee_payer<CB: TransactionProcessingCallback>(
-        account_loader: &mut AccountLoader<CB>,
+        account_loader: &AccountLoader<CB>,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         fee_lamports_per_signature: u64,
@@ -631,7 +631,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     fn validate_transaction_nonce<CB: TransactionProcessingCallback>(
-        account_loader: &mut AccountLoader<CB>,
+        account_loader: &AccountLoader<CB>,
         message: &impl SVMMessage,
         nonce_info: &NonceInfo,
         next_durable_nonce: &DurableNonce,
@@ -2177,12 +2177,12 @@ mod tests {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
         let result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
+                &account_loader,
                 &message,
                 CheckedTransactionDetails::new(
                     None,
@@ -2259,12 +2259,12 @@ mod tests {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
         let result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
+                &account_loader,
                 &message,
                 CheckedTransactionDetails::new(
                     None,
@@ -2313,11 +2313,11 @@ mod tests {
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
 
         let mock_bank = MockBankCallback::default();
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
         let mut error_counters = TransactionErrorMetrics::default();
         let result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
+                &account_loader,
                 &message,
                 CheckedTransactionDetails::new(
                     None,
@@ -2348,12 +2348,12 @@ mod tests {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
         let result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
+                &account_loader,
                 &message,
                 CheckedTransactionDetails::new(
                     None,
@@ -2388,12 +2388,12 @@ mod tests {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
         let result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
+                &account_loader,
                 &message,
                 CheckedTransactionDetails::new(
                     None,
@@ -2426,12 +2426,12 @@ mod tests {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
         let result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
+                &account_loader,
                 &message,
                 CheckedTransactionDetails::new(
                     None,
@@ -2465,11 +2465,11 @@ mod tests {
         );
 
         let mock_bank = MockBankCallback::default();
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
         let mut error_counters = TransactionErrorMetrics::default();
         let result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
+                &account_loader,
                 &message,
                 CheckedTransactionDetails::new(None, lamports_per_signature, compute_budget_limits),
                 &Hash::default(),
@@ -2528,7 +2528,7 @@ mod tests {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
                 ..Default::default()
             };
-            let mut account_loader = (&mock_bank).into();
+            let account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
 
@@ -2546,7 +2546,7 @@ mod tests {
             );
 
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
+                &account_loader,
                 &message,
                 tx_details,
                 &environment_blockhash,
@@ -2601,11 +2601,11 @@ mod tests {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
                 ..Default::default()
             };
-            let mut account_loader = (&mock_bank).into();
+            let account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
+                &account_loader,
                 &message,
                 CheckedTransactionDetails::new(None, lamports_per_signature, Ok(compute_budget_limits)),
                 &Hash::default(),
@@ -2637,7 +2637,7 @@ mod tests {
             .write()
             .unwrap()
             .insert(fee_payer_address, fee_payer_account.clone());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
             &[
@@ -2653,7 +2653,7 @@ mod tests {
         )
         .unwrap();
         TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-            &mut account_loader,
+            &account_loader,
             &message,
             CheckedTransactionDetails::new(None, 5000, Ok(compute_budget_limits)),
             &Hash::default(),
