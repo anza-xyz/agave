@@ -38,7 +38,7 @@ jobs:
 
           # checkout the commit
           if [[ -z ${{ env.COMMIT }} ]]; then
-            echo "failed to get commit"
+            echo "Required parameter env.COMMIT is empty."
             exit 1
           fi
 
