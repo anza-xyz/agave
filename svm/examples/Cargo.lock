@@ -8185,6 +8185,7 @@ dependencies = [
  "bincode",
  "bytes",
  "crossbeam-channel",
+ "dashmap",
  "futures 0.3.31",
  "itertools 0.12.1",
  "lazy-lru",
