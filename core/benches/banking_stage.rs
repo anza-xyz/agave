@@ -18,15 +18,7 @@ use {
     log::*,
     rand::{thread_rng, Rng},
     rayon::prelude::*,
-    solana_client::connection_cache::ConnectionCache,
-    solana_core::{
-        banking_stage::{
-            committer::Committer, consumer::Consumer,
-            leader_slot_metrics::LeaderSlotMetricsTracker, qos_service::QosService,
-            unprocessed_packet_batches::*, BankingStage, BankingStageStats,
-        },
-        banking_trace::BankingTracer,
-    },
+    solana_core::{banking_stage::BankingStage, banking_trace::BankingTracer},
     solana_entry::entry::{next_hash, Entry},
     solana_gossip::cluster_info::{ClusterInfo, Node},
     solana_ledger::{

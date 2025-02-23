@@ -9,9 +9,7 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         multi_iterator_scanner::{MultiIteratorScanner, ProcessingDecision},
         read_write_account_set::ReadWriteAccountSet,
-        unprocessed_packet_batches::{
-            DeserializedPacket, PacketBatchInsertionMetrics,
-        },
+        unprocessed_packet_batches::{DeserializedPacket, PacketBatchInsertionMetrics},
         BankingStageStats,
     },
     itertools::Itertools,
@@ -376,6 +374,7 @@ mod tests {
             hash::Hash,
             signature::{Keypair, Signer},
             system_transaction,
+            transaction::Transaction,
         },
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
