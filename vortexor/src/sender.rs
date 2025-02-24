@@ -63,6 +63,8 @@ impl PacketBatchSender {
         Ok(())
     }
 
+    /// Receive verified packets from the channel `packet_batch_receiver`
+    /// and send them to the desintations.
     fn recv_send(
         send_sock: UdpSocket,
         packet_batch_receiver: BankingPacketReceiver,
@@ -71,22 +73,26 @@ impl PacketBatchSender {
         destinations: Arc<RwLock<Vec<SocketAddr>>>,
     ) {
         loop {
+            let destinations = destinations.read().unwrap().clone();
             match Self::receive_until(packet_batch_receiver.clone(), recv_timeout, batch_size) {
-                Ok((_packet_count, packet_batches)) => {
-                    // Send out packet batches
+                Ok((packet_count, packet_batches)) => {
+                    trace!("Received packet counts: {}", packet_count);
+                    // Collect all packets once for all destinations
+                    let mut packets: Vec<&[u8]> = Vec::new();
 
-                    let destinations = destinations.read().unwrap();
-                    for destination in destinations.iter() {
-                        let mut packets: Vec<(&[u8], &SocketAddr)> = Vec::new();
+                    for batch in &packet_batches {
+                        for packet_batch in batch.iter() {
+                            for packet in packet_batch {
+                                packets.push(packet.data(0..).unwrap());
+                            }
+                        }
+                    }
 
-                        packet_batches.iter().for_each(|batch| {
-                            batch.iter().for_each(|packet_batch| {
-                                for packet in packet_batch.iter() {
-                                    packets.push((packet.data(0..).unwrap(), destination));
-                                }
-                            });
-                        });
-                        let _result = batch_send(&send_sock, packets.into_iter());
+                    // Send all packets to each destination
+                    for destination in &destinations {
+                        let packet_refs: Vec<(&[u8], &SocketAddr)> =
+                            packets.iter().map(|data| (*data, destination)).collect();
+                        let _result = batch_send(&send_sock, packet_refs.into_iter());
                     }
                 }
                 Err(err) => match err {
@@ -119,7 +125,10 @@ impl PacketBatchSender {
 
         while let Ok(message) = packet_batch_receiver.try_recv() {
             let packet_batches = &message;
-            trace!("got more packet batches in packet receiver");
+            trace!(
+                "Got more packet batches in packet receiver: {}",
+                packet_batches.len()
+            );
             num_packets_received
                 .checked_add(
                     packet_batches

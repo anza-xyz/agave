@@ -180,7 +180,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .help(
                     "Redirect logging to the specified file, '-' for standard error. Sending the \
-                     SIGUSR1 signal to the vortexor process will cause it to re-open the log file",
+                     SIGUSR1 signal to the vortexor process will cause it to re-open the log file.",
                 ),
         )
         .arg(
@@ -191,6 +191,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .multiple(true)
                 .validator(solana_net_utils::is_host_port)
-                .help("The destination validator address to which the vortexor will forward transaction"),
+                .help("The destination validator address to which the vortexor will forward transactions."),
         )
 }
