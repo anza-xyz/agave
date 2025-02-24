@@ -28,7 +28,7 @@ use {
         blockstore::{Blockstore, PurgeType},
         blockstore_meta::DuplicateSlotProof,
         blockstore_options::{AccessType, BlockstoreOptions},
-        leader_schedule::{FixedSchedule, LeaderSchedule},
+        leader_schedule::{CurrentLeaderSchedule, FixedSchedule, LeaderSchedule},
     },
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{
@@ -273,7 +273,7 @@ pub fn create_custom_leader_schedule(
     }
 
     info!("leader_schedule: {}", leader_schedule.len());
-    LeaderSchedule::new_from_schedule(leader_schedule)
+    Box::new(CurrentLeaderSchedule::new_from_schedule(leader_schedule))
 }
 
 pub fn create_custom_leader_schedule_with_random_keys(
