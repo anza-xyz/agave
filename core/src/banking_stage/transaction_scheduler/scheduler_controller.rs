@@ -4,7 +4,7 @@
 use {
     super::{
         receive_and_buffer::ReceiveAndBuffer,
-        scheduler::Scheduler,
+        scheduler::{PreLockFilterAction, Scheduler},
         scheduler_error::SchedulerError,
         scheduler_metrics::{
             SchedulerCountMetrics, SchedulerLeaderDetectionMetrics, SchedulerTimingMetrics,
@@ -142,7 +142,7 @@ where
                             MAX_PROCESSING_AGE,
                         )
                     },
-                    |_| true // no pre-lock filter for now
+                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
                 )?);
 
                 self.count_metrics.update(|count_metrics| {
