@@ -913,42 +913,55 @@ pub fn execute(
         .transpose()?
         .unwrap_or(SnapshotVersion::default());
 
-    let (full_snapshot_archive_interval_slots, incremental_snapshot_archive_interval_slots) = match (
-        !matches.is_present("no_incremental_snapshots"),
-        value_t_or_exit!(matches, "snapshot_interval_slots", u64),
-    ) {
-        (_, 0) => {
+    let (full_snapshot_archive_interval_slots, incremental_snapshot_archive_interval_slots) =
+        if matches.is_present("no_snapshots") {
             // snapshots are disabled
             (
                 DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
                 DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
             )
-        }
-        (true, incremental_snapshot_interval_slots) => {
-            // incremental snapshots are enabled
-            // use --snapshot-interval-slots for the incremental snapshot interval
-            (
-                value_t_or_exit!(matches, "full_snapshot_interval_slots", u64),
-                incremental_snapshot_interval_slots,
-            )
-        }
-        (false, full_snapshot_interval_slots) => {
-            // incremental snapshots are *disabled*
-            // use --snapshot-interval-slots for the *full* snapshot interval
-            // also warn if --full-snapshot-interval-slots was specified
-            if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
-                warn!(
-                    "Incremental snapshots are disabled, yet --full-snapshot-interval-slots was specified! \
-                     Note that --full-snapshot-interval-slots is *ignored* when incremental snapshots are disabled. \
-                     Use --snapshot-interval-slots instead.",
-                );
+        } else {
+            match (
+                !matches.is_present("no_incremental_snapshots"),
+                value_t_or_exit!(matches, "snapshot_interval_slots", u64),
+            ) {
+                (_, 0) => {
+                    // snapshots are disabled
+                    warn!(
+                        "Snapshot generation was disabled with `--snapshot-interval-slots 0`, \
+                         which is now deprecated. Use `--no-snapshots` instead.",
+                    );
+                    (
+                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+                    )
+                }
+                (true, incremental_snapshot_interval_slots) => {
+                    // incremental snapshots are enabled
+                    // use --snapshot-interval-slots for the incremental snapshot interval
+                    (
+                        value_t_or_exit!(matches, "full_snapshot_interval_slots", u64),
+                        incremental_snapshot_interval_slots,
+                    )
+                }
+                (false, full_snapshot_interval_slots) => {
+                    // incremental snapshots are *disabled*
+                    // use --snapshot-interval-slots for the *full* snapshot interval
+                    // also warn if --full-snapshot-interval-slots was specified
+                    if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
+                        warn!(
+                            "Incremental snapshots are disabled, yet --full-snapshot-interval-slots was specified! \
+                             Note that --full-snapshot-interval-slots is *ignored* when incremental snapshots are disabled. \
+                             Use --snapshot-interval-slots instead.",
+                        );
+                    }
+                    (
+                        full_snapshot_interval_slots,
+                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+                    )
+                }
             }
-            (
-                full_snapshot_interval_slots,
-                DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-            )
-        }
-    };
+        };
 
     validator_config.snapshot_config = SnapshotConfig {
         usage: if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
