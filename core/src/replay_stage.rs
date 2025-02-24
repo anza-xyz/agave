@@ -9131,7 +9131,7 @@ pub(crate) mod tests {
             last_hash =
                 fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, i + 1, i, last_hash);
         }
-        // Artifically root 3 and 4
+        // Artificially root 3 and 4
         blockstore.set_roots([3, 4].iter()).unwrap();
 
         // Set up bank0
