@@ -7,7 +7,7 @@ use {
     solana_metrics::inc_new_counter_debug,
     solana_perf::{
         cuda_runtime::PinnedVec,
-        packet::{Packet, PacketBatch},
+        packet::{Packet, PacketArrayBatch, PacketMut, PacketRead},
         perf_libs,
         recycler_cache::RecyclerCache,
         sigverify::{self, count_packets_in_batches, TxOffset},
@@ -32,11 +32,14 @@ const SIGN_SHRED_GPU_MIN: usize = 256;
 pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, /*merkle root:*/ Hash), ()>;
 
 #[must_use]
-pub fn verify_shred_cpu(
-    packet: &Packet,
+pub fn verify_shred_cpu<P>(
+    packet: &P,
     slot_leaders: &HashMap<Slot, Pubkey>,
     cache: &RwLock<LruCache>,
-) -> bool {
+) -> bool
+where
+    P: PacketRead,
+{
     if packet.meta().discard() {
         return false;
     }
@@ -75,7 +78,7 @@ pub fn verify_shred_cpu(
 
 fn verify_shreds_cpu(
     thread_pool: &ThreadPool,
-    batches: &[PacketBatch],
+    batches: &[Vec<Packet>],
     slot_leaders: &HashMap<Slot, Pubkey>,
     cache: &RwLock<LruCache>,
 ) -> Vec<Vec<u8>> {
@@ -96,12 +99,15 @@ fn verify_shreds_cpu(
     rv
 }
 
-fn slot_key_data_for_gpu(
+fn slot_key_data_for_gpu<P>(
     thread_pool: &ThreadPool,
-    batches: &[PacketBatch],
+    batches: &[Vec<P>],
     slot_keys: &HashMap<Slot, Pubkey>,
     recycler_cache: &RecyclerCache,
-) -> (/*pubkeys:*/ PinnedVec<u8>, TxOffset) {
+) -> (/*pubkeys:*/ PinnedVec<u8>, TxOffset)
+where
+    P: PacketRead + Send + Sync,
+{
     //TODO: mark Pubkey::default shreds as failed after the GPU returns
     assert_eq!(slot_keys.get(&Slot::MAX), Some(&Pubkey::default()));
     let slots: Vec<Slot> = thread_pool.install(|| {
@@ -155,14 +161,17 @@ fn slot_key_data_for_gpu(
 }
 
 // Recovers merkle roots from shreds binary.
-fn get_merkle_roots(
+fn get_merkle_roots<P>(
     thread_pool: &ThreadPool,
-    packets: &[PacketBatch],
+    packets: &[Vec<P>],
     recycler_cache: &RecyclerCache,
 ) -> (
     PinnedVec<u8>,      // Merkle roots
     Vec<Option<usize>>, // Offsets
-) {
+)
+where
+    P: PacketRead + Sync + Send,
+{
     let merkle_roots: Vec<Option<Hash>> = thread_pool.install(|| {
         packets
             .par_iter()
@@ -218,12 +227,15 @@ fn elems_from_buffer(buffer: &PinnedVec<u8>) -> perf_libs::Elems {
     }
 }
 
-fn shred_gpu_offsets(
+fn shred_gpu_offsets<P>(
     offset: usize,
-    batches: &[PacketBatch],
+    batches: &[Vec<P>],
     merkle_roots_offsets: impl IntoIterator<Item = Option<usize>>,
     recycler_cache: &RecyclerCache,
-) -> (TxOffset, TxOffset, TxOffset) {
+) -> (TxOffset, TxOffset, TxOffset)
+where
+    P: PacketRead,
+{
     fn add_offset(range: Range<usize>, offset: usize) -> Range<usize> {
         range.start + offset..range.end + offset
     }
@@ -263,7 +275,7 @@ fn shred_gpu_offsets(
 
 pub fn verify_shreds_gpu(
     thread_pool: &ThreadPool,
-    batches: &[PacketBatch],
+    batches: &[Vec<Packet>],
     slot_leaders: &HashMap<Slot, Pubkey>,
     recycler_cache: &RecyclerCache,
     cache: &RwLock<LruCache>,
@@ -333,13 +345,13 @@ pub fn verify_shreds_gpu(
     rvs
 }
 
-fn sign_shred_cpu(keypair: &Keypair, packet: &mut Packet) {
+fn sign_shred_cpu(keypair: &Keypair, packet: &mut PacketMut) {
     let sig = shred::layout::get_signature_range();
     let msg = shred::layout::get_shred(packet)
         .and_then(shred::layout::get_signed_data)
         .unwrap();
     assert!(
-        packet.meta().size >= sig.end,
+        packet.size() >= sig.end,
         "packet is not large enough for a signature"
     );
     let signature = keypair.sign_message(msg.as_ref());
@@ -347,8 +359,13 @@ fn sign_shred_cpu(keypair: &Keypair, packet: &mut Packet) {
     packet.buffer_mut()[sig].copy_from_slice(signature.as_ref());
 }
 
-pub fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
-    let packet_count = count_packets_in_batches(batches);
+pub fn sign_shreds_cpu(
+    thread_pool: &ThreadPool,
+    keypair: &Keypair,
+    batches: &mut Vec<Vec<PacketMut>>,
+) {
+    // let packet_count = count_packets_in_batches(batches);
+    let packet_count = batches.iter().map(|batch| batch.len()).sum();
     debug!("CPU SHRED ECDSA for {}", packet_count);
     thread_pool.install(|| {
         batches.par_iter_mut().for_each(|batch| {
@@ -381,12 +398,12 @@ pub fn sign_shreds_gpu(
     thread_pool: &ThreadPool,
     keypair: &Keypair,
     pinned_keypair: &Option<Arc<PinnedVec<u8>>>,
-    batches: &mut [PacketBatch],
+    batches: &mut Vec<Vec<PacketMut>>,
     recycler_cache: &RecyclerCache,
 ) {
     let sig_size = size_of::<Signature>();
     let pubkey_size = size_of::<Pubkey>();
-    let packet_count = count_packets_in_batches(batches);
+    let packet_count = batches.iter().map(|batch| batch.len()).sum();
     if packet_count < SIGN_SHRED_GPU_MIN || pinned_keypair.is_none() {
         return sign_shreds_cpu(thread_pool, keypair, batches);
     }
@@ -424,10 +441,20 @@ pub fn sign_shreds_gpu(
         elems_from_buffer(pinned_keypair),
         elems_from_buffer(&merkle_roots),
     ];
-    elems.extend(batches.iter().map(|batch| perf_libs::Elems {
-        elems: batch.as_ptr().cast::<u8>(),
-        num: batch.len() as u32,
-    }));
+    // elems.extend(batches.iter().map(|batch| perf_libs::Elems {
+    //     elems: batch.as_ptr().cast::<u8>(),
+    //     num: batch.len() as u32,
+    // }));
+    for batch in batches.iter() {
+        let mut cuda_batch = PacketArrayBatch::with_capacity(batch.len());
+        for packet in batch {
+            cuda_batch.push(packet.into());
+        }
+        elems.push(perf_libs::Elems {
+            elems: batch.as_ptr().cast::<u8>(),
+            num: batch.len() as u32,
+        });
+    }
     let num_packets = elems.iter().map(|elem| elem.num).sum();
     trace!("Starting verify num packets: {}", num_packets);
     trace!("elem len: {}", elems.len() as u32);
@@ -493,6 +520,7 @@ mod tests {
         rand::{seq::SliceRandom, Rng},
         rayon::ThreadPoolBuilder,
         solana_entry::entry::Entry,
+        solana_perf::packet::BufMut,
         solana_sdk::{
             hash,
             hash::Hash,
@@ -506,7 +534,7 @@ mod tests {
 
     fn run_test_sigverify_shred_cpu(slot: Slot) {
         solana_logger::setup();
-        let mut packet = Packet::default();
+        let mut packet = PacketMut::default();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let mut shred = Shred::new_from_data(
             slot,
@@ -522,8 +550,8 @@ mod tests {
         let keypair = Keypair::new();
         shred.sign(&keypair);
         trace!("signature {}", shred.signature());
-        packet.buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        packet.meta_mut().size = shred.payload().len();
+        packet.put_slice(shred.payload());
+        let packet = packet.freeze();
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
         assert!(verify_shred_cpu(&packet, &leader_slots, &cache));
@@ -543,7 +571,7 @@ mod tests {
 
     fn run_test_sigverify_shreds_cpu(thread_pool: &ThreadPool, slot: Slot) {
         solana_logger::setup();
-        let mut batches = [PacketBatch::default()];
+        // let mut batches = [Vec::default()];
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let mut shred = Shred::new_from_data(
             slot,
@@ -557,9 +585,10 @@ mod tests {
         );
         let keypair = Keypair::new();
         shred.sign(&keypair);
-        batches[0].resize(1, Packet::default());
-        batches[0][0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batches[0][0].meta_mut().size = shred.payload().len();
+        let mut packet = PacketMut::default();
+        packet.put_slice(shred.payload());
+        let packet = packet.freeze();
+        let batches = vec![vec![packet]];
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
         let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
@@ -574,8 +603,9 @@ mod tests {
         let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
         assert_eq!(rv, vec![vec![0]]);
 
+        let packet = Packet::default();
+        let batches = vec![vec![packet]];
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
-        batches[0][0].meta_mut().size = 0;
         let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
         assert_eq!(rv, vec![vec![0]]);
     }
@@ -591,7 +621,6 @@ mod tests {
         let recycler_cache = RecyclerCache::default();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
 
-        let mut batches = [PacketBatch::default()];
         let mut shred = Shred::new_from_data(
             slot,
             0xc0de,
@@ -604,9 +633,10 @@ mod tests {
         );
         let keypair = Keypair::new();
         shred.sign(&keypair);
-        batches[0].resize(1, Packet::default());
-        batches[0][0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batches[0][0].meta_mut().size = shred.payload().len();
+        let mut packet = PacketMut::default();
+        packet.put_slice(shred.payload());
+        let packet = packet.freeze();
+        let batches = vec![vec![packet]];
 
         let leader_slots = HashMap::from([(u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]);
         let rv = verify_shreds_gpu(
@@ -642,7 +672,8 @@ mod tests {
         );
         assert_eq!(rv, vec![vec![0]]);
 
-        batches[0][0].meta_mut().size = 0;
+        let packet = Packet::default();
+        let batches = vec![vec![packet]];
         let leader_slots = HashMap::from([(u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]);
         let rv = verify_shreds_gpu(
             thread_pool,
@@ -667,10 +698,11 @@ mod tests {
 
         let num_packets = 32;
         let num_batches = 100;
-        let mut packet_batch = PacketBatch::with_capacity(num_packets);
-        packet_batch.resize(num_packets, Packet::default());
+        // let mut packet_batch = PacketBatch::with_capacity(num_packets);
+        let mut packet_mut_batch = Vec::with_capacity(num_packets);
+        packet_mut_batch.resize(num_packets, PacketMut::default());
 
-        for (i, p) in packet_batch.iter_mut().enumerate() {
+        for (i, p) in packet_mut_batch.iter_mut().enumerate() {
             let shred = Shred::new_from_data(
                 slot,
                 0xc0de,
@@ -683,7 +715,12 @@ mod tests {
             );
             shred.copy_to_packet(p);
         }
-        let mut batches = vec![packet_batch; num_batches];
+        let packet_batch: Vec<_> = packet_mut_batch
+            .iter()
+            .map(|packet| packet.clone().freeze())
+            .collect();
+        let mut batches_mut = vec![packet_mut_batch; num_batches];
+        let batches = vec![packet_batch; num_batches];
         let keypair = Keypair::new();
         let pinned_keypair = sign_shreds_gpu_pinned_keypair(&keypair, &recycler_cache);
         let pinned_keypair = Some(Arc::new(pinned_keypair));
@@ -696,7 +733,7 @@ mod tests {
             thread_pool,
             &keypair,
             &pinned_keypair,
-            &mut batches,
+            &mut batches_mut,
             &recycler_cache,
         );
         let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys, &cache);
@@ -715,7 +752,6 @@ mod tests {
     fn run_test_sigverify_shreds_sign_cpu(thread_pool: &ThreadPool, slot: Slot) {
         solana_logger::setup();
 
-        let mut batches = [PacketBatch::default()];
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let keypair = Keypair::new();
         let shred = Shred::new_from_data(
@@ -728,16 +764,18 @@ mod tests {
             0,
             0xc0de,
         );
-        batches[0].resize(1, Packet::default());
-        batches[0][0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batches[0][0].meta_mut().size = shred.payload().len();
+        let mut packet_mut = PacketMut::default();
+        packet_mut.put_slice(shred.payload());
+        let mut batches_mut = vec![vec![packet_mut.clone()]];
+        let packet = packet_mut.clone().freeze();
+        let batches = vec![vec![packet]];
 
         let pubkeys = HashMap::from([(slot, keypair.pubkey()), (u64::MAX, Pubkey::default())]);
         //unsigned
         let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys, &cache);
         assert_eq!(rv, vec![vec![0]]);
         //signed
-        sign_shreds_cpu(thread_pool, &keypair, &mut batches);
+        sign_shreds_cpu(thread_pool, &keypair, &mut batches_mut);
         let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys, &cache);
         assert_eq!(rv, vec![vec![1]]);
     }
@@ -834,25 +872,40 @@ mod tests {
         shreds
     }
 
-    fn make_packets<R: Rng>(rng: &mut R, shreds: &[Shred]) -> Vec<PacketBatch> {
+    fn make_packets<R: Rng>(rng: &mut R, shreds: &[Shred]) -> Vec<Vec<Packet>> {
         let mut packets = shreds.iter().map(|shred| {
-            let mut packet = Packet::default();
+            let mut packet = PacketMut::default();
+            shred.copy_to_packet(&mut packet);
+            packet.freeze()
+        });
+        let packets: Vec<_> = repeat_with(|| {
+            let size = rng.gen_range(0..16);
+            let batch: Vec<Packet> = packets.by_ref().take(size).collect();
+            (size == 0 || !batch.is_empty()).then_some(batch)
+        })
+        .while_some()
+        .collect();
+        assert_eq!(shreds.len(), packets.iter().map(Vec::len).sum::<usize>());
+        assert!(count_packets_in_batches(&packets) > SIGN_SHRED_GPU_MIN);
+        packets
+    }
+
+    fn make_packets_mut<R: Rng>(rng: &mut R, shreds: &[Shred]) -> Vec<Vec<PacketMut>> {
+        let mut packets = shreds.iter().map(|shred| {
+            let mut packet = PacketMut::default();
             shred.copy_to_packet(&mut packet);
             packet
         });
         let packets: Vec<_> = repeat_with(|| {
             let size = rng.gen_range(0..16);
-            let packets = packets.by_ref().take(size).collect();
-            let batch = PacketBatch::new(packets);
-            (size == 0 || !batch.is_empty()).then_some(batch)
+            let packets: Vec<_> = packets.by_ref().take(size).collect();
+            (size == 0 || !packets.is_empty()).then_some(packets)
         })
         .while_some()
         .collect();
-        assert_eq!(
-            shreds.len(),
-            packets.iter().map(PacketBatch::len).sum::<usize>()
-        );
-        assert!(count_packets_in_batches(&packets) > SIGN_SHRED_GPU_MIN);
+        let packet_count: usize = packets.iter().map(|batch| batch.len()).sum();
+        assert_eq!(shreds.len(), packet_count);
+        assert!(packet_count > SIGN_SHRED_GPU_MIN);
         packets
     }
 
@@ -875,7 +928,7 @@ mod tests {
             .map(|(&slot, keypair)| (slot, keypair.pubkey()))
             .chain(once((Slot::MAX, Pubkey::default())))
             .collect();
-        let mut packets = make_packets(&mut rng, &shreds);
+        let packets = make_packets(&mut rng, &shreds);
         assert_eq!(
             verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache, &cache),
             packets
@@ -884,6 +937,7 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         // Invalidate signatures for a random number of packets.
+        let mut packets = make_packets_mut(&mut rng, &shreds);
         let out: Vec<_> = packets
             .iter_mut()
             .map(|packets| {
@@ -898,6 +952,10 @@ mod tests {
                     })
                     .collect::<Vec<_>>()
             })
+            .collect();
+        let packets: Vec<Vec<Packet>> = packets
+            .into_iter()
+            .map(|batch| batch.into_iter().map(|packet| packet.freeze()).collect())
             .collect();
         assert_eq!(
             verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache, &cache),
@@ -931,7 +989,7 @@ mod tests {
                 .chain(once((Slot::MAX, Pubkey::default())))
                 .collect()
         };
-        let mut packets = make_packets(&mut rng, &shreds);
+        let packets = make_packets(&mut rng, &shreds);
         // Assert that initially all signatrues are invalid.
         assert_eq!(
             verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache, &cache),
@@ -943,6 +1001,7 @@ mod tests {
         let pinned_keypair = sign_shreds_gpu_pinned_keypair(&keypair, &recycler_cache);
         let pinned_keypair = Some(Arc::new(pinned_keypair));
         // Sign and verify shreds signatures.
+        let mut packets = make_packets_mut(&mut rng, &shreds);
         sign_shreds_gpu(
             &thread_pool,
             &keypair,
@@ -950,6 +1009,10 @@ mod tests {
             &mut packets,
             &recycler_cache,
         );
+        let packets: Vec<Vec<Packet>> = packets
+            .into_iter()
+            .map(|batch| batch.into_iter().map(|packet| packet.freeze()).collect())
+            .collect();
         assert_eq!(
             verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache, &cache),
             packets

@@ -1,6 +1,10 @@
 use {
-    lazy_static::lazy_static, log::*, rand::Rng, solana_packet::Packet,
-    solana_perf::sigverify::PacketError, solana_short_vec::decode_shortu16_len,
+    lazy_static::lazy_static,
+    log::*,
+    rand::Rng,
+    solana_packet::{Packet, PacketRead},
+    solana_perf::sigverify::PacketError,
+    solana_short_vec::decode_shortu16_len,
     solana_signature::SIGNATURE_BYTES,
 };
 
@@ -54,8 +58,8 @@ pub fn get_signature_from_packet(packet: &Packet) -> Result<&[u8; SIGNATURE_BYTE
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_hash::Hash, solana_keypair::Keypair, solana_signature::Signature,
-        solana_system_transaction as system_transaction,
+        super::*, solana_hash::Hash, solana_keypair::Keypair, solana_packet::PacketMut,
+        solana_signature::Signature, solana_system_transaction as system_transaction,
     };
 
     #[test]
@@ -72,13 +76,15 @@ mod tests {
             1,
             Hash::new_unique(),
         );
-        let mut packet = Packet::from_data(None, tx).unwrap();
+        let mut packet_mut = PacketMut::from_data(None, tx).unwrap();
+        let packet = packet_mut.clone().freeze();
 
         let sig = get_signature_from_packet(&packet);
         assert!(sig.is_ok());
 
         // Invalid signature length
-        packet.buffer_mut()[0] = 0x0;
+        packet_mut.buffer_mut()[0] = 0x0;
+        let packet = packet_mut.freeze();
         let sig = get_signature_from_packet(&packet);
         assert_eq!(sig, Err(PacketError::InvalidSignatureLen));
     }
@@ -133,7 +139,7 @@ mod tests {
 
         let sig = Signature::from(sig);
         tx.signatures[0] = sig;
-        let mut packet = Packet::from_data(None, tx).unwrap();
+        let packet = Packet::from_data(None, tx.clone()).unwrap();
         let sig2 = signature_if_should_track_packet(&packet);
 
         match sig2 {
@@ -144,7 +150,9 @@ mod tests {
         }
 
         // Invalid signature length
+        let mut packet = PacketMut::from_data(None, tx).unwrap();
         packet.buffer_mut()[0] = 0x0;
+        let packet = packet.freeze();
         let sig = signature_if_should_track_packet(&packet);
         assert_eq!(sig, Err(PacketError::InvalidSignatureLen));
     }

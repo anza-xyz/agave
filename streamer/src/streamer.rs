@@ -3,14 +3,15 @@
 
 use {
     crate::{
-        packet::{self, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
+        packet::{
+            self, Packet, PacketBatchRecycler, PacketMutBatch, PacketRead, PACKETS_PER_BATCH,
+        },
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     histogram::Histogram,
     itertools::Itertools,
-    solana_packet::Packet,
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
@@ -37,8 +38,8 @@ pub struct StakedNodes {
     min_stake: u64,
 }
 
-pub type PacketBatchReceiver = Receiver<PacketBatch>;
-pub type PacketBatchSender = Sender<PacketBatch>;
+pub type PacketBatchReceiver = Receiver<Vec<Packet>>;
+pub type PacketBatchSender = Sender<Vec<Packet>>;
 
 #[derive(Error, Debug)]
 pub enum StreamerError {
@@ -49,7 +50,7 @@ pub enum StreamerError {
     RecvTimeout(#[from] RecvTimeoutError),
 
     #[error("send packets error")]
-    Send(#[from] SendError<PacketBatch>),
+    Send(#[from] SendError<Vec<Packet>>),
 
     #[error(transparent)]
     SendPktsError(#[from] SendPktsError),
@@ -107,19 +108,15 @@ fn recv_loop(
     socket: &UdpSocket,
     exit: &AtomicBool,
     packet_batch_sender: &PacketBatchSender,
-    recycler: &PacketBatchRecycler,
+    _recycler: &PacketBatchRecycler,
     stats: &StreamerReceiveStats,
     coalesce: Duration,
-    use_pinned_memory: bool,
+    _use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
     loop {
-        let mut packet_batch = if use_pinned_memory {
-            PacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
-        } else {
-            PacketBatch::with_capacity(PACKETS_PER_BATCH)
-        };
+        let mut packet_batch = PacketMutBatch::default();
         loop {
             // Check for exit signal, even if socket is busy
             // (for instance the leader transaction socket)
@@ -153,7 +150,12 @@ fn recv_loop(
                     packet_batch
                         .iter_mut()
                         .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
-                    packet_batch_sender.send(packet_batch)?;
+
+                    let mut immut_packet_batch = Vec::with_capacity(packet_batch.len());
+                    for packet in packet_batch.into_vec() {
+                        immut_packet_batch.push(packet.freeze());
+                    }
+                    packet_batch_sender.send(immut_packet_batch)?;
                 }
                 break;
             }
@@ -368,7 +370,7 @@ fn recv_send(
 
 pub fn recv_packet_batches(
     recvr: &PacketBatchReceiver,
-) -> Result<(Vec<PacketBatch>, usize, Duration)> {
+) -> Result<(Vec<Vec<Packet>>, usize, Duration)> {
     let recv_start = Instant::now();
     let timer = Duration::new(1, 0);
     let packet_batch = recvr.recv_timeout(timer)?;
@@ -441,15 +443,15 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{Packet, PacketBatch, PACKET_DATA_SIZE},
+            packet::{Packet, PacketMut},
             streamer::{receiver, responder},
         },
+        bytes::BufMut,
         crossbeam_channel::unbounded,
         solana_net_utils::bind_to_localhost,
         solana_perf::recycler::Recycler,
         std::{
-            io,
-            io::Write,
+            io::{self, Write},
             sync::{
                 atomic::{AtomicBool, Ordering},
                 Arc,
@@ -476,7 +478,7 @@ mod test {
     #[test]
     fn streamer_debug() {
         write!(io::sink(), "{:?}", Packet::default()).unwrap();
-        write!(io::sink(), "{:?}", PacketBatch::default()).unwrap();
+        write!(io::sink(), "{:?}", Vec::<Packet>::default()).unwrap();
     }
     #[test]
     fn streamer_send_test() {
@@ -510,16 +512,14 @@ mod test {
                 SocketAddrSpace::Unspecified,
                 None,
             );
-            let mut packet_batch = PacketBatch::default();
-            for i in 0..NUM_PACKETS {
-                let mut p = Packet::default();
-                {
-                    p.buffer_mut()[0] = i as u8;
-                    p.meta_mut().size = PACKET_DATA_SIZE;
+            let packet_batch: Vec<_> = (0..NUM_PACKETS)
+                .map(|i| {
+                    let mut p = PacketMut::default();
+                    p.put_u8(i as u8);
                     p.meta_mut().set_socket_addr(&addr);
-                }
-                packet_batch.push(p);
-            }
+                    p.freeze()
+                })
+                .collect();
             s_responder.send(packet_batch).expect("send");
             t_responder
         };
