@@ -7290,6 +7290,7 @@ dependencies = [
  "solana-unified-scheduler-logic",
  "solana-unified-scheduler-pool",
  "solana-version",
+ "solana-vortexor-receiver",
  "solana-vote",
  "solana-vote-program",
  "solana-wen-restart",
@@ -10706,6 +10707,7 @@ dependencies = [
 name = "solana-vortexor"
 version = "2.3.0"
 dependencies = [
+ "agave-banking-stage-ingress-types",
  "assert_matches",
  "async-channel",
  "bytes",
@@ -10727,9 +10729,11 @@ dependencies = [
  "quinn-proto",
  "rand 0.8.5",
  "rustls 0.23.23",
+ "signal-hook",
  "smallvec",
  "socket2",
  "solana-clap-utils",
+ "solana-client",
  "solana-core",
  "solana-logger",
  "solana-measure",
@@ -10742,7 +10746,17 @@ dependencies = [
  "solana-version",
  "thiserror 2.0.11",
  "tokio",
+ "url 2.5.4",
  "x509-parser",
+]
+
+[[package]]
+name = "solana-vortexor-receiver"
+version = "2.3.0"
+dependencies = [
+ "assert_matches",
+ "solana-perf",
+ "solana-streamer",
 ]
 
 [[package]]

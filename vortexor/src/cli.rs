@@ -7,6 +7,7 @@ use {
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
         DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
     },
+    url::Url,
 };
 
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
@@ -60,6 +61,28 @@ fn port_range_validator(port_range: String) -> Result<(), String> {
         }
     } else {
         Err("Invalid port range".to_string())
+    }
+}
+
+fn validate_http_url(input: String) -> Result<(), String> {
+    // Attempt to parse the input as a URL
+    let parsed_url = Url::parse(&input).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Check the scheme of the URL
+    match parsed_url.scheme() {
+        "http" | "https" => Ok(()),
+        scheme => Err(format!("Invalid scheme: {}. Must be http, https.", scheme)),
+    }
+}
+
+fn validate_websocket_url(input: String) -> Result<(), String> {
+    // Attempt to parse the input as a URL
+    let parsed_url = Url::parse(&input).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Check the scheme of the URL
+    match parsed_url.scheme() {
+        "ws" | "wss" => Ok(()),
+        scheme => Err(format!("Invalid scheme: {}. Must be ws, or wss.", scheme)),
     }
 }
 
@@ -171,5 +194,47 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .validator(is_parsable::<u64>)
                 .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
+        )
+        .arg(
+            Arg::with_name("logfile")
+                .short("o")
+                .long("log")
+                .value_name("FILE")
+                .takes_value(true)
+                .help(
+                    "Redirect logging to the specified file, '-' for standard error. Sending the \
+                     SIGUSR1 signal to the vortexor process will cause it to re-open the log file",
+                ),
+        )
+        .arg(
+            Arg::with_name("destination")
+                .short("n")
+                .long("destination")
+                .value_name("HOST:PORT")
+                .takes_value(true)
+                .multiple(true)
+                .validator(solana_net_utils::is_host_port)
+                .help("The destination validator address to which the vortexor will forward transaction"),
+        )
+        .arg(
+            Arg::with_name("rpc_server")
+                .short("r")
+                .long("rpc-server")
+                .value_name("HOST:PORT")
+                .takes_value(true)
+                .multiple(true)
+                .validator(validate_http_url)
+                .help("The address of RPC server to which the vortexor will forward transaction"),
+        )
+        .arg(
+            Arg::with_name("websocket_server")
+                .short("w")
+                .long("websocket-server")
+                .value_name("HOST:PORT")
+                .takes_value(true)
+                .multiple(true)
+                .validator(validate_websocket_url)
+                .help("The address of websocket server to which the vortexor will forward transaction.  \
+                 If multiple rpc servers are set, the count of websocket servers must match that of the rpc servers."),
         )
 }
