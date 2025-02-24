@@ -45,11 +45,12 @@ use {
     solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_instruction::{error::InstructionError, Instruction},
     solana_keypair::{keypair_from_seed, read_keypair_file, Keypair},
+    solana_loader_v3_interface::{
+        get_program_data_address, instruction as loader_v3_instruction,
+        state::UpgradeableLoaderState,
+    },
     solana_message::Message,
     solana_packet::PACKET_DATA_SIZE,
-    solana_program::bpf_loader_upgradeable::{
-        self, get_program_data_address, UpgradeableLoaderState,
-    },
     solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -62,7 +63,7 @@ use {
     },
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, compute_budget},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_interface::{error::SystemError, MAX_PERMITTED_DATA_LENGTH},
@@ -1606,7 +1607,7 @@ fn process_program_upgrade(
 
     let blockhash = blockhash_query.get_blockhash(&rpc_client, config.commitment)?;
     let message = Message::new_with_blockhash(
-        &[bpf_loader_upgradeable::upgrade(
+        &[loader_v3_instruction::upgrade(
             &program_id,
             &buffer_pubkey,
             &upgrade_authority_signer.pubkey(),
@@ -1772,7 +1773,7 @@ fn process_set_authority(
 
     let mut tx = if let Some(ref pubkey) = program_pubkey {
         Transaction::new_unsigned(Message::new(
-            &[bpf_loader_upgradeable::set_upgrade_authority(
+            &[loader_v3_instruction::set_upgrade_authority(
                 pubkey,
                 &authority_signer.pubkey(),
                 new_authority.as_ref(),
@@ -1782,7 +1783,7 @@ fn process_set_authority(
     } else if let Some(pubkey) = buffer_pubkey {
         if let Some(ref new_authority) = new_authority {
             Transaction::new_unsigned(Message::new(
-                &[bpf_loader_upgradeable::set_buffer_authority(
+                &[loader_v3_instruction::set_buffer_authority(
                     &pubkey,
                     &authority_signer.pubkey(),
                     new_authority,
@@ -1848,7 +1849,7 @@ fn process_set_authority_checked(
     let blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
     let mut tx = Transaction::new_unsigned(Message::new(
-        &[bpf_loader_upgradeable::set_upgrade_authority_checked(
+        &[loader_v3_instruction::set_upgrade_authority_checked(
             &program_pubkey,
             &authority_signer.pubkey(),
             &new_authority_signer.pubkey(),
@@ -2198,7 +2199,7 @@ fn close(
     let blockhash = rpc_client.get_latest_blockhash()?;
 
     let mut tx = Transaction::new_unsigned(Message::new(
-        &[bpf_loader_upgradeable::close_any(
+        &[loader_v3_instruction::close_any(
             account_pubkey,
             recipient_pubkey,
             Some(&authority_signer.pubkey()),
@@ -2422,7 +2423,7 @@ fn process_extend_program(
     let blockhash = rpc_client.get_latest_blockhash()?;
 
     let mut tx = Transaction::new_unsigned(Message::new(
-        &[bpf_loader_upgradeable::extend_program(
+        &[loader_v3_instruction::extend_program(
             &program_pubkey,
             Some(&payer_pubkey),
             additional_bytes,
@@ -2511,7 +2512,7 @@ fn process_migrate_program(
 
     let blockhash = rpc_client.get_latest_blockhash()?;
     let mut message = Message::new(
-        &vec![bpf_loader_upgradeable::migrate_program(
+        &vec![loader_v3_instruction::migrate_program(
             &programdata_pubkey,
             &program_pubkey,
             &authority_signer.pubkey(),
@@ -2594,7 +2595,7 @@ fn do_process_program_deploy(
             (vec![], 0, buffer_program_data)
         } else {
             (
-                bpf_loader_upgradeable::create_buffer(
+                loader_v3_instruction::create_buffer(
                     &fee_payer_signer.pubkey(),
                     buffer_pubkey,
                     &buffer_authority_signer.pubkey(),
@@ -2621,7 +2622,7 @@ fn do_process_program_deploy(
 
     // Create and add write messages
     let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let instruction = bpf_loader_upgradeable::write(
+        let instruction = loader_v3_instruction::write(
             buffer_pubkey,
             &buffer_authority_signer.pubkey(),
             offset,
@@ -2647,7 +2648,7 @@ fn do_process_program_deploy(
     // Create and add final message
     let final_message = {
         #[allow(deprecated)]
-        let instructions = bpf_loader_upgradeable::deploy_with_max_program_len(
+        let instructions = loader_v3_instruction::deploy_with_max_program_len(
             &fee_payer_signer.pubkey(),
             &program_signers[0].pubkey(),
             buffer_pubkey,
@@ -2727,7 +2728,7 @@ fn do_process_write_buffer(
             (vec![], 0, buffer_program_data)
         } else {
             (
-                bpf_loader_upgradeable::create_buffer(
+                loader_v3_instruction::create_buffer(
                     &fee_payer_signer.pubkey(),
                     buffer_pubkey,
                     &buffer_authority_signer.pubkey(),
@@ -2754,7 +2755,7 @@ fn do_process_write_buffer(
 
     // Create and add write messages
     let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let instruction = bpf_loader_upgradeable::write(
+        let instruction = loader_v3_instruction::write(
             buffer_pubkey,
             &buffer_authority_signer.pubkey(),
             offset,
@@ -2840,7 +2841,7 @@ fn do_process_program_upgrade(
                 (vec![], 0, buffer_program_data)
             } else {
                 (
-                    bpf_loader_upgradeable::create_buffer(
+                    loader_v3_instruction::create_buffer(
                         &fee_payer_signer.pubkey(),
                         &buffer_signer.pubkey(),
                         &upgrade_authority.pubkey(),
@@ -2879,7 +2880,7 @@ fn do_process_program_upgrade(
         let buffer_signer_pubkey = buffer_signer.pubkey();
         let upgrade_authority_pubkey = upgrade_authority.pubkey();
         let create_msg = |offset: u32, bytes: Vec<u8>| {
-            let instructions = vec![bpf_loader_upgradeable::write(
+            let instructions = vec![loader_v3_instruction::write(
                 &buffer_signer_pubkey,
                 &upgrade_authority_pubkey,
                 offset,
@@ -2908,7 +2909,7 @@ fn do_process_program_upgrade(
     };
 
     // Create and add final message
-    let final_instructions = vec![bpf_loader_upgradeable::upgrade(
+    let final_instructions = vec![loader_v3_instruction::upgrade(
         program_id,
         buffer_pubkey,
         &upgrade_authority.pubkey(),
@@ -3000,7 +3001,7 @@ fn extend_program_data_if_needed(
 
     let additional_bytes =
         u32::try_from(additional_bytes).expect("`u32` is big enough to hold an account size");
-    initial_instructions.push(bpf_loader_upgradeable::extend_program(
+    initial_instructions.push(loader_v3_instruction::extend_program(
         program_id,
         Some(fee_payer),
         additional_bytes,
