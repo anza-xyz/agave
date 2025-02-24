@@ -124,6 +124,7 @@ impl AccountsDb {
             // As long as all accounts for this slot are in 1 append vec that can be iterated oldest to newest.
             self.notify_filtered_accounts(
                 slot,
+                i as u64,
                 notified_accounts,
                 std::iter::once(account),
                 notify_stats,
@@ -137,6 +138,7 @@ impl AccountsDb {
     fn notify_filtered_accounts<'a>(
         &self,
         slot: Slot,
+        write_version: u64,
         notified_accounts: &mut HashSet<Pubkey>,
         accounts_to_stream: impl Iterator<Item = StoredAccountMeta<'a>>,
         notify_stats: &mut GeyserPluginNotifyAtSnapshotRestoreStats,
@@ -145,7 +147,7 @@ impl AccountsDb {
         let mut measure_notify = Measure::start("accountsdb-plugin-notifying-accounts");
         for account in accounts_to_stream {
             let mut measure_pure_notify = Measure::start("accountsdb-plugin-notifying-accounts");
-            notifier.notify_account_restore_from_snapshot(slot, &account);
+            notifier.notify_account_restore_from_snapshot(slot, write_version, &account);
             measure_pure_notify.stop();
 
             notify_stats.total_pure_notify += measure_pure_notify.as_us() as usize;
@@ -217,7 +219,12 @@ pub mod tests {
 
         /// Notified when the AccountsDb is initialized at start when restored
         /// from a snapshot.
-        fn notify_account_restore_from_snapshot(&self, slot: Slot, account: &StoredAccountMeta) {
+        fn notify_account_restore_from_snapshot(
+            &self,
+            slot: Slot,
+            _write_version: u64,
+            account: &StoredAccountMeta,
+        ) {
             self.accounts_notified
                 .entry(*account.pubkey())
                 .or_default()

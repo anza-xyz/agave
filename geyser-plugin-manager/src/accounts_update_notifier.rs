@@ -41,11 +41,17 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
         self.notify_plugins_of_account_update(account_info, slot, false);
     }
 
-    fn notify_account_restore_from_snapshot(&self, slot: Slot, account: &StoredAccountMeta) {
+    fn notify_account_restore_from_snapshot(
+        &self,
+        slot: Slot,
+        write_version: u64,
+        account: &StoredAccountMeta,
+    ) {
         let mut measure_all = Measure::start("geyser-plugin-notify-account-restore-all");
         let mut measure_copy = Measure::start("geyser-plugin-copy-stored-account-info");
 
-        let account = self.accountinfo_from_stored_account_meta(account);
+        let mut account = self.accountinfo_from_stored_account_meta(account);
+        account.write_version = write_version;
         measure_copy.stop();
 
         inc_new_counter_debug!(
@@ -133,13 +139,6 @@ impl AccountsUpdateNotifierImpl {
         &self,
         stored_account_meta: &'a StoredAccountMeta,
     ) -> ReplicaAccountInfoV3<'a> {
-        // We do not need to rely on the specific write_version read from the append vec.
-        // So, overwrite the write_version with something that works.
-        // There is already only entry per pubkey.
-        // write_version is only used to order multiple entries with the same pubkey,
-        // so it doesn't matter what value it gets here.
-        // Passing 0 for everyone's write_version is sufficiently correct.
-        let write_version = 0;
         ReplicaAccountInfoV3 {
             pubkey: stored_account_meta.pubkey().as_ref(),
             lamports: stored_account_meta.lamports(),
@@ -147,7 +146,7 @@ impl AccountsUpdateNotifierImpl {
             executable: stored_account_meta.executable(),
             rent_epoch: stored_account_meta.rent_epoch(),
             data: stored_account_meta.data(),
-            write_version,
+            write_version: 0, // can/will be populated afterwards
             txn: None,
         }
     }
