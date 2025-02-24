@@ -52,6 +52,14 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .validator(solana_net_utils::is_host_port)
                 .help("TPU Forwards address to advertise in gossip"),
         )
+        .arg(
+            Arg::with_name("tpu_vortexor_receiver_address")
+                .long("receiver")
+                .value_name("HOST:PORT")
+                .takes_value(false)
+                .validator(solana_net_utils::is_host_port)
+                .help("TPU Vortexor Receiver address to which verified transaction packet will be forwarded."),
+        )
         .group(
             ArgGroup::with_name("set_public_address_details")
                 .args(&["tpu_addr", "tpu_forwards_addr"])
