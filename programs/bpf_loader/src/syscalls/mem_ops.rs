@@ -341,8 +341,7 @@ where
         src_addr,
         n_bytes,
         resize_area,
-    )
-    .map_err(EbpfError::from)?;
+    )?;
     let mut dst_chunk_iter = MemoryChunkIterator::new(
         memory_mapping,
         accounts,
@@ -350,8 +349,7 @@ where
         dst_addr,
         n_bytes,
         resize_area,
-    )
-    .map_err(EbpfError::from)?;
+    )?;
 
     let mut src_chunk = None;
     let mut dst_chunk = None;

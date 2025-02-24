@@ -96,9 +96,7 @@ pub fn check_account_for_spend_and_fee_with_commitment(
         account_pubkey,
         required_balance,
         commitment,
-    )
-    .map_err(Into::<ClientError>::into)?
-    {
+    )? {
         if balance > 0 {
             return Err(CliError::InsufficientFundsForSpendAndFee(
                 lamports_to_sol(balance),
