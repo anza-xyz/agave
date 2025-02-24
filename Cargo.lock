@@ -10706,6 +10706,7 @@ dependencies = [
 name = "solana-vortexor"
 version = "2.3.0"
 dependencies = [
+ "agave-banking-stage-ingress-types",
  "assert_matches",
  "async-channel",
  "bytes",
@@ -10727,6 +10728,7 @@ dependencies = [
  "quinn-proto",
  "rand 0.8.5",
  "rustls 0.23.23",
+ "signal-hook",
  "smallvec",
  "socket2",
  "solana-clap-utils",
