@@ -53,13 +53,13 @@ mod transaction_builder;
 const fn feature_u64(feature: &Pubkey) -> u64 {
     let feature_id = feature.to_bytes();
     feature_id[0] as u64
-        | (feature_id[1] as u64) << 8
-        | (feature_id[2] as u64) << 16
-        | (feature_id[3] as u64) << 24
-        | (feature_id[4] as u64) << 32
-        | (feature_id[5] as u64) << 40
-        | (feature_id[6] as u64) << 48
-        | (feature_id[7] as u64) << 56
+        | ((feature_id[1] as u64) << 8)
+        | ((feature_id[2] as u64) << 16)
+        | ((feature_id[3] as u64) << 24)
+        | ((feature_id[4] as u64) << 32)
+        | ((feature_id[5] as u64) << 40)
+        | ((feature_id[6] as u64) << 48)
+        | ((feature_id[7] as u64) << 56)
 }
 
 lazy_static! {
