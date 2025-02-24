@@ -925,7 +925,7 @@ fn check_for_newer_github_release(
                             if (prerelease_allowed || !prerelease)
                                 && version_filter
                                     .as_ref()
-                                    .map_or(true, |version_filter| version_filter.matches(&version))
+                                    .is_none_or(|version_filter| version_filter.matches(&version))
                             {
                                 return Some(version);
                             }
