@@ -329,6 +329,7 @@ reed-solomon-erasure = "6.0.0"
 regex = "1.11.1"
 reqwest = { version = "0.11.27", default-features = false }
 reqwest-middleware = "0.2.5"
+rocksdb = { version = "0.23.0", default-features = false }
 rolling-file = "0.2.0"
 rpassword = "7.3"
 rustls = { version = "0.23.23", features = ["std"], default-features = false }
@@ -342,6 +343,7 @@ serde_derive = "1.0.217" # must match the serde version, see https://github.com/
 serde_json = "1.0.139"
 serde_with = { version = "3.12.0", default-features = false }
 serde_yaml = "0.9.34"
+serde_yaml_08 = { package = "serde_yaml", version = "0.8.26" }
 serial_test = "2.0.0"
 sha2 = "0.10.8"
 sha3 = "0.10.8"

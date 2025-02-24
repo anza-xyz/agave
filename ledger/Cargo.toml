@@ -37,6 +37,9 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
 reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
+rocksdb = { workspace = true, features = ["lz4"] }
+# Avoid the vendored bzip2 within rocksdb-sys that can cause linker conflicts
+ # when also using the bzip2 crate
 scopeguard = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
@@ -82,13 +85,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true }
 trees = { workspace = true }
-
-[dependencies.rocksdb]
-# Avoid the vendored bzip2 within rocksdb-sys that can cause linker conflicts
-# when also using the bzip2 crate
-version = "0.23.0"
-default-features = false
-features = ["lz4"]
 
 [dev-dependencies]
 bs58 = { workspace = true }

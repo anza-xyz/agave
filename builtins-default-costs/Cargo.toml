@@ -35,7 +35,7 @@ crate-type = ["lib"]
 name = "solana_builtins_default_costs"
 
 [dev-dependencies]
-rand = "0.8.5"
+rand = { workspace = true }
 solana-builtins-default-costs = { path = ".", features = ["svm-internal"] }
 static_assertions = { workspace = true }
 
