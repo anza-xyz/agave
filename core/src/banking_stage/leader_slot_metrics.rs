@@ -3,9 +3,7 @@ use {
         consumer::LeaderProcessedTransactionCounts,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
         packet_deserializer::PacketReceiverStats,
-        unprocessed_transaction_storage::{
-            InsertPacketBatchSummary, UnprocessedTransactionStorage,
-        },
+        unprocessed_transaction_storage::{InsertPacketBatchSummary, VoteStorage},
     },
     solana_poh::poh_recorder::BankStart,
     solana_sdk::{clock::Slot, saturating_add_assign},
@@ -104,7 +102,7 @@ struct LeaderPrioritizationFeesMetrics {
 }
 
 impl LeaderPrioritizationFeesMetrics {
-    fn new(unprocessed_transaction_storage: Option<&UnprocessedTransactionStorage>) -> Self {
+    fn new(unprocessed_transaction_storage: Option<&VoteStorage>) -> Self {
         if let Some(unprocessed_transaction_storage) = unprocessed_transaction_storage {
             Self {
                 min_prioritization_fees_per_cu: unprocessed_transaction_storage
@@ -476,7 +474,7 @@ impl LeaderSlotMetrics {
         id: u32,
         slot: Slot,
         bank_creation_time: &Instant,
-        unprocessed_transaction_storage: Option<&UnprocessedTransactionStorage>,
+        unprocessed_transaction_storage: Option<&VoteStorage>,
     ) -> Self {
         Self {
             id: id.to_string(),
@@ -571,7 +569,7 @@ impl LeaderSlotMetricsTracker {
     pub(crate) fn check_leader_slot_boundary(
         &mut self,
         bank_start: Option<&BankStart>,
-        unprocessed_transaction_storage: Option<&UnprocessedTransactionStorage>,
+        unprocessed_transaction_storage: Option<&VoteStorage>,
     ) -> MetricsTrackerAction {
         match (self.leader_slot_metrics.as_mut(), bank_start) {
             (None, None) => MetricsTrackerAction::Noop,
