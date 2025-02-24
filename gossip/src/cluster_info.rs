@@ -44,7 +44,7 @@ use {
         },
         weighted_shuffle::WeightedShuffle,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError},
     itertools::{Either, Itertools},
     rand::{seq::SliceRandom, CryptoRng, Rng},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
@@ -106,6 +106,9 @@ const DEFAULT_EPOCH_DURATION: Duration =
     Duration::from_millis(DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT);
 /// milliseconds we sleep for between gossip requests
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
+/// A hard limit on incoming gossip messages.
+/// 262144 packets with saturated packet batches (64 packets).
+pub(crate) const MAX_GOSSIP_TRAFFIC_BATCHED: usize = 4096;
 /// Capacity for the [`ClusterInfo::run_socket_consume`] and [`ClusterInfo::run_listen`]
 /// intermediate packet batch buffers.
 ///
@@ -1353,7 +1356,7 @@ impl ClusterInfo {
         .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
         .for_each(|pkt| packet_batch.push(pkt));
         if !packet_batch.is_empty() {
-            sender.send(packet_batch)?;
+            _ = sender.try_send(packet_batch);
         }
         self.stats
             .gossip_transmit_loop_iterations_since_last_report
@@ -1595,7 +1598,11 @@ impl ClusterInfo {
         if !requests.is_empty() {
             let response = self.handle_pull_requests(thread_pool, recycler, requests, stakes);
             if !response.is_empty() {
-                let _ = response_sender.send(response);
+                if let Err(TrySendError::Full(response)) = response_sender.try_send(response) {
+                    self.stats
+                        .gossip_packets_dropped_count
+                        .add_relaxed(response.len() as u64);
+                }
             }
         }
     }
@@ -1870,7 +1877,11 @@ impl ClusterInfo {
             .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
             .for_each(|pkt| packet_batch.push(pkt));
         if !packet_batch.is_empty() {
-            let _ = response_sender.send(packet_batch);
+            if let Err(TrySendError::Full(packet_batch)) = response_sender.try_send(packet_batch) {
+                self.stats
+                    .gossip_packets_dropped_count
+                    .add_relaxed(packet_batch.len() as u64);
+            }
         }
     }
 
@@ -2166,8 +2177,15 @@ impl ClusterInfo {
                 }
             })
         };
+        if !packets.is_empty() {
+            if let Err(TrySendError::Full(_)) = sender.try_send(packets) {
+                self.stats
+                    .gossip_packets_dropped_count
+                    .add_relaxed(packet_buf.iter().fold(0, |acc, batch| acc + batch.len()) as u64);
+            }
+        }
         packet_buf.clear();
-        Ok(sender.send(packets)?)
+        Ok(())
     }
 
     /// Process messages from the network
@@ -2991,7 +3009,11 @@ fn send_gossip_packets<S: Borrow<SocketAddr>>(
     let pkts = pkts.into_iter();
     if pkts.len() != 0 {
         let pkts = make_gossip_packet_batch(pkts, recycler, stats);
-        let _ = sender.send(pkts);
+        if let Err(TrySendError::Full(pkts)) = sender.try_send(pkts) {
+            stats
+                .gossip_packets_dropped_count
+                .add_relaxed(pkts.len() as u64);
+        }
     }
 }
 

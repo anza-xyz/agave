@@ -153,7 +153,7 @@ fn recv_loop(
                     packet_batch
                         .iter_mut()
                         .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
-                    packet_batch_sender.send(packet_batch)?;
+                    _ = packet_batch_sender.try_send(packet_batch);
                 }
                 break;
             }
