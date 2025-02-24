@@ -120,7 +120,7 @@ pub fn main() {
     };
     let _logger_thread = redirect_stderr_to_file(logfile);
 
-    info!("{} {}", crate_name!(), solana_version);
+    info!("{} {solana_version}", crate_name!());
     info!(
         "Starting vortexor {} with: {:#?}",
         identity_keypair.pubkey(),
