@@ -110,6 +110,7 @@ pub struct GossipStats {
     pub(crate) gossip_pull_request_sent_bytes: Counter,
     pub(crate) gossip_transmit_loop_iterations_since_last_report: Counter,
     pub(crate) gossip_transmit_loop_time: Counter,
+    pub(crate) gossip_transmit_packets_dropped_count: Counter,
     pub(crate) handle_batch_ping_messages_time: Counter,
     pub(crate) handle_batch_pong_messages_time: Counter,
     pub(crate) handle_batch_prune_messages_time: Counter,
@@ -412,6 +413,11 @@ pub(crate) fn submit_gossip_stats(
             stats
                 .gossip_transmit_loop_iterations_since_last_report
                 .clear(),
+            i64
+        ),
+        (
+            "gossip_transmit_packets_dropped_count",
+            stats.gossip_transmit_packets_dropped_count.clear(),
             i64
         ),
         (
