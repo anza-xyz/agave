@@ -276,13 +276,23 @@ pub struct ShredId(Slot, /*shred index:*/ u32, ShredType);
 
 impl ShredId {
     #[inline]
-    pub(crate) fn new(slot: Slot, index: u32, shred_type: ShredType) -> ShredId {
+    pub fn new(slot: Slot, index: u32, shred_type: ShredType) -> ShredId {
         ShredId(slot, index, shred_type)
     }
 
     #[inline]
     pub fn slot(&self) -> Slot {
         self.0
+    }
+
+    #[inline]
+    pub fn index(&self) -> u32 {
+        self.1
+    }
+
+    #[inline]
+    pub fn shred_type(&self) -> ShredType {
+        self.2
     }
 
     #[inline]
