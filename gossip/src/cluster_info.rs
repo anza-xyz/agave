@@ -1354,7 +1354,11 @@ impl ClusterInfo {
         .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
         .for_each(|pkt| packet_batch.push(pkt));
         if !packet_batch.is_empty() {
-            _ = sender.try_send(packet_batch);
+            if let Err(TrySendError::Full(packet_batch)) = sender.try_send(packet_batch) {
+                self.stats
+                    .gossip_transmit_packets_dropped_count
+                    .add_relaxed(packet_batch.len() as u64);
+            }
         }
         self.stats
             .gossip_transmit_loop_iterations_since_last_report
