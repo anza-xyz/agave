@@ -9850,7 +9850,7 @@ dependencies = [
  "flate2",
  "futures 0.3.31",
  "goauth",
- "http 0.2.12",
+ "http 1.1.0",
  "hyper 0.14.32",
  "hyper-proxy",
  "log",
