@@ -46,6 +46,9 @@ solana-version = { workspace = true }
 spl-instruction-padding = { workspace = true }
 thiserror = { workspace = true }
 
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
+jemallocator = { workspace = true }
+
 [dev-dependencies]
 serial_test = { workspace = true }
 solana-feature-set = { workspace = true }

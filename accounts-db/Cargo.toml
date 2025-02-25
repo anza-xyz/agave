@@ -104,6 +104,9 @@ strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 test-case = { workspace = true }
 
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
+jemallocator = { workspace = true }
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
