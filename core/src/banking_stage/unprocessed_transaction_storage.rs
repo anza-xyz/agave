@@ -9,9 +9,7 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         multi_iterator_scanner::{MultiIteratorScanner, ProcessingDecision},
         read_write_account_set::ReadWriteAccountSet,
-        unprocessed_packet_batches::{
-            DeserializedPacket, PacketBatchInsertionMetrics,
-        },
+        unprocessed_packet_batches::{DeserializedPacket, PacketBatchInsertionMetrics},
         BankingStageStats,
     },
     itertools::Itertools,
@@ -252,20 +250,22 @@ impl VoteStorage {
         &mut self,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
     ) -> InsertPacketBatchSummary {
-        InsertPacketBatchSummary::from(self.latest_unprocessed_votes.insert_batch(
-            deserialized_packets
-                .into_iter()
-                .filter_map(|deserialized_packet| {
-                    LatestValidatorVotePacket::new_from_immutable(
-                        Arc::new(deserialized_packet),
-                        self.vote_source,
-                        self.latest_unprocessed_votes
-                            .should_deprecate_legacy_vote_ixs(),
-                    )
-                    .ok()
-                }),
-            false, // should_replenish_taken_votes
-        ))
+        InsertPacketBatchSummary::from(
+            self.latest_unprocessed_votes.insert_batch(
+                deserialized_packets
+                    .into_iter()
+                    .filter_map(|deserialized_packet| {
+                        LatestValidatorVotePacket::new_from_immutable(
+                            Arc::new(deserialized_packet),
+                            self.vote_source,
+                            self.latest_unprocessed_votes
+                                .should_deprecate_legacy_vote_ixs(),
+                        )
+                        .ok()
+                    }),
+                false, // should_replenish_taken_votes
+            ),
+        )
     }
 
     // returns `true` if the end of slot is reached
@@ -344,11 +344,11 @@ impl VoteStorage {
         scanner.finalize().payload.reached_end_of_slot
     }
 
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.latest_unprocessed_votes.clear();
     }
 
-    fn cache_epoch_boundary_info(&mut self, bank: &Bank) {
+    pub fn cache_epoch_boundary_info(&mut self, bank: &Bank) {
         if matches!(self.vote_source, VoteSource::Gossip) {
             panic!("Gossip vote thread should not be checking epoch boundary");
         }
@@ -363,181 +363,17 @@ impl VoteStorage {
     }
 }
 
-impl ThreadLocalUnprocessedPackets {
-    fn is_empty(&self) -> bool {
-        self.unprocessed_packet_batches.is_empty()
-    }
-
-    pub fn thread_type(&self) -> ThreadType {
-        self.thread_type
-    }
-
-    fn len(&self) -> usize {
-        self.unprocessed_packet_batches.len()
-    }
-
-    pub fn get_min_compute_unit_price(&self) -> Option<u64> {
-        self.unprocessed_packet_batches.get_min_compute_unit_price()
-    }
-
-    pub fn get_max_compute_unit_price(&self) -> Option<u64> {
-        self.unprocessed_packet_batches.get_max_compute_unit_price()
-    }
-
-    fn max_receive_size(&self) -> usize {
-        self.unprocessed_packet_batches.capacity() - self.unprocessed_packet_batches.len()
-    }
-
-    #[cfg(test)]
-    fn iter(&mut self) -> impl Iterator<Item = &DeserializedPacket> {
-        self.unprocessed_packet_batches.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut DeserializedPacket> {
-        self.unprocessed_packet_batches.iter_mut()
-    }
-
-    fn insert_batch(
-        &mut self,
-        deserialized_packets: Vec<ImmutableDeserializedPacket>,
-    ) -> PacketBatchInsertionMetrics {
-        self.unprocessed_packet_batches.insert_batch(
-            deserialized_packets
-                .into_iter()
-                .map(DeserializedPacket::from_immutable_section),
-        )
-    }
-
-    /// Take self.unprocessed_packet_batches's priority_queue out, leave empty MinMaxHeap in its place.
-    fn take_priority_queue(&mut self) -> MinMaxHeap<Arc<ImmutableDeserializedPacket>> {
-        std::mem::replace(
-            &mut self.unprocessed_packet_batches.packet_priority_queue,
-            MinMaxHeap::new(), // <-- no need to reserve capacity as we will replace this
-        )
-    }
-
-    /// Verify that the priority queue and map are consistent and that original capacity is maintained.
-    fn verify_priority_queue(&self, original_capacity: usize) {
-        // Assert unprocessed queue is still consistent and maintains original capacity
-        assert_eq!(
-            self.unprocessed_packet_batches
-                .packet_priority_queue
-                .capacity(),
-            original_capacity
-        );
-        assert_eq!(
-            self.unprocessed_packet_batches.packet_priority_queue.len(),
-            self.unprocessed_packet_batches
-                .message_hash_to_transaction
-                .len()
-        );
-    }
-
-    fn collect_retained_packets(
-        message_hash_to_transaction: &mut HashMap<Hash, DeserializedPacket>,
-        packets_to_process: &[Arc<ImmutableDeserializedPacket>],
-        retained_packet_indexes: &[usize],
-    ) -> Vec<Arc<ImmutableDeserializedPacket>> {
-        Self::remove_non_retained_packets(
-            message_hash_to_transaction,
-            packets_to_process,
-            retained_packet_indexes,
-        );
-        retained_packet_indexes
-            .iter()
-            .map(|i| packets_to_process[*i].clone())
-            .collect_vec()
-    }
-
-    /// remove packets from UnprocessedPacketBatches.message_hash_to_transaction after they have
-    /// been removed from UnprocessedPacketBatches.packet_priority_queue
-    fn remove_non_retained_packets(
-        message_hash_to_transaction: &mut HashMap<Hash, DeserializedPacket>,
-        packets_to_process: &[Arc<ImmutableDeserializedPacket>],
-        retained_packet_indexes: &[usize],
-    ) {
-        filter_processed_packets(
-            retained_packet_indexes
-                .iter()
-                .chain(std::iter::once(&packets_to_process.len())),
-            |start, end| {
-                for processed_packet in &packets_to_process[start..end] {
-                    message_hash_to_transaction.remove(processed_packet.message_hash());
-                }
-            },
-        )
-    }
-
-    // returns `true` if reached end of slot
-    fn process_packets<F>(
-        &mut self,
-        bank: &Bank,
-        banking_stage_stats: &BankingStageStats,
-        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-        mut processing_function: F,
-    ) -> bool
-    where
-        F: FnMut(
-            &Vec<Arc<ImmutableDeserializedPacket>>,
-            &mut ConsumeScannerPayload,
-        ) -> Option<Vec<usize>>,
-    {
-        let mut retryable_packets = self.take_priority_queue();
-        let original_capacity = retryable_packets.capacity();
-        let mut new_retryable_packets = MinMaxHeap::with_capacity(original_capacity);
-        let all_packets_to_process = retryable_packets.drain_desc().collect_vec();
-
-        let should_process_packet =
-            |packet: &Arc<ImmutableDeserializedPacket>, payload: &mut ConsumeScannerPayload| {
-                consume_scan_should_process_packet(bank, banking_stage_stats, packet, payload)
-            };
-        let mut scanner = create_consume_multi_iterator(
-            &all_packets_to_process,
-            slot_metrics_tracker,
-            &mut self.unprocessed_packet_batches.message_hash_to_transaction,
-            should_process_packet,
-        );
-
-        while let Some((packets_to_process, payload)) = scanner.iterate() {
-            let packets_to_process = packets_to_process
-                .iter()
-                .map(|p| (*p).clone())
-                .collect_vec();
-            let retryable_packets = if let Some(retryable_transaction_indexes) =
-                processing_function(&packets_to_process, payload)
-            {
-                Self::collect_retained_packets(
-                    payload.message_hash_to_transaction,
-                    &packets_to_process,
-                    &retryable_transaction_indexes,
-                )
-            } else {
-                packets_to_process
-            };
-
-            new_retryable_packets.extend(retryable_packets);
-        }
-
-        let reached_end_of_slot = scanner.finalize().payload.reached_end_of_slot;
-
-        self.unprocessed_packet_batches.packet_priority_queue = new_retryable_packets;
-        self.verify_priority_queue(original_capacity);
-
-        reached_end_of_slot
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        itertools::iproduct,
         solana_perf::packet::{Packet, PacketFlags},
         solana_runtime::genesis_utils,
         solana_sdk::{
             hash::Hash,
             signature::{Keypair, Signer},
             system_transaction,
+            transaction::Transaction,
         },
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
@@ -637,10 +473,8 @@ mod tests {
 
         let latest_unprocessed_votes =
             LatestUnprocessedVotes::new_for_tests(&[vote_keypair.pubkey()]);
-        let mut transaction_storage = VoteStorage::new(
-            Arc::new(latest_unprocessed_votes),
-            VoteSource::Tpu,
-        );
+        let mut transaction_storage =
+            VoteStorage::new(Arc::new(latest_unprocessed_votes), VoteSource::Tpu);
 
         transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(vote.clone())?]);
         assert_eq!(1, transaction_storage.len());
