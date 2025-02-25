@@ -408,9 +408,9 @@ impl RetransmitStage {
         let mut shred_deduper = ShredDeduper::new(&mut rng, DEDUPER_NUM_BITS);
 
         let thread_pool = {
-            // Using clamp will panic if less than 8 sockets are provided
+            // std::cmp::Ord::clamp will panic if min > max.
             #[allow(clippy::manual_clamp)]
-            let num_threads = get_thread_count().min(8).max(retransmit_sockets.len());
+            let num_threads = get_thread_count().min(16).max(retransmit_sockets.len());
             ThreadPoolBuilder::new()
                 .num_threads(num_threads)
                 .thread_name(|i| format!("solRetransmit{i:02}"))
