@@ -73,7 +73,7 @@ impl PacketBatchSender {
         destinations: Arc<RwLock<Vec<SocketAddr>>>,
     ) {
         loop {
-            let destinations = destinations.read().unwrap().clone();
+            let destinations = destinations.read().unwrap();
             match Self::receive_until(packet_batch_receiver.clone(), recv_timeout, batch_size) {
                 Ok((packet_count, packet_batches)) => {
                     trace!("Received packet counts: {}", packet_count);
@@ -89,7 +89,7 @@ impl PacketBatchSender {
                     }
 
                     // Send all packets to each destination
-                    for destination in &destinations {
+                    for destination in destinations.iter() {
                         let packet_refs: Vec<(&[u8], &SocketAddr)> =
                             packets.iter().map(|data| (*data, destination)).collect();
                         let _result = batch_send(&send_sock, packet_refs.into_iter());
