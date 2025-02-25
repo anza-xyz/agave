@@ -1,5 +1,5 @@
 use {
-    crate::{account_storage::meta::StoredAccountMeta, accounts_db::AccountsDb},
+    crate::{accounts_db::AccountsDb, accounts_update_notifier_interface::AccountForGeyser},
     solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -92,7 +92,7 @@ impl AccountsDb {
         let mut pubkeys = HashSet::new();
 
         // populate `accounts_duplicate` for any pubkeys that are in this storage twice.
-        // Storages cannot return `StoredAccountMeta<'_>` for more than 1 account at a time, so we have to do 2 passes to make sure
+        // Storages cannot return `AccountForGeyser` for more than 1 account at a time, so we have to do 2 passes to make sure
         // we don't have duplicate pubkeys.
         let mut i = 0;
         storage_entry.accounts.scan_pubkeys(|pubkey| {
@@ -104,14 +104,14 @@ impl AccountsDb {
 
         // now, actually notify geyser
         let mut i = 0;
-        storage_entry.accounts.scan_accounts(|account| {
+        storage_entry.accounts.scan_accounts_for_geyser(|account| {
             i += 1;
             account_len += 1;
-            if notified_accounts.contains(account.pubkey()) {
+            if notified_accounts.contains(account.pubkey) {
                 notify_stats.skipped_accounts += 1;
                 return;
             }
-            if let Some(highest_i) = accounts_duplicate.get(account.pubkey()) {
+            if let Some(highest_i) = accounts_duplicate.get(account.pubkey) {
                 if highest_i != &i {
                     // this pubkey is in this storage twice and the current instance is not the last one, so we skip it.
                     // We only send unique accounts in this slot to `notify_filtered_accounts`
@@ -140,7 +140,7 @@ impl AccountsDb {
         slot: Slot,
         write_version: u64,
         notified_accounts: &mut HashSet<Pubkey>,
-        accounts_to_stream: impl Iterator<Item = StoredAccountMeta<'a>>,
+        accounts_to_stream: impl Iterator<Item = AccountForGeyser<'a>>,
         notify_stats: &mut GeyserPluginNotifyAtSnapshotRestoreStats,
     ) {
         let notifier = self.accounts_update_notifier.as_ref().unwrap();
@@ -153,7 +153,7 @@ impl AccountsDb {
             notify_stats.total_pure_notify += measure_pure_notify.as_us() as usize;
 
             let mut measure_bookkeep = Measure::start("accountsdb-plugin-notifying-bookeeeping");
-            notified_accounts.insert(*account.pubkey());
+            notified_accounts.insert(*account.pubkey);
             measure_bookkeep.stop();
             notify_stats.total_pure_bookeeping += measure_bookkeep.as_us() as usize;
 
@@ -167,18 +167,12 @@ impl AccountsDb {
 #[cfg(test)]
 pub mod tests {
     use {
-        crate::{
-            account_storage::meta::StoredAccountMeta,
-            accounts_db::AccountsDb,
-            accounts_update_notifier_interface::{
-                AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
-            },
+        super::*,
+        crate::accounts_update_notifier_interface::{
+            AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
         },
         dashmap::DashMap,
-        solana_account::{AccountSharedData, ReadableAccount},
-        solana_clock::Slot,
-        solana_pubkey::Pubkey,
-        solana_transaction::sanitized::SanitizedTransaction,
+        solana_account::ReadableAccount as _,
         std::sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
@@ -223,10 +217,10 @@ pub mod tests {
             &self,
             slot: Slot,
             _write_version: u64,
-            account: &StoredAccountMeta,
+            account: &AccountForGeyser<'_>,
         ) {
             self.accounts_notified
-                .entry(*account.pubkey())
+                .entry(*account.pubkey)
                 .or_default()
                 .push((slot, account.to_account_shared_data()));
         }

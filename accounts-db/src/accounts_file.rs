@@ -3,13 +3,14 @@ use {
         account_info::AccountInfo,
         account_storage::meta::StoredAccountMeta,
         accounts_db::AccountsFileId,
+        accounts_update_notifier_interface::AccountForGeyser,
         append_vec::{AppendVec, AppendVecError, IndexInfo},
         storable_accounts::StorableAccounts,
         tiered_storage::{
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
         },
     },
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, ReadableAccount as _},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
@@ -231,6 +232,25 @@ impl AccountsFile {
                 }
             }
         }
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    /// Only intended to be used by Geyser.
+    pub fn scan_accounts_for_geyser(
+        &self,
+        mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
+    ) {
+        self.scan_accounts(|stored_account_meta| {
+            let account_for_geyser = AccountForGeyser {
+                pubkey: stored_account_meta.pubkey(),
+                lamports: stored_account_meta.lamports(),
+                owner: stored_account_meta.owner(),
+                executable: stored_account_meta.executable(),
+                rent_epoch: stored_account_meta.rent_epoch(),
+                data: stored_account_meta.data(),
+            };
+            callback(account_for_geyser)
+        })
     }
 
     /// for each offset in `sorted_offsets`, return the account size
