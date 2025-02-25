@@ -68,9 +68,7 @@ impl PacketReceiver {
         result
     }
 
-    fn get_receive_timeout(
-        unprocessed_transaction_storage: &VoteStorage,
-    ) -> Duration {
+    fn get_receive_timeout(unprocessed_transaction_storage: &VoteStorage) -> Duration {
         // Gossip thread (does not process) should not continuously receive with 0 duration.
         // This can cause the thread to run at 100% CPU because it is continuously polling.
         if !unprocessed_transaction_storage.should_not_process()
