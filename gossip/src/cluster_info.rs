@@ -15,9 +15,7 @@
 
 use {
     crate::{
-        cluster_info_metrics::{
-            submit_gossip_stats, Counter, GossipStats, ScopedTimer, TimedGuard,
-        },
+        cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
         crds::{Crds, Cursor, GossipRoute},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, SnapshotHashes, Vote},
@@ -159,7 +157,7 @@ pub struct ClusterInfo {
     outbound_budget: DataBudget,
     my_contact_info: RwLock<ContactInfo>,
     ping_cache: Mutex<PingCache>,
-    stats: GossipStats,
+    pub(crate) stats: GossipStats,
     local_message_pending_push_queue: Mutex<Vec<CrdsValue>>,
     contact_debug_interval: u64, // milliseconds, 0 = disabled
     contact_save_interval: u64,  // milliseconds, 0 = disabled
@@ -2183,13 +2181,11 @@ impl ClusterInfo {
         receiver: &Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         response_sender: &PacketBatchSender,
         thread_pool: &ThreadPool,
-        last_print: &mut Instant,
         should_check_duplicate_instance: bool,
         packet_buf: &mut Vec<Vec<(/*from:*/ SocketAddr, Protocol)>>,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.gossip_listen_loop_time);
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
-        const SUBMIT_GOSSIP_STATS_INTERVAL: Duration = Duration::from_secs(2);
         for pkts in receiver
             .recv_timeout(RECV_TIMEOUT)
             .map(std::iter::once)?
@@ -2220,10 +2216,6 @@ impl ClusterInfo {
 
         packet_buf.clear();
 
-        if last_print.elapsed() > SUBMIT_GOSSIP_STATS_INTERVAL {
-            submit_gossip_stats(&self.stats, &self.gossip, &stakes);
-            *last_print = Instant::now();
-        }
         self.stats
             .gossip_listen_loop_iterations_since_last_report
             .add_relaxed(1);
@@ -2275,7 +2267,6 @@ impl ClusterInfo {
         should_check_duplicate_instance: bool,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let mut last_print = Instant::now();
         let recycler = PacketBatchRecycler::default();
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(get_thread_count().min(8))
@@ -2294,7 +2285,6 @@ impl ClusterInfo {
                         &requests_receiver,
                         &response_sender,
                         &thread_pool,
-                        &mut last_print,
                         should_check_duplicate_instance,
                         &mut packet_buf,
                     ) {
