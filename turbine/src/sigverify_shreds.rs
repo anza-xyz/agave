@@ -13,7 +13,12 @@ use {
         shred,
         sigverify_shreds::{verify_shreds_gpu, LruCache},
     },
-    solana_perf::{self, deduper::Deduper, packet::PacketBatch, recycler_cache::RecyclerCache},
+    solana_perf::{
+        self,
+        deduper::Deduper,
+        packet::{Packet, PacketRead},
+        recycler_cache::RecyclerCache,
+    },
     solana_runtime::{
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
         bank_forks::BankForks,
@@ -64,7 +69,7 @@ pub fn spawn_shred_sigverify(
     cluster_info: Arc<ClusterInfo>,
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    shred_fetch_receiver: Receiver<PacketBatch>,
+    shred_fetch_receiver: Receiver<Vec<Packet>>,
     retransmit_sender: Sender<Vec<shred::Payload>>,
     verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
     num_sigverify_threads: NonZeroUsize,
@@ -129,7 +134,7 @@ fn run_shred_sigverify<const K: usize>(
     leader_schedule_cache: &LeaderScheduleCache,
     recycler_cache: &RecyclerCache,
     deduper: &Deduper<K, [u8]>,
-    shred_fetch_receiver: &Receiver<PacketBatch>,
+    shred_fetch_receiver: &Receiver<Vec<Packet>>,
     retransmit_sender: &Sender<Vec<shred::Payload>>,
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
@@ -144,7 +149,7 @@ fn run_shred_sigverify<const K: usize>(
     let now = Instant::now();
     stats.num_iters += 1;
     stats.num_batches += packets.len();
-    stats.num_packets += packets.iter().map(PacketBatch::len).sum::<usize>();
+    stats.num_packets += packets.iter().map(Vec::len).sum::<usize>();
     stats.num_discards_pre += count_discards(&packets);
     // Repair shreds include a randomly generated u32 nonce, so it does not
     // make sense to deduplicate the entire packet payload (i.e. they are not
@@ -196,8 +201,9 @@ fn run_shred_sigverify<const K: usize>(
             .flatten()
             .filter(|packet| !packet.meta().discard())
             .for_each(|packet| {
+                let packet = packet.to_packet_mut();
                 let repair = packet.meta().repair();
-                let Some(shred) = shred::layout::get_shred_mut(packet) else {
+                let Some(shred) = shred::layout::get_shred_mut(&mut packet) else {
                     packet.meta_mut().set_discard(true);
                     return;
                 };
@@ -246,7 +252,7 @@ fn run_shred_sigverify<const K: usize>(
     // Extract shred payload from packets, and separate out repaired shreds.
     let (shreds, repairs): (Vec<_>, Vec<_>) = packets
         .iter()
-        .flat_map(PacketBatch::iter)
+        .flat_map(Vec::iter)
         .filter(|packet| !packet.meta().discard())
         .filter_map(|packet| {
             let shred = shred::layout::get_shred(packet)?.to_vec();
@@ -331,7 +337,7 @@ fn verify_packets(
     working_bank: &Bank,
     leader_schedule_cache: &LeaderScheduleCache,
     recycler_cache: &RecyclerCache,
-    packets: &mut [PacketBatch],
+    packets: &mut [Vec<Packet>],
     cache: &RwLock<LruCache>,
 ) {
     let leader_slots: HashMap<Slot, Pubkey> =
@@ -351,14 +357,14 @@ fn verify_packets(
 //   - slot leader is the node itself (circular transmission).
 fn get_slot_leaders(
     self_pubkey: &Pubkey,
-    batches: &mut [PacketBatch],
+    batches: &mut [Vec<Packet>],
     leader_schedule_cache: &LeaderScheduleCache,
     bank: &Bank,
 ) -> HashMap<Slot, Option<Pubkey>> {
     let mut leaders = HashMap::<Slot, Option<Pubkey>>::new();
     batches
         .iter_mut()
-        .flat_map(PacketBatch::iter_mut)
+        .flat_map(Vec::iter_mut)
         .filter(|packet| !packet.meta().discard())
         .filter(|packet| {
             let shred = shred::layout::get_shred(packet);
@@ -379,10 +385,10 @@ fn get_slot_leaders(
     leaders
 }
 
-fn count_discards(packets: &[PacketBatch]) -> usize {
+fn count_discards(packets: &[Vec<Packet>]) -> usize {
     packets
         .iter()
-        .flat_map(PacketBatch::iter)
+        .flat_map(Vec::iter)
         .filter(|packet| packet.meta().discard())
         .count()
 }
@@ -500,7 +506,7 @@ mod tests {
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let bank_forks = BankForks::new_rw_arc(bank);
         let batch_size = 2;
-        let mut batch = PacketBatch::with_capacity(batch_size);
+        let mut batch = Vec::with_capacity(batch_size);
         batch.resize(batch_size, Packet::default());
         let mut batches = vec![batch];
 

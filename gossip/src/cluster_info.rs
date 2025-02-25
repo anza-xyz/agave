@@ -57,7 +57,7 @@ use {
     },
     solana_perf::{
         data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PACKET_DATA_SIZE},
+        packet::{Packet, PacketBatchRecycler, PacketRead, PACKET_DATA_SIZE},
     },
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::BankForks,
@@ -1339,15 +1339,15 @@ impl ClusterInfo {
         generate_pull_requests: bool,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.gossip_transmit_loop_time);
-        let mut packet_batch = PacketBatch::new_unpinned_with_recycler(recycler, 0, "run_gossip");
-        self.generate_new_gossip_requests(
-            thread_pool,
-            gossip_validators,
-            stakes,
-            generate_pull_requests,
-        )
-        .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
-        .for_each(|pkt| packet_batch.push(pkt));
+        let packet_batch: Vec<_> = self
+            .generate_new_gossip_requests(
+                thread_pool,
+                gossip_validators,
+                stakes,
+                generate_pull_requests,
+            )
+            .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
+            .collect();
         if !packet_batch.is_empty() {
             sender.send(packet_batch)?;
         }
@@ -1618,7 +1618,7 @@ impl ClusterInfo {
         &'a self,
         now: Instant,
         rng: &'a mut R,
-        packet_batch: &'a mut PacketBatch,
+        packet_batch: &'a mut Vec<Packet>,
     ) -> impl FnMut(&PullRequest) -> bool + 'a
     where
         R: Rng + CryptoRng,
@@ -1659,12 +1659,11 @@ impl ClusterInfo {
         recycler: &PacketBatchRecycler,
         mut requests: Vec<PullRequest>,
         stakes: &HashMap<Pubkey, u64>,
-    ) -> PacketBatch {
+    ) -> Vec<Packet> {
         const DEFAULT_EPOCH_DURATION_MS: u64 = DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT;
         let output_size_limit =
             self.update_data_budget(stakes.len()) / PULL_RESPONSE_MIN_SERIALIZED_SIZE;
-        let mut packet_batch =
-            PacketBatch::new_unpinned_with_recycler(recycler, 64, "handle_pull_requests");
+        let mut packet_batch = Vec::new();
         let mut rng = rand::thread_rng();
         requests.retain({
             let now = Instant::now();
@@ -1728,7 +1727,7 @@ impl ClusterInfo {
                 Some((packet, num_values))
             })
             .take_while(|(packet, _)| {
-                if self.outbound_budget.take(packet.meta().size) {
+                if self.outbound_budget.take(packet.len()) {
                     true
                 } else {
                     self.stats.gossip_pull_request_no_budget.add_relaxed(1);
@@ -1736,7 +1735,7 @@ impl ClusterInfo {
                 }
             })
             .map(|(packet, num_values)| {
-                let num_bytes = packet.meta().size;
+                let num_bytes = packet.len();
                 packet_batch.push(packet);
                 (num_bytes, num_values)
             })
@@ -2087,7 +2086,7 @@ impl ClusterInfo {
         sender: &Sender<Vec<(/*from:*/ SocketAddr, Protocol)>>,
     ) -> Result<(), GossipError> {
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
-        fn count_dropped_packets(packets: &PacketBatch, dropped_packets_counts: &mut [u64; 7]) {
+        fn count_dropped_packets(packets: &Vec<Packet>, dropped_packets_counts: &mut [u64; 7]) {
             for packet in packets {
                 let k = packet
                     .data(..4)
@@ -3000,10 +2999,35 @@ fn make_gossip_packet_batch<S: Borrow<SocketAddr>>(
     pkts: impl IntoIterator<Item = (S, Protocol), IntoIter: ExactSizeIterator>,
     recycler: &PacketBatchRecycler,
     stats: &GossipStats,
-) -> PacketBatch {
+) -> Vec<Packet> {
     let record_gossip_packet = |(_, pkt): &(_, Protocol)| stats.record_gossip_packet(pkt);
     let pkts = pkts.into_iter().inspect(record_gossip_packet);
-    PacketBatch::new_unpinned_with_recycler_data_and_dests(recycler, "gossip_packet_batch", pkts)
+
+    let mut batch = Vec::new();
+    for (addr, data) in pkts {
+        let addr = addr.borrow();
+        let packet = if !addr.ip().is_unspecified() && addr.port() != 0 {
+            match Packet::from_data(Some(addr), data) {
+                Ok(packet) => packet,
+                Err(e) => {
+                    // TODO: This should never happen. Instead the caller should
+                    // break the payload into smaller messages, and here any errors
+                    // should be propagated.
+                    error!("Couldn't write to packet {:?}. Data skipped.", e);
+                    let mut packet = Packet::default();
+                    packet.meta_mut().set_discard(true);
+                    packet
+                }
+            }
+        } else {
+            trace!("Dropping packet, as destination is unknown");
+            let mut packet = Packet::default();
+            packet.meta_mut().set_discard(true);
+            packet
+        };
+        batch.push(packet);
+    }
+    batch
 }
 
 #[inline]
