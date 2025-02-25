@@ -242,7 +242,7 @@ impl LedgerWallet {
             {
                 return Err(RemoteWalletError::Protocol("Unexpected chunk header"));
             }
-            let seq = (chunk[3] as usize) << 8 | (chunk[4] as usize);
+            let seq = ((chunk[3] as usize) << 8) | (chunk[4] as usize);
             if seq != chunk_index {
                 return Err(RemoteWalletError::Protocol("Unexpected chunk header"));
             }
@@ -253,7 +253,7 @@ impl LedgerWallet {
                 if chunk_size < 7 {
                     return Err(RemoteWalletError::Protocol("Unexpected chunk header"));
                 }
-                message_size = (chunk[5] as usize) << 8 | (chunk[6] as usize);
+                message_size = ((chunk[5] as usize) << 8) | (chunk[6] as usize);
                 offset += 2;
             }
             message.extend_from_slice(&chunk[offset..chunk_size]);
@@ -266,7 +266,7 @@ impl LedgerWallet {
             return Err(RemoteWalletError::Protocol("No status word"));
         }
         let status =
-            (message[message.len() - 2] as usize) << 8 | (message[message.len() - 1] as usize);
+            ((message[message.len() - 2] as usize) << 8) | (message[message.len() - 1] as usize);
         trace!("Read status {:x}", status);
         Self::parse_status(status)?;
         let new_len = message.len() - 2;
