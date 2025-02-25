@@ -84,8 +84,8 @@ impl StakeReward {
             stake_reward_info: RewardInfo {
                 reward_type: solana_reward_info::RewardType::Staking,
                 lamports: reward_lamports,
-                post_balance: 0,  /* unused atm */
-                commission: None, /* unused atm */
+                post_balance: 0,     /* unused atm */
+                commission: Some(0), /* unused but tests require some value */
             },
 
             stake_account: validator_stake_account,
