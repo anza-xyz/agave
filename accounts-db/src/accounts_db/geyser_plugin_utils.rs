@@ -1,12 +1,15 @@
 use {
-    crate::{accounts_db::AccountsDb, accounts_update_notifier_interface::AccountForGeyser},
+    crate::accounts_db::AccountsDb,
     solana_account::AccountSharedData,
     solana_clock::Slot,
-    solana_measure::measure::Measure,
+    solana_measure::meas_dur,
     solana_metrics::*,
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::SanitizedTransaction,
-    std::collections::{HashMap, HashSet},
+    std::{
+        collections::{HashMap, HashSet},
+        time::{Duration, Instant},
+    },
 };
 
 #[derive(Default)]
@@ -14,10 +17,10 @@ pub struct GeyserPluginNotifyAtSnapshotRestoreStats {
     pub total_accounts: usize,
     pub skipped_accounts: usize,
     pub notified_accounts: usize,
-    pub elapsed_filtering_us: usize,
-    pub total_pure_notify: usize,
-    pub total_pure_bookeeping: usize,
-    pub elapsed_notifying_us: usize,
+    pub elapsed_filtering: Duration,
+    pub elapsed_notifying: Duration,
+    pub total_pure_notify: Duration,
+    pub total_pure_bookkeeping: Duration,
 }
 
 impl GeyserPluginNotifyAtSnapshotRestoreStats {
@@ -27,10 +30,26 @@ impl GeyserPluginNotifyAtSnapshotRestoreStats {
             ("total_accounts", self.total_accounts, i64),
             ("skipped_accounts", self.skipped_accounts, i64),
             ("notified_accounts", self.notified_accounts, i64),
-            ("elapsed_filtering_us", self.elapsed_filtering_us, i64),
-            ("elapsed_notifying_us", self.elapsed_notifying_us, i64),
-            ("total_pure_notify_us", self.total_pure_notify, i64),
-            ("total_pure_bookeeping_us", self.total_pure_bookeeping, i64),
+            (
+                "elapsed_filtering_us",
+                self.elapsed_filtering.as_micros(),
+                i64
+            ),
+            (
+                "elapsed_notifying_us",
+                self.elapsed_notifying.as_micros(),
+                i64
+            ),
+            (
+                "total_pure_notify_us",
+                self.total_pure_notify.as_micros(),
+                i64
+            ),
+            (
+                "total_pure_bookeeping_us",
+                self.total_pure_bookkeeping.as_micros(),
+                i64
+            ),
         );
     }
 }
@@ -84,10 +103,11 @@ impl AccountsDb {
         notified_accounts: &mut HashSet<Pubkey>,
         notify_stats: &mut GeyserPluginNotifyAtSnapshotRestoreStats,
     ) {
+        let notifier = self.accounts_update_notifier.as_ref().unwrap();
         let storage_entry = self.storage.get_slot_storage_entry(slot).unwrap();
 
+        let filtering_start = Instant::now();
         let mut accounts_duplicate: HashMap<Pubkey, usize> = HashMap::default();
-        let mut measure_filter = Measure::start("accountsdb-plugin-filtering-accounts");
         let mut account_len = 0;
         let mut pubkeys = HashSet::new();
 
@@ -103,7 +123,11 @@ impl AccountsDb {
         });
 
         // now, actually notify geyser
+        let mut pure_notify_time = Duration::ZERO;
+        let mut pure_bookkeeping_time = Duration::ZERO;
+        let mut num_notified_accounts = 0;
         let mut i = 0;
+        let notifying_start = Instant::now();
         storage_entry.accounts.scan_accounts_for_geyser(|account| {
             i += 1;
             account_len += 1;
@@ -122,45 +146,22 @@ impl AccountsDb {
             // later entries in the same slot are more recent and override earlier accounts for the same pubkey
             // We can pass an incrementing number here for write_version in the future, if the storage does not have a write_version.
             // As long as all accounts for this slot are in 1 append vec that can be iterated oldest to newest.
-            self.notify_filtered_accounts(
-                slot,
-                i as u64,
-                notified_accounts,
-                std::iter::once(account),
-                notify_stats,
-            );
+            let (_, notify_dur) =
+                meas_dur!(notifier.notify_account_restore_from_snapshot(slot, i as u64, &account));
+            let (_, bookkeeping_dur) = meas_dur!(notified_accounts.insert(*account.pubkey));
+            pure_notify_time += notify_dur;
+            pure_bookkeeping_time += bookkeeping_dur;
+            num_notified_accounts += 1;
         });
+        let notifying_time = notifying_start.elapsed();
+
+        let filtering_time = filtering_start.elapsed();
         notify_stats.total_accounts += account_len;
-        measure_filter.stop();
-        notify_stats.elapsed_filtering_us += measure_filter.as_us() as usize;
-    }
-
-    fn notify_filtered_accounts<'a>(
-        &self,
-        slot: Slot,
-        write_version: u64,
-        notified_accounts: &mut HashSet<Pubkey>,
-        accounts_to_stream: impl Iterator<Item = AccountForGeyser<'a>>,
-        notify_stats: &mut GeyserPluginNotifyAtSnapshotRestoreStats,
-    ) {
-        let notifier = self.accounts_update_notifier.as_ref().unwrap();
-        let mut measure_notify = Measure::start("accountsdb-plugin-notifying-accounts");
-        for account in accounts_to_stream {
-            let mut measure_pure_notify = Measure::start("accountsdb-plugin-notifying-accounts");
-            notifier.notify_account_restore_from_snapshot(slot, write_version, &account);
-            measure_pure_notify.stop();
-
-            notify_stats.total_pure_notify += measure_pure_notify.as_us() as usize;
-
-            let mut measure_bookkeep = Measure::start("accountsdb-plugin-notifying-bookeeeping");
-            notified_accounts.insert(*account.pubkey);
-            measure_bookkeep.stop();
-            notify_stats.total_pure_bookeeping += measure_bookkeep.as_us() as usize;
-
-            notify_stats.notified_accounts += 1;
-        }
-        measure_notify.stop();
-        notify_stats.elapsed_notifying_us += measure_notify.as_us() as usize;
+        notify_stats.notified_accounts += num_notified_accounts;
+        notify_stats.elapsed_filtering += filtering_time;
+        notify_stats.elapsed_notifying += notifying_time;
+        notify_stats.total_pure_notify += pure_notify_time;
+        notify_stats.total_pure_bookkeeping += pure_bookkeeping_time;
     }
 }
 
@@ -169,7 +170,7 @@ pub mod tests {
     use {
         super::*,
         crate::accounts_update_notifier_interface::{
-            AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
+            AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
         },
         dashmap::DashMap,
         solana_account::ReadableAccount as _,
