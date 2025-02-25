@@ -3624,7 +3624,7 @@ impl ReplayStage {
         let Some(vote_account) = bank.get_vote_account(my_vote_pubkey) else {
             return;
         };
-        let mut bank_vote_state = vote_account.vote_state().clone();
+        let mut bank_vote_state = TowerVoteState::from(vote_account.vote_state().clone());
         if bank_vote_state.last_voted_slot() <= tower.vote_state.last_voted_slot() {
             return;
         }
@@ -3673,8 +3673,8 @@ impl ReplayStage {
             }
         }
 
-        tower.vote_state.root_slot = bank_vote_state.root_slot;
-        tower.vote_state.votes = bank_vote_state.votes.into_iter().map(Into::into).collect();
+        // adopt the bank vote state
+        tower.vote_state = bank_vote_state;
 
         let last_voted_slot = tower.vote_state.last_voted_slot().unwrap_or(
             // If our local root is higher than the highest slot in `bank_vote_state` due to
