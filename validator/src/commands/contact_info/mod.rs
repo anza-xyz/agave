@@ -13,10 +13,10 @@ pub struct ContactInfoArgs {
 }
 
 impl FromClapArgMatches for ContactInfoArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Self {
-        ContactInfoArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+        Ok(ContactInfoArgs {
             output: OutputFormat::from_matches(matches, "output", false),
-        }
+        })
     }
 }
 
@@ -34,7 +34,7 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
 }
 
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
-    let contact_info_args = ContactInfoArgs::from_clap_arg_match(matches);
+    let contact_info_args = ContactInfoArgs::from_clap_arg_match(matches)?;
 
     let admin_client = admin_rpc_service::connect(ledger_path);
     let contact_info = admin_rpc_service::runtime()
