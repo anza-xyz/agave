@@ -103,9 +103,10 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     static_assertions::const_assert_eq,
     std::{collections::VecDeque, mem, sync::Arc},
+    unwrap_none::UnwrapNone,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SchedulingMode {
     BlockVerification,
     BlockProduction,
@@ -668,11 +669,49 @@ impl SchedulingStateMachine {
     /// indicating the scheduled task is blocked currently.
     ///
     /// Note that this function takes ownership of the task to allow for future optimizations.
+    #[cfg(any(test, doc))]
     #[must_use]
     pub fn schedule_task(&mut self, task: Task) -> Option<Task> {
+        self.schedule_or_buffer_task(task, false)
+    }
+
+    /// Adds given `task` to internal buffer, even if it's immediately schedulable otherwise.
+    ///
+    /// Put differently, buffering means to force the task to be blocked unconditionally after
+    /// normal scheduling processing.
+    ///
+    /// Thus, the task is internally retained inside this [`SchedulingStateMachine`], whether the
+    /// task is blocked or not. Eventually, the buffered task will be returned by one of later
+    /// invocations [`schedule_next_unblocked_task()`](Self::schedule_next_unblocked_task).
+    ///
+    /// Note that this function takes ownership of the task to allow for future optimizations.
+    pub fn buffer_task(&mut self, task: Task) {
+        self.schedule_or_buffer_task(task, true).unwrap_none();
+    }
+
+    /// Schedules or buffers given `task`, returning successful one unless buffering is forced.
+    ///
+    /// Refer to [`schedule_task()`](Self::schedule_task) and
+    /// [`buffer_task()`](Self::buffer_task) for the difference between _scheduling_ and
+    /// _buffering_ respectively.
+    ///
+    /// Note that this function takes ownership of the task to allow for future optimizations.
+    #[must_use]
+    pub fn schedule_or_buffer_task(&mut self, task: Task, force_buffering: bool) -> Option<Task> {
         self.total_task_count.increment_self();
         self.active_task_count.increment_self();
-        self.try_lock_usage_queues(task)
+        self.try_lock_usage_queues(task).and_then(|task| {
+            // locking succeeded, and then ...
+            if force_buffering {
+                // ... push to unblocked_task_queue, if buffering is forced.
+                self.unblocked_task_count.increment_self();
+                self.unblocked_task_queue.push_back(task);
+                None
+            } else {
+                // ... return the task back as schedulable to the caller as-is otherwise.
+                Some(task)
+            }
+        })
     }
 
     #[must_use]
