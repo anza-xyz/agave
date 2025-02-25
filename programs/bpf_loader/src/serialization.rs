@@ -99,7 +99,8 @@ impl Serializer {
         } else {
             self.push_region(true);
             let vaddr = self.vaddr;
-            self.push_account_data_region(account)?;
+            self.push_account_data_region(vaddr, account)?;
+            self.vaddr += account.get_data().len() as u64;
             vaddr
         };
 
@@ -128,19 +129,17 @@ impl Serializer {
 
     fn push_account_data_region(
         &mut self,
+        vaddr: u64,
         account: &mut BorrowedAccount<'_>,
     ) -> Result<(), InstructionError> {
         if !account.get_data().is_empty() {
             let region = match account_data_region_memory_state(account) {
-                MemoryState::Readable => MemoryRegion::new_readonly(account.get_data(), self.vaddr),
-                MemoryState::Writable => {
-                    MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
-                }
+                MemoryState::Readable => MemoryRegion::new_readonly(account.get_data(), vaddr),
+                MemoryState::Writable => MemoryRegion::new_writable(account.get_data_mut()?, vaddr),
                 MemoryState::Cow(index_in_transaction) => {
-                    MemoryRegion::new_cow(account.get_data(), self.vaddr, index_in_transaction)
+                    MemoryRegion::new_cow(account.get_data(), vaddr, index_in_transaction)
                 }
             };
-            self.vaddr += region.len;
             self.regions.push(region);
         }
 
