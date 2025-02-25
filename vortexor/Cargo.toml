@@ -12,6 +12,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-banking-stage-ingress-types = { workspace = true }
 async-channel = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
@@ -32,10 +33,13 @@ quinn = { workspace = true }
 quinn-proto = { workspace = true }
 rand = { workspace = true }
 rustls = { workspace = true }
+signal-hook = { workspace = true }
 smallvec = { workspace = true }
 socket2 = { workspace = true }
 solana-clap-utils = { workspace = true }
+solana-client = { workspace = true }
 solana-core = { workspace = true }
+solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
@@ -47,11 +51,11 @@ solana-version = { workspace = true }
 
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+url = { workspace = true }
 x509-parser = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-logger = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
 
 [lib]
