@@ -448,7 +448,6 @@ impl BanksClient {
             .await?
             .map(|x| x.0)
             .ok_or(BanksClientError::ClientError("valid blockhash not found"))
-            .map_err(Into::into)
     }
 
     pub async fn get_latest_blockhash_with_commitment(
