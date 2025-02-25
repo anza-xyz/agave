@@ -5,7 +5,6 @@ use {
     crate::{
         banking_stage::LikeClusterInfo,
         next_leader::{next_leader, next_leader_tpu_vote},
-        repair::cluster_slot_state_verifier::EpochSlotsFrozenSlots,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
@@ -68,7 +67,7 @@ impl<T: LikeClusterInfo> ForwardAddressGetter for (T, Arc<RwLock<PohRecorder>>) 
 
 pub trait ForwardingClient: Send + Sync + 'static {
     fn update_address(&mut self) -> bool;
-    fn send_batch(&self, input_batch: &mut Vec<Vec<u8>>);
+    fn send_batch(&self, input_batch: Vec<Vec<u8>>);
 }
 
 struct VoteClient<F: ForwardAddressGetter> {
@@ -85,9 +84,9 @@ impl<F: ForwardAddressGetter> VoteClient<F> {
             current_address: None,
         }
     }
-}
 
-impl<F: ForwardAddressGetter> ForwardingClient for VoteClient<F> {
+    // Why not implementing the same ForwardingClient trait -- to have batch: &mut
+    // Basically to save on deallocation
     fn update_address(&mut self) -> bool {
         self.current_address = self.forward_address_getter.get_vote_forwarding_addresses();
         self.current_address.is_some()
@@ -101,20 +100,12 @@ impl<F: ForwardAddressGetter> ForwardingClient for VoteClient<F> {
             self.current_address.is_some(),
             "current_address should be updated before send_batch call."
         );
-        // TODO any way to use iterator?
-        //let mut batch_with_addresses = Vec::with_capacity(batch.len());
-        //for packet in batch.drain(..) {
-        //    batch_with_addresses.push((packet, self.current_address.unwrap()));
-        //}
-        //let _res = batch_send(&self.udp_socket, &batch_with_addresses);
         let batch_with_addresses = batch
             .iter()
             .map(|bytes| (bytes, self.current_address.unwrap()));
+        // TODO(klykov) Not really in favour of skipping these errors
         let _res = batch_send(&self.udp_socket, batch_with_addresses);
 
-        //let pkts = batch.iter().map(|(bytes, addr)| (bytes, addr));
-        // TODO(klykov) Not really in favour of skipping these errors
-        //let _res = batch_send(&self.udp_socket, pkts);
         batch.clear();
     }
 }
@@ -143,7 +134,7 @@ impl<F: ForwardAddressGetter> ForwardingClient for ConnectionCacheClient<F> {
         self.current_address.is_some()
     }
 
-    fn send_batch(&self, input_batch: &mut Vec<Vec<u8>>) {
+    fn send_batch(&self, input_batch: Vec<Vec<u8>>) {
         assert!(
             self.current_address.is_some(),
             "current_address should be updated before send_batch call."
@@ -151,21 +142,19 @@ impl<F: ForwardAddressGetter> ForwardingClient for ConnectionCacheClient<F> {
         let conn = self
             .connection_cache
             .get_connection(&self.current_address.unwrap());
-        let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
-        core::mem::swap(&mut batch, input_batch);
-        let _res = conn.send_data_batch_async(batch);
+        let _res = conn.send_data_batch_async(input_batch);
     }
 }
 
 /// Forwards packets to current/next leader.
 /// TODO(klykov):  think how to parametrize with nonvoteclient as well
-pub struct ForwardingStage<F: ForwardAddressGetter> {
+pub struct ForwardingStage<F: ForwardAddressGetter, Client: ForwardingClient> {
     receiver: Receiver<(BankingPacketBatch, bool)>,
     packet_container: PacketContainer,
 
     root_bank_cache: RootBankCache,
     vote_client: VoteClient<F>,
-    non_vote_client: ConnectionCacheClient<F>,
+    non_vote_client: Client,
     data_budget: DataBudget,
 
     metrics: ForwardingStageMetrics,
@@ -196,7 +185,19 @@ struct TpuClientNextClient {
     handle: TokioJoinHandle<Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>>,
 }
 
-impl<F: ForwardAddressGetter> ForwardingStage<F> {
+impl ForwardingClient for TpuClientNextClient {
+    fn update_address(&mut self) -> bool {
+        true // TODO(klykov): it is for optimization: if not address, don't form batch
+             // how often this happens? How long it takes to form batch?
+    }
+
+    fn send_batch(&self, input_batch: Vec<Vec<u8>>) {
+        self.sender.send(TransactionBatch::new(input_batch));
+    }
+}
+
+impl<F: ForwardAddressGetter, Client: ForwardingClient> ForwardingStage<F, Client> {
+    //TODO should it be part of the ForwardingStage?
     pub fn spawn_with_connection_cache(
         receiver: Receiver<(BankingPacketBatch, bool)>,
         connection_cache: Arc<ConnectionCache>,
@@ -207,7 +208,7 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
         let non_vote_client =
             ConnectionCacheClient::new(connection_cache, forward_address_getter.clone());
         let vote_client = VoteClient::new(forward_address_getter);
-        let forwarding_stage = Self::new(
+        let forwarding_stage = ForwardingStage::new(
             receiver,
             vote_client,
             non_vote_client,
@@ -255,26 +256,35 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
         TpuClientNextClient { sender, handle }
     }
 
-    /*pub fn spawn_with_tpu_client_next(
+    pub fn spawn_with_tpu_client_next(
         receiver: Receiver<(BankingPacketBatch, bool)>,
         tokio_runtime: tokio::runtime::Handle,
         root_bank_cache: RootBankCache,
         forward_address_getter: F,
+        data_budget: DataBudget,
     ) -> JoinHandle<()> {
-        let transaction_client = spawn_tpu_client_next(forward_address_getter);
+        let non_vote_client = ForwardingStage::<F, TpuClientNextClient>::spawn_tpu_client_next(
+            tokio_runtime,
+            forward_address_getter.clone(),
+        );
         let vote_client = VoteClient::new(forward_address_getter);
-        let forwarding_stage =
-            Self::new(receiver, vote_client, transaction_client, root_bank_cache);
+        let forwarding_stage = ForwardingStage::new(
+            receiver,
+            vote_client,
+            non_vote_client,
+            root_bank_cache,
+            data_budget,
+        );
         Builder::new()
             .name("solFwdStage".to_string())
             .spawn(move || forwarding_stage.run())
             .unwrap()
-    }*/
+    }
 
     fn new(
         receiver: Receiver<(BankingPacketBatch, bool)>,
         vote_client: VoteClient<F>,
-        non_vote_client: ConnectionCacheClient<F>,
+        non_vote_client: Client,
         root_bank_cache: RootBankCache,
         data_budget: DataBudget,
     ) -> Self {
@@ -452,7 +462,10 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
                 non_vote_batch.push(packet_data_vec);
                 if non_vote_batch.len() == non_vote_batch.capacity() {
                     self.metrics.non_votes_forwarded += non_vote_batch.len();
-                    self.non_vote_client.send_batch(&mut non_vote_batch);
+
+                    let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
+                    core::mem::swap(&mut batch, &mut non_vote_batch);
+                    self.non_vote_client.send_batch(batch);
                 }
             }
         }
@@ -464,7 +477,7 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
         }
         if !non_vote_batch.is_empty() {
             self.metrics.non_votes_forwarded += non_vote_batch.len();
-            self.non_vote_client.send_batch(&mut non_vote_batch);
+            self.non_vote_client.send_batch(non_vote_batch);
         }
     }
 
