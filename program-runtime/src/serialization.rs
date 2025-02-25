@@ -7,7 +7,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sbpf::{
         aligned_memory::{AlignedMemory, Pod},
-        ebpf::{HOST_ALIGN, MM_INPUT_START},
+        ebpf::{HOST_ALIGN, MM_INPUT_START, MM_REGION_SIZE},
         memory_region::{MemoryRegion, MemoryState},
     },
     solana_sdk_ids::bpf_loader_deprecated,
@@ -202,49 +202,54 @@ pub fn serialize_parameters(
         return Err(InstructionError::MaxAccountsExceeded);
     }
 
-    let (program_id, is_loader_deprecated) = {
-        let program_account =
-            instruction_context.try_borrow_last_program_account(transaction_context)?;
-        (
-            *program_account.get_key(),
-            *program_account.get_owner() == bpf_loader_deprecated::id(),
-        )
-    };
-
-    let accounts = (0..instruction_context.get_number_of_instruction_accounts())
-        .map(|instruction_account_index| {
-            if let Some(index) = instruction_context
-                .is_instruction_account_duplicate(instruction_account_index)
-                .unwrap()
-            {
-                SerializeAccount::Duplicate(index)
-            } else {
-                let account = instruction_context
-                    .try_borrow_instruction_account(transaction_context, instruction_account_index)
-                    .unwrap();
-                SerializeAccount::Account(instruction_account_index, account)
-            }
-        })
-        // fun fact: jemalloc is good at caching tiny allocations like this one,
-        // so collecting here is actually faster than passing the iterator
-        // around, since the iterator does the work to produce its items each
-        // time it's iterated on.
-        .collect::<Vec<_>>();
-
-    if is_loader_deprecated {
-        serialize_parameters_unaligned(
-            accounts,
-            instruction_context.get_instruction_data(),
-            &program_id,
-            copy_account_data,
-        )
+    if is_abi_v2 {
+        abiv2_serialize_instruction(transaction_context, instruction_context)
     } else {
-        serialize_parameters_aligned(
-            accounts,
-            instruction_context.get_instruction_data(),
-            &program_id,
-            copy_account_data,
-        )
+        let (program_id, is_loader_deprecated) = {
+            let program_account =
+                instruction_context.try_borrow_last_program_account(transaction_context)?;
+            (
+                *program_account.get_key(),
+                *program_account.get_owner() == bpf_loader_deprecated::id(),
+            )
+        };
+        let accounts = (0..instruction_context.get_number_of_instruction_accounts())
+            .map(|instruction_account_index| {
+                if let Some(index) = instruction_context
+                    .is_instruction_account_duplicate(instruction_account_index)
+                    .unwrap()
+                {
+                    SerializeAccount::Duplicate(index)
+                } else {
+                    let account = instruction_context
+                        .try_borrow_instruction_account(
+                            transaction_context,
+                            instruction_account_index,
+                        )
+                        .unwrap();
+                    SerializeAccount::Account(instruction_account_index, account)
+                }
+            })
+            // fun fact: jemalloc is good at caching tiny allocations like this one,
+            // so collecting here is actually faster than passing the iterator
+            // around, since the iterator does the work to produce its items each
+            // time it's iterated on.
+            .collect::<Vec<_>>();
+        if is_loader_deprecated {
+            serialize_parameters_unaligned(
+                accounts,
+                instruction_context.get_instruction_data(),
+                &program_id,
+                copy_account_data,
+            )
+        } else {
+            serialize_parameters_aligned(
+                accounts,
+                instruction_context.get_instruction_data(),
+                &program_id,
+                copy_account_data,
+            )
+        }
     }
 }
 
@@ -261,7 +266,9 @@ pub fn deserialize_parameters(
         .get_owner()
         == bpf_loader_deprecated::id();
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);
-    if is_loader_deprecated {
+    if is_abi_v2 {
+        Ok(())
+    } else if is_loader_deprecated {
         deserialize_parameters_unaligned(
             transaction_context,
             instruction_context,
@@ -604,6 +611,145 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
         }
     }
     Ok(())
+}
+
+const TRANACTION_HEADER_VM_ADDRESS: u64 = MM_INPUT_START;
+const SCRATCHPAD_DATA_VM_ADDRESS: u64 = MM_INPUT_START + MM_REGION_SIZE;
+const INSTRUCTION_HEADER_VM_ADDRESS: u64 = MM_INPUT_START + MM_REGION_SIZE * 2;
+const INSTRUCTION_DATA_VM_ADDRESS: u64 = MM_INPUT_START + MM_REGION_SIZE * 3;
+const ACCOUNT_DATA_VM_ADDRESS: u64 = MM_INPUT_START + MM_REGION_SIZE * 4;
+
+pub(crate) fn abiv2_serialize_transaction(
+    transaction_context: &TransactionContext,
+) -> (AlignedMemory<HOST_ALIGN>, MemoryRegion) {
+    let size = 56 // size_of::<>()
+        + transaction_context.get_number_of_accounts() as usize * 88; // size_of::<>()
+    let mut s = Serializer::new(size, TRANACTION_HEADER_VM_ADDRESS, true, false);
+    // s.write::<u32>(0x76494241u32.to_le());
+    // s.write::<u32>(0x00000002u32.to_le());
+    let scratchpad = transaction_context.get_return_data();
+    s.write_all(scratchpad.0.as_ref());
+    s.write::<u64>(SCRATCHPAD_DATA_VM_ADDRESS.to_le());
+    s.write::<u64>((scratchpad.1.len() as u64).to_le());
+    s.write::<u64>((transaction_context.get_number_of_accounts() as u64).to_le());
+    for index_in_transaction in 0..transaction_context.get_number_of_accounts() {
+        use solana_account::ReadableAccount;
+        let transaction_account = transaction_context
+            .get_account_at_index(index_in_transaction)
+            .unwrap()
+            .borrow();
+        let _vm_key_addr = s.write_all(
+            transaction_context
+                .get_key_of_account_at_index(index_in_transaction)
+                .unwrap()
+                .as_ref(),
+        );
+        let _vm_owner_addr = s.write_all(transaction_account.owner().as_ref());
+        let _vm_lamports_addr = s.write::<u64>(transaction_account.lamports().to_le());
+        let vm_data_addr = ACCOUNT_DATA_VM_ADDRESS + MM_REGION_SIZE * index_in_transaction as u64;
+        s.write::<u64>(vm_data_addr.to_le());
+        s.write::<u64>((transaction_account.data().len() as u64).to_le());
+        // s.write::<u64>((transaction_account.capacity() as u64).to_le());
+    }
+    let (mem, regions) = s.finish(false);
+    (mem, regions.into_iter().next().unwrap())
+}
+
+fn abiv2_serialize_instruction(
+    transaction_context: &TransactionContext,
+    instruction_context: &InstructionContext,
+) -> Result<
+    (
+        AlignedMemory<HOST_ALIGN>,
+        Vec<MemoryRegion>,
+        Vec<SerializedAccountMetadata>,
+    ),
+    InstructionError,
+> {
+    /*let number_of_unique_instruction_accounts = accounts.iter().fold(0, |accumulator, account| {
+        if matches!(account, SerializeAccount::Account(_, _)) {
+            accumulator + 1
+        } else {
+            accumulator
+        }
+    });*/
+
+    let size = 20 // size_of::<>()
+        + instruction_context.get_number_of_instruction_accounts() as usize * 4; // size_of::<>();
+    let mut s = Serializer::new(size, INSTRUCTION_HEADER_VM_ADDRESS, true, false);
+    let instruction_data = instruction_context.get_instruction_data();
+    s.write::<u64>(INSTRUCTION_DATA_VM_ADDRESS.to_le());
+    s.write::<u64>((instruction_data.len() as u64).to_le());
+    let program_account_index_in_transaction = instruction_context
+        .get_index_of_program_account_in_transaction(
+            instruction_context
+                .get_number_of_program_accounts()
+                .saturating_sub(1),
+        )
+        .unwrap();
+    s.write::<u16>(program_account_index_in_transaction.to_le());
+    s.write::<u16>(
+        instruction_context
+            .get_number_of_instruction_accounts()
+            .to_le(),
+    );
+    for index_in_instruction in 0..instruction_context.get_number_of_instruction_accounts() {
+        let mut borrowed_account = instruction_context
+            .try_borrow_instruction_account(transaction_context, index_in_instruction)
+            .unwrap();
+        let index_in_transaction = borrowed_account.get_index_in_transaction();
+        s.write::<u16>(index_in_transaction.to_le());
+        let mut flags = 0u16;
+        if borrowed_account.is_signer() {
+            flags |= 1 << 0;
+        }
+        if borrowed_account.is_writable() {
+            flags |= 1 << 1;
+        }
+        s.write::<u16>(flags.to_le());
+        if instruction_context
+            .is_instruction_account_duplicate(index_in_instruction)
+            .unwrap()
+            .is_none()
+        {
+            let vm_data_addr =
+                ACCOUNT_DATA_VM_ADDRESS + MM_REGION_SIZE * index_in_transaction as u64;
+            s.push_account_data_region(vm_data_addr, &mut borrowed_account)?;
+        }
+    }
+    let (mem, mut regions) = s.finish(false);
+
+    /*let mut index: IndexOfAccount = 0;
+    let mut deduplicated_account_indices = Vec::with_capacity(accounts.len());
+    for account in accounts.iter() {
+        match account {
+            SerializeAccount::Account(instruction_account_index, _) => {
+                deduplicated_account_indices.push(instruction_account_index - index);
+            }
+            SerializeAccount::Duplicate(position) => {
+                deduplicated_account_indices.push(
+                    *deduplicated_account_indices
+                        .get(*position as usize)
+                        .unwrap(),
+                );
+                index += 1;
+            }
+        }
+    }
+    for deduplicated_account_index in deduplicated_account_indices {
+        s.write::<u16>(deduplicated_account_index.to_le());
+    }*/
+
+    let scratchpad = transaction_context.get_return_data();
+    regions.push(MemoryRegion::new_readonly(
+        scratchpad.1,
+        SCRATCHPAD_DATA_VM_ADDRESS,
+    ));
+    regions.push(MemoryRegion::new_readonly(
+        instruction_data,
+        INSTRUCTION_DATA_VM_ADDRESS,
+    ));
+    Ok((mem, regions, Vec::default()))
 }
 
 pub fn account_data_region_memory_state(account: &BorrowedAccount<'_>) -> MemoryState {
