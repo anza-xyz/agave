@@ -28,7 +28,6 @@ pub mod tests {
     {
         let matches = app.get_matches_from(vec);
         let result = T::from_clap_arg_match(&matches);
-        assert!(result.is_ok());
         assert_eq!(result.unwrap(), expected_arg);
     }
 
