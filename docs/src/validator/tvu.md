@@ -27,19 +27,19 @@ A node advertises one external ip/port for TVU while binding multiple sockets to
 
 ```rust
 let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_config_reuseport,
-            num_tvu_sockets.get(),
-        )
-        .expect("tvu multi_bind");
+    bind_ip_addr,
+    port_range,
+    socket_config_reuseport,
+    num_tvu_sockets.get(),
+)
+.expect("tvu multi_bind");
 ```
 
  `multi_bind_in_range_with_config` sets `SO_REUSEPORT`. This means that other nodes only need to know about the one ip/port pair for TVU (similar principle applies in the case of TPU UDP sockets). The kernel distributes the incoming packets to all sockets bound to that port, and each socket can be serviced by a different thread.
 
 > **NOTE:** TVU QUIC socket does not use `SO_REUSEPORT`, but otherwise works similarly to UDP
 
-The TVU socket information is published via Gossip and is available in `ContactInfo` struct.
+The TVU socket information is published via Gossip and is available in the `ContactInfo` struct.
 To set a TVU socket, the node calls `set_tvu(...)`. The `set_tvu()` method is created by the macro `set_socket!`. For example:
 
 ```rust
