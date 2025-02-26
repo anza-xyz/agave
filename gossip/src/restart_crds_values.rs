@@ -1,12 +1,16 @@
 use {
-    crate::crds_data::{new_rand_timestamp, sanitize_wallclock},
+    crate::crds_data::sanitize_wallclock,
     bv::BitVec,
     itertools::Itertools,
-    rand::Rng,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
     solana_serde_varint as serde_varint,
     thiserror::Error,
+};
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::testing_fixtures::{new_rand_timestamp, new_random_pubkey, FormatValidation},
+    rand::Rng,
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -106,9 +110,22 @@ impl RestartLastVotedForkSlots {
         })
     }
 
-    /// New random Version for tests and benchmarks.
-    pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
-        let pubkey = pubkey.unwrap_or_else(solana_pubkey::new_rand);
+    pub fn to_slots(&self, min_slot: Slot) -> Vec<Slot> {
+        match &self.offsets {
+            SlotsOffsets::RunLengthEncoding(run_length_encoding) => {
+                run_length_encoding.to_slots(self.last_voted_slot, min_slot)
+            }
+            SlotsOffsets::RawOffsets(raw_offsets) => {
+                raw_offsets.to_slots(self.last_voted_slot, min_slot)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation for RestartLastVotedForkSlots {
+    fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
+        let pubkey = pubkey.unwrap_or_else(|| new_random_pubkey(rng));
         let num_slots = rng.gen_range(2..20);
         let slots = std::iter::repeat_with(|| 47825632 + rng.gen_range(0..512))
             .take(num_slots)
@@ -122,17 +139,6 @@ impl RestartLastVotedForkSlots {
         )
         .unwrap()
     }
-
-    pub fn to_slots(&self, min_slot: Slot) -> Vec<Slot> {
-        match &self.offsets {
-            SlotsOffsets::RunLengthEncoding(run_length_encoding) => {
-                run_length_encoding.to_slots(self.last_voted_slot, min_slot)
-            }
-            SlotsOffsets::RawOffsets(raw_offsets) => {
-                raw_offsets.to_slots(self.last_voted_slot, min_slot)
-            }
-        }
-    }
 }
 
 impl Sanitize for RestartHeaviestFork {
@@ -142,9 +148,10 @@ impl Sanitize for RestartHeaviestFork {
     }
 }
 
-impl RestartHeaviestFork {
-    pub(crate) fn new_rand<R: Rng>(rng: &mut R, from: Option<Pubkey>) -> Self {
-        let from = from.unwrap_or_else(solana_pubkey::new_rand);
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation for RestartHeaviestFork {
+    fn new_rand<R: Rng>(rng: &mut R, from: Option<Pubkey>) -> Self {
+        let from = from.unwrap_or_else(|| new_random_pubkey(rng));
         Self {
             from,
             wallclock: new_rand_timestamp(rng),

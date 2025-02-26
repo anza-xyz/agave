@@ -1,3 +1,8 @@
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::testing_fixtures::{new_insecure_keypair, FormatValidation},
+    rand::Rng,
+};
 use {
     crate::{
         contact_info::ContactInfo,
@@ -6,7 +11,6 @@ use {
         epoch_slots::EpochSlots,
     },
     bincode::serialize,
-    rand::Rng,
     serde::de::{Deserialize, Deserializer},
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{
@@ -17,7 +21,8 @@ use {
     std::borrow::{Borrow, Cow},
 };
 
-/// CrdsValue that is replicated across the cluster
+/// CrdsValue is a wrapper around CrdsData that is replicated across the cluster
+/// CrdsValue's purpose is to add signature to verify the origin of the CrdsData
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct CrdsValue {
@@ -98,6 +103,24 @@ impl CrdsValueLabel {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation<&Keypair> for CrdsValue {
+    fn new_rand<R: Rng>(rng: &mut R, keypair: Option<&Keypair>) -> Self {
+        let mut random_keypair: Option<Keypair> = None;
+        let keypair = keypair
+            .unwrap_or_else(|| random_keypair.get_or_insert_with(|| new_insecure_keypair(rng)));
+        let data = CrdsData::new_rand(rng, Some(keypair.pubkey()));
+        Self::new(data, keypair)
+    }
+
+    fn exercise(&self) -> anyhow::Result<()> {
+        self.sanitize()?;
+        if !self.verify() {
+            anyhow::bail!("sigverify");
+        };
+        self.data().exercise()
+    }
+}
 impl CrdsValue {
     pub fn new(data: CrdsData, keypair: &Keypair) -> Self {
         let bincode_serialized_data = bincode::serialize(&data).unwrap();
@@ -119,21 +142,6 @@ impl CrdsValue {
             signature,
             data,
             hash,
-        }
-    }
-
-    /// New random CrdsValue for tests and benchmarks.
-    pub fn new_rand<R: Rng>(rng: &mut R, keypair: Option<&Keypair>) -> CrdsValue {
-        match keypair {
-            None => {
-                let keypair = Keypair::new();
-                let data = CrdsData::new_rand(rng, Some(keypair.pubkey()));
-                Self::new(data, &keypair)
-            }
-            Some(keypair) => {
-                let data = CrdsData::new_rand(rng, Some(keypair.pubkey()));
-                Self::new(data, keypair)
-            }
         }
     }
 

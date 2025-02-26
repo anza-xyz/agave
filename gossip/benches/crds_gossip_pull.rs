@@ -9,6 +9,7 @@ use {
         crds::{Crds, GossipRoute},
         crds_gossip_pull::{CrdsFilter, CrdsGossipPull},
         crds_value::CrdsValue,
+        testing_fixtures::FormatValidation,
     },
     solana_sdk::hash::Hash,
     std::sync::RwLock,

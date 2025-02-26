@@ -781,7 +781,10 @@ fn should_report_message_signature(signature: &Signature) -> bool {
 mod tests {
     use {
         super::*,
-        crate::crds_data::{new_rand_timestamp, AccountsHashes, NodeInstance},
+        crate::{
+            crds_data::{AccountsHashes, NodeInstance},
+            testing_fixtures::*,
+        },
         rand::{thread_rng, Rng, SeedableRng},
         rand_chacha::ChaChaRng,
         rayon::ThreadPoolBuilder,
@@ -1250,7 +1253,9 @@ mod tests {
     #[test]
     fn test_crds_value_indices() {
         let mut rng = thread_rng();
-        let keypairs: Vec<_> = repeat_with(Keypair::new).take(128).collect();
+        let keypairs: Vec<_> = repeat_with(|| new_insecure_keypair(&mut rng))
+            .take(128)
+            .collect();
         let mut crds = Crds::default();
         let mut num_inserts = 0;
         for k in 0..4096 {
@@ -1301,7 +1306,9 @@ mod tests {
             }
         }
         let mut rng = thread_rng();
-        let keypairs: Vec<_> = repeat_with(Keypair::new).take(128).collect();
+        let keypairs: Vec<_> = repeat_with(|| new_insecure_keypair(&mut rng))
+            .take(128)
+            .collect();
         let mut crds = Crds::default();
         for k in 0..4096 {
             let keypair = &keypairs[rng.gen_range(0..keypairs.len())];
@@ -1400,7 +1407,9 @@ mod tests {
                 .len()
         }
         let mut rng = thread_rng();
-        let keypairs: Vec<_> = repeat_with(Keypair::new).take(64).collect();
+        let keypairs: Vec<_> = repeat_with(|| new_insecure_keypair(&mut rng))
+            .take(64)
+            .collect();
         let stakes = keypairs
             .iter()
             .map(|k| (k.pubkey(), rng.gen_range(0..1000)))

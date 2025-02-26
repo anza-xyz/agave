@@ -137,6 +137,7 @@ mod test {
         crate::{
             crds::{Crds, GossipRoute},
             crds_value::CrdsValue,
+            testing_fixtures::*,
         },
         rand::{thread_rng, Rng},
         solana_sdk::timing::timestamp,

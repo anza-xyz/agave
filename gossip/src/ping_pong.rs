@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use crate::testing_fixtures::*;
 use {
     lru::LruCache,
     rand::{CryptoRng, Rng},
@@ -82,6 +84,17 @@ impl<const N: usize> Sanitize for Ping<N> {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation<&Keypair> for Ping<32> {
+    fn new_rand<R: Rng>(rng: &mut R, keypair: Option<&Keypair>) -> Self {
+        let mut random_keypair: Option<Keypair> = None;
+        let keypair = keypair
+            .unwrap_or_else(|| random_keypair.get_or_insert_with(|| new_insecure_keypair(rng)));
+        let token: [u8; 32] = rng.gen();
+        Ping::<32>::new(token, keypair)
+    }
+}
+
 impl<const N: usize> Signable for Ping<N> {
     #[inline]
     fn pubkey(&self) -> Pubkey {
@@ -123,6 +136,21 @@ impl Sanitize for Pong {
         self.from.sanitize()?;
         self.hash.sanitize()?;
         self.signature.sanitize()
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl FormatValidation<&Keypair> for Pong {
+    fn new_rand<R: Rng>(rng: &mut R, keypair: Option<&Keypair>) -> Self {
+        let mut random_keypair: Option<Keypair> = None;
+        let keypair = keypair
+            .unwrap_or_else(|| random_keypair.get_or_insert_with(|| new_insecure_keypair(rng)));
+        let hash = Hash::new_unique();
+        Pong {
+            from: keypair.pubkey(),
+            hash,
+            signature: keypair.sign_message(hash.as_ref()),
+        }
     }
 }
 
@@ -271,6 +299,7 @@ fn hash_ping_token<const N: usize>(token: &[u8; N]) -> Hash {
 mod tests {
     use {
         super::*,
+        crate::testing_fixtures::FormatValidation,
         std::{
             collections::HashSet,
             iter::repeat_with,
@@ -282,7 +311,7 @@ mod tests {
     fn test_ping_pong() {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
-        let ping = Ping::<32>::new(rng.gen(), &keypair);
+        let ping = Ping::<32>::new_rand(&mut rng, Some(&keypair));
         assert!(ping.verify());
         assert!(ping.sanitize().is_ok());
 
