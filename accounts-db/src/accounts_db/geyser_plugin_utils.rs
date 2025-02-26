@@ -11,6 +11,7 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     std::{
         collections::{HashMap, HashSet},
+        ops::AddAssign,
         time::{Duration, Instant},
     },
 };
@@ -57,6 +58,18 @@ impl GeyserPluginNotifyAtSnapshotRestoreStats {
     }
 }
 
+impl AddAssign for GeyserPluginNotifyAtSnapshotRestoreStats {
+    fn add_assign(&mut self, other: Self) {
+        self.total_accounts += other.total_accounts;
+        self.skipped_accounts += other.skipped_accounts;
+        self.notified_accounts += other.notified_accounts;
+        self.elapsed_filtering += other.elapsed_filtering;
+        self.elapsed_notifying += other.elapsed_notifying;
+        self.total_pure_notify += other.total_pure_notify;
+        self.total_pure_bookkeeping += other.total_pure_bookkeeping;
+    }
+}
+
 impl AccountsDb {
     /// Notify the plugins of account data when AccountsDb is restored from a snapshot. The data is streamed
     /// in the reverse order of the slots so that an account is only streamed once. At a slot, if the accounts is updated
@@ -74,12 +87,12 @@ impl AccountsDb {
             slots.sort_by(|a, b| b.cmp(a));
             for slot in slots {
                 if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-                    Self::notify_accounts_in_storage(
+                    let stats = Self::notify_accounts_in_storage(
                         accounts_update_notifier.as_ref(),
                         &storage,
                         &mut notified_accounts,
-                        &mut notify_stats,
                     );
+                    notify_stats += stats;
                 }
             }
         }
@@ -111,11 +124,9 @@ impl AccountsDb {
         notifier: &dyn AccountsUpdateNotifierInterface,
         storage: &AccountStorageEntry,
         notified_accounts: &mut HashSet<Pubkey>,
-        notify_stats: &mut GeyserPluginNotifyAtSnapshotRestoreStats,
-    ) {
+    ) -> GeyserPluginNotifyAtSnapshotRestoreStats {
         let filtering_start = Instant::now();
         let mut accounts_duplicate: HashMap<Pubkey, usize> = HashMap::default();
-        let mut account_len = 0;
         let mut pubkeys = HashSet::new();
 
         // populate `accounts_duplicate` for any pubkeys that are in this storage twice.
@@ -132,14 +143,16 @@ impl AccountsDb {
         // now, actually notify geyser
         let mut pure_notify_time = Duration::ZERO;
         let mut pure_bookkeeping_time = Duration::ZERO;
+        let mut num_total_accounts = 0;
+        let mut num_skipped_accounts = 0;
         let mut num_notified_accounts = 0;
         let mut i = 0;
         let notifying_start = Instant::now();
         storage.accounts.scan_accounts_for_geyser(|account| {
             i += 1;
-            account_len += 1;
+            num_total_accounts += 1;
             if notified_accounts.contains(account.pubkey) {
-                notify_stats.skipped_accounts += 1;
+                num_skipped_accounts += 1;
                 return;
             }
             if let Some(highest_i) = accounts_duplicate.get(account.pubkey) {
@@ -166,12 +179,15 @@ impl AccountsDb {
         let notifying_time = notifying_start.elapsed();
 
         let filtering_time = filtering_start.elapsed();
-        notify_stats.total_accounts += account_len;
-        notify_stats.notified_accounts += num_notified_accounts;
-        notify_stats.elapsed_filtering += filtering_time;
-        notify_stats.elapsed_notifying += notifying_time;
-        notify_stats.total_pure_notify += pure_notify_time;
-        notify_stats.total_pure_bookkeeping += pure_bookkeeping_time;
+        GeyserPluginNotifyAtSnapshotRestoreStats {
+            total_accounts: num_total_accounts,
+            skipped_accounts: num_skipped_accounts,
+            notified_accounts: num_notified_accounts,
+            elapsed_filtering: filtering_time,
+            elapsed_notifying: notifying_time,
+            total_pure_notify: pure_notify_time,
+            total_pure_bookkeeping: pure_bookkeeping_time,
+        }
     }
 }
 
