@@ -22,6 +22,7 @@ pub mod prioritization_fee;
 pub mod prioritization_fee_cache;
 pub mod rent_collector;
 pub mod root_bank_cache;
+pub mod runtime_config;
 pub mod serde_snapshot;
 pub mod snapshot_archive_info;
 pub mod snapshot_bank_utils;
@@ -48,6 +49,3 @@ extern crate serde_derive;
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]
 extern crate solana_frozen_abi_macro;
-
-// Don't make crates import the SVM if all they need is this module.
-pub use solana_svm::runtime_config;
