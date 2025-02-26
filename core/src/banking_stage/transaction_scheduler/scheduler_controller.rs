@@ -259,11 +259,9 @@ where
             let sanitized_txs: Vec<_> = chunk
                 .iter()
                 .map(|id| {
-                    &self
-                        .container
-                        .get_transaction_ttl(id.id)
+                    self.container
+                        .get_transaction(id.id)
                         .expect("transaction must exist")
-                        .transaction
                 })
                 .collect();
 

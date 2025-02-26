@@ -1,9 +1,6 @@
 use {
-    super::{
-        transaction_priority_id::TransactionPriorityId,
-        transaction_state::{SanitizedTransactionTTL, TransactionState},
-    },
-    crate::banking_stage::scheduler_messages::TransactionId,
+    super::{transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState},
+    crate::banking_stage::scheduler_messages::{MaxAge, TransactionId},
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
@@ -66,20 +63,16 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 
     /// Get reference to `SanitizedTransactionTTL` by id.
     /// Panics if the transaction does not exist.
-    fn get_transaction_ttl(&self, id: TransactionId) -> Option<&SanitizedTransactionTTL<Tx>>;
+    fn get_transaction(&self, id: TransactionId) -> Option<&Tx>;
 
     /// Retries a transaction - inserts transaction back into map.
     /// This transitions the transaction to `Unprocessed` state.
-    fn retry_transaction(
-        &mut self,
-        transaction_id: TransactionId,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-    ) {
+    fn retry_transaction(&mut self, transaction_id: TransactionId, transaction: Tx) {
         let transaction_state = self
             .get_mut_transaction_state(transaction_id)
             .expect("transaction must exist");
         let priority_id = TransactionPriorityId::new(transaction_state.priority(), transaction_id);
-        transaction_state.transition_to_unprocessed(transaction_ttl);
+        transaction_state.retry_transaction(transaction);
         self.push_ids_into_queue(std::iter::once(priority_id));
     }
 
@@ -136,10 +129,10 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         self.id_to_transaction_state.get_mut(id)
     }
 
-    fn get_transaction_ttl(&self, id: TransactionId) -> Option<&SanitizedTransactionTTL<Tx>> {
+    fn get_transaction(&self, id: TransactionId) -> Option<&Tx> {
         self.id_to_transaction_state
             .get(id)
-            .map(|state| state.transaction_ttl())
+            .map(|state| state.transaction())
     }
 
     fn push_ids_into_queue(
@@ -187,14 +180,15 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     /// Returns `true` if a packet was dropped due to capacity limits.
     pub(crate) fn insert_new_transaction(
         &mut self,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
+        transaction: Tx,
+        max_age: MaxAge,
         priority: u64,
         cost: u64,
     ) -> bool {
         let priority_id = {
             let entry = self.get_vacant_map_entry();
             let transaction_id = entry.key();
-            entry.insert(TransactionState::new(transaction_ttl, priority, cost));
+            entry.insert(TransactionState::new(transaction, max_age, priority, cost));
             TransactionPriorityId::new(priority, transaction_id)
         };
 
@@ -303,11 +297,8 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     }
 
     #[inline]
-    fn get_transaction_ttl(
-        &self,
-        id: TransactionId,
-    ) -> Option<&SanitizedTransactionTTL<RuntimeTransactionView>> {
-        self.inner.get_transaction_ttl(id)
+    fn get_transaction(&self, id: TransactionId) -> Option<&RuntimeTransactionView> {
+        self.inner.get_transaction(id)
     }
 
     #[inline]
@@ -352,11 +343,7 @@ mod tests {
     /// Returns (transaction_ttl, priority, cost)
     fn test_transaction(
         priority: u64,
-    ) -> (
-        SanitizedTransactionTTL<RuntimeTransaction<SanitizedTransaction>>,
-        u64,
-        u64,
-    ) {
+    ) -> (RuntimeTransaction<SanitizedTransaction>, MaxAge, u64, u64) {
         let from_keypair = Keypair::new();
         let ixs = vec![
             system_instruction::transfer(&from_keypair.pubkey(), &solana_pubkey::new_rand(), 1),
@@ -368,12 +355,8 @@ mod tests {
             message,
             Hash::default(),
         ));
-        let transaction_ttl = SanitizedTransactionTTL {
-            transaction: tx,
-            max_age: MaxAge::MAX,
-        };
         const TEST_TRANSACTION_COST: u64 = 5000;
-        (transaction_ttl, priority, TEST_TRANSACTION_COST)
+        (tx, MaxAge::MAX, priority, TEST_TRANSACTION_COST)
     }
 
     fn push_to_container(
@@ -381,8 +364,8 @@ mod tests {
         num: usize,
     ) {
         for priority in 0..num as u64 {
-            let (transaction_ttl, priority, cost) = test_transaction(priority);
-            container.insert_new_transaction(transaction_ttl, priority, cost);
+            let (transaction, max_age, priority, cost) = test_transaction(priority);
+            container.insert_new_transaction(transaction, max_age, priority, cost);
         }
     }
 
@@ -447,22 +430,13 @@ mod tests {
             )
             .unwrap();
 
-            Ok(TransactionState::new(
-                SanitizedTransactionTTL {
-                    transaction: view,
-                    max_age: MaxAge::MAX,
-                },
-                priority,
-                cost,
-            ))
+            Ok(TransactionState::new(view, MaxAge::MAX, priority, cost))
         };
 
         // Push 2 transactions into the queue so buffer is full.
         for priority in [4, 5] {
-            let (transaction_ttl, priority, cost) = test_transaction(priority);
-            let packet =
-                Packet::from_data(None, transaction_ttl.transaction.to_versioned_transaction())
-                    .unwrap();
+            let (transaction, _max_age, priority, cost) = test_transaction(priority);
+            let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
             let id = container
                 .try_insert_map_only_with_data(packet.data(..).unwrap(), |data| {
                     packet_parser(data, priority, cost)
@@ -478,10 +452,8 @@ mod tests {
         // Push 5 additional packets in. 5 should be dropped.
         let mut priority_ids = Vec::with_capacity(5);
         for priority in [10, 11, 12, 1, 2] {
-            let (transaction_ttl, priority, cost) = test_transaction(priority);
-            let packet =
-                Packet::from_data(None, transaction_ttl.transaction.to_versioned_transaction())
-                    .unwrap();
+            let (transaction, _max_age, priority, cost) = test_transaction(priority);
+            let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
             let id = container
                 .try_insert_map_only_with_data(packet.data(..).unwrap(), |data| {
                     packet_parser(data, priority, cost)
@@ -499,10 +471,8 @@ mod tests {
         // If we attempt to push additional transactions to the queue, they
         // are rejected regardless of their priority.
         let priority = u64::MAX;
-        let (transaction_ttl, priority, cost) = test_transaction(priority);
-        let packet =
-            Packet::from_data(None, transaction_ttl.transaction.to_versioned_transaction())
-                .unwrap();
+        let (transaction, _max_age, priority, cost) = test_transaction(priority);
+        let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
         let id = container
             .try_insert_map_only_with_data(packet.data(..).unwrap(), |data| {
                 packet_parser(data, priority, cost)

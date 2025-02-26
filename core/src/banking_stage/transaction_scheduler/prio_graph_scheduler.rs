@@ -6,7 +6,6 @@ use {
         },
         scheduler_error::SchedulerError,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
-        transaction_state::SanitizedTransactionTTL,
     },
     crate::banking_stage::{
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
@@ -159,8 +158,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                 *window_budget = window_budget.saturating_sub(chunk_size);
 
                 ids.iter().for_each(|id| {
-                    let transaction = container.get_transaction_ttl(id.id).unwrap();
-                    txs.push(&transaction.transaction);
+                    let transaction = container.get_transaction(id.id).unwrap();
+                    txs.push(transaction);
                 });
 
                 let (_, filter_us) =
@@ -169,7 +168,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
 
                 for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
                     if *filter_result {
-                        let transaction = container.get_transaction_ttl(id.id).unwrap();
+                        let transaction = container.get_transaction(id.id).unwrap();
                         prio_graph.insert_transaction(
                             *id,
                             Self::get_transaction_account_access(transaction),
@@ -345,9 +344,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
 impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
     /// Gets accessed accounts (resources) for use in `PrioGraph`.
     fn get_transaction_account_access(
-        transaction: &SanitizedTransactionTTL<impl SVMMessage>,
+        message: &impl SVMMessage,
     ) -> impl Iterator<Item = (Pubkey, AccessKind)> + '_ {
-        let message = &transaction.transaction;
         message
             .account_keys()
             .iter()
@@ -375,7 +373,7 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
     }
 
     // Check if this transaction conflicts with any blocked transactions
-    let transaction = &transaction_state.transaction_ttl().transaction;
+    let transaction = transaction_state.transaction();
     if !blocking_locks.check_locks(transaction) {
         blocking_locks.take_locks(transaction);
         return Err(TransactionSchedulingError::UnschedulableConflicts);
@@ -409,13 +407,13 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
         }
     };
 
-    let sanitized_transaction_ttl = transaction_state.transition_to_pending();
+    let (transaction, max_age) = transaction_state.take_transaction_for_scheduling();
     let cost = transaction_state.cost();
 
     Ok(TransactionSchedulingInfo {
         thread_id,
-        transaction: sanitized_transaction_ttl.transaction,
-        max_age: sanitized_transaction_ttl.max_age,
+        transaction,
+        max_age,
         cost,
     })
 }
@@ -519,13 +517,11 @@ mod tests {
                 lamports,
                 compute_unit_price,
             );
-            let transaction_ttl = SanitizedTransactionTTL {
-                transaction,
-                max_age: MaxAge::MAX,
-            };
+
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
-                transaction_ttl,
+                transaction,
+                MaxAge::MAX,
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );
