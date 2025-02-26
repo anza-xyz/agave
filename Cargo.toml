@@ -63,6 +63,7 @@ members = [
     "local-cluster",
     "log-analyzer",
     "log-collector",
+    "log-utils",
     "measure",
     "memory-management",
     "merkle-root-bench",
