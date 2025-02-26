@@ -38,6 +38,7 @@ smallvec = { workspace = true }
 socket2 = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-core = { workspace = true }
+solana-log-utils = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
