@@ -6,7 +6,7 @@ use {
     log::*,
     rand::{thread_rng, Rng},
     solana_perf::{
-        packet::{to_packet_batches, Packet, PacketBatch},
+        packet::{to_packet_batches, Packet, PacketMut},
         recycler::Recycler,
         sigverify,
         test_tx::{test_multisig_tx, test_tx},
@@ -40,7 +40,7 @@ fn gen_batches(
     use_same_tx: bool,
     packets_per_batch: usize,
     total_packets: usize,
-) -> Vec<PacketBatch> {
+) -> Vec<Vec<Packet>> {
     if use_same_tx {
         let tx = test_tx();
         to_packet_batches(&vec![tx; total_packets], packets_per_batch)
@@ -145,20 +145,24 @@ fn bench_sigverify_uneven(bencher: &mut Bencher) {
             len -= current_packets - num_packets;
             current_packets = num_packets;
         }
-        let mut batch = PacketBatch::with_capacity(len);
-        batch.resize(len, Packet::default());
-        for packet in batch.iter_mut() {
+        let mut mut_batch = Vec::with_capacity(len);
+        for _ in 0..len {
             if thread_rng().gen_ratio(1, 2) {
                 tx = simple_tx.clone();
             } else {
                 tx = multi_tx.clone();
             };
-            Packet::populate_packet(packet, None, &tx).expect("serialize request");
+            let mut packet = PacketMut::from_data(None, &tx).expect("serialize request");
             if thread_rng().gen_ratio((num_packets - NUM) as u32, num_packets as u32) {
                 packet.meta_mut().set_discard(true);
             } else {
                 num_valid += 1;
             }
+            mut_batch.push(packet);
+        }
+        let mut batch = Vec::with_capacity(len);
+        for packet in mut_batch {
+            batch.push(packet.freeze());
         }
         batches.push(batch);
     }

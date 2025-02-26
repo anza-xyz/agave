@@ -5,7 +5,7 @@ use {
         sigverify_stage::SigVerifyStage,
     },
     solana_net_utils::{bind_in_range_with_config, bind_more_with_config, SocketConfig},
-    solana_perf::packet::PacketBatch,
+    solana_perf::packet::Packet,
     solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
     solana_streamer::{
         nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
@@ -93,7 +93,7 @@ impl Vortexor {
     }
 
     pub fn create_sigverify_stage(
-        tpu_receiver: Receiver<solana_perf::packet::PacketBatch>,
+        tpu_receiver: Receiver<Vec<Packet>>,
         non_vote_sender: TracedSender,
     ) -> SigVerifyStage {
         let verifier = TransactionSigVerifier::new(non_vote_sender, None);
@@ -109,8 +109,8 @@ impl Vortexor {
     pub fn create_vortexor(
         tpu_sockets: TpuSockets,
         staked_nodes: Arc<RwLock<StakedNodes>>,
-        tpu_sender: Sender<PacketBatch>,
-        tpu_fwd_sender: Sender<PacketBatch>,
+        tpu_sender: Sender<Vec<Packet>>,
+        tpu_fwd_sender: Sender<Vec<Packet>>,
         max_connections_per_peer: u64,
         max_tpu_staked_connections: u64,
         max_tpu_unstaked_connections: u64,
