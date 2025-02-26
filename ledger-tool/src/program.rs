@@ -5,8 +5,7 @@ use {
     serde_derive::{Deserialize, Serialize},
     serde_json::Result,
     solana_bpf_loader_program::{
-        create_vm, load_program_from_bytes, serialization::serialize_parameters,
-        syscalls::create_program_runtime_environment_v1,
+        create_vm, load_program_from_bytes, syscalls::create_program_runtime_environment_v1,
     },
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_ledger::blockstore_options::AccessType,
@@ -15,6 +14,7 @@ use {
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET,
         },
+        serialization::serialize_parameters,
         with_mock_invoke_context,
     },
     solana_runtime::bank::Bank,

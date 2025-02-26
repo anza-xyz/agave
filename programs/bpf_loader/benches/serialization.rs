@@ -1,7 +1,7 @@
 use {
     criterion::{criterion_group, criterion_main, Criterion},
     solana_account::{Account, AccountSharedData},
-    solana_bpf_loader_program::serialization::serialize_parameters,
+    solana_program_runtime::serialization::serialize_parameters,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},

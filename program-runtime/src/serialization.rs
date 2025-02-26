@@ -1,9 +1,9 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    crate::invoke_context::SerializedAccountMetadata,
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
-    solana_program_runtime::invoke_context::SerializedAccountMetadata,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         aligned_memory::{AlignedMemory, Pod},
@@ -248,7 +248,7 @@ pub fn serialize_parameters(
     }
 }
 
-pub(crate) fn deserialize_parameters(
+pub fn deserialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
@@ -605,7 +605,7 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
     Ok(())
 }
 
-pub(crate) fn account_data_region_memory_state(account: &BorrowedAccount<'_>) -> MemoryState {
+pub fn account_data_region_memory_state(account: &BorrowedAccount<'_>) -> MemoryState {
     if account.can_data_be_changed().is_ok() {
         if account.is_shared() {
             MemoryState::Cow(account.get_index_in_transaction() as u64)
@@ -622,10 +622,10 @@ pub(crate) fn account_data_region_memory_state(account: &BorrowedAccount<'_>) ->
 mod tests {
     use {
         super::*,
+        crate::with_mock_invoke_context,
         solana_account::{Account, AccountSharedData, WritableAccount},
         solana_account_info::AccountInfo,
         solana_program_entrypoint::deserialize,
-        solana_program_runtime::with_mock_invoke_context,
         solana_sdk_ids::bpf_loader,
         solana_transaction_context::InstructionAccount,
         std::{

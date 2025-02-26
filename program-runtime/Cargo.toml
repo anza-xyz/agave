@@ -37,12 +37,14 @@ solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true, optional = true }
 solana-precompiles = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-stable-layout = { workspace = true }
+solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
@@ -52,6 +54,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+solana-account-info = { workspace = true }
 solana-compute-budget = { workspace = true, features = ["dev-context-only-utils"] }
 solana-instruction = { workspace = true, features = ["bincode"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
