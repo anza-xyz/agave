@@ -86,16 +86,17 @@ impl AccountsDb {
             let mut notified_accounts: HashSet<Pubkey> = HashSet::default();
 
             slots.sort_unstable_by_key(|&slot| Reverse(slot));
-            for slot in slots {
-                if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-                    let stats = Self::notify_accounts_in_storage(
+            slots
+                .into_iter()
+                .filter_map(|slot| self.storage.get_slot_storage_entry(slot))
+                .map(|storage| {
+                    Self::notify_accounts_in_storage(
                         accounts_update_notifier.as_ref(),
                         &storage,
                         &mut notified_accounts,
-                    );
-                    notify_stats += stats;
-                }
-            }
+                    )
+                })
+                .for_each(|stats| notify_stats += stats);
         }
 
         accounts_update_notifier.notify_end_of_restore_from_snapshot();
