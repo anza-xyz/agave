@@ -18,10 +18,7 @@ use {
     log::*,
     rand::{thread_rng, Rng},
     rayon::prelude::*,
-    solana_core::{
-        banking_stage::BankingStage,
-        banking_trace::BankingTracer,
-    },
+    solana_core::{banking_stage::BankingStage, banking_trace::BankingTracer},
     solana_entry::entry::{next_hash, Entry},
     solana_gossip::cluster_info::{ClusterInfo, Node},
     solana_ledger::{

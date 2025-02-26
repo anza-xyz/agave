@@ -424,11 +424,7 @@ pub(crate) struct LeaderSlotMetrics {
 }
 
 impl LeaderSlotMetrics {
-    pub(crate) fn new(
-        id: u32,
-        slot: Slot,
-        bank_creation_time: &Instant,
-    ) -> Self {
+    pub(crate) fn new(id: u32, slot: Slot, bank_creation_time: &Instant) -> Self {
         Self {
             id: id.to_string(),
             slot,
@@ -989,8 +985,8 @@ mod tests {
         // Test case where the thread has not detected a leader bank, and now sees a leader bank.
         // Metrics should not be reported because leader slot has not ended
         assert!(leader_slot_metrics_tracker.leader_slot_metrics.is_none());
-        let action = leader_slot_metrics_tracker
-            .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
+        let action =
+            leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_poh_recorder_bank));
         assert_eq!(
             mem::discriminant(&MetricsTrackerAction::NewTracker(None)),
             mem::discriminant(&action)
