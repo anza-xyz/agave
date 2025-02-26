@@ -164,8 +164,8 @@ impl Serializer {
         self.vaddr += range.len() as u64;
     }
 
-    fn finish(mut self) -> (AlignedMemory<HOST_ALIGN>, Vec<MemoryRegion>) {
-        self.push_region(true);
+    fn finish(mut self, writable: bool) -> (AlignedMemory<HOST_ALIGN>, Vec<MemoryRegion>) {
+        self.push_region(writable);
         debug_assert_eq!(self.region_start, self.buffer.len());
         (self.buffer, self.regions)
     }
@@ -354,7 +354,7 @@ fn serialize_parameters_unaligned(
     s.write_all(instruction_data);
     s.write_all(program_id.as_ref());
 
-    let (mem, regions) = s.finish();
+    let (mem, regions) = s.finish(true);
     Ok((mem, regions, accounts_metadata))
 }
 
@@ -495,7 +495,7 @@ fn serialize_parameters_aligned(
     s.write_all(instruction_data);
     s.write_all(program_id.as_ref());
 
-    let (mem, regions) = s.finish();
+    let (mem, regions) = s.finish(true);
     Ok((mem, regions, accounts_metadata))
 }
 
