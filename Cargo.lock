@@ -1289,9 +1289,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
-version = "1.10.1"
+version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
+checksum = "f61dac84819c6588b558454b194026eb1f09c293b9036ae9b159e74e73ab6cf9"
 
 [[package]]
 name = "bytesize"
@@ -2327,7 +2327,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4989,9 +4989,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.40"
+version = "1.0.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
+checksum = "c1f1914ce909e1658d9907913b4b91947430c7d9be598b15a1912935b8c04801"
 dependencies = [
  "proc-macro2",
 ]
@@ -5477,7 +5477,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6637,7 +6637,6 @@ dependencies = [
  "solana-bn254",
  "solana-bpf-loader-program",
  "solana-clock",
- "solana-compute-budget",
  "solana-cpi",
  "solana-curve25519",
  "solana-epoch-rewards",
@@ -7143,7 +7142,7 @@ dependencies = [
  "qualifier_attr",
  "solana-fee-structure",
  "solana-frozen-abi",
- "solana-program-entrypoint",
+ "solana-program-runtime",
 ]
 
 [[package]]
@@ -7158,6 +7157,7 @@ dependencies = [
  "solana-builtins-default-costs",
  "solana-compute-budget",
  "solana-compute-budget-interface",
+ "solana-compute-budget-program",
  "solana-feature-set",
  "solana-hash",
  "solana-instruction",
@@ -7165,6 +7165,7 @@ dependencies = [
  "solana-message",
  "solana-packet",
  "solana-program",
+ "solana-program-runtime",
  "solana-pubkey",
  "solana-sdk-ids",
  "solana-signer",
@@ -7398,6 +7399,7 @@ dependencies = [
  "solana-message",
  "solana-metrics",
  "solana-packet",
+ "solana-program-runtime",
  "solana-pubkey",
  "solana-reserved-account-keys",
  "solana-runtime-transaction",
@@ -8302,7 +8304,6 @@ dependencies = [
  "solana-bincode",
  "solana-bpf-loader-program",
  "solana-clock",
- "solana-compute-budget",
  "solana-instruction",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
@@ -8891,12 +8892,12 @@ dependencies = [
  "itertools 0.12.1",
  "log",
  "percentage",
+ "qualifier_attr",
  "rand 0.8.5",
  "serde",
  "solana-account",
  "solana-account-info",
  "solana-clock",
- "solana-compute-budget",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
  "solana-feature-set",
@@ -8910,6 +8911,7 @@ dependencies = [
  "solana-metrics",
  "solana-precompiles",
  "solana-program-entrypoint",
+ "solana-program-runtime",
  "solana-pubkey",
  "solana-rent",
  "solana-sbpf",
@@ -10062,7 +10064,6 @@ dependencies = [
  "solana-account",
  "solana-bpf-loader-program",
  "solana-clock",
- "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
  "solana-compute-budget-program",
@@ -11082,6 +11083,7 @@ dependencies = [
  "solana-compute-budget-interface",
  "solana-instruction",
  "solana-keypair",
+ "solana-program-runtime",
  "solana-program-test",
  "solana-pubkey",
  "solana-signer",
@@ -11765,7 +11767,7 @@ dependencies = [
  "getrandom 0.3.1",
  "once_cell",
  "rustix 1.0.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11996,9 +11998,9 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 
 [[package]]
 name = "tokio"
-version = "1.44.0"
+version = "1.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9975ea0f48b5aa3972bf2d888c238182458437cc2a19374b81b25cdf1023fb3a"
+checksum = "f382da615b842244d4b8738c82ed1275e6c5dd90c459a30941cd07080b06c91a"
 dependencies = [
  "backtrace",
  "bytes",

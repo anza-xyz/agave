@@ -1,4 +1,4 @@
-use super::*;
+use {super::*, solana_program_runtime::execution_budget::SVMTransactionExecutionBudget};
 
 fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
@@ -179,7 +179,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let check_aligned = invoke_context.get_check_aligned();
-        let ComputeBudget {
+        let SVMTransactionExecutionBudget {
             sysvar_base_cost,
             cpi_bytes_per_unit,
             mem_op_base_cost,

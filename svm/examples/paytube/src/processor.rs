@@ -2,10 +2,11 @@
 
 use {
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
-    solana_compute_budget::{
-        compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+    solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionBudget,
+        loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
     },
-    solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
     solana_sdk::{clock::Slot, feature_set::FeatureSet, transaction},
     solana_svm::{
         account_loader::CheckedTransactionDetails,
@@ -37,7 +38,7 @@ impl ForkGraph for PayTubeForkGraph {
 pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     feature_set: &FeatureSet,
-    compute_budget: &ComputeBudget,
+    compute_budget: &SVMTransactionExecutionBudget,
     fork_graph: Arc<RwLock<PayTubeForkGraph>>,
 ) -> TransactionBatchProcessor<PayTubeForkGraph> {
     // Create a new transaction batch processor.
@@ -98,7 +99,7 @@ pub(crate) fn get_transaction_check_results(
         transaction::Result::Ok(CheckedTransactionDetails::new(
             None,
             lamports_per_signature,
-            Ok(ComputeBudgetLimits::default())
+            Ok(ComputeBudgetLimits::default_compute_budget_and_limits())
         ));
         len
     ]

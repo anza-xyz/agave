@@ -36,8 +36,7 @@ use {
         ancestors::Ancestors,
     },
     solana_compute_budget::{
-        compute_budget::ComputeBudget,
-        compute_budget_limits::{self, ComputeBudgetLimits, MAX_COMPUTE_UNIT_LIMIT},
+        compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
     },
     solana_cost_model::block_cost_limits::{MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0207},
     solana_feature_set::{self as feature_set, FeatureSet},
@@ -45,6 +44,7 @@ use {
     solana_logger,
     solana_program_runtime::{
         declare_process_instruction,
+        execution_budget::{self, MAX_COMPUTE_UNIT_LIMIT},
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
     },
     solana_sdk::{
@@ -10008,7 +10008,7 @@ fn test_compute_budget_program_noop() {
             *compute_budget,
             ComputeBudget {
                 compute_unit_limit: u64::from(
-                    compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 ),
                 heap_size: 48 * 1024,
                 ..ComputeBudget::default()
@@ -10020,7 +10020,7 @@ fn test_compute_budget_program_noop() {
     let message = Message::new(
         &[
             ComputeBudgetInstruction::set_compute_unit_limit(
-                compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
             ),
             ComputeBudgetInstruction::request_heap_frame(48 * 1024),
             Instruction::new_with_bincode(program_id, &0, vec![]),
@@ -10053,7 +10053,7 @@ fn test_compute_request_instruction() {
             *compute_budget,
             ComputeBudget {
                 compute_unit_limit: u64::from(
-                    compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 ),
                 heap_size: 48 * 1024,
                 ..ComputeBudget::default()
@@ -10065,7 +10065,7 @@ fn test_compute_request_instruction() {
     let message = Message::new(
         &[
             ComputeBudgetInstruction::set_compute_unit_limit(
-                compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
             ),
             ComputeBudgetInstruction::request_heap_frame(48 * 1024),
             Instruction::new_with_bincode(program_id, &0, vec![]),
@@ -10106,7 +10106,7 @@ fn test_failed_compute_request_instruction() {
             *compute_budget,
             ComputeBudget {
                 compute_unit_limit: u64::from(
-                    compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 ),
                 heap_size: 48 * 1024,
                 ..ComputeBudget::default()

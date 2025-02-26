@@ -22,7 +22,6 @@ solana-bincode = { workspace = true }
 solana-blake3-hasher = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-clock = { workspace = true }
-solana-compute-budget = { workspace = true }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
 solana-feature-set = { workspace = true }

@@ -22,7 +22,6 @@ use {
         ALT_BN128_MULTIPLICATION_OUTPUT_LEN, ALT_BN128_PAIRING_ELEMENT_LEN,
         ALT_BN128_PAIRING_OUTPUT_LEN,
     },
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_cpi::MAX_RETURN_DATA,
     solana_feature_set::{
         self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
@@ -42,7 +41,9 @@ use {
     solana_poseidon as poseidon,
     solana_precompiles::is_precompile,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-    solana_program_runtime::{invoke_context::InvokeContext, stable_log},
+    solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext, stable_log,
+    },
     solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
     solana_sbpf::{
         declare_builtin_function,
@@ -140,9 +141,9 @@ trait HasherImpl {
     fn create_hasher() -> Self;
     fn hash(&mut self, val: &[u8]);
     fn result(self) -> Self::Output;
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64;
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64;
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64;
+    fn get_base_cost(compute_budget: &SVMTransactionExecutionBudget) -> u64;
+    fn get_byte_cost(compute_budget: &SVMTransactionExecutionBudget) -> u64;
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64;
 }
 
 struct Sha256Hasher(Hasher);
@@ -165,13 +166,13 @@ impl HasherImpl for Sha256Hasher {
         self.0.result()
     }
 
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64 {
+    fn get_base_cost(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_base_cost
     }
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64 {
+    fn get_byte_cost(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_byte_cost
     }
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64 {
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
     }
 }
@@ -192,13 +193,13 @@ impl HasherImpl for Blake3Hasher {
         self.0.result()
     }
 
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64 {
+    fn get_base_cost(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_base_cost
     }
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64 {
+    fn get_byte_cost(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_byte_cost
     }
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64 {
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
     }
 }
@@ -219,13 +220,13 @@ impl HasherImpl for Keccak256Hasher {
         self.0.result()
     }
 
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64 {
+    fn get_base_cost(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_base_cost
     }
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64 {
+    fn get_byte_cost(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_byte_cost
     }
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64 {
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
     }
 }
@@ -331,7 +332,7 @@ pub(crate) fn morph_into_deployment_environment_v1(
 
 pub fn create_program_runtime_environment_v1<'a>(
     feature_set: &FeatureSet,
-    compute_budget: &ComputeBudget,
+    compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
 ) -> Result<BuiltinProgram<InvokeContext<'a>>, Error> {
@@ -568,7 +569,7 @@ pub fn create_program_runtime_environment_v1<'a>(
 }
 
 pub fn create_program_runtime_environment_v2<'a>(
-    compute_budget: &ComputeBudget,
+    compute_budget: &SVMTransactionExecutionBudget,
     debugging_features: bool,
 ) -> BuiltinProgram<InvokeContext<'a>> {
     let config = Config {
@@ -4904,7 +4905,7 @@ mod tests {
     #[test]
     fn test_syscall_get_epoch_stake_total_stake() {
         let config = Config::default();
-        let mut compute_budget = ComputeBudget::default();
+        let mut compute_budget = SVMTransactionExecutionBudget::default();
         let sysvar_cache = Arc::<SysvarCache>::default();
 
         let expected_total_stake = 200_000_000_000_000u64;
@@ -4947,7 +4948,7 @@ mod tests {
     #[test]
     fn test_syscall_get_epoch_stake_vote_account_stake() {
         let config = Config::default();
-        let mut compute_budget = ComputeBudget::default();
+        let mut compute_budget = SVMTransactionExecutionBudget::default();
         let sysvar_cache = Arc::<SysvarCache>::default();
 
         let expected_epoch_stake = 55_000_000_000u64;

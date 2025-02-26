@@ -1,18 +1,14 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
-    solana_fee_structure::FeeBudgetLimits, solana_program_entrypoint::HEAP_LENGTH,
+    crate::compute_budget::ComputeBudget,
+    solana_fee_structure::FeeBudgetLimits,
+    solana_program_runtime::execution_budget::{
+        SVMTransactionComputeBudgetAndLimits, DEFAULT_HEAP_COST, MAX_COMPUTE_UNIT_LIMIT,
+        MIN_HEAP_FRAME_BYTES,
+    },
     std::num::NonZeroU32,
 };
-
-/// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
-/// default heap page cost = 0.5 * 15 ~= 8CU/page
-pub const DEFAULT_HEAP_COST: u64 = 8;
-pub const DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT: u32 = 200_000;
-// SIMD-170 defines max CUs to be allocated for any builtin program instructions, that
-// have not been migrated to sBPF programs.
-pub const MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT: u32 = 3_000;
-pub const MAX_COMPUTE_UNIT_LIMIT: u32 = 1_400_000;
-pub const MAX_HEAP_FRAME_BYTES: u32 = 256 * 1024;
-pub const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
 
 type MicroLamports = u128;
 
@@ -43,6 +39,35 @@ impl Default for ComputeBudgetLimits {
     }
 }
 
+impl ComputeBudgetLimits {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub fn default_compute_budget_and_limits() -> SVMTransactionComputeBudgetAndLimits {
+        Self::get_compute_budget_and_limits(&ComputeBudgetLimits::default())
+    }
+
+    pub fn get_compute_budget_and_limits(&self) -> SVMTransactionComputeBudgetAndLimits {
+        let budget = ComputeBudget::from(*self);
+        let fee_budget = FeeBudgetLimits::from(self);
+        SVMTransactionComputeBudgetAndLimits {
+            budget,
+            loaded_accounts_bytes: fee_budget.loaded_accounts_data_size_limit,
+            priority_fee: fee_budget.prioritization_fee,
+        }
+    }
+
+    pub fn get_limits_using_compute_budget(
+        &self,
+        budget: ComputeBudget,
+    ) -> SVMTransactionComputeBudgetAndLimits {
+        let fee_budget = FeeBudgetLimits::from(self);
+        SVMTransactionComputeBudgetAndLimits {
+            budget,
+            loaded_accounts_bytes: fee_budget.loaded_accounts_data_size_limit,
+            priority_fee: fee_budget.prioritization_fee,
+        }
+    }
+}
+
 fn get_prioritization_fee(compute_unit_price: u64, compute_unit_limit: u64) -> u64 {
     let micro_lamport_fee: MicroLamports =
         (compute_unit_price as u128).saturating_mul(compute_unit_limit as u128);
@@ -55,6 +80,20 @@ fn get_prioritization_fee(compute_unit_price: u64, compute_unit_limit: u64) -> u
 
 impl From<ComputeBudgetLimits> for FeeBudgetLimits {
     fn from(val: ComputeBudgetLimits) -> Self {
+        let prioritization_fee =
+            get_prioritization_fee(val.compute_unit_price, u64::from(val.compute_unit_limit));
+
+        FeeBudgetLimits {
+            loaded_accounts_data_size_limit: val.loaded_accounts_bytes,
+            heap_cost: DEFAULT_HEAP_COST,
+            compute_unit_limit: u64::from(val.compute_unit_limit),
+            prioritization_fee,
+        }
+    }
+}
+
+impl From<&ComputeBudgetLimits> for FeeBudgetLimits {
+    fn from(val: &ComputeBudgetLimits) -> Self {
         let prioritization_fee =
             get_prioritization_fee(val.compute_unit_price, u64::from(val.compute_unit_limit));
 

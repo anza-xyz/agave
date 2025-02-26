@@ -20,7 +20,6 @@ serde_derive = { workspace = true }
 solana-account = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-clock = { workspace = true }
-solana-compute-budget = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
@@ -69,7 +68,6 @@ prost = { workspace = true }
 rand0-7 = { workspace = true }
 shuttle = { workspace = true }
 solana-clock = { workspace = true }
-solana-compute-budget = { workspace = true, features = ["dev-context-only-utils"] }
 solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
@@ -79,6 +77,7 @@ solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-native-token = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-reserved-account-keys = { workspace = true }
@@ -106,7 +105,6 @@ dev-context-only-utils = ["dep:qualifier_attr"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-compute-budget/frozen-abi",
     "solana-program-runtime/frozen-abi",
     "solana-sdk/frozen-abi",
 ]

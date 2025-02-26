@@ -122,7 +122,6 @@ mod tests {
         },
         rand0_7::thread_rng,
         solana_account::{AccountSharedData, ReadableAccount},
-        solana_compute_budget::compute_budget::ComputeBudget,
         solana_ed25519_program::new_ed25519_instruction,
         solana_feature_set::FeatureSet,
         solana_hash::Hash,
@@ -130,6 +129,7 @@ mod tests {
         solana_message::{AccountKeys, Message, SanitizedMessage},
         solana_program_runtime::{
             declare_process_instruction,
+            execution_budget::SVMTransactionExecutionBudget,
             invoke_context::EnvironmentConfig,
             loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
             sysvar_cache::SysvarCache,
@@ -252,7 +252,7 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
         );
         let result = process_message(
             &message,
@@ -306,7 +306,7 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
         );
         let result = process_message(
             &message,
@@ -350,7 +350,7 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
         );
         let result = process_message(
             &message,
@@ -485,7 +485,7 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
         );
         let result = process_message(
             &message,
@@ -524,7 +524,7 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
         );
         let result = process_message(
             &message,
@@ -560,7 +560,7 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
         );
         let result = process_message(
             &message,
@@ -663,7 +663,7 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
         );
         let result = process_message(
             &message,

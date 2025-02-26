@@ -6,10 +6,10 @@ use {
     lazy_static::lazy_static,
     prost::Message,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_log_collector::LogCollector,
     solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionBudget,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     },
@@ -215,9 +215,9 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
 
     let transactions = vec![transaction];
 
-    let compute_budget = ComputeBudget {
+    let compute_budget = SVMTransactionExecutionBudget {
         compute_unit_limit: input.cu_avail,
-        ..ComputeBudget::default()
+        ..SVMTransactionExecutionBudget::default()
     };
 
     let v1_environment =
@@ -278,7 +278,7 @@ fn execute_fixture_as_instr(
     mock_bank: &MockBankCallback,
     batch_processor: &TransactionBatchProcessor<MockForkGraph>,
     sanitized_message: &SanitizedMessage,
-    compute_budget: ComputeBudget,
+    compute_budget: SVMTransactionExecutionBudget,
     output: &InstrEffects,
     filename: OsString,
     cu_avail: u64,

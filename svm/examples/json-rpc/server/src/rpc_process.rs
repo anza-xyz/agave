@@ -15,11 +15,10 @@ use {
         parse_token::{get_token_account_mint, is_known_spl_token_id},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
-    solana_compute_budget::{
-        compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
-    },
     solana_perf::packet::PACKET_DATA_SIZE,
-    solana_program_runtime::loaded_programs::ProgramCacheEntry,
+    solana_program_runtime::{
+        execution_budget::SVMTransactionComputeBudgetAndLimits, loaded_programs::ProgramCacheEntry,
+    },
     solana_rpc_client_api::{
         config::*,
         response::{Response as RpcResponse, *},
@@ -326,7 +325,6 @@ impl JsonRpcRequestProcessor {
             TransactionProcessingConfig {
                 account_overrides: Some(&account_overrides),
                 check_program_modification_slot: false,
-                compute_budget: Some(ComputeBudget::default()),
                 log_messages_bytes_limit: None,
                 limit_to_load_programs: true,
                 recording_config: ExecutionRecordingConfig {
@@ -428,7 +426,7 @@ impl JsonRpcRequestProcessor {
         Ok(CheckedTransactionDetails::new(
             None,
             u64::default(),
-            Ok(ComputeBudgetLimits::default()),
+            Ok(SVMTransactionComputeBudgetAndLimits::default()),
         ))
     }
 
