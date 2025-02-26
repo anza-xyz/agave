@@ -372,8 +372,6 @@ mod tests {
         solana_sdk::{
             hash::Hash,
             signature::{Keypair, Signer},
-            system_transaction,
-            transaction::Transaction,
         },
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,

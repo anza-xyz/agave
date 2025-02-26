@@ -626,9 +626,7 @@ impl BankingStage {
         }
         let (decision, make_decision_us) =
             measure_us!(decision_maker.make_consume_or_forward_decision());
-        let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(
-            decision.bank_start()
-        );
+        let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(decision.bank_start());
         slot_metrics_tracker.increment_make_decision_us(make_decision_us);
 
         match decision {
