@@ -719,21 +719,33 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
             // these only encapsulate prefixes 1-9 and A-H.  If the user is searching
             // for a keypair that starts with a prefix of J-Z or a-z, then there is no
             // reason to waste time searching for a keypair that will never match
-            let skip_len_44_pubkeys = grind_matches
-                .iter()
-                .map(|g| {
-                    let target_key = if ignore_case {
-                        g.starts.to_ascii_uppercase()
-                    } else {
-                        g.starts.clone()
-                    };
-                    let target_key =
-                        target_key + &(0..44 - g.starts.len()).map(|_| "1").collect::<String>();
-                    bs58::decode(target_key).into_vec()
-                })
-                .filter_map(|s| s.ok())
-                .all(|s| s.len() > 32);
-
+            static BS58_ALPHABET: &str =
+                "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+            let skip_len_44_pubkeys = grind_matches.iter().all(|g| {
+                // If we are ignoring the case, upper-case the search string.
+                // Uppercase letters are always earlier in the alphabet, thus smaller.
+                let target_key = if ignore_case {
+                    g.starts
+                        .chars()
+                        .map(|c| {
+                            let up = c.to_ascii_uppercase();
+                            if BS58_ALPHABET.contains(up) {
+                                up
+                            } else {
+                                c
+                            }
+                        })
+                        .collect()
+                } else {
+                    g.starts.clone()
+                };
+                let target_key =
+                    target_key + &(0..44 - g.starts.len()).map(|_| "1").collect::<String>();
+                match bs58::decode(target_key).into_vec() {
+                    Ok(out) => out.len() > 32,
+                    Err(_) => false,
+                }
+            });
             let grind_matches_thread_safe = Arc::new(grind_matches);
             let attempts = Arc::new(AtomicU64::new(1));
             let found = Arc::new(AtomicU64::new(0));
