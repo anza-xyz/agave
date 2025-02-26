@@ -10,6 +10,7 @@ use {
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::SanitizedTransaction,
     std::{
+        cmp::Reverse,
         collections::{HashMap, HashSet},
         ops::AddAssign,
         time::{Duration, Instant},
@@ -84,7 +85,7 @@ impl AccountsDb {
             let mut slots = self.storage.all_slots();
             let mut notified_accounts: HashSet<Pubkey> = HashSet::default();
 
-            slots.sort_by(|a, b| b.cmp(a));
+            slots.sort_unstable_by_key(|&slot| Reverse(slot));
             for slot in slots {
                 if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
                     let stats = Self::notify_accounts_in_storage(
