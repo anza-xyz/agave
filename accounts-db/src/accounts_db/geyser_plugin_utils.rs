@@ -1,5 +1,8 @@
 use {
-    crate::accounts_db::AccountsDb,
+    crate::{
+        accounts_db::{AccountStorageEntry, AccountsDb},
+        accounts_update_notifier_interface::AccountsUpdateNotifierInterface,
+    },
     solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_measure::meas_dur,
@@ -70,7 +73,14 @@ impl AccountsDb {
 
             slots.sort_by(|a, b| b.cmp(a));
             for slot in slots {
-                self.notify_accounts_in_slot(slot, &mut notified_accounts, &mut notify_stats);
+                if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
+                    Self::notify_accounts_in_storage(
+                        accounts_update_notifier.as_ref(),
+                        &storage,
+                        &mut notified_accounts,
+                        &mut notify_stats,
+                    );
+                }
             }
         }
 
@@ -97,15 +107,12 @@ impl AccountsDb {
         }
     }
 
-    fn notify_accounts_in_slot(
-        &self,
-        slot: Slot,
+    fn notify_accounts_in_storage(
+        notifier: &dyn AccountsUpdateNotifierInterface,
+        storage: &AccountStorageEntry,
         notified_accounts: &mut HashSet<Pubkey>,
         notify_stats: &mut GeyserPluginNotifyAtSnapshotRestoreStats,
     ) {
-        let notifier = self.accounts_update_notifier.as_ref().unwrap();
-        let storage_entry = self.storage.get_slot_storage_entry(slot).unwrap();
-
         let filtering_start = Instant::now();
         let mut accounts_duplicate: HashMap<Pubkey, usize> = HashMap::default();
         let mut account_len = 0;
@@ -115,7 +122,7 @@ impl AccountsDb {
         // Storages cannot return `AccountForGeyser` for more than 1 account at a time, so we have to do 2 passes to make sure
         // we don't have duplicate pubkeys.
         let mut i = 0;
-        storage_entry.accounts.scan_pubkeys(|pubkey| {
+        storage.accounts.scan_pubkeys(|pubkey| {
             i += 1; // pre-increment to most easily match early returns in next loop
             if !pubkeys.insert(*pubkey) {
                 accounts_duplicate.insert(*pubkey, i); // remember the highest index entry in this slot
@@ -128,7 +135,7 @@ impl AccountsDb {
         let mut num_notified_accounts = 0;
         let mut i = 0;
         let notifying_start = Instant::now();
-        storage_entry.accounts.scan_accounts_for_geyser(|account| {
+        storage.accounts.scan_accounts_for_geyser(|account| {
             i += 1;
             account_len += 1;
             if notified_accounts.contains(account.pubkey) {
@@ -146,8 +153,11 @@ impl AccountsDb {
             // later entries in the same slot are more recent and override earlier accounts for the same pubkey
             // We can pass an incrementing number here for write_version in the future, if the storage does not have a write_version.
             // As long as all accounts for this slot are in 1 append vec that can be iterated oldest to newest.
-            let (_, notify_dur) =
-                meas_dur!(notifier.notify_account_restore_from_snapshot(slot, i as u64, &account));
+            let (_, notify_dur) = meas_dur!(notifier.notify_account_restore_from_snapshot(
+                storage.slot(),
+                i as u64,
+                &account
+            ));
             let (_, bookkeeping_dur) = meas_dur!(notified_accounts.insert(*account.pubkey));
             pure_notify_time += notify_dur;
             pure_bookkeeping_time += bookkeeping_dur;
