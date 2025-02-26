@@ -1867,6 +1867,47 @@ mod tests {
     }
 
     #[test]
+    fn test_current_poh_slot() {
+        let genesis_config = create_genesis_config(2).genesis_config;
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let last_entry_hash = bank.last_blockhash();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
+        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+            0,
+            last_entry_hash,
+            bank.clone(),
+            None,
+            bank.ticks_per_slot(),
+            Arc::new(blockstore),
+            &Arc::new(leader_schedule_cache),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+
+        // Tick height is initialized as 0
+        assert_eq!(0, poh_recorder.current_poh_slot());
+
+        // Tick height will be reset to the last tick of the reset bank
+        poh_recorder.reset(bank.clone(), None);
+        assert_eq!(bank.slot() + 1, poh_recorder.current_poh_slot());
+
+        // Check that any ticks before the last tick of the current poh slot will
+        // not cause the current poh slot to advance
+        for _ in 0..bank.ticks_per_slot() - 1 {
+            poh_recorder.tick();
+            assert_eq!(bank.slot() + 1, poh_recorder.current_poh_slot());
+        }
+
+        // Check that the current poh slot is advanced once the last tick of the
+        // slot is reached
+        poh_recorder.tick();
+        assert_eq!(bank.slot() + 2, poh_recorder.current_poh_slot());
+    }
+
+    #[test]
     fn test_reached_leader_tick() {
         solana_logger::setup();
 
