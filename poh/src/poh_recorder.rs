@@ -1889,7 +1889,9 @@ mod tests {
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let fixed_schedule = solana_ledger::leader_schedule::FixedSchedule {
             leader_schedule: Arc::new(
-                solana_ledger::leader_schedule::LeaderSchedule::new_from_schedule(slot_leaders),
+                solana_ledger::leader_schedule::LeaderSchedule::new_identity_keyed_with_schedule(
+                    slot_leaders,
+                ),
             ),
         };
         leader_schedule_cache.set_fixed_leader_schedule(Some(fixed_schedule));

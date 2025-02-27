@@ -8149,6 +8149,7 @@ dependencies = [
  "solana-feature-set",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-ledger",
  "solana-logger",
  "solana-measure",
  "solana-metrics",
