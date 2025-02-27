@@ -1,10 +1,9 @@
 use {
     crate::{
-        admin_rpc_service,
-        admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
+        admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
         bootstrap,
         cli::{self},
-        ledger_lockfile, lock_ledger, redirect_stderr_to_file,
+        ledger_lockfile, lock_ledger,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
@@ -46,6 +45,7 @@ use {
         },
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
+    solana_log_utils::redirect_stderr_to_file,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_rpc::{
@@ -1139,6 +1139,19 @@ pub fn execute(
         })
         .transpose()?;
 
+    let tpu_vortexor_receiver_address =
+        matches
+            .value_of("tpu_vortexor_receiver_address")
+            .map(|tpu_vortexor_receiver_address| {
+                solana_net_utils::parse_host_port(tpu_vortexor_receiver_address).unwrap_or_else(
+                    |err| {
+                        eprintln!("Failed to parse --tpu-vortexor-receiver-address: {err}");
+                        exit(1);
+                    },
+                )
+            });
+
+    info!("tpu_vortexor_receiver_address is {tpu_vortexor_receiver_address:?}");
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
 
     let tpu_max_connections_per_peer =
@@ -1164,6 +1177,7 @@ pub fn execute(
         public_tpu_forwards_addr,
         num_tvu_sockets: tvu_receive_threads,
         num_quic_endpoints,
+        vortexor_receiver_addr: tpu_vortexor_receiver_address,
     };
 
     let cluster_entrypoints = entrypoint_addrs
