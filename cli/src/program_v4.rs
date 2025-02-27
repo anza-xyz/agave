@@ -574,6 +574,9 @@ pub fn process_deploy_program(
     let blockhash = rpc_client.get_latest_blockhash()?;
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
+    let message = |instructions: Vec<Instruction>| {
+        Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash)
+    };
 
     // Download feature set
     let mut feature_set = FeatureSet::default();
@@ -657,18 +660,14 @@ pub fn process_deploy_program(
             .value;
         if buffer_account.is_none() {
             // Create and add create_buffer message
-            initial_messages.push(Message::new_with_blockhash(
-                &instruction::create_buffer(
-                    &payer_pubkey,
-                    &buffer_address,
-                    lamports_required,
-                    &authority_pubkey,
-                    program_data.len() as u32,
-                    &payer_pubkey,
-                ),
-                Some(&payer_pubkey),
-                &blockhash,
-            ));
+            initial_messages.push(message(instruction::create_buffer(
+                &payer_pubkey,
+                &buffer_address,
+                lamports_required,
+                &authority_pubkey,
+                program_data.len() as u32,
+                &payer_pubkey,
+            )));
         }
         (buffer_address, buffer_account)
     } else {
@@ -700,11 +699,7 @@ pub fn process_deploy_program(
                 program_data.len() as u32,
             )?;
         if !set_program_length_instructions.is_empty() {
-            initial_messages.push(Message::new_with_blockhash(
-                &set_program_length_instructions,
-                Some(&payer_pubkey),
-                &blockhash,
-            ));
+            initial_messages.push(message(set_program_length_instructions));
         }
     }
 
@@ -712,7 +707,7 @@ pub fn process_deploy_program(
     let mut write_messages = vec![];
     let create_msg = |offset: u32, bytes: Vec<u8>| {
         let instruction = instruction::write(&buffer_address, &authority_pubkey, offset, bytes);
-        Message::new_with_blockhash(&[instruction], Some(&payer_pubkey), &blockhash)
+        message(vec![instruction])
     };
     let chunk_size = calculate_max_chunk_size(&create_msg);
     for (chunk, i) in program_data[upload_range.clone()]
@@ -737,24 +732,16 @@ pub fn process_deploy_program(
             &authority_pubkey,
             &buffer_address,
         ));
-        Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash)
+        message(instructions)
     } else {
         // Deploy new program or redeploy without a buffer account
         if let Some(retract_instruction) = retract_instruction {
-            initial_messages.insert(
-                0,
-                Message::new_with_blockhash(
-                    &[retract_instruction],
-                    Some(&payer_pubkey),
-                    &blockhash,
-                ),
-            );
+            initial_messages.insert(0, message(vec![retract_instruction]));
         }
-        Message::new_with_blockhash(
-            &[instruction::deploy(program_address, &authority_pubkey)],
-            Some(&payer_pubkey),
-            &blockhash,
-        )
+        message(vec![instruction::deploy(
+            program_address,
+            &authority_pubkey,
+        )])
     }];
 
     check_payer(
@@ -793,6 +780,9 @@ fn process_close_program(
     let blockhash = rpc_client.get_latest_blockhash()?;
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
+    let message = |instructions: Vec<Instruction>| {
+        Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash)
+    };
 
     let Some(program_account) = rpc_client
         .get_account_with_commitment(program_address, config.commitment)?
@@ -805,11 +795,7 @@ fn process_close_program(
         build_retract_instruction(&program_account, program_address, &authority_pubkey)?;
 
     let mut initial_messages = if let Some(instruction) = retract_instruction {
-        vec![Message::new_with_blockhash(
-            &[instruction],
-            Some(&payer_pubkey),
-            &blockhash,
-        )]
+        vec![message(vec![instruction])]
     } else {
         vec![]
     };
@@ -817,11 +803,7 @@ fn process_close_program(
     let set_program_length_instruction =
         instruction::set_program_length(program_address, &authority_pubkey, 0, &payer_pubkey);
 
-    initial_messages.push(Message::new_with_blockhash(
-        &[set_program_length_instruction],
-        Some(&payer_pubkey),
-        &blockhash,
-    ));
+    initial_messages.push(message(vec![set_program_length_instruction]));
 
     check_payer(rpc_client.clone(), config, 0, &initial_messages, &[], &[])?;
 
@@ -853,23 +835,22 @@ fn process_transfer_authority_of_program(
     let blockhash = rpc_client.get_latest_blockhash()?;
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
+    let message = |instructions: Vec<Instruction>| {
+        Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash)
+    };
 
-    let message = [Message::new_with_blockhash(
-        &[instruction::transfer_authority(
-            program_address,
-            &authority_pubkey,
-            &new_authority.pubkey(),
-        )],
-        Some(&payer_pubkey),
-        &blockhash,
-    )];
-    check_payer(rpc_client.clone(), config, 0, &message, &[], &[])?;
+    let messages = [message(vec![instruction::transfer_authority(
+        program_address,
+        &authority_pubkey,
+        &new_authority.pubkey(),
+    )])];
+    check_payer(rpc_client.clone(), config, 0, &messages, &[], &[])?;
 
     send_messages(
         rpc_client,
         config,
         auth_signer_index,
-        &message,
+        &messages,
         &[],
         &[],
         None,
@@ -893,23 +874,22 @@ fn process_finalize_program(
     let blockhash = rpc_client.get_latest_blockhash()?;
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
+    let message = |instructions: Vec<Instruction>| {
+        Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash)
+    };
 
-    let message = [Message::new_with_blockhash(
-        &[instruction::finalize(
-            program_address,
-            &authority_pubkey,
-            &next_version.pubkey(),
-        )],
-        Some(&payer_pubkey),
-        &blockhash,
-    )];
-    check_payer(rpc_client.clone(), config, 0, &message, &[], &[])?;
+    let messages = [message(vec![instruction::finalize(
+        program_address,
+        &authority_pubkey,
+        &next_version.pubkey(),
+    )])];
+    check_payer(rpc_client.clone(), config, 0, &messages, &[], &[])?;
 
     send_messages(
         rpc_client,
         config,
         auth_signer_index,
-        &message,
+        &messages,
         &[],
         &[],
         None,
