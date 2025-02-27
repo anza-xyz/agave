@@ -171,7 +171,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                     "Program authority [default: the default configured keypair]",
                                 ),
                         )
-                        .arg(Arg::with_name("use_rpc").long("use-rpc").help(
+                        .arg(Arg::with_name("use-rpc").long("use-rpc").help(
                             "Send transactions to the configured RPC instead of validator TPUs",
                         )),
                 )
@@ -365,7 +365,7 @@ pub fn parse_program_v4_subcommand(
                     path_to_elf: path_to_elf.expect("Path to ELF is missing"),
                     upload_range: value_t!(matches, "start-offset", usize).ok()
                         ..value_t!(matches, "end-offset", usize).ok(),
-                    use_rpc: matches.is_present("use_rpc"),
+                    use_rpc: matches.is_present("use-rpc"),
                 }),
                 signers: signer_info.signers,
             }
