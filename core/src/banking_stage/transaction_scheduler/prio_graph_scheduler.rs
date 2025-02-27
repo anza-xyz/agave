@@ -4,7 +4,6 @@ use {
         scheduler::Scheduler,
         scheduler_error::SchedulerError,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
-        transaction_state::SanitizedTransactionTTL,
     },
     crate::banking_stage::{
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
@@ -161,8 +160,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                 *window_budget = window_budget.saturating_sub(chunk_size);
 
                 ids.iter().for_each(|id| {
-                    let transaction = container.get_transaction_ttl(id.id).unwrap();
-                    txs.push(&transaction.transaction);
+                    let transaction = container.get_transaction(id.id).unwrap();
+                    txs.push(transaction);
                 });
 
                 let (_, filter_us) =
@@ -171,7 +170,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
 
                 for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
                     if *filter_result {
-                        let transaction = container.get_transaction_ttl(id.id).unwrap();
+                        let transaction = container.get_transaction(id.id).unwrap();
                         prio_graph.insert_transaction(
                             *id,
                             Self::get_transaction_account_access(transaction),
@@ -369,18 +368,12 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
 
                 // Retryable transactions should be inserted back into the container
                 let mut retryable_iter = retryable_indexes.into_iter().peekable();
-                for (index, (id, transaction, max_age)) in
+                for (index, (id, transaction, _max_age)) in
                     izip!(ids, transactions, max_ages).enumerate()
                 {
                     if let Some(retryable_index) = retryable_iter.peek() {
                         if *retryable_index == index {
-                            container.retry_transaction(
-                                id,
-                                SanitizedTransactionTTL {
-                                    transaction,
-                                    max_age,
-                                },
-                            );
+                            container.retry_transaction(id, transaction);
                             retryable_iter.next();
                             continue;
                         }
@@ -488,9 +481,8 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
 
     /// Gets accessed accounts (resources) for use in `PrioGraph`.
     fn get_transaction_account_access(
-        transaction: &SanitizedTransactionTTL<impl SVMMessage>,
+        message: &impl SVMMessage,
     ) -> impl Iterator<Item = (Pubkey, AccessKind)> + '_ {
-        let message = &transaction.transaction;
         message
             .account_keys()
             .iter()
@@ -575,7 +567,7 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
     num_threads: usize,
     thread_selector: impl Fn(ThreadSet) -> ThreadId,
 ) -> Result<TransactionSchedulingInfo<Tx>, TransactionSchedulingError> {
-    let transaction = &transaction_state.transaction_ttl().transaction;
+    let transaction = transaction_state.transaction();
     if !pre_lock_filter(transaction) {
         return Err(TransactionSchedulingError::Filtered);
     }
@@ -614,13 +606,13 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
         }
     };
 
-    let sanitized_transaction_ttl = transaction_state.transition_to_pending();
+    let (transaction, max_age) = transaction_state.take_transaction_for_scheduling();
     let cost = transaction_state.cost();
 
     Ok(TransactionSchedulingInfo {
         thread_id,
-        transaction: sanitized_transaction_ttl.transaction,
-        max_age: sanitized_transaction_ttl.max_age,
+        transaction,
+        max_age,
         cost,
     })
 }
@@ -721,13 +713,11 @@ mod tests {
                 lamports,
                 compute_unit_price,
             );
-            let transaction_ttl = SanitizedTransactionTTL {
-                transaction,
-                max_age: MaxAge::MAX,
-            };
+
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
-                transaction_ttl,
+                transaction,
+                MaxAge::MAX,
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );

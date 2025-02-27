@@ -8,7 +8,7 @@ use {
         scheduler_error::SchedulerError,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
         transaction_priority_id::TransactionPriorityId,
-        transaction_state::{SanitizedTransactionTTL, TransactionState},
+        transaction_state::TransactionState,
         transaction_state_container::StateContainer,
     },
     crate::banking_stage::{
@@ -126,7 +126,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             // we should immediately send out the batches, so this transaction may be scheduled.
             if !self
                 .working_account_set
-                .check_locks(&transaction_state.transaction_ttl().transaction)
+                .check_locks(transaction_state.transaction())
             {
                 self.working_account_set.clear();
                 num_sent += self.send_batches(&mut batches)?;
@@ -246,7 +246,7 @@ impl<Tx: TransactionWithMeta> GreedyScheduler<Tx> {
                         batch_id,
                         ids,
                         transactions,
-                        max_ages,
+                        max_ages: _,
                     },
                 retryable_indexes,
             }) => {
@@ -258,18 +258,10 @@ impl<Tx: TransactionWithMeta> GreedyScheduler<Tx> {
 
                 // Retryable transactions should be inserted back into the container
                 let mut retryable_iter = retryable_indexes.into_iter().peekable();
-                for (index, (id, transaction, max_age)) in
-                    izip!(ids, transactions, max_ages).enumerate()
-                {
+                for (index, (id, transaction)) in izip!(ids, transactions).enumerate() {
                     if let Some(retryable_index) = retryable_iter.peek() {
                         if *retryable_index == index {
-                            container.retry_transaction(
-                                id,
-                                SanitizedTransactionTTL {
-                                    transaction,
-                                    max_age,
-                                },
-                            );
+                            container.retry_transaction(id, transaction);
                             retryable_iter.next();
                             continue;
                         }
@@ -353,7 +345,7 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
     schedulable_threads: ThreadSet,
     thread_selector: impl Fn(ThreadSet) -> ThreadId,
 ) -> Result<TransactionSchedulingInfo<Tx>, TransactionSchedulingError> {
-    let transaction = &transaction_state.transaction_ttl().transaction;
+    let transaction = transaction_state.transaction();
     if !pre_lock_filter(transaction) {
         return Err(TransactionSchedulingError::Filtered);
     }
@@ -384,13 +376,13 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
         }
     };
 
-    let sanitized_transaction_ttl = transaction_state.transition_to_pending();
+    let (transaction, max_age) = transaction_state.take_transaction_for_scheduling();
     let cost = transaction_state.cost();
 
     Ok(TransactionSchedulingInfo {
         thread_id,
-        transaction: sanitized_transaction_ttl.transaction,
-        max_age: sanitized_transaction_ttl.max_age,
+        transaction,
+        max_age,
         cost,
     })
 }
@@ -401,10 +393,7 @@ mod test {
         super::*,
         crate::banking_stage::{
             scheduler_messages::{MaxAge, TransactionId},
-            transaction_scheduler::{
-                transaction_state::SanitizedTransactionTTL,
-                transaction_state_container::TransactionStateContainer,
-            },
+            transaction_scheduler::transaction_state_container::TransactionStateContainer,
         },
         crossbeam_channel::unbounded,
         itertools::Itertools,
@@ -481,13 +470,10 @@ mod test {
                 lamports,
                 compute_unit_price,
             );
-            let transaction_ttl = SanitizedTransactionTTL {
-                transaction,
-                max_age: MaxAge::MAX,
-            };
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
-                transaction_ttl,
+                transaction,
+                MaxAge::MAX,
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );
