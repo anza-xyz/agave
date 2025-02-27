@@ -747,10 +747,19 @@ impl PohRecorder {
         tick_height.saturating_sub(1) / self.ticks_per_slot
     }
 
+    /// Return the slot that PoH is currently ticking through.
+    fn current_poh_slot(&self) -> Slot {
+        // The tick_height field is initialized to the last tick of the start
+        // bank and generally indicates what tick height has already been
+        // reached so use the next tick height to determine which slot poh is
+        // ticking through.
+        let next_tick_height = self.tick_height.saturating_add(1);
+        self.slot_for_tick_height(next_tick_height)
+    }
+
     pub fn leader_after_n_slots(&self, slots: u64) -> Option<Pubkey> {
-        let current_slot = self.slot_for_tick_height(self.tick_height);
         self.leader_schedule_cache
-            .slot_leader_at(current_slot + slots, None)
+            .slot_leader_at(self.current_poh_slot() + slots, None)
     }
 
     /// Return the leader and slot pair after `slots_in_the_future` slots.
@@ -758,9 +767,7 @@ impl PohRecorder {
         &self,
         slots_in_the_future: u64,
     ) -> Option<(Pubkey, Slot)> {
-        let target_slot = self
-            .slot_for_tick_height(self.tick_height)
-            .checked_add(slots_in_the_future)?;
+        let target_slot = self.current_poh_slot().checked_add(slots_in_the_future)?;
         self.leader_schedule_cache
             .slot_leader_at(target_slot, None)
             .map(|leader| (leader, target_slot))
@@ -828,8 +835,7 @@ impl PohRecorder {
             self.has_bank()
         );
 
-        let next_tick_height = self.tick_height + 1;
-        let next_poh_slot = self.slot_for_tick_height(next_tick_height);
+        let current_poh_slot = self.current_poh_slot();
         let Some(leader_first_tick_height) = self.leader_first_tick_height else {
             // No next leader slot, so no leader slot has been reached.
             return PohLeaderStatus::NotReached;
@@ -840,7 +846,10 @@ impl PohRecorder {
             return PohLeaderStatus::NotReached;
         }
 
-        if self.blockstore.has_existing_shreds_for_slot(next_poh_slot) {
+        if self
+            .blockstore
+            .has_existing_shreds_for_slot(current_poh_slot)
+        {
             // We already have existing shreds for this slot. This can happen when this block was previously
             // created and added to BankForks, however a recent PoH reset caused this bank to be removed
             // as it was not part of the rooted fork. If this slot is not the first slot for this leader,
@@ -849,8 +858,7 @@ impl PohRecorder {
             return PohLeaderStatus::NotReached;
         }
 
-        assert!(next_tick_height >= self.start_tick_height);
-        let poh_slot = next_poh_slot;
+        let poh_slot = current_poh_slot;
         let parent_slot = self.start_slot();
         PohLeaderStatus::Reached {
             poh_slot,
@@ -876,13 +884,11 @@ impl PohRecorder {
         }
 
         // We're in the grace tick zone. Check if we can skip grace ticks.
-        self.can_skip_grace_ticks(my_pubkey)
+        let next_leader_slot = self.current_poh_slot();
+        self.can_skip_grace_ticks(my_pubkey, next_leader_slot)
     }
 
-    fn can_skip_grace_ticks(&self, my_pubkey: &Pubkey) -> bool {
-        let next_tick_height = self.tick_height.saturating_add(1);
-        let next_leader_slot = self.slot_for_tick_height(next_tick_height);
-
+    fn can_skip_grace_ticks(&self, my_pubkey: &Pubkey, next_leader_slot: Slot) -> bool {
         if self.start_slot_was_mine(my_pubkey) {
             // Building off my own block. No need to wait.
             return true;
@@ -1858,6 +1864,47 @@ mod tests {
         // the `start_slot` is still the slot of the last workign bank set by
         // the earlier call to `poh_recorder.set_bank()`
         assert_eq!(poh_recorder.start_slot(), bank.slot());
+    }
+
+    #[test]
+    fn test_current_poh_slot() {
+        let genesis_config = create_genesis_config(2).genesis_config;
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let last_entry_hash = bank.last_blockhash();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
+        let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+            0,
+            last_entry_hash,
+            bank.clone(),
+            None,
+            bank.ticks_per_slot(),
+            Arc::new(blockstore),
+            &Arc::new(leader_schedule_cache),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+
+        // Tick height is initialized as 0
+        assert_eq!(0, poh_recorder.current_poh_slot());
+
+        // Tick height will be reset to the last tick of the reset bank
+        poh_recorder.reset(bank.clone(), None);
+        assert_eq!(bank.slot() + 1, poh_recorder.current_poh_slot());
+
+        // Check that any ticks before the last tick of the current poh slot will
+        // not cause the current poh slot to advance
+        for _ in 0..bank.ticks_per_slot() - 1 {
+            poh_recorder.tick();
+            assert_eq!(bank.slot() + 1, poh_recorder.current_poh_slot());
+        }
+
+        // Check that the current poh slot is advanced once the last tick of the
+        // slot is reached
+        poh_recorder.tick();
+        assert_eq!(bank.slot() + 2, poh_recorder.current_poh_slot());
     }
 
     #[test]
