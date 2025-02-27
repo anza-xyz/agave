@@ -68,6 +68,29 @@ use {
     },
 };
 
+fn message_factory<'a>(
+    rpc_client: &'a RpcClient,
+    config: &CliConfig,
+    compute_unit_price: Option<u64>,
+) -> impl Fn(Vec<Instruction>) -> Result<Message, Box<dyn std::error::Error>> + use<'a> {
+    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let payer_pubkey = config.signers[0].pubkey();
+    move |mut instructions: Vec<Instruction>| {
+        instructions = instructions.with_compute_unit_config(&ComputeUnitConfig {
+            compute_unit_price,
+            compute_unit_limit: ComputeUnitLimit::Simulated,
+        });
+        let mut message =
+            Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash);
+        simulate_and_update_compute_unit_limit(
+            &ComputeUnitLimit::Simulated,
+            rpc_client,
+            &mut message,
+        )
+        .map(|_| message)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ProgramV4CliCommand {
     Deploy {
@@ -601,23 +624,9 @@ pub fn process_deploy_program(
     use_rpc: bool,
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-    let message = |mut instructions: Vec<Instruction>| {
-        instructions = instructions.with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Simulated,
-        });
-        let mut message =
-            Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash);
-        simulate_and_update_compute_unit_limit(
-            &ComputeUnitLimit::Simulated,
-            &rpc_client,
-            &mut message,
-        )
-        .map(|_| message)
-    };
+    let message = message_factory(&rpc_client, config, compute_unit_price);
 
     // Download feature set
     let mut feature_set = FeatureSet::default();
@@ -788,6 +797,7 @@ pub fn process_deploy_program(
         )])?
     }];
 
+    drop(message);
     check_payer(
         rpc_client.clone(),
         config,
@@ -796,7 +806,6 @@ pub fn process_deploy_program(
         &write_messages,
         &final_messages,
     )?;
-
     send_messages(
         rpc_client,
         config,
@@ -822,23 +831,9 @@ fn process_close_program(
     program_address: &Pubkey,
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-    let message = |mut instructions: Vec<Instruction>| {
-        instructions = instructions.with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Simulated,
-        });
-        let mut message =
-            Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash);
-        simulate_and_update_compute_unit_limit(
-            &ComputeUnitLimit::Simulated,
-            &rpc_client,
-            &mut message,
-        )
-        .map(|_| message)
-    };
+    let message = message_factory(&rpc_client, config, compute_unit_price);
 
     let Some(program_account) = rpc_client
         .get_account_with_commitment(program_address, config.commitment)?
@@ -859,8 +854,8 @@ fn process_close_program(
     instructions.push(set_program_length_instruction);
     let initial_messages = [message(instructions)?];
 
+    drop(message);
     check_payer(rpc_client.clone(), config, 0, &initial_messages, &[], &[])?;
-
     send_messages(
         rpc_client,
         config,
@@ -887,31 +882,17 @@ fn process_transfer_authority_of_program(
     new_authority: &dyn Signer,
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
-    let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-    let message = |mut instructions: Vec<Instruction>| {
-        instructions = instructions.with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Simulated,
-        });
-        let mut message =
-            Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash);
-        simulate_and_update_compute_unit_limit(
-            &ComputeUnitLimit::Simulated,
-            &rpc_client,
-            &mut message,
-        )
-        .map(|_| message)
-    };
+    let message = message_factory(&rpc_client, config, compute_unit_price);
 
     let messages = [message(vec![instruction::transfer_authority(
         program_address,
         &authority_pubkey,
         &new_authority.pubkey(),
     )])?];
-    check_payer(rpc_client.clone(), config, 0, &messages, &[], &[])?;
 
+    drop(message);
+    check_payer(rpc_client.clone(), config, 0, &messages, &[], &[])?;
     send_messages(
         rpc_client,
         config,
@@ -938,31 +919,17 @@ fn process_finalize_program(
     next_version: &dyn Signer,
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
-    let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-    let message = |mut instructions: Vec<Instruction>| {
-        instructions = instructions.with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Simulated,
-        });
-        let mut message =
-            Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash);
-        simulate_and_update_compute_unit_limit(
-            &ComputeUnitLimit::Simulated,
-            &rpc_client,
-            &mut message,
-        )
-        .map(|_| message)
-    };
+    let message = message_factory(&rpc_client, config, compute_unit_price);
 
     let messages = [message(vec![instruction::finalize(
         program_address,
         &authority_pubkey,
         &next_version.pubkey(),
     )])?];
-    check_payer(rpc_client.clone(), config, 0, &messages, &[], &[])?;
 
+    drop(message);
+    check_payer(rpc_client.clone(), config, 0, &messages, &[], &[])?;
     send_messages(
         rpc_client,
         config,
