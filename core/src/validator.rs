@@ -1822,7 +1822,9 @@ impl Validator {
         self.poh_timing_report_service
             .join()
             .expect("poh_timing_report_service");
-        self.thread_manager.destroy();
+        if let Err(e) = self.thread_manager.shutdown() {
+            warn!("Thread resource leak detected: {e:?}");
+        }
     }
 }
 
