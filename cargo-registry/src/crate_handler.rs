@@ -132,6 +132,7 @@ impl Program {
             None..None,
             Some(signer),
             false,
+            None,
         )
         .map_err(|e| {
             error!("Failed to deploy the program: {}", e);
