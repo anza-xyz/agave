@@ -1,0 +1,378 @@
+use {
+    self::{
+        field_frames::{EpochCreditsListFrame, RootSlotFrame, RootSlotView, VotesListFrame},
+        field_list_view::ListView,
+        frame_v1_14_11::VoteStateFrameV1_14_11,
+        frame_v3::VoteStateFrameV3,
+    },
+    core::fmt::Debug,
+    field_frames::{AuthorizedVotersListFrame, EpochCreditsItem},
+    solana_clock::{Epoch, Slot},
+    solana_pubkey::Pubkey,
+    solana_vote_interface::state::{BlockTimestamp, Lockout},
+    std::sync::Arc,
+};
+
+mod field_frames;
+mod field_list_view;
+mod frame_v1_14_11;
+mod frame_v3;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum VoteStateViewError {
+    ParseError,
+}
+
+pub type Result<T> = core::result::Result<T, VoteStateViewError>;
+
+enum Field {
+    NodePubkey,
+    Commission,
+    Votes,
+    RootSlot,
+    AuthorizedVoters,
+    EpochCredits,
+    LastTimestamp,
+}
+
+/// A view into a serialized VoteState.
+///
+/// This struct provides access to the VoteState data without
+/// deserializing it. This is done by parsing and caching metadata
+/// about the layout of the serialized VoteState.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+pub struct VoteStateView {
+    data: Arc<Vec<u8>>,
+    frame: VoteStateFrame,
+}
+
+impl VoteStateView {
+    pub fn try_new(data: Arc<Vec<u8>>) -> Result<Self> {
+        let frame = VoteStateFrame::try_new(data.as_ref())?;
+        Ok(Self { data, frame })
+    }
+
+    pub fn node_pubkey(&self) -> &Pubkey {
+        let offset = self.frame.offset(Field::NodePubkey);
+        unsafe { &*(self.data.as_ptr().add(offset) as *const Pubkey) }
+    }
+
+    pub fn commission(&self) -> u8 {
+        let offset = self.frame.offset(Field::Commission);
+        self.data[offset]
+    }
+
+    pub fn votes_iter(&self) -> impl Iterator<Item = Lockout> + '_ {
+        self.votes_view().votes_iter()
+    }
+
+    pub fn last_lockout(&self) -> Option<Lockout> {
+        self.votes_view().last_lockout()
+    }
+
+    pub fn last_voted_slot(&self) -> Option<Slot> {
+        self.last_lockout().map(|v| v.slot())
+    }
+
+    pub fn root_slot(&self) -> Option<Slot> {
+        self.root_slot_view().root_slot()
+    }
+
+    pub fn get_authorized_voter(&self, epoch: Epoch) -> Option<&Pubkey> {
+        self.authorized_voters_view().get_authorized_voter(epoch)
+    }
+
+    pub fn num_epoch_credits(&self) -> usize {
+        self.epoch_credits_view().len()
+    }
+
+    pub fn epoch_credits_iter(&self) -> impl Iterator<Item = &EpochCreditsItem> + '_ {
+        self.epoch_credits_view().epoch_credits_iter()
+    }
+
+    pub fn credits(&self) -> u64 {
+        self.epoch_credits_view().credits()
+    }
+
+    pub fn last_timestamp(&self) -> BlockTimestamp {
+        let offset = self.frame.offset(Field::LastTimestamp);
+        let buffer = &self.data[offset..];
+        let mut cursor = std::io::Cursor::new(buffer);
+        BlockTimestamp {
+            slot: solana_serialize_utils::cursor::read_u64(&mut cursor).unwrap(),
+            timestamp: solana_serialize_utils::cursor::read_i64(&mut cursor).unwrap(),
+        }
+    }
+
+    fn votes_view(&self) -> ListView<VotesListFrame> {
+        let offset = self.frame.offset(Field::Votes);
+        ListView::new(self.frame.votes_frame(), &self.data[offset..])
+    }
+
+    fn root_slot_view(&self) -> RootSlotView {
+        let offset = self.frame.offset(Field::RootSlot);
+        RootSlotView::new(self.frame.root_slot_frame(), &self.data[offset..])
+    }
+
+    fn authorized_voters_view(&self) -> ListView<AuthorizedVotersListFrame> {
+        let offset = self.frame.offset(Field::AuthorizedVoters);
+        ListView::new(self.frame.authorized_voters_frame(), &self.data[offset..])
+    }
+
+    fn epoch_credits_view(&self) -> ListView<EpochCreditsListFrame> {
+        let offset = self.frame.offset(Field::EpochCredits);
+        ListView::new(self.frame.epoch_credits_frame(), &self.data[offset..])
+    }
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+enum VoteStateFrame {
+    V1_14_11(VoteStateFrameV1_14_11),
+    V3(VoteStateFrameV3),
+}
+
+impl VoteStateFrame {
+    /// Parse a serialized vote state and verify structure.
+    fn try_new(bytes: &[u8]) -> Result<Self> {
+        let version = {
+            let mut cursor = std::io::Cursor::new(bytes);
+            solana_serialize_utils::cursor::read_u32(&mut cursor)
+                .map_err(|_err| VoteStateViewError::ParseError)?
+        };
+
+        Ok(match version {
+            0 => return Err(VoteStateViewError::ParseError),
+            1 => Self::V1_14_11(VoteStateFrameV1_14_11::try_new(bytes)?),
+            2 => Self::V3(VoteStateFrameV3::try_new(bytes)?),
+            _ => return Err(VoteStateViewError::ParseError),
+        })
+    }
+
+    fn offset(&self, field: Field) -> usize {
+        match &self {
+            Self::V1_14_11(frame) => frame.get_field_offset(field),
+            Self::V3(frame) => frame.get_field_offset(field),
+        }
+    }
+
+    fn votes_frame(&self) -> VotesListFrame {
+        match &self {
+            Self::V1_14_11(frame) => frame.votes_frame(),
+            Self::V3(frame) => frame.votes_frame(),
+        }
+    }
+
+    fn root_slot_frame(&self) -> RootSlotFrame {
+        match &self {
+            Self::V1_14_11(vote_frame) => vote_frame.root_slot_frame(),
+            Self::V3(vote_frame) => vote_frame.root_slot_frame(),
+        }
+    }
+
+    fn authorized_voters_frame(&self) -> AuthorizedVotersListFrame {
+        match &self {
+            Self::V1_14_11(frame) => frame.authorized_voters_frame(),
+            Self::V3(frame) => frame.authorized_voters_frame(),
+        }
+    }
+
+    fn epoch_credits_frame(&self) -> EpochCreditsListFrame {
+        match &self {
+            Self::V1_14_11(frame) => frame.epoch_credits_frame(),
+            Self::V3(frame) => frame.epoch_credits_frame(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        arbitrary::{Arbitrary, Unstructured},
+        solana_vote_interface::{
+            authorized_voters::AuthorizedVoters,
+            state::{
+                vote_state_1_14_11::VoteState1_14_11, VoteState, VoteStateVersions,
+                MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
+            },
+        },
+        std::collections::VecDeque,
+    };
+
+    #[test]
+    fn test_vote_state_view_v3() {
+        // base case
+        let target_vote_state = VoteState::default();
+        let target_vote_state_versions =
+            VoteStateVersions::Current(Box::new(target_vote_state.clone()));
+        let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+        let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
+        assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
+
+        // variant
+        // provide 4x the minimum struct size in bytes to ensure we typically touch every field
+        let struct_bytes_x4 = VoteState::size_of() * 4;
+        for _ in 0..100 {
+            let raw_data: Vec<u8> = (0..struct_bytes_x4).map(|_| rand::random::<u8>()).collect();
+            let mut unstructured = Unstructured::new(&raw_data);
+
+            let mut target_vote_state = VoteState::arbitrary(&mut unstructured).unwrap();
+            target_vote_state.votes.truncate(MAX_LOCKOUT_HISTORY);
+            target_vote_state
+                .epoch_credits
+                .truncate(MAX_EPOCH_CREDITS_HISTORY);
+            if target_vote_state.authorized_voters().len() >= u8::MAX as usize {
+                continue;
+            }
+
+            let target_vote_state_versions =
+                VoteStateVersions::Current(Box::new(target_vote_state.clone()));
+            let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+            let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
+            assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
+        }
+    }
+
+    #[test]
+    fn test_vote_state_view_1_14_11() {
+        // base case
+        let target_vote_state = VoteState1_14_11::default();
+        let target_vote_state_versions =
+            VoteStateVersions::V1_14_11(Box::new(target_vote_state.clone()));
+        let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+        let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
+        assert_eq_vote_state_1_14_11(&vote_state_view, &target_vote_state);
+
+        // variant
+        // provide 4x the minimum struct size in bytes to ensure we typically touch every field
+        let struct_bytes_x4 = std::mem::size_of::<VoteState1_14_11>() * 4;
+        for _ in 0..100 {
+            let raw_data: Vec<u8> = (0..struct_bytes_x4).map(|_| rand::random::<u8>()).collect();
+            let mut unstructured = Unstructured::new(&raw_data);
+
+            let mut target_vote_state = VoteState1_14_11::arbitrary(&mut unstructured).unwrap();
+            target_vote_state.votes.truncate(MAX_LOCKOUT_HISTORY);
+            target_vote_state
+                .epoch_credits
+                .truncate(MAX_EPOCH_CREDITS_HISTORY);
+            if target_vote_state.authorized_voters.len() >= u8::MAX as usize {
+                let (&first, &voter) = target_vote_state.authorized_voters.first().unwrap();
+                let mut authorized_voters = AuthorizedVoters::new(first, voter);
+                for (epoch, pubkey) in target_vote_state.authorized_voters.iter().skip(1).take(10) {
+                    authorized_voters.insert(*epoch, *pubkey);
+                }
+                target_vote_state.authorized_voters = authorized_voters;
+            }
+
+            let target_vote_state_versions =
+                VoteStateVersions::V1_14_11(Box::new(target_vote_state.clone()));
+            let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+            let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
+            assert_eq_vote_state_1_14_11(&vote_state_view, &target_vote_state);
+        }
+    }
+
+    fn assert_eq_vote_state_v3(vote_state_view: &VoteStateView, vote_state: &VoteState) {
+        assert_eq!(vote_state_view.node_pubkey(), &vote_state.node_pubkey);
+        assert_eq!(vote_state_view.commission(), vote_state.commission);
+        let view_votes = vote_state_view.votes_iter().collect::<Vec<_>>();
+        let state_votes = vote_state
+            .votes
+            .iter()
+            .map(|vote| vote.lockout)
+            .collect::<Vec<_>>();
+        assert_eq!(view_votes, state_votes);
+        assert_eq!(
+            vote_state_view.last_lockout(),
+            vote_state.last_lockout().copied()
+        );
+        assert_eq!(
+            vote_state_view.last_voted_slot(),
+            vote_state.last_voted_slot(),
+        );
+        assert_eq!(vote_state_view.root_slot(), vote_state.root_slot);
+
+        if let Some((first_voter_epoch, first_voter)) = vote_state.authorized_voters().first() {
+            assert_eq!(
+                vote_state_view.get_authorized_voter(*first_voter_epoch),
+                Some(first_voter)
+            );
+
+            let (last_voter_epoch, last_voter) = vote_state.authorized_voters().last().unwrap();
+            assert_eq!(
+                vote_state_view.get_authorized_voter(*last_voter_epoch),
+                Some(last_voter)
+            );
+            assert_eq!(
+                vote_state_view.get_authorized_voter(u64::MAX),
+                Some(last_voter)
+            );
+        } else {
+            assert_eq!(vote_state_view.get_authorized_voter(u64::MAX), None);
+        }
+
+        let view_credits: Vec<(Epoch, u64, u64)> = vote_state_view
+            .epoch_credits_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        assert_eq!(view_credits, vote_state.epoch_credits);
+
+        assert_eq!(
+            vote_state_view.credits(),
+            vote_state.epoch_credits.last().map(|x| x.1).unwrap_or(0)
+        );
+        assert_eq!(vote_state_view.last_timestamp(), vote_state.last_timestamp);
+    }
+
+    fn assert_eq_vote_state_1_14_11(
+        vote_state_view: &VoteStateView,
+        vote_state: &VoteState1_14_11,
+    ) {
+        assert_eq!(vote_state_view.node_pubkey(), &vote_state.node_pubkey);
+        assert_eq!(vote_state_view.commission(), vote_state.commission);
+        let view_votes = vote_state_view.votes_iter().collect::<VecDeque<_>>();
+        assert_eq!(view_votes, vote_state.votes);
+        assert_eq!(
+            vote_state_view.last_lockout(),
+            vote_state.votes.back().copied()
+        );
+        assert_eq!(
+            vote_state_view.last_voted_slot(),
+            vote_state.votes.back().map(|lockout| lockout.slot()),
+        );
+        assert_eq!(vote_state_view.root_slot(), vote_state.root_slot);
+
+        if let Some((first_voter_epoch, first_voter)) = vote_state.authorized_voters.first() {
+            assert_eq!(
+                vote_state_view.get_authorized_voter(*first_voter_epoch),
+                Some(first_voter)
+            );
+
+            let (last_voter_epoch, last_voter) = vote_state.authorized_voters.last().unwrap();
+            assert_eq!(
+                vote_state_view.get_authorized_voter(*last_voter_epoch),
+                Some(last_voter)
+            );
+            assert_eq!(
+                vote_state_view.get_authorized_voter(u64::MAX),
+                Some(last_voter)
+            );
+        } else {
+            assert_eq!(vote_state_view.get_authorized_voter(u64::MAX), None);
+        }
+
+        let view_credits: Vec<(Epoch, u64, u64)> = vote_state_view
+            .epoch_credits_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        assert_eq!(view_credits, vote_state.epoch_credits);
+
+        assert_eq!(
+            vote_state_view.credits(),
+            vote_state.epoch_credits.last().map(|x| x.1).unwrap_or(0)
+        );
+        assert_eq!(vote_state_view.last_timestamp(), vote_state.last_timestamp);
+    }
+}
