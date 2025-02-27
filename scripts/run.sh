@@ -71,6 +71,11 @@ fi
 if [[ -e "$ledgerDir"/genesis.bin || -e "$ledgerDir"/genesis.tar.bz2 ]]; then
   echo "Use existing genesis"
 else
+  ./fetch-core-bpf.sh
+  if [[ -r core-bpf-genesis-args.sh ]]; then
+    CORE_BPF_GENESIS_ARGS=$(cat core-bpf-genesis-args.sh)
+  fi
+
   ./fetch-spl.sh
   if [[ -r spl-genesis-args.sh ]]; then
     SPL_GENESIS_ARGS=$(cat spl-genesis-args.sh)
@@ -86,6 +91,7 @@ else
       "$validator_stake_account" \
     --ledger "$ledgerDir" \
     --cluster-type "$SOLANA_RUN_SH_CLUSTER_TYPE" \
+    $CORE_BPF_GENESIS_ARGS \
     $SPL_GENESIS_ARGS \
     $SOLANA_RUN_SH_GENESIS_ARGS
 fi
