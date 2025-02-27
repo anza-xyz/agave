@@ -13,7 +13,7 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_receiver::PacketReceiver,
         qos_service::QosService,
-        unprocessed_transaction_storage::UnprocessedTransactionStorage,
+        unprocessed_transaction_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -441,10 +441,7 @@ impl BankingStage {
                 committer.clone(),
                 transaction_recorder.clone(),
                 log_messages_bytes_limit,
-                UnprocessedTransactionStorage::new_vote_storage(
-                    latest_unprocessed_votes.clone(),
-                    vote_source,
-                ),
+                VoteStorage::new(latest_unprocessed_votes.clone(), vote_source),
             ));
         }
 
@@ -590,7 +587,7 @@ impl BankingStage {
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
-        unprocessed_transaction_storage: UnprocessedTransactionStorage,
+        unprocessed_transaction_storage: VoteStorage,
     ) -> JoinHandle<()> {
         let mut packet_receiver = PacketReceiver::new(id, packet_receiver);
         let consumer = Consumer::new(
@@ -620,7 +617,7 @@ impl BankingStage {
         decision_maker: &mut DecisionMaker,
         bank_forks: &RwLock<BankForks>,
         consumer: &Consumer,
-        unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
+        unprocessed_transaction_storage: &mut VoteStorage,
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
@@ -629,10 +626,7 @@ impl BankingStage {
         }
         let (decision, make_decision_us) =
             measure_us!(decision_maker.make_consume_or_forward_decision());
-        let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(
-            decision.bank_start(),
-            Some(unprocessed_transaction_storage),
-        );
+        let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(decision.bank_start());
         slot_metrics_tracker.increment_make_decision_us(make_decision_us);
 
         match decision {
@@ -675,7 +669,7 @@ impl BankingStage {
         bank_forks: &RwLock<BankForks>,
         consumer: &Consumer,
         id: u32,
-        mut unprocessed_transaction_storage: UnprocessedTransactionStorage,
+        mut unprocessed_transaction_storage: VoteStorage,
     ) {
         let mut banking_stage_stats = BankingStageStats::new(id);
 
