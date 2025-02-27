@@ -850,16 +850,14 @@ fn process_close_program(
     let retract_instruction =
         build_retract_instruction(&program_account, program_address, &authority_pubkey)?;
 
-    let mut initial_messages = if let Some(instruction) = retract_instruction {
-        vec![message(vec![instruction])?]
-    } else {
-        vec![]
-    };
-
+    let mut instructions = Vec::default();
+    if let Some(retract_instruction) = retract_instruction {
+        instructions.push(retract_instruction);
+    }
     let set_program_length_instruction =
         instruction::set_program_length(program_address, &authority_pubkey, 0, &payer_pubkey);
-
-    initial_messages.push(message(vec![set_program_length_instruction])?);
+    instructions.push(set_program_length_instruction);
+    let initial_messages = [message(instructions)?];
 
     check_payer(rpc_client.clone(), config, 0, &initial_messages, &[], &[])?;
 
