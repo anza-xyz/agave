@@ -97,7 +97,9 @@ solana-accounts-db = { path = ".", features = ["dev-context-only-utils"] }
 solana-compute-budget = { workspace = true }
 solana-instruction = { workspace = true }
 solana-logger = { workspace = true }
+solana-reserved-account-keys = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true, features = ["rand"] }
 solana-slot-history = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
