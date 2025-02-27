@@ -4723,8 +4723,8 @@ fn test_account_info_rc_in_account() {
         let mint_pubkey = mint_keypair.pubkey();
 
         let account_metas = vec![
-            AccountMeta::new(mint_pubkey, true),
             AccountMeta::new(account_keypair.pubkey(), false),
+            AccountMeta::new(mint_pubkey, true),
             AccountMeta::new_readonly(invoke_program_id, false),
         ];
 
