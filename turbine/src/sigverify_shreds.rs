@@ -265,7 +265,16 @@ fn run_shred_sigverify<const K: usize>(
         });
     // Repaired shreds are not retransmitted.
     stats.num_retransmit_shreds += shreds.len();
-    retransmit_sender.send(shreds.clone())?;
+    if let Err(send_err) = retransmit_sender.try_send(shreds.clone()) {
+        match send_err {
+            crossbeam_channel::TrySendError::Full(v) => {
+                stats.num_retransmit_stage_overflow += v.len();
+            }
+            crossbeam_channel::TrySendError::Disconnected(_) => {
+                return Err(Error::RecvDisconnected);
+            }
+        }
+    }
     // Send all shreds to window service to be inserted into blockstore.
     let shreds = shreds
         .into_iter()
@@ -426,6 +435,7 @@ struct ShredSigVerifyStats {
     num_invalid_retransmitter: AtomicUsize,
     num_retranmitter_signature_skipped: AtomicUsize,
     num_retranmitter_signature_verified: AtomicUsize,
+    num_retransmit_stage_overflow: usize,
     num_retransmit_shreds: usize,
     num_unknown_slot_leader: AtomicUsize,
     num_unknown_turbine_parent: AtomicUsize,
@@ -449,6 +459,7 @@ impl ShredSigVerifyStats {
             num_invalid_retransmitter: AtomicUsize::default(),
             num_retranmitter_signature_skipped: AtomicUsize::default(),
             num_retranmitter_signature_verified: AtomicUsize::default(),
+            num_retransmit_stage_overflow: 0,
             num_retransmit_shreds: 0usize,
             num_unknown_slot_leader: AtomicUsize::default(),
             num_unknown_turbine_parent: AtomicUsize::default(),
@@ -485,6 +496,11 @@ impl ShredSigVerifyStats {
                 "num_retranmitter_signature_verified",
                 self.num_retranmitter_signature_verified
                     .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_retransmit_stage_overflow",
+                self.num_retransmit_stage_overflow,
                 i64
             ),
             ("num_retransmit_shreds", self.num_retransmit_shreds, i64),
