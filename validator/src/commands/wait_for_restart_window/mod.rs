@@ -93,15 +93,15 @@ pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
 }
 
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
-    let wait_for_restart_window_arg = WaitForRestartWindowArgs::from_clap_arg_match(matches)?;
+    let wait_for_restart_window_args = WaitForRestartWindowArgs::from_clap_arg_match(matches)?;
 
     wait_for_restart_window(
         ledger_path,
-        wait_for_restart_window_arg.identity,
-        wait_for_restart_window_arg.min_idle_time,
-        wait_for_restart_window_arg.max_delinquent_stake,
-        wait_for_restart_window_arg.skip_new_snapshot_check,
-        wait_for_restart_window_arg.skip_health_check,
+        wait_for_restart_window_args.identity,
+        wait_for_restart_window_args.min_idle_time,
+        wait_for_restart_window_args.max_delinquent_stake,
+        wait_for_restart_window_args.skip_new_snapshot_check,
+        wait_for_restart_window_args.skip_health_check,
     )
     .map_err(|err| format!("failed to wait for restart window: {err}"))
 }
