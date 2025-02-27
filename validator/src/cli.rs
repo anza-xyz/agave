@@ -78,7 +78,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::set_identity::command(default_args))
         .subcommand(commands::set_log_filter::command(default_args))
         .subcommand(commands::staked_nodes_overrides::command(default_args))
-        .subcommand(commands::wait_for_restart_window::command(default_args))
+        .subcommand(commands::wait_for_restart_window::command())
         .subcommand(commands::set_public_address::command(default_args));
 
     commands::run::add_args(app, default_args)
@@ -436,10 +436,6 @@ pub struct DefaultArgs {
     pub exit_min_idle_time: String,
     pub exit_max_delinquent_stake: String,
 
-    // Wait subcommand
-    pub wait_for_restart_window_min_idle_time: String,
-    pub wait_for_restart_window_max_delinquent_stake: String,
-
     pub banking_trace_dir_byte_limit: String,
 
     pub wen_restart_path: String,
@@ -537,8 +533,6 @@ impl DefaultArgs {
             rpc_max_request_body_size: MAX_REQUEST_BODY_SIZE.to_string(),
             exit_min_idle_time: "10".to_string(),
             exit_max_delinquent_stake: "5".to_string(),
-            wait_for_restart_window_min_idle_time: "10".to_string(),
-            wait_for_restart_window_max_delinquent_stake: "5".to_string(),
             banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
             wen_restart_path: "wen_restart_progress.proto".to_string(),
             thread_args: DefaultThreadArgs::default(),
