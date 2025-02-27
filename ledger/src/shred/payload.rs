@@ -9,6 +9,12 @@ pub enum Payload {
     Unique(Vec<u8>),
 }
 
+enum Bytes {
+    A(Vec<u8>),
+    B([u8; 1203]), // Merkle data shreds.
+    C([u8; 1228]), // Merkle coding shreds, and legacy shreds.
+}
+
 macro_rules! make_mut {
     ($self:ident) => {
         match $self {
@@ -34,6 +40,19 @@ macro_rules! dispatch {
             make_mut!(self).$name($($arg, )*)
         }
     }
+}
+
+macro_rules! dispatch_bytes {
+    ($vis:vis fn $name:ident(&self $(, $arg:ident : $ty:ty)?) $(-> $out:ty)?) => {
+        #[inline]
+        $vis fn $name(&self $(, $arg:$ty)?) $(-> $out)? {
+            match &self {
+                Self::A(bytes) => bytes.$name($($arg, )?),
+                Self::B(bytes) => bytes.$name($($arg, )?),
+                Self::C(bytes) => bytes.$name($($arg, )?),
+            }
+        }
+    };
 }
 
 impl Payload {
@@ -120,3 +139,16 @@ impl Deref for Payload {
 impl DerefMut for Payload {
     dispatch!(fn deref_mut(&mut self) -> &mut Self::Target);
 }
+
+impl AsRef<[u8]> for Bytes {
+    dispatch_bytes!(fn as_ref(&self) -> &[u8]);
+}
+
+// impl Deref for Bytes {
+//     type Target = [u8];
+//     dispatch_bytes!(fn deref(&self) -> &Self::Target);
+// }
+
+// impl DerefMut for Bytes {
+//     dispatch_bytes!(fn deref_mut(&mut self) -> &mut Self::Target);
+// }
