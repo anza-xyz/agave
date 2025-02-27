@@ -434,6 +434,19 @@ fn process_instruction<'a>(
                 reordered_accounts.push(account_info);
                 invoke(&instruction, &reordered_accounts)?;
             }
+
+            msg!("Empty accounts slice");
+            {
+                let instruction = create_instruction(
+                    *accounts[INVOKED_PROGRAM_INDEX].key,
+                    &[
+                        (accounts[INVOKED_ARGUMENT_INDEX].key, false, false),
+                        (accounts[ARGUMENT_INDEX].key, false, false),
+                    ],
+                    vec![],
+                );
+                invoke(&instruction, &[])?;
+            }
         }
         TEST_PRIVILEGE_ESCALATION_SIGNER => {
             msg!("Test privilege escalation signer");
@@ -483,7 +496,10 @@ fn process_instruction<'a>(
             msg!("Empty accounts slice");
             let instruction = create_instruction(
                 *accounts[INVOKED_PROGRAM_INDEX].key,
-                &[(accounts[INVOKED_ARGUMENT_INDEX].key, false, false)],
+                &[
+                    (accounts[INVOKED_ARGUMENT_INDEX].key, false, false),
+                    (accounts[ARGUMENT_INDEX].key, true, false),
+                ],
                 vec![],
             );
             invoke(&instruction, &[])?;
