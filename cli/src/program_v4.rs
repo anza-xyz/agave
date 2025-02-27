@@ -705,19 +705,22 @@ pub fn process_deploy_program(
 
     // Create and add write messages
     let mut write_messages = vec![];
-    let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let instruction = instruction::write(&buffer_address, &authority_pubkey, offset, bytes);
-        message(vec![instruction])
-    };
-    let chunk_size = calculate_max_chunk_size(&create_msg);
+    let chunk_size = calculate_max_chunk_size(message(vec![instruction::write(
+        &buffer_address,
+        &authority_pubkey,
+        0,
+        Vec::new(),
+    )]));
     for (chunk, i) in program_data[upload_range.clone()]
         .chunks(chunk_size)
         .zip(0usize..)
     {
-        write_messages.push(create_msg(
+        write_messages.push(message(vec![instruction::write(
+            &buffer_address,
+            &authority_pubkey,
             (upload_range.start as u32).saturating_add(i.saturating_mul(chunk_size) as u32),
             chunk.to_vec(),
-        ));
+        )]));
     }
 
     // Create and add deploy messages
