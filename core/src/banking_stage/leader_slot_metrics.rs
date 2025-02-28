@@ -1,9 +1,9 @@
 use {
     super::{
         consumer::LeaderProcessedTransactionCounts,
+        latest_unprocessed_votes::VoteBatchInsertionMetrics,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
         packet_deserializer::PacketReceiverStats,
-        vote_storage::InsertPacketBatchSummary,
     },
     solana_poh::poh_recorder::BankStart,
     solana_sdk::{clock::Slot, saturating_add_assign},
@@ -688,18 +688,18 @@ impl LeaderSlotMetricsTracker {
         }
     }
 
-    pub(crate) fn accumulate_insert_packet_batches_summary(
+    pub(crate) fn accumulate_vote_batch_insertion_metrics(
         &mut self,
-        insert_packet_batches_summary: &InsertPacketBatchSummary,
+        vote_batch_insertion_metrics: &VoteBatchInsertionMetrics,
     ) {
         self.increment_exceeded_buffer_limit_dropped_packets_count(
-            insert_packet_batches_summary.total_dropped_packets() as u64,
+            vote_batch_insertion_metrics.total_dropped_packets() as u64,
         );
         self.increment_dropped_gossip_vote_count(
-            insert_packet_batches_summary.dropped_gossip_packets() as u64,
+            vote_batch_insertion_metrics.dropped_gossip_packets() as u64,
         );
         self.increment_dropped_tpu_vote_count(
-            insert_packet_batches_summary.dropped_tpu_packets() as u64
+            vote_batch_insertion_metrics.dropped_tpu_packets() as u64
         );
     }
 

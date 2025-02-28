@@ -38,39 +38,6 @@ pub struct VoteStorage {
     vote_source: VoteSource,
 }
 
-#[derive(Debug)]
-pub(crate) enum InsertPacketBatchSummary {
-    VoteBatchInsertionMetrics(VoteBatchInsertionMetrics),
-}
-
-impl InsertPacketBatchSummary {
-    pub fn total_dropped_packets(&self) -> usize {
-        match self {
-            Self::VoteBatchInsertionMetrics(metrics) => {
-                metrics.num_dropped_gossip + metrics.num_dropped_tpu
-            }
-        }
-    }
-
-    pub fn dropped_gossip_packets(&self) -> usize {
-        match self {
-            Self::VoteBatchInsertionMetrics(metrics) => metrics.num_dropped_gossip,
-        }
-    }
-
-    pub fn dropped_tpu_packets(&self) -> usize {
-        match self {
-            Self::VoteBatchInsertionMetrics(metrics) => metrics.num_dropped_tpu,
-        }
-    }
-}
-
-impl From<VoteBatchInsertionMetrics> for InsertPacketBatchSummary {
-    fn from(metrics: VoteBatchInsertionMetrics) -> Self {
-        Self::VoteBatchInsertionMetrics(metrics)
-    }
-}
-
 /// Convenient wrapper for shared-state between banking stage processing and the
 /// multi-iterator checking function.
 pub struct ConsumeScannerPayload<'a> {
@@ -223,22 +190,20 @@ impl VoteStorage {
     pub(crate) fn insert_batch(
         &mut self,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
-    ) -> InsertPacketBatchSummary {
-        InsertPacketBatchSummary::from(
-            self.latest_unprocessed_votes.insert_batch(
-                deserialized_packets
-                    .into_iter()
-                    .filter_map(|deserialized_packet| {
-                        LatestValidatorVotePacket::new_from_immutable(
-                            Arc::new(deserialized_packet),
-                            self.vote_source,
-                            self.latest_unprocessed_votes
-                                .should_deprecate_legacy_vote_ixs(),
-                        )
-                        .ok()
-                    }),
-                false, // should_replenish_taken_votes
-            ),
+    ) -> VoteBatchInsertionMetrics {
+        self.latest_unprocessed_votes.insert_batch(
+            deserialized_packets
+                .into_iter()
+                .filter_map(|deserialized_packet| {
+                    LatestValidatorVotePacket::new_from_immutable(
+                        Arc::new(deserialized_packet),
+                        self.vote_source,
+                        self.latest_unprocessed_votes
+                            .should_deprecate_legacy_vote_ixs(),
+                    )
+                    .ok()
+                }),
+            false, // should_replenish_taken_votes
         )
     }
 
