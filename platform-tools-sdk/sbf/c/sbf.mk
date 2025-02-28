@@ -12,6 +12,7 @@ INC_DIRS ?=
 SRC_DIR ?= ./src
 TEST_PREFIX ?= test_
 OUT_DIR ?= ./out
+SBPF_CPU ?= v0
 OS := $(shell uname)
 
 LLVM_DIR = $(LOCAL_PATH)../dependencies/platform-tools/llvm
@@ -161,6 +162,8 @@ help:
 	@echo '      OUT_DIR=$(OUT_DIR)'
 	@echo '    - Location of LLVM:'
 	@echo '      LLVM_DIR=$(LLVM_DIR)'
+	@echo '    - Version of SBPF (v0, v1 or v2):'
+	@echo '      SBPF_CPU=$(SBPF_CPU)'
 	@echo ''
 	@echo 'Usage:'
 	@echo '  - make help - This help message'
