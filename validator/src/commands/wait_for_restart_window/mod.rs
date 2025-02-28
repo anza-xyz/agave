@@ -3,7 +3,7 @@ use {
         admin_rpc_service, commands::FromClapArgMatches, new_spinner_progress_bar,
         println_name_value,
     },
-    clap::{value_t, App, Arg, ArgMatches, SubCommand},
+    clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     console::style,
     solana_clap_utils::{
         input_parsers::pubkey_of,
@@ -55,13 +55,10 @@ impl Default for WaitForRestartWindowArgs {
 
 impl FromClapArgMatches for WaitForRestartWindowArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
-        let default_args = WaitForRestartWindowArgs::default();
         Ok(WaitForRestartWindowArgs {
-            min_idle_time: value_t!(matches, "min_idle_time", usize)
-                .unwrap_or(default_args.min_idle_time),
+            min_idle_time: value_t_or_exit!(matches, "min_idle_time", usize),
             identity: pubkey_of(matches, "identity"),
-            max_delinquent_stake: value_t!(matches, "max_delinquent_stake", u8)
-                .unwrap_or(default_args.max_delinquent_stake),
+            max_delinquent_stake: value_t_or_exit!(matches, "max_delinquent_stake", u8),
             skip_new_snapshot_check: matches.is_present("skip_new_snapshot_check"),
             skip_health_check: matches.is_present("skip_health_check"),
         })
