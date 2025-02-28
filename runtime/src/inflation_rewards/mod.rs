@@ -255,14 +255,9 @@ fn commission_split(commission: u8, on: u64) -> (u64, u64, bool) {
 #[cfg(test)]
 mod tests {
     use {
-        self::points::null_tracer,
-        super::*,
-        solana_program::stake::state::Delegation,
-        solana_pubkey::Pubkey,
-        solana_sdk::native_token::sol_to_lamports,
-        solana_vote_program::vote_state::{VoteState, VoteStateVersions},
-        std::sync::Arc,
-        test_case::test_case,
+        self::points::null_tracer, super::*, solana_program::stake::state::Delegation,
+        solana_pubkey::Pubkey, solana_sdk::native_token::sol_to_lamports,
+        solana_vote_program::vote_state::VoteState, test_case::test_case,
     };
 
     fn new_stake(
@@ -275,12 +270,6 @@ mod tests {
             delegation: Delegation::new(voter_pubkey, stake, activation_epoch),
             credits_observed: vote_state.credits(),
         }
-    }
-
-    fn into_vote_state_view(vote_state: VoteState) -> VoteStateView {
-        let vote_account_data =
-            bincode::serialize(&VoteStateVersions::new_current(vote_state)).unwrap();
-        VoteStateView::try_new(Arc::new(vote_account_data)).unwrap()
     }
 
     #[test]
@@ -301,7 +290,7 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -322,7 +311,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                &into_vote_state_view(vote_state),
+                &VoteStateView::from(vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -353,7 +342,7 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -378,7 +367,7 @@ mod tests {
                     rewards: 2,
                     points: 2 // all his
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -400,7 +389,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -425,7 +414,7 @@ mod tests {
                     rewards: 2,
                     points: 2
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -448,7 +437,7 @@ mod tests {
                     rewards: 2,
                     points: 2
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -473,7 +462,7 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -492,7 +481,7 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -508,7 +497,7 @@ mod tests {
                     rewards: 4,
                     points: 4
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -531,7 +520,7 @@ mod tests {
                     rewards: 0,
                     points: 4
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -554,7 +543,7 @@ mod tests {
                     rewards: 0,
                     points: 4
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -569,7 +558,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -588,7 +577,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -604,7 +593,7 @@ mod tests {
             },
             calculate_stake_points_and_credits(
                 &stake,
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
@@ -628,7 +617,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                &into_vote_state_view(vote_state.clone()),
+                &VoteStateView::from(vote_state.clone()),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -652,7 +641,7 @@ mod tests {
                     rewards: 1,
                     points: 1
                 },
-                &into_vote_state_view(vote_state),
+                &VoteStateView::from(vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,
@@ -673,7 +662,7 @@ mod tests {
             0,
             &stake,
             &PointValue { rewards, points: 1 },
-            &into_vote_state_view(vote_state.clone()),
+            &VoteStateView::from(vote_state.clone()),
             &StakeHistory::default(),
             null_tracer(),
             None,
@@ -703,7 +692,7 @@ mod tests {
                     rewards: 1_000_000_000,
                     points: 1
                 },
-                &into_vote_state_view(vote_state),
+                &VoteStateView::from(vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None,

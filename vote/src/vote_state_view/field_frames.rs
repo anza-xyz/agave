@@ -1,14 +1,21 @@
 use {
-    super::{field_list_view::ListView, Result, VoteStateViewError},
+    super::{list_view::ListView, Result, VoteStateViewError},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_vote_interface::state::Lockout,
     std::io::BufRead,
 };
 
-pub(super) trait ListFrame {
+pub(super) trait ListFrame<'frame> {
+    type Item: 'frame;
+
     fn len(&self) -> usize;
-    fn item_size(&self) -> usize;
+    fn item_size(&self) -> usize {
+        core::mem::size_of::<Self::Item>()
+    }
+    unsafe fn read_item<'a>(&self, item_data: &'a [u8]) -> &'a Self::Item {
+        &*(item_data.as_ptr() as *const Self::Item)
+    }
     fn total_size(&self) -> usize {
         core::mem::size_of::<u64>() /* len */ + self.total_item_size()
     }
@@ -17,66 +24,130 @@ pub(super) trait ListFrame {
     }
 }
 
-pub(super) struct VotesListFrame {
-    len: usize,
-    has_latency: bool,
+pub(super) enum VotesFrame {
+    Lockout(LockoutListFrame),
+    Landed(LandedVotesListFrame),
 }
 
-impl VotesListFrame {
-    pub(super) const fn new(len: usize, has_latency: bool) -> Self {
-        Self { len, has_latency }
+impl ListFrame<'_> for VotesFrame {
+    type Item = LockoutItem;
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Lockout(frame) => frame.len(),
+            Self::Landed(frame) => frame.len(),
+        }
     }
 
-    pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>, has_latency: bool) -> Result<Self> {
+    fn item_size(&self) -> usize {
+        match self {
+            Self::Lockout(frame) => frame.item_size(),
+            Self::Landed(frame) => frame.item_size(),
+        }
+    }
+
+    unsafe fn read_item<'a>(&self, item_data: &'a [u8]) -> &'a Self::Item {
+        match self {
+            Self::Lockout(frame) => frame.read_item(item_data),
+            Self::Landed(frame) => frame.read_item(item_data),
+        }
+    }
+}
+
+#[repr(C)]
+pub(super) struct LockoutItem {
+    slot: [u8; 8],
+    confirmation_count: [u8; 4],
+}
+
+impl LockoutItem {
+    #[inline]
+    pub(super) fn slot(&self) -> Slot {
+        u64::from_le_bytes(self.slot)
+    }
+    #[inline]
+    pub(super) fn confirmation_count(&self) -> u32 {
+        u32::from_le_bytes(self.confirmation_count)
+    }
+}
+
+pub(super) struct LockoutListFrame {
+    len: usize,
+}
+
+impl LockoutListFrame {
+    pub(super) const fn new(len: usize) -> Self {
+        Self { len }
+    }
+
+    pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
             .map_err(|_err| VoteStateViewError::ParseError)? as usize;
-        let frame = Self { len, has_latency };
+        let frame = Self { len };
         cursor.consume(frame.total_item_size());
         Ok(frame)
     }
 }
 
-impl ListFrame for VotesListFrame {
+impl ListFrame<'_> for LockoutListFrame {
+    type Item = LockoutItem;
+
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+pub(super) struct LandedVotesListFrame {
+    len: usize,
+}
+
+impl LandedVotesListFrame {
+    pub(super) const fn new(len: usize) -> Self {
+        Self { len }
+    }
+
+    pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
+        let len = solana_serialize_utils::cursor::read_u64(cursor)
+            .map_err(|_err| VoteStateViewError::ParseError)? as usize;
+        let frame = Self { len };
+        cursor.consume(frame.total_item_size());
+        Ok(frame)
+    }
+}
+
+#[repr(C)]
+pub(super) struct LandedVoteItem {
+    latency: u8,
+    slot: [u8; 8],
+    confirmation_count: [u8; 4],
+}
+
+impl ListFrame<'_> for LandedVotesListFrame {
+    type Item = LockoutItem;
+
     fn len(&self) -> usize {
         self.len
     }
 
     fn item_size(&self) -> usize {
-        core::mem::size_of::<u64>()
-            + core::mem::size_of::<u32>()
-            + if self.has_latency { 1 } else { 0 }
+        core::mem::size_of::<LandedVoteItem>()
+    }
+
+    unsafe fn read_item<'a>(&self, item_data: &'a [u8]) -> &'a Self::Item {
+        &*(item_data[1..].as_ptr() as *const LockoutItem)
     }
 }
 
-impl<'a> ListView<'a, VotesListFrame> {
-    pub(super) fn votes_iter(self) -> impl Iterator<Item = Lockout> + 'a {
-        let has_latency = self.frame().has_latency;
-        self.into_iter().map(move |item| {
-            let mut cursor = std::io::Cursor::new(item);
-            if has_latency {
-                cursor.consume(1)
-            }
-            let slot = solana_serialize_utils::cursor::read_u64(&mut cursor).unwrap();
-            let confirmation_count = solana_serialize_utils::cursor::read_u32(&mut cursor).unwrap();
-            Lockout::new_with_confirmation_count(slot, confirmation_count)
-        })
-    }
-
+impl<'a, T: ListFrame<'a, Item = LockoutItem>> ListView<'a, T> {
     pub(super) fn last_lockout(&self) -> Option<Lockout> {
         if self.len() == 0 {
             return None;
         }
 
-        let last_vote_data = self.last().unwrap();
-        let mut cursor = std::io::Cursor::new(last_vote_data);
-        if self.frame().has_latency {
-            cursor.consume(1);
-        }
-        let slot = solana_serialize_utils::cursor::read_u64(&mut cursor).unwrap();
-        let confirmation_count = solana_serialize_utils::cursor::read_u32(&mut cursor).unwrap();
+        let last_item = self.last().unwrap();
         Some(Lockout::new_with_confirmation_count(
-            slot,
-            confirmation_count,
+            last_item.slot(),
+            last_item.confirmation_count(),
         ))
     }
 }
@@ -100,25 +171,22 @@ impl AuthorizedVotersListFrame {
 }
 
 #[repr(C)]
-struct AuthorizedVoterItem {
+pub(super) struct AuthorizedVoterItem {
     epoch: [u8; 8],
     voter: Pubkey,
 }
 
-impl ListFrame for AuthorizedVotersListFrame {
+impl ListFrame<'_> for AuthorizedVotersListFrame {
+    type Item = AuthorizedVoterItem;
+
     fn len(&self) -> usize {
         self.len
-    }
-
-    fn item_size(&self) -> usize {
-        core::mem::size_of::<AuthorizedVoterItem>()
     }
 }
 
 impl<'a> ListView<'a, AuthorizedVotersListFrame> {
     pub(super) fn get_authorized_voter(self, epoch: Epoch) -> Option<&'a Pubkey> {
-        for item_data in self.into_iter().rev() {
-            let item = unsafe { &*(item_data.as_ptr() as *const AuthorizedVoterItem) };
+        for item in self.into_iter().rev() {
             let voter_epoch = u64::from_le_bytes(item.epoch);
             if voter_epoch <= epoch {
                 return Some(&item.voter);
@@ -154,13 +222,11 @@ impl EpochCreditsListFrame {
     }
 }
 
-impl ListFrame for EpochCreditsListFrame {
+impl ListFrame<'_> for EpochCreditsListFrame {
+    type Item = EpochCreditsItem;
+
     fn len(&self) -> usize {
         self.len
-    }
-
-    fn item_size(&self) -> usize {
-        core::mem::size_of::<EpochCreditsItem>()
     }
 }
 
@@ -185,17 +251,9 @@ impl From<&EpochCreditsItem> for (Epoch, u64, u64) {
     }
 }
 
-impl<'a> ListView<'a, EpochCreditsListFrame> {
-    pub(super) fn epoch_credits_iter(self) -> impl Iterator<Item = &'a EpochCreditsItem> + 'a {
-        self.into_iter()
-            .map(|item_data| unsafe { &*(item_data.as_ptr() as *const EpochCreditsItem) })
-    }
-
+impl ListView<'_, EpochCreditsListFrame> {
     pub(super) fn credits(self) -> u64 {
-        self.last()
-            .map(|item_data| unsafe { &*(item_data.as_ptr() as *const EpochCreditsItem) })
-            .map(|item| item.credits())
-            .unwrap_or(0)
+        self.last().map(|item| item.credits()).unwrap_or(0)
     }
 }
 
@@ -244,7 +302,7 @@ impl RootSlotFrame {
 
     pub(super) fn size(&self) -> usize {
         if self.has_root_slot {
-            core::mem::size_of::<u64>()
+            core::mem::size_of::<Slot>()
         } else {
             0
         }
@@ -260,22 +318,31 @@ impl RootSlotFrame {
 }
 
 pub(super) struct PriorVotersFrame;
-impl PriorVotersFrame {
-    pub(super) const fn total_size() -> usize {
-        #[repr(C)]
-        struct PriorVotersItem {
-            pub voter: Pubkey,
-            pub start_epoch_inclusive: Epoch,
-            pub end_epoch_exclusive: Epoch,
-        }
 
+impl ListFrame<'_> for PriorVotersFrame {
+    type Item = PriorVotersItem;
+
+    fn len(&self) -> usize {
         const MAX_ITEMS: usize = 32;
-        let prior_voter_item_size = core::mem::size_of::<PriorVotersItem>();
-        let total_items_size = MAX_ITEMS * prior_voter_item_size;
-        total_items_size + core::mem::size_of::<u64>() + core::mem::size_of::<bool>()
+        MAX_ITEMS
     }
 
+    fn total_size(&self) -> usize {
+        self.total_item_size() +
+            core::mem::size_of::<u64>() /* idx */ +
+            core::mem::size_of::<bool>() /* is_empty */
+    }
+}
+
+#[repr(C)]
+pub(super) struct PriorVotersItem {
+    voter: Pubkey,
+    start_epoch_inclusive: Epoch,
+    end_epoch_exclusive: Epoch,
+}
+
+impl PriorVotersFrame {
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) {
-        cursor.consume(Self::total_size());
+        cursor.consume(PriorVotersFrame.total_size());
     }
 }

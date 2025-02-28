@@ -5,15 +5,11 @@ pub(super) struct ListView<'a, F> {
     item_buffer: &'a [u8],
 }
 
-impl<'a, F: ListFrame> ListView<'a, F> {
+impl<'a, F: ListFrame<'a>> ListView<'a, F> {
     pub(super) fn new(frame: F, buffer: &'a [u8]) -> Self {
         let len_offset = core::mem::size_of::<u64>();
         let item_buffer = &buffer[len_offset..];
         Self { frame, item_buffer }
-    }
-
-    pub(super) fn frame(&self) -> &F {
-        &self.frame
     }
 
     pub(super) fn len(&self) -> usize {
@@ -31,17 +27,23 @@ impl<'a, F: ListFrame> ListView<'a, F> {
         }
     }
 
-    pub(super) fn last(&self) -> Option<&'a [u8]> {
+    pub(super) fn last(&self) -> Option<&F::Item> {
         let len = self.len();
         if len == 0 {
             return None;
         }
-        Some(self.item(len - 1))
+        self.item(len - 1)
     }
 
-    fn item(&self, index: usize) -> &'a [u8] {
+    fn item(&self, index: usize) -> Option<&'a F::Item> {
+        if index >= self.len() {
+            return None;
+        }
+
         let offset = index * self.frame.item_size();
-        &self.item_buffer[offset..offset + self.frame.item_size()]
+        // SAFETY: `item_buffer` is long enough to contain all items
+        let item_data = &self.item_buffer[offset..offset + self.frame.item_size()];
+        Some(unsafe { self.frame.read_item(item_data) })
     }
 }
 
@@ -51,25 +53,25 @@ pub(super) struct ListViewIter<'a, F> {
     view: ListView<'a, F>,
 }
 
-impl<'a, F: ListFrame> Iterator for ListViewIter<'a, F> {
-    type Item = &'a [u8];
+impl<'a, F: ListFrame<'a>> Iterator for ListViewIter<'a, F> {
+    type Item = &'a F::Item;
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.view.len() {
             let item = self.view.item(self.index);
             self.index += 1;
-            Some(item)
+            item
         } else {
             None
         }
     }
 }
 
-impl<F: ListFrame> DoubleEndedIterator for ListViewIter<'_, F> {
+impl<'a, F: ListFrame<'a>> DoubleEndedIterator for ListViewIter<'a, F> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.rev_index < self.view.len() {
             let item = self.view.item(self.view.len() - self.rev_index - 1);
             self.rev_index += 1;
-            Some(item)
+            item
         } else {
             None
         }

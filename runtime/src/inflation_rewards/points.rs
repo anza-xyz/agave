@@ -207,10 +207,8 @@ pub(crate) fn calculate_stake_points_and_credits(
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::native_token::sol_to_lamports,
-        solana_vote_program::vote_state::{VoteState, VoteStateVersions},
-        std::sync::Arc,
+        super::*, solana_sdk::native_token::sol_to_lamports,
+        solana_vote_program::vote_state::VoteState,
     };
 
     fn new_stake(
@@ -223,12 +221,6 @@ mod tests {
             delegation: Delegation::new(voter_pubkey, stake, activation_epoch),
             credits_observed: vote_state.credits(),
         }
-    }
-
-    fn into_vote_state_view(vote_state: VoteState) -> VoteStateView {
-        let vote_account_data =
-            bincode::serialize(&VoteStateVersions::new_current(vote_state)).unwrap();
-        VoteStateView::try_new(Arc::new(vote_account_data)).unwrap()
     }
 
     #[test]
@@ -256,7 +248,7 @@ mod tests {
             u128::from(stake.delegation.stake) * epoch_slots,
             calculate_stake_points(
                 &stake,
-                &into_vote_state_view(vote_state),
+                &VoteStateView::from(vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None

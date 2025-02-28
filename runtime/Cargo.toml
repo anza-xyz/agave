@@ -132,6 +132,7 @@ dev-context-only-utils = [
     "dep:solana-system-program",
     "solana-svm/dev-context-only-utils",
     "solana-runtime-transaction/dev-context-only-utils",
+    "solana-vote/dev-context-only-utils",
 ]
 frozen-abi = [
     "dep:solana-frozen-abi",

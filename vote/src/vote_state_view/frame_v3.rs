@@ -1,8 +1,8 @@
 use {
     super::{
         field_frames::{
-            AuthorizedVotersListFrame, EpochCreditsListFrame, ListFrame, PriorVotersFrame,
-            RootSlotFrame, VotesListFrame,
+            AuthorizedVotersListFrame, EpochCreditsListFrame, LandedVotesListFrame, ListFrame,
+            PriorVotersFrame, RootSlotFrame,
         },
         Field, Result, VoteStateViewError,
     },
@@ -26,12 +26,14 @@ impl VoteStateFrameV3 {
         let mut cursor = std::io::Cursor::new(bytes);
         cursor.set_position(votes_offset as u64);
 
-        let votes = VotesListFrame::read(&mut cursor, true /* has_latency */)?;
+        let votes = LandedVotesListFrame::read(&mut cursor)?;
         let root_slot = RootSlotFrame::read(&mut cursor)?;
         let authorized_voters = AuthorizedVotersListFrame::read(&mut cursor)?;
         PriorVotersFrame::read(&mut cursor);
         let epoch_credits = EpochCreditsListFrame::read(&mut cursor)?;
         cursor.consume(core::mem::size_of::<BlockTimestamp>());
+        // trailing bytes are allowed. consistent with default behavior of
+        // function bincode::deserialize
         if cursor.position() as usize <= bytes.len() {
             Ok(Self {
                 num_votes: u8::try_from(votes.len()).map_err(|_| VoteStateViewError::ParseError)?,
@@ -46,8 +48,8 @@ impl VoteStateFrameV3 {
         }
     }
 
-    pub(super) fn votes_frame(&self) -> VotesListFrame {
-        VotesListFrame::new(self.num_votes as usize, true /* has_latency */)
+    pub(super) fn votes_frame(&self) -> LandedVotesListFrame {
+        LandedVotesListFrame::new(self.num_votes as usize)
     }
 
     pub(super) fn root_slot_frame(&self) -> RootSlotFrame {
@@ -75,7 +77,7 @@ impl VoteStateFrameV3 {
     }
 
     const fn node_pubkey_offset() -> usize {
-        4 // size of version
+        core::mem::size_of::<u32>() // version
     }
 
     const fn authorized_withdrawer_offset() -> usize {
@@ -103,7 +105,7 @@ impl VoteStateFrameV3 {
     }
 
     fn epoch_credits_offset(&self) -> usize {
-        self.prior_voters_offset() + PriorVotersFrame::total_size()
+        self.prior_voters_offset() + PriorVotersFrame.total_size()
     }
 
     fn last_timestamp_offset(&self) -> usize {

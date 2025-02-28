@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+bincode = { workspace = true, optional = true }
 itertools = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true, optional = true }
@@ -57,7 +58,7 @@ solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-dev-context-only-utils = ["dep:rand"]
+dev-context-only-utils = ["dep:rand", "dep:bincode"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [lints]

@@ -1,22 +1,29 @@
 use {
     self::{
-        field_frames::{EpochCreditsListFrame, RootSlotFrame, RootSlotView, VotesListFrame},
-        field_list_view::ListView,
+        field_frames::{
+            AuthorizedVotersListFrame, EpochCreditsItem, EpochCreditsListFrame, RootSlotFrame,
+            RootSlotView, VotesFrame,
+        },
         frame_v1_14_11::VoteStateFrameV1_14_11,
         frame_v3::VoteStateFrameV3,
+        list_view::ListView,
     },
     core::fmt::Debug,
-    field_frames::{AuthorizedVotersListFrame, EpochCreditsItem},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_vote_interface::state::{BlockTimestamp, Lockout},
     std::sync::Arc,
 };
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    bincode,
+    solana_vote_interface::state::{VoteState, VoteStateVersions},
+};
 
 mod field_frames;
-mod field_list_view;
 mod frame_v1_14_11;
 mod frame_v3;
+mod list_view;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum VoteStateViewError {
@@ -55,16 +62,20 @@ impl VoteStateView {
 
     pub fn node_pubkey(&self) -> &Pubkey {
         let offset = self.frame.offset(Field::NodePubkey);
+        // SAFETY: `frame` was created from `data`.
         unsafe { &*(self.data.as_ptr().add(offset) as *const Pubkey) }
     }
 
     pub fn commission(&self) -> u8 {
         let offset = self.frame.offset(Field::Commission);
+        // SAFETY: `frame` was created from `data`.
         self.data[offset]
     }
 
     pub fn votes_iter(&self) -> impl Iterator<Item = Lockout> + '_ {
-        self.votes_view().votes_iter()
+        self.votes_view().into_iter().map(|vote| {
+            Lockout::new_with_confirmation_count(vote.slot(), vote.confirmation_count())
+        })
     }
 
     pub fn last_lockout(&self) -> Option<Lockout> {
@@ -88,7 +99,7 @@ impl VoteStateView {
     }
 
     pub fn epoch_credits_iter(&self) -> impl Iterator<Item = &EpochCreditsItem> + '_ {
-        self.epoch_credits_view().epoch_credits_iter()
+        self.epoch_credits_view().into_iter()
     }
 
     pub fn credits(&self) -> u64 {
@@ -97,6 +108,7 @@ impl VoteStateView {
 
     pub fn last_timestamp(&self) -> BlockTimestamp {
         let offset = self.frame.offset(Field::LastTimestamp);
+        // SAFETY: `frame` was created from `data`.
         let buffer = &self.data[offset..];
         let mut cursor = std::io::Cursor::new(buffer);
         BlockTimestamp {
@@ -105,24 +117,37 @@ impl VoteStateView {
         }
     }
 
-    fn votes_view(&self) -> ListView<VotesListFrame> {
+    fn votes_view(&self) -> ListView<VotesFrame> {
         let offset = self.frame.offset(Field::Votes);
+        // SAFETY: `frame` was created from `data`.
         ListView::new(self.frame.votes_frame(), &self.data[offset..])
     }
 
     fn root_slot_view(&self) -> RootSlotView {
         let offset = self.frame.offset(Field::RootSlot);
+        // SAFETY: `frame` was created from `data`.
         RootSlotView::new(self.frame.root_slot_frame(), &self.data[offset..])
     }
 
     fn authorized_voters_view(&self) -> ListView<AuthorizedVotersListFrame> {
         let offset = self.frame.offset(Field::AuthorizedVoters);
+        // SAFETY: `frame` was created from `data`.
         ListView::new(self.frame.authorized_voters_frame(), &self.data[offset..])
     }
 
     fn epoch_credits_view(&self) -> ListView<EpochCreditsListFrame> {
         let offset = self.frame.offset(Field::EpochCredits);
+        // SAFETY: `frame` was created from `data`.
         ListView::new(self.frame.epoch_credits_frame(), &self.data[offset..])
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl From<VoteState> for VoteStateView {
+    fn from(vote_state: VoteState) -> Self {
+        let vote_account_data =
+            bincode::serialize(&VoteStateVersions::new_current(vote_state)).unwrap();
+        VoteStateView::try_new(Arc::new(vote_account_data)).unwrap()
     }
 }
 
@@ -157,10 +182,10 @@ impl VoteStateFrame {
         }
     }
 
-    fn votes_frame(&self) -> VotesListFrame {
+    fn votes_frame(&self) -> VotesFrame {
         match &self {
-            Self::V1_14_11(frame) => frame.votes_frame(),
-            Self::V3(frame) => frame.votes_frame(),
+            Self::V1_14_11(frame) => VotesFrame::Lockout(frame.votes_frame()),
+            Self::V3(frame) => VotesFrame::Landed(frame.votes_frame()),
         }
     }
 
