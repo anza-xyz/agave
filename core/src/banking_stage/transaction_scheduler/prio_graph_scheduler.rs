@@ -120,12 +120,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
             }
         }
         if schedulable_threads.is_empty() {
-            return Ok(SchedulingSummary {
-                num_scheduled: 0,
-                num_unschedulable: 0,
-                num_filtered_out: 0,
-                filter_time_us: 0,
-            });
+            return Ok(SchedulingSummary::default());
         }
 
         let mut batches = Batches::new(num_threads, self.config.target_transactions_per_batch);
@@ -198,7 +193,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         let mut num_scanned: usize = 0;
         let mut num_scheduled: usize = 0;
         let mut num_sent: usize = 0;
-        let mut num_unschedulable: usize = 0;
+        let mut num_unschedulable_conflicts: usize = 0;
+        let mut num_unschedulable_threads: usize = 0;
         while num_scanned < self.config.max_scanned_transactions_per_scheduling_pass {
             // If nothing is in the main-queue of the `PrioGraph` then there's nothing left to schedule.
             if self.prio_graph.is_empty() {
@@ -233,10 +229,13 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                 );
 
                 match maybe_schedule_info {
-                    Err(TransactionSchedulingError::UnschedulableConflicts)
-                    | Err(TransactionSchedulingError::UnschedulableThread) => {
+                    Err(TransactionSchedulingError::UnschedulableConflicts) => {
+                        num_unschedulable_conflicts += 1;
                         unschedulable_ids.push(id);
-                        saturating_add_assign!(num_unschedulable, 1);
+                    }
+                    Err(TransactionSchedulingError::UnschedulableThread) => {
+                        num_unschedulable_threads += 1;
+                        unschedulable_ids.push(id);
                     }
                     Ok(TransactionSchedulingInfo {
                         thread_id,
@@ -314,7 +313,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
 
         Ok(SchedulingSummary {
             num_scheduled,
-            num_unschedulable,
+            num_unschedulable_conflicts,
+            num_unschedulable_threads,
             num_filtered_out,
             filter_time_us: total_filter_time_us,
         })
@@ -783,7 +783,7 @@ mod tests {
             .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
-        assert_eq!(scheduling_summary.num_unschedulable, 0);
+        assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
         assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1, 0]]);
     }
 
@@ -800,7 +800,7 @@ mod tests {
             .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
-        assert_eq!(scheduling_summary.num_unschedulable, 0);
+        assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
         assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1], vec![0]]);
     }
 
@@ -820,7 +820,7 @@ mod tests {
             scheduling_summary.num_scheduled,
             4 * TARGET_NUM_TRANSACTIONS_PER_BATCH
         );
-        assert_eq!(scheduling_summary.num_unschedulable, 0);
+        assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
 
         let thread0_work_counts: Vec<_> = work_receivers[0]
             .try_iter()
@@ -839,7 +839,7 @@ mod tests {
             .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 4);
-        assert_eq!(scheduling_summary.num_unschedulable, 0);
+        assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
         assert_eq!(collect_work(&work_receivers[0]).1, [vec![3, 1]]);
         assert_eq!(collect_work(&work_receivers[1]).1, [vec![2, 0]]);
     }
@@ -880,7 +880,7 @@ mod tests {
             .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 4);
-        assert_eq!(scheduling_summary.num_unschedulable, 2);
+        assert_eq!(scheduling_summary.num_unschedulable_conflicts, 2);
         let (thread_0_work, thread_0_ids) = collect_work(&work_receivers[0]);
         assert_eq!(thread_0_ids, [vec![0], vec![2]]);
         assert_eq!(collect_work(&work_receivers[1]).1, [vec![1], vec![3]]);
@@ -890,7 +890,7 @@ mod tests {
             .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 0);
-        assert_eq!(scheduling_summary.num_unschedulable, 2);
+        assert_eq!(scheduling_summary.num_unschedulable_conflicts, 2);
 
         // Complete batch on thread 0. Remaining txs can be scheduled onto thread 1
         finished_work_sender
@@ -904,7 +904,7 @@ mod tests {
             .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
-        assert_eq!(scheduling_summary.num_unschedulable, 0);
+        assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
 
         assert_eq!(collect_work(&work_receivers[1]).1, [vec![4], vec![5]]);
     }
@@ -934,7 +934,7 @@ mod tests {
                 .max_scanned_transactions_per_scheduling_pass,
         );
         assert_eq!(scheduling_summary.num_scheduled, expected_num_scheduled);
-        assert_eq!(scheduling_summary.num_unschedulable, 0);
+        assert_eq!(scheduling_summary.num_unschedulable_conflicts, 0);
 
         let mut post_schedule_remaining_ids = 0;
         while let Some(_p) = container.pop() {
