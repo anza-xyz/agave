@@ -1,5 +1,3 @@
-use crate::replay_stage::DUPLICATE_THRESHOLD;
-
 pub mod fork_choice;
 pub mod heaviest_subtree_fork_choice;
 pub(crate) mod latest_validator_votes_for_frozen_banks;
@@ -7,6 +5,7 @@ pub mod progress_map;
 mod tower1_14_11;
 mod tower1_7_14;
 pub mod tower_storage;
+pub(crate) mod tower_vote_state;
 pub mod tree_diff;
 pub mod vote_stake_tracker;
 
@@ -18,7 +17,9 @@ use {
         tower1_14_11::Tower1_14_11,
         tower1_7_14::Tower1_7_14,
         tower_storage::{SavedTower, SavedTowerVersions, TowerStorage},
+        tower_vote_state::TowerVoteState,
     },
+    crate::replay_stage::DUPLICATE_THRESHOLD,
     chrono::prelude::*,
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
@@ -35,11 +36,11 @@ use {
     },
     solana_vote::vote_account::VoteAccountsHashMap,
     solana_vote_program::{
+        vote_error::VoteError,
         vote_instruction,
         vote_state::{
-            process_slot_vote_unchecked, process_vote_unchecked, BlockTimestamp, LandedVote,
-            Lockout, TowerSync, Vote, VoteState, VoteState1_14_11, VoteStateUpdate,
-            VoteStateVersions, VoteTransaction, MAX_LOCKOUT_HISTORY,
+            process_slot_vote_unchecked, BlockTimestamp, Lockout, TowerSync, Vote,
+            VoteState1_14_11, VoteStateUpdate, VoteTransaction, MAX_LOCKOUT_HISTORY,
         },
     },
     std::{
@@ -179,6 +180,7 @@ pub(crate) struct ComputedBankState {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum TowerVersions {
     V1_7_14(Tower1_7_14),
     V1_14_11(Tower1_14_11),
@@ -218,7 +220,7 @@ pub struct Tower {
     pub node_pubkey: Pubkey,
     pub(crate) threshold_depth: usize,
     threshold_size: f64,
-    pub(crate) vote_state: VoteState,
+    pub(crate) vote_state: TowerVoteState,
     last_vote: VoteTransaction,
     // The blockhash used in the last vote transaction, may or may not equal the
     // blockhash of the voted block itself, depending if the vote slot was refreshed.
@@ -243,7 +245,7 @@ impl Default for Tower {
             node_pubkey: Pubkey::default(),
             threshold_depth: VOTE_THRESHOLD_DEPTH,
             threshold_size: VOTE_THRESHOLD_SIZE,
-            vote_state: VoteState::default(),
+            vote_state: TowerVoteState::default(),
             last_vote: VoteTransaction::from(TowerSync::default()),
             last_timestamp: BlockTimestamp::default(),
             last_vote_tx_blockhash: BlockhashStatus::default(),
@@ -264,8 +266,8 @@ impl From<Tower> for Tower1_14_11 {
             node_pubkey: tower.node_pubkey,
             threshold_depth: tower.threshold_depth,
             threshold_size: tower.threshold_size,
-            vote_state: VoteState1_14_11::from(tower.vote_state.clone()),
-            last_vote: tower.last_vote.clone(),
+            vote_state: VoteState1_14_11::from(tower.vote_state),
+            last_vote: tower.last_vote,
             last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
             last_timestamp: tower.last_timestamp,
             stray_restored_slot: tower.stray_restored_slot,
@@ -282,8 +284,7 @@ impl From<Tower1_14_11> for Tower {
             node_pubkey: tower.node_pubkey,
             threshold_depth: tower.threshold_depth,
             threshold_size: tower.threshold_size,
-            vote_state: VoteStateVersions::V1_14_11(Box::new(tower.vote_state))
-                .convert_to_current(),
+            vote_state: TowerVoteState::from(tower.vote_state),
             last_vote: tower.last_vote,
             last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
             last_timestamp: tower.last_timestamp,
@@ -301,8 +302,7 @@ impl From<Tower1_7_14> for Tower {
             node_pubkey: tower.node_pubkey,
             threshold_depth: tower.threshold_depth,
             threshold_size: tower.threshold_size,
-            vote_state: VoteStateVersions::V1_14_11(Box::new(tower.vote_state))
-                .convert_to_current(),
+            vote_state: TowerVoteState::from(tower.vote_state),
             last_vote: box_last_vote,
             last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
             last_timestamp: tower.last_timestamp,
@@ -338,7 +338,7 @@ impl Tower {
 
     #[cfg(test)]
     pub fn new_random(node_pubkey: Pubkey) -> Self {
-        use rand::Rng;
+        use {rand::Rng, solana_vote_program::vote_state::VoteState};
 
         let mut rng = rand::thread_rng();
         let root_slot = rng.gen();
@@ -352,7 +352,7 @@ impl Tower {
         );
         Self {
             node_pubkey,
-            vote_state,
+            vote_state: TowerVoteState::from(vote_state),
             last_vote: VoteTransaction::from(last_vote),
             ..Tower::default()
         }
@@ -641,22 +641,14 @@ impl Tower {
     ) {
         let mut new_vote = if enable_tower_sync_ix {
             VoteTransaction::from(TowerSync::new(
-                self.vote_state
-                    .votes
-                    .iter()
-                    .map(|vote| vote.lockout)
-                    .collect(),
+                self.vote_state.votes.clone(),
                 self.vote_state.root_slot,
                 vote_hash,
                 block_id,
             ))
         } else {
             VoteTransaction::from(VoteStateUpdate::new(
-                self.vote_state
-                    .votes
-                    .iter()
-                    .map(|vote| vote.lockout)
-                    .collect(),
+                self.vote_state.votes.clone(),
                 self.vote_state.root_slot,
                 vote_hash,
             ))
@@ -673,17 +665,21 @@ impl Tower {
         enable_tower_sync_ix: bool,
         block_id: Hash,
     ) -> Option<Slot> {
+        if let Some(last_voted_slot) = self.vote_state.last_voted_slot() {
+            if vote_slot <= last_voted_slot {
+                panic!(
+                    "Error while recording vote {} {} in local tower {:?}",
+                    vote_slot,
+                    vote_hash,
+                    VoteError::VoteTooOld
+                );
+            }
+        }
+
         trace!("{} record_vote for {}", self.node_pubkey, vote_slot);
         let old_root = self.root();
 
-        let vote = Vote::new(vec![vote_slot], vote_hash);
-        let result = process_vote_unchecked(&mut self.vote_state, vote);
-        if result.is_err() {
-            panic!(
-                "Error while recording vote {} {} in local tower {:?}",
-                vote_slot, vote_hash, result
-            );
-        }
+        self.vote_state.process_next_vote_slot(vote_slot);
         self.update_last_vote_from_vote_state(vote_hash, enable_tower_sync_ix, block_id);
 
         let new_root = self.root();
@@ -708,8 +704,7 @@ impl Tower {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn increase_lockout(&mut self, confirmation_count_increase: u32) {
         for vote in self.vote_state.votes.iter_mut() {
-            vote.lockout
-                .increase_confirmation_count(confirmation_count_increase);
+            vote.increase_confirmation_count(confirmation_count_increase);
         }
     }
 
@@ -801,7 +796,7 @@ impl Tower {
         // remaining voted slots are on a different fork from the checked slot,
         // it's still locked out.
         let mut vote_state = self.vote_state.clone();
-        process_slot_vote_unchecked(&mut vote_state, slot);
+        vote_state.process_next_vote_slot(slot);
         for vote in &vote_state.votes {
             if slot != vote.slot() && !ancestors.contains(&vote.slot()) {
                 return true;
@@ -1280,11 +1275,11 @@ impl Tower {
     // would have rolled up to earlier votes in the tower, which presumably
     // could have helped us pass the threshold check. Worst case, we'll just
     // recheck later without having increased lockouts.
-    fn optimistically_bypass_vote_stake_threshold_check(
-        vote_state_before_applying_vote: &VoteState,
+    fn optimistically_bypass_vote_stake_threshold_check<'a>(
+        tower_before_applying_vote: impl Iterator<Item = &'a Lockout>,
         threshold_vote: &Lockout,
     ) -> bool {
-        for old_vote in &vote_state_before_applying_vote.votes {
+        for old_vote in tower_before_applying_vote {
             if old_vote.slot() == threshold_vote.slot()
                 && old_vote.confirmation_count() == threshold_vote.confirmation_count()
             {
@@ -1295,9 +1290,9 @@ impl Tower {
     }
 
     /// Checks a single vote threshold for `slot`
-    fn check_vote_stake_threshold(
+    fn check_vote_stake_threshold<'a>(
         threshold_vote: Option<&Lockout>,
-        vote_state_before_applying_vote: &VoteState,
+        tower_before_applying_vote: impl Iterator<Item = &'a Lockout>,
         threshold_depth: usize,
         threshold_size: f64,
         slot: Slot,
@@ -1324,7 +1319,7 @@ impl Tower {
             total_stake
         );
         if Self::optimistically_bypass_vote_stake_threshold_check(
-            vote_state_before_applying_vote,
+            tower_before_applying_vote,
             threshold_vote,
         ) || lockout > threshold_size
         {
@@ -1343,7 +1338,7 @@ impl Tower {
         let mut threshold_decisions = vec![];
         // Generate the vote state assuming this vote is included.
         let mut vote_state = self.vote_state.clone();
-        process_slot_vote_unchecked(&mut vote_state, slot);
+        vote_state.process_next_vote_slot(slot);
 
         // Assemble all the vote thresholds and depths to check.
         let vote_thresholds_and_depths = vec![
@@ -1361,7 +1356,7 @@ impl Tower {
             if let ThresholdDecision::FailedThreshold(vote_depth, stake) =
                 Self::check_vote_stake_threshold(
                     vote_state.nth_recent_lockout(threshold_depth),
-                    &self.vote_state,
+                    self.vote_state.votes.iter(),
                     threshold_depth,
                     threshold_size,
                     slot,
@@ -1623,14 +1618,9 @@ impl Tower {
         bank: &Bank,
     ) {
         if let Some(vote_account) = bank.get_vote_account(vote_account_pubkey) {
-            self.vote_state = vote_account.vote_state().clone();
+            self.vote_state = TowerVoteState::from(vote_account.vote_state().clone());
             self.initialize_root(root);
             self.initialize_lockouts(|v| v.slot() > root);
-            trace!(
-                "Lockouts in tower for {} is initialized using bank {}",
-                self.vote_state.node_pubkey,
-                bank.slot(),
-            );
         } else {
             self.initialize_root(root);
             info!(
@@ -1641,7 +1631,7 @@ impl Tower {
         }
     }
 
-    fn initialize_lockouts<F: FnMut(&LandedVote) -> bool>(&mut self, should_retain: F) {
+    fn initialize_lockouts<F: FnMut(&Lockout) -> bool>(&mut self, should_retain: F) {
         self.vote_state.votes.retain(should_retain);
     }
 
@@ -1804,7 +1794,9 @@ pub mod test {
             slot_history::SlotHistory,
         },
         solana_vote::vote_account::VoteAccount,
-        solana_vote_program::vote_state::{Vote, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+        solana_vote_program::vote_state::{
+            Vote, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+        },
         std::{
             collections::{HashMap, VecDeque},
             fs::{remove_file, OpenOptions},
@@ -3568,14 +3560,8 @@ pub mod test {
     #[test]
     fn test_adjust_lockouts_after_replay_time_warped() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(1)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(0)));
+        tower.vote_state.votes.push_back(Lockout::new(1));
+        tower.vote_state.votes.push_back(Lockout::new(0));
         let vote = Vote::new(vec![0], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3592,14 +3578,8 @@ pub mod test {
     #[test]
     fn test_adjust_lockouts_after_replay_diverged_ancestor() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(1)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(2)));
+        tower.vote_state.votes.push_back(Lockout::new(1));
+        tower.vote_state.votes.push_back(Lockout::new(2));
         let vote = Vote::new(vec![2], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3622,15 +3602,9 @@ pub mod test {
         tower
             .vote_state
             .votes
-            .push_back(LandedVote::from(Lockout::new(MAX_ENTRIES - 1)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(0)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(1)));
+            .push_back(Lockout::new(MAX_ENTRIES - 1));
+        tower.vote_state.votes.push_back(Lockout::new(0));
+        tower.vote_state.votes.push_back(Lockout::new(1));
         let vote = Vote::new(vec![1], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3649,14 +3623,8 @@ pub mod test {
     #[should_panic(expected = "slot_in_tower(2) < checked_slot(1)")]
     fn test_adjust_lockouts_after_replay_reversed_votes() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(2)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(1)));
+        tower.vote_state.votes.push_back(Lockout::new(2));
+        tower.vote_state.votes.push_back(Lockout::new(1));
         let vote = Vote::new(vec![1], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3673,18 +3641,9 @@ pub mod test {
     #[should_panic(expected = "slot_in_tower(3) < checked_slot(3)")]
     fn test_adjust_lockouts_after_replay_repeated_non_root_votes() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(2)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(3)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(3)));
+        tower.vote_state.votes.push_back(Lockout::new(2));
+        tower.vote_state.votes.push_back(Lockout::new(3));
+        tower.vote_state.votes.push_back(Lockout::new(3));
         let vote = Vote::new(vec![3], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3701,18 +3660,9 @@ pub mod test {
     fn test_adjust_lockouts_after_replay_vote_on_root() {
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower.vote_state.root_slot = Some(42);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(42)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(43)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(44)));
+        tower.vote_state.votes.push_back(Lockout::new(42));
+        tower.vote_state.votes.push_back(Lockout::new(43));
+        tower.vote_state.votes.push_back(Lockout::new(44));
         let vote = Vote::new(vec![44], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3726,10 +3676,7 @@ pub mod test {
     #[test]
     fn test_adjust_lockouts_after_replay_vote_on_genesis() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(0)));
+        tower.vote_state.votes.push_back(Lockout::new(0));
         let vote = Vote::new(vec![0], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3742,14 +3689,8 @@ pub mod test {
     #[test]
     fn test_adjust_lockouts_after_replay_future_tower() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(13)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(14)));
+        tower.vote_state.votes.push_back(Lockout::new(13));
+        tower.vote_state.votes.push_back(Lockout::new(14));
         let vote = Vote::new(vec![14], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
         tower.initialize_root(12);

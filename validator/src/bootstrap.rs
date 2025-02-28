@@ -99,6 +99,12 @@ fn verify_reachable_ports(
         udp_sockets.extend(node.sockets.broadcast.iter());
         udp_sockets.extend(node.sockets.retransmit_sockets.iter());
     }
+    if !solana_net_utils::verify_all_reachable_udp(
+        &cluster_entrypoint.gossip().unwrap(),
+        &udp_sockets,
+    ) {
+        return false;
+    }
 
     let mut tcp_listeners = vec![];
     if let Some((rpc_addr, rpc_pubsub_addr)) = validator_config.rpc_addrs {
@@ -107,27 +113,20 @@ fn verify_reachable_ports(
             ("RPC pubsub", rpc_pubsub_addr, node.info.rpc_pubsub()),
         ] {
             if verify_address(public_addr) {
-                tcp_listeners.push((
-                    bind_addr.port(),
-                    TcpListener::bind(bind_addr).unwrap_or_else(|err| {
-                        error!("Unable to bind to tcp {bind_addr:?} for {purpose}: {err}");
-                        exit(1);
-                    }),
-                ));
+                tcp_listeners.push(TcpListener::bind(bind_addr).unwrap_or_else(|err| {
+                    error!("Unable to bind to tcp {bind_addr:?} for {purpose}: {err}");
+                    exit(1);
+                }));
             }
         }
     }
 
     if let Some(ip_echo) = &node.sockets.ip_echo {
         let ip_echo = ip_echo.try_clone().expect("unable to clone tcp_listener");
-        tcp_listeners.push((ip_echo.local_addr().unwrap().port(), ip_echo));
+        tcp_listeners.push(ip_echo);
     }
 
-    solana_net_utils::verify_reachable_ports(
-        &cluster_entrypoint.gossip().unwrap(),
-        tcp_listeners,
-        &udp_sockets,
-    )
+    solana_net_utils::verify_all_reachable_tcp(&cluster_entrypoint.gossip().unwrap(), tcp_listeners)
 }
 
 fn is_known_validator(id: &Pubkey, known_validators: &Option<HashSet<Pubkey>>) -> bool {

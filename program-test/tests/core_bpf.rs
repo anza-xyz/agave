@@ -1,15 +1,36 @@
 use {
-    solana_program_test::ProgramTest,
+    solana_program_test::{ProgramTest, ProgramTestContext},
     solana_sdk::{
-        bpf_loader_upgradeable, instruction::Instruction, signature::Signer,
+        bpf_loader_upgradeable, instruction::Instruction, pubkey::Pubkey, signature::Signer,
         transaction::Transaction,
     },
 };
 
+async fn assert_bpf_program(context: &ProgramTestContext, program_id: &Pubkey) {
+    let program_account = context
+        .banks_client
+        .get_account(*program_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
+    assert!(program_account.executable);
+}
+
 #[tokio::test]
-async fn test_add_bpf_program() {
-    // Core BPF program: Address Lookup Lable.
-    let program_id = solana_sdk::address_lookup_table::program::id();
+async fn test_vended_core_bpf_programs() {
+    let program_test = ProgramTest::default();
+    let context = program_test.start_with_context().await;
+
+    assert_bpf_program(&context, &solana_sdk_ids::address_lookup_table::id()).await;
+    assert_bpf_program(&context, &solana_sdk_ids::config::id()).await;
+    assert_bpf_program(&context, &solana_sdk_ids::feature::id()).await;
+}
+
+#[tokio::test]
+async fn test_add_core_bpf_program_manually() {
+    // Core BPF program: Stake.
+    let program_id = solana_sdk_ids::stake::id();
 
     let mut program_test = ProgramTest::default();
     program_test.add_upgradeable_program_to_genesis("noop_program", &program_id);
@@ -17,13 +38,7 @@ async fn test_add_bpf_program() {
     let context = program_test.start_with_context().await;
 
     // Assert the program is a BPF Loader Upgradeable program.
-    let program_account = context
-        .banks_client
-        .get_account(program_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
+    assert_bpf_program(&context, &program_id).await;
 
     // Invoke the program.
     let instruction = Instruction::new_with_bytes(program_id, &[], Vec::new());

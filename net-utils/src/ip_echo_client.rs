@@ -21,7 +21,7 @@ use {
     },
 };
 
-/// Applies to all operations with the echo server
+/// Applies to all operations with the echo server.
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Make a request to the echo server, binding the client socket to the provided IP.
@@ -49,6 +49,7 @@ pub(crate) async fn ip_echo_server_request(
     parse_response(response, ip_echo_server_addr)
 }
 
+/// Makes the request to the specified server and returns reply as Bytes.
 async fn make_request(
     socket: TcpSocket,
     ip_echo_server_addr: SocketAddr,
@@ -91,7 +92,9 @@ fn parse_response(
                 "Not enough data in the response from {ip_echo_server_addr}!"
             ))?;
     let payload = match response_header {
-        [0, 0, 0, 0] => bincode::deserialize(&response[HEADER_LENGTH..])?,
+        [0, 0, 0, 0] => {
+            bincode::deserialize(&response[HEADER_LENGTH..IP_ECHO_SERVER_RESPONSE_LENGTH])?
+        }
         [b'H', b'T', b'T', b'P'] => {
             let http_response = std::str::from_utf8(body);
             match http_response {
@@ -112,30 +115,55 @@ pub(crate) const DEFAULT_RETRY_COUNT: usize = 5;
 /// `ip_echo_server_addr`. Tests must complete within timeout provided.
 /// Tests will run concurrently to avoid head-of-line blocking. Will return false on any error.
 /// This function may panic.
+/// All listening sockets should be bound to the same IP.
 pub(crate) async fn verify_all_reachable_tcp(
     ip_echo_server_addr: SocketAddr,
-    listeners: Vec<(u16, TcpListener)>,
+    listeners: Vec<TcpListener>,
     timeout: Duration,
 ) -> bool {
     if listeners.is_empty() {
         warn!("No ports provided for verify_all_reachable_tcp to check");
         return true;
     }
+
+    // Extract the bind address for requests to remote server
+    let bind_address = listeners[0]
+        .local_addr()
+        .expect("Sockets should be bound")
+        .ip();
+
+    // Verify that all other sockets are bound to the same address
+    for listener in listeners.iter() {
+        let local_binding = listener.local_addr().expect("Sockets should be bound");
+        assert_eq!(
+            local_binding.ip(),
+            bind_address,
+            "All sockets should be bound to the same IP"
+        );
+    }
     let mut checkers = Vec::new();
     let mut ok = true;
 
     // Chunk the port range into slices small enough to fit into one packet
     for chunk in &listeners.into_iter().chunks(MAX_PORT_COUNT_PER_MESSAGE) {
-        let (ports, listeners): (Vec<_>, Vec<_>) = chunk.unzip();
+        let listeners = chunk.collect_vec();
+        let ports = listeners
+            .iter()
+            .map(|l| l.local_addr().expect("Sockets should be bound").port())
+            .collect_vec();
         info!(
             "Checking that tcp ports {:?} are reachable from {:?}",
             &ports, ip_echo_server_addr
         );
 
         // make request to the echo server
-        let _ = ip_echo_server_request(ip_echo_server_addr, IpEchoServerMessage::new(&ports, &[]))
-            .await
-            .map_err(|err| warn!("ip_echo_server request failed: {}", err));
+        let _ = ip_echo_server_request_with_binding(
+            ip_echo_server_addr,
+            IpEchoServerMessage::new(&ports, &[]),
+            bind_address,
+        )
+        .await
+        .map_err(|err| warn!("ip_echo_server request failed: {}", err));
 
         // spawn checker to wait for reply
         // since we do not know if tcp_listeners are nonblocking, we have to run them in native threads.
@@ -198,6 +226,7 @@ pub(crate) async fn verify_all_reachable_tcp(
 /// necessary if checking many ports.
 /// A given amount of retries will be made to accommodate packet loss.
 /// This function may panic.
+/// This function assumes that all sockets are bound to the same IP.
 pub(crate) async fn verify_all_reachable_udp(
     ip_echo_server_addr: SocketAddr,
     sockets: &[&UdpSocket],
@@ -208,17 +237,29 @@ pub(crate) async fn verify_all_reachable_udp(
         warn!("No ports provided for verify_all_reachable_udp to check");
         return true;
     }
+    // Extract the bind_address for requests from the first socket, it should be same for all others too
+    let bind_address = sockets[0]
+        .local_addr()
+        .expect("Sockets should be bound")
+        .ip();
     // This function may get fed multiple sockets bound to the same port.
     // In such case we need to know which sockets are bound to each port,
     // as only one of them will receive a packet from echo server
     let mut ports_to_socks_map: BTreeMap<_, _> = BTreeMap::new();
-    sockets.iter().for_each(|&socket| {
-        let port = socket.local_addr().expect("Sockets should be bound").port();
+    for &socket in sockets.iter() {
+        let local_binding = socket.local_addr().expect("Sockets should be bound");
+        assert_eq!(
+            local_binding.ip(),
+            bind_address,
+            "All sockets should be bound to the same IP"
+        );
+        let port = local_binding.port();
         ports_to_socks_map
             .entry(port)
             .or_insert_with(Vec::new)
             .push(socket);
-    });
+    }
+
     let ports: Vec<_> = ports_to_socks_map.into_iter().collect();
 
     info!(
@@ -244,9 +285,10 @@ pub(crate) async fn verify_all_reachable_udp(
                     .map(|&s| s.try_clone().expect("Unable to clone udp socket"))
             });
 
-            let _ = ip_echo_server_request(
+            let _ = ip_echo_server_request_with_binding(
                 ip_echo_server_addr,
                 IpEchoServerMessage::new(&[], &ports_to_check),
+                bind_address,
             )
             .await
             .map_err(|err| warn!("ip_echo_server request failed: {}", err));
@@ -255,7 +297,7 @@ pub(crate) async fn verify_all_reachable_udp(
             // Spawn threads for each socket to check
             let mut checkers = JoinSet::new();
             for socket in sockets_to_check {
-                let port = socket.local_addr().unwrap().port();
+                let port = socket.local_addr().expect("Socket should be bound").port();
                 let reachable_ports = reachable_ports.clone();
 
                 // Use blocking API since we have no idea if sockets given to us are nonblocking or not
