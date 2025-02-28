@@ -37,15 +37,11 @@ impl PacketReceiver {
             let recv_timeout = Self::get_receive_timeout(vote_storage);
             let mut recv_and_buffer_measure = Measure::start("recv_and_buffer");
             self.packet_deserializer
-                .receive_packets(
-                    recv_timeout,
-                    vote_storage.max_receive_size(),
-                    |packet| {
-                        packet.check_insufficent_compute_unit_limit()?;
-                        packet.check_excessive_precompiles()?;
-                        Ok(packet)
-                    },
-                )
+                .receive_packets(recv_timeout, vote_storage.max_receive_size(), |packet| {
+                    packet.check_insufficent_compute_unit_limit()?;
+                    packet.check_excessive_precompiles()?;
+                    Ok(packet)
+                })
                 // Consumes results if Ok, otherwise we keep the Err
                 .map(|receive_packet_results| {
                     self.buffer_packets(
@@ -71,9 +67,7 @@ impl PacketReceiver {
     fn get_receive_timeout(vote_storage: &VoteStorage) -> Duration {
         // Gossip thread (does not process) should not continuously receive with 0 duration.
         // This can cause the thread to run at 100% CPU because it is continuously polling.
-        if !vote_storage.should_not_process()
-            && !vote_storage.is_empty()
-        {
+        if !vote_storage.should_not_process() && !vote_storage.is_empty() {
             // If there are buffered packets, run the equivalent of try_recv to try reading more
             // packets. This prevents starving BankingStage::consume_buffered_packets due to
             // buffered_packet_batches containing transactions that exceed the cost model for
@@ -149,8 +143,7 @@ impl PacketReceiver {
             slot_metrics_tracker
                 .increment_newly_buffered_packets_count(deserialized_packets.len() as u64);
 
-            let insert_packet_batches_summary =
-                vote_storage.insert_batch(deserialized_packets);
+            let insert_packet_batches_summary = vote_storage.insert_batch(deserialized_packets);
             slot_metrics_tracker
                 .accumulate_insert_packet_batches_summary(&insert_packet_batches_summary);
             saturating_add_assign!(
