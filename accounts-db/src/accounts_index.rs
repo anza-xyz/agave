@@ -504,16 +504,34 @@ fn bin_from_bound(
     }
 }
 
-/// This trait is used to share the common functionality between the two types
-/// of accounts index iterators (sorted and unsorted).
-///
-/// The common functionality is:
-/// - calculating the range of bins to look in
-/// - holding the range in memory
-///   And they are provided with the default implementation in this trait.
-trait AccountsIndexIteratorCommon<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
-    fn start_bin(&self) -> usize;
-    fn end_bin_inclusive(&self) -> usize;
+pub struct AccountsIndexIteratorUnsorted<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
+    account_maps: &'a LockMapTypeSlice<T, U>,
+    bin_calculator: &'a PubkeyBinCalculator24,
+    start_bound: Bound<Pubkey>,
+    end_bound: Bound<Pubkey>,
+    is_finished: bool,
+}
+
+impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
+    AccountsIndexIteratorUnsorted<'a, T, U>
+{
+    fn range<R>(map: &AccountMaps<T, U>, range: R) -> RangeItemVec<T>
+    where
+        R: RangeBounds<Pubkey> + std::fmt::Debug,
+    {
+        map.items(&range)
+    }
+
+    fn start_bin(&self) -> usize {
+        // start in bin where 'start_bound' would exist
+        bin_from_bound(self.bin_calculator, &self.start_bound, 0)
+    }
+
+    fn end_bin_inclusive(&self) -> usize {
+        // end in bin where 'end_bound' would exist
+        bin_from_bound(self.bin_calculator, &self.end_bound, usize::MAX)
+    }
+
     fn bin_start_and_range(&self) -> (usize, usize) {
         let start_bin = self.start_bin();
         // calculate the max range of bins to look in
@@ -529,7 +547,6 @@ trait AccountsIndexIteratorCommon<T: IndexValue, U: DiskIndexValue + From<T> + I
         };
         (start_bin, bin_range)
     }
-    fn get_account_maps(&self) -> &LockMapTypeSlice<T, U>;
 
     fn hold_range_in_memory<R>(&self, range: &R, start_holding: bool, thread_pool: &ThreadPool)
     where
@@ -539,13 +556,55 @@ trait AccountsIndexIteratorCommon<T: IndexValue, U: DiskIndexValue + From<T> + I
         let (start_bin, bin_range) = self.bin_start_and_range();
         // the idea is this range shouldn't be more than a few buckets, but the process of loading from disk buckets is very slow
         // so, parallelize the bucket loads
-        let account_maps = self.get_account_maps();
         thread_pool.install(|| {
             (0..bin_range).into_par_iter().for_each(|idx| {
-                let map = &account_maps[idx + start_bin];
+                let map = &self.account_maps[idx + start_bin];
                 map.hold_range_in_memory(range, start_holding);
             });
         });
+    }
+
+    pub fn new<R>(index: &'a AccountsIndex<T, U>, range: Option<&R>) -> Self
+    where
+        R: RangeBounds<Pubkey>,
+    {
+        Self {
+            account_maps: &index.account_maps,
+            bin_calculator: &index.bin_calculator,
+            start_bound: range
+                .as_ref()
+                .map(|r| clone_bound(r.start_bound()))
+                .unwrap_or(Unbounded),
+            end_bound: range
+                .as_ref()
+                .map(|r| clone_bound(r.end_bound()))
+                .unwrap_or(Unbounded),
+            is_finished: false,
+        }
+    }
+}
+
+/// implement Iterator trait for AccountsIndexIteratorUnsorted
+impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
+    for AccountsIndexIteratorUnsorted<'_, T, U>
+{
+    type Item = Vec<(Pubkey, AccountMapEntry<T>)>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_finished {
+            return None;
+        }
+        let (start_bin, bin_range) = self.bin_start_and_range();
+        let mut chunk = Vec::with_capacity(ITER_BATCH_SIZE);
+        for map in self.account_maps.iter().skip(start_bin).take(bin_range) {
+            let mut range = Self::range(&map, (self.start_bound, self.end_bound));
+            chunk.append(&mut range);
+        }
+        self.is_finished = true;
+        if chunk.is_empty() {
+            None
+        } else {
+            Some(chunk)
+        }
     }
 }
 
@@ -570,6 +629,32 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
         result
     }
 
+    fn bin_start_and_range(&self) -> (usize, usize) {
+        let start_bin = self.start_bin();
+        // calculate the max range of bins to look in
+        let end_bin_inclusive = self.end_bin_inclusive();
+        let bin_range = if start_bin > end_bin_inclusive {
+            0 // empty range
+        } else if end_bin_inclusive == usize::MAX {
+            usize::MAX
+        } else {
+            // the range is end_inclusive + 1 - start
+            // end_inclusive could be usize::MAX already if no bound was specified
+            end_bin_inclusive.saturating_add(1) - start_bin
+        };
+        (start_bin, bin_range)
+    }
+
+    fn start_bin(&self) -> usize {
+        // start in bin where 'start_bound' would exist
+        bin_from_bound(self.bin_calculator, &self.start_bound, 0)
+    }
+
+    fn end_bin_inclusive(&self) -> usize {
+        // end in bin where 'end_bound' would exist
+        bin_from_bound(self.bin_calculator, &self.end_bound, usize::MAX)
+    }
+
     pub fn new<R>(index: &'a AccountsIndex<T, U>, range: Option<&R>) -> Self
     where
         R: RangeBounds<Pubkey>,
@@ -588,25 +673,6 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
             is_finished: false,
             last_bin_range: None,
         }
-    }
-}
-
-/// Implement the common functionality for AccountsIndexIteratorSorted with AccountsIndexIteratorCommon.
-impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIteratorCommon<T, U>
-    for AccountsIndexIteratorSorted<'_, T, U>
-{
-    fn start_bin(&self) -> usize {
-        // start in bin where 'start_bound' would exist
-        bin_from_bound(self.bin_calculator, &self.start_bound, 0)
-    }
-
-    fn end_bin_inclusive(&self) -> usize {
-        // end in bin where 'end_bound' would exist
-        bin_from_bound(self.bin_calculator, &self.end_bound, usize::MAX)
-    }
-
-    fn get_account_maps(&self) -> &LockMapTypeSlice<T, U> {
-        self.account_maps
     }
 }
 
@@ -656,87 +722,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
             None
         } else {
             self.start_bound = Excluded(chunk.last().unwrap().0);
-            Some(chunk)
-        }
-    }
-}
-
-pub struct AccountsIndexIteratorUnsorted<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
-    account_maps: &'a LockMapTypeSlice<T, U>,
-    bin_calculator: &'a PubkeyBinCalculator24,
-    start_bound: Bound<Pubkey>,
-    end_bound: Bound<Pubkey>,
-    is_finished: bool,
-}
-
-impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
-    AccountsIndexIteratorUnsorted<'a, T, U>
-{
-    fn range<R>(map: &AccountMaps<T, U>, range: R) -> RangeItemVec<T>
-    where
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
-    {
-        map.items(&range)
-    }
-
-    pub fn new<R>(index: &'a AccountsIndex<T, U>, range: Option<&R>) -> Self
-    where
-        R: RangeBounds<Pubkey>,
-    {
-        Self {
-            account_maps: &index.account_maps,
-            bin_calculator: &index.bin_calculator,
-            start_bound: range
-                .as_ref()
-                .map(|r| clone_bound(r.start_bound()))
-                .unwrap_or(Unbounded),
-            end_bound: range
-                .as_ref()
-                .map(|r| clone_bound(r.end_bound()))
-                .unwrap_or(Unbounded),
-            is_finished: false,
-        }
-    }
-}
-
-/// Implement the common functionality for AccountsIndexIteratorUnsorted with AccountsIndexIteratorCommon.
-impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIteratorCommon<T, U>
-    for AccountsIndexIteratorUnsorted<'_, T, U>
-{
-    fn start_bin(&self) -> usize {
-        // start in bin where 'start_bound' would exist
-        bin_from_bound(self.bin_calculator, &self.start_bound, 0)
-    }
-
-    fn end_bin_inclusive(&self) -> usize {
-        // end in bin where 'end_bound' would exist
-        bin_from_bound(self.bin_calculator, &self.end_bound, usize::MAX)
-    }
-
-    fn get_account_maps(&self) -> &LockMapTypeSlice<T, U> {
-        self.account_maps
-    }
-}
-
-/// implement Iterator trait for AccountsIndexIteratorUnsorted
-impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
-    for AccountsIndexIteratorUnsorted<'_, T, U>
-{
-    type Item = Vec<(Pubkey, AccountMapEntry<T>)>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.is_finished {
-            return None;
-        }
-        let (start_bin, bin_range) = self.bin_start_and_range();
-        let mut chunk = Vec::with_capacity(ITER_BATCH_SIZE);
-        for map in self.account_maps.iter().skip(start_bin).take(bin_range) {
-            let mut range = Self::range(&map, (self.start_bound, self.end_bound));
-            chunk.append(&mut range);
-        }
-        self.is_finished = true;
-        if chunk.is_empty() {
-            None
-        } else {
             Some(chunk)
         }
     }
