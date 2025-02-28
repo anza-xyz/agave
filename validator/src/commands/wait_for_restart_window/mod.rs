@@ -25,6 +25,9 @@ use {
 
 const COMMAND: &str = "wait-for-restart-window";
 
+const DEFAULT_MIN_IDLE_TIME: &str = "10";
+const DEFAULT_MAX_DELINQUENT_STAKE: &str = "5";
+
 #[derive(Debug, PartialEq)]
 pub struct WaitForRestartWindowArgs {
     pub min_idle_time: usize,
@@ -37,9 +40,13 @@ pub struct WaitForRestartWindowArgs {
 impl Default for WaitForRestartWindowArgs {
     fn default() -> Self {
         WaitForRestartWindowArgs {
-            min_idle_time: 10,
+            min_idle_time: DEFAULT_MIN_IDLE_TIME
+                .parse()
+                .expect("invalid DEFAULT_MIN_IDLE_TIME"),
             identity: None,
-            max_delinquent_stake: 5,
+            max_delinquent_stake: DEFAULT_MAX_DELINQUENT_STAKE
+                .parse()
+                .expect("invalid DEFAULT_MAX_DELINQUENT_STAKE"),
             skip_new_snapshot_check: false,
             skip_health_check: false,
         }
@@ -70,6 +77,7 @@ pub(crate) fn command<'a>() -> App<'a, 'a> {
                 .takes_value(true)
                 .validator(is_parsable::<usize>)
                 .value_name("MINUTES")
+                .default_value(DEFAULT_MIN_IDLE_TIME)
                 .help(
                     "Minimum time that the validator should not be leader before restarting",
                 ),
@@ -88,6 +96,7 @@ pub(crate) fn command<'a>() -> App<'a, 'a> {
                 .takes_value(true)
                 .validator(is_valid_percentage)
                 .value_name("PERCENT")
+                .default_value(DEFAULT_MAX_DELINQUENT_STAKE)
                 .help("The maximum delinquent stake % permitted for a restart"),
         )
         .arg(
