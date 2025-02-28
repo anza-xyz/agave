@@ -5,6 +5,9 @@ use {
             common_error_adapter, log_instruction_custom_error_ex, CliCommand, CliCommandInfo,
             CliConfig, CliError, ProcessResult,
         },
+        compute_budget::{
+            simulate_and_update_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
+        },
         feature::{status_from_account, CliFeatureStatus},
         program::calculate_max_chunk_size,
     },
@@ -13,6 +16,7 @@ use {
     solana_account::Account,
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
+        compute_budget::{compute_unit_price_arg, ComputeUnitLimit},
         input_parsers::{pubkey_of, pubkey_of_signer, signer_of},
         input_validators::{is_valid_pubkey, is_valid_signer},
         keypair::{DefaultSigner, SignerIndex},
@@ -64,6 +68,29 @@ use {
     },
 };
 
+fn message_factory<'a>(
+    rpc_client: &'a RpcClient,
+    config: &CliConfig,
+    compute_unit_price: Option<u64>,
+) -> impl Fn(Vec<Instruction>) -> Result<Message, Box<dyn std::error::Error>> + use<'a> {
+    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let payer_pubkey = config.signers[0].pubkey();
+    move |mut instructions: Vec<Instruction>| {
+        instructions = instructions.with_compute_unit_config(&ComputeUnitConfig {
+            compute_unit_price,
+            compute_unit_limit: ComputeUnitLimit::Simulated,
+        });
+        let mut message =
+            Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash);
+        simulate_and_update_compute_unit_limit(
+            &ComputeUnitLimit::Simulated,
+            rpc_client,
+            &mut message,
+        )
+        .map(|_| message)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ProgramV4CliCommand {
     Deploy {
@@ -74,20 +101,24 @@ pub enum ProgramV4CliCommand {
         path_to_elf: String,
         upload_range: Range<Option<usize>>,
         use_rpc: bool,
+        compute_unit_price: Option<u64>,
     },
     Close {
         program_address: Pubkey,
         authority_signer_index: SignerIndex,
+        compute_unit_price: Option<u64>,
     },
     TransferAuthority {
         program_address: Pubkey,
         authority_signer_index: SignerIndex,
         new_authority_signer_index: SignerIndex,
+        compute_unit_price: Option<u64>,
     },
     Finalize {
         program_address: Pubkey,
         authority_signer_index: SignerIndex,
         next_version_signer_index: SignerIndex,
+        compute_unit_price: Option<u64>,
     },
     Show {
         account_pubkey: Option<Pubkey>,
@@ -171,9 +202,10 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                     "Program authority [default: the default configured keypair]",
                                 ),
                         )
-                        .arg(Arg::with_name("use_rpc").long("use-rpc").help(
+                        .arg(Arg::with_name("use-rpc").long("use-rpc").help(
                             "Send transactions to the configured RPC instead of validator TPUs",
-                        )),
+                        ))
+                        .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
                     SubCommand::with_name("close")
@@ -194,7 +226,8 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .help(
                                     "Program authority [default: the default configured keypair]",
                                 ),
-                        ),
+                        )
+                        .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
                     SubCommand::with_name("transfer-authority")
@@ -226,7 +259,8 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .help(
                                     "New program authority",
                                 ),
-                        ),
+                        )
+                        .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
                     SubCommand::with_name("finalize")
@@ -257,7 +291,8 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .help(
                                     "Reserves the address and links it as the programs next-version, which is a hint that frontends can show to users",
                                 ),
-                        ),
+                        )
+                        .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
                     SubCommand::with_name("show")
@@ -365,7 +400,8 @@ pub fn parse_program_v4_subcommand(
                     path_to_elf: path_to_elf.expect("Path to ELF is missing"),
                     upload_range: value_t!(matches, "start-offset", usize).ok()
                         ..value_t!(matches, "end-offset", usize).ok(),
-                    use_rpc: matches.is_present("use_rpc"),
+                    use_rpc: matches.is_present("use-rpc"),
+                    compute_unit_price: value_t!(matches, "compute_unit_price", u64).ok(),
                 }),
                 signers: signer_info.signers,
             }
@@ -388,6 +424,7 @@ pub fn parse_program_v4_subcommand(
                     authority_signer_index: signer_info
                         .index_of(authority_pubkey)
                         .expect("Authority signer is missing"),
+                    compute_unit_price: value_t!(matches, "compute_unit_price", u64).ok(),
                 }),
                 signers: signer_info.signers,
             }
@@ -417,6 +454,7 @@ pub fn parse_program_v4_subcommand(
                     new_authority_signer_index: signer_info
                         .index_of(new_authority_pubkey)
                         .expect("Authority signer is missing"),
+                    compute_unit_price: value_t!(matches, "compute_unit_price", u64).ok(),
                 }),
                 signers: signer_info.signers,
             }
@@ -449,6 +487,7 @@ pub fn parse_program_v4_subcommand(
                     next_version_signer_index: pubkey_of(matches, "next-version")
                         .and_then(|pubkey| signer_info.index_of(Some(pubkey)))
                         .unwrap_or(authority_signer_index),
+                    compute_unit_price: value_t!(matches, "compute_unit_price", u64).ok(),
                 }),
                 signers: signer_info.signers,
             }
@@ -494,6 +533,7 @@ pub fn process_program_v4_subcommand(
             path_to_elf,
             upload_range,
             use_rpc,
+            compute_unit_price,
         } => {
             let mut program_data = Vec::new();
             let mut file = File::open(path_to_elf)
@@ -512,33 +552,45 @@ pub fn process_program_v4_subcommand(
                     .or(*buffer_signer_index)
                     .map(|index| config.signers[index]),
                 *use_rpc,
+                *compute_unit_price,
             )
         }
         ProgramV4CliCommand::Close {
             program_address,
             authority_signer_index,
-        } => process_close_program(rpc_client, config, authority_signer_index, program_address),
+            compute_unit_price,
+        } => process_close_program(
+            rpc_client,
+            config,
+            authority_signer_index,
+            program_address,
+            *compute_unit_price,
+        ),
         ProgramV4CliCommand::TransferAuthority {
             program_address,
             authority_signer_index,
             new_authority_signer_index,
+            compute_unit_price,
         } => process_transfer_authority_of_program(
             rpc_client,
             config,
             authority_signer_index,
             program_address,
             config.signers[*new_authority_signer_index],
+            *compute_unit_price,
         ),
         ProgramV4CliCommand::Finalize {
             program_address,
             authority_signer_index,
             next_version_signer_index,
+            compute_unit_price,
         } => process_finalize_program(
             rpc_client,
             config,
             authority_signer_index,
             program_address,
             config.signers[*next_version_signer_index],
+            *compute_unit_price,
         ),
         ProgramV4CliCommand::Show {
             account_pubkey,
@@ -570,10 +622,11 @@ pub fn process_deploy_program(
     upload_range: Range<Option<usize>>,
     buffer_signer: Option<&dyn Signer>,
     use_rpc: bool,
+    compute_unit_price: Option<u64>,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
+    let message = message_factory(&rpc_client, config, compute_unit_price);
 
     // Download feature set
     let mut feature_set = FeatureSet::default();
@@ -657,18 +710,14 @@ pub fn process_deploy_program(
             .value;
         if buffer_account.is_none() {
             // Create and add create_buffer message
-            initial_messages.push(Message::new_with_blockhash(
-                &instruction::create_buffer(
-                    &payer_pubkey,
-                    &buffer_address,
-                    lamports_required,
-                    &authority_pubkey,
-                    program_data.len() as u32,
-                    &payer_pubkey,
-                ),
-                Some(&payer_pubkey),
-                &blockhash,
-            ));
+            initial_messages.push(message(instruction::create_buffer(
+                &payer_pubkey,
+                &buffer_address,
+                lamports_required,
+                &authority_pubkey,
+                program_data.len() as u32,
+                &payer_pubkey,
+            ))?);
         }
         (buffer_address, buffer_account)
     } else {
@@ -700,29 +749,28 @@ pub fn process_deploy_program(
                 program_data.len() as u32,
             )?;
         if !set_program_length_instructions.is_empty() {
-            initial_messages.push(Message::new_with_blockhash(
-                &set_program_length_instructions,
-                Some(&payer_pubkey),
-                &blockhash,
-            ));
+            initial_messages.push(message(set_program_length_instructions)?);
         }
     }
 
     // Create and add write messages
     let mut write_messages = vec![];
-    let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let instruction = instruction::write(&buffer_address, &authority_pubkey, offset, bytes);
-        Message::new_with_blockhash(&[instruction], Some(&payer_pubkey), &blockhash)
-    };
-    let chunk_size = calculate_max_chunk_size(&create_msg);
+    let chunk_size = calculate_max_chunk_size(message(vec![instruction::write(
+        &buffer_address,
+        &authority_pubkey,
+        0,
+        Vec::new(),
+    )])?);
     for (chunk, i) in program_data[upload_range.clone()]
         .chunks(chunk_size)
         .zip(0usize..)
     {
-        write_messages.push(create_msg(
+        write_messages.push(message(vec![instruction::write(
+            &buffer_address,
+            &authority_pubkey,
             (upload_range.start as u32).saturating_add(i.saturating_mul(chunk_size) as u32),
             chunk.to_vec(),
-        ));
+        )])?);
     }
 
     // Create and add deploy messages
@@ -737,26 +785,19 @@ pub fn process_deploy_program(
             &authority_pubkey,
             &buffer_address,
         ));
-        Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash)
+        message(instructions)?
     } else {
         // Deploy new program or redeploy without a buffer account
         if let Some(retract_instruction) = retract_instruction {
-            initial_messages.insert(
-                0,
-                Message::new_with_blockhash(
-                    &[retract_instruction],
-                    Some(&payer_pubkey),
-                    &blockhash,
-                ),
-            );
+            initial_messages.insert(0, message(vec![retract_instruction])?);
         }
-        Message::new_with_blockhash(
-            &[instruction::deploy(program_address, &authority_pubkey)],
-            Some(&payer_pubkey),
-            &blockhash,
-        )
+        message(vec![instruction::deploy(
+            program_address,
+            &authority_pubkey,
+        )])?
     }];
 
+    drop(message);
     check_payer(
         rpc_client.clone(),
         config,
@@ -765,7 +806,6 @@ pub fn process_deploy_program(
         &write_messages,
         &final_messages,
     )?;
-
     send_messages(
         rpc_client,
         config,
@@ -789,10 +829,11 @@ fn process_close_program(
     config: &CliConfig,
     auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
+    compute_unit_price: Option<u64>,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
+    let message = message_factory(&rpc_client, config, compute_unit_price);
 
     let Some(program_account) = rpc_client
         .get_account_with_commitment(program_address, config.commitment)?
@@ -804,27 +845,17 @@ fn process_close_program(
     let retract_instruction =
         build_retract_instruction(&program_account, program_address, &authority_pubkey)?;
 
-    let mut initial_messages = if let Some(instruction) = retract_instruction {
-        vec![Message::new_with_blockhash(
-            &[instruction],
-            Some(&payer_pubkey),
-            &blockhash,
-        )]
-    } else {
-        vec![]
-    };
-
+    let mut instructions = Vec::default();
+    if let Some(retract_instruction) = retract_instruction {
+        instructions.push(retract_instruction);
+    }
     let set_program_length_instruction =
         instruction::set_program_length(program_address, &authority_pubkey, 0, &payer_pubkey);
+    instructions.push(set_program_length_instruction);
+    let initial_messages = [message(instructions)?];
 
-    initial_messages.push(Message::new_with_blockhash(
-        &[set_program_length_instruction],
-        Some(&payer_pubkey),
-        &blockhash,
-    ));
-
+    drop(message);
     check_payer(rpc_client.clone(), config, 0, &initial_messages, &[], &[])?;
-
     send_messages(
         rpc_client,
         config,
@@ -849,27 +880,24 @@ fn process_transfer_authority_of_program(
     auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
     new_authority: &dyn Signer,
+    compute_unit_price: Option<u64>,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
-    let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
+    let message = message_factory(&rpc_client, config, compute_unit_price);
 
-    let message = [Message::new_with_blockhash(
-        &[instruction::transfer_authority(
-            program_address,
-            &authority_pubkey,
-            &new_authority.pubkey(),
-        )],
-        Some(&payer_pubkey),
-        &blockhash,
-    )];
-    check_payer(rpc_client.clone(), config, 0, &message, &[], &[])?;
+    let messages = [message(vec![instruction::transfer_authority(
+        program_address,
+        &authority_pubkey,
+        &new_authority.pubkey(),
+    )])?];
 
+    drop(message);
+    check_payer(rpc_client.clone(), config, 0, &messages, &[], &[])?;
     send_messages(
         rpc_client,
         config,
         auth_signer_index,
-        &message,
+        &messages,
         &[],
         &[],
         None,
@@ -889,27 +917,24 @@ fn process_finalize_program(
     auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
     next_version: &dyn Signer,
+    compute_unit_price: Option<u64>,
 ) -> ProcessResult {
-    let blockhash = rpc_client.get_latest_blockhash()?;
-    let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
+    let message = message_factory(&rpc_client, config, compute_unit_price);
 
-    let message = [Message::new_with_blockhash(
-        &[instruction::finalize(
-            program_address,
-            &authority_pubkey,
-            &next_version.pubkey(),
-        )],
-        Some(&payer_pubkey),
-        &blockhash,
-    )];
-    check_payer(rpc_client.clone(), config, 0, &message, &[], &[])?;
+    let messages = [message(vec![instruction::finalize(
+        program_address,
+        &authority_pubkey,
+        &next_version.pubkey(),
+    )])?];
 
+    drop(message);
+    check_payer(rpc_client.clone(), config, 0, &messages, &[], &[])?;
     send_messages(
         rpc_client,
         config,
         auth_signer_index,
-        &message,
+        &messages,
         &[],
         &[],
         None,
@@ -1441,6 +1466,7 @@ mod tests {
             None..None,
             Some(&program_signer),
             true,
+            None,
         )
         .is_ok());
 
@@ -1453,6 +1479,7 @@ mod tests {
             None..None,
             Some(&program_signer),
             true,
+            None,
         )
         .is_err());
 
@@ -1465,6 +1492,7 @@ mod tests {
             None..None,
             Some(&program_signer),
             true,
+            None,
         )
         .is_err());
     }
@@ -1493,6 +1521,7 @@ mod tests {
             None..None,
             None,
             true,
+            None,
         )
         .is_err());
 
@@ -1505,6 +1534,7 @@ mod tests {
             None..None,
             None,
             true,
+            None,
         )
         .is_ok());
 
@@ -1517,6 +1547,7 @@ mod tests {
             None..None,
             None,
             true,
+            None,
         )
         .is_ok());
 
@@ -1529,6 +1560,7 @@ mod tests {
             None..None,
             None,
             true,
+            None,
         )
         .is_err());
 
@@ -1541,6 +1573,7 @@ mod tests {
             None..None,
             None,
             true,
+            None,
         )
         .is_err());
 
@@ -1553,6 +1586,7 @@ mod tests {
             None..None,
             None,
             true,
+            None,
         )
         .is_err());
     }
@@ -1582,6 +1616,7 @@ mod tests {
             None..None,
             Some(&buffer_signer),
             true,
+            None,
         )
         .is_err());
 
@@ -1594,6 +1629,7 @@ mod tests {
             None..None,
             Some(&buffer_signer),
             true,
+            None,
         )
         .is_err());
 
@@ -1606,6 +1642,7 @@ mod tests {
             None..None,
             Some(&buffer_signer),
             true,
+            None,
         )
         .is_err());
     }
@@ -1626,6 +1663,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
+            None,
         )
         .is_err());
 
@@ -1634,6 +1672,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
+            None,
         )
         .is_ok());
 
@@ -1642,6 +1681,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
+            None,
         )
         .is_ok());
 
@@ -1650,6 +1690,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
+            None,
         )
         .is_err());
 
@@ -1658,6 +1699,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
+            None,
         )
         .is_err());
 
@@ -1666,6 +1708,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
+            None,
         )
         .is_err());
     }
@@ -1689,6 +1732,7 @@ mod tests {
             &1,
             &program_signer.pubkey(),
             &new_authority_signer,
+            None,
         )
         .is_ok());
     }
@@ -1712,6 +1756,7 @@ mod tests {
             &1,
             &program_signer.pubkey(),
             &next_version_signer,
+            None,
         )
         .is_ok());
     }
@@ -1771,6 +1816,7 @@ mod tests {
                     path_to_elf: "/Users/test/program.so".to_string(),
                     upload_range: None..None,
                     use_rpc: false,
+                    compute_unit_price: None,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -1800,6 +1846,7 @@ mod tests {
                     path_to_elf: "/Users/test/program.so".to_string(),
                     upload_range: None..None,
                     use_rpc: false,
+                    compute_unit_price: None,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -1830,6 +1877,7 @@ mod tests {
                     path_to_elf: "/Users/test/program.so".to_string(),
                     upload_range: None..None,
                     use_rpc: false,
+                    compute_unit_price: None,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -1861,6 +1909,7 @@ mod tests {
                     path_to_elf: "/Users/test/program.so".to_string(),
                     upload_range: None..None,
                     use_rpc: false,
+                    compute_unit_price: None,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -1886,6 +1935,8 @@ mod tests {
             "--authority",
             &authority_keypair_file,
             "--use-rpc",
+            "--with-compute-unit-price",
+            "1",
         ]);
         assert_eq!(
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
@@ -1898,6 +1949,7 @@ mod tests {
                     path_to_elf: "/Users/test/program.so".to_string(),
                     upload_range: Some(16)..Some(32),
                     use_rpc: true,
+                    compute_unit_price: Some(1),
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -1941,6 +1993,7 @@ mod tests {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Close {
                     program_address: program_keypair.pubkey(),
                     authority_signer_index: 1,
+                    compute_unit_price: None,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -1990,6 +2043,7 @@ mod tests {
                     program_address: program_keypair.pubkey(),
                     authority_signer_index: 1,
                     new_authority_signer_index: 2,
+                    compute_unit_price: None,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -2040,6 +2094,7 @@ mod tests {
                     program_address: program_keypair.pubkey(),
                     authority_signer_index: 1,
                     next_version_signer_index: 2,
+                    compute_unit_price: None,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),

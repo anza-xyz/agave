@@ -2551,11 +2551,7 @@ fn process_migrate_program(
         }))
 }
 
-pub fn calculate_max_chunk_size<F>(create_msg: &F) -> usize
-where
-    F: Fn(u32, Vec<u8>) -> Message,
-{
-    let baseline_msg = create_msg(0, Vec::new());
+pub fn calculate_max_chunk_size(baseline_msg: Message) -> usize {
     let tx_size = bincode::serialized_size(&Transaction {
         signatures: vec![
             Signature::default();
@@ -2637,7 +2633,7 @@ fn do_process_program_deploy(
     };
 
     let mut write_messages = vec![];
-    let chunk_size = calculate_max_chunk_size(&create_msg);
+    let chunk_size = calculate_max_chunk_size(create_msg(0, Vec::new()));
     for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
         let offset = i.saturating_mul(chunk_size);
         if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
@@ -2770,7 +2766,7 @@ fn do_process_write_buffer(
     };
 
     let mut write_messages = vec![];
-    let chunk_size = calculate_max_chunk_size(&create_msg);
+    let chunk_size = calculate_max_chunk_size(create_msg(0, Vec::new()));
     for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
         let offset = i.saturating_mul(chunk_size);
         if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
@@ -2895,7 +2891,7 @@ fn do_process_program_upgrade(
 
         // Create and add write messages
         let mut write_messages = vec![];
-        let chunk_size = calculate_max_chunk_size(&create_msg);
+        let chunk_size = calculate_max_chunk_size(create_msg(0, Vec::new()));
         for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
             let offset = i.saturating_mul(chunk_size);
             if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
