@@ -1,12 +1,10 @@
 use {
+    solana_clock::{Epoch, DEFAULT_MS_PER_SLOT},
+    solana_epoch_schedule::EpochSchedule,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankForks, ReadOnlyAtomicSlot},
-    },
-    solana_sdk::{
-        clock::{Epoch, DEFAULT_MS_PER_SLOT},
-        epoch_schedule::EpochSchedule,
-        pubkey::Pubkey,
     },
     std::{
         collections::HashMap,
@@ -82,11 +80,11 @@ fn get_epoch_duration(bank: &Bank) -> Duration {
 mod tests {
     use {
         super::*,
+        solana_clock::Slot,
         solana_runtime::{
             accounts_background_service::AbsRequestSender,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
-        solana_sdk::clock::Slot,
     };
 
     #[test]

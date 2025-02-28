@@ -182,8 +182,6 @@ impl OuterLoopTimings {
 pub(crate) struct ProcessBufferedPacketsTimings {
     pub make_decision_us: u64,
     pub consume_buffered_packets_us: u64,
-    pub forward_us: u64,
-    pub forward_and_hold_us: u64,
 }
 impl ProcessBufferedPacketsTimings {
     fn report(&self, id: &str, slot: Slot) {
@@ -197,8 +195,6 @@ impl ProcessBufferedPacketsTimings {
                 self.consume_buffered_packets_us as i64,
                 i64
             ),
-            ("forward_us", self.forward_us as i64, i64),
-            ("forward_and_hold_us", self.forward_and_hold_us as i64, i64),
         );
     }
 }

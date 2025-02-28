@@ -1,8 +1,5 @@
 use {
-    super::{
-        forward_packet_batches_by_accounts::ForwardPacketBatchesByAccounts,
-        immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
-    },
+    super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
     itertools::Itertools,
     rand::{thread_rng, Rng},
     solana_perf::packet::Packet,
@@ -35,7 +32,7 @@ pub enum VoteSource {
     Tpu,
 }
 
-/// Holds deserialized vote messages as well as their source, forward status and slot
+/// Holds deserialized vote messages as well as their source, and slot
 #[derive(Debug, Clone)]
 pub struct LatestValidatorVotePacket {
     vote_source: VoteSource,
@@ -43,7 +40,6 @@ pub struct LatestValidatorVotePacket {
     vote: Option<Arc<ImmutableDeserializedPacket>>,
     slot: Slot,
     hash: Hash,
-    forwarded: bool,
     timestamp: Option<UnixTimestamp>,
 }
 
@@ -108,7 +104,6 @@ impl LatestValidatorVotePacket {
                     hash,
                     vote_pubkey,
                     vote_source,
-                    forwarded: false,
                     timestamp,
                 })
             }
@@ -134,11 +129,6 @@ impl LatestValidatorVotePacket {
 
     pub fn timestamp(&self) -> Option<UnixTimestamp> {
         self.timestamp
-    }
-
-    pub fn is_forwarded(&self) -> bool {
-        // By definition all gossip votes have been forwarded
-        self.forwarded || matches!(self.vote_source, VoteSource::Gossip)
     }
 
     pub fn is_vote_taken(&self) -> bool {
@@ -399,57 +389,6 @@ impl LatestUnprocessedVotes {
         );
     }
 
-    /// Returns how many packets were forwardable
-    /// Performs a weighted random order based on stake and stops forwarding at the first error
-    /// Votes from validators with 0 stakes are ignored
-    pub fn get_and_insert_forwardable_packets(
-        &self,
-        bank: Arc<Bank>,
-        forward_packet_batches_by_accounts: &mut ForwardPacketBatchesByAccounts,
-    ) -> usize {
-        let pubkeys_by_stake = self.weighted_random_order_by_stake();
-        let mut forwarded_count: usize = 0;
-        for pubkey in pubkeys_by_stake {
-            let Some(vote) = self.get_entry(pubkey) else {
-                continue;
-            };
-
-            let mut vote = vote.write().unwrap();
-            if vote.is_vote_taken() || vote.is_forwarded() {
-                continue;
-            }
-
-            let deserialized_vote_packet = vote.vote.as_ref().unwrap().clone();
-            let Some((sanitized_vote_transaction, _deactivation_slot)) = deserialized_vote_packet
-                .build_sanitized_transaction(
-                    bank.vote_only_bank(),
-                    bank.as_ref(),
-                    bank.get_reserved_account_keys(),
-                )
-            else {
-                continue;
-            };
-
-            let forwarding_successful = forward_packet_batches_by_accounts.try_add_packet(
-                &sanitized_vote_transaction,
-                deserialized_vote_packet,
-                &bank.feature_set,
-            );
-
-            if !forwarding_successful {
-                // To match behavior of regular transactions we stop forwarding votes as soon as one
-                // fails. We are assuming that failure (try_add_packet) means no more space
-                // available.
-                break;
-            }
-
-            vote.forwarded = true;
-            forwarded_count += 1;
-        }
-
-        forwarded_count
-    }
-
     /// Drains all votes yet to be processed sorted by a weighted random ordering by stake
     /// Do not touch votes that are for a different fork from `bank` as we know they will fail,
     /// however the next bank could be built on a different fork and consume these votes.
@@ -495,17 +434,14 @@ impl LatestUnprocessedVotes {
             .unwrap_or(false)
     }
 
-    /// Sometimes we forward and hold the packets, sometimes we forward and clear.
-    /// This also clears all gossip votes since by definition they have been forwarded
-    pub fn clear_forwarded_packets(&self) {
+    pub fn clear(&self) {
         self.latest_vote_per_vote_pubkey
             .read()
             .unwrap()
             .values()
-            .filter(|lock| lock.read().unwrap().is_forwarded())
             .for_each(|lock| {
                 let mut vote = lock.write().unwrap();
-                if vote.is_forwarded() && vote.take_vote().is_some() {
+                if vote.take_vote().is_some() {
                     self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
                 }
             });
@@ -525,7 +461,6 @@ mod tests {
         solana_perf::packet::{Packet, PacketBatch, PacketFlags},
         solana_runtime::{
             bank::Bank,
-            epoch_stakes::EpochStakes,
             genesis_utils::{self, ValidatorVoteKeypairs},
         },
         solana_sdk::{
@@ -966,126 +901,7 @@ mod tests {
     }
 
     #[test]
-    fn test_forwardable_packets() {
-        let latest_unprocessed_votes = LatestUnprocessedVotes::new_for_tests(&[]);
-        let bank_0 = Bank::new_for_tests(&GenesisConfig::default());
-        let mut bank = Bank::new_from_parent(
-            Arc::new(bank_0),
-            &Pubkey::new_unique(),
-            MINIMUM_SLOTS_PER_EPOCH,
-        );
-        assert_eq!(bank.epoch(), 1);
-        bank.set_epoch_stakes_for_test(
-            bank.epoch().saturating_add(2),
-            EpochStakes::new_for_tests(HashMap::new(), bank.epoch().saturating_add(2)),
-        );
-        let bank = Arc::new(bank);
-        let mut forward_packet_batches_by_accounts =
-            ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
-
-        let keypair_a = ValidatorVoteKeypairs::new_rand();
-        let keypair_b = ValidatorVoteKeypairs::new_rand();
-
-        let vote_a = from_slots(vec![(1, 1)], VoteSource::Gossip, &keypair_a, None);
-        let vote_b = from_slots(vec![(2, 1)], VoteSource::Tpu, &keypair_b, None);
-        latest_unprocessed_votes
-            .update_latest_vote(vote_a.clone(), false /* should replenish */);
-        latest_unprocessed_votes
-            .update_latest_vote(vote_b.clone(), false /* should replenish */);
-
-        // Recache on epoch boundary and don't forward 0 stake accounts
-        latest_unprocessed_votes.cache_epoch_boundary_info(&bank);
-        let forwarded = latest_unprocessed_votes
-            .get_and_insert_forwardable_packets(bank, &mut forward_packet_batches_by_accounts);
-        assert_eq!(0, forwarded);
-        assert_eq!(
-            0,
-            forward_packet_batches_by_accounts
-                .iter_batches()
-                .filter(|&batch| !batch.is_empty())
-                .count()
-        );
-
-        let config =
-            genesis_utils::create_genesis_config_with_vote_accounts(100, &[keypair_a], vec![200])
-                .genesis_config;
-        let bank_0 = Bank::new_for_tests(&config);
-        let bank = Bank::new_from_parent(
-            Arc::new(bank_0),
-            &Pubkey::new_unique(),
-            2 * MINIMUM_SLOTS_PER_EPOCH,
-        );
-        let mut forward_packet_batches_by_accounts =
-            ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
-
-        // Don't forward votes from gossip
-        latest_unprocessed_votes.cache_epoch_boundary_info(&bank);
-        latest_unprocessed_votes
-            .update_latest_vote(vote_a.clone(), false /* should replenish */);
-        latest_unprocessed_votes
-            .update_latest_vote(vote_b.clone(), false /* should replenish */);
-        let forwarded = latest_unprocessed_votes.get_and_insert_forwardable_packets(
-            Arc::new(bank),
-            &mut forward_packet_batches_by_accounts,
-        );
-
-        assert_eq!(0, forwarded);
-        assert_eq!(
-            0,
-            forward_packet_batches_by_accounts
-                .iter_batches()
-                .filter(|&batch| !batch.is_empty())
-                .count()
-        );
-
-        let config =
-            genesis_utils::create_genesis_config_with_vote_accounts(100, &[keypair_b], vec![200])
-                .genesis_config;
-        let bank_0 = Bank::new_for_tests(&config);
-        let bank = Arc::new(Bank::new_from_parent(
-            Arc::new(bank_0),
-            &Pubkey::new_unique(),
-            3 * MINIMUM_SLOTS_PER_EPOCH,
-        ));
-        let mut forward_packet_batches_by_accounts =
-            ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
-
-        // Forward from TPU
-        latest_unprocessed_votes.cache_epoch_boundary_info(&bank);
-        latest_unprocessed_votes.update_latest_vote(vote_a, false /* should replenish */);
-        latest_unprocessed_votes.update_latest_vote(vote_b, false /* should replenish */);
-        let forwarded = latest_unprocessed_votes.get_and_insert_forwardable_packets(
-            bank.clone(),
-            &mut forward_packet_batches_by_accounts,
-        );
-
-        assert_eq!(1, forwarded);
-        assert_eq!(
-            1,
-            forward_packet_batches_by_accounts
-                .iter_batches()
-                .filter(|&batch| !batch.is_empty())
-                .count()
-        );
-
-        // Don't forward again
-        let mut forward_packet_batches_by_accounts =
-            ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
-        let forwarded = latest_unprocessed_votes
-            .get_and_insert_forwardable_packets(bank, &mut forward_packet_batches_by_accounts);
-
-        assert_eq!(0, forwarded);
-        assert_eq!(
-            0,
-            forward_packet_batches_by_accounts
-                .iter_batches()
-                .filter(|&batch| !batch.is_empty())
-                .count()
-        );
-    }
-
-    #[test]
-    fn test_clear_forwarded_packets() {
+    fn test_clear() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
         let keypair_b = ValidatorVoteKeypairs::new_rand();
         let keypair_c = ValidatorVoteKeypairs::new_rand();
@@ -1098,8 +914,7 @@ mod tests {
         ]);
 
         let vote_a = from_slots(vec![(1, 1)], VoteSource::Gossip, &keypair_a, None);
-        let mut vote_b = from_slots(vec![(2, 1)], VoteSource::Tpu, &keypair_b, None);
-        vote_b.forwarded = true;
+        let vote_b = from_slots(vec![(2, 1)], VoteSource::Tpu, &keypair_b, None);
         let vote_c = from_slots(vec![(3, 1)], VoteSource::Tpu, &keypair_c, None);
         let vote_d = from_slots(vec![(4, 1)], VoteSource::Gossip, &keypair_d, None);
 
@@ -1109,8 +924,8 @@ mod tests {
         latest_unprocessed_votes.update_latest_vote(vote_d, false /* should replenish */);
         assert_eq!(4, latest_unprocessed_votes.len());
 
-        latest_unprocessed_votes.clear_forwarded_packets();
-        assert_eq!(1, latest_unprocessed_votes.len());
+        latest_unprocessed_votes.clear();
+        assert_eq!(0, latest_unprocessed_votes.len());
 
         assert_eq!(
             Some(1),

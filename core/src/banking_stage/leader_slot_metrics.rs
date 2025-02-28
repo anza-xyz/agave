@@ -220,24 +220,6 @@ struct LeaderSlotPacketCountMetrics {
     // according to the cost model. These transactions are added back to the buffered queue and are
     // already counted in `self.retrayble_errored_transaction_count`.
     cost_model_throttled_transactions_count: u64,
-
-    // total number of forwardsable packets that failed forwarding
-    failed_forwarded_packets_count: u64,
-
-    // total number of forwardsable packets that were successfully forwarded
-    successful_forwarded_packets_count: u64,
-
-    // total number of attempted forwards that failed. Note this is not a count of the number of packets
-    // that failed, just the total number of batches of packets that failed forwarding
-    packet_batch_forward_failure_count: u64,
-
-    // total number of valid unprocessed packets in the buffer that were removed after being forwarded
-    cleared_from_buffer_after_forward_count: u64,
-
-    // total number of forwardable batches that were attempted for forwarding. A forwardable batch
-    // is defined in `ForwardPacketBatchesByAccounts` in `forward_packet_batches_by_accounts.rs`
-    forwardable_batches_count: u64,
-
     // min prioritization fees for scheduled transactions
     min_prioritization_fees: u64,
     // max prioritization fees for scheduled transactions
@@ -352,31 +334,6 @@ impl LeaderSlotPacketCountMetrics {
             (
                 "cost_model_throttled_transactions_count",
                 self.cost_model_throttled_transactions_count,
-                i64
-            ),
-            (
-                "failed_forwarded_packets_count",
-                self.failed_forwarded_packets_count,
-                i64
-            ),
-            (
-                "successful_forwarded_packets_count",
-                self.successful_forwarded_packets_count,
-                i64
-            ),
-            (
-                "packet_batch_forward_failure_count",
-                self.packet_batch_forward_failure_count,
-                i64
-            ),
-            (
-                "cleared_from_buffer_after_forward_count",
-                self.cleared_from_buffer_after_forward_count,
-                i64
-            ),
-            (
-                "forwardable_batches_count",
-                self.forwardable_batches_count,
                 i64
             ),
             (
@@ -883,61 +840,6 @@ impl LeaderSlotMetricsTracker {
         }
     }
 
-    pub(crate) fn increment_failed_forwarded_packets_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .failed_forwarded_packets_count,
-                count
-            );
-        }
-    }
-
-    pub(crate) fn increment_successful_forwarded_packets_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .successful_forwarded_packets_count,
-                count
-            );
-        }
-    }
-
-    pub(crate) fn increment_packet_batch_forward_failure_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .packet_batch_forward_failure_count,
-                count
-            );
-        }
-    }
-
-    pub(crate) fn increment_cleared_from_buffer_after_forward_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .cleared_from_buffer_after_forward_count,
-                count
-            );
-        }
-    }
-
-    pub(crate) fn increment_forwardable_batches_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .forwardable_batches_count,
-                count
-            );
-        }
-    }
-
     pub(crate) fn increment_retryable_packets_count(&mut self, count: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
             saturating_add_assign!(
@@ -1005,24 +907,6 @@ impl LeaderSlotMetricsTracker {
                 .timing_metrics
                 .process_buffered_packets_timings
                 .consume_buffered_packets_us += us;
-        }
-    }
-
-    pub(crate) fn increment_forward_us(&mut self, us: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            leader_slot_metrics
-                .timing_metrics
-                .process_buffered_packets_timings
-                .forward_us += us;
-        }
-    }
-
-    pub(crate) fn increment_forward_and_hold_us(&mut self, us: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            leader_slot_metrics
-                .timing_metrics
-                .process_buffered_packets_timings
-                .forward_and_hold_us += us;
         }
     }
 

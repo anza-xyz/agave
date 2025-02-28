@@ -4,19 +4,17 @@ use {
         address_generator::AddressGenerator,
         unlocks::{UnlockInfo, Unlocks},
     },
-    solana_sdk::{
-        account::Account,
-        clock::Slot,
-        genesis_config::GenesisConfig,
-        pubkey::Pubkey,
-        stake::{
-            self,
-            state::{Authorized, Lockup, StakeStateV2},
-        },
-        system_program,
-        timing::years_as_slots,
+    solana_account::Account,
+    solana_clock::Slot,
+    solana_genesis_config::GenesisConfig,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::system_program,
+    solana_stake_interface::{
+        self as stake,
+        state::{Authorized, Lockup, StakeStateV2},
     },
     solana_stake_program::stake_state::create_lockup_stake_account,
+    solana_time_utils::years_as_slots,
 };
 
 #[derive(Debug)]
@@ -165,7 +163,7 @@ pub fn create_and_add_stakes(
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_sdk::rent::Rent};
+    use {super::*, solana_rent::Rent};
 
     fn create_and_check_stakes(
         genesis_config: &mut GenesisConfig,

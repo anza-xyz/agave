@@ -17,7 +17,6 @@ use {
     crossbeam_channel::{unbounded, Sender},
     itertools::Itertools,
     log::*,
-    solana_client::connection_cache::ConnectionCache,
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
         contact_info::ContactInfoQuery,
@@ -803,7 +802,6 @@ impl BankingSimulator {
             gossip_vote_receiver,
         } = banking_tracer_channels;
 
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_sim"));
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
         let shred_version = compute_shred_version(
@@ -849,10 +847,8 @@ impl BankingSimulator {
             None,
             replay_vote_sender,
             None,
-            connection_cache,
             bank_forks.clone(),
             prioritization_fee_cache,
-            false,
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot

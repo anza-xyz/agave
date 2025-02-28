@@ -17,6 +17,7 @@ use {
             VerifiedVoteSender, VoteTracker,
         },
         fetch_stage::FetchStage,
+        forwarding_stage::ForwardingStage,
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
@@ -24,13 +25,14 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig, TransactionStructure},
     },
     bytes::Bytes,
-    crossbeam_channel::{unbounded, Receiver},
+    crossbeam_channel::{bounded, unbounded, Receiver},
     solana_client::connection_cache::ConnectionCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
     },
+    solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotificationSender,
@@ -39,6 +41,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
+        root_bank_cache::RootBankCache,
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
@@ -51,7 +54,7 @@ use {
         collections::HashMap,
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
-        thread,
+        thread::{self, JoinHandle},
         time::Duration,
     },
     tokio::sync::mpsc::Sender as AsyncSender,
@@ -72,6 +75,7 @@ pub struct Tpu {
     sigverify_stage: SigVerifyStage,
     vote_sigverify_stage: SigVerifyStage,
     banking_stage: BankingStage,
+    forwarding_stage: JoinHandle<()>,
     cluster_info_vote_listener: ClusterInfoVoteListener,
     broadcast_stage: BroadcastStage,
     tpu_quic_t: thread::JoinHandle<()>,
@@ -219,13 +223,20 @@ impl Tpu {
         )
         .unwrap();
 
+        let (forward_stage_sender, forward_stage_receiver) = bounded(1024);
         let sigverify_stage = {
-            let verifier = TransactionSigVerifier::new(non_vote_sender);
+            let verifier = TransactionSigVerifier::new(
+                non_vote_sender,
+                enable_block_production_forwarding.then(|| forward_stage_sender.clone()),
+            );
             SigVerifyStage::new(packet_receiver, verifier, "solSigVerTpu", "tpu-verifier")
         };
 
         let vote_sigverify_stage = {
-            let verifier = TransactionSigVerifier::new_reject_non_vote(tpu_vote_sender);
+            let verifier = TransactionSigVerifier::new_reject_non_vote(
+                tpu_vote_sender,
+                Some(forward_stage_sender),
+            );
             SigVerifyStage::new(
                 vote_packet_receiver,
                 verifier,
@@ -260,10 +271,16 @@ impl Tpu {
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
-            connection_cache.clone(),
             bank_forks.clone(),
             prioritization_fee_cache,
-            enable_block_production_forwarding,
+        );
+
+        let forwarding_stage = ForwardingStage::spawn(
+            forward_stage_receiver,
+            connection_cache.clone(),
+            RootBankCache::new(bank_forks.clone()),
+            (cluster_info.clone(), poh_recorder.clone()),
+            DataBudget::default(),
         );
 
         let (entry_receiver, tpu_entry_notifier) =
@@ -298,6 +315,7 @@ impl Tpu {
                 sigverify_stage,
                 vote_sigverify_stage,
                 banking_stage,
+                forwarding_stage,
                 cluster_info_vote_listener,
                 broadcast_stage,
                 tpu_quic_t,
@@ -318,6 +336,7 @@ impl Tpu {
             self.vote_sigverify_stage.join(),
             self.cluster_info_vote_listener.join(),
             self.banking_stage.join(),
+            self.forwarding_stage.join(),
             self.staked_nodes_updater_service.join(),
             self.tpu_quic_t.join(),
             self.tpu_forwards_quic_t.join(),

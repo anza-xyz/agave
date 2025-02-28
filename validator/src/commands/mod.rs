@@ -13,7 +13,9 @@ pub mod staked_nodes_overrides;
 pub mod wait_for_restart_window;
 
 pub trait FromClapArgMatches {
-    fn from_clap_arg_match(matches: &clap::ArgMatches) -> Self;
+    fn from_clap_arg_match(matches: &clap::ArgMatches) -> Result<Self, String>
+    where
+        Self: Sized;
 }
 
 #[cfg(test)]
@@ -26,7 +28,7 @@ pub mod tests {
     {
         let matches = app.get_matches_from(vec);
         let result = T::from_clap_arg_match(&matches);
-        assert_eq!(result, expected_arg);
+        assert_eq!(result.unwrap(), expected_arg);
     }
 
     pub fn verify_args_struct_by_command_is_error<T>(app: clap::App, vec: Vec<&str>)

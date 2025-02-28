@@ -1,5 +1,8 @@
 use {
-    super::{scheduler_error::SchedulerError, transaction_state_container::StateContainer},
+    super::{
+        scheduler_error::SchedulerError, transaction_state::TransactionState,
+        transaction_state_container::StateContainer,
+    },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
 };
 
@@ -11,7 +14,7 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
         &mut self,
         container: &mut S,
         pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
-        pre_lock_filter: impl Fn(&Tx) -> bool,
+        pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError>;
 
     /// Receive completed batches of transactions without blocking.
@@ -20,6 +23,12 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
         &mut self,
         container: &mut impl StateContainer<Tx>,
     ) -> Result<(usize, usize), SchedulerError>;
+}
+
+/// Action to be taken by pre-lock filter.
+pub(crate) enum PreLockFilterAction {
+    /// Attempt to schedule the transaction.
+    AttemptToSchedule,
 }
 
 /// Metrics from scheduling transactions.

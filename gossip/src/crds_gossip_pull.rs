@@ -28,13 +28,12 @@ use {
     },
     rayon::{prelude::*, ThreadPool},
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
-    solana_sdk::{
-        hash::Hash,
-        native_token::LAMPORTS_PER_SOL,
-        packet::PACKET_DATA_SIZE,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     std::{
         collections::{HashMap, HashSet, VecDeque},
@@ -668,13 +667,12 @@ pub(crate) mod tests {
         rand::{seq::SliceRandom, SeedableRng},
         rand_chacha::ChaChaRng,
         rayon::ThreadPoolBuilder,
+        solana_hash::HASH_BYTES,
+        solana_keypair::keypair_from_seed,
+        solana_packet::PACKET_DATA_SIZE,
         solana_perf::test_tx::new_test_vote_tx,
-        solana_sdk::{
-            hash::{hash, HASH_BYTES},
-            packet::PACKET_DATA_SIZE,
-            signer::keypair::keypair_from_seed,
-            timing::timestamp,
-        },
+        solana_sha256_hasher::hash,
+        solana_time_utils::timestamp,
         std::{
             net::{IpAddr, Ipv6Addr},
             time::Instant,
@@ -783,7 +781,7 @@ pub(crate) mod tests {
         );
         let hash_values: Vec<_> = repeat_with(|| {
             let buf: [u8; 32] = rng.gen();
-            solana_sdk::hash::hashv(&[&buf])
+            solana_sha256_hasher::hashv(&[&buf])
         })
         .take(1024)
         .collect();

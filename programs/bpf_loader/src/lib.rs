@@ -1,7 +1,6 @@
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
-pub mod serialization;
 pub mod syscalls;
 
 #[cfg(feature = "svm-internal")]
@@ -30,7 +29,7 @@ use {
             ProgramCacheForTxBatch, ProgramRuntimeEnvironment, DELAY_VISIBILITY_SLOT_OFFSET,
         },
         mem_pool::VmMemoryPool,
-        stable_log,
+        serialization, stable_log,
         sysvar_cache::get_sysvar_with_account_check,
     },
     solana_pubkey::Pubkey,

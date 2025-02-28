@@ -1,7 +1,7 @@
 use {
     super::{
         in_flight_tracker::InFlightTracker,
-        scheduler::Scheduler,
+        scheduler::{PreLockFilterAction, Scheduler},
         scheduler_error::SchedulerError,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
         transaction_state::SanitizedTransactionTTL,
@@ -108,7 +108,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         &mut self,
         container: &mut S,
         pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
-        pre_lock_filter: impl Fn(&Tx) -> bool,
+        pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
         let num_threads = self.consume_work_senders.len();
         let max_cu_per_thread = self.config.max_scheduled_cus / num_threads as u64;
@@ -233,9 +233,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                 );
 
                 match maybe_schedule_info {
-                    Err(TransactionSchedulingError::Filtered) => {
-                        container.remove_by_id(id.id);
-                    }
                     Err(TransactionSchedulingError::UnschedulableConflicts)
                     | Err(TransactionSchedulingError::UnschedulableThread) => {
                         unschedulable_ids.push(id);
@@ -558,8 +555,6 @@ pub(crate) struct TransactionSchedulingInfo<Tx> {
 
 /// Error type for reasons a transaction could not be scheduled.
 pub(crate) enum TransactionSchedulingError {
-    /// Transaction was filtered out before locking.
-    Filtered,
     /// Transaction cannot be scheduled due to conflicts, or
     /// higher priority conflicting transactions are unschedulable.
     UnschedulableConflicts,
@@ -569,18 +564,18 @@ pub(crate) enum TransactionSchedulingError {
 
 fn try_schedule_transaction<Tx: TransactionWithMeta>(
     transaction_state: &mut TransactionState<Tx>,
-    pre_lock_filter: impl Fn(&Tx) -> bool,
+    pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     blocking_locks: &mut ReadWriteAccountSet,
     account_locks: &mut ThreadAwareAccountLocks,
     num_threads: usize,
     thread_selector: impl Fn(ThreadSet) -> ThreadId,
 ) -> Result<TransactionSchedulingInfo<Tx>, TransactionSchedulingError> {
-    let transaction = &transaction_state.transaction_ttl().transaction;
-    if !pre_lock_filter(transaction) {
-        return Err(TransactionSchedulingError::Filtered);
+    match pre_lock_filter(transaction_state) {
+        PreLockFilterAction::AttemptToSchedule => {}
     }
 
     // Check if this transaction conflicts with any blocked transactions
+    let transaction = &transaction_state.transaction_ttl().transaction;
     if !blocking_locks.check_locks(transaction) {
         blocking_locks.take_locks(transaction);
         return Err(TransactionSchedulingError::UnschedulableConflicts);
@@ -629,10 +624,7 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
 mod tests {
     use {
         super::*,
-        crate::banking_stage::{
-            immutable_deserialized_packet::ImmutableDeserializedPacket,
-            transaction_scheduler::transaction_state_container::TransactionStateContainer,
-        },
+        crate::banking_stage::transaction_scheduler::transaction_state_container::TransactionStateContainer,
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -640,14 +632,13 @@ mod tests {
             compute_budget::ComputeBudgetInstruction,
             hash::Hash,
             message::Message,
-            packet::Packet,
             pubkey::Pubkey,
             signature::Keypair,
             signer::Signer,
             system_instruction,
             transaction::{SanitizedTransaction, Transaction},
         },
-        std::{borrow::Borrow, sync::Arc},
+        std::borrow::Borrow,
     };
 
     #[allow(clippy::type_complexity)]
@@ -725,12 +716,6 @@ mod tests {
                 lamports,
                 compute_unit_price,
             );
-            let packet = Arc::new(
-                ImmutableDeserializedPacket::new(
-                    Packet::from_data(None, transaction.to_versioned_transaction()).unwrap(),
-                )
-                .unwrap(),
-            );
             let transaction_ttl = SanitizedTransactionTTL {
                 transaction,
                 max_age: MaxAge::MAX,
@@ -738,7 +723,6 @@ mod tests {
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
                 transaction_ttl,
-                packet,
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );
@@ -769,8 +753,10 @@ mod tests {
         results.fill(true);
     }
 
-    fn test_pre_lock_filter(_tx: &RuntimeTransaction<SanitizedTransaction>) -> bool {
-        true
+    fn test_pre_lock_filter(
+        _tx: &TransactionState<RuntimeTransaction<SanitizedTransaction>>,
+    ) -> PreLockFilterAction {
+        PreLockFilterAction::AttemptToSchedule
     }
 
     #[test]
@@ -921,29 +907,6 @@ mod tests {
         assert_eq!(scheduling_summary.num_unschedulable, 0);
 
         assert_eq!(collect_work(&work_receivers[1]).1, [vec![4], vec![5]]);
-    }
-
-    #[test]
-    fn test_schedule_pre_lock_filter() {
-        let (mut scheduler, work_receivers, _finished_work_sender) = create_test_frame(1);
-        let pubkey = Pubkey::new_unique();
-        let keypair = Keypair::new();
-        let mut container = create_container([
-            (&Keypair::new(), &[pubkey], 1, 1),
-            (&keypair, &[pubkey], 1, 2),
-            (&Keypair::new(), &[pubkey], 1, 3),
-        ]);
-
-        // 2nd transaction should be filtered out and dropped before locking.
-        let pre_lock_filter = |tx: &RuntimeTransaction<SanitizedTransaction>| {
-            tx.message().fee_payer() != &keypair.pubkey()
-        };
-        let scheduling_summary = scheduler
-            .schedule(&mut container, test_pre_graph_filter, pre_lock_filter)
-            .unwrap();
-        assert_eq!(scheduling_summary.num_scheduled, 2);
-        assert_eq!(scheduling_summary.num_unschedulable, 0);
-        assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![2], vec![0]]);
     }
 
     #[test]

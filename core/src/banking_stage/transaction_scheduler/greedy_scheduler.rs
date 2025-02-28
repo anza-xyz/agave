@@ -4,7 +4,7 @@ use {
         prio_graph_scheduler::{
             Batches, PrioGraphScheduler, TransactionSchedulingError, TransactionSchedulingInfo,
         },
-        scheduler::{Scheduler, SchedulingSummary},
+        scheduler::{PreLockFilterAction, Scheduler, SchedulingSummary},
         scheduler_error::SchedulerError,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
         transaction_priority_id::TransactionPriorityId,
@@ -82,7 +82,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         &mut self,
         container: &mut S,
         _pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
-        pre_lock_filter: impl Fn(&Tx) -> bool,
+        pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
         let num_threads = self.consume_work_senders.len();
         let target_cu_per_thread = self.config.target_scheduled_cus / num_threads as u64;
@@ -99,7 +99,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         }
 
         // Track metrics on filter.
-        let mut num_filtered_out: usize = 0;
         let mut num_scanned: usize = 0;
         let mut num_scheduled: usize = 0;
         let mut num_sent: usize = 0;
@@ -148,10 +147,6 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                     )
                 },
             ) {
-                Err(TransactionSchedulingError::Filtered) => {
-                    num_filtered_out += 1;
-                    container.remove_by_id(id.id);
-                }
                 Err(TransactionSchedulingError::UnschedulableConflicts)
                 | Err(TransactionSchedulingError::UnschedulableThread) => {
                     num_unschedulable += 1;
@@ -207,7 +202,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         Ok(SchedulingSummary {
             num_scheduled,
             num_unschedulable,
-            num_filtered_out,
+            num_filtered_out: 0,
             filter_time_us: 0,
         })
     }
@@ -348,17 +343,17 @@ impl<Tx: TransactionWithMeta> GreedyScheduler<Tx> {
 
 fn try_schedule_transaction<Tx: TransactionWithMeta>(
     transaction_state: &mut TransactionState<Tx>,
-    pre_lock_filter: impl Fn(&Tx) -> bool,
+    pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     account_locks: &mut ThreadAwareAccountLocks,
     schedulable_threads: ThreadSet,
     thread_selector: impl Fn(ThreadSet) -> ThreadId,
 ) -> Result<TransactionSchedulingInfo<Tx>, TransactionSchedulingError> {
-    let transaction = &transaction_state.transaction_ttl().transaction;
-    if !pre_lock_filter(transaction) {
-        return Err(TransactionSchedulingError::Filtered);
+    match pre_lock_filter(transaction_state) {
+        PreLockFilterAction::AttemptToSchedule => {}
     }
 
     // Schedule the transaction if it can be.
+    let transaction = &transaction_state.transaction_ttl().transaction;
     let account_keys = transaction.account_keys();
     let write_account_locks = account_keys
         .iter()
@@ -400,7 +395,6 @@ mod test {
     use {
         super::*,
         crate::banking_stage::{
-            immutable_deserialized_packet::ImmutableDeserializedPacket,
             scheduler_messages::{MaxAge, TransactionId},
             transaction_scheduler::{
                 transaction_state::SanitizedTransactionTTL,
@@ -409,7 +403,6 @@ mod test {
         },
         crossbeam_channel::unbounded,
         itertools::Itertools,
-        solana_perf::packet::Packet,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
@@ -421,7 +414,7 @@ mod test {
             system_instruction,
             transaction::{SanitizedTransaction, Transaction},
         },
-        std::{borrow::Borrow, sync::Arc},
+        std::borrow::Borrow,
     };
 
     #[allow(clippy::type_complexity)]
@@ -483,12 +476,6 @@ mod test {
                 lamports,
                 compute_unit_price,
             );
-            let packet = Arc::new(
-                ImmutableDeserializedPacket::new(
-                    Packet::from_data(None, transaction.to_versioned_transaction()).unwrap(),
-                )
-                .unwrap(),
-            );
             let transaction_ttl = SanitizedTransactionTTL {
                 transaction,
                 max_age: MaxAge::MAX,
@@ -496,7 +483,6 @@ mod test {
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
                 transaction_ttl,
-                packet,
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );
@@ -527,8 +513,10 @@ mod test {
         results.fill(true);
     }
 
-    fn test_pre_lock_filter(_tx: &RuntimeTransaction<SanitizedTransaction>) -> bool {
-        true
+    fn test_pre_lock_filter(
+        _tx: &TransactionState<RuntimeTransaction<SanitizedTransaction>>,
+    ) -> PreLockFilterAction {
+        PreLockFilterAction::AttemptToSchedule
     }
 
     #[test]

@@ -52,7 +52,7 @@ impl Default for Config<'_> {
             verbose: false,
             workspace: false,
             jobs: None,
-            arch: "sbfv1",
+            arch: "v0",
         }
     }
 }
@@ -376,8 +376,8 @@ fn main() {
         .arg(
             Arg::new("arch")
                 .long("arch")
-                .possible_values(["sbfv1", "sbfv2"])
-                .default_value("sbfv1")
+                .possible_values(["v0", "v1", "v2", "v3"])
+                .default_value("v0")
                 .help("Build for the given target architecture"),
         )
         .arg(

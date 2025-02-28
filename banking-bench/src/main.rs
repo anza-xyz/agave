@@ -7,7 +7,6 @@ use {
     log::*,
     rand::{thread_rng, Rng},
     rayon::prelude::*,
-    solana_client::connection_cache::ConnectionCache,
     solana_core::{
         banking_stage::{
             unified_scheduler::ensure_banking_stage_setup,
@@ -40,7 +39,6 @@ use {
         transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
-    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     solana_unified_scheduler_logic::SchedulingMode,
     solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     std::{
@@ -310,12 +308,6 @@ fn main() {
                 .help("Number of threads to use in the banking stage"),
         )
         .arg(
-            Arg::new("tpu_disable_quic")
-                .long("tpu-disable-quic")
-                .takes_value(false)
-                .help("Disable forwarding messages to TPU using QUIC"),
-        )
-        .arg(
             Arg::new("simulate_mint")
                 .long("simulate-mint")
                 .takes_value(false)
@@ -492,18 +484,6 @@ fn main() {
         gossip_vote_sender,
         gossip_vote_receiver,
     } = banking_tracer_channels;
-    let tpu_disable_quic = matches.is_present("tpu_disable_quic");
-    let connection_cache = if tpu_disable_quic {
-        ConnectionCache::with_udp(
-            "connection_cache_banking_bench_udp",
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        )
-    } else {
-        ConnectionCache::new_quic(
-            "connection_cache_banking_bench_quic",
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        )
-    };
     let banking_stage = BankingStage::new_num_threads(
         block_production_method.clone(),
         transaction_struct,
@@ -516,10 +496,8 @@ fn main() {
         None,
         replay_vote_sender,
         None,
-        Arc::new(connection_cache),
         bank_forks.clone(),
         &prioritization_fee_cache,
-        false,
     );
 
     // This bench processes transactions, starting from the very first bank, so special-casing is

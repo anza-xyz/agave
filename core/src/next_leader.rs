@@ -20,7 +20,7 @@ pub(crate) fn upcoming_leader_tpu_vote_sockets(
 ) -> Vec<SocketAddr> {
     let upcoming_leaders = {
         let poh_recorder = poh_recorder.read().unwrap();
-        (1..=fanout_slots)
+        (0..fanout_slots)
             .filter_map(|n_slots| poh_recorder.leader_after_n_slots(n_slots))
             .collect_vec()
     };

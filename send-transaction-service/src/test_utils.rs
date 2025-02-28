@@ -4,7 +4,9 @@
 use {
     crate::{
         tpu_info::NullTpuInfo,
-        transaction_client::{ConnectionCacheClient, TpuInfoWithSendStatic, TransactionClient},
+        transaction_client::{
+            ConnectionCacheClient, TpuClientNextClient, TpuInfoWithSendStatic, TransactionClient,
+        },
     },
     solana_client::connection_cache::ConnectionCache,
     std::{net::SocketAddr, sync::Arc},
@@ -42,23 +44,52 @@ impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
     }
 }
 
-pub trait Cancelable {
-    fn cancel(&self);
+impl CreateClient for TpuClientNextClient<NullTpuInfo> {
+    fn create_client(
+        maybe_runtime: Option<Handle>,
+        my_tpu_address: SocketAddr,
+        tpu_peers: Option<Vec<SocketAddr>>,
+        leader_forward_count: u64,
+    ) -> Self {
+        let runtime_handle =
+            maybe_runtime.expect("Runtime should be provided for the TpuClientNextClient.");
+        Self::new(
+            runtime_handle,
+            my_tpu_address,
+            tpu_peers,
+            None,
+            leader_forward_count,
+            None,
+        )
+    }
 }
 
-impl<T> Cancelable for ConnectionCacheClient<T>
+pub trait Stoppable {
+    fn stop(&self);
+}
+
+impl<T> Stoppable for ConnectionCacheClient<T>
 where
     T: TpuInfoWithSendStatic,
 {
-    fn cancel(&self) {}
+    fn stop(&self) {}
+}
+
+impl<T> Stoppable for TpuClientNextClient<T>
+where
+    T: TpuInfoWithSendStatic + Clone,
+{
+    fn stop(&self) {
+        self.cancel().unwrap();
+    }
 }
 
 // Define type alias to simplify definition of test functions.
 pub trait ClientWithCreator:
-    CreateClient + TransactionClient + Cancelable + Send + Clone + 'static
+    CreateClient + TransactionClient + Stoppable + Send + Clone + 'static
 {
 }
 impl<T> ClientWithCreator for T where
-    T: CreateClient + TransactionClient + Cancelable + Send + Clone + 'static
+    T: CreateClient + TransactionClient + Stoppable + Send + Clone + 'static
 {
 }

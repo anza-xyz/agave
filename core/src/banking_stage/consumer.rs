@@ -214,7 +214,7 @@ impl Consumer {
             packets_to_process_len.saturating_sub(retryable_transaction_indexes.len());
 
         // Out of the buffered packets just retried, collect any still unprocessed
-        // transactions in this batch for forwarding
+        // transactions in this batch
         *rebuffered_packet_count += retryable_transaction_indexes.len();
 
         payload

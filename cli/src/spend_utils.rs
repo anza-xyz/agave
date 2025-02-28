@@ -3,6 +3,7 @@ use {
         checks::{check_account_for_balance_with_commitment, get_fee_for_messages},
         cli::CliError,
         compute_budget::{simulate_and_update_compute_unit_limit, UpdateComputeUnitLimitResult},
+        stake,
     },
     clap::ArgMatches,
     solana_clap_utils::{
@@ -19,6 +20,7 @@ use {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SpendAmount {
     All,
+    Available,
     Some(u64),
     RentExempt,
     AllForAccountCreation { create_account_min_balance: u64 },
@@ -40,9 +42,16 @@ impl SpendAmount {
     }
 
     pub fn new_from_matches(matches: &ArgMatches<'_>, name: &str) -> Self {
-        let amount = lamports_of_sol(matches, name);
         let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
-        SpendAmount::new(amount, sign_only)
+        let amount = lamports_of_sol(matches, name);
+        if amount.is_some() {
+            return SpendAmount::new(amount, sign_only);
+        }
+        match matches.value_of(name).unwrap_or("ALL") {
+            "ALL" if !sign_only => SpendAmount::All,
+            "AVAILABLE" if !sign_only => SpendAmount::Available,
+            _ => panic!("Only specific amounts are supported for sign-only operations"),
+        }
     }
 }
 
@@ -105,15 +114,40 @@ where
         )?;
         Ok((message, spend))
     } else {
-        let from_balance = rpc_client
-            .get_balance_with_commitment(from_pubkey, commitment)?
-            .value;
-        let from_rent_exempt_minimum = if amount == SpendAmount::RentExempt {
-            let data = rpc_client.get_account_data(from_pubkey)?;
-            rpc_client.get_minimum_balance_for_rent_exemption(data.len())?
-        } else {
-            0
-        };
+        let account = rpc_client
+            .get_account_with_commitment(from_pubkey, commitment)?
+            .value
+            .unwrap_or_default();
+        let mut from_balance = account.lamports;
+        let from_rent_exempt_minimum =
+            if amount == SpendAmount::RentExempt || amount == SpendAmount::Available {
+                rpc_client.get_minimum_balance_for_rent_exemption(account.data.len())?
+            } else {
+                0
+            };
+        if amount == SpendAmount::Available && account.owner == solana_sdk_ids::stake::id() {
+            let state = stake::get_account_stake_state(
+                rpc_client,
+                from_pubkey,
+                account,
+                true,
+                None,
+                false,
+                None,
+            )?;
+            let mut subtract_rent_exempt_minimum = false;
+            if let Some(active_stake) = state.active_stake {
+                from_balance = from_balance.saturating_sub(active_stake);
+                subtract_rent_exempt_minimum = true;
+            }
+            if let Some(activating_stake) = state.activating_stake {
+                from_balance = from_balance.saturating_sub(activating_stake);
+                subtract_rent_exempt_minimum = true;
+            }
+            if subtract_rent_exempt_minimum {
+                from_balance = from_balance.saturating_sub(from_rent_exempt_minimum);
+            }
+        }
         let (message, SpendAndFee { spend, fee }) = resolve_spend_message(
             rpc_client,
             amount,
@@ -156,7 +190,7 @@ fn resolve_spend_message<F>(
     rpc_client: &RpcClient,
     amount: SpendAmount,
     blockhash: Option<&Hash>,
-    from_balance: u64,
+    from_account_transferable_balance: u64,
     from_pubkey: &Pubkey,
     fee_pubkey: &Pubkey,
     from_rent_exempt_minimum: u64,
@@ -184,14 +218,16 @@ where
                     SpendAmount::AllForAccountCreation {
                         create_account_min_balance,
                     } => create_account_min_balance,
-                    SpendAmount::All | SpendAmount::RentExempt => 0,
+                    SpendAmount::All | SpendAmount::Available | SpendAmount::RentExempt => 0,
                 }
             } else {
                 match amount {
                     SpendAmount::Some(lamports) => lamports,
-                    SpendAmount::AllForAccountCreation { .. } | SpendAmount::All => from_balance,
+                    SpendAmount::AllForAccountCreation { .. }
+                    | SpendAmount::All
+                    | SpendAmount::Available => from_account_transferable_balance,
                     SpendAmount::RentExempt => {
-                        from_balance.saturating_sub(from_rent_exempt_minimum)
+                        from_account_transferable_balance.saturating_sub(from_rent_exempt_minimum)
                     }
                 }
             };
@@ -226,11 +262,11 @@ where
                 fee,
             },
         ),
-        SpendAmount::All | SpendAmount::AllForAccountCreation { .. } => {
+        SpendAmount::All | SpendAmount::AllForAccountCreation { .. } | SpendAmount::Available => {
             let lamports = if from_pubkey == fee_pubkey {
-                from_balance.saturating_sub(fee)
+                from_account_transferable_balance.saturating_sub(fee)
             } else {
-                from_balance
+                from_account_transferable_balance
             };
             (
                 build_message(lamports),
@@ -242,9 +278,9 @@ where
         }
         SpendAmount::RentExempt => {
             let mut lamports = if from_pubkey == fee_pubkey {
-                from_balance.saturating_sub(fee)
+                from_account_transferable_balance.saturating_sub(fee)
             } else {
-                from_balance
+                from_account_transferable_balance
             };
             lamports = lamports.saturating_sub(from_rent_exempt_minimum);
             (

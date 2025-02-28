@@ -38,7 +38,7 @@ pub fn load_program_from_file(name: &str) -> Vec<u8> {
                 .unwrap(),
         )
     };
-    pathbuf.push("sbf-solana-solana");
+    pathbuf.push("sbpf-solana-solana");
     pathbuf.push("release");
     pathbuf.push(name);
     pathbuf.set_extension("so");

@@ -1,7 +1,7 @@
 use {
     crate::{admin_rpc_service, cli::DefaultArgs},
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
-    std::{path::Path, process::exit},
+    std::path::Path,
 };
 
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
@@ -16,13 +16,10 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
         .after_help("Note: the new filter only applies to the currently running validator instance")
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     let filter = value_t_or_exit!(matches, "filter", String);
     let admin_client = admin_rpc_service::connect(ledger_path);
     admin_rpc_service::runtime()
         .block_on(async move { admin_client.await?.set_log_filter(filter).await })
-        .unwrap_or_else(|err| {
-            println!("set log filter failed: {err}");
-            exit(1);
-        });
+        .map_err(|err| format!("set log filter request failed: {err}"))
 }

@@ -1,13 +1,14 @@
 use {
     crate::crds_data::sanitize_wallclock,
     itertools::Itertools,
+    solana_clock::Slot,
     solana_ledger::{
         blockstore::BlockstoreError,
         blockstore_meta::{DuplicateSlotProof, ErasureMeta},
         shred::{self, Shred, ShredType},
     },
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{clock::Slot, pubkey::Pubkey},
     std::{
         collections::{hash_map::Entry, HashMap},
         convert::TryFrom,
@@ -337,12 +338,12 @@ pub(crate) mod tests {
         super::*,
         rand::Rng,
         solana_entry::entry::Entry,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
-        solana_sdk::{
-            hash::Hash,
-            signature::{Keypair, Signature, Signer},
-            system_transaction,
-        },
+        solana_signature::Signature,
+        solana_signer::Signer,
+        solana_system_transaction::transfer,
         std::sync::Arc,
         test_case::test_case,
     };
@@ -441,7 +442,7 @@ pub(crate) mod tests {
         is_last_in_slot: bool,
     ) -> (Vec<Shred>, Vec<Shred>) {
         let entries: Vec<_> = std::iter::repeat_with(|| {
-            let tx = system_transaction::transfer(
+            let tx = transfer(
                 &Keypair::new(),       // from
                 &Pubkey::new_unique(), // to
                 rng.gen(),             // lamports

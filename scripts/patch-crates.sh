@@ -32,7 +32,6 @@ update_solana_dependencies() {
     solana-lattice-hash
     solana-ledger
     solana-log-collector
-    solana-logger
     solana-measure
     solana-merkle-tree
     solana-metrics

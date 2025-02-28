@@ -9,7 +9,6 @@ use {
         committer::Committer,
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
-        forwarder::Forwarder,
         latest_unprocessed_votes::{LatestUnprocessedVotes, VoteSource},
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_receiver::PacketReceiver,
@@ -30,11 +29,10 @@ use {
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
-    solana_client::connection_cache::ConnectionCache,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
-    solana_perf::{data_budget::DataBudget, packet::PACKETS_PER_BATCH},
+    solana_perf::packet::PACKETS_PER_BATCH,
     solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
@@ -65,7 +63,6 @@ use {
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
 pub mod consumer;
-pub mod forwarder;
 pub mod leader_slot_metrics;
 pub mod qos_service;
 pub mod unprocessed_packet_batches;
@@ -73,7 +70,6 @@ pub mod unprocessed_transaction_storage;
 
 mod consume_worker;
 mod decision_maker;
-mod forward_packet_batches_by_accounts;
 mod immutable_deserialized_packet;
 mod latest_unprocessed_votes;
 mod leader_slot_timing_metrics;
@@ -116,8 +112,6 @@ pub struct BankingStageStats {
     current_buffered_packets_count: AtomicUsize,
     rebuffered_packets_count: AtomicUsize,
     consumed_buffered_packets_count: AtomicUsize,
-    forwarded_transaction_count: AtomicUsize,
-    forwarded_vote_count: AtomicUsize,
     batch_packet_indexes_len: Histogram,
 
     // Timing
@@ -162,8 +156,6 @@ impl BankingStageStats {
             + self.filter_pending_packets_elapsed.load(Ordering::Relaxed)
             + self.packet_conversion_elapsed.load(Ordering::Relaxed)
             + self.transaction_processing_elapsed.load(Ordering::Relaxed)
-            + self.forwarded_transaction_count.load(Ordering::Relaxed) as u64
-            + self.forwarded_vote_count.load(Ordering::Relaxed) as u64
             + self.batch_packet_indexes_len.entries()
     }
 
@@ -225,16 +217,6 @@ impl BankingStageStats {
                     "consumed_buffered_packets_count",
                     self.consumed_buffered_packets_count
                         .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "forwarded_transaction_count",
-                    self.forwarded_transaction_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "forwarded_vote_count",
-                    self.forwarded_vote_count.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -321,21 +303,6 @@ pub struct BankingStage {
     bank_thread_hdls: Vec<JoinHandle<()>>,
 }
 
-#[derive(Debug, Clone)]
-pub enum ForwardOption {
-    NotForward,
-    ForwardTpuVote,
-    ForwardTransaction,
-}
-
-#[derive(Debug, Default)]
-pub struct FilterForwardingResults {
-    pub(crate) total_forwardable_packets: usize,
-    pub(crate) total_dropped_packets: usize,
-    pub(crate) total_packet_conversion_us: u64,
-    pub(crate) total_filter_packets_us: u64,
-}
-
 pub trait LikeClusterInfo: Send + Sync + 'static + Clone {
     fn id(&self) -> Pubkey;
 
@@ -366,10 +333,8 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
-        enable_forwarding: bool,
     ) -> Self {
         Self::new_num_threads(
             block_production_method,
@@ -383,10 +348,8 @@ impl BankingStage {
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
-            connection_cache,
             bank_forks,
             prioritization_fee_cache,
-            enable_forwarding,
         )
     }
 
@@ -403,10 +366,8 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
-        enable_forwarding: bool,
     ) -> Self {
         match block_production_method {
             BlockProductionMethod::CentralScheduler
@@ -427,10 +388,8 @@ impl BankingStage {
                     transaction_status_sender,
                     replay_vote_sender,
                     log_messages_bytes_limit,
-                    connection_cache,
                     bank_forks,
                     prioritization_fee_cache,
-                    enable_forwarding,
                 )
             }
             BlockProductionMethod::UnifiedScheduler => Self {
@@ -452,16 +411,10 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
-        enable_forwarding: bool,
     ) -> Self {
         assert!(num_threads >= MIN_TOTAL_THREADS);
-        // Single thread to generate entries from many banks.
-        // This thread talks to poh_service and broadcasts the entries once they have been recorded.
-        // Once an entry has been recorded, its blockhash is registered with the bank.
-        let data_budget = Arc::new(DataBudget::default());
         // Keeps track of extraneous vote transactions for the vote threads
         let latest_unprocessed_votes = {
             let bank = bank_forks.read().unwrap().working_bank();
@@ -488,16 +441,10 @@ impl BankingStage {
                 id,
                 packet_receiver,
                 decision_maker.clone(),
+                bank_forks.clone(),
                 committer.clone(),
                 transaction_recorder.clone(),
                 log_messages_bytes_limit,
-                Forwarder::new(
-                    poh_recorder.clone(),
-                    bank_forks.clone(),
-                    cluster_info.clone(),
-                    connection_cache.clone(),
-                    data_budget.clone(),
-                ),
                 UnprocessedTransactionStorage::new_vote_storage(
                     latest_unprocessed_votes.clone(),
                     vote_source,
@@ -505,22 +452,11 @@ impl BankingStage {
             ));
         }
 
-        let transaction_struct =
-            if enable_forwarding && !matches!(transaction_struct, TransactionStructure::Sdk) {
-                warn!(
-                "Forwarding only supported for `Sdk` transaction struct. Overriding to use `Sdk`."
-            );
-                TransactionStructure::Sdk
-            } else {
-                transaction_struct
-            };
-
         match transaction_struct {
             TransactionStructure::Sdk => {
                 let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
                     PacketDeserializer::new(non_vote_receiver),
                     bank_forks.clone(),
-                    enable_forwarding,
                 );
                 Self::spawn_scheduler_and_workers(
                     &mut bank_thread_hdls,
@@ -528,14 +464,10 @@ impl BankingStage {
                     use_greedy_scheduler,
                     decision_maker,
                     committer,
-                    cluster_info,
                     poh_recorder,
                     num_threads,
                     log_messages_bytes_limit,
-                    connection_cache,
                     bank_forks,
-                    enable_forwarding,
-                    data_budget,
                 );
             }
             TransactionStructure::View => {
@@ -549,14 +481,10 @@ impl BankingStage {
                     use_greedy_scheduler,
                     decision_maker,
                     committer,
-                    cluster_info,
                     poh_recorder,
                     num_threads,
                     log_messages_bytes_limit,
-                    connection_cache,
                     bank_forks,
-                    enable_forwarding,
-                    data_budget,
                 );
             }
         }
@@ -571,14 +499,10 @@ impl BankingStage {
         use_greedy_scheduler: bool,
         decision_maker: DecisionMaker,
         committer: Committer,
-        cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         num_threads: u32,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
-        enable_forwarding: bool,
-        data_budget: Arc<DataBudget>,
     ) {
         // Create channels for communication between scheduler and workers
         let num_workers = (num_threads).saturating_sub(NUM_VOTE_PROCESSING_THREADS);
@@ -614,86 +538,62 @@ impl BankingStage {
             )
         }
 
-        let forwarder = enable_forwarding.then(|| {
-            Forwarder::new(
-                poh_recorder.clone(),
-                bank_forks.clone(),
-                cluster_info.clone(),
-                connection_cache.clone(),
-                data_budget.clone(),
-            )
-        });
+        // Macro to spawn the scheduler. Different type on `scheduler` and thus
+        // scheduler_controller mean we cannot have an easy if for `scheduler`
+        // assignment without introducing `dyn`.
+        macro_rules! spawn_scheduler {
+            ($scheduler:ident) => {
+                bank_thread_hdls.push(
+                    Builder::new()
+                        .name("solBnkTxSched".to_string())
+                        .spawn(move || {
+                            let scheduler_controller = SchedulerController::new(
+                                decision_maker.clone(),
+                                receive_and_buffer,
+                                bank_forks,
+                                $scheduler,
+                                worker_metrics,
+                            );
+
+                            match scheduler_controller.run() {
+                                Ok(_) => {}
+                                Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
+                                Err(SchedulerError::DisconnectedSendChannel(_)) => {
+                                    warn!("Unexpected worker disconnect from scheduler")
+                                }
+                            }
+                        })
+                        .unwrap(),
+                );
+            };
+        }
 
         // Spawn the central scheduler thread
         if use_greedy_scheduler {
-            bank_thread_hdls.push(
-                Builder::new()
-                    .name("solBnkTxSched".to_string())
-                    .spawn(move || {
-                        let scheduler = GreedyScheduler::new(
-                            work_senders,
-                            finished_work_receiver,
-                            GreedySchedulerConfig::default(),
-                        );
-                        let scheduler_controller = SchedulerController::new(
-                            decision_maker.clone(),
-                            receive_and_buffer,
-                            bank_forks,
-                            scheduler,
-                            worker_metrics,
-                            forwarder,
-                        );
-
-                        match scheduler_controller.run() {
-                            Ok(_) => {}
-                            Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
-                            Err(SchedulerError::DisconnectedSendChannel(_)) => {
-                                warn!("Unexpected worker disconnect from scheduler")
-                            }
-                        }
-                    })
-                    .unwrap(),
+            let scheduler = GreedyScheduler::new(
+                work_senders,
+                finished_work_receiver,
+                GreedySchedulerConfig::default(),
             );
+            spawn_scheduler!(scheduler);
         } else {
-            bank_thread_hdls.push(
-                Builder::new()
-                    .name("solBnkTxSched".to_string())
-                    .spawn(move || {
-                        let scheduler = PrioGraphScheduler::new(
-                            work_senders,
-                            finished_work_receiver,
-                            PrioGraphSchedulerConfig::default(),
-                        );
-                        let scheduler_controller = SchedulerController::new(
-                            decision_maker.clone(),
-                            receive_and_buffer,
-                            bank_forks,
-                            scheduler,
-                            worker_metrics,
-                            forwarder,
-                        );
-
-                        match scheduler_controller.run() {
-                            Ok(_) => {}
-                            Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
-                            Err(SchedulerError::DisconnectedSendChannel(_)) => {
-                                warn!("Unexpected worker disconnect from scheduler")
-                            }
-                        }
-                    })
-                    .unwrap(),
+            let scheduler = PrioGraphScheduler::new(
+                work_senders,
+                finished_work_receiver,
+                PrioGraphSchedulerConfig::default(),
             );
+            spawn_scheduler!(scheduler);
         }
     }
 
-    fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(
+    fn spawn_thread_local_multi_iterator_thread(
         id: u32,
         packet_receiver: BankingPacketReceiver,
         mut decision_maker: DecisionMaker,
+        bank_forks: Arc<RwLock<BankForks>>,
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
-        mut forwarder: Forwarder<T>,
         unprocessed_transaction_storage: UnprocessedTransactionStorage,
     ) -> JoinHandle<()> {
         let mut packet_receiver = PacketReceiver::new(id, packet_receiver);
@@ -710,7 +610,7 @@ impl BankingStage {
                 Self::process_loop(
                     &mut packet_receiver,
                     &mut decision_maker,
-                    &mut forwarder,
+                    &bank_forks,
                     &consumer,
                     id,
                     unprocessed_transaction_storage,
@@ -720,9 +620,9 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn process_buffered_packets<T: LikeClusterInfo>(
+    fn process_buffered_packets(
         decision_maker: &mut DecisionMaker,
-        forwarder: &mut Forwarder<T>,
+        bank_forks: &RwLock<BankForks>,
         consumer: &Consumer,
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
         banking_stage_stats: &BankingStageStats,
@@ -757,36 +657,26 @@ impl BankingStage {
                     .increment_consume_buffered_packets_us(consume_buffered_packets_us);
             }
             BufferedPacketsDecision::Forward => {
-                let ((), forward_us) = measure_us!(forwarder.handle_forwarding(
-                    unprocessed_transaction_storage,
-                    false,
-                    slot_metrics_tracker,
-                    banking_stage_stats,
-                ));
-                slot_metrics_tracker.increment_forward_us(forward_us);
-                // Take metrics action after forwarding packets to include forwarded
-                // metrics into current slot
-                slot_metrics_tracker.apply_action(metrics_action);
+                // get current working bank from bank_forks, use it to sanitize transaction and
+                // load all accounts from address loader;
+                let current_bank = bank_forks.read().unwrap().working_bank();
+                unprocessed_transaction_storage.cache_epoch_boundary_info(&current_bank);
+                unprocessed_transaction_storage.clear();
             }
             BufferedPacketsDecision::ForwardAndHold => {
-                let ((), forward_and_hold_us) = measure_us!(forwarder.handle_forwarding(
-                    unprocessed_transaction_storage,
-                    true,
-                    slot_metrics_tracker,
-                    banking_stage_stats,
-                ));
-                slot_metrics_tracker.increment_forward_and_hold_us(forward_and_hold_us);
-                // Take metrics action after forwarding packets
-                slot_metrics_tracker.apply_action(metrics_action);
+                // get current working bank from bank_forks, use it to sanitize transaction and
+                // load all accounts from address loader;
+                let current_bank = bank_forks.read().unwrap().working_bank();
+                unprocessed_transaction_storage.cache_epoch_boundary_info(&current_bank);
             }
-            _ => (),
+            BufferedPacketsDecision::Hold => {}
         }
     }
 
-    fn process_loop<T: LikeClusterInfo>(
+    fn process_loop(
         packet_receiver: &mut PacketReceiver,
         decision_maker: &mut DecisionMaker,
-        forwarder: &mut Forwarder<T>,
+        bank_forks: &RwLock<BankForks>,
         consumer: &Consumer,
         id: u32,
         mut unprocessed_transaction_storage: UnprocessedTransactionStorage,
@@ -802,7 +692,7 @@ impl BankingStage {
             {
                 let (_, process_buffered_packets_us) = measure_us!(Self::process_buffered_packets(
                     decision_maker,
-                    forwarder,
+                    bank_forks,
                     consumer,
                     &mut unprocessed_transaction_storage,
                     &banking_stage_stats,
@@ -957,10 +847,8 @@ mod tests {
             None,
             replay_vote_sender,
             None,
-            Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks,
             &Arc::new(PrioritizationFeeCache::new(0u64)),
-            false,
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -1016,10 +904,8 @@ mod tests {
             None,
             replay_vote_sender,
             None,
-            Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks,
             &Arc::new(PrioritizationFeeCache::new(0u64)),
-            false,
         );
         trace!("sending bank");
         drop(non_vote_sender);
@@ -1101,10 +987,8 @@ mod tests {
             None,
             replay_vote_sender,
             None,
-            Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             &Arc::new(PrioritizationFeeCache::new(0u64)),
-            false,
         );
 
         // fund another account so we can send 2 good transactions in a single batch.
@@ -1273,10 +1157,8 @@ mod tests {
                 None,
                 replay_vote_sender,
                 None,
-                Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
-                false,
             );
 
             // wait for banking_stage to eat the packets
@@ -1463,10 +1345,8 @@ mod tests {
             None,
             replay_vote_sender,
             None,
-            Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks,
             &Arc::new(PrioritizationFeeCache::new(0u64)),
-            false,
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

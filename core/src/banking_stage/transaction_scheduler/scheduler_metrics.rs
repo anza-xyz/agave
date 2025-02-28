@@ -59,8 +59,6 @@ pub struct SchedulerCountMetricsInner {
     pub num_finished: usize,
     /// Number of transactions that were retryable.
     pub num_retryable: usize,
-    /// Number of transactions that were scheduled to be forwarded.
-    pub num_forwarded: usize,
 
     /// Number of transactions that were immediately dropped on receive.
     pub num_dropped_on_receive: usize,
@@ -124,7 +122,6 @@ impl SchedulerCountMetricsInner {
             ),
             ("num_finished", self.num_finished, i64),
             ("num_retryable", self.num_retryable, i64),
-            ("num_forwarded", self.num_forwarded, i64),
             ("num_dropped_on_receive", self.num_dropped_on_receive, i64),
             (
                 "num_dropped_on_sanitization",
@@ -165,7 +162,6 @@ impl SchedulerCountMetricsInner {
             || self.num_schedule_filtered_out != 0
             || self.num_finished != 0
             || self.num_retryable != 0
-            || self.num_forwarded != 0
             || self.num_dropped_on_receive != 0
             || self.num_dropped_on_sanitization != 0
             || self.num_dropped_on_validate_locks != 0
@@ -183,7 +179,6 @@ impl SchedulerCountMetricsInner {
         self.num_schedule_filtered_out = 0;
         self.num_finished = 0;
         self.num_retryable = 0;
-        self.num_forwarded = 0;
         self.num_dropped_on_receive = 0;
         self.num_dropped_on_sanitization = 0;
         self.num_dropped_on_validate_locks = 0;
@@ -275,8 +270,6 @@ pub struct SchedulerTimingMetricsInner {
     pub clear_time_us: u64,
     /// Time spent cleaning expired or processed transactions from the container.
     pub clean_time_us: u64,
-    /// Time spent forwarding transactions.
-    pub forward_time_us: u64,
     /// Time spent receiving completed transactions.
     pub receive_completed_time_us: u64,
 }
@@ -318,7 +311,6 @@ impl SchedulerTimingMetricsInner {
             ("schedule_time_us", self.schedule_time_us, i64),
             ("clear_time_us", self.clear_time_us, i64),
             ("clean_time_us", self.clean_time_us, i64),
-            ("forward_time_us", self.forward_time_us, i64),
             (
                 "receive_completed_time_us",
                 self.receive_completed_time_us,
@@ -339,7 +331,6 @@ impl SchedulerTimingMetricsInner {
         self.schedule_time_us = 0;
         self.clear_time_us = 0;
         self.clean_time_us = 0;
-        self.forward_time_us = 0;
         self.receive_completed_time_us = 0;
     }
 }

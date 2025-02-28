@@ -17,22 +17,42 @@ itertools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-entry = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-feature-gate-interface = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-fee-calculator = { workspace = true }
+solana-genesis-config = { workspace = true }
+solana-inflation = { workspace = true }
+solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
+solana-loader-v3-interface = { workspace = true }
 solana-logger = { workspace = true }
+solana-native-token = { workspace = true }
+solana-poh-config = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-signer = { workspace = true }
+solana-stake-interface = { workspace = true }
 solana-stake-program = { workspace = true }
+solana-time-utils = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
+solana-borsh = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 
 [[bin]]

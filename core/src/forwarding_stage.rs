@@ -199,9 +199,10 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
                 .filter(|p| initial_packet_meta_filter(p.meta()))
             {
                 let Some(packet_data) = packet.data(..) else {
-                    // should never occur since we've already checked the
-                    // packet is not marked for discard.
-                    continue;
+                    unreachable!(
+                        "packet.meta().discard() was already checked. \
+                         If not discarded, packet MUST have data"
+                    );
                 };
 
                 let vote_count = usize::from(is_tpu_vote_batch);

@@ -2,7 +2,7 @@ use {
     crate::{admin_rpc_service, cli::DefaultArgs, commands},
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::{is_parsable, is_valid_percentage},
-    std::{path::Path, process::exit},
+    std::path::Path,
 };
 
 pub fn command(default_args: &DefaultArgs) -> App<'_, '_> {
@@ -56,7 +56,7 @@ pub fn command(default_args: &DefaultArgs) -> App<'_, '_> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     let min_idle_time = value_t_or_exit!(matches, "min_idle_time", usize);
     let force = matches.is_present("force");
     let monitor = matches.is_present("monitor");
@@ -73,22 +73,18 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
             skip_new_snapshot_check,
             skip_health_check,
         )
-        .unwrap_or_else(|err| {
-            println!("{err}");
-            exit(1);
-        });
+        .map_err(|err| format!("error waiting for restart window: {err}"))?;
     }
 
     let admin_client = admin_rpc_service::connect(ledger_path);
     admin_rpc_service::runtime()
         .block_on(async move { admin_client.await?.exit().await })
-        .unwrap_or_else(|err| {
-            println!("exit request failed: {err}");
-            exit(1);
-        });
+        .map_err(|err| format!("exit request failed: {err}"))?;
     println!("Exit request sent");
 
     if monitor {
-        commands::monitor::execute(matches, ledger_path);
+        commands::monitor::execute(matches, ledger_path)?;
     }
+
+    Ok(())
 }

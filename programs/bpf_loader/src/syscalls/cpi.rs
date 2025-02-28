@@ -1,11 +1,12 @@
 use {
     super::*,
-    crate::serialization::account_data_region_memory_state,
     scopeguard::defer,
     solana_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix},
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
-    solana_program_runtime::invoke_context::SerializedAccountMetadata,
+    solana_program_runtime::{
+        invoke_context::SerializedAccountMetadata, serialization::account_data_region_memory_state,
+    },
     solana_sbpf::{
         ebpf,
         memory_region::{MemoryRegion, MemoryState},
