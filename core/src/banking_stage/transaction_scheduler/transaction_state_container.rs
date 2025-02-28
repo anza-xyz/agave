@@ -50,6 +50,10 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Create a new `TransactionStateContainer` with the given capacity.
     fn with_capacity(capacity: usize) -> Self;
 
+    fn queue_size(&self) -> usize;
+
+    fn buffer_size(&self) -> usize;
+
     /// Returns true if the queue is empty.
     fn is_empty(&self) -> bool;
 
@@ -107,6 +111,14 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             priority_queue: MinMaxHeap::with_capacity(capacity + EXTRA_CAPACITY),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
         }
+    }
+
+    fn queue_size(&self) -> usize {
+        self.priority_queue.len()
+    }
+
+    fn buffer_size(&self) -> usize {
+        self.id_to_transaction_state.len()
     }
 
     fn is_empty(&self) -> bool {
@@ -260,6 +272,16 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
             inner,
             bytes_buffer,
         }
+    }
+
+    #[inline]
+    fn queue_size(&self) -> usize {
+        self.inner.queue_size()
+    }
+
+    #[inline]
+    fn buffer_size(&self) -> usize {
+        self.inner.buffer_size()
     }
 
     #[inline]

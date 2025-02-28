@@ -110,6 +110,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
+        let starting_queue_size = container.queue_size();
+        let starting_buffer_size = container.buffer_size();
         let num_threads = self.consume_work_senders.len();
         let max_cu_per_thread = self.config.max_scheduled_cus / num_threads as u64;
 
@@ -121,10 +123,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         }
         if schedulable_threads.is_empty() {
             return Ok(SchedulingSummary {
-                num_scheduled: 0,
-                num_unschedulable: 0,
-                num_filtered_out: 0,
-                filter_time_us: 0,
+                starting_queue_size,
+                starting_buffer_size,
+                ..SchedulingSummary::default()
             });
         }
 
@@ -313,6 +314,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         );
 
         Ok(SchedulingSummary {
+            starting_queue_size,
+            starting_buffer_size,
             num_scheduled,
             num_unschedulable,
             num_filtered_out,
