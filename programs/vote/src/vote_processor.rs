@@ -134,9 +134,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if invoke_context
                 .get_feature_set()
                 .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
-                && invoke_context
-                    .get_feature_set()
-                    .is_active(&feature_set::enable_tower_sync_ix::id())
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
@@ -158,9 +155,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if invoke_context
                 .get_feature_set()
                 .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
-                && invoke_context
-                    .get_feature_set()
-                    .is_active(&feature_set::enable_tower_sync_ix::id())
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
@@ -181,9 +175,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if invoke_context
                 .get_feature_set()
                 .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
-                && invoke_context
-                    .get_feature_set()
-                    .is_active(&feature_set::enable_tower_sync_ix::id())
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
@@ -201,12 +192,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::TowerSync(tower_sync)
         | VoteInstruction::TowerSyncSwitch(tower_sync, _) => {
-            if !invoke_context
-                .get_feature_set()
-                .is_active(&feature_set::enable_tower_sync_ix::id())
-            {
-                return Err(InstructionError::InvalidInstructionData);
-            }
             let sysvar_cache = invoke_context.get_sysvar_cache();
             let slot_hashes = sysvar_cache.get_slot_hashes()?;
             let clock = sysvar_cache.get_clock()?;
