@@ -37,8 +37,8 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
-    solana_vote::vote_transaction::VoteTransaction,
-    solana_vote_program::{vote_state::TowerSync, vote_transaction},
+    solana_vote::vote_transaction::{self, VoteTransaction},
+    solana_vote_program::vote_state::TowerSync,
     std::{
         collections::{HashMap, HashSet, VecDeque},
         net::{SocketAddr, TcpListener},

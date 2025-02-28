@@ -27,6 +27,7 @@ solana-runtime = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-timings = { workspace = true }
+solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 
 [dev-dependencies]
@@ -40,7 +41,6 @@ solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
-solana-vote = { workspace = true }
 tempfile = { workspace = true }
 
 [build-dependencies]

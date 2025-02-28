@@ -231,12 +231,15 @@ impl Bank {
 mod tests {
     use {
         super::*,
-        crate::bank::{
-            partitioned_epoch_rewards::{
-                epoch_rewards_hasher::hash_rewards_into_partitions, tests::convert_rewards,
-                REWARD_CALCULATION_NUM_BLOCKS,
+        crate::{
+            bank::{
+                partitioned_epoch_rewards::{
+                    epoch_rewards_hasher::hash_rewards_into_partitions, tests::convert_rewards,
+                    REWARD_CALCULATION_NUM_BLOCKS,
+                },
+                tests::create_genesis_config,
             },
-            tests::create_genesis_config,
+            inflation_rewards::points::PointValue,
         },
         rand::Rng,
         solana_accounts_db::stake_rewards::StakeReward,
@@ -254,7 +257,7 @@ mod tests {
             },
             sysvar,
         },
-        solana_stake_program::{points::PointValue, stake_state},
+        solana_stake_program::stake_state,
         solana_vote_program::vote_state,
     };
 

@@ -51,6 +51,7 @@ use {
             Bank, RewardCalculationEvent,
         },
         bank_forks::BankForks,
+        inflation_rewards::points::{InflationPointCalculationEvent, PointValue},
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
         snapshot_minimizer::SnapshotMinimizer,
@@ -76,7 +77,7 @@ use {
         system_program,
         transaction::{MessageHash, SimpleAddressLoader},
     },
-    solana_stake_program::{points::PointValue, stake_state},
+    solana_stake_program::stake_state,
     solana_transaction_status::parse_ui_instruction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::{
@@ -2765,7 +2766,6 @@ fn main() {
                             new_credits_observed: Option<u64>,
                             skipped_reasons: String,
                         }
-                        use solana_stake_program::points::InflationPointCalculationEvent;
                         let stake_calculation_details: DashMap<Pubkey, CalculationDetail> =
                             DashMap::new();
                         let last_point_value = Arc::new(RwLock::new(None));

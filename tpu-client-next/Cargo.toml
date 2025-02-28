@@ -17,7 +17,6 @@ rustls = { workspace = true }
 solana-clock = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-quic-definitions = { workspace = true }
 solana-rpc-client = { workspace = true }

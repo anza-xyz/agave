@@ -8,7 +8,8 @@ use {
     solana_signer::Signer,
     solana_system_interface::instruction::SystemInstruction,
     solana_transaction::Transaction,
-    solana_vote_program::{vote_state::TowerSync, vote_transaction},
+    solana_vote::vote_transaction,
+    solana_vote_program::vote_state::TowerSync,
 };
 
 pub fn test_tx() -> Transaction {

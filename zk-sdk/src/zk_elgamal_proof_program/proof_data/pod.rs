@@ -19,3 +19,24 @@ impl TryFrom<PodProofType> for ProofType {
         FromPrimitive::from_u8(pod.0).ok_or(Self::Error::InvalidProofType)
     }
 }
+
+macro_rules! impl_wasm_to_bytes {
+    (TYPE = $type:ident) => {
+        #[cfg(not(target_os = "solana"))]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+        impl $type {
+            #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
+            pub fn to_bytes(&self) -> Box<[u8]> {
+                bytes_of(self).into()
+            }
+
+            #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromBytes))]
+            pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProofDataError> {
+                bytemuck::try_from_bytes(bytes)
+                    .copied()
+                    .map_err(|_| ProofDataError::Deserialization)
+            }
+        }
+    };
+}
+pub(crate) use impl_wasm_to_bytes;

@@ -874,24 +874,20 @@ pub fn withdraw(
         return Err(StakeError::LockupInForce.into());
     }
 
-    let lamports_and_reserve = checked_add(lamports, reserve)?;
-    // if the stake is active, we mustn't allow the account to go away
-    if is_staked // line coverage for branch coverage
-            && lamports_and_reserve > stake_account.get_lamports()
-    {
-        return Err(InstructionError::InsufficientFunds);
-    }
-
-    if lamports != stake_account.get_lamports() // not a full withdrawal
-            && lamports_and_reserve > stake_account.get_lamports()
-    {
-        assert!(!is_staked);
-        return Err(InstructionError::InsufficientFunds);
-    }
-
-    // Deinitialize state upon zero balance
     if lamports == stake_account.get_lamports() {
+        // if the stake is active, we mustn't allow the account to go away
+        if is_staked {
+            return Err(InstructionError::InsufficientFunds);
+        }
+
+        // Deinitialize state upon zero balance
         stake_account.set_state(&StakeStateV2::Uninitialized)?;
+    } else {
+        // Don't allow withdrawing the reserved rent balance or active stake
+        let lamports_and_reserve = checked_add(lamports, reserve)?;
+        if lamports_and_reserve > stake_account.get_lamports() {
+            return Err(InstructionError::InsufficientFunds);
+        }
     }
 
     stake_account.checked_sub_lamports(lamports)?;

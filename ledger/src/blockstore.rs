@@ -1010,10 +1010,14 @@ impl Blockstore {
                 // are not stored in blockstore.
                 match shred.shred_type() {
                     ShredType::Code => {
+                        // Don't need Arc overhead here!
+                        debug_assert_matches!(shred.payload(), shred::Payload::Unique(_));
                         recovered_shreds.push(shred.into_payload());
                         None
                     }
                     ShredType::Data => {
+                        // Verify that the cloning is cheap here.
+                        debug_assert_matches!(shred.payload(), shred::Payload::Shared(_));
                         recovered_shreds.push(shred.payload().clone());
                         Some(shred)
                     }
@@ -2595,7 +2599,7 @@ impl Blockstore {
         Err(BlockstoreError::SlotNotRooted)
     }
 
-    pub fn cache_block_time(&self, slot: Slot, timestamp: UnixTimestamp) -> Result<()> {
+    pub fn set_block_time(&self, slot: Slot, timestamp: UnixTimestamp) -> Result<()> {
         self.blocktime_cf.put(slot, &timestamp)
     }
 
@@ -2608,7 +2612,7 @@ impl Blockstore {
         self.block_height_cf.get(slot)
     }
 
-    pub fn cache_block_height(&self, slot: Slot, block_height: u64) -> Result<()> {
+    pub fn set_block_height(&self, slot: Slot, block_height: u64) -> Result<()> {
         self.block_height_cf.put(slot, &block_height)
     }
 

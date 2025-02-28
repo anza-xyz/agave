@@ -1814,30 +1814,6 @@ impl JsonRpcRequestProcessor {
         Ok(None)
     }
 
-    pub fn get_confirmed_signatures_for_address(
-        &self,
-        pubkey: Pubkey,
-        start_slot: Slot,
-        end_slot: Slot,
-    ) -> Vec<Signature> {
-        if self.config.enable_rpc_transaction_history {
-            // TODO: Add bigtable_ledger_storage support as a part of
-            // https://github.com/solana-labs/solana/pull/10928
-            let end_slot = min(
-                end_slot,
-                self.block_commitment_cache
-                    .read()
-                    .unwrap()
-                    .highest_super_majority_root(),
-            );
-            self.blockstore
-                .get_confirmed_signatures_for_address(pubkey, start_slot, end_slot)
-                .unwrap_or_default()
-        } else {
-            vec![]
-        }
-    }
-
     pub async fn get_signatures_for_address(
         &self,
         address: Pubkey,
@@ -4903,7 +4879,7 @@ pub mod tests {
                     .unwrap()
                     .clock()
                     .unix_timestamp;
-                self.blockstore.cache_block_time(*root, block_time).unwrap();
+                self.blockstore.set_block_time(*root, block_time).unwrap();
             }
         }
 

@@ -40,6 +40,15 @@ struct AccountLocks {
     pub read_locks: Option<AccountReadLocks>,
 }
 
+/// `try_lock_accounts` may fail for different reasons:
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum TryLockError {
+    /// Outstanding conflicts with multiple threads.
+    MultipleConflicts,
+    /// Outstanding conflict (if any) not in `allowed_threads`.
+    ThreadNotAllowed,
+}
+
 /// Thread-aware account locks which allows for scheduling on threads
 /// that already hold locks on the account. This is useful for allowing
 /// queued transactions to be scheduled on a thread while the transaction
@@ -80,16 +89,18 @@ impl ThreadAwareAccountLocks {
         read_account_locks: impl Iterator<Item = &'a Pubkey> + Clone,
         allowed_threads: ThreadSet,
         thread_selector: impl FnOnce(ThreadSet) -> ThreadId,
-    ) -> Option<ThreadId> {
-        let schedulable_threads = self.accounts_schedulable_threads(
-            write_account_locks.clone(),
-            read_account_locks.clone(),
-        )? & allowed_threads;
-        (!schedulable_threads.is_empty()).then(|| {
-            let thread_id = thread_selector(schedulable_threads);
-            self.lock_accounts(write_account_locks, read_account_locks, thread_id);
-            thread_id
-        })
+    ) -> Result<ThreadId, TryLockError> {
+        let schedulable_threads = self
+            .accounts_schedulable_threads(write_account_locks.clone(), read_account_locks.clone())
+            .ok_or(TryLockError::MultipleConflicts)?;
+        let schedulable_threads = schedulable_threads & allowed_threads;
+        if schedulable_threads.is_empty() {
+            return Err(TryLockError::ThreadNotAllowed);
+        }
+
+        let thread_id = thread_selector(schedulable_threads);
+        self.lock_accounts(write_account_locks, read_account_locks, thread_id);
+        Ok(thread_id)
     }
 
     /// Unlocks the accounts for the given thread.
@@ -492,7 +503,7 @@ mod tests {
                 TEST_ANY_THREADS,
                 test_thread_selector
             ),
-            None
+            Err(TryLockError::MultipleConflicts)
         );
     }
 
@@ -510,7 +521,25 @@ mod tests {
                 TEST_ANY_THREADS,
                 test_thread_selector
             ),
-            Some(3)
+            Ok(3)
+        );
+    }
+
+    #[test]
+    fn test_try_lock_accounts_one_not_allowed() {
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
+        let mut locks = ThreadAwareAccountLocks::new(TEST_NUM_THREADS);
+        locks.write_lock_account(&pk2, 3);
+
+        assert_eq!(
+            locks.try_lock_accounts(
+                [&pk1].into_iter(),
+                [&pk2].into_iter(),
+                ThreadSet::none(),
+                test_thread_selector
+            ),
+            Err(TryLockError::ThreadNotAllowed)
         );
     }
 
@@ -529,7 +558,7 @@ mod tests {
                 TEST_ANY_THREADS - ThreadSet::only(0), // exclude 0
                 test_thread_selector
             ),
-            Some(1)
+            Ok(1)
         );
     }
 
@@ -545,7 +574,7 @@ mod tests {
                 TEST_ANY_THREADS,
                 test_thread_selector
             ),
-            Some(0)
+            Ok(0)
         );
     }
 

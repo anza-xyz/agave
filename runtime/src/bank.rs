@@ -42,6 +42,7 @@ use {
         },
         bank_forks::BankForks,
         epoch_stakes::{split_epoch_stakes, EpochStakes, NodeVoteAccounts, VersionedEpochStakes},
+        inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         rent_collector::RentCollectorWithMetrics,
         runtime_config::RuntimeConfig,
@@ -151,7 +152,6 @@ use {
         },
         transaction_context::{TransactionAccount, TransactionReturnData},
     },
-    solana_stake_program::points::InflationPointCalculationEvent,
     solana_svm::{
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
@@ -2546,14 +2546,19 @@ impl Bank {
     /// recalcuates the bank hash.
     ///
     /// Note that the account state is *not* allowed to change by rehashing.
-    /// If it does, this function will panic.
     /// If modifying accounts in ledger-tool is needed, create a new bank.
     pub fn rehash(&self) {
         let get_delta_hash = || {
-            self.rc
-                .accounts
-                .accounts_db
-                .get_accounts_delta_hash(self.slot())
+            (!self
+                .feature_set
+                .is_active(&feature_set::remove_accounts_delta_hash::id()))
+            .then(|| {
+                self.rc
+                    .accounts
+                    .accounts_db
+                    .get_accounts_delta_hash(self.slot())
+            })
+            .flatten()
         };
 
         let mut hash = self.hash.write().unwrap();
@@ -5220,25 +5225,38 @@ impl Bank {
     ///  of the delta of the ledger since the last vote and up to now
     fn hash_internal_state(&self) -> Hash {
         let measure_total = Measure::start("");
-
         let slot = self.slot();
-        let (accounts_delta_hash, accounts_delta_hash_us) = measure_us!({
-            self.rc
-                .accounts
-                .accounts_db
-                .calculate_accounts_delta_hash_internal(
-                    slot,
-                    None,
-                    self.skipped_rewrites.lock().unwrap().clone(),
-                )
+
+        let delta_hash_info = (!self
+            .feature_set
+            .is_active(&feature_set::remove_accounts_delta_hash::id()))
+        .then(|| {
+            measure_us!({
+                self.rc
+                    .accounts
+                    .accounts_db
+                    .calculate_accounts_delta_hash_internal(
+                        slot,
+                        None,
+                        self.skipped_rewrites.lock().unwrap().clone(),
+                    )
+            })
         });
 
-        let mut hash = hashv(&[
-            self.parent_hash.as_ref(),
-            accounts_delta_hash.0.as_ref(),
-            &self.signature_count().to_le_bytes(),
-            self.last_blockhash().as_ref(),
-        ]);
+        let mut hash = if let Some((accounts_delta_hash, _measure)) = delta_hash_info.as_ref() {
+            hashv(&[
+                self.parent_hash.as_ref(),
+                accounts_delta_hash.0.as_ref(),
+                &self.signature_count().to_le_bytes(),
+                self.last_blockhash().as_ref(),
+            ])
+        } else {
+            hashv(&[
+                self.parent_hash.as_ref(),
+                &self.signature_count().to_le_bytes(),
+                self.last_blockhash().as_ref(),
+            ])
+        };
 
         let accounts_hash_info = if self
             .feature_set
@@ -5294,15 +5312,19 @@ impl Bank {
         let bank_hash_stats = self.bank_hash_stats.load();
 
         let total_us = measure_total.end_as_us();
+
+        let (accounts_delta_hash_us, accounts_delta_hash_log) = delta_hash_info
+            .map(|(hash, us)| (us, format!(" accounts_delta: {}", hash.0)))
+            .unzip();
         datapoint_info!(
             "bank-hash_internal_state",
             ("slot", slot, i64),
             ("total_us", total_us, i64),
-            ("accounts_delta_hash_us", accounts_delta_hash_us, i64),
+            ("accounts_delta_hash_us", accounts_delta_hash_us, Option<i64>),
         );
         info!(
-            "bank frozen: {slot} hash: {hash} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}{}, stats: {bank_hash_stats:?}",
-            accounts_delta_hash.0,
+            "bank frozen: {slot} hash: {hash}{} signature_count: {} last_blockhash: {} capitalization: {}{}, stats: {bank_hash_stats:?}",
+            accounts_delta_hash_log.unwrap_or_default(),
             self.signature_count(),
             self.last_blockhash(),
             self.capitalization(),

@@ -5,7 +5,10 @@ mod sysvar;
 
 use {
     super::Bank,
-    crate::{stake_account::StakeAccount, stake_history::StakeHistory},
+    crate::{
+        inflation_rewards::points::PointValue, stake_account::StakeAccount,
+        stake_history::StakeHistory,
+    },
     solana_accounts_db::{
         partitioned_rewards::PartitionedEpochRewardsConfig, stake_rewards::StakeReward,
     },
@@ -15,7 +18,6 @@ use {
         reward_info::RewardInfo,
         stake::state::{Delegation, Stake},
     },
-    solana_stake_program::points::PointValue,
     solana_vote::vote_account::VoteAccounts,
     std::sync::Arc,
 };
@@ -252,10 +254,8 @@ mod tests {
             transaction::Transaction,
             vote::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
         },
-        solana_vote_program::{
-            vote_state::{self, TowerSync},
-            vote_transaction,
-        },
+        solana_vote::vote_transaction,
+        solana_vote_program::vote_state::{self, TowerSync},
     };
 
     impl PartitionedStakeReward {

@@ -13,7 +13,7 @@ mod serde_snapshot_tests {
         log::info,
         rand::{thread_rng, Rng},
         solana_accounts_db::{
-            account_storage::{AccountStorageMap, AccountStorageReference},
+            account_storage::AccountStorageMap,
             accounts::Accounts,
             accounts_db::{
                 get_temp_accounts_paths, test_utils::create_test_accounts, AccountStorageEntry,
@@ -23,6 +23,7 @@ mod serde_snapshot_tests {
             accounts_hash::AccountsHash,
             ancestors::Ancestors,
         },
+        solana_nohash_hasher::BuildNoHashHasher,
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount},
             clock::Slot,
@@ -133,7 +134,10 @@ mod serde_snapshot_tests {
         storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
-        let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
+        let storage: AccountStorageMap = AccountStorageMap::with_capacity_and_hasher(
+            storage_entries.len(),
+            BuildNoHashHasher::default(),
+        );
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
             // Copy file to new directory
@@ -155,13 +159,7 @@ mod serde_snapshot_tests {
                 num_accounts,
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
-            storage.insert(
-                new_storage_entry.slot(),
-                AccountStorageReference {
-                    id: new_storage_entry.id(),
-                    storage: Arc::new(new_storage_entry),
-                },
-            );
+            storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));
         }
 
         Ok(StorageAndNextAccountsFileId {

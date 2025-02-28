@@ -819,7 +819,7 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3300), config).unwrap();
 
         let _runtime = ip_echo_server(
             server_tcp_listener,
@@ -843,9 +843,9 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3300), config).unwrap();
         let (_client_port, (client_udp_socket, client_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3300), config).unwrap();
 
         let _runtime = ip_echo_server(
             server_tcp_listener,
@@ -873,19 +873,18 @@ mod tests {
     }
 
     #[test]
-    fn test_get_public_ip_addr_tcp_unreachable() {
+    fn test_verify_ports_tcp_unreachable() {
         solana_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, _server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3300), config).unwrap();
 
         // make the socket unreachable by not running the ip echo server!
-
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
 
         let (_, (_client_udp_socket, client_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3300), config).unwrap();
 
         let rt = runtime();
         assert!(!rt.block_on(ip_echo_client::verify_all_reachable_tcp(
@@ -896,19 +895,18 @@ mod tests {
     }
 
     #[test]
-    fn test_get_public_ip_addr_udp_unreachable() {
+    fn test_verify_ports_udp_unreachable() {
         solana_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, _server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3300), config).unwrap();
 
         // make the socket unreachable by not running the ip echo server!
-
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
 
         let (_correct_client_port, (client_udp_socket, _client_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3300), config).unwrap();
 
         let rt = runtime();
         assert!(!rt.block_on(ip_echo_client::verify_all_reachable_udp(
@@ -928,12 +926,12 @@ mod tests {
         let mut udp_sockets = vec![];
 
         let (_server_port, (_, server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3300), config).unwrap();
         for _ in 0..MAX_PORT_VERIFY_THREADS * 2 {
             let (_client_port, (client_udp_socket, client_tcp_listener)) =
                 bind_common_in_range_with_config(
                     ip_addr,
-                    (3200, 3200 + (MAX_PORT_VERIFY_THREADS * 3) as u16),
+                    (3300, 3300 + (MAX_PORT_VERIFY_THREADS * 3) as u16),
                     config,
                 )
                 .unwrap();

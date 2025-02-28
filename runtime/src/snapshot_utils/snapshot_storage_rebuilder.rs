@@ -15,10 +15,11 @@ use {
     },
     regex::Regex,
     solana_accounts_db::{
-        account_storage::{AccountStorageMap, AccountStorageReference},
-        accounts_db::{AccountStorageEntry, AccountsFileId, AtomicAccountsFileId},
+        account_storage::AccountStorageMap,
+        accounts_db::{AccountsFileId, AtomicAccountsFileId},
         accounts_file::StorageAccess,
     },
+    solana_nohash_hasher::BuildNoHashHasher,
     solana_sdk::clock::Slot,
     std::{
         collections::HashMap,
@@ -118,7 +119,10 @@ impl SnapshotStorageRebuilder {
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
     ) -> Self {
-        let storage = DashMap::with_capacity(snapshot_storage_lengths.len());
+        let storage = DashMap::with_capacity_and_hasher(
+            snapshot_storage_lengths.len(),
+            BuildNoHashHasher::default(),
+        );
         let storage_paths: DashMap<_, _> = snapshot_storage_lengths
             .iter()
             .map(|(slot, storage_lengths)| {
@@ -338,10 +342,9 @@ impl SnapshotStorageRebuilder {
                     )?,
                 };
 
-                Ok((storage_entry.id(), storage_entry))
+                Ok(storage_entry)
             })
-            .collect::<Result<HashMap<AccountsFileId, Arc<AccountStorageEntry>>, SnapshotError>>(
-            )?;
+            .collect::<Result<Vec<_>, SnapshotError>>()?;
 
         if slot_stores.len() != 1 {
             return Err(SnapshotError::RebuildStorages(format!(
@@ -351,10 +354,9 @@ impl SnapshotStorageRebuilder {
         }
         // SAFETY: The check above guarantees there is one item in slot_stores,
         // so `.next()` will always return `Some`
-        let (id, storage) = slot_stores.into_iter().next().unwrap();
+        let storage = slot_stores.into_iter().next().unwrap();
 
-        self.storage
-            .insert(slot, AccountStorageReference { id, storage });
+        self.storage.insert(slot, storage);
         Ok(())
     }
 

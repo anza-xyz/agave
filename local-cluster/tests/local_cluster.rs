@@ -83,8 +83,8 @@ use {
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, ClusterPartition},
         BroadcastStageType,
     },
-    solana_vote::vote_parser,
-    solana_vote_program::{vote_state::MAX_LOCKOUT_HISTORY, vote_transaction},
+    solana_vote::{vote_parser, vote_transaction},
+    solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
         collections::{BTreeSet, HashMap, HashSet},
         fs,

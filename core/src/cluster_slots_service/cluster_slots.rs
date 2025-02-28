@@ -68,13 +68,12 @@ impl ClusterSlots {
                     .saturating_mul(2),
             );
         let slot_nodes_stakes = epoch_slots_list
-            .into_iter()
+            .iter()
             .flat_map(|(epoch_slots, stake)| {
                 epoch_slots
                     .to_slots(root)
-                    .into_iter()
                     .filter(|slot| slot_range.contains(slot))
-                    .zip(std::iter::repeat((epoch_slots.from, stake)))
+                    .zip(std::iter::repeat((epoch_slots.from, *stake)))
             })
             .into_group_map();
         let slot_nodes_stakes: Vec<_> = {

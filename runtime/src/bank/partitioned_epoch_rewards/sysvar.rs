@@ -1,11 +1,11 @@
 use {
     super::Bank,
+    crate::inflation_rewards::points::PointValue,
     log::info,
     solana_sdk::{
         account::{create_account_shared_data_with_fields as create_account, from_account},
         sysvar,
     },
-    solana_stake_program::points::PointValue,
 };
 
 impl Bank {

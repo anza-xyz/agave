@@ -11,6 +11,7 @@ use {
         sync::{Arc, RwLock},
         thread, Runner,
     },
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_program_runtime::loaded_programs::ProgramCacheEntryType,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -239,8 +240,11 @@ fn svm_concurrent() {
             let local_bank = mock_bank.clone();
             let th_txs = std::mem::take(&mut transactions[idx]);
             let check_results = vec![
-                Ok(CheckedTransactionDetails::new(None, 20))
-                    as TransactionCheckResult;
+                Ok(CheckedTransactionDetails::new(
+                    None,
+                    20,
+                    Ok(ComputeBudgetLimits::default())
+                )) as TransactionCheckResult;
                 TRANSACTIONS_PER_THREAD
             ];
             let processing_config = TransactionProcessingConfig {

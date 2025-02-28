@@ -26,6 +26,7 @@ use {
     solana_streamer::socket::SocketAddrSpace,
     std::{
         any::TypeId,
+        cell::RefCell,
         cmp::Ordering,
         collections::{HashMap, HashSet},
         iter::repeat_with,
@@ -36,6 +37,12 @@ use {
     },
     thiserror::Error,
 };
+
+thread_local! {
+    static THREAD_LOCAL_WEIGHTED_SHUFFLE: RefCell<WeightedShuffle<u64>> = RefCell::new(
+        WeightedShuffle::new::<[u64; 0]>("get_retransmit_addrs", []),
+    );
+}
 
 const DATA_PLANE_FANOUT: usize = 200;
 pub(crate) const MAX_NUM_TURBINE_HOPS: usize = 4;
@@ -220,7 +227,6 @@ impl ClusterNodes<RetransmitStage> {
         fanout: usize,
         socket_addr_space: &SocketAddrSpace,
     ) -> Result<(/*root_distance:*/ usize, Vec<SocketAddr>), Error> {
-        let mut weighted_shuffle = self.weighted_shuffle.clone();
         // Exclude slot leader from list of nodes.
         if slot_leader == &self.pubkey {
             return Err(Error::Loopback {
@@ -228,22 +234,25 @@ impl ClusterNodes<RetransmitStage> {
                 shred: *shred,
             });
         }
-        if let Some(index) = self.index.get(slot_leader) {
-            weighted_shuffle.remove_index(*index);
-        }
-        let mut rng = get_seeded_rng(slot_leader, shred);
-        let (index, peers) = get_retransmit_peers(
-            fanout,
-            |k| self.nodes[k].pubkey() == &self.pubkey,
-            weighted_shuffle.shuffle(&mut rng),
-        );
-        let protocol = get_broadcast_protocol(shred);
-        let peers = peers
-            .filter_map(|k| self.nodes[k].contact_info()?.tvu(protocol))
-            .filter(|addr| socket_addr_space.check(addr))
-            .collect();
-        let root_distance = get_root_distance(index, fanout);
-        Ok((root_distance, peers))
+        THREAD_LOCAL_WEIGHTED_SHUFFLE.with_borrow_mut(|weighted_shuffle| {
+            weighted_shuffle.clone_from(&self.weighted_shuffle);
+            if let Some(index) = self.index.get(slot_leader) {
+                weighted_shuffle.remove_index(*index);
+            }
+            let mut rng = get_seeded_rng(slot_leader, shred);
+            let (index, peers) = get_retransmit_peers(
+                fanout,
+                |k| self.nodes[k].pubkey() == &self.pubkey,
+                weighted_shuffle.shuffle(&mut rng),
+            );
+            let protocol = get_broadcast_protocol(shred);
+            let peers = peers
+                .filter_map(|k| self.nodes[k].contact_info()?.tvu(protocol))
+                .filter(|addr| socket_addr_space.check(addr))
+                .collect();
+            let root_distance = get_root_distance(index, fanout);
+            Ok((root_distance, peers))
+        })
     }
 
     // Returns the parent node in the turbine broadcast tree.

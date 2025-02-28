@@ -72,7 +72,8 @@ impl VoteClient {
     }
 
     fn send_batch(&self, batch: &mut Vec<(Vec<u8>, SocketAddr)>) {
-        let _res = batch_send(&self.udp_socket, batch);
+        let pkts = batch.iter().map(|(bytes, addr)| (bytes, addr));
+        let _res = batch_send(&self.udp_socket, pkts);
         batch.clear();
     }
 }
@@ -292,11 +293,13 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
             if packet.meta().is_simple_vote_tx() {
                 vote_batch.push((packet_data_vec, tpu_vote));
                 if vote_batch.len() == vote_batch.capacity() {
+                    self.metrics.votes_forwarded += vote_batch.len();
                     self.vote_client.send_batch(&mut vote_batch);
                 }
             } else {
                 non_vote_batch.push(packet_data_vec);
                 if non_vote_batch.len() == non_vote_batch.capacity() {
+                    self.metrics.non_votes_forwarded += non_vote_batch.len();
                     self.send_non_vote_batch(tpu, &mut non_vote_batch);
                 }
             }

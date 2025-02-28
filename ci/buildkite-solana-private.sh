@@ -109,7 +109,7 @@ command_step() {
     timeout_in_minutes: $3
     artifact_paths: "log-*.txt"
     agents:
-      queue: "sol-private"
+      queue: "default"
 EOF
 }
 
@@ -138,7 +138,7 @@ all_test_steps() {
   wait_step
 
   # Full test suite
-  .buildkite/scripts/build-stable.sh sol-private >> "$output_file"
+  .buildkite/scripts/build-stable.sh default >> "$output_file"
 
   # Docs tests
   if affects \
@@ -173,7 +173,7 @@ all_test_steps() {
     timeout_in_minutes: 35
     artifact_paths: "sbf-dumps.tar.bz2"
     agents:
-      queue: "sol-private"
+      queue: "default"
 EOF
   else
     annotate --style info \
@@ -196,7 +196,7 @@ EOF
              ^ci/downstream-projects \
              .buildkite/scripts/build-downstream-projects.sh \
       ; then
-    .buildkite/scripts/build-downstream-projects.sh sol-private >> "$output_file"
+    .buildkite/scripts/build-downstream-projects.sh default >> "$output_file"
   else
     annotate --style info \
       "downstream-projects skipped as no relevant files were modified"

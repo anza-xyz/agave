@@ -35,7 +35,6 @@ criterion = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-hash = { workspace = true }
-solana-logger = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk = { workspace = true }

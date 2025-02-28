@@ -6,7 +6,7 @@ use {
         },
         scheduler::{Scheduler, SchedulingSummary},
         scheduler_error::SchedulerError,
-        thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet},
+        thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
         transaction_priority_id::TransactionPriorityId,
         transaction_state::{SanitizedTransactionTTL, TransactionState},
         transaction_state_container::StateContainer,
@@ -152,7 +152,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                     num_filtered_out += 1;
                     container.remove_by_id(id.id);
                 }
-                Err(TransactionSchedulingError::UnschedulableConflicts) => {
+                Err(TransactionSchedulingError::UnschedulableConflicts)
+                | Err(TransactionSchedulingError::UnschedulableThread) => {
                     num_unschedulable += 1;
                     self.unschedulables.push(id);
                 }
@@ -370,13 +371,19 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
         .enumerate()
         .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key));
 
-    let Some(thread_id) = account_locks.try_lock_accounts(
+    let thread_id = match account_locks.try_lock_accounts(
         write_account_locks,
         read_account_locks,
         schedulable_threads,
         thread_selector,
-    ) else {
-        return Err(TransactionSchedulingError::UnschedulableConflicts);
+    ) {
+        Ok(thread_id) => thread_id,
+        Err(TryLockError::MultipleConflicts) => {
+            return Err(TransactionSchedulingError::UnschedulableConflicts);
+        }
+        Err(TryLockError::ThreadNotAllowed) => {
+            return Err(TransactionSchedulingError::UnschedulableThread);
+        }
     };
 
     let sanitized_transaction_ttl = transaction_state.transition_to_pending();

@@ -1005,9 +1005,8 @@ mod tests {
             system_transaction,
             transaction::Transaction,
         },
-        solana_vote_program::{
-            vote_state::TowerSync, vote_transaction::new_tower_sync_transaction,
-        },
+        solana_vote::vote_transaction::new_tower_sync_transaction,
+        solana_vote_program::vote_state::TowerSync,
         std::error::Error,
     };
 

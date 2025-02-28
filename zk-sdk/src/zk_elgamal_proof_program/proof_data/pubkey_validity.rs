@@ -12,7 +12,10 @@ use {
     crate::{
         encryption::elgamal::ElGamalKeypair,
         sigma_proofs::pubkey_validity::PubkeyValidityProof,
-        zk_elgamal_proof_program::errors::{ProofGenerationError, ProofVerificationError},
+        zk_elgamal_proof_program::{
+            errors::{ProofGenerationError, ProofVerificationError},
+            proof_data::errors::ProofDataError,
+        },
     },
     bytemuck::bytes_of,
     merlin::Transcript,
@@ -22,7 +25,7 @@ use {
     crate::{
         encryption::pod::elgamal::PodElGamalPubkey,
         sigma_proofs::pod::PodPubkeyValidityProof,
-        zk_elgamal_proof_program::proof_data::{ProofType, ZkProofData},
+        zk_elgamal_proof_program::proof_data::{pod::impl_wasm_to_bytes, ProofType, ZkProofData},
     },
     bytemuck_derive::{Pod, Zeroable},
 };
@@ -65,12 +68,9 @@ impl PubkeyValidityProofData {
 
         Ok(PubkeyValidityProofData { context, proof })
     }
-
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
-    pub fn to_bytes(&self) -> Box<[u8]> {
-        bytes_of(self).into()
-    }
 }
+
+impl_wasm_to_bytes!(TYPE = PubkeyValidityProofData);
 
 impl ZkProofData<PubkeyValidityProofContext> for PubkeyValidityProofData {
     const PROOF_TYPE: ProofType = ProofType::PubkeyValidity;
@@ -97,6 +97,8 @@ impl PubkeyValidityProofContext {
         transcript
     }
 }
+
+impl_wasm_to_bytes!(TYPE = PubkeyValidityProofContext);
 
 #[cfg(test)]
 mod test {

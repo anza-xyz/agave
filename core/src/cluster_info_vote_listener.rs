@@ -749,10 +749,8 @@ mod tests {
             pubkey::Pubkey,
             signature::{Keypair, Signature, Signer},
         },
-        solana_vote_program::{
-            vote_state::{TowerSync, Vote, MAX_LOCKOUT_HISTORY},
-            vote_transaction,
-        },
+        solana_vote::vote_transaction,
+        solana_vote_program::vote_state::{TowerSync, Vote, MAX_LOCKOUT_HISTORY},
         std::{
             collections::BTreeSet,
             iter::repeat_with,

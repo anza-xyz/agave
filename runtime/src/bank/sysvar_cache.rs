@@ -5,11 +5,11 @@ use super::Bank;
 mod tests {
     use {
         super::*,
+        crate::inflation_rewards::points::PointValue,
         solana_sdk::{
             genesis_config::create_genesis_config, pubkey::Pubkey,
             sysvar::epoch_rewards::EpochRewards,
         },
-        solana_stake_program::points::PointValue,
         std::sync::Arc,
     };
 

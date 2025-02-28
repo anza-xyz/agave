@@ -11,6 +11,10 @@ use {
             PrevEpochInflationRewards, RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
             VoteAccount, VoteReward, VoteRewards,
         },
+        inflation_rewards::{
+            points::{calculate_points, PointValue},
+            redeem_rewards,
+        },
         stake_account::StakeAccount,
         stakes::Stakes,
     },
@@ -31,7 +35,6 @@ use {
         stake::state::{Delegation, StakeStateV2},
         sysvar::epoch_rewards::EpochRewards,
     },
-    solana_stake_program::points::PointValue,
     std::sync::atomic::{AtomicU64, Ordering::Relaxed},
 };
 
@@ -378,7 +381,7 @@ impl Bank {
 
                     let pre_lamport = stake_account.lamports();
 
-                    let redeemed = solana_stake_program::rewards::redeem_rewards(
+                    let redeemed = redeem_rewards(
                         rewarded_epoch,
                         stake_state,
                         &mut stake_account,
@@ -434,7 +437,7 @@ impl Bank {
                         });
                     } else {
                         debug!(
-                            "solana_stake_program::rewards::redeem_rewards() failed for {}: {:?}",
+                            "redeem_rewards() failed for {}: {:?}",
                             stake_pubkey, redeemed
                         );
                     }
@@ -499,7 +502,7 @@ impl Bank {
                         return 0;
                     }
 
-                    solana_stake_program::points::calculate_points(
+                    calculate_points(
                         stake_account.stake_state(),
                         vote_account.vote_state(),
                         stake_history,

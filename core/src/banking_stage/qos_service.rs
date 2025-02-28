@@ -618,7 +618,8 @@ mod tests {
             signature::{Keypair, Signer},
             system_transaction,
         },
-        solana_vote_program::{vote_state::TowerSync, vote_transaction},
+        solana_vote::vote_transaction,
+        solana_vote_program::vote_state::TowerSync,
         std::sync::Arc,
     };
 

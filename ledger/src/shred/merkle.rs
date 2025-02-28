@@ -639,7 +639,7 @@ impl ShredCodeTrait for ShredCode {
     }
 }
 
-// Obtains parent's hash by joining two sibiling nodes in merkle tree.
+// Obtains parent's hash by joining two sibling nodes in merkle tree.
 fn join_nodes<S: AsRef<[u8]>, T: AsRef<[u8]>>(node: S, other: T) -> Hash {
     let node = &node.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY];
     let other = &other.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY];
@@ -915,7 +915,7 @@ pub(super) fn recover(
             shred.merkle_node()
         });
     let tree = make_merkle_tree(nodes)?;
-    // The attched signature verfies only if we obtain the same Merkle root.
+    // The attached signature verifies only if we obtain the same Merkle root.
     // Because shreds obtained from turbine or repair are sig-verified, this
     // also means that we don't need to verify signatures for recovered shreds.
     if tree.last() != Some(&merkle_root) {
@@ -1032,7 +1032,11 @@ fn make_stub_shred(
         Shred::ShredData(ShredData {
             common_header,
             data_header,
-            payload: Payload::from(payload),
+            // Recovered data shreds are concurrently inserted into blockstore
+            // while their payload is sent to retransmit-stage. Using a shared
+            // payload between the two concurrent paths will reduce allocations
+            // and memcopies.
+            payload: Payload::from(std::sync::Arc::new(payload)),
         })
     };
     if let Some(chained_merkle_root) = chained_merkle_root {
@@ -1202,7 +1206,7 @@ pub(super) fn make_shreds_from_data(
     if !data.is_empty() || shreds.is_empty() {
         // Should generate at least one data shred (which may have no data).
         // Last erasure batch should also be padded with empty data shreds to
-        // make >= 32 data shreds. This gaurantees that the batch cannot be
+        // make >= 32 data shreds. This guarantees that the batch cannot be
         // recovered unless 32+ shreds are received from turbine or repair.
         let min_num_data_shreds = if is_last_in_slot {
             DATA_SHREDS_PER_FEC_BLOCK
@@ -1768,6 +1772,12 @@ mod test {
                 }
             });
             assert_eq!(recovered_shreds, removed_shreds);
+            for shred in recovered_shreds {
+                match shred.shred_type() {
+                    ShredType::Code => assert_matches!(shred.payload(), Payload::Unique(_)),
+                    ShredType::Data => assert_matches!(shred.payload(), Payload::Shared(_)),
+                }
+            }
         }
     }
 
@@ -2095,6 +2105,9 @@ mod test {
             })
             .collect();
         assert_eq!(recovered_data_shreds.len(), data_shreds.len());
+        for shred in &recovered_data_shreds {
+            assert_matches!(shred.payload(), Payload::Shared(_));
+        }
         for (shred, other) in recovered_data_shreds.into_iter().zip(data_shreds) {
             match shred {
                 Shred::ShredCode(_) => panic!("Invalid shred type!"),

@@ -243,6 +243,20 @@ mod grouped_elgamal_wasm {
                 amount,
             ))
         }
+
+        #[wasm_bindgen(js_name = encryptionWithU64)]
+        pub fn encryption_with_u64(
+            first_pubkey: &ElGamalPubkey,
+            second_pubkey: &ElGamalPubkey,
+            amount: u64,
+            opening: &PedersenOpening,
+        ) -> Self {
+            Self(GroupedElGamal::<2>::encrypt_with(
+                [first_pubkey, second_pubkey],
+                amount,
+                opening,
+            ))
+        }
     }
 
     #[wasm_bindgen]
@@ -260,6 +274,21 @@ mod grouped_elgamal_wasm {
             Self(GroupedElGamal::<3>::encrypt(
                 [first_pubkey, second_pubkey, third_pubkey],
                 amount,
+            ))
+        }
+
+        #[wasm_bindgen(js_name = encryptionWithU64)]
+        pub fn encryption_with_u64(
+            first_pubkey: &ElGamalPubkey,
+            second_pubkey: &ElGamalPubkey,
+            third_pubkey: &ElGamalPubkey,
+            amount: u64,
+            opening: &PedersenOpening,
+        ) -> Self {
+            Self(GroupedElGamal::<3>::encrypt_with(
+                [first_pubkey, second_pubkey, third_pubkey],
+                amount,
+                opening,
             ))
         }
     }

@@ -532,9 +532,8 @@ mod tests {
             epoch_schedule::MINIMUM_SLOTS_PER_EPOCH, genesis_config::GenesisConfig, hash::Hash,
             signature::Signer, system_transaction::transfer,
         },
-        solana_vote_program::{
-            vote_state::TowerSync, vote_transaction::new_tower_sync_transaction,
-        },
+        solana_vote::vote_transaction::new_tower_sync_transaction,
+        solana_vote_program::vote_state::TowerSync,
         std::{sync::Arc, thread::Builder},
     };
 

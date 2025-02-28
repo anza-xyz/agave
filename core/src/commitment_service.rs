@@ -273,12 +273,9 @@ mod tests {
         },
         solana_sdk::{account::Account, pubkey::Pubkey, signature::Signer},
         solana_stake_program::stake_state,
-        solana_vote_program::{
-            vote_state::{
-                self, process_slot_vote_unchecked, TowerSync, VoteStateVersions,
-                MAX_LOCKOUT_HISTORY,
-            },
-            vote_transaction,
+        solana_vote::vote_transaction,
+        solana_vote_program::vote_state::{
+            self, process_slot_vote_unchecked, TowerSync, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     };
 

@@ -13,7 +13,10 @@ use {
     crate::{
         encryption::pedersen::{PedersenCommitment, PedersenOpening},
         sigma_proofs::percentage_with_cap::PercentageWithCapProof,
-        zk_elgamal_proof_program::errors::{ProofGenerationError, ProofVerificationError},
+        zk_elgamal_proof_program::{
+            errors::{ProofGenerationError, ProofVerificationError},
+            proof_data::errors::ProofDataError,
+        },
     },
     bytemuck::bytes_of,
     merlin::Transcript,
@@ -24,7 +27,7 @@ use {
         encryption::pod::pedersen::PodPedersenCommitment,
         pod::PodU64,
         sigma_proofs::pod::PodPercentageWithCapProof,
-        zk_elgamal_proof_program::proof_data::{ProofType, ZkProofData},
+        zk_elgamal_proof_program::proof_data::{pod::impl_wasm_to_bytes, ProofType, ZkProofData},
     },
     bytemuck_derive::{Pod, Zeroable},
 };
@@ -110,12 +113,9 @@ impl PercentageWithCapProofData {
 
         Ok(Self { context, proof })
     }
-
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
-    pub fn to_bytes(&self) -> Box<[u8]> {
-        bytes_of(self).into()
-    }
 }
+
+impl_wasm_to_bytes!(TYPE = PercentageWithCapProofData);
 
 impl ZkProofData<PercentageWithCapProofContext> for PercentageWithCapProofData {
     const PROOF_TYPE: ProofType = ProofType::PercentageWithCap;
@@ -160,6 +160,8 @@ impl PercentageWithCapProofContext {
         transcript
     }
 }
+
+impl_wasm_to_bytes!(TYPE = PercentageWithCapProofContext);
 
 #[cfg(test)]
 mod test {

@@ -2,7 +2,7 @@
 # repo and would like to avoid introducing dependencies in the meantime.
 /builtins-default-costs/ @anza-xyz/svm
 /compute-budget/ @anza-xyz/svm
-/compute-budget-instruction/ @anza-xyz/svm @anza-xyz/fees
+/compute-budget-instruction/ @anza-xyz/fees
 /fee/ @anza-xyz/fees
 /log-collector/ @anza-xyz/svm
 /program-runtime/ @anza-xyz/svm

@@ -56,13 +56,13 @@ use {
 };
 
 // Time to defer repair requests to allow for turbine propagation
-const DEFER_REPAIR_THRESHOLD: Duration = Duration::from_millis(200);
+const DEFER_REPAIR_THRESHOLD: Duration = Duration::from_millis(250);
 const DEFER_REPAIR_THRESHOLD_TICKS: u64 = DEFER_REPAIR_THRESHOLD.as_millis() as u64 / MS_PER_TICK;
 
 // This is the amount of time we will wait for a repair request to be fulfilled
 // before making another request. Value is based on reasonable upper bound of
 // expected network delays in requesting repairs and receiving shreds.
-const REPAIR_REQUEST_TIMEOUT_MS: u64 = 100;
+const REPAIR_REQUEST_TIMEOUT_MS: u64 = 150;
 
 // When requesting repair for a specific shred through the admin RPC, we will
 // request up to NUM_PEERS_TO_SAMPLE_FOR_REPAIRS in the event a specific, valid
@@ -646,15 +646,13 @@ impl RepairService {
 
             let mut batch_send_repairs_elapsed = Measure::start("batch_send_repairs_elapsed");
             if !batch.is_empty() {
-                match batch_send(repair_socket, &batch) {
+                let num_pkts = batch.len();
+                let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
+                match batch_send(repair_socket, batch) {
                     Ok(()) => (),
                     Err(SendPktsError::IoError(err, num_failed)) => {
                         error!(
-                            "{} batch_send failed to send {}/{} packets first error {:?}",
-                            id,
-                            num_failed,
-                            batch.len(),
-                            err
+                            "{id} batch_send failed to send {num_failed}/{num_pkts} packets first error {err:?}"
                         );
                     }
                 }
@@ -954,10 +952,10 @@ impl RepairService {
             ServeRepair::repair_proto_to_bytes(&request_proto, &identity_keypair).unwrap();
 
         // Prepare packet batch to send
-        let reqs = [(packet_buf, address)];
+        let reqs = [(&packet_buf, address)];
 
         // Send packet batch
-        match batch_send(repair_socket, &reqs[..]) {
+        match batch_send(repair_socket, reqs) {
             Ok(()) => {
                 debug!("successfully sent repair request to {pubkey} / {address}!");
             }

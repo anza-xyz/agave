@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq)]
 pub enum Payload {
     Shared(Arc<Vec<u8>>),
     Unique(Vec<u8>),
@@ -84,6 +84,13 @@ pub(crate) mod serde_bytes_payload {
         Deserialize::deserialize(deserializer)
             .map(ByteBuf::into_vec)
             .map(Payload::from)
+    }
+}
+
+impl PartialEq for Payload {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.as_ref() == other.as_ref()
     }
 }
 

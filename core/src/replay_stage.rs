@@ -52,7 +52,7 @@ use {
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::{PohLeaderStatus, PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
     solana_rpc::{
-        cache_block_meta_service::CacheBlockMetaSender,
+        block_meta_service::BlockMetaSender,
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
         rpc_subscriptions::RpcSubscriptions,
         slot_status_notifier::SlotStatusNotifier,
@@ -78,7 +78,7 @@ use {
     },
     solana_timings::ExecuteTimings,
     solana_unified_scheduler_logic::SchedulingMode,
-    solana_vote_program::vote_state::VoteTransaction,
+    solana_vote::vote_transaction::VoteTransaction,
     std::{
         collections::{HashMap, HashSet},
         num::NonZeroUsize,
@@ -283,7 +283,7 @@ pub struct ReplaySenders {
     pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub accounts_background_request_sender: AbsRequestSender,
     pub transaction_status_sender: Option<TransactionStatusSender>,
-    pub cache_block_meta_sender: Option<CacheBlockMetaSender>,
+    pub block_meta_sender: Option<BlockMetaSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
     pub bank_notification_sender: Option<BankNotificationSenderConfig>,
     pub ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
@@ -574,7 +574,7 @@ impl ReplayStage {
             slot_status_notifier,
             accounts_background_request_sender,
             transaction_status_sender,
-            cache_block_meta_sender,
+            block_meta_sender,
             entry_notification_sender,
             bank_notification_sender,
             ancestor_hashes_replay_update_sender,
@@ -732,7 +732,7 @@ impl ReplayStage {
                     &vote_account,
                     &mut progress,
                     transaction_status_sender.as_ref(),
-                    cache_block_meta_sender.as_ref(),
+                    block_meta_sender.as_ref(),
                     entry_notification_sender.as_ref(),
                     &verify_recyclers,
                     &mut heaviest_subtree_fork_choice,
@@ -3134,7 +3134,7 @@ impl ReplayStage {
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
         transaction_status_sender: Option<&TransactionStatusSender>,
-        cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+        block_meta_sender: Option<&BlockMetaSender>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
@@ -3367,7 +3367,7 @@ impl ReplayStage {
                         .send(BankNotification::Frozen(bank.clone_without_scheduler()))
                         .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
                 }
-                blockstore_processor::cache_block_meta(bank, cache_block_meta_sender);
+                blockstore_processor::send_block_meta(bank, block_meta_sender);
 
                 let bank_hash = bank.hash();
                 if let Some(new_frozen_voters) =
@@ -3432,7 +3432,7 @@ impl ReplayStage {
         vote_account: &Pubkey,
         progress: &mut ProgressMap,
         transaction_status_sender: Option<&TransactionStatusSender>,
-        cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+        block_meta_sender: Option<&BlockMetaSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
         verify_recyclers: &VerifyRecyclers,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
@@ -3517,7 +3517,7 @@ impl ReplayStage {
             bank_forks,
             progress,
             transaction_status_sender,
-            cache_block_meta_sender,
+            block_meta_sender,
             heaviest_subtree_fork_choice,
             bank_notification_sender,
             rpc_subscriptions,
@@ -4357,10 +4357,8 @@ pub(crate) mod tests {
         solana_streamer::socket::SocketAddrSpace,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         solana_transaction_status::VersionedTransactionWithStatusMeta,
-        solana_vote_program::{
-            vote_state::{self, TowerSync, VoteStateVersions},
-            vote_transaction,
-        },
+        solana_vote::vote_transaction,
+        solana_vote_program::vote_state::{self, TowerSync, VoteStateVersions},
         std::{
             fs::remove_dir_all,
             iter,

@@ -15,7 +15,7 @@ use {
             elgamal::PodElGamalPubkey, grouped_elgamal::PodGroupedElGamalCiphertext3Handles,
         },
         sigma_proofs::pod::PodBatchedGroupedCiphertext3HandlesValidityProof,
-        zk_elgamal_proof_program::proof_data::{ProofType, ZkProofData},
+        zk_elgamal_proof_program::proof_data::{pod::impl_wasm_to_bytes, ProofType, ZkProofData},
     },
     bytemuck_derive::{Pod, Zeroable},
 };
@@ -27,7 +27,10 @@ use {
             pedersen::PedersenOpening,
         },
         sigma_proofs::batched_grouped_ciphertext_validity::BatchedGroupedCiphertext3HandlesValidityProof,
-        zk_elgamal_proof_program::errors::{ProofGenerationError, ProofVerificationError},
+        zk_elgamal_proof_program::{
+            errors::{ProofGenerationError, ProofVerificationError},
+            proof_data::errors::ProofDataError,
+        },
     },
     bytemuck::bytes_of,
     merlin::Transcript,
@@ -155,12 +158,9 @@ impl BatchedGroupedCiphertext3HandlesValidityProofData {
 
         Ok(Self { context, proof })
     }
-
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
-    pub fn to_bytes(&self) -> Box<[u8]> {
-        bytes_of(self).into()
-    }
 }
+
+impl_wasm_to_bytes!(TYPE = BatchedGroupedCiphertext3HandlesValidityProofData);
 
 impl ZkProofData<BatchedGroupedCiphertext3HandlesValidityProofContext>
     for BatchedGroupedCiphertext3HandlesValidityProofData
@@ -233,6 +233,8 @@ impl BatchedGroupedCiphertext3HandlesValidityProofContext {
         transcript
     }
 }
+
+impl_wasm_to_bytes!(TYPE = BatchedGroupedCiphertext3HandlesValidityProofContext);
 
 #[cfg(test)]
 mod test {

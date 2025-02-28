@@ -12,9 +12,8 @@ use {
 };
 
 pub mod config;
+#[deprecated(since = "2.2.0")]
 pub mod points;
-#[doc(hidden)]
-pub mod rewards;
 pub mod stake_instruction;
 pub mod stake_state;
 

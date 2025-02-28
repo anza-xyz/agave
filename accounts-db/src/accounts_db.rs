@@ -774,7 +774,6 @@ struct GenerateIndexTimings {
     pub num_duplicate_accounts: u64,
     pub populate_duplicate_keys_us: u64,
     pub total_slots: u64,
-    pub slots_to_clean: u64,
     pub par_duplicates_lt_hash_us: AtomicU64,
     pub visit_zero_lamports_us: u64,
     pub num_zero_lamport_single_refs: u64,
@@ -846,7 +845,6 @@ impl GenerateIndexTimings {
                 i64
             ),
             ("total_slots", self.total_slots, i64),
-            ("slots_to_clean", self.slots_to_clean, i64),
             (
                 "copy_data_us",
                 startup_stats.copy_data_us.swap(0, Ordering::Relaxed),
@@ -8099,7 +8097,6 @@ impl AccountsDb {
             .store_total_data
             .fetch_add(total_data as u64, Ordering::Relaxed);
 
-        // we use default hashes for now since the same account may be stored to the cache multiple times
         self.store_accounts_unfrozen(
             accounts,
             store_to,

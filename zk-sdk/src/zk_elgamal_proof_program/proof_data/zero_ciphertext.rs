@@ -11,7 +11,10 @@ use {
     crate::{
         encryption::elgamal::{ElGamalCiphertext, ElGamalKeypair},
         sigma_proofs::zero_ciphertext::ZeroCiphertextProof,
-        zk_elgamal_proof_program::errors::{ProofGenerationError, ProofVerificationError},
+        zk_elgamal_proof_program::{
+            errors::{ProofGenerationError, ProofVerificationError},
+            proof_data::errors::ProofDataError,
+        },
     },
     bytemuck::bytes_of,
     merlin::Transcript,
@@ -21,7 +24,7 @@ use {
     crate::{
         encryption::pod::elgamal::{PodElGamalCiphertext, PodElGamalPubkey},
         sigma_proofs::pod::PodZeroCiphertextProof,
-        zk_elgamal_proof_program::proof_data::{ProofType, ZkProofData},
+        zk_elgamal_proof_program::proof_data::{pod::impl_wasm_to_bytes, ProofType, ZkProofData},
     },
     bytemuck_derive::{Pod, Zeroable},
 };
@@ -73,12 +76,9 @@ impl ZeroCiphertextProofData {
 
         Ok(ZeroCiphertextProofData { context, proof })
     }
-
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
-    pub fn to_bytes(&self) -> Box<[u8]> {
-        bytes_of(self).into()
-    }
 }
+
+impl_wasm_to_bytes!(TYPE = ZeroCiphertextProofData);
 
 impl ZkProofData<ZeroCiphertextProofContext> for ZeroCiphertextProofData {
     const PROOF_TYPE: ProofType = ProofType::ZeroCiphertext;
@@ -111,6 +111,8 @@ impl ZeroCiphertextProofContext {
         transcript
     }
 }
+
+impl_wasm_to_bytes!(TYPE = ZeroCiphertextProofContext);
 
 #[cfg(test)]
 mod test {

@@ -8,12 +8,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v2.2](#edge-channel)
-* [beta - v2.1](https://github.com/anza-xyz/agave/blob/v2.1/CHANGELOG.md)
-* [stable - v2.0](https://github.com/anza-xyz/agave/blob/v2.0/CHANGELOG.md)
+* [edge - v2.3](#edge-channel)
+* [beta - v2.2](https://github.com/anza-xyz/agave/blob/v2.2/CHANGELOG.md)
+* [stable - v2.1](https://github.com/anza-xyz/agave/blob/v2.1/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 2.2.0 - Unreleased
+## 2.3.0 - Unreleased
+
+
+## 2.2.0
 * Breaking:
   * Blockstore Index column format change
     * The Blockstore Index column format has been updated. The column format written in v2.2 is compatible with v2.1, but incompatible with v2.0 and older.

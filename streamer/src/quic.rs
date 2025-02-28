@@ -68,7 +68,7 @@ pub struct SpawnServerResult {
 }
 
 /// Controls the the channel size for the PacketBatch coalesce
-pub(crate) const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 1_000_000;
+pub(crate) const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 250_000;
 
 /// Returns default server configuration along with its PEM certificate chain.
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
