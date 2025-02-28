@@ -2412,7 +2412,7 @@ impl ReplayStage {
         let new_root = tower.record_bank_vote(bank);
 
         if let Some(new_root) = new_root {
-            Self::handle_new_root_all(
+            Self::check_and_handle_new_root(
                 bank,
                 new_root,
                 bank_forks,
@@ -3989,7 +3989,7 @@ impl ReplayStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn handle_new_root_all(
+    fn check_and_handle_new_root(
         vote_bank: &Bank,
         new_root: Slot,
         bank_forks: &RwLock<BankForks>,
