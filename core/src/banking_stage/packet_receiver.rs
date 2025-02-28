@@ -143,12 +143,12 @@ impl PacketReceiver {
             slot_metrics_tracker
                 .increment_newly_buffered_packets_count(deserialized_packets.len() as u64);
 
-            let insert_packet_batches_summary = vote_storage.insert_batch(deserialized_packets);
+            let vote_batch_insertion_metrics = vote_storage.insert_batch(deserialized_packets);
             slot_metrics_tracker
-                .accumulate_insert_packet_batches_summary(&insert_packet_batches_summary);
+                .accumulate_vote_batch_insertion_metrics(&vote_batch_insertion_metrics);
             saturating_add_assign!(
                 *dropped_packets_count,
-                insert_packet_batches_summary.total_dropped_packets()
+                vote_batch_insertion_metrics.total_dropped_packets()
             );
         }
     }
