@@ -279,8 +279,7 @@ impl BankForks {
         // assumed that block is produced in singleton way and it's actually desired, while
         // ignoring the opportunity cost of (hopefully rare!) fork switching...
         if matches!(mode, SchedulingMode::BlockVerification) {
-            scheduler_pool
-                .register_timeout_listener(bank_with_scheduler.create_timeout_listener());
+            scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
         }
         bank_with_scheduler
     }

@@ -1684,8 +1684,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // which isn't great and is inconsistent with `if`s in the Rust's match
                         // arm. So, eagerly binding the result to a variable unconditionally here
                         // makes no perf. difference...
-                        let dummy_unblocked_task_receiver =
-                            dummy_receiver(state_machine.has_runnable_task() && !(scheduling_mode == BlockProduction && session_ending));
+                        let dummy_unblocked_task_receiver = dummy_receiver(
+                            state_machine.has_runnable_task()
+                                && !(scheduling_mode == BlockProduction && session_ending),
+                        );
 
                         // There's something special called dummy_unblocked_task_receiver here.
                         // This odd pattern was needed to react to newly unblocked tasks from
@@ -1776,8 +1778,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                         };
 
-                        is_finished = scheduling_mode == BlockVerification && state_machine.has_no_active_task()
-                            || scheduling_mode == BlockProduction && state_machine.has_no_executing_task();
+                        is_finished = scheduling_mode == BlockVerification
+                            && state_machine.has_no_active_task()
+                            || scheduling_mode == BlockProduction
+                                && state_machine.has_no_executing_task();
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
@@ -4060,8 +4064,13 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_for_production(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
@@ -4119,8 +4128,13 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_for_production(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -4192,8 +4206,13 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_for_production(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -4260,8 +4279,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_for_production(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let bank = Arc::new(Bank::default_for_tests());
         let context = &SchedulingContext::for_production(bank);
         let scheduler = pool.do_take_scheduler(context.clone());
@@ -4279,8 +4303,13 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_for_production(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -4390,8 +4419,13 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_for_production(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
