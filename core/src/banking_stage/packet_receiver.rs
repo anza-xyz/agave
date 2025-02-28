@@ -3,7 +3,7 @@ use {
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_deserializer::{PacketDeserializer, ReceivePacketResults},
-        unprocessed_transaction_storage::VoteStorage,
+        vote_storage::VoteStorage,
         BankingStageStats,
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
@@ -29,17 +29,17 @@ impl PacketReceiver {
     /// Receive incoming packets, push into unprocessed buffer with packet indexes
     pub fn receive_and_buffer_packets(
         &mut self,
-        unprocessed_transaction_storage: &mut VoteStorage,
+        vote_storage: &mut VoteStorage,
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> Result<(), RecvTimeoutError> {
         let (result, recv_time_us) = measure_us!({
-            let recv_timeout = Self::get_receive_timeout(unprocessed_transaction_storage);
+            let recv_timeout = Self::get_receive_timeout(vote_storage);
             let mut recv_and_buffer_measure = Measure::start("recv_and_buffer");
             self.packet_deserializer
                 .receive_packets(
                     recv_timeout,
-                    unprocessed_transaction_storage.max_receive_size(),
+                    vote_storage.max_receive_size(),
                     |packet| {
                         packet.check_insufficent_compute_unit_limit()?;
                         packet.check_excessive_precompiles()?;
@@ -50,7 +50,7 @@ impl PacketReceiver {
                 .map(|receive_packet_results| {
                     self.buffer_packets(
                         receive_packet_results,
-                        unprocessed_transaction_storage,
+                        vote_storage,
                         banking_stage_stats,
                         slot_metrics_tracker,
                     );
@@ -68,11 +68,11 @@ impl PacketReceiver {
         result
     }
 
-    fn get_receive_timeout(unprocessed_transaction_storage: &VoteStorage) -> Duration {
+    fn get_receive_timeout(vote_storage: &VoteStorage) -> Duration {
         // Gossip thread (does not process) should not continuously receive with 0 duration.
         // This can cause the thread to run at 100% CPU because it is continuously polling.
-        if !unprocessed_transaction_storage.should_not_process()
-            && !unprocessed_transaction_storage.is_empty()
+        if !vote_storage.should_not_process()
+            && !vote_storage.is_empty()
         {
             // If there are buffered packets, run the equivalent of try_recv to try reading more
             // packets. This prevents starving BankingStage::consume_buffered_packets due to
@@ -91,7 +91,7 @@ impl PacketReceiver {
             deserialized_packets,
             packet_stats,
         }: ReceivePacketResults,
-        unprocessed_transaction_storage: &mut VoteStorage,
+        vote_storage: &mut VoteStorage,
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
@@ -104,7 +104,7 @@ impl PacketReceiver {
         let mut newly_buffered_packets_count = 0;
         let mut newly_buffered_forwarded_packets_count = 0;
         Self::push_unprocessed(
-            unprocessed_transaction_storage,
+            vote_storage,
             deserialized_packets,
             &mut dropped_packets_count,
             &mut newly_buffered_packets_count,
@@ -124,11 +124,11 @@ impl PacketReceiver {
             .fetch_add(newly_buffered_packets_count, Ordering::Relaxed);
         banking_stage_stats
             .current_buffered_packets_count
-            .swap(unprocessed_transaction_storage.len(), Ordering::Relaxed);
+            .swap(vote_storage.len(), Ordering::Relaxed);
     }
 
     fn push_unprocessed(
-        unprocessed_transaction_storage: &mut VoteStorage,
+        vote_storage: &mut VoteStorage,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
         dropped_packets_count: &mut usize,
         newly_buffered_packets_count: &mut usize,
@@ -150,7 +150,7 @@ impl PacketReceiver {
                 .increment_newly_buffered_packets_count(deserialized_packets.len() as u64);
 
             let insert_packet_batches_summary =
-                unprocessed_transaction_storage.insert_batch(deserialized_packets);
+                vote_storage.insert_batch(deserialized_packets);
             slot_metrics_tracker
                 .accumulate_insert_packet_batches_summary(&insert_packet_batches_summary);
             saturating_add_assign!(

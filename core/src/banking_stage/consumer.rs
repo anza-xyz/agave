@@ -8,7 +8,7 @@ use {
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         qos_service::QosService,
         scheduler_messages::MaxAge,
-        unprocessed_transaction_storage::{ConsumeScannerPayload, VoteStorage},
+        vote_storage::{ConsumeScannerPayload, VoteStorage},
         BankingStageStats,
     },
     itertools::Itertools,

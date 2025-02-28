@@ -3,7 +3,7 @@ use {
         consumer::LeaderProcessedTransactionCounts,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
         packet_deserializer::PacketReceiverStats,
-        unprocessed_transaction_storage::InsertPacketBatchSummary,
+        vote_storage::InsertPacketBatchSummary,
     },
     solana_poh::poh_recorder::BankStart,
     solana_sdk::{clock::Slot, saturating_add_assign},
