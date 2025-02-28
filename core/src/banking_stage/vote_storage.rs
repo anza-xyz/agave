@@ -218,16 +218,6 @@ impl VoteStorage {
         }
     }
 
-    // TODO: Remove this.
-    pub fn get_min_priority(&self) -> Option<u64> {
-        None
-    }
-
-    // TODO: Remove this.
-    pub fn get_max_priority(&self) -> Option<u64> {
-        None
-    }
-
     pub fn is_empty(&self) -> bool {
         self.latest_unprocessed_votes.is_empty()
     }
