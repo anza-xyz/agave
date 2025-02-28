@@ -123,7 +123,7 @@ impl SupportedSchedulingMode {
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     supported_scheduling_mode: SupportedSchedulingMode,
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
-    block_production_scheduler_inner: Mutex<BlockProdutionSchedulerInner<S, TH>>,
+    block_production_scheduler_inner: Mutex<BlockProductionSchedulerInner<S, TH>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     block_verification_handler_count: usize,
@@ -152,14 +152,14 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
 /// (= banks) and `banking_packet_receiver` shouldn't be consumed by multiple schedulers at once.
 /// So, it's managed differently from block-verification schedulers.
 #[derive(Default, Debug)]
-enum BlockProdutionSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
+enum BlockProductionSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     #[default]
     NotSpawned,
     Pooled(S::Inner),
     Taken(SchedulerId),
 }
 
-impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProdutionSchedulerInner<S, TH> {
+impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S, TH> {
     fn can_put(&self, returned: &S::Inner) -> bool {
         match self {
             Self::NotSpawned => false,
@@ -836,7 +836,7 @@ where
 
     fn spawn_block_production_scheduler(
         &self,
-        block_production_scheduler_inner: &mut MutexGuard<'_, BlockProdutionSchedulerInner<S, TH>>,
+        block_production_scheduler_inner: &mut MutexGuard<'_, BlockProductionSchedulerInner<S, TH>>,
     ) {
         trace!("spawn block production scheduler: start!");
         let scheduler = S::spawn(
@@ -4446,7 +4446,7 @@ mod tests {
             poh_recorder.read().unwrap().new_recorder(),
         );
 
-        // Make sure the assertion in BlockProdutionSchedulerInner::can_put() doesn't cause false
+        // Make sure the assertion in BlockProductionSchedulerInner::can_put() doesn't cause false
         // positives...
         let context = SchedulingContext::for_verification(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
