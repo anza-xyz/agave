@@ -38,12 +38,6 @@ pub struct VoteStorage {
     vote_source: VoteSource,
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum ThreadType {
-    Voting(VoteSource),
-    Transactions,
-}
-
 #[derive(Debug)]
 pub(crate) enum InsertPacketBatchSummary {
     VoteBatchInsertionMetrics(VoteBatchInsertionMetrics),
