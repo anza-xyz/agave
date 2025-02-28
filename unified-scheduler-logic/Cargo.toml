@@ -15,6 +15,7 @@ solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-transaction = { workspace = true }
 static_assertions = { workspace = true }
+unwrap_none = { workspace = true }
 
 [dev-dependencies]
 solana-instruction = { workspace = true }
