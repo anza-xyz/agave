@@ -174,7 +174,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         )
         .arg(
             Arg::with_name("logfile")
-                .short("o")
                 .long("log")
                 .value_name("FILE")
                 .takes_value(true)
@@ -185,7 +184,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         )
         .arg(
             Arg::with_name("destination")
-                .short("n")
                 .long("destination")
                 .value_name("HOST:PORT")
                 .takes_value(true)
