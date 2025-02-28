@@ -1,8 +1,8 @@
 use {
     rand::{rngs::SmallRng, SeedableRng},
+    solana_account::{Account, AccountSharedData},
     solana_accounts_db::read_only_accounts_cache::{ReadOnlyAccountsCache, CACHE_ENTRY_SIZE},
     solana_pubkey::Pubkey,
-    solana_sdk::account::{Account, AccountSharedData},
     std::{collections::HashSet, sync::atomic::Ordering},
     test_case::test_matrix,
 };

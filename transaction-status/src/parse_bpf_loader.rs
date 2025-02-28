@@ -187,6 +187,17 @@ pub fn parse_bpf_upgradeable_loader(
                 }),
             })
         }
+        UpgradeableLoaderInstruction::Migrate => {
+            check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 3)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "migrate".to_string(),
+                info: json!({
+                    "programDataAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "programAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "authority": account_keys[instruction.accounts[2] as usize].to_string(),
+                }),
+            })
+        }
     }
 }
 

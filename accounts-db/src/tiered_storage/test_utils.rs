@@ -6,12 +6,10 @@ use {
         account_storage::meta::{StoredAccountMeta, StoredMeta},
         accounts_hash::AccountHash,
     },
+    solana_account::{Account, AccountSharedData, ReadableAccount},
+    solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount},
-        hash::Hash,
-        rent_collector::RENT_EXEMPT_RENT_EPOCH,
-    },
+    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
 };
 
 /// Create a test account based on the specified seed.

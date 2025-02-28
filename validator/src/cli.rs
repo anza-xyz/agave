@@ -131,24 +131,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         (@into-option $v:expr) => { Some($v) };
     }
 
-    add_arg!(
-        Arg::with_name("accounts_db_skip_shrink")
-            .long("accounts-db-skip-shrink")
-            .help("Enables faster starting of validators by skipping startup clean and shrink."),
-        usage_warning: "Enabled by default",
-    );
-    add_arg!(Arg::with_name("accounts_hash_interval_slots")
-        .long("accounts-hash-interval-slots")
-        .value_name("NUMBER")
-        .takes_value(true)
-        .help("Number of slots between verifying accounts hash.")
-        .validator(|val| {
-            if val.eq("0") {
-                Err(String::from("Accounts hash interval cannot be zero"))
-            } else {
-                Ok(())
-            }
-        }));
     // deprecated in v2.1 by PR #2721
     add_arg!(Arg::with_name("accounts_index_memory_limit_mb")
         .long("accounts-index-memory-limit-mb")
@@ -212,6 +194,41 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("enable-quic-servers"),
         usage_warning: "The quic server is now enabled by default.",
     );
+    // All etcd config is deprecated as of v2.2
+    add_arg!(Arg::with_name("etcd_cacert_file")
+        .long("etcd-cacert-file")
+        .required_if("tower_storage", "etcd")
+        .value_name("FILE")
+        .takes_value(true)
+        .help("verify the TLS certificate of the etcd endpoint using this CA bundle"),);
+    add_arg!(Arg::with_name("etcd_cert_file")
+        .long("etcd-cert-file")
+        .required_if("tower_storage", "etcd")
+        .value_name("FILE")
+        .takes_value(true)
+        .help("TLS certificate to use when establishing a connection to the etcd endpoint"),);
+    add_arg!(Arg::with_name("etcd_domain_name")
+        .long("etcd-domain-name")
+        .required_if("tower_storage", "etcd")
+        .value_name("DOMAIN")
+        .default_value("localhost")
+        .takes_value(true)
+        .help("domain name against which to verify the etcd server’s TLS certificate"),);
+    add_arg!(Arg::with_name("etcd_endpoint")
+        .long("etcd-endpoint")
+        .required_if("tower_storage", "etcd")
+        .value_name("HOST:PORT")
+        .takes_value(true)
+        .multiple(true)
+        .validator(solana_net_utils::is_host_port)
+        .help("etcd gRPC endpoint to connect with"),);
+    add_arg!(Arg::with_name("etcd_key_file")
+        .long("etcd-key-file")
+        .required_if("tower_storage", "etcd")
+        .value_name("FILE")
+        .takes_value(true)
+        .help("TLS key file to use when establishing a connection to the etcd endpoint"),);
+
     add_arg!(Arg::with_name("minimal_rpc_api")
         .long("minimal-rpc-api")
         .takes_value(false)
@@ -296,6 +313,17 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .takes_value(false)
             .help("Skip ledger verification at validator bootup."),
         replaced_by: "skip-startup-ledger-verification",
+    );
+    // Deprecated as of v2.2
+    add_arg!(
+        Arg::with_name("tower_storage")
+            .long("tower-storage")
+            .possible_values(&["file", "etcd"])
+            .default_value("file")
+            .takes_value(true)
+            .help("Where to store the tower"),
+        usage_warning: "\"etcd\" is no longer supported, and the functionality from setting \
+            \"file\" will be become the sole behavior",
     );
 
     res

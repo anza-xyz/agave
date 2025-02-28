@@ -5,25 +5,26 @@ use {
             AccountStorageEntry, AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount,
             ScanAccountStorageData, ScanStorageResult, VerifyAccountsHashAndLamportsConfig,
         },
-        accounts_index::{IndexKey, ScanConfig, ScanError, ScanResult},
+        accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
         ancestors::Ancestors,
         storable_accounts::StorableAccounts,
     },
     dashmap::DashMap,
     log::*,
-    solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        address_lookup_table::{self, error::AddressLookupError, state::AddressLookupTable},
-        clock::{BankId, Slot},
-        message::v0::LoadedAddresses,
-        slot_hashes::SlotHashes,
-        transaction::{Result, SanitizedTransaction},
-        transaction_context::TransactionAccount,
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_address_lookup_table_interface::{
+        self as address_lookup_table, error::AddressLookupError, state::AddressLookupTable,
     },
+    solana_clock::{BankId, Slot},
+    solana_message::v0::LoadedAddresses,
+    solana_pubkey::Pubkey,
+    solana_slot_hashes::SlotHashes,
     solana_svm_transaction::{
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
     },
+    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction_context::TransactionAccount,
+    solana_transaction_error::TransactionResult as Result,
     std::{
         cmp::Reverse,
         collections::{BinaryHeap, HashSet},
@@ -260,6 +261,11 @@ impl Accounts {
         if num == 0 {
             return Ok(vec![]);
         }
+        let scan_order = if sort_results {
+            ScanOrder::Sorted
+        } else {
+            ScanOrder::Unsorted
+        };
         let mut account_balances = BinaryHeap::new();
         self.accounts_db.scan_accounts(
             ancestors,
@@ -289,7 +295,7 @@ impl Accounts {
                     account_balances.push(Reverse((account.lamports(), *pubkey)));
                 }
             },
-            &ScanConfig::new(!sort_results),
+            &ScanConfig::new(scan_order),
         )?;
         Ok(account_balances
             .into_sorted_vec()
@@ -484,6 +490,11 @@ impl Accounts {
         bank_id: BankId,
         sort_results: bool,
     ) -> ScanResult<Vec<PubkeyAccountSlot>> {
+        let scan_order = if sort_results {
+            ScanOrder::Sorted
+        } else {
+            ScanOrder::Unsorted
+        };
         let mut collector = Vec::new();
         self.accounts_db
             .scan_accounts(
@@ -496,7 +507,7 @@ impl Accounts {
                         collector.push((*pubkey, account, slot))
                     }
                 },
-                &ScanConfig::new(!sort_results),
+                &ScanConfig::new(scan_order),
             )
             .map(|_| collector)
     }
@@ -511,12 +522,13 @@ impl Accounts {
     where
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
-        self.accounts_db.scan_accounts(
-            ancestors,
-            bank_id,
-            scan_func,
-            &ScanConfig::new(!sort_results),
-        )
+        let scan_order = if sort_results {
+            ScanOrder::Sorted
+        } else {
+            ScanOrder::Unsorted
+        };
+        self.accounts_db
+            .scan_accounts(ancestors, bank_id, scan_func, &ScanConfig::new(scan_order))
     }
 
     pub fn hold_range_in_memory<R>(
@@ -652,16 +664,18 @@ impl Accounts {
 mod tests {
     use {
         super::*,
-        solana_sdk::{
-            account::{AccountSharedData, WritableAccount},
-            address_lookup_table::state::LookupTableMeta,
-            hash::Hash,
-            instruction::CompiledInstruction,
-            message::{v0::MessageAddressTableLookup, Message, MessageHeader},
-            native_loader,
-            signature::{signers::Signers, Keypair, Signer},
-            transaction::{Transaction, TransactionError, MAX_TX_ACCOUNT_LOCKS},
+        solana_account::{AccountSharedData, WritableAccount},
+        solana_address_lookup_table_interface::state::LookupTableMeta,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::{
+            compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup, Message,
+            MessageHeader,
         },
+        solana_sdk_ids::native_loader,
+        solana_signer::{signers::Signers, Signer},
+        solana_transaction::{sanitized::MAX_TX_ACCOUNT_LOCKS, Transaction},
+        solana_transaction_error::TransactionError,
         std::{
             borrow::Cow,
             iter,
@@ -1531,10 +1545,12 @@ mod tests {
     #[test]
     fn test_maybe_abort_scan() {
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &ScanConfig::default()).is_ok());
-        assert!(
-            Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &ScanConfig::new(false)).is_ok()
-        );
-        let config = ScanConfig::new(false).recreate_with_abort();
+        assert!(Accounts::maybe_abort_scan(
+            ScanResult::Ok(vec![]),
+            &ScanConfig::new(ScanOrder::Sorted)
+        )
+        .is_ok());
+        let config = ScanConfig::new(ScanOrder::Sorted).recreate_with_abort();
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &config).is_ok());
         config.abort();
         assert!(Accounts::maybe_abort_scan(ScanResult::Ok(vec![]), &config).is_err());

@@ -241,11 +241,12 @@ impl Bank {
             .parent()
             .expect("Partitioned rewards calculation must still have access to parent Bank.")
             .last_blockhash();
-        let stake_rewards_by_partition = hash_rewards_into_partitions(
+        let (stake_rewards_by_partition, hash_us) = measure_us!(hash_rewards_into_partitions(
             std::mem::take(&mut stake_rewards.stake_rewards),
             &parent_blockhash,
             num_partitions as usize,
-        );
+        ));
+        metrics.hash_partition_rewards_us += hash_us;
 
         PartitionedRewardsCalculation {
             vote_account_rewards,
@@ -348,6 +349,7 @@ impl Bank {
             // already have been cached in cached_vote_accounts; so the code
             // below is only for sanity checking, and can be removed once
             // the cache is deemed to be reliable.
+            metrics.vote_accounts_cache_miss_count.fetch_add(1, Relaxed);
             let account = self.get_account_with_fixed_root(vote_pubkey)?;
             VoteAccount::try_from(account).ok()
         };

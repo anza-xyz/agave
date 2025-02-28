@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         accounts_file::StorageAccess,
         append_vec::{self, AppendVec, SCAN_BUFFER_SIZE_WITHOUT_DATA},
@@ -9,13 +10,10 @@ use {
             hot::{HotStorageReader, HotStorageWriter},
         },
     },
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Slot,
-        rent_collector::RENT_EXEMPT_RENT_EPOCH,
-        system_instruction::MAX_PERMITTED_DATA_LENGTH,
-    },
+    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::mem::ManuallyDrop,
 };
 

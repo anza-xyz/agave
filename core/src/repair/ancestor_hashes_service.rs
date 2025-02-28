@@ -142,6 +142,12 @@ impl AncestorRepairRequestsStats {
     }
 }
 
+pub struct AncestorHashesChannels {
+    pub ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+    pub ancestor_hashes_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
+    pub ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
+}
+
 pub struct AncestorHashesService {
     thread_hdls: Vec<JoinHandle<()>>,
 }
@@ -151,10 +157,8 @@ impl AncestorHashesService {
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         ancestor_hashes_request_socket: Arc<UdpSocket>,
-        ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-        ancestor_hashes_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
+        ancestor_hashes_channels: AncestorHashesChannels,
         repair_info: RepairInfo,
-        ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
     ) -> Self {
         let outstanding_requests = Arc::<RwLock<OutstandingAncestorHashesRepairs>>::default();
         let (response_sender, response_receiver) = unbounded();
@@ -172,6 +176,12 @@ impl AncestorHashesService {
             None,                     // in_vote_only_mode
             false,                    // is_staked_service
         );
+
+        let AncestorHashesChannels {
+            ancestor_hashes_request_quic_sender,
+            ancestor_hashes_response_quic_receiver,
+            ancestor_hashes_replay_update_receiver,
+        } = ancestor_hashes_channels;
 
         let t_receiver_quic = {
             let exit = exit.clone();

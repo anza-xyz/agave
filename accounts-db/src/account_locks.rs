@@ -2,11 +2,10 @@
 use qualifier_attr::qualifiers;
 use {
     ahash::{AHashMap, AHashSet},
+    solana_message::AccountKeys,
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        message::AccountKeys,
-        transaction::{TransactionError, MAX_TX_ACCOUNT_LOCKS},
-    },
+    solana_transaction::sanitized::MAX_TX_ACCOUNT_LOCKS,
+    solana_transaction_error::TransactionError,
     std::{cell::RefCell, collections::hash_map},
 };
 
@@ -156,7 +155,7 @@ fn has_duplicates(account_keys: AccountKeys) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_sdk::message::v0::LoadedAddresses};
+    use {super::*, solana_message::v0::LoadedAddresses};
 
     #[test]
     fn test_account_locks() {

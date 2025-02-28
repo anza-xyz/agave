@@ -10,12 +10,10 @@ use {
         seq::{IteratorRandom, SliceRandom},
         thread_rng, Rng,
     },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_clock::Slot,
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Slot,
-    },
     std::{
         mem::ManuallyDrop,
         sync::{
@@ -454,7 +452,7 @@ mod tests {
         super::*,
         rand::{Rng, SeedableRng},
         rand_chacha::ChaChaRng,
-        solana_sdk::account::Account,
+        solana_account::Account,
         std::{
             collections::HashMap,
             iter::repeat_with,

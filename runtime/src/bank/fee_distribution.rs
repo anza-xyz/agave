@@ -2,7 +2,6 @@ use {
     super::Bank,
     crate::bank::CollectorFeeDetails,
     log::{debug, warn},
-    solana_feature_set::reward_full_priority_fee,
     solana_fee::FeeFeatures,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
@@ -44,19 +43,6 @@ impl Bank {
     // On the other hand, rent fees are distributed under slightly different philosophy, while
     // still being stake-weighted.
     // Ref: distribute_rent_to_validators
-    pub(super) fn distribute_transaction_fees(&self) {
-        let collector_fees = self.collector_fees.load(Relaxed);
-        if collector_fees != 0 {
-            let (deposit, mut burn) = self.calculate_reward_and_burn_fees(collector_fees);
-            if deposit > 0 {
-                self.deposit_or_burn_fee(deposit, &mut burn);
-            }
-            self.capitalization.fetch_sub(burn, Relaxed);
-        }
-    }
-
-    // Replace `distribute_transaction_fees()` after Feature Gate: Reward full priority fee to
-    // validators #34731;
     pub(super) fn distribute_transaction_fee_details(&self) {
         let fee_details = self.collector_fee_details.read().unwrap();
         if fee_details.total() == 0 {
@@ -84,17 +70,9 @@ impl Bank {
             fee_budget_limits.prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),
         );
-        let (reward, _burn) = if self.feature_set.is_active(&reward_full_priority_fee::id()) {
-            self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details))
-        } else {
-            let fee = fee_details.total_fee();
-            self.calculate_reward_and_burn_fees(fee)
-        };
+        let (reward, _burn) =
+            self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details));
         reward
-    }
-
-    fn calculate_reward_and_burn_fees(&self, fee: u64) -> (u64, u64) {
-        self.fee_rate_governor.burn(fee)
     }
 
     fn calculate_reward_and_burn_fee_details(
@@ -185,7 +163,7 @@ impl Bank {
     // The reason is that rent fee doesn't need to be incentivized for throughput unlike transaction
     // fees
     //
-    // Ref: distribute_transaction_fees
+    // Ref: distribute_transaction_fee_details
     fn distribute_rent_to_validators(
         &self,
         vote_accounts: &VoteAccountsHashMap,
@@ -428,119 +406,6 @@ pub mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn test_distribute_transaction_fees_normal() {
-        let genesis = create_genesis_config(0);
-        let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let transaction_fees = 100;
-        bank.collector_fees.fetch_add(transaction_fees, Relaxed);
-        assert_eq!(transaction_fees, bank.collector_fees.load(Relaxed));
-        let (expected_collected_fees, burn_amount) = bank.fee_rate_governor.burn(transaction_fees);
-
-        let initial_capitalization = bank.capitalization();
-        let initial_collector_id_balance = bank.get_balance(bank.collector_id());
-        bank.distribute_transaction_fees();
-        let new_collector_id_balance = bank.get_balance(bank.collector_id());
-
-        assert_eq!(
-            initial_collector_id_balance + expected_collected_fees,
-            new_collector_id_balance
-        );
-        assert_eq!(initial_capitalization - burn_amount, bank.capitalization());
-        let locked_rewards = bank.rewards.read().unwrap();
-        assert_eq!(
-            locked_rewards.len(),
-            1,
-            "There should be one reward distributed"
-        );
-
-        let reward_info = &locked_rewards[0];
-        assert_eq!(
-            reward_info.1.lamports, expected_collected_fees as i64,
-            "The reward amount should match the expected deposit"
-        );
-        assert_eq!(
-            reward_info.1.reward_type,
-            RewardType::Fee,
-            "The reward type should be Fee"
-        );
-    }
-
-    #[test]
-    fn test_distribute_transaction_fees_zero() {
-        let genesis = create_genesis_config(0);
-        let bank = Bank::new_for_tests(&genesis.genesis_config);
-        assert_eq!(bank.collector_fees.load(Relaxed), 0);
-
-        let initial_capitalization = bank.capitalization();
-        let initial_collector_id_balance = bank.get_balance(bank.collector_id());
-        bank.distribute_transaction_fees();
-        let new_collector_id_balance = bank.get_balance(bank.collector_id());
-
-        assert_eq!(initial_collector_id_balance, new_collector_id_balance);
-        assert_eq!(initial_capitalization, bank.capitalization());
-        let locked_rewards = bank.rewards.read().unwrap();
-        assert!(
-            locked_rewards.is_empty(),
-            "There should be no rewards distributed"
-        );
-    }
-
-    #[test]
-    fn test_distribute_transaction_fees_burn_all() {
-        let mut genesis = create_genesis_config(0);
-        genesis.genesis_config.fee_rate_governor.burn_percent = 100;
-        let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let transaction_fees = 100;
-        bank.collector_fees.fetch_add(transaction_fees, Relaxed);
-        assert_eq!(transaction_fees, bank.collector_fees.load(Relaxed));
-
-        let initial_capitalization = bank.capitalization();
-        let initial_collector_id_balance = bank.get_balance(bank.collector_id());
-        bank.distribute_transaction_fees();
-        let new_collector_id_balance = bank.get_balance(bank.collector_id());
-
-        assert_eq!(initial_collector_id_balance, new_collector_id_balance);
-        assert_eq!(
-            initial_capitalization - transaction_fees,
-            bank.capitalization()
-        );
-        let locked_rewards = bank.rewards.read().unwrap();
-        assert!(
-            locked_rewards.is_empty(),
-            "There should be no rewards distributed"
-        );
-    }
-
-    #[test]
-    fn test_distribute_transaction_fees_overflow_failure() {
-        let genesis = create_genesis_config(0);
-        let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let transaction_fees = 100;
-        bank.collector_fees.fetch_add(transaction_fees, Relaxed);
-        assert_eq!(transaction_fees, bank.collector_fees.load(Relaxed));
-
-        // ensure that account balance will overflow and fee distribution will fail
-        let account = AccountSharedData::new(u64::MAX, 0, &system_program::id());
-        bank.store_account(bank.collector_id(), &account);
-
-        let initial_capitalization = bank.capitalization();
-        let initial_collector_id_balance = bank.get_balance(bank.collector_id());
-        bank.distribute_transaction_fees();
-        let new_collector_id_balance = bank.get_balance(bank.collector_id());
-
-        assert_eq!(initial_collector_id_balance, new_collector_id_balance);
-        assert_eq!(
-            initial_capitalization - transaction_fees,
-            bank.capitalization()
-        );
-        let locked_rewards = bank.rewards.read().unwrap();
-        assert!(
-            locked_rewards.is_empty(),
-            "There should be no rewards distributed"
-        );
     }
 
     #[test]

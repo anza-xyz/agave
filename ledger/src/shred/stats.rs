@@ -1,4 +1,5 @@
 use {
+    crate::shred::{Shred, ShredType},
     solana_sdk::clock::Slot,
     std::{
         ops::AddAssign,
@@ -26,8 +27,8 @@ pub struct ProcessShredsStats {
     // When looking up chained merkle root from parent slot fails.
     pub err_unknown_chained_merkle_root: u64,
     pub(crate) data_buffer_residual: usize,
-    pub num_merkle_data_shreds: usize,
-    pub num_merkle_coding_shreds: usize,
+    num_merkle_data_shreds: usize,
+    num_merkle_coding_shreds: usize,
 }
 
 #[derive(Default, Debug, Eq, PartialEq)]
@@ -112,6 +113,15 @@ impl ProcessShredsStats {
         let index = index.saturating_sub(3) as usize;
         let index = index.min(self.num_data_shreds_hist.len() - 1);
         self.num_data_shreds_hist[index] += 1;
+    }
+
+    #[inline]
+    pub fn record_shred(&mut self, shred: &Shred) {
+        let num_shreds = match shred.shred_type() {
+            ShredType::Code => &mut self.num_merkle_coding_shreds,
+            ShredType::Data => &mut self.num_merkle_data_shreds,
+        };
+        *num_shreds += 1;
     }
 }
 

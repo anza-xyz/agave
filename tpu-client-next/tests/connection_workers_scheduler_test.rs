@@ -45,7 +45,7 @@ use {
 fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
     ConnectionWorkersSchedulerConfig {
         bind: SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0),
-        stake_identity,
+        stake_identity: stake_identity.map(Into::into),
         num_connections: 1,
         skip_check_transaction_age: false,
         // At the moment we have only one strategy to send transactions: we try

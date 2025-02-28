@@ -202,9 +202,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         );
 
         // Push unschedulables back into the queue
-        for id in self.unschedulables.drain(..) {
-            container.push_id_into_queue(id);
-        }
+        container.push_ids_into_queue(self.unschedulables.drain(..));
 
         Ok(SchedulingSummary {
             num_scheduled,

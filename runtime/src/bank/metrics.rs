@@ -18,12 +18,11 @@ pub(crate) struct NewEpochTimings {
 
 #[derive(Debug, Default)]
 pub(crate) struct RewardsMetrics {
-    pub(crate) load_vote_and_stake_accounts_us: AtomicU64,
     pub(crate) calculate_points_us: AtomicU64,
     pub(crate) redeem_rewards_us: u64,
     pub(crate) store_stake_accounts_us: AtomicU64,
     pub(crate) store_vote_accounts_us: AtomicU64,
-    pub(crate) vote_accounts_cache_miss_count: usize,
+    pub(crate) vote_accounts_cache_miss_count: AtomicU64,
     pub(crate) hash_partition_rewards_us: u64,
 }
 
@@ -79,11 +78,6 @@ pub(crate) fn report_new_epoch_metrics(
             i64
         ),
         (
-            "load_vote_and_stake_accounts_us",
-            metrics.load_vote_and_stake_accounts_us.load(Relaxed),
-            i64
-        ),
-        (
             "calculate_points_us",
             metrics.calculate_points_us.load(Relaxed),
             i64
@@ -101,7 +95,7 @@ pub(crate) fn report_new_epoch_metrics(
         ),
         (
             "vote_accounts_cache_miss_count",
-            metrics.vote_accounts_cache_miss_count,
+            metrics.vote_accounts_cache_miss_count.load(Relaxed),
             i64
         ),
         (

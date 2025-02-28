@@ -22,12 +22,10 @@ use {
     bytemuck_derive::{Pod, Zeroable},
     memmap2::{Mmap, MmapOptions},
     modular_bitfield::prelude::*,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        rent_collector::RENT_EXEMPT_RENT_EPOCH,
-        stake_history::Epoch,
-    },
+    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
     std::{io::Write, option::Option, path::Path},
 };
 
@@ -833,10 +831,10 @@ mod tests {
         assert_matches::assert_matches,
         memoffset::offset_of,
         rand::{seq::SliceRandom, Rng},
+        solana_account::ReadableAccount,
+        solana_clock::{Epoch, Slot},
+        solana_hash::Hash,
         solana_pubkey::Pubkey,
-        solana_sdk::{
-            account::ReadableAccount, hash::Hash, slot_history::Slot, stake_history::Epoch,
-        },
         std::path::PathBuf,
         tempfile::TempDir,
     };

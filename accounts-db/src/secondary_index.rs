@@ -1,7 +1,8 @@
 use {
     dashmap::{mapref::entry::Entry::Occupied, DashMap},
     log::*,
-    solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
+    solana_pubkey::Pubkey,
+    solana_time_utils::AtomicInterval,
     std::{
         collections::HashSet,
         fmt::Debug,

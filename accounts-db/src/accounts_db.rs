@@ -82,21 +82,18 @@ use {
     rayon::{prelude::*, ThreadPool},
     seqlock::SeqLock,
     smallvec::SmallVec,
+    solana_account::{Account, AccountSharedData, ReadableAccount},
+    solana_clock::{BankId, Epoch, Slot},
+    solana_epoch_schedule::EpochSchedule,
+    solana_genesis_config::GenesisConfig,
+    solana_hash::Hash,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount},
-        clock::{BankId, Epoch, Slot},
-        epoch_schedule::EpochSchedule,
-        genesis_config::GenesisConfig,
-        hash::Hash,
-        rent_collector::RentCollector,
-        saturating_add_assign,
-        transaction::SanitizedTransaction,
-    },
+    solana_rent_collector::RentCollector,
+    solana_transaction::sanitized::SanitizedTransaction,
     std::{
         borrow::Cow,
         boxed::Box,
@@ -1497,7 +1494,7 @@ pub struct AccountsDb {
 
     write_cache_limit_bytes: Option<u64>,
 
-    sender_bg_hasher: Option<Sender<Vec<CachedAccount>>>,
+    sender_bg_hasher: RwLock<Option<Sender<Vec<CachedAccount>>>>,
     read_only_accounts_cache: ReadOnlyAccountsCache,
 
     /// distribute the accounts across storage lists
@@ -2012,7 +2009,7 @@ impl AccountsDb {
 
         let thread_pool_hash = make_hash_thread_pool(accounts_db_config.num_hash_threads);
 
-        let mut new = Self {
+        let new = Self {
             accounts_index,
             paths,
             base_working_path,
@@ -2064,7 +2061,7 @@ impl AccountsDb {
             active_stats: ActiveStats::default(),
             storage: AccountStorage::default(),
             accounts_cache: AccountsCache::default(),
-            sender_bg_hasher: None,
+            sender_bg_hasher: RwLock::new(None),
             uncleaned_pubkeys: DashMap::default(),
             next_id: AtomicAccountsFileId::new(0),
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
@@ -2093,7 +2090,6 @@ impl AccountsDb {
             best_ancient_slots_to_shrink: RwLock::default(),
         };
 
-        new.start_background_hasher();
         {
             for path in new.paths.iter() {
                 std::fs::create_dir_all(path).expect("Create directory failed.");
@@ -2367,7 +2363,11 @@ impl AccountsDb {
         info!("Background account hasher has stopped");
     }
 
-    fn start_background_hasher(&mut self) {
+    pub fn start_background_hasher(&self) {
+        if self.is_background_hasher_running() {
+            return;
+        }
+
         let (sender, receiver) = unbounded();
         Builder::new()
             .name("solDbStoreHashr".to_string())
@@ -2375,7 +2375,15 @@ impl AccountsDb {
                 Self::background_hasher(receiver);
             })
             .unwrap();
-        self.sender_bg_hasher = Some(sender);
+        *self.sender_bg_hasher.write().unwrap() = Some(sender);
+    }
+
+    pub fn stop_background_hasher(&self) {
+        drop(self.sender_bg_hasher.write().unwrap().take())
+    }
+
+    pub fn is_background_hasher_running(&self) -> bool {
+        self.sender_bg_hasher.read().unwrap().is_some()
     }
 
     #[must_use]
@@ -6516,7 +6524,7 @@ impl AccountsDb {
                         pubkey,
                         current_write_version,
                     );
-                    saturating_add_assign!(current_write_version, 1);
+                    current_write_version = current_write_version.saturating_add(1);
 
                     let cached_account =
                         self.accounts_cache.store(slot, pubkey, account_shared_data);
@@ -6526,7 +6534,7 @@ impl AccountsDb {
             .unzip();
 
         // hash this accounts in bg
-        if let Some(ref sender) = &self.sender_bg_hasher {
+        if let Some(sender) = self.sender_bg_hasher.read().unwrap().as_ref() {
             let _ = sender.send(cached_accounts);
         };
 

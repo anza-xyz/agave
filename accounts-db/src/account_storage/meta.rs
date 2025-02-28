@@ -5,8 +5,10 @@ use {
         append_vec::AppendVecStoredAccountMeta,
         tiered_storage::hot::{HotAccount, HotAccountMeta},
     },
+    solana_account::ReadableAccount,
+    solana_clock::Epoch,
+    solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_sdk::{account::ReadableAccount, hash::Hash, stake_history::Epoch},
 };
 
 pub type StoredMetaWriteVersion = u64;

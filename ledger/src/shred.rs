@@ -809,7 +809,7 @@ pub(crate) fn make_merkle_shreds_from_entries(
     next_code_index: u32,
     reed_solomon_cache: &ReedSolomonCache,
     stats: &mut ProcessShredsStats,
-) -> Result<Vec<Shred>, Error> {
+) -> Result<impl Iterator<Item = Shred>, Error> {
     let now = Instant::now();
     let entries = bincode::serialize(entries)?;
     stats.serialize_elapsed += now.elapsed().as_micros() as u64;
@@ -828,7 +828,7 @@ pub(crate) fn make_merkle_shreds_from_entries(
         reed_solomon_cache,
         stats,
     )?;
-    Ok(shreds.into_iter().map(Shred::from).collect())
+    Ok(shreds.into_iter().map(Shred::from))
 }
 
 // Accepts shreds in the slot range [root + 1, max_slot].

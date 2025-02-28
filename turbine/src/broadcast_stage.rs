@@ -445,6 +445,7 @@ pub fn broadcast_shreds(
     quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
 ) -> Result<()> {
     let mut result = Ok(());
+    // Compute destinations & transmission protocols for each of the shreds to be sent
     let mut shred_select = Measure::start("shred_select");
     let (root_bank, working_bank) = {
         let bank_forks = bank_forks.read().unwrap();
@@ -476,7 +477,6 @@ pub fn broadcast_shreds(
         .partition_map(std::convert::identity);
     shred_select.stop();
     transmit_stats.shred_select += shred_select.as_us();
-
     let num_udp_packets = packets.len();
     let mut send_mmsg_time = Measure::start("send_mmsg");
     match batch_send(s, packets) {
@@ -488,6 +488,7 @@ pub fn broadcast_shreds(
     }
     send_mmsg_time.stop();
     transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
+    let mut quic_send_time = Measure::start("send shreds via quic");
     transmit_stats.total_packets += num_udp_packets + quic_packets.len();
     for (shred, addr) in quic_packets {
         let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred.clone()));
@@ -496,6 +497,8 @@ pub fn broadcast_shreds(
             result = Err(Error::from(err));
         }
     }
+    quic_send_time.stop();
+    transmit_stats.send_quic_elapsed = quic_send_time.as_us();
     result
 }
 

@@ -5,11 +5,9 @@ use {
         accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
         accounts_index::ZeroLamport,
     },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::{Epoch, Slot},
-    },
     std::sync::{Arc, RwLock},
 };
 
@@ -321,10 +319,8 @@ pub mod tests {
             accounts_hash::AccountHash,
             append_vec::AppendVecStoredAccountMeta,
         },
-        solana_sdk::{
-            account::{accounts_equal, AccountSharedData, WritableAccount},
-            hash::Hash,
-        },
+        solana_account::{accounts_equal, AccountSharedData, WritableAccount},
+        solana_hash::Hash,
         std::sync::Arc,
     };
 

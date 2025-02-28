@@ -10,8 +10,8 @@ use {
     bytemuck::Zeroable,
     memmap2::Mmap,
     num_enum::TryFromPrimitiveError,
+    solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_sdk::hash::Hash,
     std::{mem, path::Path, ptr},
     thiserror::Error,
 };

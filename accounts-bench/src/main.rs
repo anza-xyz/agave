@@ -13,10 +13,10 @@ use {
         },
         ancestors::Ancestors,
     },
+    solana_epoch_schedule::EpochSchedule,
     solana_measure::measure::Measure,
-    solana_sdk::{
-        pubkey::Pubkey, rent_collector::RentCollector, sysvar::epoch_schedule::EpochSchedule,
-    },
+    solana_pubkey::Pubkey,
+    solana_rent_collector::RentCollector,
     std::{env, fs, path::PathBuf, sync::Arc},
 };
 
@@ -127,7 +127,7 @@ fn main() {
             let results_store = accounts.accounts_db.update_accounts_hash_with_verify_from(
                 CalcAccountsHashDataSource::Storages,
                 false,
-                solana_sdk::clock::Slot::default(),
+                solana_clock::Slot::default(),
                 &ancestors,
                 None,
                 &EpochSchedule::default(),

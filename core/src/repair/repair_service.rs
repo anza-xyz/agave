@@ -10,7 +10,9 @@ use {
         cluster_info_vote_listener::VerifiedVoteReceiver,
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{
-            ancestor_hashes_service::{AncestorHashesReplayUpdateReceiver, AncestorHashesService},
+            ancestor_hashes_service::{
+                AncestorHashesChannels, AncestorHashesReplayUpdateReceiver, AncestorHashesService,
+            },
             duplicate_repair_status::AncestorDuplicateSlotToRepair,
             outstanding_requests::OutstandingRequests,
             repair_weight::RepairWeight,
@@ -400,27 +402,58 @@ impl Default for RepairSlotRange {
     }
 }
 
+struct RepairChannels {
+    repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+    verified_vote_receiver: VerifiedVoteReceiver,
+    dumped_slots_receiver: DumpedSlotsReceiver,
+    popular_pruned_forks_sender: PopularPrunedForksSender,
+}
+
+pub struct RepairServiceChannels {
+    repair_channels: RepairChannels,
+    ancestors_hashes_channels: AncestorHashesChannels,
+}
+
+impl RepairServiceChannels {
+    pub fn new(
+        repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+        verified_vote_receiver: VerifiedVoteReceiver,
+        dumped_slots_receiver: DumpedSlotsReceiver,
+        popular_pruned_forks_sender: PopularPrunedForksSender,
+        ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+        ancestor_hashes_response_quic_receiver: CrossbeamReceiver<(Pubkey, SocketAddr, Bytes)>,
+        ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
+    ) -> Self {
+        Self {
+            repair_channels: RepairChannels {
+                repair_request_quic_sender,
+                verified_vote_receiver,
+                dumped_slots_receiver,
+                popular_pruned_forks_sender,
+            },
+            ancestors_hashes_channels: AncestorHashesChannels {
+                ancestor_hashes_request_quic_sender,
+                ancestor_hashes_response_quic_receiver,
+                ancestor_hashes_replay_update_receiver,
+            },
+        }
+    }
+}
+
 pub struct RepairService {
     t_repair: JoinHandle<()>,
     ancestor_hashes_service: AncestorHashesService,
 }
 
 impl RepairService {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         blockstore: Arc<Blockstore>,
         exit: Arc<AtomicBool>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
-        repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-        ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-        ancestor_hashes_response_quic_receiver: CrossbeamReceiver<(Pubkey, SocketAddr, Bytes)>,
         repair_info: RepairInfo,
-        verified_vote_receiver: VerifiedVoteReceiver,
         outstanding_requests: Arc<RwLock<OutstandingShredRepairs>>,
-        ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
-        dumped_slots_receiver: DumpedSlotsReceiver,
-        popular_pruned_forks_sender: PopularPrunedForksSender,
+        repair_service_channels: RepairServiceChannels,
     ) -> Self {
         let t_repair = {
             let blockstore = blockstore.clone();
@@ -433,12 +466,9 @@ impl RepairService {
                         &blockstore,
                         &exit,
                         &repair_socket,
-                        &repair_request_quic_sender,
+                        repair_service_channels.repair_channels,
                         repair_info,
-                        verified_vote_receiver,
                         &outstanding_requests,
-                        dumped_slots_receiver,
-                        popular_pruned_forks_sender,
                     )
                 })
                 .unwrap()
@@ -448,10 +478,8 @@ impl RepairService {
             exit,
             blockstore,
             ancestor_hashes_socket,
-            ancestor_hashes_request_quic_sender,
-            ancestor_hashes_response_quic_receiver,
+            repair_service_channels.ancestors_hashes_channels,
             repair_info,
-            ancestor_hashes_replay_update_receiver,
         );
 
         RepairService {
@@ -460,17 +488,13 @@ impl RepairService {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn run(
         blockstore: &Blockstore,
         exit: &AtomicBool,
         repair_socket: &UdpSocket,
-        repair_request_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
+        repair_channels: RepairChannels,
         repair_info: RepairInfo,
-        verified_vote_receiver: VerifiedVoteReceiver,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
-        dumped_slots_receiver: DumpedSlotsReceiver,
-        popular_pruned_forks_sender: PopularPrunedForksSender,
     ) {
         let mut root_bank_cache = RootBankCache::new(repair_info.bank_forks.clone());
         let mut repair_weight = RepairWeight::new(root_bank_cache.root_bank().slot());
@@ -486,6 +510,14 @@ impl RepairService {
         let mut popular_pruned_forks_requests = HashSet::new();
         // Maps a repair that may still be outstanding to the timestamp it was requested.
         let mut outstanding_repairs = HashMap::new();
+
+        let RepairChannels {
+            repair_request_quic_sender,
+            verified_vote_receiver,
+            dumped_slots_receiver,
+            popular_pruned_forks_sender,
+            ..
+        } = repair_channels;
 
         while !exit.load(Ordering::Relaxed) {
             let mut set_root_elapsed;
@@ -634,7 +666,7 @@ impl RepairService {
                                 &repair_info.repair_validators,
                                 &mut outstanding_requests,
                                 identity_keypair,
-                                repair_request_quic_sender,
+                                &repair_request_quic_sender,
                                 repair_protocol,
                             )
                             .ok()??;

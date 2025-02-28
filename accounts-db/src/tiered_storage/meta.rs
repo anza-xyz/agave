@@ -4,7 +4,8 @@ use {
     crate::tiered_storage::owners::OwnerOffset,
     bytemuck_derive::{Pod, Zeroable},
     modular_bitfield::prelude::*,
-    solana_sdk::{pubkey::Pubkey, stake_history::Epoch},
+    solana_clock::Epoch,
+    solana_pubkey::Pubkey,
 };
 
 /// The struct that handles the account meta flags.

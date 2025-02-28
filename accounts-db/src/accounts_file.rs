@@ -9,8 +9,9 @@ use {
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
         },
     },
+    solana_account::AccountSharedData,
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_sdk::{account::AccountSharedData, clock::Slot},
     std::{
         mem,
         path::{Path, PathBuf},

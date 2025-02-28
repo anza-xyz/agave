@@ -19,9 +19,10 @@ use {
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
+        bpf_loader, bpf_loader_deprecated,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::{Clock, UnixTimestamp},
-        compute_budget, native_loader,
+        compute_budget, loader_v4, native_loader,
         pubkey::Pubkey,
         rent::Rent,
         slot_hashes::Slot,
@@ -237,7 +238,7 @@ pub fn deploy_program_with_upgrade_authority(
     let mut account_data = AccountSharedData::default();
     let state = UpgradeableLoaderState::ProgramData {
         slot: deployment_slot,
-        upgrade_authority_address: None,
+        upgrade_authority_address,
     };
     let mut header = bincode::serialize(&state).unwrap();
     let mut complement = vec![
@@ -265,21 +266,60 @@ pub fn deploy_program_with_upgrade_authority(
 pub fn register_builtins(
     mock_bank: &MockBankCallback,
     batch_processor: &TransactionBatchProcessor<MockForkGraph>,
+    with_loader_v4: bool,
 ) {
     const DEPLOYMENT_SLOT: u64 = 0;
-    // We must register the bpf loader account as a loadable account, otherwise programs
-    // won't execute.
-    let bpf_loader_name = "solana_bpf_loader_upgradeable_program";
+    // We must register LoaderV3 as a loadable account, otherwise programs won't execute.
+    let loader_v3_name = "solana_bpf_loader_upgradeable_program";
     batch_processor.add_builtin(
         mock_bank,
         bpf_loader_upgradeable::id(),
-        bpf_loader_name,
+        loader_v3_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            bpf_loader_name.len(),
+            loader_v3_name.len(),
             solana_bpf_loader_program::Entrypoint::vm,
         ),
     );
+
+    // Other loaders are needed for testing program cache behavior.
+    let loader_v1_name = "solana_bpf_loader_deprecated_program";
+    batch_processor.add_builtin(
+        mock_bank,
+        bpf_loader_deprecated::id(),
+        loader_v1_name,
+        ProgramCacheEntry::new_builtin(
+            DEPLOYMENT_SLOT,
+            loader_v1_name.len(),
+            solana_bpf_loader_program::Entrypoint::vm,
+        ),
+    );
+
+    let loader_v2_name = "solana_bpf_loader_program";
+    batch_processor.add_builtin(
+        mock_bank,
+        bpf_loader::id(),
+        loader_v2_name,
+        ProgramCacheEntry::new_builtin(
+            DEPLOYMENT_SLOT,
+            loader_v2_name.len(),
+            solana_bpf_loader_program::Entrypoint::vm,
+        ),
+    );
+
+    if with_loader_v4 {
+        let loader_v4_name = "solana_loader_v4_program";
+        batch_processor.add_builtin(
+            mock_bank,
+            loader_v4::id(),
+            loader_v4_name,
+            ProgramCacheEntry::new_builtin(
+                DEPLOYMENT_SLOT,
+                loader_v4_name.len(),
+                solana_loader_v4_program::Entrypoint::vm,
+            ),
+        );
+    }
 
     // In order to perform a transference of native tokens using the system instruction,
     // the system program builtin must be registered.

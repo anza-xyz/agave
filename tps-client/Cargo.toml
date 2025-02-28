@@ -35,9 +35,7 @@ solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-serial_test = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-test-validator = { workspace = true }
 tempfile = { workspace = true }
 
 [package.metadata.docs.rs]

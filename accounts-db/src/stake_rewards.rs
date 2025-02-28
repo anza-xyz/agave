@@ -2,8 +2,10 @@
 
 use {
     crate::storable_accounts::{AccountForStorage, StorableAccounts},
+    solana_account::AccountSharedData,
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_sdk::{account::AccountSharedData, clock::Slot, reward_info::RewardInfo},
+    solana_reward_info::RewardInfo,
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -44,14 +46,8 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [StakeReward]) {
 
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    rand::Rng,
-    solana_sdk::{
-        account::WritableAccount,
-        rent::Rent,
-        signature::{Keypair, Signer},
-    },
-    solana_stake_program::stake_state,
-    solana_vote_program::vote_state,
+    rand::Rng, solana_account::WritableAccount, solana_keypair::Keypair, solana_rent::Rent,
+    solana_signer::Signer, solana_stake_program::stake_state, solana_vote_program::vote_state,
 };
 
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
@@ -86,7 +82,7 @@ impl StakeReward {
         Self {
             stake_pubkey: Pubkey::new_unique(),
             stake_reward_info: RewardInfo {
-                reward_type: solana_sdk::reward_type::RewardType::Staking,
+                reward_type: solana_reward_info::RewardType::Staking,
                 lamports: reward_lamports,
                 post_balance: 0,  /* unused atm */
                 commission: None, /* unused atm */

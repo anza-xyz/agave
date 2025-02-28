@@ -37,7 +37,7 @@ Your system should close all ports that do not need to be open to the outside wo
 
 [fail2ban](https://github.com/fail2ban/fail2ban) is a network security tool that checks your logs for suspicious login attempts and bans those IP addresses after repeated attempts. This will help mitigate brute force attacks on your server.
 
-The default setup should work out-of-the-box by doing the simply installing `fail2ban`:
+The default setup should work out-of-the-box by simply installing `fail2ban`:
 
 ```
 sudo apt install fail2ban

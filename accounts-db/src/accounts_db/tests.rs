@@ -16,11 +16,12 @@ use {
     assert_matches::assert_matches,
     itertools::Itertools,
     rand::{prelude::SliceRandom, thread_rng, Rng},
-    solana_pubkey::PUBKEY_BYTES,
-    solana_sdk::{
-        account::{accounts_equal, Account, AccountSharedData, ReadableAccount, WritableAccount},
-        hash::HASH_BYTES,
+    solana_account::{
+        accounts_equal, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
+        WritableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
+    solana_hash::HASH_BYTES,
+    solana_pubkey::PUBKEY_BYTES,
     std::{
         hash::DefaultHasher,
         iter::{self, FromIterator},
@@ -77,6 +78,23 @@ where
             false
         }
     }
+}
+
+fn create_loadable_account_with_fields(
+    name: &str,
+    (lamports, rent_epoch): InheritableAccountFields,
+) -> AccountSharedData {
+    AccountSharedData::from(Account {
+        lamports,
+        owner: solana_sdk_ids::native_loader::id(),
+        data: name.as_bytes().to_vec(),
+        executable: true,
+        rent_epoch,
+    })
+}
+
+fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
+    create_loadable_account_with_fields(name, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
 }
 
 impl AccountStorageEntry {
@@ -2458,7 +2476,7 @@ fn test_verify_bank_capitalization() {
             some_slot,
             &[(
                 &native_account_pubkey,
-                &solana_sdk::native_loader::create_loadable_account_for_test("foo"),
+                &create_loadable_account_for_test("foo"),
             )],
         );
         db.add_root_and_flush_write_cache(some_slot);
@@ -3279,15 +3297,14 @@ fn test_delete_dependencies() {
 
 #[test]
 fn test_account_balance_for_capitalization_sysvar() {
-    let normal_sysvar = solana_sdk::account::create_account_for_test(
-        &solana_sdk::slot_history::SlotHistory::default(),
-    );
+    let normal_sysvar =
+        solana_account::create_account_for_test(&solana_slot_history::SlotHistory::default());
     assert_eq!(normal_sysvar.lamports(), 1);
 }
 
 #[test]
 fn test_account_balance_for_capitalization_native_program() {
-    let normal_native_program = solana_sdk::native_loader::create_loadable_account_for_test("foo");
+    let normal_native_program = create_loadable_account_for_test("foo");
     assert_eq!(normal_native_program.lamports(), 1);
 }
 

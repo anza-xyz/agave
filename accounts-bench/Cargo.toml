@@ -13,9 +13,12 @@ clap = { workspace = true }
 log = { workspace = true }
 rayon = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
+solana-clock = { workspace = true }
+solana-epoch-schedule = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
-solana-sdk = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent-collector = { workspace = true }
 solana-version = { workspace = true }
 
 [package.metadata.docs.rs]
