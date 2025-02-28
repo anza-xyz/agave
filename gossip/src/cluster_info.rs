@@ -44,7 +44,7 @@ use {
         },
         weighted_shuffle::WeightedShuffle,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError},
     itertools::{Either, Itertools},
     rand::{seq::SliceRandom, CryptoRng, Rng},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
@@ -118,6 +118,13 @@ const MAX_GOSSIP_TRAFFIC: usize = 128_000_000 / PACKET_DATA_SIZE;
 /// so any extra capacity that may be reserved due to traffic variations will be preserved,
 /// avoiding excessive resizing and re-allocation.
 const CHANNEL_RECV_BUFFER_INITIAL_CAPACITY: usize = MAX_GOSSIP_TRAFFIC.div_ceil(28);
+/// Channel capacity for gossip channels.
+///
+/// It was observed that under extreme load, the channel caps out
+/// around 11k capacity. This rounds that up to the next power of 2
+/// such that load shedding is highly unlikely to occur on the sender
+/// and continues to be done on the receiver side.
+pub(crate) const GOSSIP_CHANNEL_CAPACITY: usize = 16_384; // 2^14
 const GOSSIP_PING_CACHE_CAPACITY: usize = 126976;
 const GOSSIP_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
 const GOSSIP_PING_CACHE_RATE_LIMIT_DELAY: Duration = Duration::from_secs(1280 / 64);
@@ -1357,7 +1364,11 @@ impl ClusterInfo {
         .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
         .for_each(|pkt| packet_batch.push(pkt));
         if !packet_batch.is_empty() {
-            sender.send(packet_batch)?;
+            if let Err(TrySendError::Full(packet_batch)) = sender.try_send(packet_batch) {
+                self.stats
+                    .gossip_transmit_packets_dropped_count
+                    .add_relaxed(packet_batch.len() as u64);
+            }
         }
         self.stats
             .gossip_transmit_loop_iterations_since_last_report
@@ -1599,7 +1610,11 @@ impl ClusterInfo {
         if !requests.is_empty() {
             let response = self.handle_pull_requests(thread_pool, recycler, requests, stakes);
             if !response.is_empty() {
-                let _ = response_sender.send(response);
+                if let Err(TrySendError::Full(response)) = response_sender.try_send(response) {
+                    self.stats
+                        .gossip_packets_dropped_count
+                        .add_relaxed(response.len() as u64);
+                }
             }
         }
     }
@@ -1874,7 +1889,11 @@ impl ClusterInfo {
             .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
             .for_each(|pkt| packet_batch.push(pkt));
         if !packet_batch.is_empty() {
-            let _ = response_sender.send(packet_batch);
+            if let Err(TrySendError::Full(packet_batch)) = response_sender.try_send(packet_batch) {
+                self.stats
+                    .gossip_packets_dropped_count
+                    .add_relaxed(packet_batch.len() as u64);
+            }
         }
     }
 
@@ -2158,7 +2177,7 @@ impl ClusterInfo {
             .map(EpochSpecs::current_epoch_staked_nodes)
             .cloned()
             .unwrap_or_default();
-        let packets: Vec<_> = {
+        let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
             thread_pool.install(|| {
                 if packet_buf.len() == 1 {
@@ -2175,8 +2194,15 @@ impl ClusterInfo {
                 }
             })
         };
+        if let Err(TrySendError::Full(_)) = sender.try_send(packets_verified) {
+            self.stats.gossip_packets_dropped_count.add_relaxed(
+                packet_buf
+                    .iter()
+                    .fold(0, |acc, packet_batch| acc + packet_batch.len()) as u64,
+            );
+        }
         packet_buf.clear();
-        Ok(sender.send(packets)?)
+        Ok(())
     }
 
     /// Process messages from the network
@@ -3006,7 +3032,11 @@ fn send_gossip_packets<S: Borrow<SocketAddr>>(
     let pkts = pkts.into_iter();
     if pkts.len() != 0 {
         let pkts = make_gossip_packet_batch(pkts, recycler, stats);
-        let _ = sender.send(pkts);
+        if let Err(TrySendError::Full(pkts)) = sender.try_send(pkts) {
+            stats
+                .gossip_packets_dropped_count
+                .add_relaxed(pkts.len() as u64);
+        }
     }
 }
 

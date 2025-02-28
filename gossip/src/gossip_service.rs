@@ -1,8 +1,11 @@
 //! The `gossip_service` module implements the network control plane.
 
 use {
-    crate::{cluster_info::ClusterInfo, contact_info::ContactInfo},
-    crossbeam_channel::{unbounded, Sender},
+    crate::{
+        cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
+        contact_info::ContactInfo,
+    },
+    crossbeam_channel::{bounded, Sender},
     rand::{thread_rng, Rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
@@ -43,7 +46,7 @@ impl GossipService {
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let (request_sender, request_receiver) = unbounded();
+        let (request_sender, request_receiver) = bounded(GOSSIP_CHANNEL_CAPACITY);
         let gossip_socket = Arc::new(gossip_socket);
         trace!(
             "GossipService: id: {}, listening on: {:?}",
@@ -63,14 +66,14 @@ impl GossipService {
             None,
             false,
         );
-        let (consume_sender, listen_receiver) = unbounded();
+        let (consume_sender, listen_receiver) = bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
             bank_forks.clone(),
             request_receiver,
             consume_sender,
             exit.clone(),
         );
-        let (response_sender, response_receiver) = unbounded();
+        let (response_sender, response_receiver) = bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_listen = cluster_info.clone().listen(
             bank_forks.clone(),
             listen_receiver,
