@@ -9,7 +9,7 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         multi_iterator_scanner::{MultiIteratorScanner, ProcessingDecision},
         read_write_account_set::ReadWriteAccountSet,
-        unprocessed_packet_batches::{DeserializedPacket, PacketBatchInsertionMetrics},
+        unprocessed_packet_batches::DeserializedPacket,
         BankingStageStats,
     },
     itertools::Itertools,
@@ -41,7 +41,6 @@ pub struct VoteStorage {
 #[derive(Debug)]
 pub(crate) enum InsertPacketBatchSummary {
     VoteBatchInsertionMetrics(VoteBatchInsertionMetrics),
-    PacketBatchInsertionMetrics(PacketBatchInsertionMetrics),
 }
 
 impl InsertPacketBatchSummary {
@@ -50,21 +49,18 @@ impl InsertPacketBatchSummary {
             Self::VoteBatchInsertionMetrics(metrics) => {
                 metrics.num_dropped_gossip + metrics.num_dropped_tpu
             }
-            Self::PacketBatchInsertionMetrics(metrics) => metrics.num_dropped_packets,
         }
     }
 
     pub fn dropped_gossip_packets(&self) -> usize {
         match self {
             Self::VoteBatchInsertionMetrics(metrics) => metrics.num_dropped_gossip,
-            _ => 0,
         }
     }
 
     pub fn dropped_tpu_packets(&self) -> usize {
         match self {
             Self::VoteBatchInsertionMetrics(metrics) => metrics.num_dropped_tpu,
-            _ => 0,
         }
     }
 }
@@ -72,12 +68,6 @@ impl InsertPacketBatchSummary {
 impl From<VoteBatchInsertionMetrics> for InsertPacketBatchSummary {
     fn from(metrics: VoteBatchInsertionMetrics) -> Self {
         Self::VoteBatchInsertionMetrics(metrics)
-    }
-}
-
-impl From<PacketBatchInsertionMetrics> for InsertPacketBatchSummary {
-    fn from(metrics: PacketBatchInsertionMetrics) -> Self {
-        Self::PacketBatchInsertionMetrics(metrics)
     }
 }
 
