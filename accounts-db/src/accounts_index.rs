@@ -548,22 +548,6 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
         (start_bin, bin_range)
     }
 
-    fn hold_range_in_memory<R>(&self, range: &R, start_holding: bool, thread_pool: &ThreadPool)
-    where
-        R: RangeBounds<Pubkey> + Debug + Sync,
-    {
-        // forward this hold request ONLY to the bins which contain keys in the specified range
-        let (start_bin, bin_range) = self.bin_start_and_range();
-        // the idea is this range shouldn't be more than a few buckets, but the process of loading from disk buckets is very slow
-        // so, parallelize the bucket loads
-        thread_pool.install(|| {
-            (0..bin_range).into_par_iter().for_each(|idx| {
-                let map = &self.account_maps[idx + start_bin];
-                map.hold_range_in_memory(range, start_holding);
-            });
-        });
-    }
-
     pub fn new<R>(index: &'a AccountsIndex<T, U>, range: Option<&R>) -> Self
     where
         R: RangeBounds<Pubkey>,
@@ -581,6 +565,22 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
                 .unwrap_or(Unbounded),
             is_finished: false,
         }
+    }
+
+    fn hold_range_in_memory<R>(&self, range: &R, start_holding: bool, thread_pool: &ThreadPool)
+    where
+        R: RangeBounds<Pubkey> + Debug + Sync,
+    {
+        // forward this hold request ONLY to the bins which contain keys in the specified range
+        let (start_bin, bin_range) = self.bin_start_and_range();
+        // the idea is this range shouldn't be more than a few buckets, but the process of loading from disk buckets is very slow
+        // so, parallelize the bucket loads
+        thread_pool.install(|| {
+            (0..bin_range).into_par_iter().for_each(|idx| {
+                let map = &self.account_maps[idx + start_bin];
+                map.hold_range_in_memory(range, start_holding);
+            });
+        });
     }
 }
 
