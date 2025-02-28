@@ -13,7 +13,7 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_receiver::PacketReceiver,
         qos_service::QosService,
-        unprocessed_transaction_storage::VoteStorage,
+        vote_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -65,7 +65,7 @@ pub mod consumer;
 pub mod leader_slot_metrics;
 pub mod qos_service;
 pub mod unprocessed_packet_batches;
-pub mod unprocessed_transaction_storage;
+pub mod vote_storage;
 
 mod consume_worker;
 mod decision_maker;
@@ -587,7 +587,7 @@ impl BankingStage {
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
-        unprocessed_transaction_storage: VoteStorage,
+        vote_storage: VoteStorage,
     ) -> JoinHandle<()> {
         let mut packet_receiver = PacketReceiver::new(id, packet_receiver);
         let consumer = Consumer::new(
@@ -606,7 +606,7 @@ impl BankingStage {
                     &bank_forks,
                     &consumer,
                     id,
-                    unprocessed_transaction_storage,
+                    vote_storage,
                 )
             })
             .unwrap()
@@ -617,11 +617,11 @@ impl BankingStage {
         decision_maker: &mut DecisionMaker,
         bank_forks: &RwLock<BankForks>,
         consumer: &Consumer,
-        unprocessed_transaction_storage: &mut VoteStorage,
+        vote_storage: &mut VoteStorage,
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
-        if unprocessed_transaction_storage.should_not_process() {
+        if vote_storage.should_not_process() {
             return;
         }
         let (decision, make_decision_us) =
@@ -639,7 +639,7 @@ impl BankingStage {
                 let (_, consume_buffered_packets_us) = measure_us!(consumer
                     .consume_buffered_packets(
                         &bank_start,
-                        unprocessed_transaction_storage,
+                        vote_storage,
                         banking_stage_stats,
                         slot_metrics_tracker,
                     ));
@@ -650,14 +650,14 @@ impl BankingStage {
                 // get current working bank from bank_forks, use it to sanitize transaction and
                 // load all accounts from address loader;
                 let current_bank = bank_forks.read().unwrap().working_bank();
-                unprocessed_transaction_storage.cache_epoch_boundary_info(&current_bank);
-                unprocessed_transaction_storage.clear();
+                vote_storage.cache_epoch_boundary_info(&current_bank);
+                vote_storage.clear();
             }
             BufferedPacketsDecision::ForwardAndHold => {
                 // get current working bank from bank_forks, use it to sanitize transaction and
                 // load all accounts from address loader;
                 let current_bank = bank_forks.read().unwrap().working_bank();
-                unprocessed_transaction_storage.cache_epoch_boundary_info(&current_bank);
+                vote_storage.cache_epoch_boundary_info(&current_bank);
             }
             BufferedPacketsDecision::Hold => {}
         }
@@ -669,7 +669,7 @@ impl BankingStage {
         bank_forks: &RwLock<BankForks>,
         consumer: &Consumer,
         id: u32,
-        mut unprocessed_transaction_storage: VoteStorage,
+        mut vote_storage: VoteStorage,
     ) {
         let mut banking_stage_stats = BankingStageStats::new(id);
 
@@ -677,14 +677,14 @@ impl BankingStage {
         let mut last_metrics_update = Instant::now();
 
         loop {
-            if !unprocessed_transaction_storage.is_empty()
+            if !vote_storage.is_empty()
                 || last_metrics_update.elapsed() >= SLOT_BOUNDARY_CHECK_PERIOD
             {
                 let (_, process_buffered_packets_us) = measure_us!(Self::process_buffered_packets(
                     decision_maker,
                     bank_forks,
                     consumer,
-                    &mut unprocessed_transaction_storage,
+                    &mut vote_storage,
                     &banking_stage_stats,
                     &mut slot_metrics_tracker,
                 ));
@@ -694,7 +694,7 @@ impl BankingStage {
             }
 
             match packet_receiver.receive_and_buffer_packets(
-                &mut unprocessed_transaction_storage,
+                &mut vote_storage,
                 &mut banking_stage_stats,
                 &mut slot_metrics_tracker,
             ) {
@@ -1285,7 +1285,7 @@ mod tests {
 
     #[test_case(TransactionStructure::Sdk)]
     #[test_case(TransactionStructure::View)]
-    fn test_unprocessed_transaction_storage_full_send(transaction_struct: TransactionStructure) {
+    fn test_vote_storage_full_send(transaction_struct: TransactionStructure) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
