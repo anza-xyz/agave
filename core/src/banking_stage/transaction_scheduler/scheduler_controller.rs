@@ -3,8 +3,8 @@
 
 use {
     super::{
-        prio_graph_scheduler::PrioGraphScheduler,
         receive_and_buffer::ReceiveAndBuffer,
+        scheduler::Scheduler,
         scheduler_error::SchedulerError,
         scheduler_metrics::{
             SchedulerCountMetrics, SchedulerLeaderDetectionMetrics, SchedulerTimingMetrics,
@@ -33,7 +33,12 @@ use {
 };
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
-pub(crate) struct SchedulerController<C: LikeClusterInfo, R: ReceiveAndBuffer> {
+pub(crate) struct SchedulerController<C, R, S>
+where
+    C: LikeClusterInfo,
+    R: ReceiveAndBuffer,
+    S: Scheduler<R::Transaction>,
+{
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     receive_and_buffer: R,
@@ -42,7 +47,7 @@ pub(crate) struct SchedulerController<C: LikeClusterInfo, R: ReceiveAndBuffer> {
     /// Shared resource between `packet_receiver` and `scheduler`.
     container: R::Container,
     /// State for scheduling and communicating with worker threads.
-    scheduler: PrioGraphScheduler<R::Transaction>,
+    scheduler: S,
     /// Metrics tracking time for leader bank detection.
     leader_detection_metrics: SchedulerLeaderDetectionMetrics,
     /// Metrics tracking counts on transactions in different states
@@ -57,12 +62,17 @@ pub(crate) struct SchedulerController<C: LikeClusterInfo, R: ReceiveAndBuffer> {
     forwarder: Option<Forwarder<C>>,
 }
 
-impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
+impl<C, R, S> SchedulerController<C, R, S>
+where
+    C: LikeClusterInfo,
+    R: ReceiveAndBuffer,
+    S: Scheduler<R::Transaction>,
+{
     pub fn new(
         decision_maker: DecisionMaker,
         receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
-        scheduler: PrioGraphScheduler<R::Transaction>,
+        scheduler: S,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
         forwarder: Option<Forwarder<C>>,
     ) -> Self {
@@ -444,7 +454,7 @@ mod tests {
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
             transaction_scheduler::{
-                prio_graph_scheduler::PrioGraphSchedulerConfig,
+                prio_graph_scheduler::{PrioGraphScheduler, PrioGraphSchedulerConfig},
                 receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
             },
             TransactionViewReceiveAndBuffer,
@@ -517,7 +527,7 @@ mod tests {
         create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
     ) -> (
         TestFrame<R::Transaction>,
-        SchedulerController<Arc<ClusterInfo>, R>,
+        SchedulerController<Arc<ClusterInfo>, R, PrioGraphScheduler<R::Transaction>>,
     ) {
         let GenesisConfigInfo {
             mut genesis_config,
@@ -617,8 +627,12 @@ mod tests {
     // in order to keep the decision as recent as possible for processing.
     // In the tests, the decision will not become stale, so it is more convenient
     // to receive first and then schedule.
-    fn test_receive_then_schedule(
-        scheduler_controller: &mut SchedulerController<Arc<ClusterInfo>, impl ReceiveAndBuffer>,
+    fn test_receive_then_schedule<R: ReceiveAndBuffer>(
+        scheduler_controller: &mut SchedulerController<
+            Arc<ClusterInfo>,
+            R,
+            impl Scheduler<R::Transaction>,
+        >,
     ) {
         let decision = scheduler_controller
             .decision_maker

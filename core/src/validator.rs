@@ -195,6 +195,7 @@ impl BlockVerificationMethod {
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockProductionMethod {
     CentralScheduler,
+    CentralSchedulerGreedy,
     #[default]
     UnifiedScheduler,
 }
