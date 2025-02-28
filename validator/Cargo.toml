@@ -45,6 +45,7 @@ solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
+solana-log-utils = { workspace = true }
 solana-logger = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }

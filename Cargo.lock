@@ -355,6 +355,7 @@ dependencies = [
  "solana-gossip",
  "solana-inline-spl",
  "solana-ledger",
+ "solana-log-utils",
  "solana-logger",
  "solana-metrics",
  "solana-net-utils",
@@ -7291,6 +7292,7 @@ dependencies = [
  "solana-unified-scheduler-logic",
  "solana-unified-scheduler-pool",
  "solana-version",
+ "solana-vortexor-receiver",
  "solana-vote",
  "solana-vote-program",
  "solana-wen-restart",
@@ -8315,6 +8317,17 @@ name = "solana-log-collector"
 version = "2.3.0"
 dependencies = [
  "log",
+]
+
+[[package]]
+name = "solana-log-utils"
+version = "2.3.0"
+dependencies = [
+ "clap 2.33.3",
+ "libc",
+ "log",
+ "signal-hook",
+ "solana-logger",
 ]
 
 [[package]]
@@ -10724,6 +10737,7 @@ dependencies = [
 name = "solana-vortexor"
 version = "2.3.0"
 dependencies = [
+ "agave-banking-stage-ingress-types",
  "assert_matches",
  "async-channel",
  "bytes",
@@ -10745,10 +10759,13 @@ dependencies = [
  "quinn-proto",
  "rand 0.8.5",
  "rustls 0.23.23",
+ "signal-hook",
  "smallvec",
  "socket2",
  "solana-clap-utils",
+ "solana-client",
  "solana-core",
+ "solana-log-utils",
  "solana-logger",
  "solana-measure",
  "solana-metrics",
@@ -10760,7 +10777,17 @@ dependencies = [
  "solana-version",
  "thiserror 2.0.11",
  "tokio",
+ "url 2.5.4",
  "x509-parser",
+]
+
+[[package]]
+name = "solana-vortexor-receiver"
+version = "2.3.0"
+dependencies = [
+ "assert_matches",
+ "solana-perf",
+ "solana-streamer",
 ]
 
 [[package]]

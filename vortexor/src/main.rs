@@ -1,15 +1,26 @@
 use {
-    clap::{value_t, value_t_or_exit},
+    clap::{crate_name, value_t, value_t_or_exit, values_t},
     crossbeam_channel::bounded,
+    log::*,
     solana_clap_utils::input_parsers::keypair_of,
     solana_core::banking_trace::BankingTracer,
-    solana_sdk::net::DEFAULT_TPU_COALESCE,
+    solana_log_utils::redirect_stderr_to_file,
+    solana_net_utils::{bind_in_range_with_config, SocketConfig},
+    solana_sdk::{net::DEFAULT_TPU_COALESCE, pubkey::Pubkey, signer::Signer},
     solana_streamer::streamer::StakedNodes,
     solana_vortexor::{
         cli::{app, DefaultArgs},
+        load_balancer::LoadBalancer,
+        sender::{
+            PacketBatchSender, DEFAULT_BATCH_SIZE, DEFAULT_RECV_TIMEOUT,
+            DEFAULT_SENDER_THREADS_COUNT,
+        },
+        stake_updater::StakeUpdater,
         vortexor::Vortexor,
     },
     std::{
+        collections::{HashMap, HashSet},
+        env,
         sync::{atomic::AtomicBool, Arc, RwLock},
         time::Duration,
     },
@@ -18,6 +29,8 @@ use {
 const DEFAULT_CHANNEL_SIZE: usize = 100_000;
 
 pub fn main() {
+    solana_logger::setup();
+
     let default_args = DefaultArgs::default();
     let solana_version = solana_version::version!();
     let cli_app = app(solana_version, &default_args);
@@ -30,6 +43,28 @@ pub fn main() {
         )
         .exit();
     });
+
+    let logfile = {
+        let logfile = matches
+            .value_of("logfile")
+            .map(|s| s.into())
+            .unwrap_or_else(|| format!("solana-vortexor-{}.log", identity_keypair.pubkey()));
+
+        if logfile == "-" {
+            None
+        } else {
+            println!("log file: {logfile}");
+            Some(logfile)
+        }
+    };
+    let _logger_thread = redirect_stderr_to_file(logfile);
+
+    info!("{} {solana_version}", crate_name!());
+    info!(
+        "Starting vortexor {} with: {:#?}",
+        identity_keypair.pubkey(),
+        std::env::args_os()
+    );
 
     let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
         .expect("invalid bind_address");
@@ -67,13 +102,77 @@ pub fn main() {
     )
     .unwrap();
 
-    // The _non_vote_receiver will forward the verified transactions to its configured validator
-    let (non_vote_sender, _non_vote_receiver) = banking_tracer.create_channel_non_vote();
+    let config = SocketConfig::default().reuseport(false);
 
+    let sender_socket =
+        bind_in_range_with_config(bind_address, dynamic_port_range, config).unwrap();
+
+    // The non_vote_receiver will forward the verified transactions to its configured validator
+    let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
+
+    let destinations = values_t!(matches, "destination", String)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|destination| {
+            solana_net_utils::parse_host_port(&destination).unwrap_or_else(|e| {
+                panic!("Failed to parse destination address: {e}");
+            })
+        })
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let rpc_servers = values_t!(matches, "rpc_server", String)
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let websocket_servers = values_t!(matches, "websocket_server", String)
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let servers = rpc_servers
+        .iter()
+        .zip(websocket_servers.iter())
+        .map(|(rpc, ws)| (rpc.clone(), ws.clone()))
+        .collect::<Vec<_>>();
+
+    info!("Creating the PacketBatchSender: at address: {:?} for the following initial destinations: {destinations:?}",
+        sender_socket.1.local_addr());
+
+    let destinations = Arc::new(RwLock::new(destinations));
+    let packet_sender = PacketBatchSender::new(
+        sender_socket.1,
+        non_vote_receiver,
+        DEFAULT_SENDER_THREADS_COUNT,
+        DEFAULT_BATCH_SIZE,
+        DEFAULT_RECV_TIMEOUT,
+        destinations,
+    );
+
+    info!("Creating the SigVerifier");
     let sigverify_stage = Vortexor::create_sigverify_stage(tpu_receiver, non_vote_sender);
 
     // To be linked with StakedNodes service.
     let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+    let staked_nodes_overrides: HashMap<Pubkey, u64> = HashMap::new();
+
+    let (rpc_load_balancer, _slot_receiver) = LoadBalancer::new(&servers, &exit);
+    let rpc_load_balancer = Arc::new(rpc_load_balancer);
+
+    let staked_nodes_updater_service = StakeUpdater::new(
+        exit.clone(),
+        rpc_load_balancer.clone(),
+        staked_nodes.clone(),
+        staked_nodes_overrides,
+    );
+
+    info!(
+        "Creating the Vortexor. The tpu socket is: {:?}, tpu_fwd: {:?}",
+        tpu_sockets.tpu_quic[0].local_addr(),
+        tpu_sockets.tpu_quic_fwd[0].local_addr()
+    );
 
     let vortexor = Vortexor::create_vortexor(
         tpu_sockets,
@@ -93,4 +192,6 @@ pub fn main() {
     );
     vortexor.join().unwrap();
     sigverify_stage.join().unwrap();
+    packet_sender.join().unwrap();
+    staked_nodes_updater_service.join().unwrap();
 }
