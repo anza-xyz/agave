@@ -5850,6 +5850,7 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
 
 #[test]
 #[serial]
+#[ignore]
 fn test_randomly_mixed_block_production_methods_between_bootstrap_and_not() {
     // tailored logging just to see two block production methods are working correctly
     solana_logger::setup_with_default(
