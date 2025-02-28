@@ -504,6 +504,20 @@ fn bin_from_bound(
     }
 }
 
+fn bin_start_and_range(start_bin: usize, end_bin_inclusive: usize) -> (usize, usize) {
+    // calculate the max range of bins to look in
+    let bin_range = if start_bin > end_bin_inclusive {
+        0 // empty range
+    } else if end_bin_inclusive == usize::MAX {
+        usize::MAX
+    } else {
+        // the range is end_inclusive + 1 - start
+        // end_inclusive could be usize::MAX already if no bound was specified
+        end_bin_inclusive.saturating_add(1) - start_bin
+    };
+    (start_bin, bin_range)
+}
+
 pub struct AccountsIndexIteratorUnsorted<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     account_maps: &'a LockMapTypeSlice<T, U>,
     bin_calculator: &'a PubkeyBinCalculator24,
@@ -515,13 +529,6 @@ pub struct AccountsIndexIteratorUnsorted<'a, T: IndexValue, U: DiskIndexValue + 
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     AccountsIndexIteratorUnsorted<'a, T, U>
 {
-    fn range<R>(map: &AccountMaps<T, U>, range: R) -> RangeItemVec<T>
-    where
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
-    {
-        map.items(&range)
-    }
-
     fn start_bin(&self) -> usize {
         // start in bin where 'start_bound' would exist
         bin_from_bound(self.bin_calculator, &self.start_bound, 0)
@@ -530,22 +537,6 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     fn end_bin_inclusive(&self) -> usize {
         // end in bin where 'end_bound' would exist
         bin_from_bound(self.bin_calculator, &self.end_bound, usize::MAX)
-    }
-
-    fn bin_start_and_range(&self) -> (usize, usize) {
-        let start_bin = self.start_bin();
-        // calculate the max range of bins to look in
-        let end_bin_inclusive = self.end_bin_inclusive();
-        let bin_range = if start_bin > end_bin_inclusive {
-            0 // empty range
-        } else if end_bin_inclusive == usize::MAX {
-            usize::MAX
-        } else {
-            // the range is end_inclusive + 1 - start
-            // end_inclusive could be usize::MAX already if no bound was specified
-            end_bin_inclusive.saturating_add(1) - start_bin
-        };
-        (start_bin, bin_range)
     }
 
     pub fn new<R>(index: &'a AccountsIndex<T, U>, range: Option<&R>) -> Self
@@ -566,22 +557,6 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
             is_finished: false,
         }
     }
-
-    fn hold_range_in_memory<R>(&self, range: &R, start_holding: bool, thread_pool: &ThreadPool)
-    where
-        R: RangeBounds<Pubkey> + Debug + Sync,
-    {
-        // forward this hold request ONLY to the bins which contain keys in the specified range
-        let (start_bin, bin_range) = self.bin_start_and_range();
-        // the idea is this range shouldn't be more than a few buckets, but the process of loading from disk buckets is very slow
-        // so, parallelize the bucket loads
-        thread_pool.install(|| {
-            (0..bin_range).into_par_iter().for_each(|idx| {
-                let map = &self.account_maps[idx + start_bin];
-                map.hold_range_in_memory(range, start_holding);
-            });
-        });
-    }
 }
 
 /// implement Iterator trait for AccountsIndexIteratorUnsorted
@@ -593,10 +568,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
         if self.is_finished {
             return None;
         }
-        let (start_bin, bin_range) = self.bin_start_and_range();
+        let (start_bin, bin_range) =
+            bin_start_and_range(self.start_bin(), self.end_bin_inclusive());
         let mut chunk = Vec::with_capacity(ITER_BATCH_SIZE);
         for map in self.account_maps.iter().skip(start_bin).take(bin_range) {
-            let mut range = Self::range(&map, (self.start_bound, self.end_bound));
+            let mut range = map.items(&(self.start_bound, self.end_bound));
             chunk.append(&mut range);
         }
         self.is_finished = true;
@@ -620,31 +596,6 @@ pub struct AccountsIndexIteratorSorted<'a, T: IndexValue, U: DiskIndexValue + Fr
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
     AccountsIndexIteratorSorted<'a, T, U>
 {
-    fn range<R>(map: &AccountMaps<T, U>, range: R) -> RangeItemVec<T>
-    where
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
-    {
-        let mut result = map.items(&range);
-        result.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        result
-    }
-
-    fn bin_start_and_range(&self) -> (usize, usize) {
-        let start_bin = self.start_bin();
-        // calculate the max range of bins to look in
-        let end_bin_inclusive = self.end_bin_inclusive();
-        let bin_range = if start_bin > end_bin_inclusive {
-            0 // empty range
-        } else if end_bin_inclusive == usize::MAX {
-            usize::MAX
-        } else {
-            // the range is end_inclusive + 1 - start
-            // end_inclusive could be usize::MAX already if no bound was specified
-            end_bin_inclusive.saturating_add(1) - start_bin
-        };
-        (start_bin, bin_range)
-    }
-
     fn start_bin(&self) -> usize {
         // start in bin where 'start_bound' would exist
         bin_from_bound(self.bin_calculator, &self.start_bound, 0)
@@ -686,7 +637,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
             return None;
         }
 
-        let (start_bin, bin_range) = self.bin_start_and_range();
+        let (start_bin, bin_range) =
+            bin_start_and_range(self.start_bin(), self.end_bin_inclusive());
         let mut chunk = Vec::with_capacity(ITER_BATCH_SIZE);
         'outer: for (i, map) in self
             .account_maps
@@ -703,7 +655,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
                 }
                 _ => {
                     // else load the new bin
-                    Self::range(&map, (self.start_bound, self.end_bound))
+                    let mut result = map.items(&(self.start_bound, self.end_bound));
+                    result.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                    result
                 }
             };
             for (count, (pubkey, account_map_entry)) in range.iter().enumerate() {
@@ -1525,8 +1479,22 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     where
         R: RangeBounds<Pubkey> + Debug + Sync,
     {
-        let iter = self.iter_unsorted(Some(range));
-        iter.hold_range_in_memory(range, start_holding, thread_pool);
+        let start_bound = clone_bound(range.start_bound());
+        let end_bound = clone_bound(range.end_bound());
+        let bin_calculator = &self.bin_calculator;
+        let start_bin = bin_from_bound(bin_calculator, &start_bound, 0);
+        let end_bin_inclusive = bin_from_bound(bin_calculator, &end_bound, usize::MAX);
+
+        // forward this hold request ONLY to the bins which contain keys in the specified range
+        let (start_bin, bin_range) = bin_start_and_range(start_bin, end_bin_inclusive);
+        // the idea is this range shouldn't be more than a few buckets, but the process of loading from disk buckets is very slow
+        // so, parallelize the bucket loads
+        thread_pool.install(|| {
+            (0..bin_range).into_par_iter().for_each(|idx| {
+                let map = &self.account_maps[idx + start_bin];
+                map.hold_range_in_memory(range, start_holding);
+            });
+        });
     }
 
     /// get stats related to startup
@@ -4103,7 +4071,10 @@ pub mod tests {
     fn test_bin_start_and_range() {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let iter = AccountsIndexIteratorSorted::new(&index, None::<&RangeInclusive<Pubkey>>);
-        assert_eq!((0, usize::MAX), iter.bin_start_and_range());
+        assert_eq!(
+            (0, usize::MAX),
+            bin_start_and_range(iter.start_bin(), iter.end_bin_inclusive())
+        );
 
         let key_0 = Pubkey::from([0; 32]);
         let key_ff = Pubkey::from([0xff; 32]);
@@ -4111,14 +4082,26 @@ pub mod tests {
         let iter =
             AccountsIndexIteratorSorted::new(&index, Some(&RangeInclusive::new(key_0, key_ff)));
         let bins = index.bins();
-        assert_eq!((0, bins), iter.bin_start_and_range());
+        assert_eq!(
+            (0, bins),
+            bin_start_and_range(iter.start_bin(), iter.end_bin_inclusive())
+        );
         let iter =
             AccountsIndexIteratorSorted::new(&index, Some(&RangeInclusive::new(key_ff, key_0)));
-        assert_eq!((bins - 1, 0), iter.bin_start_and_range());
+        assert_eq!(
+            (bins - 1, 0),
+            bin_start_and_range(iter.start_bin(), iter.end_bin_inclusive())
+        );
         let iter = AccountsIndexIteratorSorted::new(&index, Some(&(Included(key_0), Unbounded)));
-        assert_eq!((0, usize::MAX), iter.bin_start_and_range());
+        assert_eq!(
+            (0, usize::MAX),
+            bin_start_and_range(iter.start_bin(), iter.end_bin_inclusive())
+        );
         let iter = AccountsIndexIteratorSorted::new(&index, Some(&(Included(key_ff), Unbounded)));
-        assert_eq!((bins - 1, usize::MAX), iter.bin_start_and_range());
+        assert_eq!(
+            (bins - 1, usize::MAX),
+            bin_start_and_range(iter.start_bin(), iter.end_bin_inclusive())
+        );
 
         assert_eq!((0..2).skip(1).take(usize::MAX).collect::<Vec<_>>(), vec![1]);
     }
