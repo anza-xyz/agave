@@ -37,22 +37,6 @@ pub struct WaitForRestartWindowArgs {
     pub skip_health_check: bool,
 }
 
-impl Default for WaitForRestartWindowArgs {
-    fn default() -> Self {
-        WaitForRestartWindowArgs {
-            min_idle_time: DEFAULT_MIN_IDLE_TIME
-                .parse()
-                .expect("invalid DEFAULT_MIN_IDLE_TIME"),
-            identity: None,
-            max_delinquent_stake: DEFAULT_MAX_DELINQUENT_STAKE
-                .parse()
-                .expect("invalid DEFAULT_MAX_DELINQUENT_STAKE"),
-            skip_new_snapshot_check: false,
-            skip_health_check: false,
-        }
-    }
-}
-
 impl FromClapArgMatches for WaitForRestartWindowArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
         Ok(WaitForRestartWindowArgs {
@@ -380,6 +364,22 @@ pub fn wait_for_restart_window(
 #[cfg(test)]
 mod tests {
     use {super::*, crate::commands::tests::verify_args_struct_by_command, std::str::FromStr};
+
+    impl Default for WaitForRestartWindowArgs {
+        fn default() -> Self {
+            WaitForRestartWindowArgs {
+                min_idle_time: DEFAULT_MIN_IDLE_TIME
+                    .parse()
+                    .expect("invalid DEFAULT_MIN_IDLE_TIME"),
+                identity: None,
+                max_delinquent_stake: DEFAULT_MAX_DELINQUENT_STAKE
+                    .parse()
+                    .expect("invalid DEFAULT_MAX_DELINQUENT_STAKE"),
+                skip_new_snapshot_check: false,
+                skip_health_check: false,
+            }
+        }
+    }
 
     #[test]
     fn verify_args_struct_by_command_wait_for_restart_window_default() {
