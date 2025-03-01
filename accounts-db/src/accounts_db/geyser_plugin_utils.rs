@@ -141,7 +141,7 @@ pub mod tests {
     };
 
     impl AccountsDb {
-        pub fn set_geyser_plugin_notifer(&mut self, notifier: Option<AccountsUpdateNotifier>) {
+        pub fn set_geyser_plugin_notifier(&mut self, notifier: Option<AccountsUpdateNotifier>) {
             self.accounts_update_notifier = notifier;
         }
     }
@@ -214,7 +214,7 @@ pub mod tests {
         // Do the notification
         let notifier = GeyserTestPlugin::default();
         let notifier = Arc::new(notifier);
-        accounts.set_geyser_plugin_notifer(Some(notifier.clone()));
+        accounts.set_geyser_plugin_notifier(Some(notifier.clone()));
         accounts.notify_account_restore_from_snapshot();
 
         // Ensure key1 was notified twice in different slots
@@ -261,7 +261,7 @@ pub mod tests {
         let notifier = GeyserTestPlugin::default();
 
         let notifier = Arc::new(notifier);
-        accounts.set_geyser_plugin_notifer(Some(notifier.clone()));
+        accounts.set_geyser_plugin_notifier(Some(notifier.clone()));
 
         // Account with key1 is updated twice in two different slots -- should only get notified twice.
         // Account with key2 is updated slot0, should get notified once
