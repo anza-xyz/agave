@@ -1,5 +1,5 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs, commands::FromClapArgMatches},
+    crate::{admin_rpc_service, commands::FromClapArgMatches},
     clap::{App, Arg, ArgMatches, SubCommand},
     std::path::Path,
 };
@@ -22,7 +22,7 @@ impl FromClapArgMatches for StakedNodesOverridesArgs {
     }
 }
 
-pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
+pub fn command<'a>() -> App<'a, 'a> {
     SubCommand::with_name(COMMAND)
         .about("Overrides stakes of specific node identities.")
         .arg(
@@ -65,7 +65,7 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_staked_nodes_overrides_default() {
         verify_args_struct_by_command_is_error::<StakedNodesOverridesArgs>(
-            command(&DefaultArgs::default()),
+            command(),
             vec![COMMAND],
         );
     }
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_staked_nodes_overrides_path() {
         verify_args_struct_by_command(
-            command(&DefaultArgs::default()),
+            command(),
             vec![COMMAND, "test.json"],
             StakedNodesOverridesArgs {
                 path: "test.json".to_string(),
