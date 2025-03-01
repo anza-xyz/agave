@@ -5828,22 +5828,14 @@ impl AccountsDb {
                 (*account.key(), purged_slot)
             })
             .collect();
-        self.purge_slot_cache_pubkeys(
-            purged_slot,
-            purged_slot_pubkeys,
-            pubkey_to_slot_set,
-            true,
-            &HashSet::default(),
-        );
+        self.purge_slot_cache_pubkeys(purged_slot, pubkey_to_slot_set, true);
     }
 
     fn purge_slot_cache_pubkeys(
         &self,
         purged_slot: Slot,
-        purged_slot_pubkeys: HashSet<(Slot, Pubkey)>,
         pubkey_to_slot_set: Vec<(Pubkey, Slot)>,
         is_dead: bool,
-        pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
     ) {
         // Slot purged from cache should not exist in the backing store
         assert!(self
@@ -5854,12 +5846,7 @@ impl AccountsDb {
         let (reclaims, _) = self.purge_keys_exact(pubkey_to_slot_set.iter());
         assert_eq!(reclaims.len(), num_purged_keys);
         if is_dead {
-            self.remove_dead_slots_metadata(
-                std::iter::once(&purged_slot),
-                purged_slot_pubkeys,
-                None,
-                pubkeys_removed_from_accounts_index,
-            );
+            self.remove_dead_slots_metadata(std::iter::once(&purged_slot));
         }
     }
 
@@ -6358,7 +6345,6 @@ impl AccountsDb {
     ) -> FlushStats {
         let mut flush_stats = FlushStats::default();
         let iter_items: Vec<_> = slot_cache.iter().collect();
-        let mut purged_slot_pubkeys: HashSet<(Slot, Pubkey)> = HashSet::new();
         let mut pubkey_to_slot_set: Vec<(Pubkey, Slot)> = vec![];
         if should_flush_f.is_some() {
             if let Some(max_clean_root) = max_clean_root {
@@ -6387,7 +6373,6 @@ impl AccountsDb {
                 } else {
                     // If we don't flush, we have to remove the entry from the
                     // index, since it's equivalent to purging
-                    purged_slot_pubkeys.insert((slot, *key));
                     pubkey_to_slot_set.push((*key, slot));
                     flush_stats.num_purged += 1;
                     None
@@ -6398,13 +6383,7 @@ impl AccountsDb {
         let is_dead_slot = accounts.is_empty();
         // Remove the account index entries from earlier roots that are outdated by later roots.
         // Safe because queries to the index will be reading updates from later roots.
-        self.purge_slot_cache_pubkeys(
-            slot,
-            purged_slot_pubkeys,
-            pubkey_to_slot_set,
-            is_dead_slot,
-            &HashSet::default(),
-        );
+        self.purge_slot_cache_pubkeys(slot, pubkey_to_slot_set, is_dead_slot);
 
         if !is_dead_slot {
             // This ensures that all updates are written to an AppendVec, before any
@@ -7842,23 +7821,12 @@ impl AccountsDb {
         (dead_slots, reclaimed_offsets)
     }
 
-    /// pubkeys_removed_from_accounts_index - These keys have already been removed from the accounts index
-    ///    and should not be unref'd. If they exist in the accounts index, they are NEW.
     fn remove_dead_slots_metadata<'a>(
         &'a self,
         dead_slots_iter: impl Iterator<Item = &'a Slot> + Clone,
-        purged_slot_pubkeys: HashSet<(Slot, Pubkey)>,
-        // Should only be `Some` for non-cached slots
-        purged_stored_account_slots: Option<&mut AccountSlots>,
-        pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
     ) {
         let mut measure = Measure::start("remove_dead_slots_metadata-ms");
-        self.clean_dead_slots_from_accounts_index(
-            dead_slots_iter.clone(),
-            purged_slot_pubkeys,
-            purged_stored_account_slots,
-            pubkeys_removed_from_accounts_index,
-        );
+        self.clean_dead_slots_from_accounts_index(dead_slots_iter.clone());
 
         let mut accounts_delta_hashes = self.accounts_delta_hashes.lock().unwrap();
         for slot in dead_slots_iter {
@@ -7940,28 +7908,11 @@ impl AccountsDb {
         }
     }
 
-    /// pubkeys_removed_from_accounts_index - These keys have already been removed from the accounts index
-    ///    and should not be unref'd. If they exist in the accounts index, they are NEW.
     fn clean_dead_slots_from_accounts_index<'a>(
         &'a self,
         dead_slots_iter: impl Iterator<Item = &'a Slot> + Clone,
-        purged_slot_pubkeys: HashSet<(Slot, Pubkey)>,
-        // Should only be `Some` for non-cached slots
-        purged_stored_account_slots: Option<&mut AccountSlots>,
-        pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
     ) {
         let mut accounts_index_root_stats = AccountsIndexRootsStats::default();
-        let mut measure = Measure::start("unref_from_storage");
-        if let Some(purged_stored_account_slots) = purged_stored_account_slots {
-            self.unref_accounts(
-                purged_slot_pubkeys,
-                purged_stored_account_slots,
-                pubkeys_removed_from_accounts_index,
-            );
-        }
-        measure.stop();
-        accounts_index_root_stats.clean_unref_from_storage_us += measure.as_us();
-
         let mut measure = Measure::start("clean_dead_slot");
         let mut rooted_cleaned_count = 0;
         let mut unrooted_cleaned_count = 0;
@@ -8027,12 +7978,26 @@ impl AccountsDb {
                     .collect::<HashSet<_>>()
             })
         };
-        self.remove_dead_slots_metadata(
-            dead_slots.iter(),
-            purged_slot_pubkeys,
-            purged_account_slots,
-            pubkeys_removed_from_accounts_index,
-        );
+
+        //Unref the accounts from storage
+        let mut accounts_index_root_stats = AccountsIndexRootsStats::default();
+        let mut measure_unref = Measure::start("unref_from_storage");
+
+        if let Some(purged_account_slots) = purged_account_slots {
+            self.unref_accounts(
+                purged_slot_pubkeys,
+                purged_account_slots,
+                pubkeys_removed_from_accounts_index,
+            );
+        }
+        measure_unref.stop();
+        accounts_index_root_stats.clean_unref_from_storage_us += measure_unref.as_us();
+
+        self.clean_accounts_stats
+            .latest_accounts_index_roots_stats
+            .update(&accounts_index_root_stats);
+
+        self.remove_dead_slots_metadata(dead_slots.iter());
         measure.stop();
         self.clean_accounts_stats
             .clean_stored_dead_slots_us
