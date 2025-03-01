@@ -79,7 +79,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::set_log_filter::command(default_args))
         .subcommand(commands::staked_nodes_overrides::command(default_args))
         .subcommand(commands::wait_for_restart_window::command())
-        .subcommand(commands::set_public_address::command(default_args));
+        .subcommand(commands::set_public_address::command());
 
     commands::run::add_args(app, default_args)
         .args(&thread_args(&default_args.thread_args))

@@ -1,5 +1,5 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs, commands::FromClapArgMatches},
+    crate::{admin_rpc_service, commands::FromClapArgMatches},
     clap::{App, Arg, ArgGroup, ArgMatches, SubCommand},
     std::{net::SocketAddr, path::Path},
 };
@@ -33,7 +33,7 @@ impl FromClapArgMatches for SetPublicAddressArgs {
     }
 }
 
-pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
+pub fn command<'a>() -> App<'a, 'a> {
     SubCommand::with_name(COMMAND)
         .about("Specify addresses to advertise in gossip")
         .arg(
@@ -102,16 +102,13 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_set_public_default() {
-        verify_args_struct_by_command_is_error::<SetPublicAddressArgs>(
-            command(&DefaultArgs::default()),
-            vec![COMMAND],
-        );
+        verify_args_struct_by_command_is_error::<SetPublicAddressArgs>(command(), vec![COMMAND]);
     }
 
     #[test]
     fn verify_args_struct_by_command_set_public_address_tpu() {
         verify_args_struct_by_command(
-            command(&DefaultArgs::default()),
+            command(),
             vec![COMMAND, "--tpu", "127.0.0.1:8080"],
             SetPublicAddressArgs {
                 tpu_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8080))),
@@ -123,7 +120,7 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_set_public_address_tpu_forwards() {
         verify_args_struct_by_command(
-            command(&DefaultArgs::default()),
+            command(),
             vec![COMMAND, "--tpu-forwards", "127.0.0.1:8081"],
             SetPublicAddressArgs {
                 tpu_addr: None,
@@ -135,7 +132,7 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_set_public_address_tpu_and_tpu_forwards() {
         verify_args_struct_by_command(
-            command(&DefaultArgs::default()),
+            command(),
             vec![
                 COMMAND,
                 "--tpu",
