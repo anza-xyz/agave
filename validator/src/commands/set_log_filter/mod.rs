@@ -1,10 +1,10 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs},
+    crate::admin_rpc_service,
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     std::path::Path,
 };
 
-pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
+pub fn command<'a>() -> App<'a, 'a> {
     SubCommand::with_name("set-log-filter")
         .about("Adjust the validator log filter")
         .arg(
