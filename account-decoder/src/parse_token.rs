@@ -26,7 +26,7 @@ pub fn spl_token_ids() -> Vec<Pubkey> {
     vec![spl_token::id(), spl_token_2022::id()]
 }
 
-// Check if the provided program id as a known SPL Token program id
+// Check if the provided program id is a known SPL Token program id
 pub fn is_known_spl_token_id(program_id: &Pubkey) -> bool {
     *program_id == spl_token::id() || *program_id == spl_token_2022::id()
 }
