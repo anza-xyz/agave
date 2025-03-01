@@ -4,8 +4,10 @@ use {
     std::path::Path,
 };
 
+const COMMAND: &str = "set-log-filter";
+
 pub fn command<'a>() -> App<'a, 'a> {
-    SubCommand::with_name("set-log-filter")
+    SubCommand::with_name(COMMAND)
         .about("Adjust the validator log filter")
         .arg(
             Arg::with_name("filter")
