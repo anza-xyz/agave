@@ -27,7 +27,7 @@ use {
         num::NonZeroUsize,
         ops::{
             Bound,
-            Bound::{Excluded, Included, Unbounded},
+            Bound::{Excluded, Unbounded},
             Range, RangeBounds,
         },
         path::PathBuf,
@@ -485,14 +485,6 @@ pub struct AccountsIndexRootsStats {
 
 type RangeItemVec<T> = Vec<(Pubkey, AccountMapEntry<T>)>;
 
-fn clone_bound(bound: Bound<&Pubkey>) -> Bound<Pubkey> {
-    match bound {
-        Unbounded => Unbounded,
-        Included(k) => Included(*k),
-        Excluded(k) => Excluded(*k),
-    }
-}
-
 fn bin_from_bound(
     bin_calculator: &PubkeyBinCalculator24,
     bound: Bound<&Pubkey>,
@@ -521,8 +513,8 @@ fn bin_start_and_range(start_bin: usize, end_bin_inclusive: usize) -> (usize, us
 pub struct AccountsIndexIteratorUnsorted<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     account_maps: &'a LockMapTypeSlice<T, U>,
     bin_calculator: &'a PubkeyBinCalculator24,
-    start_bound: Bound<Pubkey>,
-    end_bound: Bound<Pubkey>,
+    start_bound: Bound<&'a Pubkey>,
+    end_bound: Bound<&'a Pubkey>,
     is_finished: bool,
 }
 
@@ -531,30 +523,33 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
 {
     fn start_bin(&self) -> usize {
         // start in bin where 'start_bound' would exist
-        bin_from_bound(self.bin_calculator, self.start_bound.as_ref(), 0)
+        bin_from_bound(self.bin_calculator, self.start_bound, 0)
     }
 
     fn end_bin_inclusive(&self) -> usize {
         // end in bin where 'end_bound' would exist
-        bin_from_bound(self.bin_calculator, self.end_bound.as_ref(), usize::MAX)
+        bin_from_bound(self.bin_calculator, self.end_bound, usize::MAX)
     }
 
-    pub fn new<R>(index: &'a AccountsIndex<T, U>, range: Option<&R>) -> Self
+    pub fn new<R>(index: &'a AccountsIndex<T, U>, range: &'a Option<R>) -> Self
     where
         R: RangeBounds<Pubkey>,
     {
-        Self {
-            account_maps: &index.account_maps,
-            bin_calculator: &index.bin_calculator,
-            start_bound: range
-                .as_ref()
-                .map(|r| clone_bound(r.start_bound()))
-                .unwrap_or(Unbounded),
-            end_bound: range
-                .as_ref()
-                .map(|r| clone_bound(r.end_bound()))
-                .unwrap_or(Unbounded),
-            is_finished: false,
+        match range {
+            Some(range) => Self {
+                account_maps: &index.account_maps,
+                bin_calculator: &index.bin_calculator,
+                start_bound: range.start_bound(),
+                end_bound: range.end_bound(),
+                is_finished: false,
+            },
+            None => Self {
+                account_maps: &index.account_maps,
+                bin_calculator: &index.bin_calculator,
+                start_bound: Unbounded,
+                end_bound: Unbounded,
+                is_finished: false,
+            },
         }
     }
 }
@@ -587,8 +582,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
 pub struct AccountsIndexIteratorSorted<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     account_maps: &'a LockMapTypeSlice<T, U>,
     bin_calculator: &'a PubkeyBinCalculator24,
+    // `start_bound`` has to be a Pubkey, not a reference to a Pubkey. Because
+    // we need to move it in the next iteration.
     start_bound: Bound<Pubkey>,
-    end_bound: Bound<Pubkey>,
+    end_bound: Bound<&'a Pubkey>,
     is_finished: bool,
     last_bin_range: Option<(usize, RangeItemVec<T>)>,
 }
@@ -603,26 +600,30 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
 
     fn end_bin_inclusive(&self) -> usize {
         // end in bin where 'end_bound' would exist
-        bin_from_bound(self.bin_calculator, self.end_bound.as_ref(), usize::MAX)
+        bin_from_bound(self.bin_calculator, self.end_bound, usize::MAX)
     }
 
-    pub fn new<R>(index: &'a AccountsIndex<T, U>, range: Option<&R>) -> Self
+    pub fn new<R>(index: &'a AccountsIndex<T, U>, range: &'a Option<R>) -> Self
     where
         R: RangeBounds<Pubkey>,
     {
-        Self {
-            account_maps: &index.account_maps,
-            bin_calculator: &index.bin_calculator,
-            start_bound: range
-                .as_ref()
-                .map(|r| clone_bound(r.start_bound()))
-                .unwrap_or(Unbounded),
-            end_bound: range
-                .as_ref()
-                .map(|r| clone_bound(r.end_bound()))
-                .unwrap_or(Unbounded),
-            is_finished: false,
-            last_bin_range: None,
+        match range {
+            Some(range) => Self {
+                account_maps: &index.account_maps,
+                bin_calculator: &index.bin_calculator,
+                start_bound: range.start_bound().cloned(),
+                end_bound: range.end_bound(),
+                is_finished: false,
+                last_bin_range: None,
+            },
+            None => Self {
+                account_maps: &index.account_maps,
+                bin_calculator: &index.bin_calculator,
+                start_bound: Unbounded,
+                end_bound: Unbounded,
+                is_finished: false,
+                last_bin_range: None,
+            },
         }
     }
 }
@@ -655,7 +656,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
                 }
                 _ => {
                     // else load the new bin
-                    let mut result = map.items(&(self.start_bound, self.end_bound));
+                    let mut result = map.items(&(self.start_bound.as_ref(), self.end_bound));
                     result.sort_unstable_by(|a, b| a.0.cmp(&b.0));
                     result
                 }
@@ -834,14 +835,20 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         (account_maps, bin_calculator, storage)
     }
 
-    pub fn iter_sorted<R>(&self, range: Option<&R>) -> AccountsIndexIteratorSorted<T, U>
+    pub fn iter_sorted<'a, R>(
+        &'a self,
+        range: &'a Option<R>,
+    ) -> AccountsIndexIteratorSorted<'a, T, U>
     where
         R: RangeBounds<Pubkey>,
     {
         AccountsIndexIteratorSorted::new(self, range)
     }
 
-    pub fn iter_unsorted<R>(&self, range: Option<&R>) -> AccountsIndexIteratorUnsorted<T, U>
+    pub fn iter_unsorted<'a, R>(
+        &'a self,
+        range: &'a Option<R>,
+    ) -> AccountsIndexIteratorUnsorted<'a, T, U>
     where
         R: RangeBounds<Pubkey>,
     {
@@ -1135,9 +1142,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
         let iter: Box<dyn Iterator<Item = Vec<(Pubkey, AccountMapEntry<T>)>>> =
             if returns_items == AccountsIndexIteratorReturnsItems::Sorted {
-                Box::new(self.iter_sorted(range.as_ref()))
+                Box::new(self.iter_sorted(&range))
             } else {
-                Box::new(self.iter_unsorted(range.as_ref()))
+                Box::new(self.iter_unsorted(&range))
             };
 
         for pubkey_list in iter {
@@ -2190,6 +2197,7 @@ pub mod tests {
         solana_account::{AccountSharedData, WritableAccount},
         solana_inline_spl::token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
         solana_pubkey::PUBKEY_BYTES,
+        std::ops::Bound::Included,
         std::ops::RangeInclusive,
     };
 
@@ -3137,7 +3145,7 @@ pub mod tests {
     #[test]
     fn test_accounts_iter_finished() {
         let (index, _) = setup_accounts_index_keys(0);
-        let mut iter = index.iter_sorted(None::<&Range<Pubkey>>);
+        let mut iter = index.iter_sorted(&None::<Range<Pubkey>>);
         assert!(iter.next().is_none());
         let mut gc = vec![];
         index.upsert(
@@ -4002,7 +4010,7 @@ pub mod tests {
         }
 
         // Create a sorted iterator for the whole pubkey range.
-        let mut iter = index.iter_sorted(None::<&Range<Pubkey>>);
+        let mut iter = index.iter_sorted(&None::<Range<Pubkey>>);
         // First iter.next() should return the first batch of pubkeys (1000
         // pubkeys) out of the 2000 pubkeys in the first bin. And the remaining
         // 1000 pubkeys from the first bin should be cached in
@@ -4055,7 +4063,7 @@ pub mod tests {
         }
 
         // Create an unsorted iterator for the whole pubkey range.
-        let mut iter = index.iter_unsorted(None::<&Range<Pubkey>>);
+        let mut iter = index.iter_unsorted(&None::<Range<Pubkey>>);
         // In contrast with sorted iterator, unsorted iterator should return the
         // all the pubkeys in the bin range in the first `iter.next()`.
         let x = iter.next().unwrap();
@@ -4068,7 +4076,7 @@ pub mod tests {
     #[test]
     fn test_bin_start_and_range() {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
-        let iter = AccountsIndexIteratorSorted::new(&index, None::<&RangeInclusive<Pubkey>>);
+        let iter = AccountsIndexIteratorSorted::new(&index, &None::<RangeInclusive<Pubkey>>);
         assert_eq!(
             (0, usize::MAX),
             bin_start_and_range(iter.start_bin(), iter.end_bin_inclusive())
@@ -4077,25 +4085,27 @@ pub mod tests {
         let key_0 = Pubkey::from([0; 32]);
         let key_ff = Pubkey::from([0xff; 32]);
 
-        let iter =
-            AccountsIndexIteratorSorted::new(&index, Some(&RangeInclusive::new(key_0, key_ff)));
+        let range = Some((Included(key_0), Included(key_ff)));
+        let iter = AccountsIndexIteratorSorted::new(&index, &range);
         let bins = index.bins();
         assert_eq!(
             (0, bins),
             bin_start_and_range(iter.start_bin(), iter.end_bin_inclusive())
         );
-        let iter =
-            AccountsIndexIteratorSorted::new(&index, Some(&RangeInclusive::new(key_ff, key_0)));
+        let range = Some((Included(key_ff), Included(key_0)));
+        let iter = AccountsIndexIteratorSorted::new(&index, &range);
         assert_eq!(
             (bins - 1, 0),
             bin_start_and_range(iter.start_bin(), iter.end_bin_inclusive())
         );
-        let iter = AccountsIndexIteratorSorted::new(&index, Some(&(Included(key_0), Unbounded)));
+        let range = Some((Included(key_0), Unbounded));
+        let iter = AccountsIndexIteratorSorted::new(&index, &range);
         assert_eq!(
             (0, usize::MAX),
             bin_start_and_range(iter.start_bin(), iter.end_bin_inclusive())
         );
-        let iter = AccountsIndexIteratorSorted::new(&index, Some(&(Included(key_ff), Unbounded)));
+        let range = Some((Included(key_ff), Unbounded));
+        let iter = AccountsIndexIteratorSorted::new(&index, &range);
         assert_eq!(
             (bins - 1, usize::MAX),
             bin_start_and_range(iter.start_bin(), iter.end_bin_inclusive())
@@ -4342,30 +4352,36 @@ pub mod tests {
     fn test_start_end_bin() {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         assert_eq!(index.bins(), BINS_FOR_TESTING);
-        let iter = AccountsIndexIteratorSorted::new(&index, None::<&RangeInclusive<Pubkey>>);
+        let iter = AccountsIndexIteratorSorted::new(&index, &None::<RangeInclusive<Pubkey>>);
         assert_eq!(iter.start_bin(), 0); // no range, so 0
         assert_eq!(iter.end_bin_inclusive(), usize::MAX); // no range, so max
 
         let key = Pubkey::from([0; 32]);
-        let iter = AccountsIndexIteratorSorted::new(&index, Some(&RangeInclusive::new(key, key)));
+        let range = Some(RangeInclusive::new(key, key));
+        let iter = AccountsIndexIteratorSorted::new(&index, &range);
         assert_eq!(iter.start_bin(), 0); // start at pubkey 0, so 0
         assert_eq!(iter.end_bin_inclusive(), 0); // end at pubkey 0, so 0
-        let iter = AccountsIndexIteratorSorted::new(&index, Some(&(Included(key), Excluded(key))));
+        let range = Some((Included(key), Excluded(key)));
+        let iter = AccountsIndexIteratorSorted::new(&index, &range);
         assert_eq!(iter.start_bin(), 0); // start at pubkey 0, so 0
         assert_eq!(iter.end_bin_inclusive(), 0); // end at pubkey 0, so 0
-        let iter = AccountsIndexIteratorSorted::new(&index, Some(&(Excluded(key), Excluded(key))));
+        let range = Some((Excluded(key), Excluded(key)));
+        let iter = AccountsIndexIteratorSorted::new(&index, &range);
         assert_eq!(iter.start_bin(), 0); // start at pubkey 0, so 0
         assert_eq!(iter.end_bin_inclusive(), 0); // end at pubkey 0, so 0
 
         let key = Pubkey::from([0xff; 32]);
-        let iter = AccountsIndexIteratorSorted::new(&index, Some(&RangeInclusive::new(key, key)));
+        let range = Some(RangeInclusive::new(key, key));
+        let iter = AccountsIndexIteratorSorted::new(&index, &range);
         let bins = index.bins();
         assert_eq!(iter.start_bin(), bins - 1); // start at highest possible pubkey, so bins - 1
         assert_eq!(iter.end_bin_inclusive(), bins - 1);
-        let iter = AccountsIndexIteratorSorted::new(&index, Some(&(Included(key), Excluded(key))));
+        let range = Some((Included(key), Excluded(key)));
+        let iter = AccountsIndexIteratorSorted::new(&index, &range);
         assert_eq!(iter.start_bin(), bins - 1); // start at highest possible pubkey, so bins - 1
         assert_eq!(iter.end_bin_inclusive(), bins - 1);
-        let iter = AccountsIndexIteratorSorted::new(&index, Some(&(Excluded(key), Excluded(key))));
+        let range = Some((Excluded(key), Excluded(key)));
+        let iter = AccountsIndexIteratorSorted::new(&index, &range);
         assert_eq!(iter.start_bin(), bins - 1); // start at highest possible pubkey, so bins - 1
         assert_eq!(iter.end_bin_inclusive(), bins - 1);
     }
