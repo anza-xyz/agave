@@ -189,29 +189,29 @@ impl VoteStateFrame {
 
     fn votes_frame(&self) -> VotesFrame {
         match &self {
-            Self::V1_14_11(frame) => VotesFrame::Lockout(frame.votes_frame()),
-            Self::V3(frame) => VotesFrame::Landed(frame.votes_frame()),
+            Self::V1_14_11(frame) => VotesFrame::Lockout(frame.votes_frame),
+            Self::V3(frame) => VotesFrame::Landed(frame.votes_frame),
         }
     }
 
     fn root_slot_frame(&self) -> RootSlotFrame {
         match &self {
-            Self::V1_14_11(vote_frame) => vote_frame.root_slot_frame(),
-            Self::V3(vote_frame) => vote_frame.root_slot_frame(),
+            Self::V1_14_11(vote_frame) => vote_frame.root_slot_frame,
+            Self::V3(vote_frame) => vote_frame.root_slot_frame,
         }
     }
 
     fn authorized_voters_frame(&self) -> AuthorizedVotersListFrame {
         match &self {
-            Self::V1_14_11(frame) => frame.authorized_voters_frame(),
-            Self::V3(frame) => frame.authorized_voters_frame(),
+            Self::V1_14_11(frame) => frame.authorized_voters_frame,
+            Self::V3(frame) => frame.authorized_voters_frame,
         }
     }
 
     fn epoch_credits_frame(&self) -> EpochCreditsListFrame {
         match &self {
-            Self::V1_14_11(frame) => frame.epoch_credits_frame(),
-            Self::V3(frame) => frame.epoch_credits_frame(),
+            Self::V1_14_11(frame) => frame.epoch_credits_frame,
+            Self::V3(frame) => frame.epoch_credits_frame,
         }
     }
 }

@@ -2,7 +2,6 @@ use {
     super::{list_view::ListView, Result, VoteStateViewError},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_vote_interface::state::Lockout,
     std::io::BufRead,
 };
 
@@ -71,18 +70,17 @@ impl LockoutItem {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct LockoutListFrame {
-    len: usize,
+    len: u8,
 }
 
 impl LockoutListFrame {
-    pub(super) const fn new(len: usize) -> Self {
-        Self { len }
-    }
-
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
             .map_err(|_err| VoteStateViewError::ParseError)? as usize;
+        let len = u8::try_from(len).map_err(|_| VoteStateViewError::ParseError)?;
         let frame = Self { len };
         cursor.consume(frame.total_item_size());
         Ok(frame)
@@ -93,22 +91,21 @@ impl ListFrame<'_> for LockoutListFrame {
     type Item = LockoutItem;
 
     fn len(&self) -> usize {
-        self.len
+        self.len as usize
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct LandedVotesListFrame {
-    len: usize,
+    len: u8,
 }
 
 impl LandedVotesListFrame {
-    pub(super) const fn new(len: usize) -> Self {
-        Self { len }
-    }
-
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
             .map_err(|_err| VoteStateViewError::ParseError)? as usize;
+        let len = u8::try_from(len).map_err(|_| VoteStateViewError::ParseError)?;
         let frame = Self { len };
         cursor.consume(frame.total_item_size());
         Ok(frame)
@@ -126,7 +123,7 @@ impl ListFrame<'_> for LandedVotesListFrame {
     type Item = LockoutItem;
 
     fn len(&self) -> usize {
-        self.len
+        self.len as usize
     }
 
     fn item_size(&self) -> usize {
@@ -138,18 +135,17 @@ impl ListFrame<'_> for LandedVotesListFrame {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct AuthorizedVotersListFrame {
-    len: usize,
+    len: u8,
 }
 
 impl AuthorizedVotersListFrame {
-    pub(super) const fn new(len: usize) -> Self {
-        Self { len }
-    }
-
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
             .map_err(|_err| VoteStateViewError::ParseError)? as usize;
+        let len = u8::try_from(len).map_err(|_| VoteStateViewError::ParseError)?;
         let frame = Self { len };
         cursor.consume(frame.total_item_size());
         Ok(frame)
@@ -166,7 +162,7 @@ impl ListFrame<'_> for AuthorizedVotersListFrame {
     type Item = AuthorizedVoterItem;
 
     fn len(&self) -> usize {
-        self.len
+        self.len as usize
     }
 }
 
@@ -190,18 +186,17 @@ pub struct EpochCreditsItem {
     prev_credits: [u8; 8],
 }
 
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct EpochCreditsListFrame {
-    len: usize,
+    len: u8,
 }
 
 impl EpochCreditsListFrame {
-    pub(super) const fn new(len: usize) -> Self {
-        Self { len }
-    }
-
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
             .map_err(|_err| VoteStateViewError::ParseError)? as usize;
+        let len = u8::try_from(len).map_err(|_| VoteStateViewError::ParseError)?;
         let frame = Self { len };
         cursor.consume(frame.total_item_size());
         Ok(frame)
@@ -212,7 +207,7 @@ impl ListFrame<'_> for EpochCreditsListFrame {
     type Item = EpochCreditsItem;
 
     fn len(&self) -> usize {
-        self.len
+        self.len as usize
     }
 }
 
@@ -263,19 +258,13 @@ impl RootSlotView<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct RootSlotFrame {
     has_root_slot: bool,
 }
 
 impl RootSlotFrame {
-    pub(super) const fn new(has_root_slot: bool) -> Self {
-        Self { has_root_slot }
-    }
-
-    pub(super) fn has_root_slot(&self) -> bool {
-        self.has_root_slot
-    }
-
     pub(super) fn total_size(&self) -> usize {
         1 + self.size()
     }
