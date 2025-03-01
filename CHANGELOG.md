@@ -24,6 +24,8 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 * `cargo-build-sbf` and `cargo-test-sbf` now accept `v0`, `v1`, `v2` and `v3` for the `--arch` argument. These parameters specify the SBPF version to build for.
+* SBFPv1 and SBPFv2 are also available for Anza's C compiler toolchain.
+* SBPFv3 will be only available for the Rust toolchain. The C toolchain will no longer be supported for SBPFv3 onwards.
 
 ## 2.2.0
 
