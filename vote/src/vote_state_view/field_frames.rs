@@ -138,20 +138,6 @@ impl ListFrame<'_> for LandedVotesListFrame {
     }
 }
 
-impl<'a, T: ListFrame<'a, Item = LockoutItem>> ListView<'a, T> {
-    pub(super) fn last_lockout(&self) -> Option<Lockout> {
-        if self.len() == 0 {
-            return None;
-        }
-
-        let last_item = self.last().unwrap();
-        Some(Lockout::new_with_confirmation_count(
-            last_item.slot(),
-            last_item.confirmation_count(),
-        ))
-    }
-}
-
 pub(super) struct AuthorizedVotersListFrame {
     len: usize,
 }
@@ -248,12 +234,6 @@ impl EpochCreditsItem {
 impl From<&EpochCreditsItem> for (Epoch, u64, u64) {
     fn from(item: &EpochCreditsItem) -> Self {
         (item.epoch(), item.credits(), item.prev_credits())
-    }
-}
-
-impl ListView<'_, EpochCreditsListFrame> {
-    pub(super) fn credits(self) -> u64 {
-        self.last().map(|item| item.credits()).unwrap_or(0)
     }
 }
 

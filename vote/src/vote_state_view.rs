@@ -79,11 +79,13 @@ impl VoteStateView {
     }
 
     pub fn last_lockout(&self) -> Option<Lockout> {
-        self.votes_view().last_lockout()
+        self.votes_view().last().map(|item| {
+            Lockout::new_with_confirmation_count(item.slot(), item.confirmation_count())
+        })
     }
 
     pub fn last_voted_slot(&self) -> Option<Slot> {
-        self.last_lockout().map(|v| v.slot())
+        self.votes_view().last().map(|item| item.slot())
     }
 
     pub fn root_slot(&self) -> Option<Slot> {
@@ -103,7 +105,10 @@ impl VoteStateView {
     }
 
     pub fn credits(&self) -> u64 {
-        self.epoch_credits_view().credits()
+        self.epoch_credits_view()
+            .last()
+            .map(|item| item.credits())
+            .unwrap_or(0)
     }
 
     pub fn last_timestamp(&self) -> BlockTimestamp {
