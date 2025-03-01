@@ -33,6 +33,14 @@ If there is an exploit in your system, a hacker could have full access if your S
 
 Your system should close all ports that do not need to be open to the outside world. A common firewall for closing ports is `ufw` (uncomplicated firewall). You can find a guide to using `ufw` from [Digital Ocean](https://www.digitalocean.com/community/tutorials/ufw-essentials-common-firewall-rules-and-commands).
 
+## Default Ports
+| Port(s)        | Reason          | Status   | Configure |
+|----------------|-----------------|----------|-----------|
+| 8000/tcp       | Port Check      | Open     |           |
+| 8000-10000/udp | Dynamic Ports   | Open     | `--dynamic-port-range 8000-10000`  |
+| 8899/tcp       | RPC             | Optional | `--rpc-port 8899`, `--private-rpc` |
+| 8900/tcp       | RPC (websocket) | Optional | Uses `--rpc-port` + 1 |
+
 ## Eliminate Brute Force Attacks With fail2ban
 
 [fail2ban](https://github.com/fail2ban/fail2ban) is a network security tool that checks your logs for suspicious login attempts and bans those IP addresses after repeated attempts. This will help mitigate brute force attacks on your server.
