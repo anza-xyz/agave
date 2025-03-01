@@ -495,7 +495,7 @@ fn clone_bound(bound: Bound<&Pubkey>) -> Bound<Pubkey> {
 
 fn bin_from_bound(
     bin_calculator: &PubkeyBinCalculator24,
-    bound: &Bound<Pubkey>,
+    bound: Bound<&Pubkey>,
     unbounded_bin: usize,
 ) -> usize {
     match bound {
@@ -531,12 +531,12 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
 {
     fn start_bin(&self) -> usize {
         // start in bin where 'start_bound' would exist
-        bin_from_bound(self.bin_calculator, &self.start_bound, 0)
+        bin_from_bound(self.bin_calculator, self.start_bound.as_ref(), 0)
     }
 
     fn end_bin_inclusive(&self) -> usize {
         // end in bin where 'end_bound' would exist
-        bin_from_bound(self.bin_calculator, &self.end_bound, usize::MAX)
+        bin_from_bound(self.bin_calculator, self.end_bound.as_ref(), usize::MAX)
     }
 
     pub fn new<R>(index: &'a AccountsIndex<T, U>, range: Option<&R>) -> Self
@@ -598,12 +598,12 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
 {
     fn start_bin(&self) -> usize {
         // start in bin where 'start_bound' would exist
-        bin_from_bound(self.bin_calculator, &self.start_bound, 0)
+        bin_from_bound(self.bin_calculator, self.start_bound.as_ref(), 0)
     }
 
     fn end_bin_inclusive(&self) -> usize {
         // end in bin where 'end_bound' would exist
-        bin_from_bound(self.bin_calculator, &self.end_bound, usize::MAX)
+        bin_from_bound(self.bin_calculator, self.end_bound.as_ref(), usize::MAX)
     }
 
     pub fn new<R>(index: &'a AccountsIndex<T, U>, range: Option<&R>) -> Self
@@ -1479,11 +1479,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     where
         R: RangeBounds<Pubkey> + Debug + Sync,
     {
-        let start_bound = clone_bound(range.start_bound());
-        let end_bound = clone_bound(range.end_bound());
         let bin_calculator = &self.bin_calculator;
-        let start_bin = bin_from_bound(bin_calculator, &start_bound, 0);
-        let end_bin_inclusive = bin_from_bound(bin_calculator, &end_bound, usize::MAX);
+        let start_bin = bin_from_bound(bin_calculator, range.start_bound(), 0);
+        let end_bin_inclusive = bin_from_bound(bin_calculator, range.end_bound(), usize::MAX);
 
         // forward this hold request ONLY to the bins which contain keys in the specified range
         let (start_bin, bin_range) = bin_start_and_range(start_bin, end_bin_inclusive);
