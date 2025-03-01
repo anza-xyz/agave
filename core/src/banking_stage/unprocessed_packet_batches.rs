@@ -51,11 +51,6 @@ impl Ord for DeserializedPacket {
     }
 }
 
-#[derive(Debug)]
-pub struct PacketBatchInsertionMetrics {
-    pub(crate) num_dropped_packets: usize,
-}
-
 /// Currently each banking_stage thread has a `UnprocessedPacketBatches` buffer to store
 /// PacketBatch's received from sigverify. Banking thread continuously scans the buffer
 /// to pick proper packets to add to the block.
@@ -87,26 +82,6 @@ impl UnprocessedPacketBatches {
     pub fn clear(&mut self) {
         self.packet_priority_queue.clear();
         self.message_hash_to_transaction.clear();
-    }
-
-    /// Insert new `deserialized_packet_batch` into inner `MinMaxHeap<DeserializedPacket>`,
-    /// ordered by the tx priority.
-    /// If buffer is at the max limit, the lowest priority packet is dropped
-    ///
-    /// Returns tuple of number of packets dropped
-    pub fn insert_batch(
-        &mut self,
-        deserialized_packets: impl Iterator<Item = DeserializedPacket>,
-    ) -> PacketBatchInsertionMetrics {
-        let mut num_dropped_packets = 0;
-        for deserialized_packet in deserialized_packets {
-            if let Some(_dropped_packet) = self.push(deserialized_packet) {
-                num_dropped_packets += 1;
-            }
-        }
-        PacketBatchInsertionMetrics {
-            num_dropped_packets,
-        }
     }
 
     /// Pushes a new `deserialized_packet` into the unprocessed packet batches if it does not already

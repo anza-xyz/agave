@@ -146,6 +146,20 @@ pub(crate) struct VoteBatchInsertionMetrics {
     pub(crate) num_dropped_tpu: usize,
 }
 
+impl VoteBatchInsertionMetrics {
+    pub fn total_dropped_packets(&self) -> usize {
+        self.num_dropped_gossip + self.num_dropped_tpu
+    }
+
+    pub fn dropped_gossip_packets(&self) -> usize {
+        self.num_dropped_gossip
+    }
+
+    pub fn dropped_tpu_packets(&self) -> usize {
+        self.num_dropped_tpu
+    }
+}
+
 #[derive(Debug)]
 pub struct LatestUnprocessedVotes {
     latest_vote_per_vote_pubkey: RwLock<HashMap<Pubkey, Arc<RwLock<LatestValidatorVotePacket>>>>,
