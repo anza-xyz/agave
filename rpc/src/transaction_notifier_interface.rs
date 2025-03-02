@@ -1,3 +1,6 @@
+use solana_pubkey::Pubkey;
+use solana_sdk::account::AccountSharedData;
+
 use {
     solana_clock::Slot, solana_signature::Signature,
     solana_transaction::sanitized::SanitizedTransaction,
@@ -12,6 +15,7 @@ pub trait TransactionNotifier {
         signature: &Signature,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &SanitizedTransaction,
+        post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
     );
 }
 
