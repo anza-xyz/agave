@@ -3272,6 +3272,7 @@ fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: boo
                     loaded_accounts_count: 2,
                     loaded_accounts_data_size: nonce_size as u32,
                 },
+                post_accounts_states: vec![]
             })]
         );
     } else {
