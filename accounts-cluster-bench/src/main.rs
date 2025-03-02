@@ -1202,11 +1202,11 @@ fn main() {
                 .takes_value(true)
                 .value_name("BYTES")
                 .help(
-                    "Every `n` batches, create a batch of close transactions for
-                    the earliest remaining batch of accounts created.
-                    Note: Should be > 1 to avoid situations where the close \
-                    transactions will be submitted before the corresponding \
-                    create transactions have been confirmed",
+                    "Every `n` batches, create a batch of close transactions for \
+                     the earliest remaining batch of accounts created. \
+                     Note: Should be > 1 to avoid situations where the close \
+                     transactions will be submitted before the corresponding \
+                     create transactions have been confirmed",
                 ),
         )
         .arg(

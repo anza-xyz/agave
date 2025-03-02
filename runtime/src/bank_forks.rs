@@ -417,11 +417,7 @@ impl BankForks {
         let new_epoch = root_bank.epoch();
         if old_epoch != new_epoch {
             info!(
-                "Root entering
-                    epoch: {},
-                    next_epoch_start_slot: {},
-                    epoch_stakes: {:#?}",
-                new_epoch,
+                "Root entering epoch: {new_epoch}, next_epoch_start_slot: {}, epoch_stakes: {:#?}",
                 root_bank
                     .epoch_schedule()
                     .get_first_slot_in_epoch(new_epoch + 1),

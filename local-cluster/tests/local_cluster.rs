@@ -1761,8 +1761,8 @@ fn test_optimistic_confirmation_violation_detection() {
 
         // Wait for this node to make a fork that doesn't include the `optimistically_confirmed_slot``
         info!(
-            "Looking for slot not equal to {optimistically_confirmed_slot}
-            with parent {optimistically_confirmed_slot_parent}"
+            "Looking for slot not equal to {optimistically_confirmed_slot} \
+             with parent {optimistically_confirmed_slot_parent}"
         );
         let start = Instant::now();
         let new_fork_slot;
@@ -3435,13 +3435,9 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         let elapsed = now.elapsed();
         assert!(
             elapsed <= Duration::from_secs(30),
-            "C failed to create a fork past {} in {} seconds
-            last_vote {},
-            votes_on_c_fork: {:?}",
-            base_slot,
+            "C failed to create a fork past {base_slot} in {} seconds, \
+             last_vote {last_vote}, votes_on_c_fork: {votes_on_c_fork:?}",
             elapsed.as_secs(),
-            last_vote,
-            votes_on_c_fork,
         );
         sleep(Duration::from_millis(100));
 
@@ -3458,7 +3454,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         }
     }
     assert!(!votes_on_c_fork.is_empty());
-    info!("Collected validator C's votes: {:?}", votes_on_c_fork);
+    info!("Collected validator C's votes: {votes_on_c_fork:?}");
 
     // Step 4:
     // verify whether there was violation or not
@@ -4827,11 +4823,9 @@ fn test_duplicate_with_pruned_ancestor() {
         let elapsed = now.elapsed();
         assert!(
             elapsed <= Duration::from_secs(30),
-            "Majority validator failed to vote on a slot >= {} in {} secs,
-            majority validator last vote: {}",
-            fork_slot,
+            "Majority validator failed to vote on a slot >= {fork_slot} in {} secs, \
+             majority validator last vote: {last_majority_vote}",
             elapsed.as_secs(),
-            last_majority_vote,
         );
         sleep(Duration::from_millis(100));
 
@@ -4843,7 +4837,7 @@ fn test_duplicate_with_pruned_ancestor() {
         }
     }
 
-    info!("Killing majority validator, waiting for minority fork to reach a depth of at least 15",);
+    info!("Killing majority validator, waiting for minority fork to reach a depth of at least 15");
     let mut majority_validator_info = cluster.exit_node(&majority_pubkey);
 
     let now = Instant::now();
@@ -4852,11 +4846,9 @@ fn test_duplicate_with_pruned_ancestor() {
         let elapsed = now.elapsed();
         assert!(
             elapsed <= Duration::from_secs(30),
-            "Minority validator failed to create a fork of depth >= {} in {} secs,
-            last_minority_vote: {}",
-            15,
+            "Minority validator failed to create a fork of depth >= {} in 15 secs, \
+             last_minority_vote: {last_minority_vote}",
             elapsed.as_secs(),
-            last_minority_vote,
         );
 
         if let Some((last_vote, _)) = last_vote_in_tower(&minority_ledger_path, &minority_pubkey) {
@@ -4904,11 +4896,10 @@ fn test_duplicate_with_pruned_ancestor() {
         let elapsed = now.elapsed();
         assert!(
             elapsed <= Duration::from_secs(60),
-            "Majority validator failed to root something > {} in {} secs,
-            last majority validator vote: {},",
+            "Majority validator failed to root something > {} in {} secs, \
+             last majority validator vote: {last_majority_vote}",
             fork_slot + fork_length + majority_fork_buffer,
             elapsed.as_secs(),
-            last_majority_vote,
         );
         sleep(Duration::from_millis(100));
 
@@ -4921,8 +4912,8 @@ fn test_duplicate_with_pruned_ancestor() {
         wait_for_last_vote_in_tower_to_land_in_ledger(&majority_ledger_path, &majority_pubkey)
             .unwrap();
     info!(
-        "Creating duplicate block built off of pruned branch for our node.
-           Last majority vote {last_majority_vote}, Last minority vote {last_minority_vote}"
+        "Creating duplicate block built off of pruned branch for our node. \
+         Last majority vote {last_majority_vote}, Last minority vote {last_minority_vote}"
     );
     {
         {
@@ -5532,14 +5523,10 @@ fn test_duplicate_shreds_switch_failure() {
     ) = (validators[0], validators[1], validators[2], validators[3]);
 
     info!(
-        "duplicate_fork_validator1_pubkey: {},
-        duplicate_fork_validator2_pubkey: {},
-        target_switch_fork_validator_pubkey: {},
-        duplicate_leader_validator_pubkey: {}",
-        duplicate_fork_validator1_pubkey,
-        duplicate_fork_validator2_pubkey,
-        target_switch_fork_validator_pubkey,
-        duplicate_leader_validator_pubkey
+        "duplicate_fork_validator1_pubkey: {duplicate_fork_validator1_pubkey}, \
+         duplicate_fork_validator2_pubkey: {duplicate_fork_validator2_pubkey}, \
+         target_switch_fork_validator_pubkey: {target_switch_fork_validator_pubkey}, \
+         duplicate_leader_validator_pubkey: {duplicate_leader_validator_pubkey}",
     );
 
     let validator_to_slots = vec![

@@ -576,7 +576,7 @@ impl Tower {
         if let Some(last_voted_slot) = self.last_vote.last_voted_slot() {
             if heaviest_slot_on_same_fork <= last_voted_slot {
                 warn!(
-                    "Trying to refresh timestamp for vote on {last_voted_slot}
+                    "Trying to refresh timestamp for vote on {last_voted_slot} \
                      using smaller heaviest bank {heaviest_slot_on_same_fork}"
                 );
                 return;
@@ -588,8 +588,8 @@ impl Tower {
             self.last_vote.set_timestamp(Some(timestamp));
         } else {
             warn!(
-                "Trying to refresh timestamp for last vote on heaviest bank on same fork
-                   {heaviest_slot_on_same_fork}, but there is no vote to refresh"
+                "Trying to refresh timestamp for last vote on heaviest bank on same fork \
+                 {heaviest_slot_on_same_fork}, but there is no vote to refresh"
             );
         }
     }
@@ -1115,8 +1115,8 @@ impl Tower {
                             last_vote_ancestors,
                         )
                         .expect(
-                            "candidate_slot and switch_slot exist in descendants map,
-                        so they must exist in ancestors map",
+                            "candidate_slot and switch_slot exist in descendants map, \
+                             so they must exist in ancestors map",
                         )
                 }
             {

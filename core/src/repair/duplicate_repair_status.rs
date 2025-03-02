@@ -473,10 +473,10 @@ impl AncestorRequestStatus {
                 // replay dump then repair to fix.
 
                 warn!(
-                    "Blockstore is missing frozen hash for slot {},
-                which the cluster claims is an ancestor of dead slot {}. Potentially
-                our version of the dead slot chains to the wrong fork!",
-                    ancestor_slot, self.requested_mismatched_slot
+                    "Blockstore is missing frozen hash for slot {ancestor_slot}, \
+                     which the cluster claims is an ancestor of dead slot {}. Potentially \
+                     our version of the dead slot chains to the wrong fork!",
+                    self.requested_mismatched_slot
                 );
             }
             last_ancestor = *ancestor_slot;

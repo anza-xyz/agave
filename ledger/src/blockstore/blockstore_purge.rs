@@ -170,9 +170,8 @@ impl Blockstore {
                     .put_in_batch(&mut write_batch, parent_slot, &parent_slot_meta)?;
             } else {
                 error!(
-                    "Parent slot meta {} for child {} is missing  or cleaned up.
-                       Falling back to orphan repair to remedy the situation",
-                    parent_slot, slot
+                    "Parent slot meta {parent_slot} for child {slot} is missing or cleaned up. \
+                     Falling back to orphan repair to remedy the situation",
                 );
             }
         }

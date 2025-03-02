@@ -5677,8 +5677,8 @@ impl AccountsDb {
     pub fn purge_slot(&self, slot: Slot, bank_id: BankId, is_serialized_with_abs: bool) {
         if self.is_bank_drop_callback_enabled.load(Ordering::Acquire) && !is_serialized_with_abs {
             panic!(
-                "bad drop callpath detected; Bank::drop() must run serially with other logic in
-                ABS like clean_accounts()"
+                "bad drop callpath detected; Bank::drop() must run serially with other logic in \
+                 ABS like clean_accounts()"
             )
         }
 

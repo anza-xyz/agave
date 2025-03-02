@@ -3833,9 +3833,8 @@ impl Blockstore {
         let results = self.check_last_fec_set(slot);
         let Ok(results) = results else {
             warn!(
-                "Unable to check the last fec set for slot {} {},
+                "Unable to check the last fec set for slot {slot} {bank_hash}, \
                  marking as dead: {results:?}",
-                slot, bank_hash,
             );
             if feature_set.is_active(&solana_sdk::feature_set::vote_only_full_fec_sets::id()) {
                 return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
