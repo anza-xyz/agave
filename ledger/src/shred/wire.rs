@@ -112,9 +112,10 @@ pub(super) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
     Some(u16::from_le_bytes(bytes))
 }
 
-// Returns DataShredHeader.flags.
+// Returns DataShredHeader.flags if the shred is data.
+// Returns Error::InvalidShredType for coding shreds.
 #[inline]
-pub(crate) fn get_flags(shred: &[u8]) -> Result<ShredFlags, Error> {
+pub fn get_flags(shred: &[u8]) -> Result<ShredFlags, Error> {
     match get_shred_type(shred)? {
         ShredType::Code => Err(Error::InvalidShredType),
         ShredType::Data => {
