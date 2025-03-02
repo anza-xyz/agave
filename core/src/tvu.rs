@@ -191,7 +191,7 @@ impl Tvu {
         );
 
         let (verified_sender, verified_receiver) = unbounded();
-        let (retransmit_sender, retransmit_receiver) = bounded(1024); //Allow for a max of 1024 batches of 1024 packets each (according to MAX_IOV).
+        let (retransmit_sender, retransmit_receiver) = bounded(2048); //Allow for a max of 2048 batches of up to 1024 packets each (according to MAX_IOV). In reality this holds about 15K shreds since most batches are never full.
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),
             bank_forks.clone(),
