@@ -1,3 +1,5 @@
+use solana_transaction_context::TransactionAccount;
+
 use {
     crate::transaction_execution_result::TransactionLoadedAccountsStats,
     solana_fee_structure::FeeDetails, solana_rent_debits::RentDebits,
@@ -18,6 +20,7 @@ pub struct CommittedTransaction {
     pub fee_details: FeeDetails,
     pub rent_debits: RentDebits,
     pub loaded_account_stats: TransactionLoadedAccountsStats,
+    pub post_accounts_states: Vec<TransactionAccount>,
 }
 
 pub trait TransactionCommitResultExtensions {
