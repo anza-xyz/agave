@@ -3885,6 +3885,7 @@ impl Bank {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
                             },
+                            post_accounts_states: loaded_accounts,
                         })
                     }
                     ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
@@ -3899,6 +3900,7 @@ impl Bank {
                             loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
                             loaded_accounts_data_size,
                         },
+                        post_accounts_states: vec![],
                     }),
                 }
             })
