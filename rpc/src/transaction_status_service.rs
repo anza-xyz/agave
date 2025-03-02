@@ -143,6 +143,7 @@ impl TransactionStatusService {
                         executed_units,
                         fee_details,
                         rent_debits,
+                        post_accounts_states,
                         ..
                     } = committed_tx;
 
@@ -189,6 +190,7 @@ impl TransactionStatusService {
                             transaction.signature(),
                             &transaction_status_meta,
                             &transaction,
+                            post_accounts_states,
                         );
                     }
 
@@ -262,6 +264,8 @@ impl TransactionStatusService {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use solana_sdk::account::AccountSharedData;
+
     use {
         super::*,
         crate::transaction_notifier_interface::TransactionNotifier,
@@ -329,6 +333,7 @@ pub(crate) mod tests {
             signature: &Signature,
             transaction_status_meta: &TransactionStatusMeta,
             transaction: &SanitizedTransaction,
+            _post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
         ) {
             self.notifications.insert(
                 TestNotifierKey {
@@ -397,6 +402,8 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits,
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            //Do we need to put something here?
+            post_accounts_states: vec![],
         });
 
         let balances = TransactionBalancesSet {
@@ -524,6 +531,8 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits: RentDebits::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            //Do we need to put something here?
+            post_accounts_states: vec![],
         });
 
         let balances = TransactionBalancesSet {

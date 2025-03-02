@@ -157,6 +157,47 @@ pub struct ReplicaTransactionInfoV2<'a> {
     pub index: usize,
 }
 
+/// Information about a transaction, including index in block and post accounts states data
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaTransactionInfoV3<'a> {
+    /// The first signature of the transaction, used for identifying the transaction.
+    pub signature: &'a Signature,
+
+    /// Indicates if the transaction is a simple vote transaction.
+    pub is_vote: bool,
+
+    /// The sanitized transaction.
+    pub transaction: &'a SanitizedTransaction,
+
+    /// Metadata of the transaction status.
+    pub transaction_status_meta: &'a TransactionStatusMeta,
+
+    /// The transaction's index in the block
+    pub index: usize,
+    /// States of accounts that was in transaction
+    pub post_accounts_states: Vec<(&'a [u8], TxnReplicaAccountInfo<'a>)>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
+/// Information about an account being updated in txn
+pub struct TxnReplicaAccountInfo<'a> {
+    /// The lamports for the account
+    pub lamports: u64,
+
+    /// The Pubkey of the owner program account
+    pub owner: &'a [u8],
+
+    /// This account's data contains a loaded program (and is now read-only)
+    pub executable: bool,
+
+    /// The epoch at which this account will next owe rent
+    pub rent_epoch: u64,
+
+    /// The data held in this account.
+    pub data: &'a [u8],
+}
+
 /// A wrapper to future-proof ReplicaTransactionInfo handling.
 /// If there were a change to the structure of ReplicaTransactionInfo,
 /// there would be new enum entry for the newer version, forcing
@@ -165,6 +206,7 @@ pub struct ReplicaTransactionInfoV2<'a> {
 pub enum ReplicaTransactionInfoVersions<'a> {
     V0_0_1(&'a ReplicaTransactionInfo<'a>),
     V0_0_2(&'a ReplicaTransactionInfoV2<'a>),
+    V0_0_3(&'a ReplicaTransactionInfoV3<'a>),
 }
 
 #[derive(Clone, Debug)]
