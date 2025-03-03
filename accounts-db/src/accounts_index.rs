@@ -566,7 +566,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
         let (start_bin, bin_range) =
             bin_start_and_range(self.start_bin(), self.end_bin_inclusive());
 
-        // For efficiency, we return all the items in a bin range at once.
+        // There is a subtle difference between this iterator and the sorted
+        // iterator. In sorted iterator, update the start_bound to the last
+        // pubkey in the chunk returned. And next iter will start with
+        // `start_bound`. This is correct for sorted iterator because we are
+        // iterating in sorted order. However, for unsorted iterator, we can't
+        // relying on the last item in the chunk to update `start_bound` because
+        // we are iterating in unsorted order.  Last item in the chunk maybe
+        // larger than the following items. If we do so, we may miss those some
+        // items. For simplicity, we return all the items in a bin range at
+        // once.
         let chunk: Vec<_> = self
             .account_maps
             .iter()
