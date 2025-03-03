@@ -565,11 +565,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
         }
         let (start_bin, bin_range) =
             bin_start_and_range(self.start_bin(), self.end_bin_inclusive());
-        let mut chunk = Vec::with_capacity(ITER_BATCH_SIZE);
-        for map in self.account_maps.iter().skip(start_bin).take(bin_range) {
-            let mut range = map.items(&(self.start_bound, self.end_bound));
-            chunk.append(&mut range);
-        }
+
+        // For efficiency, we return all the items in a bin range at once.
+        let chunk: Vec<_> = self
+            .account_maps
+            .iter()
+            .skip(start_bin)
+            .take(bin_range)
+            .flat_map(|map| map.items(&(self.start_bound, self.end_bound)))
+            .collect();
+
         self.is_finished = true;
         if chunk.is_empty() {
             None
