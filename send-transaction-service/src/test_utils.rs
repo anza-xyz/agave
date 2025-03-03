@@ -16,7 +16,7 @@ use {
 // `maybe_runtime` argument is introduced to be able to use runtime from test
 // for the TpuClientNext, while ConnectionCache uses runtime created internally
 // in the quic-client module and it is impossible to pass test runtime there.
-pub trait CreateClient: TransactionClient {
+pub trait CreateClient: TransactionClient + Clone {
     fn create_client(
         maybe_runtime: Option<Handle>,
         my_tpu_address: SocketAddr,
@@ -27,12 +27,11 @@ pub trait CreateClient: TransactionClient {
 
 impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
     fn create_client(
-        maybe_runtime: Option<Handle>,
+        _maybe_runtime: Option<Handle>,
         my_tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_forward_count: u64,
     ) -> Self {
-        assert!(maybe_runtime.is_none());
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
         ConnectionCacheClient::new(
             connection_cache,
