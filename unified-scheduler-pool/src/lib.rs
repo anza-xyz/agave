@@ -1931,7 +1931,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 banking_stage_helper.signal_disconnection();
                                 break;
                             };
-
                             if let Err(SchedulerAborted) = banking_packet_handler(banking_stage_helper, banking_packet) {
                                 info!("dead new_task_sender");
                                 break;
