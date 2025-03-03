@@ -53,6 +53,7 @@ solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
+static_assertions = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

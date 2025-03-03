@@ -43,6 +43,7 @@ impl<'a, F: ListFrame> ListView<'a, F> {
         let offset = index * self.frame.item_size();
         // SAFETY: `item_buffer` is long enough to contain all items
         let item_data = &self.item_buffer[offset..offset + self.frame.item_size()];
+        // SAFETY: `item_data` is long enough to contain an item
         Some(unsafe { self.frame.read_item(item_data) })
     }
 }

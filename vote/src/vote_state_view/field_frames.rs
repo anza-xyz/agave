@@ -1,3 +1,5 @@
+#[cfg(test)]
+use static_assertions::const_assert;
 use {
     super::{list_view::ListView, Result, VoteStateViewError},
     solana_clock::{Epoch, Slot},
@@ -8,16 +10,30 @@ use {
 pub(super) trait ListFrame {
     type Item;
 
+    // SAFETY: Each implementor MUST enforce that `Self::Item` is alignment 1 to
+    // ensure that after casting it won't have alignment issues, any heap
+    // allocated fields, or any assumptions about endianness.
+    #[cfg(test)]
+    const ASSERT_ITEM_ALIGNMENT: ();
+
     fn len(&self) -> usize;
     fn item_size(&self) -> usize {
         core::mem::size_of::<Self::Item>()
     }
+
+    /// This function is safe under the following conditions:
+    /// SAFETY:
+    /// - `Self::Item` is alignment 1
+    /// - The passed `item_data` slice is large enough for the type `Self::Item`
+    /// - `Self::Item` is valid for any sequence of bytes
     unsafe fn read_item<'a>(&self, item_data: &'a [u8]) -> &'a Self::Item {
         &*(item_data.as_ptr() as *const Self::Item)
     }
+
     fn total_size(&self) -> usize {
         core::mem::size_of::<u64>() /* len */ + self.total_item_size()
     }
+
     fn total_item_size(&self) -> usize {
         self.len() * self.item_size()
     }
@@ -30,6 +46,11 @@ pub(super) enum VotesFrame {
 
 impl ListFrame for VotesFrame {
     type Item = LockoutItem;
+
+    #[cfg(test)]
+    const ASSERT_ITEM_ALIGNMENT: () = {
+        const_assert!(core::mem::align_of::<LockoutItem>() == 1);
+    };
 
     fn len(&self) -> usize {
         match self {
@@ -90,6 +111,11 @@ impl LockoutListFrame {
 impl ListFrame for LockoutListFrame {
     type Item = LockoutItem;
 
+    #[cfg(test)]
+    const ASSERT_ITEM_ALIGNMENT: () = {
+        const_assert!(core::mem::align_of::<LockoutItem>() == 1);
+    };
+
     fn len(&self) -> usize {
         self.len as usize
     }
@@ -121,6 +147,11 @@ pub(super) struct LandedVoteItem {
 
 impl ListFrame for LandedVotesListFrame {
     type Item = LockoutItem;
+
+    #[cfg(test)]
+    const ASSERT_ITEM_ALIGNMENT: () = {
+        const_assert!(core::mem::align_of::<LockoutItem>() == 1);
+    };
 
     fn len(&self) -> usize {
         self.len as usize
@@ -160,6 +191,11 @@ pub(super) struct AuthorizedVoterItem {
 
 impl ListFrame for AuthorizedVotersListFrame {
     type Item = AuthorizedVoterItem;
+
+    #[cfg(test)]
+    const ASSERT_ITEM_ALIGNMENT: () = {
+        const_assert!(core::mem::align_of::<AuthorizedVoterItem>() == 1);
+    };
 
     fn len(&self) -> usize {
         self.len as usize
@@ -205,6 +241,11 @@ impl EpochCreditsListFrame {
 
 impl ListFrame for EpochCreditsListFrame {
     type Item = EpochCreditsItem;
+
+    #[cfg(test)]
+    const ASSERT_ITEM_ALIGNMENT: () = {
+        const_assert!(core::mem::align_of::<EpochCreditsItem>() == 1);
+    };
 
     fn len(&self) -> usize {
         self.len as usize
@@ -291,6 +332,11 @@ pub(super) struct PriorVotersFrame;
 impl ListFrame for PriorVotersFrame {
     type Item = PriorVotersItem;
 
+    #[cfg(test)]
+    const ASSERT_ITEM_ALIGNMENT: () = {
+        const_assert!(core::mem::align_of::<PriorVotersItem>() == 1);
+    };
+
     fn len(&self) -> usize {
         const MAX_ITEMS: usize = 32;
         MAX_ITEMS
@@ -306,8 +352,8 @@ impl ListFrame for PriorVotersFrame {
 #[repr(C)]
 pub(super) struct PriorVotersItem {
     voter: Pubkey,
-    start_epoch_inclusive: Epoch,
-    end_epoch_exclusive: Epoch,
+    start_epoch_inclusive: [u8; 8],
+    end_epoch_exclusive: [u8; 8],
 }
 
 impl PriorVotersFrame {
