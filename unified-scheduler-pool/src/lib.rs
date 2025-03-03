@@ -217,7 +217,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
 
 #[derive(derive_more::Debug, Clone)]
 pub struct HandlerContext {
-    count: usize,
+    parallelism: usize,
     log_messages_bytes_limit: Option<usize>,
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<ReplayVoteSender>,
@@ -257,7 +257,7 @@ struct CommonHandlerContext {
 impl CommonHandlerContext {
     fn into_handler_context(
         self,
-        count: usize,
+        parallelism: usize,
         banking_packet_receiver: BankingPacketReceiver,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
         banking_stage_helper: Option<Arc<BankingStageHelper>>,
@@ -271,7 +271,7 @@ impl CommonHandlerContext {
         } = self;
 
         HandlerContext {
-            count,
+            parallelism,
             log_messages_bytes_limit,
             transaction_status_sender,
             replay_vote_sender,
@@ -794,7 +794,7 @@ where
         new_task_sender: &Arc<Sender<NewTaskPayload>>,
     ) -> HandlerContext {
         let (
-            count,
+            parallelism,
             banking_packet_receiver,
             banking_packet_handler,
             banking_stage_helper,
@@ -830,7 +830,7 @@ where
             }
         };
         self.common_handler_context.clone().into_handler_context(
-            count,
+            parallelism,
             banking_packet_receiver,
             banking_packet_handler,
             banking_stage_helper,
@@ -1496,8 +1496,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         mut result_with_timings: ResultWithTimings,
         handler_context: HandlerContext,
     ) {
-        let handler_count = handler_context.count;
-        assert!(handler_count >= 1);
+        assert!(handler_context.parallelism >= 1);
 
         let postfix = match context.mode() {
             BlockVerification => "V",
@@ -1672,7 +1671,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 let mut state_machine = unsafe {
                     SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
-                        handler_count.checked_mul(2).unwrap().try_into().unwrap(),
+                        handler_context
+                            .parallelism
+                            .checked_mul(2)
+                            .unwrap()
+                            .try_into()
+                            .unwrap(),
                     )
                 };
 
@@ -1829,7 +1833,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
 
                                 runnable_task_sender
-                                    .send_chained_channel(&new_context, handler_count)
+                                    .send_chained_channel(&new_context, handler_context.parallelism)
                                     .unwrap();
                                 if matches!(scheduling_mode, BlockVerification) {
                                     result_with_timings = new_result_with_timings;
@@ -1976,7 +1980,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 .unwrap(),
         );
 
-        self.handler_threads = (0..handler_count)
+        self.handler_threads = (0..handler_context.parallelism)
             .map({
                 |thx| {
                     thread::Builder::new()
@@ -3889,7 +3893,7 @@ mod tests {
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let scheduling_context = &SchedulingContext::for_verification(bank.clone());
         let handler_context = &HandlerContext {
-            count: 0,
+            parallelism: 0,
             log_messages_bytes_limit: None,
             transaction_status_sender: None,
             replay_vote_sender: None,
@@ -3974,7 +3978,7 @@ mod tests {
                 Some(leader_schedule_cache),
             );
         let handler_context = &HandlerContext {
-            count: 0,
+            parallelism: 0,
             log_messages_bytes_limit: None,
             transaction_status_sender: Some(TransactionStatusSender { sender }),
             replay_vote_sender: None,
