@@ -1272,10 +1272,10 @@ fn assert_instruction_count() {
             ("noop", 5),
             ("noop++", 5),
             ("relative_call", 210),
-            ("return_data", 980),
+            ("return_data", 982),
             ("sanity", 2377),
             ("sanity++", 2277),
-            ("secp256k1_recover", 25383),
+            ("secp256k1_recover", 25483),
             ("sha", 1355),
             ("struct_pass", 108),
             ("struct_ret", 122),
@@ -1284,20 +1284,20 @@ fn assert_instruction_count() {
     #[cfg(feature = "sbf_rust")]
     {
         programs.extend_from_slice(&[
-            ("solana_sbf_rust_128bit", 1218),
-            ("solana_sbf_rust_alloc", 5077),
-            ("solana_sbf_rust_custom_heap", 398),
+            ("solana_sbf_rust_128bit", 955),
+            ("solana_sbf_rust_alloc", 4784),
+            ("solana_sbf_rust_custom_heap", 270),
             ("solana_sbf_rust_dep_crate", 2),
             ("solana_sbf_rust_iter", 1514),
             ("solana_sbf_rust_many_args", 1289),
-            ("solana_sbf_rust_mem", 2067),
-            ("solana_sbf_rust_membuiltins", 1539),
+            ("solana_sbf_rust_mem", 1207),
+            ("solana_sbf_rust_membuiltins", 292),
             ("solana_sbf_rust_noop", 275),
-            ("solana_sbf_rust_param_passing", 146),
-            ("solana_sbf_rust_rand", 378),
-            ("solana_sbf_rust_sanity", 51953),
-            ("solana_sbf_rust_secp256k1_recover", 91185),
-            ("solana_sbf_rust_sha", 24059),
+            ("solana_sbf_rust_param_passing", 108),
+            ("solana_sbf_rust_rand", 264),
+            ("solana_sbf_rust_sanity", 50084),
+            ("solana_sbf_rust_secp256k1_recover", 89217),
+            ("solana_sbf_rust_sha", 22850),
         ]);
     }
 
