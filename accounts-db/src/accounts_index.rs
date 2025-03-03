@@ -2197,8 +2197,7 @@ pub mod tests {
         solana_account::{AccountSharedData, WritableAccount},
         solana_inline_spl::token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
         solana_pubkey::PUBKEY_BYTES,
-        std::ops::Bound::Included,
-        std::ops::RangeInclusive,
+        std::ops::{Bound::Included, RangeInclusive},
     };
 
     const SPL_TOKENS: &[Pubkey] = &[
