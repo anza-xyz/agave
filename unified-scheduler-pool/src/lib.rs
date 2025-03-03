@@ -1436,7 +1436,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
     #[must_use]
     fn accumulate_result_with_timings(
-        context: &SchedulingContext,
+        mode: SchedulingMode,
         (result, timings): &mut ResultWithTimings,
         executed_task: HandlerResult,
     ) -> Option<(Box<ExecutedTask>, bool)> {
@@ -1444,7 +1444,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             return None;
         };
         timings.accumulate(&executed_task.result_with_timings.1);
-        match context.mode() {
+        match mode {
             BlockVerification => match executed_task.result_with_timings.0 {
                 Ok(()) => Some((executed_task, false)),
                 Err(error) => {
@@ -1488,7 +1488,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     // for type safety.
     fn start_threads(
         &mut self,
-        mut context: SchedulingContext,
+        context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
         handler_context: HandlerContext,
     ) {
@@ -1586,7 +1586,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // prioritization further. Consequently, this also contributes to alleviate the known
         // heuristic's caveat for the first task of linearized runs, which is described above.
         let (mut runnable_task_sender, runnable_task_receiver) =
-            chained_channel::unbounded::<Task, SchedulingContext>(context.clone());
+            chained_channel::unbounded::<Task, SchedulingContext>(context);
         // Create two handler-to-scheduler channels to prioritize the finishing of blocked tasks,
         // because it is more likely that a blocked task will have more blocked tasks behind it,
         // which should be scheduled while minimizing the delay to clear buffered linearized runs
@@ -1702,12 +1702,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         select_biased! {
                             recv(finished_blocked_task_receiver) -> executed_task => {
                                 let Ok(executed_task) = executed_task else {
-                                    assert_matches!(context.mode(), BlockProduction);
+                                    assert_matches!(scheduling_mode, BlockProduction);
                                     break 'nonaborted_main_loop;
                                 };
 
                                 let Some((executed_task, should_pause)) = Self::accumulate_result_with_timings(
-                                    &context,
+                                    scheduling_mode,
                                     &mut result_with_timings,
                                     executed_task,
                                 ) else {
@@ -1760,7 +1760,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                             recv(finished_idle_task_receiver) -> executed_task => {
                                 let Some((executed_task, should_pause)) = Self::accumulate_result_with_timings(
-                                    &context,
+                                    scheduling_mode,
                                     &mut result_with_timings,
                                     executed_task.expect("alive handler"),
                                 ) else {
@@ -1778,10 +1778,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                         };
 
-                        is_finished = scheduling_mode == BlockVerification
-                            && state_machine.has_no_active_task()
-                            || scheduling_mode == BlockProduction
-                                && state_machine.has_no_executing_task();
+                        is_finished = session_ending
+                            && (scheduling_mode == BlockVerification
+                                && state_machine.has_no_active_task()
+                                || scheduling_mode == BlockProduction
+                                    && state_machine.has_no_executing_task());
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
@@ -1790,7 +1791,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     session_result_sender
                         .send(result_with_timings)
                         .expect("always outlived receiver");
-
                     assert!(mem::replace(&mut session_ending, false));
 
                     let mut new_result_with_timings = initialized_result_with_timings();
@@ -1808,7 +1808,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 sleepless_testing::at(CheckPoint::NewBufferedTask(
                                     task.task_index(),
                                 ));
-                                assert_eq!(scheduling_mode, BlockProduction);
+                                assert_matches!(scheduling_mode, BlockProduction);
                                 state_machine.buffer_task(task);
                             }
                             Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
@@ -1828,16 +1828,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 runnable_task_sender
                                     .send_chained_channel(&new_context, handler_count)
                                     .unwrap();
-                                context = new_context;
-                                if context.mode() == BlockVerification {
+                                if scheduling_mode == BlockVerification {
                                     result_with_timings = new_result_with_timings;
                                     break;
                                 }
                             }
                             Ok(NewTaskPayload::Reset) => {
+                                assert_matches!(scheduling_mode, BlockProduction);
                                 session_resetting = true;
                             }
                             Ok(NewTaskPayload::Unblock) => {
+                                assert_matches!(scheduling_mode, BlockProduction);
                                 result_with_timings = new_result_with_timings;
                                 break;
                             }
@@ -2208,7 +2209,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         index: usize,
     ) -> ScheduleResult {
-        assert_matches!(self.context().mode(), BlockVerification);
+        //assert_matches!(self.context().mode(), BlockVerification);
         let task = SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
             self.inner.task_creator.usage_queue_loader().load(pubkey)
         });
@@ -4095,6 +4096,7 @@ mod tests {
         assert_eq!(bank.transaction_count(), 0);
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
+        scheduler.unblock_scheduling();
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
@@ -4180,6 +4182,7 @@ mod tests {
         assert_eq!(bank.transaction_count(), 0);
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
+        scheduler.unblock_scheduling();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         assert_eq!(bank.transaction_count(), 1);
@@ -4250,6 +4253,7 @@ mod tests {
         // waiting for new session...
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context.clone()).unwrap();
+        scheduler.unblock_scheduling();
         let bank_tmp = BankWithScheduler::new(bank.clone(), Some(scheduler));
         assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
 
@@ -4265,6 +4269,7 @@ mod tests {
 
         assert_eq!(bank.transaction_count(), 0);
         let scheduler = pool.take_scheduler(context).unwrap();
+        scheduler.unblock_scheduling();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         assert_eq!(bank.transaction_count(), 1);
@@ -4387,6 +4392,7 @@ mod tests {
 
         let context = SchedulingContext::for_production(bank);
         let scheduler = pool.do_take_scheduler(context.clone());
+        scheduler.unblock_scheduling();
         let trashed_old_scheduler_id = scheduler.id();
 
         // Make scheduler overgrown and trash it by returning
@@ -4399,6 +4405,7 @@ mod tests {
 
         // Re-take a brand-new one
         let scheduler = pool.do_take_scheduler(context);
+        scheduler.unblock_scheduling();
         let respawned_new_scheduler_id = scheduler.id();
         Box::new(scheduler.into_inner().1).return_to_pool();
 
