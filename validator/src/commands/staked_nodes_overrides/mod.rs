@@ -1,23 +1,20 @@
 use {
     crate::{admin_rpc_service, commands::FromClapArgMatches},
     clap::{App, Arg, ArgMatches, SubCommand},
-    std::path::Path,
+    std::{path::Path, path::PathBuf},
 };
 
 const COMMAND: &str = "staked-nodes-overrides";
 
 #[derive(Debug, PartialEq)]
 pub struct StakedNodesOverridesArgs {
-    pub path: String,
+    pub path: PathBuf,
 }
 
 impl FromClapArgMatches for StakedNodesOverridesArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
         Ok(StakedNodesOverridesArgs {
-            path: matches
-                .value_of("path")
-                .expect("path is required")
-                .to_string(),
+            path: matches.value_of("path").expect("path is required").into(),
         })
     }
 }
@@ -47,7 +44,9 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
         .block_on(async move {
             admin_client
                 .await?
-                .set_staked_nodes_overrides(staked_nodes_overrides_args.path)
+                .set_staked_nodes_overrides(String::from(
+                    staked_nodes_overrides_args.path.to_string_lossy(),
+                ))
                 .await
         })
         .map_err(|err| format!("set staked nodes override request failed: {err}"))
@@ -76,7 +75,7 @@ mod tests {
             command(),
             vec![COMMAND, "test.json"],
             StakedNodesOverridesArgs {
-                path: "test.json".to_string(),
+                path: PathBuf::from("test.json"),
             },
         );
     }
