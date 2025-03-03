@@ -6,6 +6,8 @@ pub struct PubkeyBinCalculator24 {
     shift_bits: u32,
 }
 
+const MAX_BITS: u32 = 24;
+
 impl PubkeyBinCalculator24 {
     const fn num_bits<T>() -> usize {
         std::mem::size_of::<T>() * 8
@@ -17,7 +19,6 @@ impl PubkeyBinCalculator24 {
     }
 
     pub fn new(bins: usize) -> Self {
-        const MAX_BITS: u32 = 24;
         assert!(bins > 0);
         let max_plus_1 = 1 << MAX_BITS;
         assert!(bins <= max_plus_1);
@@ -28,6 +29,10 @@ impl PubkeyBinCalculator24 {
         }
     }
 
+    pub fn bins(&self) -> usize {
+        1 << (MAX_BITS - self.shift_bits)
+    }
+
     #[inline]
     pub fn bin_from_pubkey(&self, pubkey: &Pubkey) -> usize {
         let as_ref = pubkey.as_ref();
@@ -35,11 +40,22 @@ impl PubkeyBinCalculator24 {
             >> self.shift_bits
     }
 
-    #[cfg(test)]
-    pub(crate) fn lowest_pubkey_from_bin(&self, mut bin: usize, bins: usize) -> Pubkey {
-        assert!(bin < bins);
+    pub(crate) fn lowest_pubkey_from_bin(&self, mut bin: usize) -> Pubkey {
+        assert!(bin < self.bins());
         bin <<= self.shift_bits;
         let mut pubkey = Pubkey::from([0; 32]);
+        pubkey.as_mut()[0] = ((bin / 256 / 256) & 0xff) as u8;
+        pubkey.as_mut()[1] = ((bin / 256) & 0xff) as u8;
+        pubkey.as_mut()[2] = (bin & 0xff) as u8;
+        pubkey
+    }
+
+    pub(crate) fn highest_pubkey_from_bin(&self, mut bin: usize) -> Pubkey {
+        assert!(bin < self.bins());
+        let mask = (1 << self.shift_bits) - 1;
+        bin <<= self.shift_bits;
+        bin |= mask;
+        let mut pubkey = Pubkey::from([0xff; 32]);
         pubkey.as_mut()[0] = ((bin / 256 / 256) & 0xff) as u8;
         pubkey.as_mut()[1] = ((bin / 256) & 0xff) as u8;
         pubkey.as_mut()[2] = (bin & 0xff) as u8;
@@ -69,8 +85,15 @@ pub mod tests {
             for bin in 0..bins {
                 assert_eq!(
                     bin as usize,
-                    calc.bin_from_pubkey(&calc.lowest_pubkey_from_bin(bin as usize, bins as usize))
+                    calc.bin_from_pubkey(&calc.lowest_pubkey_from_bin(bin as usize))
                 );
+
+                assert_eq!(
+                    bin as usize,
+                    calc.bin_from_pubkey(&calc.highest_pubkey_from_bin(bin as usize))
+                );
+
+                assert_eq!(calc.bins(), bins as usize);
             }
         }
     }

@@ -1411,7 +1411,7 @@ mod tests {
                             CalculateHashIntermediate {
                                 hash: AccountHash(Hash::default()),
                                 lamports: 0,
-                                pubkey: binner.lowest_pubkey_from_bin(bin, bins),
+                                pubkey: binner.lowest_pubkey_from_bin(bin),
                             }
                         })
                     })
