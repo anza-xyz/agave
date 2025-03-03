@@ -829,6 +829,7 @@ where
                 )
             }
         };
+        assert!(parallelism >= 1);
         self.common_handler_context.clone().into_handler_context(
             parallelism,
             banking_packet_receiver,
@@ -1496,8 +1497,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         mut result_with_timings: ResultWithTimings,
         handler_context: HandlerContext,
     ) {
-        assert!(handler_context.parallelism >= 1);
-
         let postfix = match context.mode() {
             BlockVerification => "V",
             BlockProduction => "P",
