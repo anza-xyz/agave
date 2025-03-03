@@ -840,14 +840,6 @@ impl SchedulingStateMachine {
         index: usize,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
-        Self::do_create_task(transaction, index, usage_queue_loader)
-    }
-
-    pub fn do_create_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
-        usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
-    ) -> Task {
         // It's crucial for tasks to be validated with
         // `account_locks::validate_account_locks()` prior to the creation.
         // That's because it's part of protocol consensus regarding the

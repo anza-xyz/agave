@@ -240,6 +240,10 @@ impl HandlerContext {
             },
         }
     }
+
+    fn banking_stage_helper(&self) -> &BankingStageHelper {
+        self.banking_stage_helper.as_ref().unwrap()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -322,7 +326,7 @@ impl BankingStageHelper {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         index: usize,
     ) -> Task {
-        SchedulingStateMachine::do_create_task(transaction, index, &mut |pubkey| {
+        SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
             self.usage_queue_loader.load(pubkey)
         })
     }
@@ -335,9 +339,9 @@ impl BankingStageHelper {
         self.do_create_task(transaction, index)
     }
 
-    fn recreate_task(&self, task: Task) -> Task {
+    fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
         let new_index = self.generate_task_ids(1);
-        let transaction = task.into_transaction();
+        let transaction = executed_task.into_task().into_transaction();
         self.do_create_task(transaction, new_index)
     }
 
@@ -1008,7 +1012,7 @@ impl ExecutedTask {
         })
     }
 
-    fn into_inner(self) -> Task {
+    fn into_task(self) -> Task {
         self.task
     }
 }
@@ -1717,9 +1721,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 if trigger_ending {
                                     assert_matches!(scheduling_mode, BlockProduction);
                                     session_ending = true;
-                                    let task = handler_context.banking_stage_helper.as_ref().unwrap().recreate_task(
-                                        executed_task.into_inner(),
-                                    );
+                                    let task = handler_context.banking_stage_helper().recreate_task(executed_task);
                                     state_machine.buffer_task(task);
                                 }
                             },
@@ -1773,9 +1775,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 if trigger_ending {
                                     assert_matches!(scheduling_mode, BlockProduction);
                                     session_ending = true;
-                                    let task = handler_context.banking_stage_helper.as_ref().unwrap().recreate_task(
-                                        executed_task.into_inner(),
-                                    );
+                                    let task = handler_context.banking_stage_helper().recreate_task(executed_task);
                                     state_machine.buffer_task(task);
                                 }
                             },
@@ -1831,7 +1831,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 runnable_task_sender
                                     .send_chained_channel(&new_context, handler_count)
                                     .unwrap();
-                                if scheduling_mode == BlockVerification {
+                                if matches!(scheduling_mode, BlockVerification) {
                                     result_with_timings = new_result_with_timings;
                                     break;
                                 }
@@ -1849,6 +1849,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             Ok(NewTaskPayload::Unblock) => {
                                 assert_matches!(scheduling_mode, BlockProduction);
+                                // borrow checker won't allow us to do this inside OpenSubchannel
+                                // to remove duplicate assignments...
                                 result_with_timings = new_result_with_timings;
                                 break;
                             }
