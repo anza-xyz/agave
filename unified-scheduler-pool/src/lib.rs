@@ -1803,6 +1803,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 state_machine.deschedule_task(&task);
                                 drop(task);
                             }
+                            // should call state_machine.reinitialize()???
                             session_resetting = false;
                         }
                         // Prepare for the new session.
@@ -1823,7 +1824,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // Before that, propagate new SchedulingContext to handler threads
                                 assert_eq!(scheduling_mode, new_context.mode());
                                 assert!(!new_context.is_preallocated());
-
                                 if matches!(scheduling_mode, BlockVerification) {
                                     state_machine.reinitialize();
                                 }
@@ -1921,20 +1921,18 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                         },
                         recv(handler_context.banking_packet_receiver) -> banking_packet => {
-                            let helper = handler_context.banking_stage_helper.as_ref().unwrap();
+                            let HandlerContext {banking_packet_handler, banking_stage_helper, ..} = &mut handler_context;
+                            let banking_stage_helper = banking_stage_helper.as_ref().unwrap();
 
                             // See solana_core::banking_stage::unified_scheduler module doc as to
                             // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
-                                helper.signal_disconnection();
+                                banking_stage_helper.signal_disconnection();
                                 break;
                             };
 
-                            if let Err(SchedulerAborted) = (handler_context.banking_packet_handler)(
-                                helper,
-                                banking_packet
-                            ) {
+                            if let Err(SchedulerAborted) = banking_packet_handler(banking_stage_helper, banking_packet) {
                                 info!("dead new_task_sender");
                                 break;
                             }
