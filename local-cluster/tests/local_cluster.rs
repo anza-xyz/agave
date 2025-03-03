@@ -5861,7 +5861,7 @@ fn test_randomly_mixed_block_production_methods_between_bootstrap_and_not() {
          info",
     );
 
-    let num_nodes = BlockVerificationMethod::COUNT;
+    let num_nodes = BlockProductionMethod::COUNT;
     let mut config =
         ClusterConfig::new_with_equal_stakes(num_nodes, DEFAULT_MINT_LAMPORTS, DEFAULT_NODE_STAKE);
 

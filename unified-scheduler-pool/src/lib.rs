@@ -1706,7 +1706,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 };
 
-                                let Some((executed_task, should_pause)) = Self::accumulate_result_with_timings(
+                                let Some((executed_task, trigger_ending)) = Self::accumulate_result_with_timings(
                                     scheduling_mode,
                                     &mut result_with_timings,
                                     executed_task,
@@ -1714,13 +1714,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
-                                if should_pause {
-                                    assert!(!session_ending);
+                                if trigger_ending {
+                                    assert_matches!(scheduling_mode, BlockProduction);
+                                    session_ending = true;
                                     let task = handler_context.banking_stage_helper.as_ref().unwrap().recreate_task(
                                         executed_task.into_inner(),
                                     );
                                     state_machine.buffer_task(task);
-                                    session_ending = true;
                                 }
                             },
                             recv(dummy_unblocked_task_receiver) -> dummy => {
@@ -1744,10 +1744,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     Ok(NewTaskPayload::CloseSubchannel) => {
                                         session_ending = true;
                                     }
-                                    Ok(NewTaskPayload::Reset) => {
-                                        session_ending = true;
-                                        session_resetting = true;
-                                    }
                                     Ok(NewTaskPayload::OpenSubchannel(_) | NewTaskPayload::Unblock) =>
                                         unreachable!(),
                                     Ok(NewTaskPayload::Disconnect) | Err(RecvError) => {
@@ -1756,24 +1752,31 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         // This short-circuiting is tested with test_scheduler_drop_short_circuiting.
                                         break 'nonaborted_main_loop;
                                     }
+                                    Ok(NewTaskPayload::Reset) => {
+                                        assert_matches!(scheduling_mode, BlockProduction);
+                                        session_ending = true;
+                                        session_resetting = true;
+                                    }
                                 }
                             },
                             recv(finished_idle_task_receiver) -> executed_task => {
-                                let Some((executed_task, should_pause)) = Self::accumulate_result_with_timings(
+                                let Some((executed_task, trigger_ending)) = Self::accumulate_result_with_timings(
                                     scheduling_mode,
                                     &mut result_with_timings,
+                                    // finished_idle_task_sender won't be disconnected
+                                    // unlike finished_blocked_task_sender???
                                     executed_task.expect("alive handler"),
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
-                                if should_pause {
-                                    assert!(!session_ending);
+                                if trigger_ending {
+                                    assert_matches!(scheduling_mode, BlockProduction);
+                                    session_ending = true;
                                     let task = handler_context.banking_stage_helper.as_ref().unwrap().recreate_task(
                                         executed_task.into_inner(),
                                     );
                                     state_machine.buffer_task(task);
-                                    session_ending = true;
                                 }
                             },
                         };
@@ -1833,17 +1836,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break;
                                 }
                             }
-                            Ok(NewTaskPayload::Reset) => {
-                                assert_matches!(scheduling_mode, BlockProduction);
-                                session_resetting = true;
-                            }
-                            Ok(NewTaskPayload::Unblock) => {
-                                assert_matches!(scheduling_mode, BlockProduction);
-                                result_with_timings = new_result_with_timings;
-                                break;
-                            }
                             Ok(NewTaskPayload::CloseSubchannel) => {
-                                assert_eq!(scheduling_mode, BlockProduction);
+                                assert_matches!(scheduling_mode, BlockProduction);
                                 // This match arm can be hit if context.is_preallocated()
                                 info!("ignoring duplicate CloseSubchannel...");
                             }
@@ -1852,6 +1846,15 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // Initialize result_with_timings with a harmless value...
                                 result_with_timings = initialized_result_with_timings();
                                 break 'nonaborted_main_loop;
+                            }
+                            Ok(NewTaskPayload::Unblock) => {
+                                assert_matches!(scheduling_mode, BlockProduction);
+                                result_with_timings = new_result_with_timings;
+                                break;
+                            }
+                            Ok(NewTaskPayload::Reset) => {
+                                assert_matches!(scheduling_mode, BlockProduction);
+                                session_resetting = true;
                             }
                         }
                     }
