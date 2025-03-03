@@ -5,8 +5,8 @@ use {
     std::io::BufRead,
 };
 
-pub(super) trait ListFrame<'frame> {
-    type Item: 'frame;
+pub(super) trait ListFrame {
+    type Item;
 
     fn len(&self) -> usize;
     fn item_size(&self) -> usize {
@@ -28,7 +28,7 @@ pub(super) enum VotesFrame {
     Landed(LandedVotesListFrame),
 }
 
-impl ListFrame<'_> for VotesFrame {
+impl ListFrame for VotesFrame {
     type Item = LockoutItem;
 
     fn len(&self) -> usize {
@@ -87,7 +87,7 @@ impl LockoutListFrame {
     }
 }
 
-impl ListFrame<'_> for LockoutListFrame {
+impl ListFrame for LockoutListFrame {
     type Item = LockoutItem;
 
     fn len(&self) -> usize {
@@ -119,7 +119,7 @@ pub(super) struct LandedVoteItem {
     confirmation_count: [u8; 4],
 }
 
-impl ListFrame<'_> for LandedVotesListFrame {
+impl ListFrame for LandedVotesListFrame {
     type Item = LockoutItem;
 
     fn len(&self) -> usize {
@@ -158,7 +158,7 @@ pub(super) struct AuthorizedVoterItem {
     voter: Pubkey,
 }
 
-impl ListFrame<'_> for AuthorizedVotersListFrame {
+impl ListFrame for AuthorizedVotersListFrame {
     type Item = AuthorizedVoterItem;
 
     fn len(&self) -> usize {
@@ -203,7 +203,7 @@ impl EpochCreditsListFrame {
     }
 }
 
-impl ListFrame<'_> for EpochCreditsListFrame {
+impl ListFrame for EpochCreditsListFrame {
     type Item = EpochCreditsItem;
 
     fn len(&self) -> usize {
@@ -288,7 +288,7 @@ impl RootSlotFrame {
 
 pub(super) struct PriorVotersFrame;
 
-impl ListFrame<'_> for PriorVotersFrame {
+impl ListFrame for PriorVotersFrame {
     type Item = PriorVotersItem;
 
     fn len(&self) -> usize {

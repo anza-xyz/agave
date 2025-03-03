@@ -5,7 +5,7 @@ pub(super) struct ListView<'a, F> {
     item_buffer: &'a [u8],
 }
 
-impl<'a, F: ListFrame<'a>> ListView<'a, F> {
+impl<'a, F: ListFrame> ListView<'a, F> {
     pub(super) fn new(frame: F, buffer: &'a [u8]) -> Self {
         let len_offset = core::mem::size_of::<u64>();
         let item_buffer = &buffer[len_offset..];
@@ -53,7 +53,10 @@ pub(super) struct ListViewIter<'a, F> {
     view: ListView<'a, F>,
 }
 
-impl<'a, F: ListFrame<'a>> Iterator for ListViewIter<'a, F> {
+impl<'a, F: ListFrame> Iterator for ListViewIter<'a, F>
+where
+    F::Item: 'a,
+{
     type Item = &'a F::Item;
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.view.len() {
@@ -66,7 +69,10 @@ impl<'a, F: ListFrame<'a>> Iterator for ListViewIter<'a, F> {
     }
 }
 
-impl<'a, F: ListFrame<'a>> DoubleEndedIterator for ListViewIter<'a, F> {
+impl<'a, F: ListFrame> DoubleEndedIterator for ListViewIter<'a, F>
+where
+    F::Item: 'a,
+{
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.rev_index < self.view.len() {
             let item = self.view.item(self.view.len() - self.rev_index - 1);
