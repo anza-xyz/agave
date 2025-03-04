@@ -20,16 +20,20 @@ use {
     },
 };
 
-fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<usize> {
+fn producer(dest_addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<usize> {
     let send = bind_to_unspecified().unwrap();
 
     let batch_size = 10;
+    let payload = [0u8; PACKET_DATA_SIZE];
+    let packet = {
+        let mut packet = Packet::default();
+        packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
+        packet.meta_mut().size = payload.len();
+        packet.meta_mut().set_socket_addr(dest_addr);
+        packet
+    };
     let mut packet_batch = PacketBatch::with_capacity(batch_size);
-    packet_batch.resize(batch_size, Packet::default());
-    for w in packet_batch.iter_mut() {
-        w.meta_mut().size = PACKET_DATA_SIZE;
-        w.meta_mut().set_socket_addr(addr);
-    }
+    packet_batch.resize(batch_size, packet);
 
     spawn(move || {
         let mut num_packets_sent = 0;
