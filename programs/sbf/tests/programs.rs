@@ -1697,10 +1697,15 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
             );
         } else {
             let (result, _, _, _) = process_transaction_and_record_inner(&bank, tx);
-            assert_eq!(
-                result.unwrap_err(),
-                TransactionError::InstructionError(37, InstructionError::UnsupportedProgramId),
-            );
+            if let TransactionError::InstructionError(instr_no, ty) = result.unwrap_err() {
+                // Asserting the instruction number as an upper bound, since the quantity of
+                // instructions depends on the program size, which in turn depends on the SBPF
+                // versions.
+                assert!(instr_no <= 38);
+                assert_eq!(ty, InstructionError::UnsupportedProgramId);
+            } else {
+                panic!("Invalid error type");
+            }
         }
     }
 }
