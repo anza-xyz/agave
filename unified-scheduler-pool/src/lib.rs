@@ -1791,8 +1791,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                         };
 
-                        is_finished =
-                            session_ending && Self::can_finish_session(scheduling_mode, &state_machine);
+                        is_finished = session_ending
+                            && Self::can_finish_session(scheduling_mode, &state_machine);
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
