@@ -84,6 +84,7 @@ fn main() -> Result<()> {
                 .long("num-producers")
                 .value_name("NUM")
                 .takes_value(true)
+                .default_value("4")
                 .help("Use this many producer threads."),
         )
         .arg(
@@ -97,7 +98,7 @@ fn main() -> Result<()> {
         .get_matches();
 
     let num_sockets = value_t_or_exit!(matches, "num-recv-sockets", usize);
-    let num_producers: u64 = matches.value_of_t("num-producers").unwrap_or(4);
+    let num_producers = value_t_or_exit!(matches, "num-producers", usize);
     let duration_secs = value_t_or_exit!(matches, "duration", u64);
     let duration = Duration::new(duration_secs, 0);
 
