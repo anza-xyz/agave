@@ -1504,11 +1504,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         mut result_with_timings: ResultWithTimings,
         handler_context: HandlerContext,
     ) {
-        let postfix = match context.mode() {
-            BlockVerification => "V",
-            BlockProduction => "P",
-        };
-
         let scheduling_mode = context.mode();
         let (mut is_finished, mut session_ending) = match scheduling_mode {
             BlockVerification => (false, false),
@@ -1791,8 +1786,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                         };
 
-                        is_finished = session_ending
-                            && Self::can_finish_session(scheduling_mode, &state_machine);
+                        is_finished =
+                            session_ending && Self::can_finish_session(scheduling_mode, &state_machine);
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
@@ -1976,9 +1971,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             }
         };
 
+        let mode_char = match scheduling_mode {
+            BlockVerification => 'V',
+            BlockProduction => 'P',
+        };
+
         self.scheduler_thread = Some(
             thread::Builder::new()
-                .name(format!("solSchedule{postfix}"))
+                .name(format!("solSchedule{mode_char}"))
                 .spawn_tracked(scheduler_main_loop)
                 .unwrap(),
         );
@@ -1987,7 +1987,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .map({
                 |thx| {
                     thread::Builder::new()
-                        .name(format!("solScHandle{postfix}{:02}", thx))
+                        .name(format!("solScHandle{mode_char}{:02}", thx))
                         .spawn_tracked(handler_main_loop())
                         .unwrap()
                 }
