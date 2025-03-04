@@ -10,6 +10,7 @@ use {
     serde::de::{Deserialize, Deserializer},
     solana_hash::Hash,
     solana_keypair::{signable::Signable, Keypair},
+    solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_signature::Signature,
@@ -227,8 +228,13 @@ impl<'de> Deserialize<'de> for CrdsValue {
             data: CrdsData,
         }
         let CrdsValue { signature, data } = CrdsValue::deserialize(deserializer)?;
-        let bincode_serialized_data = bincode::serialize(&data).unwrap();
-        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        let mut buffer = [0u8; PACKET_DATA_SIZE];
+        let position = {
+            let mut cursor = std::io::Cursor::new(buffer.as_mut());
+            bincode::serialize_into(&mut cursor, &data).map_err(serde::de::Error::custom)?;
+            cursor.position() as usize
+        };
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &buffer[0..position]]);
         Ok(Self {
             signature,
             data,
