@@ -108,31 +108,35 @@ fn main() -> Result<()> {
     .unwrap();
 
     let mut addr = SocketAddr::new(ip_addr, 0);
-    let mut read_channels = Vec::new();
-    let mut read_threads = Vec::new();
     let recycler = PacketBatchRecycler::default();
     let exit = Arc::new(AtomicBool::new(false));
     let stats = Arc::new(StreamerReceiveStats::new("bench-streamer-test"));
 
-    for read in read_sockets {
-        read.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
+    let (read_threads, read_channels): (Vec<_>, Vec<_>) = read_sockets
+        .into_iter()
+        .map(|read_socket| {
+            read_socket
+                .set_read_timeout(Some(Duration::new(1, 0)))
+                .unwrap();
+            addr = read_socket.local_addr().unwrap();
 
-        addr = read.local_addr().unwrap();
-        let (s_reader, r_reader) = unbounded();
-        read_channels.push(r_reader);
-        read_threads.push(receiver(
-            "solRcvrBenStrmr".to_string(),
-            Arc::new(read),
-            exit.clone(),
-            s_reader,
-            recycler.clone(),
-            stats.clone(),
-            Some(Duration::from_millis(1)), // coalesce
-            true,
-            None,
-            false,
-        ));
-    }
+            let (packet_sender, packet_receiver) = unbounded();
+            let receiver = receiver(
+                "solRcvrBenStrmr".to_string(),
+                Arc::new(read_socket),
+                exit.clone(),
+                packet_sender,
+                recycler.clone(),
+                stats.clone(),
+                Some(Duration::from_millis(1)), // coalesce
+                true,
+                None,
+                false,
+            );
+
+            (receiver, packet_receiver)
+        })
+        .unzip();
 
     let producer_threads: Vec<_> = (0..num_producers)
         .map(|_| producer(&addr, exit.clone()))
@@ -154,6 +158,7 @@ fn main() -> Result<()> {
     let ftime = (time as f64) / 10_000_000_000_f64;
     let fcount = (end_val - start_val) as f64;
     println!("performance: {:?}", fcount / ftime);
+
     exit.store(true, Ordering::Relaxed);
 
     for t_reader in read_threads {
