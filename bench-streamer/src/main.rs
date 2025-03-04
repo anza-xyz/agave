@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    clap::{crate_description, crate_name, Arg, Command},
+    clap::{crate_description, crate_name, value_t_or_exit, Arg, Command},
     crossbeam_channel::unbounded,
     solana_net_utils::{bind_to_unspecified, SocketConfig},
     solana_streamer::{
@@ -84,13 +84,22 @@ fn main() -> Result<()> {
                 .takes_value(true)
                 .help("Use this many producer threads."),
         )
+        .arg(
+            Arg::new("duration")
+                .long("duration")
+                .value_name("NUM")
+                .takes_value(true)
+                .default_value("5")
+                .help("Run for this many seconds"),
+        )
         .get_matches();
 
     if let Some(n) = matches.value_of("num-recv-sockets") {
         num_sockets = max(num_sockets, n.to_string().parse().expect("integer"));
     }
-
     let num_producers: u64 = matches.value_of_t("num-producers").unwrap_or(4);
+    let duration_secs = value_t_or_exit!(matches, "duration", u64);
+    let duration = Duration::new(duration_secs, 0);
 
     let port = 0;
     let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
@@ -140,7 +149,9 @@ fn main() -> Result<()> {
         .collect();
     let start = SystemTime::now();
     let start_val = rvs.load(Ordering::Relaxed);
-    sleep(Duration::new(5, 0));
+
+    sleep(duration);
+
     let elapsed = start.elapsed().unwrap();
     let end_val = rvs.load(Ordering::Relaxed);
     let time = elapsed.as_secs() * 10_000_000_000 + u64::from(elapsed.subsec_nanos());
@@ -148,6 +159,7 @@ fn main() -> Result<()> {
     let fcount = (end_val - start_val) as f64;
     println!("performance: {:?}", fcount / ftime);
     exit.store(true, Ordering::Relaxed);
+
     for t_reader in read_threads {
         t_reader.join()?;
     }
