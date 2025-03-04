@@ -1,5 +1,6 @@
 use {
     crate::retransmit_stage::RetransmitSlotStats,
+    itertools::Itertools,
     solana_ledger::{
         blockstore::MAX_DATA_SHREDS_PER_SLOT,
         shred::{shred_code::MAX_CODE_SHREDS_PER_SLOT, ShredId, ShredType},
@@ -318,27 +319,21 @@ impl CacheEntry {
         } else {
             extend_buffer
         };
-        let mut code = {
+        // Find and interleave missing code and data entries in the cache.
+        let code = {
             // There at least as many coding shreds as data shreds.
             let max_index = self.max_index_code.max(self.max_index_data) as usize + extend_buffer;
             self.index_code..max_index.min(MAX_CODE_SHREDS_PER_SLOT)
-        };
-        let mut data = {
+        }
+        .filter(|&k| matches!(self.code.get(k), None | Some(None)))
+        .map(|k| (ShredType::Code, k));
+        let data = {
             let max_index = self.max_index_data as usize + extend_buffer;
             self.index_data..max_index.min(MAX_DATA_SHREDS_PER_SLOT)
-        };
-        std::iter::from_fn(move || {
-            // Find next missing code and data entries in the cache.
-            let code = code.find(|&k| matches!(self.code.get(k), None | Some(None)));
-            let data = data.find(|&k| matches!(self.data.get(k), None | Some(None)));
-            let out = [
-                code.map(|k| (ShredType::Code, k)),
-                data.map(|k| (ShredType::Data, k)),
-            ];
-            (!matches!(out, [None, None])).then_some(out)
-        })
-        .flatten()
-        .flatten()
+        }
+        .filter(|&k| matches!(self.data.get(k), None | Some(None)))
+        .map(|k| (ShredType::Data, k));
+        code.interleave(data)
     }
 }
 
@@ -408,5 +403,11 @@ mod tests {
             .eq([(ShredType::Code, 3), (ShredType::Data, 2)]));
         assert_eq!(entry.index_code, 3);
         assert_eq!(entry.index_data, 2);
+
+        entry.put(ShredType::Code, 3, (0, Box::new([])));
+        entry.put(ShredType::Data, 2, (0, Box::new([])));
+        assert!(entry.get_shreds(7).eq([]));
+        assert_eq!(entry.index_code, 5);
+        assert_eq!(entry.index_data, 4);
     }
 }
