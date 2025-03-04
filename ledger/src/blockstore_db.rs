@@ -659,10 +659,22 @@ where
     }
 
     #[cfg(test)]
-    pub fn compact_range_raw_key(&self, from: &[u8], to: &[u8]) {
-        self.backend
-            .db
-            .compact_range_cf(self.handle(), Some(from), Some(to));
+    // The validator performs compactions asynchronously, this method is
+    // provided to force a synchronous compaction to test our compaction filter
+    pub fn compact(&self) {
+        // compact_range_cf() optionally takes a start and end key to limit
+        // compaction. Providing values will result in a different method
+        // getting called in the rocksdb code, even if the specified keys span
+        // the entire key range of the column
+        //
+        // Internally, rocksdb will do some checks to figure out if it should
+        // run a compaction. Empirically, it has been found that passing the
+        // keys leads to more variability in whether rocksdb runs a compaction
+        // or not. For the sake of our unit tests, we want the compaction to
+        // run everytime. So, set the keys as None which will result in rocksdb
+        // using the heavier method to determine if a compaction should run
+        let (start, end) = (None::<&[u8]>, None::<&[u8]>);
+        self.backend.db.compact_range_cf(self.handle(), start, end);
     }
 
     #[inline]
@@ -1384,23 +1396,6 @@ pub mod tests {
             let serialized_value = C::serialize(value)?;
             self.backend
                 .put_cf(self.handle(), C::deprecated_key(index), &serialized_value)
-        }
-    }
-
-    impl<C> LedgerColumn<C>
-    where
-        C: ColumnIndexDeprecation + ColumnName,
-    {
-        pub(crate) fn iterator_cf_raw_key(
-            &self,
-            iterator_mode: IteratorMode<C::Index>,
-        ) -> impl Iterator<Item = (C::Key, Box<[u8]>)> + '_ {
-            // The conversion of key back into Box<[u8]> incurs an extra
-            // allocation. However, this is test code and the goal is to
-            // maximize code reuse over efficiency
-            self.iter(iterator_mode)
-                .unwrap()
-                .map(|(key, value)| (C::key(&key), value))
         }
     }
 }
