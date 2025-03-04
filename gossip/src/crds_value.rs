@@ -89,11 +89,16 @@ pub enum CrdsData {
     LegacyContactInfo(LegacyContactInfo),
     Vote(VoteIndex, Vote),
     LowestSlot(/*DEPRECATED:*/ u8, LowestSlot),
+    #[allow(private_interfaces)]
     LegacySnapshotHashes(LegacySnapshotHashes), // Deprecated
-    AccountsHashes(AccountsHashes),             // Deprecated
+    #[allow(private_interfaces)]
+    AccountsHashes(AccountsHashes), // Deprecated
     EpochSlots(EpochSlotsIndex, EpochSlots),
+    #[allow(private_interfaces)]
     LegacyVersion(LegacyVersion),
+    #[allow(private_interfaces)]
     Version(Version),
+    #[allow(private_interfaces)]
     NodeInstance(NodeInstance),
     DuplicateShred(DuplicateShredIndex, DuplicateShred),
     SnapshotHashes(SnapshotHashes),
@@ -175,14 +180,36 @@ impl CrdsData {
             ),
         }
     }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_deprecated(&self) -> bool {
+        match self {
+            Self::LegacyContactInfo(_) => true,
+            Self::Vote(..) => false,
+            Self::LowestSlot(0, _) => false,
+            Self::LowestSlot(1.., _) => true,
+            Self::LegacySnapshotHashes(_) => true,
+            Self::AccountsHashes(_) => true,
+            Self::EpochSlots(..) => false,
+            Self::LegacyVersion(_) => true,
+            Self::Version(_) => true,
+            Self::NodeInstance(_) => true,
+            Self::DuplicateShred(..) => false,
+            Self::SnapshotHashes(_) => false,
+            Self::ContactInfo(_) => false,
+            Self::RestartLastVotedForkSlots(_) => false,
+            Self::RestartHeaviestFork(_) => false,
+        }
+    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct AccountsHashes {
-    pub from: Pubkey,
-    pub hashes: Vec<(Slot, Hash)>,
-    pub wallclock: u64,
+pub(crate) struct AccountsHashes {
+    pub(crate) from: Pubkey,
+    pub(crate) hashes: Vec<(Slot, Hash)>,
+    pub(crate) wallclock: u64,
 }
 
 impl Sanitize for AccountsHashes {
@@ -198,14 +225,6 @@ impl Sanitize for AccountsHashes {
 }
 
 impl AccountsHashes {
-    pub fn new(from: Pubkey, hashes: Vec<(Slot, Hash)>) -> Self {
-        Self {
-            from,
-            hashes,
-            wallclock: timestamp(),
-        }
-    }
-
     /// New random AccountsHashes for tests and benchmarks.
     pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         let num_hashes = rng.gen_range(0..MAX_ACCOUNTS_HASHES) + 1;
@@ -378,10 +397,10 @@ impl<'de> Deserialize<'de> for Vote {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct LegacyVersion {
-    pub from: Pubkey,
-    pub wallclock: u64,
-    pub version: solana_version::LegacyVersion1,
+pub(crate) struct LegacyVersion {
+    pub(crate) from: Pubkey,
+    pub(crate) wallclock: u64,
+    pub(crate) version: solana_version::LegacyVersion1,
 }
 
 impl Sanitize for LegacyVersion {
@@ -394,10 +413,10 @@ impl Sanitize for LegacyVersion {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct Version {
-    pub from: Pubkey,
-    pub wallclock: u64,
-    pub version: solana_version::LegacyVersion2,
+pub(crate) struct Version {
+    pub(crate) from: Pubkey,
+    pub(crate) wallclock: u64,
+    pub(crate) version: solana_version::LegacyVersion2,
 }
 
 impl Sanitize for Version {
@@ -435,7 +454,7 @@ impl Version {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct NodeInstance {
+pub(crate) struct NodeInstance {
     from: Pubkey,
     wallclock: u64,
     timestamp: u64, // Timestamp when the instance was created.
