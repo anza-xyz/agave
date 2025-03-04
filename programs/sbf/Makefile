@@ -20,7 +20,7 @@ rust-v0:
 	cp -r target/sbpf-solana-solana/release/* target/deploy
 
 rust-v1:
-	cargo +solana build --release --target sbpfv1-solana-solana --workspace ; \
+	cargo +solana build --release --target sbpfv1-solana-solana --workspace --features dynamic-frames ; \
 	cp -r target/sbpfv1-solana-solana/release/* target/deploy
 
 .PHONY: rust-v0

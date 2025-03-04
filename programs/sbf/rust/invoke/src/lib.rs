@@ -3,6 +3,8 @@
 #![allow(unreachable_code)]
 #![allow(clippy::arithmetic_side_effects)]
 
+#[cfg(feature = "dynamic-frames")]
+use solana_program::program_memory::sol_memcmp;
 use {
     solana_program::{
         account_info::AccountInfo,
@@ -1456,17 +1458,36 @@ fn process_instruction<'a>(
             heap[8..pos].fill(42);
 
             // Check that the stack is zeroed too.
-            //
+            let stack = unsafe {
+                slice::from_raw_parts_mut(
+                    MM_STACK_START as *mut u8,
+                    MAX_CALL_DEPTH * STACK_FRAME_SIZE,
+                )
+            };
+
+            #[cfg(not(feature = "dynamic-frames"))]
             // We don't know in which frame we are now, so we skip a few (10) frames at the start
             // which might have been used by the current call stack. We check that the memory for
             // the 10..MAX_CALL_DEPTH frames is zeroed. Then we write a sentinel value, and in the
             // next nested invocation check that it's been zeroed.
-            let stack =
-                unsafe { slice::from_raw_parts_mut(MM_STACK_START as *mut u8, 0x100000000) };
+            //
+            // When we don't have dynamic stack frames, the stack grows from lower addresses
+            // to higher addresses, so we compare accordingly.
             for i in 10..MAX_CALL_DEPTH {
                 let stack = &mut stack[i * STACK_FRAME_SIZE..][..STACK_FRAME_SIZE];
                 assert!(stack == &ZEROS[..STACK_FRAME_SIZE], "stack not zeroed");
                 stack.fill(42);
+            }
+
+            #[cfg(feature = "dynamic-frames")]
+            // When we have dynamic frames, the stack grows from the higher addresses, so we
+            // compare from zero until the beginning of a function frame.
+            // We have 64 * 4096 = 262.144 bytes of stack space, and we consider around 4096
+            // already used by the current function and previous calls. We are considering a
+            // little less than 63 * 4096 = 258.048 bytes to be zeroed.
+            {
+                assert_eq!(sol_memcmp(stack, &ZEROS, 257900), 0);
+                stack[..257900].fill(42);
             }
 
             // Recurse to check that the stack and heap are zeroed.
