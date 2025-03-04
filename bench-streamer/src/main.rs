@@ -99,13 +99,6 @@ fn main() -> Result<()> {
 
     let port = 0;
     let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-    let mut addr = SocketAddr::new(ip_addr, 0);
-
-    let exit = Arc::new(AtomicBool::new(false));
-
-    let mut read_channels = Vec::new();
-    let mut read_threads = Vec::new();
-    let recycler = PacketBatchRecycler::default();
     let (_port, read_sockets) = solana_net_utils::multi_bind_in_range_with_config(
         ip_addr,
         (port, port + num_sockets as u16),
@@ -113,7 +106,14 @@ fn main() -> Result<()> {
         num_sockets,
     )
     .unwrap();
+
+    let mut addr = SocketAddr::new(ip_addr, 0);
+    let mut read_channels = Vec::new();
+    let mut read_threads = Vec::new();
+    let recycler = PacketBatchRecycler::default();
+    let exit = Arc::new(AtomicBool::new(false));
     let stats = Arc::new(StreamerReceiveStats::new("bench-streamer-test"));
+
     for read in read_sockets {
         read.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
 
