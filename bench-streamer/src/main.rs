@@ -10,7 +10,6 @@ use {
         streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
     },
     std::{
-        cmp::max,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -65,8 +64,6 @@ fn sink(exit: Arc<AtomicBool>, rvs: Arc<AtomicUsize>, r: PacketBatchReceiver) ->
 }
 
 fn main() -> Result<()> {
-    let mut num_sockets = 1usize;
-
     let matches = Command::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
@@ -75,6 +72,7 @@ fn main() -> Result<()> {
                 .long("num-recv-sockets")
                 .value_name("NUM")
                 .takes_value(true)
+                .default_value("1")
                 .help("Use NUM receive sockets"),
         )
         .arg(
@@ -94,9 +92,7 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    if let Some(n) = matches.value_of("num-recv-sockets") {
-        num_sockets = max(num_sockets, n.to_string().parse().expect("integer"));
-    }
+    let num_sockets = value_t_or_exit!(matches, "num-recv-sockets", usize);
     let num_producers: u64 = matches.value_of_t("num-producers").unwrap_or(4);
     let duration_secs = value_t_or_exit!(matches, "duration", u64);
     let duration = Duration::new(duration_secs, 0);
