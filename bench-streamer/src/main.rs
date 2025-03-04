@@ -6,6 +6,7 @@ use {
     solana_net_utils::{bind_to_unspecified, SocketConfig},
     solana_streamer::{
         packet::{Packet, PacketBatch, PacketBatchRecycler, PACKET_DATA_SIZE},
+        sendmmsg::batch_send,
         streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
     },
     std::{
@@ -22,6 +23,7 @@ use {
 
 fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<()> {
     let send = bind_to_unspecified().unwrap();
+
     let batch_size = 10;
     let mut packet_batch = PacketBatch::with_capacity(batch_size);
     packet_batch.resize(batch_size, Packet::default());
@@ -29,20 +31,19 @@ fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<()> {
         w.meta_mut().size = PACKET_DATA_SIZE;
         w.meta_mut().set_socket_addr(addr);
     }
-    let packet_batch = Arc::new(packet_batch);
+
     spawn(move || loop {
         if exit.load(Ordering::Relaxed) {
             return;
         }
-        let mut num = 0;
-        for p in packet_batch.iter() {
-            let a = p.meta().socket_addr();
-            assert!(p.meta().size <= PACKET_DATA_SIZE);
-            let data = p.data(..).unwrap_or_default();
-            send.send_to(data, a).unwrap();
-            num += 1;
-        }
-        assert_eq!(num, 10);
+
+        let packets_and_addrs = packet_batch.iter().map(|packet| {
+            let addr = packet.meta().socket_addr();
+            let data = packet.data(..).unwrap();
+            (data, addr)
+        });
+
+        batch_send(&send, packets_and_addrs).unwrap();
     })
 }
 
