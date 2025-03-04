@@ -1475,6 +1475,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
     }
 
+    fn can_finish_session(mode: SchedulingMode, state_machine: &SchedulingStateMachine) -> bool {
+        match mode {
+            BlockVerification => state_machine.has_no_active_task(),
+            BlockProduction => state_machine.has_no_executing_task(),
+        }
+    }
+
     fn take_session_result_with_timings(&mut self) -> ResultWithTimings {
         self.session_result_with_timings.take().unwrap()
     }
@@ -1784,11 +1791,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                         };
 
-                        is_finished = session_ending
-                            && (scheduling_mode == BlockVerification
-                                && state_machine.has_no_active_task()
-                                || scheduling_mode == BlockProduction
-                                    && state_machine.has_no_executing_task());
+                        is_finished =
+                            session_ending && Self::can_finish_session(scheduling_mode, &state_machine);
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
