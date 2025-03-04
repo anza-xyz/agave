@@ -253,7 +253,7 @@ mod tests {
                 create_genesis_config_with_leader, GenesisConfigInfo,
             },
             get_tmp_ledger_path_auto_delete,
-            leader_schedule::CurrentLeaderSchedule,
+            leader_schedule::IdentityKeyedLeaderSchedule,
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
         crossbeam_channel::unbounded,
@@ -312,7 +312,7 @@ mod tests {
         for i in 0..=MAX_SCHEDULES {
             cached_schedules.insert(
                 i as u64,
-                Arc::new(Box::new(CurrentLeaderSchedule::default())),
+                Arc::new(Box::new(IdentityKeyedLeaderSchedule::default())),
             );
             order.push_back(i as u64);
         }

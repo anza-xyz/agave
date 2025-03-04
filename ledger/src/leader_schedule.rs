@@ -6,8 +6,8 @@ use {
     std::{collections::HashMap, convert::identity, ops::Index, sync::Arc},
 };
 
-mod current;
-pub use current::LeaderSchedule as CurrentLeaderSchedule;
+mod identity_keyed;
+pub use identity_keyed::LeaderSchedule as IdentityKeyedLeaderSchedule;
 
 // Used for testing
 #[derive(Clone, Debug)]
@@ -110,7 +110,7 @@ mod tests {
         let schedule: Vec<_> = repeat_with(|| pubkeys[rng.gen_range(0..3)])
             .take(19)
             .collect();
-        let schedule = CurrentLeaderSchedule::new_from_schedule(schedule);
+        let schedule = IdentityKeyedLeaderSchedule::new_from_schedule(schedule);
         let leaders = (0..NUM_SLOTS)
             .map(|i| (schedule[i as u64], i))
             .into_group_map();

@@ -1,5 +1,5 @@
 use {
-    crate::leader_schedule::{CurrentLeaderSchedule, LeaderSchedule},
+    crate::leader_schedule::{IdentityKeyedLeaderSchedule, LeaderSchedule},
     solana_runtime::bank::Bank,
     solana_sdk::{
         clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
@@ -12,7 +12,7 @@ use {
 pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
     bank.epoch_staked_nodes(epoch)
         .map(|stakes| -> LeaderSchedule {
-            Box::new(CurrentLeaderSchedule::new(
+            Box::new(IdentityKeyedLeaderSchedule::new(
                 &stakes,
                 epoch,
                 bank.get_slots_in_epoch(epoch),
@@ -81,7 +81,7 @@ mod tests {
             .iter()
             .map(|(pubkey, stake)| (*pubkey, *stake))
             .collect();
-        let leader_schedule = CurrentLeaderSchedule::new(
+        let leader_schedule = IdentityKeyedLeaderSchedule::new(
             &pubkeys_and_stakes,
             0,
             genesis_config.epoch_schedule.slots_per_epoch,
