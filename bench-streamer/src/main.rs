@@ -23,7 +23,7 @@ use {
 fn producer(dest_addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<usize> {
     let send = bind_to_unspecified().unwrap();
 
-    let batch_size = 10;
+    let batch_size = 1024;
     let payload = [0u8; PACKET_DATA_SIZE];
     let packet = {
         let mut packet = Packet::default();
