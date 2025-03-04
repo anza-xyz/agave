@@ -21,7 +21,7 @@ use {
     },
 };
 
-fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<()> {
+fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<usize> {
     let send = bind_to_unspecified().unwrap();
 
     let batch_size = 10;
@@ -32,18 +32,23 @@ fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<()> {
         w.meta_mut().set_socket_addr(addr);
     }
 
-    spawn(move || loop {
-        if exit.load(Ordering::Relaxed) {
-            return;
+    spawn(move || {
+        let mut num_packets_sent = 0;
+        loop {
+            if exit.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let packets_and_addrs = packet_batch.iter().map(|packet| {
+                let addr = packet.meta().socket_addr();
+                let data = packet.data(..).unwrap();
+                (data, addr)
+            });
+
+            batch_send(&send, packets_and_addrs).unwrap();
+            num_packets_sent += batch_size;
         }
-
-        let packets_and_addrs = packet_batch.iter().map(|packet| {
-            let addr = packet.meta().socket_addr();
-            let data = packet.data(..).unwrap();
-            (data, addr)
-        });
-
-        batch_send(&send, packets_and_addrs).unwrap();
+        num_packets_sent
     })
 }
 
@@ -146,9 +151,13 @@ fn main() -> Result<()> {
     for t_reader in read_threads {
         t_reader.join()?;
     }
+
+    let mut num_packets_sent = 0;
     for t_producer in producer_threads {
-        t_producer.join()?;
+        num_packets_sent += t_producer.join()?;
     }
+    println!("{num_packets_sent} total packets sent");
+
     for t_sink in sink_threads {
         t_sink.join()?;
     }
