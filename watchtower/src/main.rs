@@ -28,6 +28,7 @@ use {
 struct Config {
     address_labels: HashMap<String, String>,
     ignore_http_bad_gateway: bool,
+    ignore_rpc_timeout: bool,
     interval: Duration,
     json_rpc_urls: Vec<String>,
     rpc_timeout: Duration,
@@ -171,6 +172,12 @@ fn get_config() -> Config {
                     the real problem")
         )
         .arg(
+            Arg::with_name("ignore_rpc_timeout")
+                .long("ignore-rpc-timeout")
+                .takes_value(false)
+                .help("Ignore RPC timeout errors as some RPC endpoints often timeout and thus generate many false positives.")
+        )
+        .arg(
             Arg::with_name("name_suffix")
                 .long("name-suffix")
                 .value_name("SUFFIX")
@@ -216,6 +223,7 @@ fn get_config() -> Config {
     let active_stake_alert_threshold =
         value_t_or_exit!(matches, "active_stake_alert_threshold", u8);
     let ignore_http_bad_gateway = matches.is_present("ignore_http_bad_gateway");
+    let ignore_rpc_timeout = matches.is_present("ignore_rpc_timeout");
 
     let name_suffix = value_t_or_exit!(matches, "name_suffix", String);
 
@@ -224,6 +232,7 @@ fn get_config() -> Config {
     let config = Config {
         address_labels: config.address_labels,
         ignore_http_bad_gateway,
+        ignore_rpc_timeout,
         interval,
         json_rpc_urls,
         rpc_timeout,
@@ -383,7 +392,12 @@ fn query_endpoint(
         }
         Err(err) => {
             if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind() {
-                if let Some(client_error::reqwest::StatusCode::BAD_GATEWAY) = reqwest_err.status() {
+                if reqwest_err.is_timeout() && config.ignore_rpc_timeout {
+                    warn!("Error suppressed: {}", err);
+                    return Ok(None);
+                } else if let Some(client_error::reqwest::StatusCode::BAD_GATEWAY) =
+                    reqwest_err.status()
+                {
                     if config.ignore_http_bad_gateway {
                         warn!("Error suppressed: {}", err);
                         return Ok(None);
