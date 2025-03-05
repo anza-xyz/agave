@@ -1,3 +1,4 @@
+
 [workspace]
 members = [
     "account-decoder",
@@ -607,6 +608,15 @@ winreg = "0.50"
 x509-parser = "0.14.0"
 zeroize = { version = "1.7", default-features = false }
 zstd = "0.13.3"
+
+# Enable optimizations for procmacros for faster codegen
+[profile.dev.build-override]
+opt-level = 1
+
+# Enable optimizations for ci unittests to trigger const propagation and inlining
+[profile.ci]
+inherits = "test"
+opt-level = 1
 
 [profile.release-with-debug]
 inherits = "release"
