@@ -19,25 +19,23 @@ mod tests {
         bincode::serialize(&pkt).unwrap()
     }
 
+    /// Test the ability of gossip parsers to understand and re-serialize a corpus of
+    /// packets captured from mainnet.
+    /// You will want to run this in --release mode
+    /// This test requires external files and is not run by default.
+    /// `cargo test test_gossip_wire_format  -- --nocapture --ignored` to run this test manually
     #[test]
-    fn validate_ping() {
+    #[ignore]
+    fn test_gossip_wire_format() {
         solana_logger::setup();
         let path_base = match std::env::var_os("CARGO_MANIFEST_DIR") {
             Some(p) => PathBuf::from(p),
             None => panic!("Requires CARGO_MANIFEST_DIR env variable"),
         };
-
-        validate_packet_format(
-            &path_base.join("GOSSIP_PACKETS/ping.pcap"),
-            parse_gossip,
-            serialize,
-        )
-        .unwrap();
-        validate_packet_format(
-            &path_base.join("GOSSIP_PACKETS/pull_request.pcap"),
-            parse_gossip,
-            serialize,
-        )
-        .unwrap();
+        let path_base = path_base.join("GOSSIP_PACKETS");
+        for entry in std::fs::read_dir(path_base).unwrap() {
+            let entry = entry.unwrap();
+            validate_packet_format(&entry.path(), parse_gossip, serialize).unwrap();
+        }
     }
 }
