@@ -2,6 +2,9 @@
 mod ip_echo_client;
 mod ip_echo_server;
 
+#[cfg(feature = "dev-context-only-utils")]
+pub mod tooling_for_tests;
+
 pub use ip_echo_server::{
     ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
     MINIMUM_IP_ECHO_SERVER_THREADS,
