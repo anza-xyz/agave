@@ -8427,7 +8427,7 @@ fn test_invoke_non_program_account_owned_by_a_builtin() {
         bank.process_transaction(&tx),
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::ExternalAccountDataModified
+            InstructionError::UnsupportedProgramId
         ))
     );
 }
@@ -13596,7 +13596,7 @@ fn test_loader_v3_to_v4_migration() {
             finalized_migration_transaction.clone(),
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::InvalidInstructionData,
+                InstructionError::UnsupportedProgramId,
             )),
         ),
         (
@@ -13604,7 +13604,7 @@ fn test_loader_v3_to_v4_migration() {
             finalized_migration_transaction.clone(),
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::InvalidInstructionData,
+                InstructionError::UnsupportedProgramId,
             )),
         ),
         (
