@@ -3698,7 +3698,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_clock_obj, src_clock);
 
             let mut clean_clock = create_filled_type::<Clock>(true);
@@ -3718,7 +3718,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let clock_from_buf = bincode::deserialize::<Clock>(&got_clock_buf).unwrap();
 
@@ -3764,7 +3764,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_epochschedule_obj, src_epochschedule);
 
             let mut clean_epochschedule = create_filled_type::<EpochSchedule>(true);
@@ -3788,7 +3788,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let epochschedule_from_buf =
                 bincode::deserialize::<EpochSchedule>(&got_epochschedule_buf).unwrap();
@@ -3826,7 +3826,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_fees, src_fees);
 
             let mut clean_fees = create_filled_type::<Fees>(true);
@@ -3865,7 +3865,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_rent_obj, src_rent);
 
             let mut clean_rent = create_filled_type::<Rent>(true);
@@ -3883,7 +3883,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let rent_from_buf = bincode::deserialize::<Rent>(&got_rent_buf).unwrap();
 
@@ -3925,7 +3925,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_rewards_obj, src_rewards);
 
             let mut clean_rewards = create_filled_type::<EpochRewards>(true);
@@ -3948,7 +3948,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let rewards_from_buf = bincode::deserialize::<EpochRewards>(&got_rewards_buf).unwrap();
 
@@ -3990,7 +3990,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_restart_obj, src_restart);
 
             let mut clean_restart = create_filled_type::<LastRestartSlot>(true);
@@ -4006,7 +4006,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let restart_from_buf =
                 bincode::deserialize::<LastRestartSlot>(&got_restart_buf).unwrap();
@@ -4075,7 +4075,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let history_from_buf = bincode::deserialize::<StakeHistory>(&got_history_buf).unwrap();
             assert_eq!(history_from_buf, src_history);
@@ -4134,7 +4134,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let hashes_from_buf = bincode::deserialize::<SlotHashes>(&got_hashes_buf).unwrap();
             assert_eq!(hashes_from_buf, src_hashes);
