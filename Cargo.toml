@@ -8,6 +8,14 @@ lto = false                # Preserve the 'thin local LTO' for this build.
 split-debuginfo = "unpacked"
 lto = "thin"
 
+# Enable basic optimizations for unittests
+[profile.test]
+opt-level = 1
+
+# Enable optimizations for procmacros for faster recompile
+[profile.dev.build-override]
+opt-level = 1
+
 [workspace]
 members = [
     "account-decoder",
