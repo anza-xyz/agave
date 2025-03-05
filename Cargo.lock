@@ -7185,7 +7185,6 @@ name = "solana-core"
 version = "2.2.2"
 dependencies = [
  "agave-banking-stage-ingress-types",
- "agave-thread-manager",
  "agave-transaction-view",
  "ahash 0.8.11",
  "anyhow",
