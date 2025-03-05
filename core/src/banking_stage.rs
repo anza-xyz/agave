@@ -754,7 +754,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_perf::packet::{to_packet_batches, PacketBatch},
+        solana_perf::packet::to_packet_batches,
         solana_poh::{
             poh_recorder::{
                 create_test_recorder, PohRecorderError, Record, RecordTransactionsSummary,
@@ -913,17 +913,6 @@ mod tests {
         banking_stage.join().unwrap();
     }
 
-    pub fn convert_from_old_verified(
-        mut with_vers: Vec<(PacketBatch, Vec<u8>)>,
-    ) -> Vec<PacketBatch> {
-        with_vers.iter_mut().for_each(|(b, v)| {
-            b.iter_mut()
-                .zip(v)
-                .for_each(|(p, f)| p.meta_mut().set_discard(*f == 0))
-        });
-        with_vers.into_iter().map(|(b, _)| b).collect()
-    }
-
     fn test_banking_stage_entries_only(
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
@@ -976,13 +965,13 @@ mod tests {
         let fund_tx = system_transaction::transfer(&mint_keypair, &keypair.pubkey(), 2, start_hash);
         bank.process_transaction(&fund_tx).unwrap();
 
-        // good tx
-        let to = solana_pubkey::new_rand();
-        let tx = system_transaction::transfer(&mint_keypair, &to, 1, start_hash);
-
         // good tx, but no verify
         let to2 = solana_pubkey::new_rand();
         let tx_no_ver = system_transaction::transfer(&keypair, &to2, 2, start_hash);
+
+        // good tx
+        let to = solana_pubkey::new_rand();
+        let tx = system_transaction::transfer(&mint_keypair, &to, 1, start_hash);
 
         // bad tx, AccountNotFound
         let keypair = Keypair::new();
@@ -990,16 +979,12 @@ mod tests {
         let tx_anf = system_transaction::transfer(&keypair, &to3, 1, start_hash);
 
         // send 'em over
-        let packet_batches = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3);
+        let mut packet_batches = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3);
+        packet_batches[0][0].meta_mut().set_discard(true); // set discard on `tx_no_ver`
 
         // glad they all fit
         assert_eq!(packet_batches.len(), 1);
 
-        let packet_batches = packet_batches
-            .into_iter()
-            .map(|batch| (batch, vec![0u8, 1u8, 1u8]))
-            .collect();
-        let packet_batches = convert_from_old_verified(packet_batches);
         non_vote_sender // no_ver, anf, tx
             .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
@@ -1084,11 +1069,6 @@ mod tests {
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 2, genesis_config.hash());
 
         let packet_batches = to_packet_batches(&[tx], 1);
-        let packet_batches = packet_batches
-            .into_iter()
-            .map(|batch| (batch, vec![1u8]))
-            .collect();
-        let packet_batches = convert_from_old_verified(packet_batches);
         non_vote_sender
             .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
@@ -1097,11 +1077,6 @@ mod tests {
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 1, genesis_config.hash());
         let packet_batches = to_packet_batches(&[tx], 1);
-        let packet_batches = packet_batches
-            .into_iter()
-            .map(|batch| (batch, vec![1u8]))
-            .collect();
-        let packet_batches = convert_from_old_verified(packet_batches);
         non_vote_sender
             .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
