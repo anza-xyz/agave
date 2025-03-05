@@ -3466,8 +3466,12 @@ mod tests {
         assert!(*TASK_COUNT.lock().unwrap() < 10);
     }
 
-    #[test]
-    fn test_scheduler_schedule_execution_blocked() {
+    #[test_matrix(
+        [BlockVerification, BlockProduction]
+    )]
+    fn test_scheduler_schedule_execution_blocked_at_session_ending(
+        scheduling_mode: SchedulingMode,
+    ) {
         solana_logger::setup();
 
         const STALLED_TRANSACTION_INDEX: usize = 0;
@@ -3498,7 +3502,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(10_000);
+        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
 
         // tx0 and tx1 is definitely conflicting to write-lock the mint address
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -3517,17 +3521,53 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_dyn_for_verification(
+        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_for_production(
             None,
             None,
             None,
             None,
             ignored_prioritization_fee_cache,
         );
-        let context = SchedulingContext::for_verification(bank.clone());
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        let (exit, poh_recorder, poh_service, _signal_receiver) =
+            create_test_recorder_with_index_tracking(
+                bank.clone(),
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            );
 
-        assert_eq!(bank.transaction_count(), 0);
+        if matches!(scheduling_mode, BlockProduction) {
+            pool.register_banking_stage(
+                banking_packet_receiver,
+                DefaultSchedulerPool::default_handler_count(),
+                Box::new(DummyBankingMinitor),
+                Box::new(|_, _| unreachable!()),
+                poh_recorder.read().unwrap().new_recorder(),
+            );
+        }
+
+        // Wait until genesis_bank reaches its tick height...
+        while poh_recorder.read().unwrap().bank().is_some() {
+            sleep(Duration::from_millis(100));
+        }
+
+        let bank = Arc::new(Bank::new_from_parent(
+            bank.clone(),
+            &Pubkey::default(),
+            bank.slot().checked_add(1).unwrap(),
+        ));
+        let mut current_transaction_count = 0;
+        assert_eq!(bank.transaction_count(), current_transaction_count);
+
+        let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
+        if matches!(scheduling_mode, BlockProduction) {
+            scheduler.unblock_scheduling();
+        }
 
         // Stall handling tx0 and tx1
         let lock_to_stall = LOCK_TO_STALL.lock().unwrap();
@@ -3538,14 +3578,61 @@ mod tests {
             .schedule_execution(tx1, BLOCKED_TRANSACTION_INDEX)
             .unwrap();
 
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank(bank.clone_with_scheduler(), true);
+
         // Wait a bit for the scheduler thread to decide to block tx1
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
         // Resume handling by unlocking LOCK_TO_STALL
         drop(lock_to_stall);
-        let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-        assert_eq!(bank.transaction_count(), 2);
+
+        current_transaction_count += 1;
+        if matches!(scheduling_mode, BlockVerification) {
+            // Block verification scheduler should fully clear its blocked transactions before
+            // finishing.
+            current_transaction_count += 1;
+        }
+        assert_eq!(bank.transaction_count(), current_transaction_count);
+
+        // Wait until genesis_bank reaches its tick height...
+        while poh_recorder.read().unwrap().bank().is_some() {
+            sleep(Duration::from_millis(100));
+        }
+
+        // Create new bank to observe behavior difference around session ending
+        let bank = Arc::new(Bank::new_from_parent(
+            bank.clone_without_scheduler(),
+            &Pubkey::default(),
+            bank.slot().checked_add(1).unwrap(),
+        ));
+        assert_eq!(bank.transaction_count(), current_transaction_count);
+
+        let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
+        let scheduler = pool.take_scheduler(context).unwrap();
+        if matches!(scheduling_mode, BlockProduction) {
+            scheduler.unblock_scheduling();
+        }
+
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank(bank.clone_with_scheduler(), true);
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+
+        if matches!(scheduling_mode, BlockProduction) {
+            // Block production scheduler should carry over transactions from previous bank
+            current_transaction_count += 1;
+        }
+        assert_eq!(bank.transaction_count(), current_transaction_count);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[test]
