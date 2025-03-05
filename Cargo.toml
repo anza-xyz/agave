@@ -637,6 +637,11 @@ opt-level = 3
 inherits = "dev"
 debug = "full"
 
+# Enable optimizations for ci unittests to trigger const propagation and inlining
+[profile.ci]
+inherits = "test"
+opt-level = 1
+
 [profile.release-with-debug]
 inherits = "release"
 debug = true

@@ -287,6 +287,11 @@ debug = "line-tables-only"
 inherits = "dev"
 debug = "full"
 
+# Enable basic optimizations for unittests to trigger const propagation and inlining
+[profile.ci]
+inherits = "test"
+opt-level = 1
+
 [profile.release]
 # The test programs are build in release mode
 # Minimize their file size so that they fit into the account size limit

@@ -58,7 +58,7 @@ $ ./cargo build
 **Run the test suite:**
 
 ```bash
-$ ./cargo test
+$ ./cargo nextest run --profile ci  --cargo-profile ci --config-file .config/nextest.toml
 ```
 
 ### Starting a local testnet
