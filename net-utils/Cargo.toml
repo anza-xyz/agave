@@ -15,9 +15,11 @@ anyhow = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
 clap = { version = "3.1.5", features = ["cargo"], optional = true }
+hxdmp = { version = "0.2.1", optional = true }
 itertools = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["socket"] }
+pcap-file = { version = "2.0.0", optional = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
@@ -27,8 +29,6 @@ solana-serde = { workspace = true }
 solana-version = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
-hxdmp = {version="0.2.1", optional=true}
-pcap-file = {version="2.0.0", optional=true}
 
 [dev-dependencies]
 solana-logger = { workspace = true }
