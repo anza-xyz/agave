@@ -36,7 +36,10 @@ use {
         exit::Exit, genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH, hash::Hash,
         native_token::lamports_to_sol,
     },
-    solana_send_transaction_service::send_transaction_service::{self, SendTransactionService},
+    solana_send_transaction_service::{
+        send_transaction_service::{self, SendTransactionService},
+        transaction_client::ConnectionCacheClient,
+    },
     solana_storage_bigtable::CredentialType,
     std::{
         net::SocketAddr,
@@ -467,12 +470,17 @@ impl JsonRpcService {
 
         let leader_info =
             poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
-        let _send_transaction_service = Arc::new(SendTransactionService::new_with_config(
+        let client = ConnectionCacheClient::new(
+            connection_cache,
             tpu_address,
-            &bank_forks,
+            send_transaction_service_config.tpu_peers.clone(),
             leader_info,
+            send_transaction_service_config.leader_forward_count,
+        );
+        let _send_transaction_service = Arc::new(SendTransactionService::new_with_client(
+            &bank_forks,
             receiver,
-            &connection_cache,
+            client,
             send_transaction_service_config,
             exit,
         ));
