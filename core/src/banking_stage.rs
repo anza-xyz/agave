@@ -1148,9 +1148,16 @@ mod tests {
             );
 
             // wait for banking_stage to eat the packets
-            while bank.get_balance(&alice.pubkey()) < 1 {
+            let mut tries = 0;
+            const MAX_TRIES: usize = 100;
+            while bank.get_balance(&alice.pubkey()) < 1 && tries < MAX_TRIES {
+                tries += 1;
                 sleep(Duration::from_millis(10));
             }
+            assert_ne!(
+                tries, MAX_TRIES,
+                "banking stage took too long to process transactions"
+            );
             exit.store(true, Ordering::Relaxed);
             poh_service.join().unwrap();
             entry_receiver
