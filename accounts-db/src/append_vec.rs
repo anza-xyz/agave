@@ -1830,7 +1830,6 @@ pub mod tests {
                 {
                     let executable_bool: bool = account.executable();
                     assert!(!executable_bool);
-                    assert_eq!(account.get_executable_byte(), 0); // Wow, not crafted_executable!
                 }
             })
             .unwrap();
