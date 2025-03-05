@@ -1482,12 +1482,12 @@ fn process_instruction<'a>(
             #[cfg(feature = "dynamic-frames")]
             // When we have dynamic frames, the stack grows from the higher addresses, so we
             // compare from zero until the beginning of a function frame.
-            // We have 64 * 4096 = 262.144 bytes of stack space, and we consider around 4096
-            // already used by the current function and previous calls. We are considering a
-            // little less than 63 * 4096 = 258.048 bytes to be zeroed.
+            // We have 64 * 4096 = 262.144 bytes of stack space, and we consider around 2 * 4096
+            // already used by the current function and previous calls.
             {
-                assert_eq!(sol_memcmp(stack, &ZEROS, 257900), 0);
-                stack[..257900].fill(42);
+                const ZEROED_BYTES_LENGTH: usize = (MAX_CALL_DEPTH - 2) * STACK_FRAME_SIZE;
+                assert_eq!(sol_memcmp(stack, &ZEROS, ZEROED_BYTES_LENGTH), 0);
+                stack[..ZEROED_BYTES_LENGTH].fill(42);
             }
 
             // Recurse to check that the stack and heap are zeroed.
