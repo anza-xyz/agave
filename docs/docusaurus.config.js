@@ -19,31 +19,6 @@ module.exports = {
       crossorigin: "anonymous",
     },
   ],
-  i18n: {
-    defaultLocale: "en",
-    locales: ["en", "de", "es", "ru", "ar"],
-    // localesNotBuilding: ["ko", "pt", "vi", "zh", "ja"],
-    localeConfigs: {
-      en: {
-        label: "English",
-      },
-      ru: {
-        label: "Русский",
-      },
-      es: {
-        label: "Español",
-      },
-      de: {
-        label: "Deutsch",
-      },
-      ar: {
-        label: "العربية",
-      },
-      ko: {
-        label: "한국어",
-      },
-    },
-  },
   themeConfig: {
     prism: {
       additionalLanguages: ["rust"],
@@ -80,10 +55,6 @@ module.exports = {
               label: "Solana Program Library",
             },
           ],
-        },
-        {
-          type: "localeDropdown",
-          position: "right",
         },
         {
           href: "https://solana.com/discord",
