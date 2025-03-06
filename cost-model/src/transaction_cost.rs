@@ -55,6 +55,13 @@ impl<Tx> TransactionCost<'_, Tx> {
         }
     }
 
+    pub fn tx_bytes(&self) -> u64 {
+        match self {
+            Self::SimpleVote { .. } => 0,
+            Self::Transaction(usage_cost) => usage_cost.tx_bytes,
+        }
+    }
+
     pub fn data_bytes_cost(&self) -> u64 {
         match self {
             Self::SimpleVote { .. } => 0,
@@ -154,6 +161,7 @@ pub struct UsageCostDetails<'a, Tx> {
     pub transaction: &'a Tx,
     pub signature_cost: u64,
     pub write_lock_cost: u64,
+    pub tx_bytes: u64,
     pub data_bytes_cost: u64,
     pub programs_execution_cost: u64,
     pub loaded_accounts_data_size_cost: u64,

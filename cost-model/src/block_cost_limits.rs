@@ -37,6 +37,9 @@ pub const MAX_WRITABLE_ACCOUNT_UNITS: u64 = 12_000_000;
 /// set to less than MAX_BLOCK_UNITS to leave room for non-vote transactions
 pub const MAX_VOTE_UNITS: u64 = 36_000_000;
 
+// Roughly correlated with 2k data shreds, which is ~what retransmit can handle.
+pub const MAX_TX_BYTES: u64 = 2_000_000;
+
 /// The maximum allowed size, in bytes, that accounts data can grow, per block.
 /// This can also be thought of as the maximum size of new allocations per block.
 pub const MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA: u64 = 100_000_000;

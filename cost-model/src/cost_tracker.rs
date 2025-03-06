@@ -62,9 +62,11 @@ pub struct UpdatedCosts {
 pub struct CostTracker {
     account_cost_limit: u64,
     block_cost_limit: u64,
+    tx_byte_limit: u64,
     vote_cost_limit: u64,
     cost_by_writable_accounts: HashMap<Pubkey, u64, ahash::RandomState>,
     block_cost: u64,
+    tx_bytes: u64,
     vote_cost: u64,
     transaction_count: Saturating<u64>,
     allocated_accounts_data_size: Saturating<u64>,
@@ -89,12 +91,14 @@ impl Default for CostTracker {
         Self {
             account_cost_limit: MAX_WRITABLE_ACCOUNT_UNITS,
             block_cost_limit: MAX_BLOCK_UNITS,
+            tx_byte_limit: MAX_TX_BYTES,
             vote_cost_limit: MAX_VOTE_UNITS,
             cost_by_writable_accounts: HashMap::with_capacity_and_hasher(
                 WRITABLE_ACCOUNTS_PER_BLOCK,
                 ahash::RandomState::new(),
             ),
             block_cost: 0,
+            tx_bytes: 0,
             vote_cost: 0,
             transaction_count: Saturating(0),
             allocated_accounts_data_size: Saturating(0),
@@ -121,6 +125,7 @@ impl CostTracker {
     pub fn reset(&mut self) {
         self.cost_by_writable_accounts.clear();
         self.block_cost = 0;
+        self.tx_bytes = 0;
         self.vote_cost = 0;
         self.transaction_count = Saturating(0);
         self.allocated_accounts_data_size = Saturating(0);
@@ -228,6 +233,7 @@ impl CostTracker {
             "cost_tracker_stats",
             ("bank_slot", bank_slot as i64, i64),
             ("block_cost", self.block_cost as i64, i64),
+            ("tx_bytes", self.tx_bytes as i64, i64),
             ("vote_cost", self.vote_cost as i64, i64),
             ("transaction_count", self.transaction_count.0 as i64, i64),
             ("number_of_accounts", self.number_of_accounts() as i64, i64),
@@ -304,6 +310,11 @@ impl CostTracker {
             return Err(CostTrackerError::WouldExceedAccountDataBlockLimit);
         }
 
+        let tx_bytes = self.tx_bytes + tx_cost.tx_bytes();
+        if tx_bytes > self.tx_byte_limit {
+            return Err(CostTrackerError::WouldExceedAccountDataTotalLimit);
+        }
+
         // check each account against account_cost_limit,
         for account_key in tx_cost.writable_accounts() {
             match self.cost_by_writable_accounts.get(account_key) {
@@ -324,6 +335,7 @@ impl CostTracker {
     // Returns the highest account cost for all write-lock accounts `TransactionCost` updated
     fn add_transaction_cost(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) -> u64 {
         self.allocated_accounts_data_size += tx_cost.allocated_accounts_data_size();
+        self.tx_bytes += tx_cost.tx_bytes();
         self.transaction_count += 1;
         self.transaction_signature_count += tx_cost.num_transaction_signatures();
         self.secp256k1_instruction_signature_count +=
@@ -338,6 +350,7 @@ impl CostTracker {
         let cost = tx_cost.sum();
         self.sub_transaction_execution_cost(tx_cost, cost);
         self.allocated_accounts_data_size -= tx_cost.allocated_accounts_data_size();
+        self.tx_bytes -= tx_cost.tx_bytes();
         self.transaction_count -= 1;
         self.transaction_signature_count -= tx_cost.num_transaction_signatures();
         self.secp256k1_instruction_signature_count -=
@@ -439,6 +452,7 @@ mod tests {
             transaction,
             signature_cost: 0,
             write_lock_cost: 0,
+            tx_bytes: 0,
             data_bytes_cost: 0,
             programs_execution_cost,
             loaded_accounts_data_size_cost: 0,

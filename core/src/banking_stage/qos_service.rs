@@ -342,6 +342,10 @@ impl QosService {
                     cost.write_lock_cost()
                 );
                 saturating_add_assign!(
+                    batched_transaction_details.costs.batched_tx_bytes,
+                    cost.tx_bytes()
+                );
+                saturating_add_assign!(
                     batched_transaction_details.costs.batched_data_bytes_cost,
                     cost.data_bytes_cost()
                 );
@@ -936,6 +940,7 @@ mod tests {
     fn test_accumulate_batched_transaction_costs() {
         let signature_cost = 1;
         let write_lock_cost = 2;
+        let tx_bytes = 1;
         let data_bytes_cost = 3;
         let programs_execution_cost = 10;
         let num_txs = 4;
@@ -948,6 +953,7 @@ mod tests {
                         transaction: &dummy_transaction,
                         signature_cost,
                         write_lock_cost,
+                        tx_bytes,
                         data_bytes_cost,
                         programs_execution_cost,
                         loaded_accounts_data_size_cost: 0,
@@ -961,6 +967,7 @@ mod tests {
         // should only accumulate half of the costs that are OK
         let expected_signatures = signature_cost * (num_txs / 2);
         let expected_write_locks = write_lock_cost * (num_txs / 2);
+        let expected_tx_bytes = tx_bytes * (num_txs / 2);
         let expected_data_bytes = data_bytes_cost * (num_txs / 2);
         let expected_programs_execution_costs = programs_execution_cost * (num_txs / 2);
         let batched_transaction_details =
@@ -972,6 +979,10 @@ mod tests {
         assert_eq!(
             expected_write_locks,
             batched_transaction_details.costs.batched_write_lock_cost
+        );
+        assert_eq!(
+            expected_tx_bytes,
+            batched_transaction_details.costs.batched_data_bytes_cost
         );
         assert_eq!(
             expected_data_bytes,
