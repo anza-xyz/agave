@@ -13,7 +13,7 @@ use {
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
-        packet::PacketBatch,
+        packet::{Packet, PacketRead},
         sigverify::{
             count_discarded_packets, count_packets_in_batches, count_valid_packets, shrink_batches,
         },
@@ -56,8 +56,8 @@ pub struct SigVerifyStage {
 
 pub trait SigVerifier {
     type SendType: std::fmt::Debug;
-    fn verify_batches(&self, batches: Vec<PacketBatch>, valid_packets: usize) -> Vec<PacketBatch>;
-    fn send_packets(&mut self, packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType>;
+    fn verify_batches(&self, batches: Vec<Vec<Packet>>, valid_packets: usize) -> Vec<Vec<Packet>>;
+    fn send_packets(&mut self, packet_batches: Vec<Vec<Packet>>) -> Result<(), Self::SendType>;
 }
 
 #[derive(Default, Clone)]
@@ -218,21 +218,21 @@ impl SigVerifier for DisabledSigVerifier {
     type SendType = ();
     fn verify_batches(
         &self,
-        mut batches: Vec<PacketBatch>,
+        mut batches: Vec<Vec<Packet>>,
         _valid_packets: usize,
-    ) -> Vec<PacketBatch> {
+    ) -> Vec<Vec<Packet>> {
         sigverify::ed25519_verify_disabled(&mut batches);
         batches
     }
 
-    fn send_packets(&mut self, _packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType> {
+    fn send_packets(&mut self, _packet_batches: Vec<Vec<Packet>>) -> Result<(), Self::SendType> {
         Ok(())
     }
 }
 
 impl SigVerifyStage {
     pub fn new<T: SigVerifier + 'static + Send>(
-        packet_receiver: Receiver<PacketBatch>,
+        packet_receiver: Receiver<Vec<Packet>>,
         verifier: T,
         thread_name: &'static str,
         metrics_name: &'static str,
@@ -242,7 +242,7 @@ impl SigVerifyStage {
         Self { thread_hdl }
     }
 
-    pub fn discard_excess_packets(batches: &mut [PacketBatch], mut max_packets: usize) {
+    pub fn discard_excess_packets(batches: &mut [Vec<Packet>], mut max_packets: usize) {
         // Group packets by their incoming IP address.
         let mut addrs = batches
             .iter_mut()
@@ -268,7 +268,7 @@ impl SigVerifyStage {
     }
 
     /// make this function public so that it is available for benchmarking
-    pub fn maybe_shrink_batches(packet_batches: &mut Vec<PacketBatch>) -> (u64, usize) {
+    pub fn maybe_shrink_batches(packet_batches: &mut Vec<Vec<Packet>>) -> (u64, usize) {
         let mut shrink_time = Measure::start("sigverify_shrink_time");
         let num_packets = count_packets_in_batches(packet_batches);
         let num_discarded_packets = count_discarded_packets(packet_batches);
@@ -285,7 +285,7 @@ impl SigVerifyStage {
 
     fn verifier<const K: usize, T: SigVerifier>(
         deduper: &Deduper<K, [u8]>,
-        recvr: &Receiver<PacketBatch>,
+        recvr: &Receiver<Vec<Packet>>,
         verifier: &mut T,
         stats: &mut SigVerifierStats,
     ) -> Result<(), T::SendType> {
@@ -379,7 +379,7 @@ impl SigVerifyStage {
     }
 
     fn verifier_service<T: SigVerifier + 'static + Send>(
-        packet_receiver: Receiver<PacketBatch>,
+        packet_receiver: Receiver<Vec<Packet>>,
         mut verifier: T,
         thread_name: &'static str,
         metrics_name: &'static str,
@@ -441,7 +441,7 @@ mod tests {
         },
     };
 
-    fn count_non_discard(packet_batches: &[PacketBatch]) -> usize {
+    fn count_non_discard(packet_batches: &[Vec<Packet>]) -> usize {
         packet_batches
             .iter()
             .flatten()
@@ -453,7 +453,7 @@ mod tests {
     fn test_packet_discard() {
         solana_logger::setup();
         let batch_size = 10;
-        let mut batch = PacketBatch::with_capacity(batch_size);
+        let mut batch = Vec::with_capacity(batch_size);
         let packet = Packet::default();
         batch.resize(batch_size, packet);
         batch[3].meta_mut().addr = std::net::IpAddr::from([1u16; 8]);
@@ -473,7 +473,7 @@ mod tests {
         use_same_tx: bool,
         packets_per_batch: usize,
         total_packets: usize,
-    ) -> Vec<PacketBatch> {
+    ) -> Vec<Vec<Packet>> {
         if use_same_tx {
             let tx = test_tx();
             to_packet_batches(&vec![tx; total_packets], packets_per_batch)

@@ -4,12 +4,12 @@ use {
     crate::result::{Error, Result},
     crossbeam_channel::{unbounded, RecvTimeoutError},
     solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
-    solana_perf::{packet::PacketBatchRecycler, recycler::Recycler},
-    solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::{
-        clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
-        packet::{Packet, PacketFlags},
+    solana_perf::{
+        packet::{Packet, PacketBatchRecycler, PacketFlags},
+        recycler::Recycler,
     },
+    solana_poh::poh_recorder::PohRecorder,
+    solana_sdk::clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_streamer::streamer::{
         self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats,
     },

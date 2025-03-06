@@ -92,6 +92,7 @@ features = ["lz4"]
 
 [dev-dependencies]
 bs58 = { workspace = true }
+bytes = { workspace = true }
 criterion = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-logger = { workspace = true }

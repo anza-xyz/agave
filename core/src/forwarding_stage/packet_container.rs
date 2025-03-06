@@ -57,7 +57,10 @@ struct PriorityIndex {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_sdk::packet::PacketFlags};
+    use {
+        super::*,
+        solana_perf::packet::{PacketFlags, PacketRead},
+    };
 
     fn simple_packet_with_flags(packet_flags: PacketFlags) -> Packet {
         let mut packet = Packet::default();

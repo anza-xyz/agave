@@ -349,7 +349,7 @@ mod tests {
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
+        solana_perf::packet::{to_packet_batches, Packet, NUM_PACKETS},
         solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
         solana_runtime::bank::Bank,
         solana_runtime_transaction::transaction_meta::StaticMeta,
@@ -376,7 +376,7 @@ mod tests {
         _entry_receiver: Receiver<WorkingBankEntry>,
         _record_receiver: Receiver<Record>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
-        banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
+        banking_packet_sender: Sender<Arc<Vec<Vec<Packet>>>>,
 
         consume_work_receivers: Vec<Receiver<ConsumeWork<Tx>>>,
         finished_consume_work_sender: Sender<FinishedConsumeWork<Tx>>,

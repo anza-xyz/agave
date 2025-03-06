@@ -7,7 +7,7 @@ use {
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     crossbeam_channel::RecvTimeoutError,
-    solana_perf::packet::PacketBatch,
+    solana_perf::packet::{Packet, PacketRead},
     solana_sdk::saturating_add_assign,
     std::time::{Duration, Instant},
 };
@@ -167,7 +167,7 @@ impl PacketDeserializer {
         Ok((num_packets_received, messages))
     }
 
-    fn generate_packet_indexes(packet_batch: &PacketBatch) -> Vec<usize> {
+    fn generate_packet_indexes(packet_batch: &[Packet]) -> Vec<usize> {
         packet_batch
             .iter()
             .enumerate()
@@ -177,7 +177,7 @@ impl PacketDeserializer {
     }
 
     fn deserialize_packets<'a>(
-        packet_batch: &'a PacketBatch,
+        packet_batch: &'a [Packet],
         packet_indexes: &'a [usize],
         packet_stats: &'a mut PacketReceiverStats,
         packet_filter: &'a impl Fn(
@@ -201,7 +201,7 @@ impl PacketDeserializer {
 
     #[allow(dead_code)]
     pub(crate) fn deserialize_packets_with_indexes(
-        packet_batch: &PacketBatch,
+        packet_batch: &[Packet],
     ) -> impl Iterator<Item = (ImmutableDeserializedPacket, usize)> + '_ {
         let packet_indexes = PacketDeserializer::generate_packet_indexes(packet_batch);
         packet_indexes.into_iter().filter_map(move |packet_index| {

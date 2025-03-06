@@ -16,12 +16,13 @@ use {
     solana_gossip::contact_info::Protocol,
     solana_net_utils::bind_to_unspecified,
     solana_perf::data_budget::DataBudget,
+    solana_perf::packet::{Meta, PacketRead},
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{bank::Bank, root_bank_cache::RootBankCache},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
     },
-    solana_sdk::{fee::FeeBudgetLimits, packet, transaction::MessageHash},
+    solana_sdk::{fee::FeeBudgetLimits, transaction::MessageHash},
     solana_streamer::sendmmsg::batch_send,
     std::{
         net::{SocketAddr, UdpSocket},
@@ -281,7 +282,7 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
         // Loop through packets creating batches of packets to forward.
         while let Some(packet) = self.packet_container.pop_and_remove_max() {
             // If it exceeds our data-budget, drop.
-            if !self.data_budget.take(packet.meta().size) {
+            if !self.data_budget.take(packet.len()) {
                 self.metrics.votes_dropped_on_data_budget +=
                     usize::from(packet.meta().is_simple_vote_tx());
                 self.metrics.non_votes_dropped_on_data_budget +=
@@ -476,7 +477,7 @@ impl Default for ForwardingStageMetrics {
     }
 }
 
-fn initial_packet_meta_filter(meta: &packet::Meta) -> bool {
+fn initial_packet_meta_filter(meta: &Meta) -> bool {
     !meta.discard() && !meta.forwarded() && meta.is_from_staked_node()
 }
 
@@ -485,9 +486,8 @@ mod tests {
     use {
         super::*,
         crossbeam_channel::unbounded,
-        packet::PacketFlags,
         solana_net_utils::bind_to_unspecified,
-        solana_perf::packet::{Packet, PacketBatch},
+        solana_perf::packet::{Packet, PacketFlags},
         solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::create_genesis_config,
         solana_sdk::{hash::Hash, signature::Keypair, system_transaction},
@@ -499,10 +499,10 @@ mod tests {
         }
     }
 
-    fn meta_with_flags(packet_flags: PacketFlags) -> packet::Meta {
-        packet::Meta {
+    fn meta_with_flags(packet_flags: PacketFlags) -> Meta {
+        Meta {
             flags: packet_flags,
-            ..packet::Meta::default()
+            ..Meta::default()
         }
     }
 
@@ -567,12 +567,12 @@ mod tests {
         );
 
         // Send packet batches.
-        let non_vote_packets = BankingPacketBatch::new(vec![PacketBatch::new(vec![
+        let non_vote_packets = BankingPacketBatch::new(vec![vec![
             simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
             simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
             simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
-        ])]);
-        let vote_packets = BankingPacketBatch::new(vec![PacketBatch::new(vec![
+        ]]);
+        let vote_packets = BankingPacketBatch::new(vec![vec![
             simple_transfer_with_flags(PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE),
             simple_transfer_with_flags(
                 PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD,
@@ -582,7 +582,7 @@ mod tests {
                     | PacketFlags::FROM_STAKED_NODE
                     | PacketFlags::FORWARDED,
             ),
-        ])]);
+        ]]);
 
         packet_batch_sender
             .send((non_vote_packets.clone(), false))

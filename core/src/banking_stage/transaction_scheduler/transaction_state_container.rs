@@ -8,10 +8,10 @@ use {
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
     slab::{Slab, VacantEntry},
+    solana_perf::packet::PACKET_DATA_SIZE,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::packet::PACKET_DATA_SIZE,
     std::sync::Arc,
 };
 
@@ -313,7 +313,7 @@ mod tests {
         super::*,
         crate::banking_stage::scheduler_messages::MaxAge,
         agave_transaction_view::transaction_view::SanitizedTransactionView,
-        solana_perf::packet::Packet,
+        solana_perf::packet::{Packet, PacketRead},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,

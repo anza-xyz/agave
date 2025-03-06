@@ -71,6 +71,7 @@ members = [
     "net-shaper",
     "net-utils",
     "notifier",
+    "packet",
     "perf",
     "platform-tools-sdk/cargo-build-sbf",
     "platform-tools-sdk/cargo-test-sbf",
@@ -458,7 +459,7 @@ solana-notifier = { path = "notifier", version = "=2.3.0" }
 solana-offchain-message = "=2.2.1"
 solana-package-metadata = "=2.2.1"
 solana-package-metadata-macro = "=2.2.1"
-solana-packet = "=2.2.1"
+solana-packet = { path = "packet", version = "=2.3.0" }
 solana-perf = { path = "perf", version = "=2.3.0" }
 solana-poh = { path = "poh", version = "=2.3.0" }
 solana-poh-config = "=2.2.1"
@@ -655,3 +656,6 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 # comments and the overrides in sync.
 solana-curve25519 = { path = "curves/curve25519" }
 solana-zk-sdk = { path = "zk-sdk" }
+
+# FIXME: Remove before merging.
+solana-frozen-abi = { git = "https://github.com/vadorovsky/solana-sdk", branch = "packet-bytes" }

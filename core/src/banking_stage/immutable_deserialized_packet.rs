@@ -2,7 +2,7 @@ use {
     super::packet_filter::PacketFilterFailure,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_perf::packet::Packet,
+    solana_perf::packet::{Packet, PacketRead},
     solana_runtime::bank::Bank,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sanitize::SanitizeError,
