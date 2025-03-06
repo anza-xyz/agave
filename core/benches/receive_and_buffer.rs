@@ -205,22 +205,25 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
     let mut timing_metrics = SchedulerTimingMetrics::default();
     let decision = BufferedPacketsDecision::Consume(bank_start);
 
+    let txs = generate_transactions_simple(
+        num_txs,
+        bank.clone(),
+        TransactionConfig {
+            compute_unit_price: Box::new(UniformDist::new(1, 100)),
+            transaction_cu_budget: 1, // No effect
+            num_account_conflicts,    // No effect for this benchmark
+            probability_invalid_blockhash: 0.0,
+            probability_invalid_account: 0.0, // No effect
+            data_size_limit: 1,               // No effect
+        },
+    );
     c.bench_function(bench_name, |bencher| {
         bencher.iter_with_setup(
             || {
-                generate_transactions_simple(
-                    num_txs,
-                    bank.clone(),
-                    sender.clone(),
-                    TransactionConfig {
-                        compute_unit_price: Box::new(UniformDist::new(1, 100)),
-                        transaction_cu_budget: 1, // No effect
-                        num_account_conflicts,    // No effect for this benchmark
-                        probability_invalid_blockhash: 0.0,
-                        probability_invalid_account: 0.0, // No effect
-                        data_size_limit: 1,               // No effect
-                    },
-                );
+                if sender.send(txs.clone()).is_err() {
+                    panic!("Unexpectedly dropped receiver!");
+                }
+
                 let container =
                     <T as ReceiveAndBuffer>::Container::with_capacity(TOTAL_BUFFERED_PACKETS);
                 container
@@ -232,7 +235,10 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
                     &mut count_metrics,
                     &decision,
                 );
-                assert!(res.unwrap() == num_txs && !container.is_empty());
+                assert!(
+                    res.unwrap() == num_txs && !container.is_empty(),
+                    "NUM: {num_txs}"
+                );
                 black_box(container);
             },
         )

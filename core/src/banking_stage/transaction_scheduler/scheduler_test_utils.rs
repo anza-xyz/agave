@@ -1,5 +1,6 @@
 use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    core::num,
     crossbeam_channel::Sender,
     rand::prelude::*,
     rand_distr::{Distribution, Normal, Uniform, WeightedIndex},
@@ -7,13 +8,12 @@ use {
     solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_sdk::instruction::AccountMeta,
     solana_sdk::{
         account::AccountSharedData,
         compute_budget::ComputeBudgetInstruction,
         genesis_config::GenesisConfig,
         hash::Hash,
-        instruction::Instruction,
+        instruction::{AccountMeta, Instruction},
         message::{Message, VersionedMessage},
         signer::Signer,
         system_instruction,
@@ -241,13 +241,12 @@ pub fn generate_transactions(
 pub fn generate_transactions_simple(
     num_txs: usize,
     bank: Arc<Bank>,
-    sender: Sender<Arc<Vec<PacketBatch>>>,
     TransactionConfig {
         compute_unit_price,
         probability_invalid_blockhash,
         ..
     }: TransactionConfig,
-) {
+) -> BankingPacketBatch {
     let mut rng: ThreadRng = thread_rng();
     let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
 
@@ -285,14 +284,6 @@ pub fn generate_transactions_simple(
         })
         .collect();
 
-    //let x = to_packet_batches(&txs, NUM_PACKETS);
-
     let packets_batches = BankingPacketBatch::new(to_packet_batches(&txs, NUM_PACKETS));
-    //TODO Does it matter?
-    // Send 2 times to touch more code in receive_until packet_deserializer.rs
-    //for _ in 0..2 {
-    if sender.send(packets_batches.clone()).is_err() {
-        panic!("Unexpectedly dropped receiver!");
-    }
-    //}
+    return packets_batches;
 }
