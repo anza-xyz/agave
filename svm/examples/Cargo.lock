@@ -84,26 +84,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-name = "agave-thread-manager"
-version = "2.2.2"
-dependencies = [
- "affinity",
- "anyhow",
- "cfg-if 1.0.0",
- "log",
- "num_cpus",
- "rayon",
- "serde",
- "solana-metrics",
- "thread-priority",
- "tokio",
- "toml 0.8.19",
-]
-
-[[package]]
-=======
->>>>>>> 30c95ff6e (Revert "Thread manager instantiation in the validator (#4603)" (#5132))
 name = "agave-transaction-view"
 version = "2.2.2"
 dependencies = [
