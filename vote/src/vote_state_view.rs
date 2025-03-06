@@ -182,8 +182,8 @@ impl VoteStateFrame {
 
     fn offset(&self, field: Field) -> usize {
         match &self {
-            Self::V1_14_11(frame) => frame.get_field_offset(field),
-            Self::V3(frame) => frame.get_field_offset(field),
+            Self::V1_14_11(frame) => frame.field_offset(field),
+            Self::V3(frame) => frame.field_offset(field),
         }
     }
 
@@ -343,6 +343,10 @@ mod tests {
             assert_eq!(vote_state_view.get_authorized_voter(u64::MAX), None);
         }
 
+        assert_eq!(
+            vote_state_view.num_epoch_credits(),
+            vote_state.epoch_credits.len()
+        );
         let view_credits: Vec<(Epoch, u64, u64)> = vote_state_view
             .epoch_credits_iter()
             .map(Into::into)
@@ -393,6 +397,10 @@ mod tests {
             assert_eq!(vote_state_view.get_authorized_voter(u64::MAX), None);
         }
 
+        assert_eq!(
+            vote_state_view.num_epoch_credits(),
+            vote_state.epoch_credits.len()
+        );
         let view_credits: Vec<(Epoch, u64, u64)> = vote_state_view
             .epoch_credits_iter()
             .map(Into::into)

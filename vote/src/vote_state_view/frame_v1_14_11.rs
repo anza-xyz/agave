@@ -45,7 +45,7 @@ impl VoteStateFrameV1_14_11 {
         }
     }
 
-    pub(super) fn get_field_offset(&self, field: Field) -> usize {
+    pub(super) fn field_offset(&self, field: Field) -> usize {
         match field {
             Field::NodePubkey => Self::node_pubkey_offset(),
             Field::Commission => Self::commission_offset(),
