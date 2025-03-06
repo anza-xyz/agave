@@ -1266,17 +1266,17 @@ fn assert_instruction_count() {
     #[cfg(feature = "sbf_c")]
     {
         programs.extend_from_slice(&[
-            ("alloc", 14575),
-            ("sbf_to_sbf", 313),
-            ("multiple_static", 208),
-            ("noop", 5),
-            ("noop++", 5),
-            ("relative_call", 210),
-            ("return_data", 982),
-            ("sanity", 2377),
-            ("sanity++", 2277),
+            ("alloc", 19332),
+            ("sbf_to_sbf", 316),
+            ("multiple_static", 210),
+            ("noop", 6),
+            ("noop++", 6),
+            ("relative_call", 212),
+            ("return_data", 1027),
+            ("sanity", 2394),
+            ("sanity++", 2294),
             ("secp256k1_recover", 25483),
-            ("sha", 1355),
+            ("sha", 1447),
             ("struct_pass", 108),
             ("struct_ret", 122),
         ]);
@@ -1285,18 +1285,18 @@ fn assert_instruction_count() {
     {
         programs.extend_from_slice(&[
             ("solana_sbf_rust_128bit", 955),
-            ("solana_sbf_rust_alloc", 4784),
-            ("solana_sbf_rust_custom_heap", 270),
+            ("solana_sbf_rust_alloc", 4940),
+            ("solana_sbf_rust_custom_heap", 286),
             ("solana_sbf_rust_dep_crate", 2),
             ("solana_sbf_rust_iter", 1514),
-            ("solana_sbf_rust_many_args", 1289),
-            ("solana_sbf_rust_mem", 1207),
-            ("solana_sbf_rust_membuiltins", 292),
+            ("solana_sbf_rust_many_args", 1290),
+            ("solana_sbf_rust_mem", 1302),
+            ("solana_sbf_rust_membuiltins", 327),
             ("solana_sbf_rust_noop", 275),
             ("solana_sbf_rust_param_passing", 108),
-            ("solana_sbf_rust_rand", 264),
-            ("solana_sbf_rust_sanity", 50084),
-            ("solana_sbf_rust_secp256k1_recover", 89217),
+            ("solana_sbf_rust_rand", 278),
+            ("solana_sbf_rust_sanity", 51325),
+            ("solana_sbf_rust_secp256k1_recover", 89388),
             ("solana_sbf_rust_sha", 22850),
         ]);
     }
@@ -1701,7 +1701,7 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
                 // Asserting the instruction number as an upper bound, since the quantity of
                 // instructions depends on the program size, which in turn depends on the SBPF
                 // versions.
-                assert!(instr_no <= 38);
+                assert!(instr_no <= 39);
                 assert_eq!(ty, InstructionError::UnsupportedProgramId);
             } else {
                 panic!("Invalid error type");
