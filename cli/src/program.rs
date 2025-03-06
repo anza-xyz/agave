@@ -1895,16 +1895,16 @@ fn get_buffers(
     authority_pubkey: Option<Pubkey>,
     use_lamports_unit: bool,
 ) -> Result<CliUpgradeableBuffers, Box<dyn std::error::Error>> {
-    let mut filters = vec![RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
+    let mut filters = vec![RpcFilterType::Memcmp(Memcmp::new_base64_encoded(
         0,
         &[1, 0, 0, 0],
     ))];
     if let Some(authority_pubkey) = authority_pubkey {
-        filters.push(RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
+        filters.push(RpcFilterType::Memcmp(Memcmp::new_base64_encoded(
             ACCOUNT_TYPE_SIZE,
             &[1],
         )));
-        filters.push(RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
+        filters.push(RpcFilterType::Memcmp(Memcmp::new_base64_encoded(
             ACCOUNT_TYPE_SIZE + OPTION_SIZE,
             authority_pubkey.as_ref(),
         )));

@@ -164,6 +164,13 @@ impl Memcmp {
         }
     }
 
+    pub fn new_base64_encoded(offset: usize, bytes: &[u8]) -> Self {
+        Self {
+            offset,
+            bytes: MemcmpEncodedBytes::Base64(BASE64_STANDARD.encode(bytes)),
+        }
+    }
+
     pub fn offset(&self) -> usize {
         self.offset
     }
