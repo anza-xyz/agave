@@ -3466,6 +3466,7 @@ mod tests {
         assert!(*TASK_COUNT.lock().unwrap() < 10);
     }
 
+    #[allow(clippy::arithmetic_side_effects)]
     #[test_matrix(
         [BlockVerification, BlockProduction]
     )]
