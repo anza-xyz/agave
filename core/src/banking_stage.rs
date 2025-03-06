@@ -966,12 +966,12 @@ mod tests {
         bank.process_transaction(&fund_tx).unwrap();
 
         // good tx, but no verify
-        let to2 = solana_pubkey::new_rand();
-        let tx_no_ver = system_transaction::transfer(&keypair, &to2, 2, start_hash);
+        let to = solana_pubkey::new_rand();
+        let tx_no_ver = system_transaction::transfer(&keypair, &to, 2, start_hash);
 
         // good tx
-        let to = solana_pubkey::new_rand();
-        let tx = system_transaction::transfer(&mint_keypair, &to, 1, start_hash);
+        let to2 = solana_pubkey::new_rand();
+        let tx = system_transaction::transfer(&mint_keypair, &to2, 1, start_hash);
 
         // bad tx, AccountNotFound
         let keypair = Keypair::new();
@@ -1019,15 +1019,15 @@ mod tests {
                 }
             }
 
-            if bank.get_balance(&to) == 1 {
+            if bank.get_balance(&to2) == 1 {
                 break;
             }
 
             sleep(Duration::from_millis(200));
         }
 
-        assert_eq!(bank.get_balance(&to), 1);
-        assert_eq!(bank.get_balance(&to2), 0);
+        assert_eq!(bank.get_balance(&to2), 1);
+        assert_eq!(bank.get_balance(&to), 0);
 
         drop(entry_receiver);
     }
