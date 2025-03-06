@@ -2188,9 +2188,6 @@ impl ClusterInfo {
         self.stats
             .packets_received_count
             .add_relaxed(num_packets as u64);
-        self.stats
-            .socket_consume_packet_buf_capacity
-            .max_relaxed(packet_buf.capacity() as u64);
         fn verify_packet(
             packet: &Packet,
             stakes: &HashMap<Pubkey, u64>,
@@ -2270,9 +2267,6 @@ impl ClusterInfo {
                 break;
             }
         }
-        self.stats
-            .listen_packet_buf_capacity
-            .max_relaxed(packet_buf.capacity() as u64);
         let stakes = epoch_specs
             .as_mut()
             .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
