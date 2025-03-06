@@ -430,6 +430,7 @@ impl TransactionViewReceiveAndBuffer {
                     if result.is_err() {
                         num_dropped_on_status_age_checks += 1;
                         container.remove_by_id(priority_id.id);
+                        continue;
                     }
                     let transaction = &container
                         .get_transaction_ttl(priority_id.id)
