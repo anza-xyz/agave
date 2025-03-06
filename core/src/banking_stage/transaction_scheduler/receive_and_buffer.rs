@@ -381,7 +381,19 @@ impl TransactionViewReceiveAndBuffer {
     ) -> usize {
         // If not holding packets, just drop them immediately without parsing.
         if matches!(decision, BufferedPacketsDecision::Forward) {
-            return 0;
+            let num_received = packet_batch_message
+                .iter()
+                .map(|packet_batch| {
+                    packet_batch
+                        .iter()
+                        .filter(|packet| !packet.meta().discard())
+                        .count()
+                })
+                .sum();
+            count_metrics.update(|count_metrics| {
+                saturating_add_assign!(count_metrics.num_received, num_received)
+            });
+            return num_received;
         }
 
         let start = Instant::now();
