@@ -1073,34 +1073,16 @@ mod tests {
             gossip_vote_receiver,
         } = banking_tracer.create_channels(false);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-<<<<<<< HEAD
         {
             let blockstore = Arc::new(
                 Blockstore::open(ledger_path.path())
                     .expect("Expected to be able to open database ledger"),
             );
-            let poh_config = PohConfig {
-                // limit tick count to avoid clearing working_bank at PohRecord then
-                // PohRecorderError(MaxHeightReached) at BankingStage
-                target_tick_count: Some(bank.max_tick_height() - 1),
-                ..PohConfig::default()
-            };
             let (exit, poh_recorder, poh_service, entry_receiver) =
-                create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
+                create_test_recorder(bank.clone(), blockstore, None, None);
             let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
             let cluster_info = Arc::new(cluster_info);
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-=======
-        let blockstore = Arc::new(
-            Blockstore::open(ledger_path.path())
-                .expect("Expected to be able to open database ledger"),
-        );
-        let (exit, poh_recorder, poh_service, entry_receiver) =
-            create_test_recorder(bank.clone(), blockstore, None, None);
-        let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
-        let cluster_info = Arc::new(cluster_info);
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
->>>>>>> 433f4ffe1 (Fix flaky banking stage tests (#5160))
 
             let banking_stage = BankingStage::new(
                 block_production_method,
@@ -1261,7 +1243,6 @@ mod tests {
         {
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
-<<<<<<< HEAD
             let entry_receiver = {
                 // start a banking_stage to eat verified receiver
                 let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
@@ -1269,14 +1250,8 @@ mod tests {
                     Blockstore::open(ledger_path.path())
                         .expect("Expected to be able to open database ledger"),
                 );
-                let poh_config = PohConfig {
-                    // limit tick count to avoid clearing working_bank at
-                    // PohRecord then PohRecorderError(MaxHeightReached) at BankingStage
-                    target_tick_count: Some(bank.max_tick_height() - 1),
-                    ..PohConfig::default()
-                };
                 let (exit, poh_recorder, poh_service, entry_receiver) =
-                    create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
+                    create_test_recorder(bank.clone(), blockstore, None, None);
                 let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
                 let cluster_info = Arc::new(cluster_info);
                 let _banking_stage = BankingStage::new(
@@ -1307,30 +1282,6 @@ mod tests {
             drop(non_vote_sender);
             drop(tpu_vote_sender);
             drop(gossip_vote_sender);
-=======
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let entry_receiver = {
-            // start a banking_stage to eat verified receiver
-            let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-            let (exit, poh_recorder, poh_service, entry_receiver) =
-                create_test_recorder(bank.clone(), blockstore, None, None);
-            let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
-            let cluster_info = Arc::new(cluster_info);
-            let _banking_stage = BankingStage::new(
-                BlockProductionMethod::CentralScheduler,
-                transaction_struct,
-                &cluster_info,
-                &poh_recorder,
-                non_vote_receiver,
-                tpu_vote_receiver,
-                gossip_vote_receiver,
-                None,
-                replay_vote_sender,
-                None,
-                bank_forks,
-                &Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
->>>>>>> 433f4ffe1 (Fix flaky banking stage tests (#5160))
 
             // consume the entire entry_receiver, feed it into a new bank
             // check that the balance is what we expect.
@@ -1484,34 +1435,16 @@ mod tests {
             gossip_vote_receiver,
         } = banking_tracer.create_channels(false);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
-<<<<<<< HEAD
         {
             let blockstore = Arc::new(
                 Blockstore::open(ledger_path.path())
                     .expect("Expected to be able to open database ledger"),
             );
-            let poh_config = PohConfig {
-                // limit tick count to avoid clearing working_bank at PohRecord then
-                // PohRecorderError(MaxHeightReached) at BankingStage
-                target_tick_count: Some(bank.max_tick_height() - 1),
-                ..PohConfig::default()
-            };
             let (exit, poh_recorder, poh_service, _entry_receiver) =
-                create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
+                create_test_recorder(bank.clone(), blockstore, None, None);
             let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
             let cluster_info = Arc::new(cluster_info);
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-=======
-        let blockstore = Arc::new(
-            Blockstore::open(ledger_path.path())
-                .expect("Expected to be able to open database ledger"),
-        );
-        let (exit, poh_recorder, poh_service, _entry_receiver) =
-            create_test_recorder(bank.clone(), blockstore, None, None);
-        let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
-        let cluster_info = Arc::new(cluster_info);
-        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
->>>>>>> 433f4ffe1 (Fix flaky banking stage tests (#5160))
 
             let banking_stage = BankingStage::new(
                 BlockProductionMethod::CentralScheduler,
