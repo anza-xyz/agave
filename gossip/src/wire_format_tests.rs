@@ -21,20 +21,23 @@ mod tests {
 
     /// Test the ability of gossip parsers to understand and re-serialize a corpus of
     /// packets captured from mainnet.
-    /// You will want to run this in --release mode
+    ///
     /// This test requires external files and is not run by default.
-    /// `cargo test test_gossip_wire_format  -- --nocapture --ignored` to run this test manually
+    /// Export the "GOSSIP_WIRE_FORMAT_PACKETS" variable to run this test
     #[test]
-    #[ignore]
     fn test_gossip_wire_format() {
         solana_logger::setup();
-        let path_base = match std::env::var_os("CARGO_MANIFEST_DIR") {
+        let path_base = match std::env::var_os("GOSSIP_WIRE_FORMAT_PACKETS") {
             Some(p) => PathBuf::from(p),
-            None => panic!("Requires CARGO_MANIFEST_DIR env variable"),
+            None => {
+                eprintln!("Test requires GOSSIP_WIRE_FORMAT_PACKETS env variable, skipping!");
+                return;
+            }
         };
-        let path_base = path_base.join("GOSSIP_PACKETS");
-        for entry in std::fs::read_dir(path_base).unwrap() {
-            let entry = entry.unwrap();
+        for entry in
+            std::fs::read_dir(path_base).expect("Expecting env var to point to a directory")
+        {
+            let entry = entry.expect("Expecting a readable file");
             validate_packet_format(&entry.path(), parse_gossip, serialize).unwrap();
         }
     }
