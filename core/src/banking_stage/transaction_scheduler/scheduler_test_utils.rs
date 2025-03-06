@@ -5,11 +5,19 @@ use {
     rand_distr::{Distribution, Normal, Uniform, WeightedIndex},
     solana_keypair::Keypair,
     solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
+    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
+    solana_sdk::instruction::AccountMeta,
     solana_sdk::{
-        account::AccountSharedData, compute_budget::ComputeBudgetInstruction,
-        genesis_config::GenesisConfig, hash::Hash, message::Message, signer::Signer,
-        system_instruction, transaction::Transaction,
+        account::AccountSharedData,
+        compute_budget::ComputeBudgetInstruction,
+        genesis_config::GenesisConfig,
+        hash::Hash,
+        instruction::Instruction,
+        message::{Message, VersionedMessage},
+        signer::Signer,
+        system_instruction,
+        transaction::{Transaction, VersionedTransaction},
     },
     std::sync::Arc,
 };
@@ -228,4 +236,63 @@ pub fn generate_transactions(
             panic!("Unexpectedly dropped receiver!");
         }
     }
+}
+
+pub fn generate_transactions_simple(
+    num_txs: usize,
+    bank: Arc<Bank>,
+    sender: Sender<Arc<Vec<PacketBatch>>>,
+    TransactionConfig {
+        compute_unit_price,
+        probability_invalid_blockhash,
+        ..
+    }: TransactionConfig,
+) {
+    let mut rng: ThreadRng = thread_rng();
+    let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
+
+    const MAX_INSTRUCTIONS_PER_TRANSACTION: usize = 205;
+
+    let txs: Vec<VersionedTransaction> = (0..num_txs)
+        .map(|_| {
+            let keypair = Keypair::new();
+            let program_id = Pubkey::new_unique();
+
+            let mut instructions = Vec::with_capacity(MAX_INSTRUCTIONS_PER_TRANSACTION);
+            instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
+                compute_unit_price.sample(&mut rng),
+            ));
+            for _ in 0..MAX_INSTRUCTIONS_PER_TRANSACTION - 1 {
+                instructions.push(Instruction::new_with_bytes(
+                    program_id,
+                    &[0],
+                    vec![AccountMeta {
+                        pubkey: keypair.pubkey(),
+                        is_signer: true,
+                        is_writable: true,
+                    }],
+                ));
+            }
+            VersionedTransaction::try_new(
+                VersionedMessage::Legacy(Message::new_with_blockhash(
+                    &instructions,
+                    Some(&keypair.pubkey()),
+                    &blockhash.get(&mut rng),
+                )),
+                &[&keypair],
+            )
+            .unwrap()
+        })
+        .collect();
+
+    //let x = to_packet_batches(&txs, NUM_PACKETS);
+
+    let packets_batches = BankingPacketBatch::new(to_packet_batches(&txs, NUM_PACKETS));
+    //TODO Does it matter?
+    // Send 2 times to touch more code in receive_until packet_deserializer.rs
+    //for _ in 0..2 {
+    if sender.send(packets_batches.clone()).is_err() {
+        panic!("Unexpectedly dropped receiver!");
+    }
+    //}
 }

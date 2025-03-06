@@ -36,7 +36,7 @@ fn bench_transactions_parsing(
     group.bench_function("VersionedTransaction", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let _ = bincode::deserialize::<VersionedTransaction>(black_box(bytes)).unwrap();
+                black_box(bincode::deserialize::<VersionedTransaction>(bytes).unwrap());
             }
         });
     });
@@ -45,8 +45,8 @@ fn bench_transactions_parsing(
     group.bench_function("SanitizedVersionedTransaction", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let tx = bincode::deserialize::<VersionedTransaction>(black_box(bytes)).unwrap();
-                let _ = SanitizedVersionedTransaction::try_new(tx).unwrap();
+                let tx = bincode::deserialize::<VersionedTransaction>(bytes).unwrap();
+                black_box(SanitizedVersionedTransaction::try_new(tx).unwrap());
             }
         });
     });
@@ -55,7 +55,7 @@ fn bench_transactions_parsing(
     group.bench_function("TransactionView", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let _ = TransactionView::try_new_unsanitized(black_box(bytes.as_ref())).unwrap();
+                black_box(TransactionView::try_new_unsanitized(bytes.as_ref()).unwrap());
             }
         });
     });
@@ -64,7 +64,7 @@ fn bench_transactions_parsing(
     group.bench_function("TransactionView (Sanitized)", |c| {
         c.iter(|| {
             for bytes in serialized_transactions.iter() {
-                let _ = TransactionView::try_new_sanitized(black_box(bytes.as_ref())).unwrap();
+                black_box(TransactionView::try_new_sanitized(bytes.as_ref()).unwrap());
             }
         });
     });
@@ -223,10 +223,10 @@ fn bench_parse_packed_atls(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_parse_min_sized_transactions,
+    //bench_parse_min_sized_transactions,
     bench_parse_simple_transfers,
-    bench_parse_packed_transfers,
-    bench_parse_packed_noops,
-    bench_parse_packed_atls
+    //bench_parse_packed_transfers,
+    //bench_parse_packed_noops,
+    //bench_parse_packed_atls
 );
 criterion_main!(benches);
