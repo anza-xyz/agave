@@ -1,7 +1,7 @@
 use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
     criterion::{black_box, criterion_group, criterion_main, Criterion},
-    crossbeam_channel::unbounded,
+    crossbeam_channel::{unbounded, Receiver},
     solana_core::banking_stage::{
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         decision_maker::BufferedPacketsDecision,
@@ -14,22 +14,23 @@ use {
             },
             scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
             scheduler_test_utils::{
-                create_accounts, generate_transactions, TransactionConfig, UniformDist,
+                create_accounts, generate_transactions, generate_transactions_simple,
+                TransactionConfig, UniformDist,
             },
             transaction_state_container::StateContainer,
         },
     },
     solana_keypair::Keypair,
     solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
-    solana_perf::packet::{to_packet_batches, NUM_PACKETS},
+    solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
     solana_poh::poh_recorder::BankStart,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
         hash::Hash, message::Message, signer::Signer, system_instruction, transaction::Transaction,
     },
     std::{
-        sync::Arc,
+        sync::{Arc, RwLock},
         thread,
         time::{Duration, Instant},
     },
@@ -148,14 +149,45 @@ fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
     });
 }
 
-fn bench_sanitized_transaction_receive_and_buffer2(c: &mut Criterion) {
-    let GenesisConfigInfo {
-        mut genesis_config, ..
-    } = create_genesis_config(100_000);
+trait ReceiveAndBufferCreator {
+    fn create(
+        receiver: Receiver<Arc<Vec<PacketBatch>>>,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> Self;
+}
+
+impl ReceiveAndBufferCreator for TransactionViewReceiveAndBuffer {
+    fn create(
+        receiver: Receiver<Arc<Vec<PacketBatch>>>,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> Self {
+        TransactionViewReceiveAndBuffer {
+            receiver,
+            bank_forks,
+        }
+    }
+}
+
+impl ReceiveAndBufferCreator for SanitizedTransactionReceiveAndBuffer {
+    fn create(
+        receiver: Receiver<Arc<Vec<PacketBatch>>>,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> Self {
+        SanitizedTransactionReceiveAndBuffer::new(
+            PacketDeserializer::new(receiver),
+            bank_forks,
+            false,
+        )
+    }
+}
+
+fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
+    c: &mut Criterion,
+    bench_name: &str,
+) {
+    let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100_000);
     let num_txs = 1024 * 64;
     let num_account_conflicts = 1;
-    let num_accounts = ((num_account_conflicts + 1) * num_txs) / num_account_conflicts;
-    let account_keypairs = create_accounts(num_accounts, &mut genesis_config);
 
     let (bank, bank_forks) =
         Bank::new_for_benches(&genesis_config).wrap_with_bank_forks_for_tests();
@@ -166,23 +198,18 @@ fn bench_sanitized_transaction_receive_and_buffer2(c: &mut Criterion) {
 
     let (sender, receiver) = unbounded();
 
-    let mut rb = SanitizedTransactionReceiveAndBuffer::new(
-        PacketDeserializer::new(receiver),
-        bank_forks,
-        false,
-    );
+    let mut rb = T::create(receiver, bank_forks);
 
     const TOTAL_BUFFERED_PACKETS: usize = 100_000;
     let mut count_metrics = SchedulerCountMetrics::default();
     let mut timing_metrics = SchedulerTimingMetrics::default();
     let decision = BufferedPacketsDecision::Consume(bank_start);
 
-    c.bench_function("sanitized_transaction_receive_and_buffer", |bencher| {
+    c.bench_function(bench_name, |bencher| {
         bencher.iter_with_setup(
             || {
-                generate_transactions(
+                generate_transactions_simple(
                     num_txs,
-                    &account_keypairs,
                     bank.clone(),
                     sender.clone(),
                     TransactionConfig {
@@ -195,9 +222,7 @@ fn bench_sanitized_transaction_receive_and_buffer2(c: &mut Criterion) {
                     },
                 );
                 let container =
-        <SanitizedTransactionReceiveAndBuffer as ReceiveAndBuffer>::Container::with_capacity(
-            TOTAL_BUFFERED_PACKETS,
-        );
+                    <T as ReceiveAndBuffer>::Container::with_capacity(TOTAL_BUFFERED_PACKETS);
                 container
             },
             |mut container| {
@@ -207,11 +232,22 @@ fn bench_sanitized_transaction_receive_and_buffer2(c: &mut Criterion) {
                     &mut count_metrics,
                     &decision,
                 );
-                assert!(res.unwrap() == 2 * num_txs && !container.is_empty());
+                assert!(res.unwrap() == num_txs && !container.is_empty());
                 black_box(container);
             },
         )
     });
+}
+
+fn bench_sanitized_transaction_receive_and_buffer2(c: &mut Criterion) {
+    bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
+        c,
+        "sanitized_transaction_receive_and_buffer",
+    );
+    bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
+        c,
+        "transaction_view_receive_and_buffer",
+    );
 }
 
 criterion_group!(

@@ -746,112 +746,11 @@ mod tests {
 
     #[test]
     fn test_sanitized_transaction_receive_and_buffer() {
-        solana_logger::setup_with_default("trace");
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100_000);
-        let num_txs = 1024;
-        let num_account_conflicts = 1;
-
-        let (bank, bank_forks) =
-            Bank::new_for_benches(&genesis_config).wrap_with_bank_forks_for_tests();
-        let bank_start = BankStart {
-            working_bank: bank.clone(),
-            bank_creation_time: Arc::new(Instant::now()),
-        };
-
-        let (sender, receiver) = unbounded();
-        generate_transactions_simple(
-            num_txs,
-            bank,
-            sender,
-            TransactionConfig {
-                compute_unit_price: Box::new(UniformDist::new(1, 10)),
-                transaction_cu_budget: 1, // No effect
-                num_account_conflicts,    // No effect for this benchmark
-                probability_invalid_blockhash: 0.0,
-                probability_invalid_account: 0.0, // No effect
-                data_size_limit: 1,               // No effect
-            },
-        );
-
-        let mut rb = SanitizedTransactionReceiveAndBuffer::new(
-            PacketDeserializer::new(receiver),
-            bank_forks,
-            false,
-        );
-
-        const TOTAL_BUFFERED_PACKETS: usize = 100_000;
-        let mut container =
-            <SanitizedTransactionReceiveAndBuffer as ReceiveAndBuffer>::Container::with_capacity(
-                TOTAL_BUFFERED_PACKETS,
-            );
-        let mut count_metrics = SchedulerCountMetrics::default();
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let decision = BufferedPacketsDecision::Consume(bank_start);
-
-        match rb.receive_and_buffer_packets(
-            &mut container,
-            &mut timing_metrics,
-            &mut count_metrics,
-            &decision,
-        ) {
-            Ok(num_received) => assert_eq!(num_received, num_txs),
-            Err(_) => panic!("Receiver unexpectedly dropped!"),
-        }
-        thread::sleep(Duration::from_secs(1));
+        test_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>();
     }
 
     #[test]
     fn test_transaction_view_receive_and_buffer() {
-        solana_logger::setup_with_default("trace");
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100_000);
-        let num_txs = 1024;
-        let num_account_conflicts = 1;
-
-        let (bank, bank_forks) =
-            Bank::new_for_benches(&genesis_config).wrap_with_bank_forks_for_tests();
-        let bank_start = BankStart {
-            working_bank: bank.clone(),
-            bank_creation_time: Arc::new(Instant::now()),
-        };
-
-        let (sender, receiver) = unbounded();
-        generate_transactions_simple(
-            num_txs,
-            bank,
-            sender,
-            TransactionConfig {
-                compute_unit_price: Box::new(UniformDist::new(1, 10)),
-                transaction_cu_budget: 1, // No effect
-                num_account_conflicts,    // No effect for this benchmark
-                probability_invalid_blockhash: 0.0,
-                probability_invalid_account: 0.0, // No effect
-                data_size_limit: 1,               // No effect
-            },
-        );
-
-        let mut rb = TransactionViewReceiveAndBuffer {
-            receiver,
-            bank_forks,
-        };
-
-        const TOTAL_BUFFERED_PACKETS: usize = 100_000;
-        let mut container =
-            <TransactionViewReceiveAndBuffer as ReceiveAndBuffer>::Container::with_capacity(
-                TOTAL_BUFFERED_PACKETS,
-            );
-        let mut count_metrics = SchedulerCountMetrics::default();
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let decision = BufferedPacketsDecision::Consume(bank_start);
-
-        match rb.receive_and_buffer_packets(
-            &mut container,
-            &mut timing_metrics,
-            &mut count_metrics,
-            &decision,
-        ) {
-            Ok(num_received) => assert_eq!(num_received, num_txs),
-            Err(_) => panic!("Receiver unexpectedly dropped!"),
-        }
-        thread::sleep(Duration::from_secs(1));
+        test_receive_and_buffer::<TransactionViewReceiveAndBuffer>();
     }
 }
