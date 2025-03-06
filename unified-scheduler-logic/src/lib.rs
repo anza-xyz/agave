@@ -649,15 +649,15 @@ impl SchedulingStateMachine {
         self.executing_task_count.current() == 0
     }
 
-    pub fn has_unblocked_task(&self) -> bool {
+    fn has_unblocked_task(&self) -> bool {
         !self.unblocked_task_queue.is_empty()
     }
 
     pub fn has_runnable_task(&self) -> bool {
-        self.is_task_runnable() && self.has_unblocked_task()
+        self.has_unblocked_task() && self.is_task_runnable()
     }
 
-    pub fn is_task_runnable(&self) -> bool {
+    fn is_task_runnable(&self) -> bool {
         self.executing_task_count.current() < self.max_executing_task_count
     }
 
@@ -936,7 +936,7 @@ impl SchedulingStateMachine {
     /// Call this exactly once for each thread. See [`TokenCell`] for details.
     #[must_use]
     pub unsafe fn exclusively_initialize_current_thread_for_scheduling(
-        max_executing_task_count: u32,
+        max_executing_task_count: Option<usize>,
     ) -> Self {
         Self {
             // It's very unlikely this is desired to be configurable, like
@@ -944,7 +944,10 @@ impl SchedulingStateMachine {
             unblocked_task_queue: VecDeque::with_capacity(1024),
             active_task_count: ShortCounter::zero(),
             executing_task_count: ShortCounter::zero(),
-            max_executing_task_count,
+            max_executing_task_count: max_executing_task_count
+                .unwrap_or(u32::MAX as usize)
+                .try_into()
+                .unwrap(),
             handled_task_count: ShortCounter::zero(),
             unblocked_task_count: ShortCounter::zero(),
             total_task_count: ShortCounter::zero(),
@@ -955,7 +958,7 @@ impl SchedulingStateMachine {
 
     #[cfg(test)]
     unsafe fn exclusively_initialize_current_thread_for_scheduling_for_test() -> Self {
-        Self::exclusively_initialize_current_thread_for_scheduling(200)
+        Self::exclusively_initialize_current_thread_for_scheduling(None)
     }
 }
 

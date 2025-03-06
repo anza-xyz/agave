@@ -388,6 +388,10 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
+// Not rigidly tested yet; but capping to 2x of handler thread should be enough because unified
+// scheduler is latency optimized...
+const BLOCK_PRODUCTION_SCHEDULER_MAX_EXECUTING_TASK_COUNT_FACTOR: usize = 2;
+
 impl<S, TH> SchedulerPool<S, TH>
 where
     S: SpawnableScheduler<TH>,
@@ -1439,6 +1443,53 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         );
     }
 
+    fn max_executing_task_count(
+        mode: SchedulingMode,
+        handler_context: &HandlerContext,
+    ) -> Option<usize> {
+        match mode {
+            BlockVerification => None,
+            BlockProduction => {
+                // Unlike block verification, it's desired for block production to be safely
+                // interrupted as soon as possible after session is ending. Thus, don't take
+                // unbounded number of non-conflicting tasks out of SchedulingStateMachine, which
+                // all needs to be descheduled before finishing session.
+                Some(
+                    handler_context
+                        .parallelism
+                        .checked_mul(BLOCK_PRODUCTION_SCHEDULER_MAX_EXECUTING_TASK_COUNT_FACTOR)
+                        .unwrap(),
+                )
+            }
+        }
+    }
+
+    fn can_receive_unblocked_task(
+        session_ending: bool,
+        mode: SchedulingMode,
+        state_machine: &SchedulingStateMachine,
+    ) -> bool {
+        match mode {
+            BlockVerification => state_machine.has_runnable_task(),
+            BlockProduction => {
+                // Much like max_executing_task_count() reasonings, stop taking runnable and
+                // unblocked tasks out of SchedulingStateMachine as soon as session is ending.
+                !session_ending && state_machine.has_runnable_task()
+            }
+        }
+    }
+
+    fn can_finish_session(
+        session_ending: bool,
+        mode: SchedulingMode,
+        state_machine: &SchedulingStateMachine,
+    ) -> bool {
+        match mode {
+            BlockVerification => session_ending && state_machine.has_no_active_task(),
+            BlockProduction => session_ending && state_machine.has_no_executing_task(),
+        }
+    }
+
     #[must_use]
     fn accumulate_result_with_timings(
         mode: SchedulingMode,
@@ -1472,28 +1523,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     Some((executed_task, false))
                 }
             },
-        }
-    }
-
-    fn can_receive_unblocked_task(
-        session_ending: bool,
-        mode: SchedulingMode,
-        state_machine: &SchedulingStateMachine,
-    ) -> bool {
-        match mode {
-            BlockVerification => state_machine.has_runnable_task(),
-            BlockProduction => !session_ending && state_machine.has_runnable_task(),
-        }
-    }
-
-    fn can_finish_session(
-        session_ending: bool,
-        mode: SchedulingMode,
-        state_machine: &SchedulingStateMachine,
-    ) -> bool {
-        match mode {
-            BlockVerification => session_ending && state_machine.has_no_active_task(),
-            BlockProduction => session_ending && state_machine.has_no_executing_task(),
         }
     }
 
@@ -1687,12 +1716,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 let mut state_machine = unsafe {
                     SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
-                        handler_context
-                            .parallelism
-                            .checked_mul(2)
-                            .unwrap()
-                            .try_into()
-                            .unwrap(),
+                        Self::max_executing_task_count(scheduling_mode, &handler_context),
                     )
                 };
 
