@@ -298,6 +298,10 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
+// Not rigidly tested yet; but capping to 2x of handler thread should be enough because unified
+// scheduler is latency optimized...
+const BLOCK_PRODUCTION_SCHEDULER_MAX_EXECUTING_TASK_COUNT_FACTOR: usize = 2;
+
 impl<S, TH> SchedulerPool<S, TH>
 where
     S: SpawnableScheduler<TH>,
@@ -1192,6 +1196,53 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         );
     }
 
+    fn max_executing_task_count(mode: SchedulingMode, handler_count: usize) -> Option<usize> {
+        match mode {
+            BlockVerification => None,
+            BlockProduction => {
+                // Unlike block verification, it's desired for block production to be safely
+                // interrupted as soon as possible after session is ending. Thus, don't take
+                // unbounded number of non-conflicting tasks out of SchedulingStateMachine, which
+                // all needs to be descheduled before finishing session.
+                Some(
+                    handler_count
+                        .checked_mul(BLOCK_PRODUCTION_SCHEDULER_MAX_EXECUTING_TASK_COUNT_FACTOR)
+                        .unwrap(),
+                )
+            }
+        }
+    }
+
+    fn can_receive_unblocked_task(
+        session_ending: bool,
+        mode: SchedulingMode,
+        state_machine: &SchedulingStateMachine,
+    ) -> bool {
+        match mode {
+            BlockVerification => state_machine.has_unblocked_task(),
+            BlockProduction => {
+                // Much like max_executing_task_count() reasonings, stop taking runnable and
+                // unblocked tasks out of SchedulingStateMachine as soon as session is ending.
+                !session_ending && state_machine.has_runnable_task()
+            }
+        }
+    }
+
+    fn can_finish_session(
+        session_ending: bool,
+        mode: SchedulingMode,
+        state_machine: &SchedulingStateMachine,
+    ) -> bool {
+        match mode {
+            BlockVerification => session_ending && state_machine.has_no_active_task(),
+            BlockProduction => {
+                // No need to wait to execute all active tasks unlike block verification. Just wind
+                // down all tasks which has already been passed down to handler threads.
+                session_ending && state_machine.has_no_executing_task()
+            }
+        }
+    }
+
     #[must_use]
     fn accumulate_result_with_timings(
         (result, timings): &mut ResultWithTimings,
@@ -1398,7 +1449,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 };
 
                 let mut state_machine = unsafe {
-                    SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+                    SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
+                        Self::max_executing_task_count(scheduling_mode, handler_count),
+                    )
                 };
 
                 // The following loop maintains and updates ResultWithTimings as its
@@ -1414,7 +1467,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // arm. So, eagerly binding the result to a variable unconditionally here
                         // makes no perf. difference...
                         let dummy_unblocked_task_receiver =
-                            dummy_receiver(state_machine.has_unblocked_task());
+                            dummy_receiver(Self::can_receive_unblocked_task(
+                                session_ending,
+                                scheduling_mode,
+                                &state_machine,
+                            ));
 
                         // There's something special called dummy_unblocked_task_receiver here.
                         // This odd pattern was needed to react to newly unblocked tasks from
@@ -1478,7 +1535,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                         };
 
-                        is_finished = session_ending && state_machine.has_no_active_task();
+                        is_finished = Self::can_finish_session(
+                            session_ending,
+                            scheduling_mode,
+                            &state_machine,
+                        );
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
@@ -1487,7 +1548,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     session_result_sender
                         .send(result_with_timings)
                         .expect("always outlived receiver");
-                    state_machine.reinitialize();
+                    if matches!(scheduling_mode, BlockVerification) {
+                        state_machine.reinitialize();
+                    }
                     assert!(mem::replace(&mut session_ending, false));
 
                     loop {
@@ -1926,6 +1989,7 @@ mod tests {
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         std::{
+            num::Saturating,
             sync::{atomic::Ordering, Arc, RwLock},
             thread::JoinHandle,
         },
@@ -2963,8 +3027,12 @@ mod tests {
         assert!(*TASK_COUNT.lock().unwrap() < 10);
     }
 
-    #[test]
-    fn test_scheduler_schedule_execution_blocked() {
+    #[test_matrix(
+        [BlockVerification, BlockProduction]
+    )]
+    fn test_scheduler_schedule_execution_blocked_at_session_ending(
+        scheduling_mode: SchedulingMode,
+    ) {
         solana_logger::setup();
 
         const STALLED_TRANSACTION_INDEX: usize = 0;
@@ -2995,7 +3063,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(10_000);
+        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
 
         // tx0 and tx1 is definitely conflicting to write-lock the mint address
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -3014,17 +3082,53 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_dyn(
+        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
             None,
             None,
             None,
             None,
             ignored_prioritization_fee_cache,
         );
-        let context = SchedulingContext::for_verification(bank.clone());
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        let (exit, poh_recorder, poh_service, _signal_receiver) =
+            create_test_recorder_with_index_tracking(
+                bank.clone(),
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            );
 
-        assert_eq!(bank.transaction_count(), 0);
+        if matches!(scheduling_mode, BlockProduction) {
+            pool.register_banking_stage(
+                banking_packet_receiver,
+                Box::new(|_, _| unreachable!()),
+                poh_recorder.read().unwrap().new_recorder(),
+            );
+        }
+
+        // Wait until genesis_bank reaches its tick height...
+        while poh_recorder.read().unwrap().bank().is_some() {
+            sleep(Duration::from_millis(100));
+        }
+
+        let bank = Arc::new(Bank::new_from_parent(
+            bank.clone(),
+            &Pubkey::default(),
+            bank.slot().checked_add(1).unwrap(),
+        ));
+
+        // This variable tracks the cumulative count of transactions since genesis, which is
+        // incremented as test is progressed.
+        let mut current_transaction_count = Saturating(0);
+
+        assert_eq!(bank.transaction_count(), current_transaction_count.0);
+
+        let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context);
+        let old_scheduler_id = scheduler.id();
 
         // Stall handling tx0 and tx1
         let lock_to_stall = LOCK_TO_STALL.lock().unwrap();
@@ -3035,14 +3139,61 @@ mod tests {
             .schedule_execution(tx1, BLOCKED_TRANSACTION_INDEX)
             .unwrap();
 
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank(bank.clone_with_scheduler(), true);
+
         // Wait a bit for the scheduler thread to decide to block tx1
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
         // Resume handling by unlocking LOCK_TO_STALL
         drop(lock_to_stall);
-        let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-        assert_eq!(bank.transaction_count(), 2);
+
+        current_transaction_count += 1;
+        if matches!(scheduling_mode, BlockVerification) {
+            // Block verification scheduler should fully clear its blocked transactions before
+            // finishing.
+            current_transaction_count += 1;
+        }
+        assert_eq!(bank.transaction_count(), current_transaction_count.0);
+
+        // Wait until genesis_bank reaches its tick height...
+        while poh_recorder.read().unwrap().bank().is_some() {
+            sleep(Duration::from_millis(100));
+        }
+
+        // Create new bank to observe behavior difference around session ending
+        let bank = Arc::new(Bank::new_from_parent(
+            bank.clone_without_scheduler(),
+            &Pubkey::default(),
+            bank.slot().checked_add(1).unwrap(),
+        ));
+        assert_eq!(bank.transaction_count(), current_transaction_count.0);
+
+        let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
+        let scheduler = pool.take_scheduler(context);
+        // make sure the same scheduler is used to test its internal cross-session behavior
+        // regardless scheduling_mode.
+        assert_eq!(scheduler.id(), old_scheduler_id);
+
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank(bank.clone_with_scheduler(), true);
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+
+        if matches!(scheduling_mode, BlockProduction) {
+            // Block production scheduler should carry over transactions from previous bank
+            current_transaction_count += 1;
+        }
+        assert_eq!(bank.transaction_count(), current_transaction_count.0);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[test]
