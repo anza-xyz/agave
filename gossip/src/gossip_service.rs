@@ -2,12 +2,12 @@
 
 use {
     crate::{
-        cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
+        cluster_info::{ClusterInfo, EvictingSender, GOSSIP_CHANNEL_CAPACITY},
         cluster_info_metrics::submit_gossip_stats,
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
     },
-    crossbeam_channel::{bounded, Sender},
+    crossbeam_channel::Sender,
     rand::{thread_rng, Rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
@@ -50,7 +50,8 @@ impl GossipService {
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let (request_sender, request_receiver) = bounded(GOSSIP_CHANNEL_CAPACITY);
+        let (request_sender, request_receiver) =
+            EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let gossip_socket = Arc::new(gossip_socket);
         trace!(
             "GossipService: id: {}, listening on: {:?}",
@@ -71,14 +72,16 @@ impl GossipService {
             None,
             false,
         );
-        let (consume_sender, listen_receiver) = bounded(GOSSIP_CHANNEL_CAPACITY);
+        let (consume_sender, listen_receiver) =
+            EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
             bank_forks.clone(),
             request_receiver,
             consume_sender,
             exit.clone(),
         );
-        let (response_sender, response_receiver) = bounded(GOSSIP_CHANNEL_CAPACITY);
+        let (response_sender, response_receiver) =
+            EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_listen = cluster_info.clone().listen(
             bank_forks.clone(),
             listen_receiver,
