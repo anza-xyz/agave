@@ -653,7 +653,7 @@ impl SchedulingStateMachine {
         !self.unblocked_task_queue.is_empty()
     }
 
-    pub fn has_runnable_task(&mut self) -> bool {
+    pub fn has_runnable_task(&self) -> bool {
         self.is_task_runnable() && self.has_unblocked_task()
     }
 

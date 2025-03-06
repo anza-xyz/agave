@@ -751,9 +751,9 @@ where
         transaction_recorder: TransactionRecorder,
     ) {
         *self.banking_stage_handler_context.lock().unwrap() = Some(BankingStageHandlerContext {
+            banking_packet_receiver,
             block_production_handler_count,
             banking_stage_monitor,
-            banking_packet_receiver,
             banking_packet_handler,
             transaction_recorder,
         });
@@ -1475,10 +1475,25 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
     }
 
-    fn can_finish_session(mode: SchedulingMode, state_machine: &SchedulingStateMachine) -> bool {
+    fn can_receive_unblocked_task(
+        session_ending: bool,
+        mode: SchedulingMode,
+        state_machine: &SchedulingStateMachine,
+    ) -> bool {
         match mode {
-            BlockVerification => state_machine.has_no_active_task(),
-            BlockProduction => state_machine.has_no_executing_task(),
+            BlockVerification => state_machine.has_runnable_task(),
+            BlockProduction => !session_ending && state_machine.has_runnable_task(),
+        }
+    }
+
+    fn can_finish_session(
+        session_ending: bool,
+        mode: SchedulingMode,
+        state_machine: &SchedulingStateMachine,
+    ) -> bool {
+        match mode {
+            BlockVerification => session_ending && state_machine.has_no_active_task(),
+            BlockProduction => session_ending && state_machine.has_no_executing_task(),
         }
     }
 
@@ -1693,10 +1708,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // which isn't great and is inconsistent with `if`s in the Rust's match
                         // arm. So, eagerly binding the result to a variable unconditionally here
                         // makes no perf. difference...
-                        let dummy_unblocked_task_receiver = dummy_receiver(
-                            state_machine.has_runnable_task()
-                                && !(scheduling_mode == BlockProduction && session_ending),
-                        );
+                        let dummy_unblocked_task_receiver =
+                            dummy_receiver(Self::can_receive_unblocked_task(
+                                session_ending,
+                                scheduling_mode,
+                                &state_machine,
+                            ));
 
                         // There's something special called dummy_unblocked_task_receiver here.
                         // This odd pattern was needed to react to newly unblocked tasks from
@@ -1786,8 +1803,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                         };
 
-                        is_finished = session_ending
-                            && Self::can_finish_session(scheduling_mode, &state_machine);
+                        is_finished = Self::can_finish_session(
+                            session_ending,
+                            scheduling_mode,
+                            &state_machine,
+                        );
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
@@ -2336,6 +2356,7 @@ mod tests {
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         std::{
+            num::Saturating,
             sync::{atomic::Ordering, Arc, RwLock},
             thread::JoinHandle,
         },
@@ -3466,7 +3487,6 @@ mod tests {
         assert!(*TASK_COUNT.lock().unwrap() < 10);
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     #[test_matrix(
         [BlockVerification, BlockProduction]
     )]
@@ -3561,11 +3581,16 @@ mod tests {
             &Pubkey::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
-        let mut current_transaction_count = 0;
-        assert_eq!(bank.transaction_count(), current_transaction_count);
+
+        // This variable tracks the cumulative count of transactions since genesis, which is
+        // incremented as test is progressed.
+        let mut current_transaction_count = Saturating(0);
+
+        assert_eq!(bank.transaction_count(), current_transaction_count.0);
 
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
+        let old_scheduler_id = scheduler.id();
         if matches!(scheduling_mode, BlockProduction) {
             scheduler.unblock_scheduling();
         }
@@ -3598,7 +3623,7 @@ mod tests {
             // finishing.
             current_transaction_count += 1;
         }
-        assert_eq!(bank.transaction_count(), current_transaction_count);
+        assert_eq!(bank.transaction_count(), current_transaction_count.0);
 
         // Wait until genesis_bank reaches its tick height...
         while poh_recorder.read().unwrap().bank().is_some() {
@@ -3611,10 +3636,13 @@ mod tests {
             &Pubkey::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
-        assert_eq!(bank.transaction_count(), current_transaction_count);
+        assert_eq!(bank.transaction_count(), current_transaction_count.0);
 
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
+        // make sure the same scheduler is used to test its internal cross-session behavior
+        // regardless scheduling_mode.
+        assert_eq!(scheduler.id(), old_scheduler_id);
         if matches!(scheduling_mode, BlockProduction) {
             scheduler.unblock_scheduling();
         }
@@ -3630,7 +3658,7 @@ mod tests {
             // Block production scheduler should carry over transactions from previous bank
             current_transaction_count += 1;
         }
-        assert_eq!(bank.transaction_count(), current_transaction_count);
+        assert_eq!(bank.transaction_count(), current_transaction_count.0);
 
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
