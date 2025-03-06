@@ -406,6 +406,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("no_snapshots")
+            .long("no-snapshots")
+            .takes_value(false)
+            .conflicts_with_all(&["no_incremental_snapshots", "snapshot_interval_slots", "full_snapshot_interval_slots"])
+            .help("Disable all snapshot generation")
+    )
+    .arg(
         Arg::with_name("no_incremental_snapshots")
             .long("no-incremental-snapshots")
             .takes_value(false)
@@ -423,7 +430,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "Number of slots between generating snapshots. \
                  If incremental snapshots are enabled, this sets the incremental snapshot interval. \
                  If incremental snapshots are disabled, this sets the full snapshot interval. \
-                 Setting this to 0 disables all snapshots.",
+                 To disable all snapshot generation, see --no-snapshots.",
             ),
     )
     .arg(

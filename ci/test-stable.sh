@@ -56,20 +56,8 @@ test-stable-sbf)
   _ platform-tools-sdk/sbf/scripts/install.sh
 
   # SBF program tests
-  export SBF_OUT_DIR=target/sbpf-solana-solana/release
-  _ make -C programs/sbf test
+  _ make -C programs/sbf test-v0
 
-  # SBF program instruction count assertion
-  sbf_target_path=programs/sbf/target
-  mkdir -p $sbf_target_path/deploy
-  _ cargo test \
-    --manifest-path programs/sbf/Cargo.toml \
-    --features=sbf_c,sbf_rust assert_instruction_count \
-    -- --nocapture &> $sbf_target_path/deploy/instruction_counts.txt
-
-  sbf_dump_archive="sbf-dumps.tar.bz2"
-  rm -f "$sbf_dump_archive"
-  tar cjvf "$sbf_dump_archive" $sbf_target_path/{deploy/*.txt,sbpf-solana-solana/release/*.so}
   exit 0
   ;;
 test-docs)

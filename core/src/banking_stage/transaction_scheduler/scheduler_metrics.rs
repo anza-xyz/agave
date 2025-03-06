@@ -51,8 +51,10 @@ pub struct SchedulerCountMetricsInner {
 
     /// Number of transactions scheduled.
     pub num_scheduled: usize,
-    /// Number of transactions that were unschedulable.
-    pub num_unschedulable: usize,
+    /// Number of transactions that were unschedulable due to multiple conflicts.
+    pub num_unschedulable_conflicts: usize,
+    /// Number of transactions that were unschedulable due to thread capacity.
+    pub num_unschedulable_threads: usize,
     /// Number of transactions that were filtered out during scheduling.
     pub num_schedule_filtered_out: usize,
     /// Number of completed transactions received from workers.
@@ -114,7 +116,8 @@ impl SchedulerCountMetricsInner {
             ("num_received", self.num_received, i64),
             ("num_buffered", self.num_buffered, i64),
             ("num_scheduled", self.num_scheduled, i64),
-            ("num_unschedulable", self.num_unschedulable, i64),
+            ("num_unschedulable_conflicts", self.num_unschedulable_conflicts, i64),
+            ("num_unschedulable_threads", self.num_unschedulable_threads, i64),
             (
                 "num_schedule_filtered_out",
                 self.num_schedule_filtered_out,
@@ -158,7 +161,8 @@ impl SchedulerCountMetricsInner {
         self.num_received != 0
             || self.num_buffered != 0
             || self.num_scheduled != 0
-            || self.num_unschedulable != 0
+            || self.num_unschedulable_conflicts != 0
+            || self.num_unschedulable_threads != 0
             || self.num_schedule_filtered_out != 0
             || self.num_finished != 0
             || self.num_retryable != 0
@@ -175,7 +179,8 @@ impl SchedulerCountMetricsInner {
         self.num_received = 0;
         self.num_buffered = 0;
         self.num_scheduled = 0;
-        self.num_unschedulable = 0;
+        self.num_unschedulable_conflicts = 0;
+        self.num_unschedulable_threads = 0;
         self.num_schedule_filtered_out = 0;
         self.num_finished = 0;
         self.num_retryable = 0;

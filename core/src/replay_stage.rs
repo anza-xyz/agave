@@ -2413,47 +2413,18 @@ impl ReplayStage {
         let new_root = tower.record_bank_vote(bank);
 
         if let Some(new_root) = new_root {
-            // get the root bank before squash
-            let root_bank = bank_forks
-                .read()
-                .unwrap()
-                .get(new_root)
-                .expect("Root bank doesn't exist");
-            let mut rooted_banks = root_bank.parents();
-            let oldest_parent = rooted_banks.last().map(|last| last.parent_slot());
-            rooted_banks.push(root_bank.clone());
-            let rooted_slots: Vec<_> = rooted_banks.iter().map(|bank| bank.slot()).collect();
-            // The following differs from  rooted_slots by including the parent slot of the oldest parent bank.
-            let rooted_slots_with_parents = bank_notification_sender
-                .as_ref()
-                .is_some_and(|sender| sender.should_send_parents)
-                .then(|| {
-                    let mut new_chain = rooted_slots.clone();
-                    new_chain.push(oldest_parent.unwrap_or_else(|| bank.parent_slot()));
-                    new_chain
-                });
-
-            // Call leader schedule_cache.set_root() before blockstore.set_root() because
-            // bank_forks.root is consumed by repair_service to update gossip, so we don't want to
-            // get shreds for repair on gossip before we update leader schedule, otherwise they may
-            // get dropped.
-            leader_schedule_cache.set_root(rooted_banks.last().unwrap());
-            blockstore
-                .set_roots(rooted_slots.iter())
-                .expect("Ledger set roots failed");
-            let highest_super_majority_root = Some(
-                block_commitment_cache
-                    .read()
-                    .unwrap()
-                    .highest_super_majority_root(),
-            );
-            Self::handle_new_root(
+            Self::check_and_handle_new_root(
+                bank,
                 new_root,
                 bank_forks,
                 progress,
+                blockstore,
+                leader_schedule_cache,
                 accounts_background_request_sender,
-                highest_super_majority_root,
+                rpc_subscriptions,
+                block_commitment_cache,
                 heaviest_subtree_fork_choice,
+                bank_notification_sender,
                 duplicate_slots_tracker,
                 duplicate_confirmed_slots,
                 unfrozen_gossip_verified_vote_hashes,
@@ -2462,24 +2433,6 @@ impl ReplayStage {
                 epoch_slots_frozen_slots,
                 drop_bank_sender,
             )?;
-
-            blockstore.slots_stats.mark_rooted(new_root);
-
-            rpc_subscriptions.notify_roots(rooted_slots);
-            if let Some(sender) = bank_notification_sender {
-                sender
-                    .sender
-                    .send(BankNotification::NewRootBank(root_bank))
-                    .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
-
-                if let Some(new_chain) = rooted_slots_with_parents {
-                    sender
-                        .sender
-                        .send(BankNotification::NewRootedChain(new_chain))
-                        .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
-                }
-            }
-            info!("new root {}", new_root);
         }
 
         let mut update_commitment_cache_time = Measure::start("update_commitment_cache");
@@ -3655,10 +3608,10 @@ impl ReplayStage {
             return;
         }
         info!(
-            "Frozen bank vote state slot {:?}
-             is newer than our local vote state slot {:?},
-             adopting the bank vote state as our own.
-             Bank votes: {:?}, root: {:?},
+            "Frozen bank vote state slot {:?} \
+             is newer than our local vote state slot {:?}, \
+             adopting the bank vote state as our own. \
+             Bank votes: {:?}, root: {:?}, \
              Local votes: {:?}, root: {:?}",
             bank_vote_state.last_voted_slot(),
             tower.vote_state.last_voted_slot(),
@@ -3682,7 +3635,7 @@ impl ReplayStage {
                     .votes
                     .retain(|lockout| lockout.slot() > local_root);
                 info!(
-                    "Local root is larger than on chain root,
+                    "Local root is larger than on chain root, \
                      overwrote bank root {:?} and updated votes {:?}",
                     bank_vote_state.root_slot, bank_vote_state.votes
                 );
@@ -4059,6 +4012,95 @@ impl ReplayStage {
             }
         }
         duplicate_confirmed_forks
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_and_handle_new_root(
+        vote_bank: &Bank,
+        new_root: Slot,
+        bank_forks: &RwLock<BankForks>,
+        progress: &mut ProgressMap,
+        blockstore: &Blockstore,
+        leader_schedule_cache: &Arc<LeaderScheduleCache>,
+        accounts_background_request_sender: &AbsRequestSender,
+        rpc_subscriptions: &Arc<RpcSubscriptions>,
+        block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
+        heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
+        bank_notification_sender: &Option<BankNotificationSenderConfig>,
+        duplicate_slots_tracker: &mut DuplicateSlotsTracker,
+        duplicate_confirmed_slots: &mut DuplicateConfirmedSlots,
+        unfrozen_gossip_verified_vote_hashes: &mut UnfrozenGossipVerifiedVoteHashes,
+        has_new_vote_been_rooted: &mut bool,
+        voted_signatures: &mut Vec<Signature>,
+        epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
+        drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
+    ) -> Result<(), SetRootError> {
+        // get the root bank before squash
+        let root_bank = bank_forks
+            .read()
+            .unwrap()
+            .get(new_root)
+            .expect("Root bank doesn't exist");
+        let mut rooted_banks = root_bank.parents();
+        let oldest_parent = rooted_banks.last().map(|last| last.parent_slot());
+        rooted_banks.push(root_bank.clone());
+        let rooted_slots: Vec<_> = rooted_banks.iter().map(|bank| bank.slot()).collect();
+        // The following differs from rooted_slots by including the parent slot of the oldest parent bank.
+        let rooted_slots_with_parents = bank_notification_sender
+            .as_ref()
+            .is_some_and(|sender| sender.should_send_parents)
+            .then(|| {
+                let mut new_chain = rooted_slots.clone();
+                new_chain.push(oldest_parent.unwrap_or_else(|| vote_bank.parent_slot()));
+                new_chain
+            });
+
+        // Call leader schedule_cache.set_root() before blockstore.set_root() because
+        // bank_forks.root is consumed by repair_service to update gossip, so we don't want to
+        // get shreds for repair on gossip before we update leader schedule, otherwise they may
+        // get dropped.
+        leader_schedule_cache.set_root(rooted_banks.last().unwrap());
+        blockstore
+            .set_roots(rooted_slots.iter())
+            .expect("Ledger set roots failed");
+        let highest_super_majority_root = Some(
+            block_commitment_cache
+                .read()
+                .unwrap()
+                .highest_super_majority_root(),
+        );
+        Self::handle_new_root(
+            new_root,
+            bank_forks,
+            progress,
+            accounts_background_request_sender,
+            highest_super_majority_root,
+            heaviest_subtree_fork_choice,
+            duplicate_slots_tracker,
+            duplicate_confirmed_slots,
+            unfrozen_gossip_verified_vote_hashes,
+            has_new_vote_been_rooted,
+            voted_signatures,
+            epoch_slots_frozen_slots,
+            drop_bank_sender,
+        )?;
+        blockstore.slots_stats.mark_rooted(new_root);
+        rpc_subscriptions.notify_roots(rooted_slots);
+        if let Some(sender) = bank_notification_sender {
+            sender
+                .sender
+                .send(BankNotification::NewRootBank(root_bank))
+                .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
+
+            if let Some(new_chain) = rooted_slots_with_parents {
+                sender
+                    .sender
+                    .send(BankNotification::NewRootedChain(new_chain))
+                    .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
+            }
+        }
+        info!("new root {}", new_root);
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]

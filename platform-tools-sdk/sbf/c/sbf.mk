@@ -12,14 +12,25 @@ INC_DIRS ?=
 SRC_DIR ?= ./src
 TEST_PREFIX ?= test_
 OUT_DIR ?= ./out
+SBPF_CPU ?= v0
 OS := $(shell uname)
 
 LLVM_DIR = $(LOCAL_PATH)../dependencies/platform-tools/llvm
-LLVM_SYSTEM_INC_DIRS := $(LLVM_DIR)/lib/clang/17/include
-COMPILER_RT_DIR = $(LOCAL_PATH)../dependencies/platform-tools/rust/lib/rustlib/sbf-solana-solana/lib
-STD_INC_DIRS := $(LLVM_DIR)/include
-STD_LIB_DIRS := $(LLVM_DIR)/lib
+LLVM_SYSTEM_INC_DIRS := $(LLVM_DIR)/lib/clang/18/include
 
+ifeq "$(SBPF_CPU)" "v1"
+TARGET_NAME := sbpfv1
+else ifeq "$(SBPF_CPU)" "v2"
+TARGET_NAME := sbpfv2
+else
+TARGET_NAME := sbpf
+endif
+
+LLVM_TARGET := $(TARGET_NAME)-solana-solana
+
+COMPILER_RT_DIR = $(LOCAL_PATH)../dependencies/platform-tools/rust/lib/rustlib/$(LLVM_TARGET)/lib
+STD_INC_DIRS := $(LLVM_DIR)/$(TARGET_NAME)/include
+STD_LIB_DIRS := $(LLVM_DIR)/lib/$(TARGET_NAME)
 ifdef LLVM_DIR
 CC := $(LLVM_DIR)/bin/clang
 CXX := $(LLVM_DIR)/bin/clang++
@@ -65,6 +76,24 @@ SBF_CXX_FLAGS := \
   -fno-asynchronous-unwind-tables \
   -fno-unwind-tables
 
+ifeq "$(SBPF_CPU)" "v1"
+SBF_C_FLAGS := \
+  $(SBF_C_FLAGS) \
+  -mcpu=v1
+
+SBF_CXX_FLAGS := \
+  $(SBF_CXX_FLAGS) \
+  -mcpu=v1
+else ifeq "$(SBPF_CPU)" "v2"
+SBF_C_FLAGS := \
+  $(SBF_C_FLAGS) \
+  -mcpu=v2
+
+SBF_CXX_FLAGS := \
+  $(SBF_CXX_FLAGS) \
+  -mcpu=v2
+endif
+
 SBF_LLD_FLAGS := \
   -z notext \
   -shared \
@@ -73,12 +102,6 @@ SBF_LLD_FLAGS := \
   --entry entrypoint \
   -L $(STD_LIB_DIRS) \
   -lc \
-
-ifeq ($(SOL_SBPFV3),1)
-SBF_LLD_FLAGS := \
-  $(SBF_LLD_FLAGS) \
-  --pack-dyn-relocs=relr
-endif
 
 OBJ_DUMP_FLAGS := \
   --source \
@@ -139,6 +162,8 @@ help:
 	@echo '      OUT_DIR=$(OUT_DIR)'
 	@echo '    - Location of LLVM:'
 	@echo '      LLVM_DIR=$(LLVM_DIR)'
+	@echo '    - Version of SBPF (v0, v1 or v2):'
+	@echo '      SBPF_CPU=$(SBPF_CPU)'
 	@echo ''
 	@echo 'Usage:'
 	@echo '  - make help - This help message'

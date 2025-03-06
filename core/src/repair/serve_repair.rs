@@ -503,8 +503,8 @@ impl ServeRepair {
                     error!("Unexpected legacy request: {request:?}");
                     debug_assert!(
                         false,
-                        "Legacy requests should have been filtered out during signature
-                        verification. {request:?}"
+                        "Legacy requests should have been filtered out during signature \
+                         verification. {request:?}"
                     );
                     (None, "Legacy")
                 }
@@ -958,8 +958,8 @@ impl ServeRepair {
                     error!("Unexpected legacy request: {request:?}");
                     debug_assert!(
                         false,
-                        "Legacy requests should have been filtered out during signature
-                        verification. {request:?}"
+                        "Legacy requests should have been filtered out during signature \
+                         verification. {request:?}"
                     );
                     None
                 }

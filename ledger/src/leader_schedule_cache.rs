@@ -134,7 +134,7 @@ impl LeaderScheduleCache {
                 let num_slots = bank.get_slots_in_epoch(k) as usize;
                 let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(k);
                 leader_schedule
-                    .get_indices(pubkey, offset)
+                    .get_leader_upcoming_slots(pubkey, offset)
                     .take_while(move |i| *i < num_slots)
                     .map(move |i| i as Slot + first_slot)
             })
@@ -253,6 +253,7 @@ mod tests {
                 create_genesis_config_with_leader, GenesisConfigInfo,
             },
             get_tmp_ledger_path_auto_delete,
+            leader_schedule::IdentityKeyedLeaderSchedule,
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
         crossbeam_channel::unbounded,
@@ -306,10 +307,13 @@ mod tests {
 
     #[test]
     fn test_retain_latest() {
-        let mut cached_schedules = HashMap::new();
+        let mut cached_schedules: HashMap<Epoch, Arc<LeaderSchedule>> = HashMap::new();
         let mut order = VecDeque::new();
         for i in 0..=MAX_SCHEDULES {
-            cached_schedules.insert(i as u64, Arc::new(LeaderSchedule::default()));
+            cached_schedules.insert(
+                i as u64,
+                Arc::new(Box::new(IdentityKeyedLeaderSchedule::default())),
+            );
             order.push_back(i as u64);
         }
         LeaderScheduleCache::retain_latest(&mut cached_schedules, &mut order, MAX_SCHEDULES);

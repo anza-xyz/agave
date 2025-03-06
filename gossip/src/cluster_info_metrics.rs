@@ -13,6 +13,21 @@ use {
     },
 };
 
+/// A metric that records the maximum value between reporting intervals.
+#[derive(Default)]
+pub(crate) struct Max(AtomicU64);
+
+impl Max {
+    /// Max the given value against the current maximum, retaining the greater of the two.
+    pub(crate) fn max_relaxed(&self, x: u64) {
+        self.0.fetch_max(x, Ordering::Relaxed);
+    }
+
+    fn clear(&self) -> u64 {
+        self.0.swap(0, Ordering::Relaxed)
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Counter(AtomicU64);
 
@@ -111,12 +126,14 @@ pub struct GossipStats {
     pub(crate) gossip_pull_request_sent_bytes: Counter,
     pub(crate) gossip_transmit_loop_iterations_since_last_report: Counter,
     pub(crate) gossip_transmit_loop_time: Counter,
+    pub(crate) gossip_transmit_packets_dropped_count: Counter,
     pub(crate) handle_batch_ping_messages_time: Counter,
     pub(crate) handle_batch_pong_messages_time: Counter,
     pub(crate) handle_batch_prune_messages_time: Counter,
     pub(crate) handle_batch_pull_requests_time: Counter,
     pub(crate) handle_batch_pull_responses_time: Counter,
     pub(crate) handle_batch_push_messages_time: Counter,
+    pub(crate) listen_packet_buf_capacity: Max,
     pub(crate) new_pull_requests: Counter,
     pub(crate) new_push_requests2: Counter,
     pub(crate) new_push_requests: Counter,
@@ -161,6 +178,7 @@ pub struct GossipStats {
     pub(crate) skip_pull_response_shred_version: Counter,
     pub(crate) skip_pull_shred_version: Counter,
     pub(crate) skip_push_message_shred_version: Counter,
+    pub(crate) socket_consume_packet_buf_capacity: Max,
     pub(crate) trim_crds_table: Counter,
     pub(crate) trim_crds_table_failed: Counter,
     pub(crate) trim_crds_table_purged_values_count: Counter,
@@ -432,6 +450,11 @@ pub(crate) fn submit_gossip_stats(
             i64
         ),
         (
+            "gossip_transmit_packets_dropped_count",
+            stats.gossip_transmit_packets_dropped_count.clear(),
+            i64
+        ),
+        (
             "gossip_transmit_loop_iterations_since_last_report",
             stats
                 .gossip_transmit_loop_iterations_since_last_report
@@ -602,6 +625,16 @@ pub(crate) fn submit_gossip_stats(
         (
             "trim_crds_table_purged_values_count",
             stats.trim_crds_table_purged_values_count.clear(),
+            i64
+        ),
+        (
+            "listen_packet_buf_capacity",
+            stats.listen_packet_buf_capacity.clear(),
+            i64
+        ),
+        (
+            "socket_consume_packet_buf_capacity",
+            stats.socket_consume_packet_buf_capacity.clear(),
             i64
         ),
     );

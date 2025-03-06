@@ -7,7 +7,7 @@ use {
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
+    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
     itertools::Itertools,
     solana_packet::Packet,
@@ -61,6 +61,7 @@ pub struct StreamerReceiveStats {
     pub packet_batches_count: AtomicUsize,
     pub full_packet_batches_count: AtomicUsize,
     pub max_channel_len: AtomicUsize,
+    pub num_packets_dropped: AtomicUsize,
 }
 
 impl StreamerReceiveStats {
@@ -71,6 +72,7 @@ impl StreamerReceiveStats {
             packet_batches_count: AtomicUsize::default(),
             full_packet_batches_count: AtomicUsize::default(),
             max_channel_len: AtomicUsize::default(),
+            num_packets_dropped: AtomicUsize::default(),
         }
     }
 
@@ -95,6 +97,11 @@ impl StreamerReceiveStats {
             (
                 "channel_len",
                 self.max_channel_len.swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
+            (
+                "num_packets_dropped",
+                self.num_packets_dropped.swap(0, Ordering::Relaxed) as i64,
                 i64
             ),
         );
@@ -153,7 +160,9 @@ fn recv_loop(
                     packet_batch
                         .iter_mut()
                         .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
-                    packet_batch_sender.send(packet_batch)?;
+                    if let Err(TrySendError::Full(_)) = packet_batch_sender.try_send(packet_batch) {
+                        stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
+                    }
                 }
                 break;
             }

@@ -226,7 +226,7 @@ impl ClusterNodes<RetransmitStage> {
         shred: &ShredId,
         fanout: usize,
         socket_addr_space: &SocketAddrSpace,
-    ) -> Result<(/*root_distance:*/ usize, Vec<SocketAddr>), Error> {
+    ) -> Result<(/*root_distance:*/ u8, Vec<SocketAddr>), Error> {
         // Exclude slot leader from list of nodes.
         if slot_leader == &self.pubkey {
             return Err(Error::Loopback {
@@ -596,7 +596,7 @@ pub(crate) fn get_broadcast_protocol(_: &ShredId) -> Protocol {
 }
 
 #[inline]
-fn get_root_distance(index: usize, fanout: usize) -> usize {
+fn get_root_distance(index: usize, fanout: usize) -> u8 {
     if index == 0 {
         0
     } else if index <= fanout {

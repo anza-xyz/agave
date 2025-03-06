@@ -11,10 +11,8 @@ use {
         blockstore,
         shred::{shred_code, ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder},
     },
-    solana_sdk::{
-        genesis_config::ClusterType, hash::Hash, signature::Keypair, timing::AtomicInterval,
-    },
-    std::{sync::RwLock, time::Duration},
+    solana_sdk::{hash::Hash, signature::Keypair, timing::AtomicInterval},
+    std::{borrow::Cow, sync::RwLock, time::Duration},
     tokio::sync::mpsc::Sender as AsyncSender,
 };
 
@@ -76,7 +74,6 @@ impl StandardBroadcastRun {
         &mut self,
         keypair: &Keypair,
         max_ticks_in_slot: u8,
-        cluster_type: ClusterType,
         stats: &mut ProcessShredsStats,
     ) -> Vec<Shred> {
         if self.completed {
@@ -91,8 +88,7 @@ impl StandardBroadcastRun {
                     keypair,
                     &[],  // entries
                     true, // is_last_in_slot,
-                    should_chain_merkle_shreds(self.slot, cluster_type)
-                        .then_some(self.chained_merkle_root),
+                    Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
                     &self.reed_solomon_cache,
@@ -115,7 +111,6 @@ impl StandardBroadcastRun {
         entries: &[Entry],
         reference_tick: u8,
         is_slot_end: bool,
-        cluster_type: ClusterType,
         process_stats: &mut ProcessShredsStats,
         max_data_shreds_per_slot: u32,
         max_code_shreds_per_slot: u32,
@@ -127,8 +122,7 @@ impl StandardBroadcastRun {
                     keypair,
                     entries,
                     is_slot_end,
-                    should_chain_merkle_shreds(self.slot, cluster_type)
-                        .then_some(self.chained_merkle_root),
+                    Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
                     &self.reed_solomon_cache,
@@ -193,17 +187,12 @@ impl StandardBroadcastRun {
         let mut process_stats = ProcessShredsStats::default();
 
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
-        let cluster_type = bank.cluster_type();
 
         if self.slot != bank.slot() {
             // Finish previous slot if it was interrupted.
             if !self.completed {
-                let shreds = self.finish_prev_slot(
-                    keypair,
-                    bank.ticks_per_slot() as u8,
-                    cluster_type,
-                    &mut process_stats,
-                );
+                let shreds =
+                    self.finish_prev_slot(keypair, bank.ticks_per_slot() as u8, &mut process_stats);
                 debug_assert!(shreds.iter().all(|shred| shred.slot() == self.slot));
                 // Broadcast shreds for the interrupted slot.
                 let batch_info = Some(BroadcastShredBatchInfo {
@@ -270,7 +259,6 @@ impl StandardBroadcastRun {
                 &receive_results.entries,
                 reference_tick as u8,
                 is_last_in_slot,
-                cluster_type,
                 &mut process_stats,
                 blockstore::MAX_DATA_SHREDS_PER_SLOT as u32,
                 shred_code::MAX_CODE_SHREDS_PER_SLOT as u32,
@@ -288,8 +276,8 @@ impl StandardBroadcastRun {
         if let Some(shred) = shreds.iter().find(|shred| shred.is_data()) {
             if shred.index() == 0 {
                 blockstore
-                    .insert_shreds(
-                        [shred.clone()],
+                    .insert_cow_shreds(
+                        [Cow::Borrowed(shred)],
                         None, // leader_schedule
                         true, // is_trusted
                     )
@@ -343,17 +331,17 @@ impl StandardBroadcastRun {
     ) {
         // Insert shreds into blockstore
         let insert_shreds_start = Instant::now();
-        let mut shreds = Arc::unwrap_or_clone(shreds);
         // The first data shred is inserted synchronously.
         // https://github.com/solana-labs/solana/blob/92a0b310c/turbine/src/broadcast_stage/standard_broadcast_run.rs#L268-L283
-        if let Some(shred) = shreds.first() {
-            if shred.is_data() && shred.index() == 0 {
-                shreds.swap_remove(0);
-            }
-        }
+        let offset = shreds
+            .first()
+            .map(|shred| shred.is_data() && shred.index() == 0)
+            .map(usize::from)
+            .unwrap_or_default();
         let num_shreds = shreds.len();
+        let shreds = shreds.iter().skip(offset).map(Cow::Borrowed);
         blockstore
-            .insert_shreds(
+            .insert_cow_shreds(
                 shreds, /*leader_schedule:*/ None, /*is_trusted:*/ true,
             )
             .expect("Failed to insert shreds in blockstore");
@@ -483,16 +471,6 @@ impl BroadcastRun for StandardBroadcastRun {
     }
 }
 
-fn should_chain_merkle_shreds(slot: Slot, cluster_type: ClusterType) -> bool {
-    match cluster_type {
-        ClusterType::Development => true,
-        ClusterType::Devnet => true,
-        // Roll out chained Merkle shreds to ~53% of mainnet slots.
-        ClusterType::MainnetBeta => slot % 19 < 10,
-        ClusterType::Testnet => true,
-    }
-}
-
 #[cfg(test)]
 mod test {
     use {
@@ -580,7 +558,6 @@ mod test {
         let shreds = run.finish_prev_slot(
             &keypair,
             0, // max_ticks_in_slot
-            ClusterType::Development,
             &mut ProcessShredsStats::default(),
         );
         assert!(run.completed);
@@ -830,7 +807,6 @@ mod test {
                 &entries[0..entries.len() - 2],
                 0,
                 false,
-                ClusterType::Development,
                 &mut stats,
                 1000,
                 1000,
@@ -842,16 +818,7 @@ mod test {
         assert!(!data.is_empty());
         assert!(!coding.is_empty());
 
-        let r = bs.entries_to_shreds(
-            &keypair,
-            &entries,
-            0,
-            false,
-            ClusterType::Development,
-            &mut stats,
-            10,
-            10,
-        );
+        let r = bs.entries_to_shreds(&keypair, &entries, 0, false, &mut stats, 10, 10);
         info!("{:?}", r);
         assert_matches!(r, Err(BroadcastError::TooManyShreds));
     }

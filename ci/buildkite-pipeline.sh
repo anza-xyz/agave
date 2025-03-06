@@ -226,7 +226,6 @@ all_test_steps() {
   - command: "ci/docker-run-default-image.sh ci/test-stable-sbf.sh"
     name: "stable-sbf"
     timeout_in_minutes: 35
-    artifact_paths: "sbf-dumps.tar.bz2"
     agents:
       queue: "solana"
 EOF

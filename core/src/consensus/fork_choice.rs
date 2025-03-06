@@ -144,16 +144,13 @@ fn recheck_fork_decision_failed_switch_threshold(
     // then there will be no blocks to include the votes for slot 4, and the network halts
     // because 90% of validators can't vote
     info!(
-        "Waiting to switch vote to {},
-        resetting to slot {:?} for now,
-        switch proof stake: {},
-        threshold stake: {},
-        total stake: {}",
-        heaviest_bank_slot,
+        "Waiting to switch vote to {heaviest_bank_slot}, \
+        resetting to slot {:?} for now, \
+        switch proof stake: {switch_proof_stake}, \
+        threshold stake: {}, \
+        total stake: {total_stake}",
         reset_bank.as_ref().map(|b| b.slot()),
-        switch_proof_stake,
         total_stake as f64 * SWITCH_FORK_THRESHOLD,
-        total_stake
     );
     failure_reasons.push(HeaviestForkFailures::FailedSwitchThreshold(
         heaviest_bank_slot,

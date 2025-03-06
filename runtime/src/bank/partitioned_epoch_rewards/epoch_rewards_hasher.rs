@@ -47,8 +47,8 @@ mod tests {
 
         let total = stake_rewards
             .iter()
-            .map(|stake_reward| stake_reward.stake_reward_info.lamports)
-            .sum::<i64>();
+            .map(|stake_reward| stake_reward.stake_reward)
+            .sum::<u64>();
 
         let stake_rewards_in_bucket =
             hash_rewards_into_partitions(stake_rewards.clone(), &Hash::default(), 5);
@@ -60,8 +60,8 @@ mod tests {
         let total_after_hash_partition = stake_rewards_in_bucket
             .iter()
             .flatten()
-            .map(|stake_reward| stake_reward.stake_reward_info.lamports)
-            .sum::<i64>();
+            .map(|stake_reward| stake_reward.stake_reward)
+            .sum::<u64>();
 
         let total_num_after_hash_partition: usize =
             stake_rewards_in_bucket.iter().map(|x| x.len()).sum();
@@ -83,8 +83,8 @@ mod tests {
         let total_after_hash_partition = stake_rewards_in_bucket
             .iter()
             .flatten()
-            .map(|stake_reward| stake_reward.stake_reward_info.lamports)
-            .sum::<i64>();
+            .map(|stake_reward| stake_reward.stake_reward)
+            .sum::<u64>();
 
         assert_eq!(total, total_after_hash_partition);
 
