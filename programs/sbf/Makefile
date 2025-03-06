@@ -8,10 +8,13 @@ clean-all: clean
 test:
 	SBF_OUT_DIR=$(OUT_DIR) cargo test --features="sbf_rust,sbf_c" $(TEST_ARGS)
 
+test-v0: all rust-v0 test
+
 test-v1:
 	VER=v1 $(MAKE) test-version
 
-test-v0: all rust-v0 test
+test-v2:
+	VER=v2 $(MAKE) test-version
 
 test-version:
 	SBPF_CPU=$(VER) $(MAKE) all; \
