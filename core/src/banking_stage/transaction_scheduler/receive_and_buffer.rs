@@ -688,7 +688,57 @@ fn calculate_max_age(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        crate::banking_stage::tests::create_slow_genesis_config,
+        crossbeam_channel::{unbounded, Receiver},
+        solana_ledger::genesis_utils::GenesisConfigInfo,
+        solana_sdk::signature::Keypair,
+        test_case::test_case,
+    };
+
+    fn test_bank_forks() -> (Arc<RwLock<BankForks>>, Keypair) {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(u64::MAX);
+
+        let (_bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        (bank_forks, mint_keypair)
+    }
+
+    const TEST_CONTAINER_CAPACITY: usize = 100;
+
+    fn setup_sanitized_transaction_receive_and_buffer(
+        receiver: Receiver<BankingPacketBatch>,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> (
+        SanitizedTransactionReceiveAndBuffer,
+        TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+    ) {
+        let receive_and_buffer = SanitizedTransactionReceiveAndBuffer {
+            packet_receiver: PacketDeserializer::new(receiver),
+            bank_forks,
+        };
+        let container = TransactionStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
+        (receive_and_buffer, container)
+    }
+
+    fn setup_transaction_view_receive_and_buffer(
+        receiver: Receiver<BankingPacketBatch>,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> (
+        TransactionViewReceiveAndBuffer,
+        TransactionViewStateContainer,
+    ) {
+        let receive_and_buffer = TransactionViewReceiveAndBuffer {
+            receiver,
+            bank_forks,
+        };
+        let container = TransactionViewStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
+        (receive_and_buffer, container)
+    }
 
     #[test]
     fn test_calculate_max_age() {
@@ -713,5 +763,30 @@ mod tests {
                 alt_invalidation_slot: current_slot + solana_sdk::slot_hashes::get_entries() as u64,
             }
         );
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_disconnected_channel<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, _mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks);
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        drop(sender); // disconnect channel
+        let r = receive_and_buffer.receive_and_buffer_packets(
+            &mut container,
+            &mut timing_metrics,
+            &mut count_metrics,
+            &BufferedPacketsDecision::Hold,
+        );
+        assert!(r.is_err());
     }
 }
