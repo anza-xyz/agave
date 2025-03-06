@@ -221,29 +221,6 @@ impl GossipStats {
         .add_relaxed(1);
         Some(protocol)
     }
-
-    // Updates metrics from count of dropped packets.
-    pub(crate) fn record_dropped_packets(&self, counts: &[u64; 7]) -> u64 {
-        let num_packets_dropped = counts.iter().sum::<u64>();
-        if num_packets_dropped > 0u64 {
-            self.gossip_packets_dropped_count
-                .add_relaxed(num_packets_dropped);
-            self.packets_received_pull_requests_count
-                .add_relaxed(counts[0]);
-            self.packets_received_pull_responses_count
-                .add_relaxed(counts[1]);
-            self.packets_received_push_messages_count
-                .add_relaxed(counts[2]);
-            self.packets_received_prune_messages_count
-                .add_relaxed(counts[3]);
-            self.packets_received_ping_messages_count
-                .add_relaxed(counts[4]);
-            self.packets_received_pong_messages_count
-                .add_relaxed(counts[5]);
-            self.packets_received_unknown_count.add_relaxed(counts[6]);
-        }
-        num_packets_dropped
-    }
 }
 
 pub(crate) fn submit_gossip_stats(
