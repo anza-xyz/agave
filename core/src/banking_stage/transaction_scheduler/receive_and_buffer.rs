@@ -695,7 +695,7 @@ mod tests {
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_perf::packet::to_packet_batches,
         solana_pubkey::Pubkey,
-        solana_sdk::{signature::Keypair, system_transaction::transfer},
+        solana_sdk::{hash::Hash, signature::Keypair, system_transaction::transfer},
         test_case::test_case,
     };
 
@@ -843,6 +843,38 @@ mod tests {
                 &mut timing_metrics,
                 &mut count_metrics,
                 &BufferedPacketsDecision::Forward, // no packets should be held
+            )
+            .unwrap();
+
+        assert_eq!(num_received, 1);
+        verify_container(&mut container, 0);
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_invalid_blockhash<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let transaction = transfer(&mint_keypair, &Pubkey::new_unique(), 1, Hash::new_unique());
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Hold,
             )
             .unwrap();
 
