@@ -1378,9 +1378,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.1.19"
+version = "1.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d74707dde2ba56f86ae90effb3b43ddd369504387e718014de010cec7959800"
+checksum = "be714c154be609ec7f5dad223a33bf1482fff90472de28f7362806e6d4832b8c"
 dependencies = [
  "jobserver",
  "libc",
@@ -4943,7 +4943,7 @@ dependencies = [
  "bytes",
  "getrandom 0.2.15",
  "rand 0.8.5",
- "ring 0.17.3",
+ "ring 0.17.12",
  "rustc-hash 2.0.0",
  "rustls 0.23.23",
  "rustls-pki-types",
@@ -5308,16 +5308,16 @@ dependencies = [
 
 [[package]]
 name = "ring"
-version = "0.17.3"
+version = "0.17.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9babe80d5c16becf6594aa32ad2be8fe08498e7ae60b77de8df700e67f191d7e"
+checksum = "ed9b823fa29b721a59671b41d6b06e66b29e0628e207e8b1c3ceeda701ec928d"
 dependencies = [
  "cc",
+ "cfg-if 1.0.0",
  "getrandom 0.2.15",
  "libc",
- "spin 0.9.8",
  "untrusted 0.9.0",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5425,7 +5425,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e"
 dependencies = [
  "log",
- "ring 0.17.3",
+ "ring 0.17.12",
  "rustls-webpki 0.101.7",
  "sct",
 ]
@@ -5437,7 +5437,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47796c98c480fce5406ef69d1c76378375492c3b0a0de587be0c1d9feb12f395"
 dependencies = [
  "once_cell",
- "ring 0.17.3",
+ "ring 0.17.12",
  "rustls-pki-types",
  "rustls-webpki 0.102.8",
  "subtle",
@@ -5518,7 +5518,7 @@ version = "0.101.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
- "ring 0.17.3",
+ "ring 0.17.12",
  "untrusted 0.9.0",
 ]
 
@@ -5528,7 +5528,7 @@ version = "0.102.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
 dependencies = [
- "ring 0.17.3",
+ "ring 0.17.12",
  "rustls-pki-types",
  "untrusted 0.9.0",
 ]
