@@ -7902,6 +7902,7 @@ dependencies = [
 name = "solana-gossip"
 version = "2.3.0"
 dependencies = [
+ "arrayvec",
  "assert_matches",
  "bincode",
  "bs58",

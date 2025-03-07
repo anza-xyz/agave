@@ -5,6 +5,7 @@ use {
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
     },
+    arrayvec::ArrayVec,
     bincode::serialize,
     rand::Rng,
     serde::de::{Deserialize, Deserializer},
@@ -15,11 +16,7 @@ use {
     solana_sanitize::{Sanitize, SanitizeError},
     solana_signature::Signature,
     solana_signer::Signer,
-    std::{
-        borrow::{Borrow, Cow},
-        io::Cursor,
-        mem::MaybeUninit,
-    },
+    std::borrow::{Borrow, Cow},
 };
 
 /// CrdsValue that is replicated across the cluster
@@ -234,15 +231,10 @@ impl<'de> Deserialize<'de> for CrdsValue {
         let CrdsValue { signature, data } = CrdsValue::deserialize(deserializer)?;
         // To compute the hash of the received CrdsData we need to re-serialize it
         // PACKET_DATA_SIZE is always enough since we have just received the value in a packet
-        let mut buffer: MaybeUninit<[u8; PACKET_DATA_SIZE]> = MaybeUninit::uninit();
-        // SAFETY: we are only using this buffer to store serialize results
-        let buf_ref = unsafe { buffer.assume_init_mut() };
-        let position = {
-            let mut cursor = Cursor::new(buf_ref.as_mut());
-            bincode::serialize_into(&mut cursor, &data).map_err(serde::de::Error::custom)?;
-            cursor.position() as usize
-        };
-        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &buf_ref[0..position]]);
+        // ArrayVec allows us to write serialized data into stack memory without initializing it
+        let mut buffer = ArrayVec::<u8, PACKET_DATA_SIZE>::new();
+        bincode::serialize_into(&mut buffer, &data).map_err(serde::de::Error::custom)?;
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &buffer]);
         Ok(Self {
             signature,
             data,
