@@ -1,8 +1,9 @@
 use {
+    super::scheduler::SchedulingSummary,
     itertools::MinMaxResult,
     solana_poh::poh_recorder::BankStart,
     solana_sdk::{clock::Slot, timing::AtomicInterval},
-    std::time::Instant,
+    std::time::{Duration, Instant},
 };
 
 #[derive(Default)]
@@ -400,5 +401,113 @@ impl SchedulerLeaderDetectionMetrics {
                 i64
             ),
         );
+    }
+}
+
+pub struct SchedulingDetails {
+    pub last_report: Instant,
+    pub num_schedule_calls: usize,
+
+    pub min_starting_queue_size: usize,
+    pub max_starting_queue_size: usize,
+    pub sum_starting_queue_size: usize, // div for report
+
+    pub min_starting_buffer_size: usize,
+    pub max_starting_buffer_size: usize,
+    pub sum_starting_buffer_size: usize, // div for report
+
+    pub sum_num_scheduled: usize,
+    pub sum_unschedulable_conflicts: usize,
+    pub sum_unschedulable_threads: usize,
+}
+
+impl Default for SchedulingDetails {
+    fn default() -> Self {
+        Self {
+            last_report: Instant::now(),
+            num_schedule_calls: 0,
+            min_starting_queue_size: 0,
+            max_starting_queue_size: 0,
+            sum_starting_queue_size: 0,
+            min_starting_buffer_size: 0,
+            max_starting_buffer_size: 0,
+            sum_starting_buffer_size: 0,
+            sum_num_scheduled: 0,
+            sum_unschedulable_conflicts: 0,
+            sum_unschedulable_threads: 0,
+        }
+    }
+}
+
+impl SchedulingDetails {
+    pub fn update(&mut self, scheduling_summary: &SchedulingSummary) {
+        self.num_schedule_calls += 1;
+
+        self.min_starting_queue_size = self
+            .min_starting_queue_size
+            .min(scheduling_summary.starting_queue_size);
+        self.max_starting_queue_size = self
+            .max_starting_queue_size
+            .max(scheduling_summary.starting_queue_size);
+        self.sum_starting_queue_size += scheduling_summary.starting_queue_size;
+
+        self.min_starting_buffer_size = self
+            .min_starting_buffer_size
+            .min(scheduling_summary.starting_buffer_size);
+        self.max_starting_buffer_size = self
+            .max_starting_buffer_size
+            .max(scheduling_summary.starting_buffer_size);
+        self.sum_starting_buffer_size += scheduling_summary.starting_buffer_size;
+
+        self.sum_num_scheduled += scheduling_summary.num_scheduled;
+        self.sum_unschedulable_conflicts += scheduling_summary.num_unschedulable_conflicts;
+        self.sum_unschedulable_threads += scheduling_summary.num_unschedulable_threads;
+    }
+
+    pub fn maybe_report(&mut self) {
+        const REPORT_INTERVAL: Duration = Duration::from_millis(20);
+        let now = Instant::now();
+        if self.last_report.duration_since(now) > REPORT_INTERVAL {
+            self.last_report = now;
+            if self.num_schedule_calls > 0 {
+                let avg_starting_queue_size =
+                    self.sum_starting_queue_size / self.num_schedule_calls;
+                let avg_starting_buffer_size =
+                    self.sum_starting_buffer_size / self.num_schedule_calls;
+                datapoint_info!(
+                    "scheduling_details",
+                    ("num_schedule_calls", self.num_schedule_calls, i64),
+                    ("min_starting_queue_size", self.min_starting_queue_size, i64),
+                    ("max_starting_queue_size", self.max_starting_queue_size, i64),
+                    ("avg_starting_queue_size", avg_starting_queue_size, i64),
+                    (
+                        "min_starting_buffer_size",
+                        self.min_starting_buffer_size,
+                        i64
+                    ),
+                    (
+                        "max_starting_buffer_size",
+                        self.max_starting_buffer_size,
+                        i64
+                    ),
+                    ("avg_starting_buffer_size", avg_starting_buffer_size, i64),
+                    ("num_scheduled", self.sum_num_scheduled, i64),
+                    (
+                        "num_unschedulable_conflicts",
+                        self.sum_unschedulable_conflicts,
+                        i64
+                    ),
+                    (
+                        "num_unschedulable_threads",
+                        self.sum_unschedulable_threads,
+                        i64
+                    ),
+                );
+                *self = Self {
+                    last_report: now,
+                    ..Self::default()
+                }
+            }
+        }
     }
 }
