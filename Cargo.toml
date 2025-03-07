@@ -328,7 +328,7 @@ rayon = "1.10.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.11.1"
 reqwest = { version = "0.12.12", default-features = false }
-reqwest-middleware = "0.2.5"
+reqwest-middleware = "0.4.1"
 rolling-file = "0.2.0"
 rpassword = "7.3"
 rustls = { version = "0.23.23", features = ["std"], default-features = false }
