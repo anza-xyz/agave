@@ -657,24 +657,22 @@ pub fn process_deploy_program(
         upload_range.start.unwrap_or(0)..upload_range.end.unwrap_or(program_data.len());
     const MAX_LEN: usize =
         (MAX_PERMITTED_DATA_LENGTH as usize).saturating_sub(LoaderV4State::program_data_offset());
-    assert!(
-        program_data.len() <= MAX_LEN,
-        "Program length {} exeeds maximum length {}",
-        program_data.len(),
-        MAX_LEN,
-    );
-    assert!(
-        upload_range.start < upload_range.end,
-        "Range {}..{} is empty",
-        upload_range.start,
-        upload_range.end,
-    );
-    assert!(
-        upload_range.end <= program_data.len(),
-        "Range end {} exeeds program length {}",
-        upload_range.end,
-        program_data.len(),
-    );
+    if program_data.len() > MAX_LEN {
+        return Err(format!(
+            "Program length {} exeeds maximum length {}",
+            program_data.len(),
+            MAX_LEN,
+        )
+        .into());
+    }
+    if upload_range.end > program_data.len() {
+        return Err(format!(
+            "Range end {} exeeds program length {}",
+            upload_range.end,
+            program_data.len(),
+        )
+        .into());
+    }
     let executable =
         Executable::<InvokeContext>::from_elf(program_data, Arc::new(program_runtime_environment))
             .map_err(|err| format!("ELF error: {err}"))?;
@@ -732,44 +730,46 @@ pub fn process_deploy_program(
         }
     }
 
-    // Create and add set_program_length message
-    if let Some(buffer_account) = buffer_account.as_ref() {
-        let (set_program_length_instructions, _lamports_required) =
-            build_set_program_length_instructions(
-                rpc_client.clone(),
-                config,
-                auth_signer_index,
-                buffer_account,
-                &buffer_address,
-                program_data.len() as u32,
-            )?;
-        if !set_program_length_instructions.is_empty() {
-            initial_messages.push(set_program_length_instructions);
-        }
-    }
-
-    // Create and add write messages
     let mut write_messages = vec![];
-    let first_write_message = Message::new(
-        &[instruction::write(
-            &buffer_address,
-            &authority_pubkey,
-            0,
-            Vec::new(),
-        )],
-        Some(&payer_pubkey),
-    );
-    let chunk_size = calculate_max_chunk_size(first_write_message);
-    for (chunk, i) in program_data[upload_range.clone()]
-        .chunks(chunk_size)
-        .zip(0usize..)
-    {
-        write_messages.push(vec![instruction::write(
-            &buffer_address,
-            &authority_pubkey,
-            (upload_range.start as u32).saturating_add(i.saturating_mul(chunk_size) as u32),
-            chunk.to_vec(),
-        )]);
+    if !upload_range.is_empty() {
+        // Create and add set_program_length message
+        if let Some(buffer_account) = buffer_account.as_ref() {
+            let (set_program_length_instructions, _lamports_required) =
+                build_set_program_length_instructions(
+                    rpc_client.clone(),
+                    config,
+                    auth_signer_index,
+                    buffer_account,
+                    &buffer_address,
+                    program_data.len() as u32,
+                )?;
+            if !set_program_length_instructions.is_empty() {
+                initial_messages.push(set_program_length_instructions);
+            }
+        }
+
+        // Create and add write messages
+        let first_write_message = Message::new(
+            &[instruction::write(
+                &buffer_address,
+                &authority_pubkey,
+                0,
+                Vec::new(),
+            )],
+            Some(&payer_pubkey),
+        );
+        let chunk_size = calculate_max_chunk_size(first_write_message);
+        for (chunk, i) in program_data[upload_range.clone()]
+            .chunks(chunk_size)
+            .zip(0usize..)
+        {
+            write_messages.push(vec![instruction::write(
+                &buffer_address,
+                &authority_pubkey,
+                (upload_range.start as u32).saturating_add(i.saturating_mul(chunk_size) as u32),
+                chunk.to_vec(),
+            )]);
+        }
     }
 
     // Create and add deploy messages
