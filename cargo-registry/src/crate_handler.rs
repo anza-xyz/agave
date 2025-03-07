@@ -12,7 +12,7 @@ use {
     serde_derive::{Deserialize, Serialize},
     serde_json::from_slice,
     sha2::{Digest, Sha256},
-    solana_cli::program_v4::{process_deploy_program, process_dump},
+    solana_cli::program_v4::{process_deploy_program, process_dump, AdditionalCliConfig},
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_signer::{EncodableKey, Signer},
@@ -126,13 +126,12 @@ impl Program {
         process_deploy_program(
             client.rpc_client.clone(),
             &client.get_cli_config(),
+            &AdditionalCliConfig::default(),
             &client.authority_signer_index,
             &signer.pubkey(),
             &program_data,
             None..None,
             Some(signer),
-            false,
-            None,
         )
         .map_err(|e| {
             error!("Failed to deploy the program: {}", e);
