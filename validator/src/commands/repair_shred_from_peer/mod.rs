@@ -6,8 +6,10 @@ use {
     std::path::Path,
 };
 
+const COMMAND: &str = "repair-shred-from-peer";
+
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
-    SubCommand::with_name("repair-shred-from-peer")
+    SubCommand::with_name(COMMAND)
         .about("Request a repair from the specified validator")
         .arg(
             Arg::with_name("pubkey")
