@@ -121,7 +121,8 @@ fn bench_serialize_unaligned(c: &mut Criterion) {
 
     c.bench_function("serialize_unaligned", |b| {
         b.iter(|| {
-            let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+            let _ = serialize_parameters(&transaction_context, instruction_context, false, false)
+                .unwrap();
         });
     });
 }
@@ -133,7 +134,8 @@ fn bench_serialize_unaligned_copy_account_data(c: &mut Criterion) {
         .unwrap();
     c.bench_function("serialize_unaligned_copy_account_data", |b| {
         b.iter(|| {
-            let _ = serialize_parameters(&transaction_context, instruction_context, true).unwrap();
+            let _ = serialize_parameters(&transaction_context, instruction_context, true, false)
+                .unwrap();
         });
     });
 }
@@ -146,7 +148,8 @@ fn bench_serialize_aligned(c: &mut Criterion) {
 
     c.bench_function("serialize_aligned", |b| {
         b.iter(|| {
-            let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+            let _ = serialize_parameters(&transaction_context, instruction_context, false, false)
+                .unwrap();
         });
     });
 }
@@ -159,7 +162,8 @@ fn bench_serialize_aligned_copy_account_data(c: &mut Criterion) {
 
     c.bench_function("serialize_aligned_copy_account_data", |b| {
         b.iter(|| {
-            let _ = serialize_parameters(&transaction_context, instruction_context, true).unwrap();
+            let _ = serialize_parameters(&transaction_context, instruction_context, true, false)
+                .unwrap();
         });
     });
 }
@@ -172,7 +176,8 @@ fn bench_serialize_unaligned_max_accounts(c: &mut Criterion) {
 
     c.bench_function("serialize_unaligned_max_accounts", |b| {
         b.iter(|| {
-            let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+            let _ = serialize_parameters(&transaction_context, instruction_context, false, false)
+                .unwrap();
         });
     });
 }
@@ -185,7 +190,8 @@ fn bench_serialize_aligned_max_accounts(c: &mut Criterion) {
 
     c.bench_function("serialize_aligned_max_accounts", |b| {
         b.iter(|| {
-            let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+            let _ = serialize_parameters(&transaction_context, instruction_context, false, false)
+                .unwrap();
         });
     });
 }
