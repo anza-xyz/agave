@@ -71,6 +71,11 @@ module.exports = {
           position: "left",
         },
         {
+          to: "contributing",
+          label: "Contributing to Agave",
+          position: "left",
+        },
+        {
           label: "More",
           position: "left",
           items: [
