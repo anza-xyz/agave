@@ -710,6 +710,10 @@ pub fn process_deploy_program(
             build_retract_instruction(program_account, program_address, &authority_pubkey)?;
     }
 
+    let existing_lamports = program_account
+        .as_ref()
+        .map(|account| account.lamports)
+        .unwrap_or(0);
     let lamports_required = rpc_client.get_minimum_balance_for_rent_exemption(
         LoaderV4State::program_data_offset().saturating_add(program_data.len()),
     )?;
@@ -809,14 +813,6 @@ pub fn process_deploy_program(
     }];
 
     drop(message);
-    check_payer(
-        rpc_client.clone(),
-        config,
-        lamports_required,
-        &initial_messages,
-        &write_messages,
-        &final_messages,
-    )?;
     send_messages(
         rpc_client,
         config,
@@ -826,6 +822,7 @@ pub fn process_deploy_program(
         &write_messages,
         &final_messages,
         buffer_signer,
+        lamports_required.saturating_sub(existing_lamports),
     )?;
 
     let program_id = CliProgramId {
@@ -866,7 +863,6 @@ fn process_close_program(
     let initial_messages = [message(instructions)?];
 
     drop(message);
-    check_payer(rpc_client.clone(), config, 0, &initial_messages, &[], &[])?;
     send_messages(
         rpc_client,
         config,
@@ -876,6 +872,7 @@ fn process_close_program(
         &[],
         &[],
         None,
+        0,
     )?;
 
     let program_id = CliProgramId {
@@ -903,7 +900,6 @@ fn process_transfer_authority_of_program(
     )])?];
 
     drop(message);
-    check_payer(rpc_client.clone(), config, 0, &messages, &[], &[])?;
     send_messages(
         rpc_client,
         config,
@@ -913,6 +909,7 @@ fn process_transfer_authority_of_program(
         &[],
         &[],
         None,
+        0,
     )?;
 
     let program_id = CliProgramId {
@@ -940,7 +937,6 @@ fn process_finalize_program(
     )])?];
 
     drop(message);
-    check_payer(rpc_client.clone(), config, 0, &messages, &[], &[])?;
     send_messages(
         rpc_client,
         config,
@@ -950,6 +946,7 @@ fn process_finalize_program(
         &[],
         &[],
         None,
+        0,
     )?;
 
     let program_id = CliProgramId {
@@ -1031,20 +1028,23 @@ pub fn process_dump(
     }
 }
 
-fn check_payer(
+fn send_messages(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig,
-    balance_needed: u64,
+    additional_cli_config: &AdditionalCliConfig,
+    auth_signer_index: &SignerIndex,
     initial_messages: &[Message],
     write_messages: &[Message],
-    other_messages: &[Message],
+    final_messages: &[Message],
+    program_signer: Option<&dyn Signer>,
+    balance_needed: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let payer_pubkey = config.signers[0].pubkey();
     let mut fee = Saturating(0);
     for message in initial_messages {
         fee += rpc_client.get_fee_for_message(message)?;
     }
-    for message in other_messages {
+    for message in final_messages {
         fee += rpc_client.get_fee_for_message(message)?;
     }
     // Assume all write messages cost the same
@@ -1060,19 +1060,7 @@ fn check_payer(
         fee.0,
         config.commitment,
     )?;
-    Ok(())
-}
 
-fn send_messages(
-    rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
-    additional_cli_config: &AdditionalCliConfig,
-    auth_signer_index: &SignerIndex,
-    initial_messages: &[Message],
-    write_messages: &[Message],
-    final_messages: &[Message],
-    program_signer: Option<&dyn Signer>,
-) -> Result<(), Box<dyn std::error::Error>> {
     for message in initial_messages.iter() {
         let blockhash = rpc_client.get_latest_blockhash()?;
         let mut initial_transaction = Transaction::new_unsigned(message.clone());
