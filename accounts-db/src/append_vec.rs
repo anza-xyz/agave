@@ -1277,13 +1277,6 @@ pub mod tests {
             }
         }
 
-        fn get_executable_byte(&self) -> u8 {
-            let executable_bool: bool = self.executable();
-            // UNSAFE: Force to interpret mmap-backed bool as u8 to really read the actual memory content
-            let executable_byte: u8 = unsafe { std::mem::transmute::<bool, u8>(executable_bool) };
-            executable_byte
-        }
-
         fn set_executable_as_byte(&self, new_executable_byte: u8) {
             // UNSAFE: Force to interpret mmap-backed &bool as &u8 to write some crafted value;
             unsafe {
