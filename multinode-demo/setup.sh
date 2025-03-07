@@ -41,6 +41,14 @@ args=(
                         "$SOLANA_CONFIG_DIR"/bootstrap-validator/stake-account.json
 )
 
+"$SOLANA_ROOT"/fetch-core-bpf.sh
+if [[ -r core-bpf-genesis-args.sh ]]; then
+  CORE_BPF_GENESIS_ARGS=$(cat "$SOLANA_ROOT"/core-bpf-genesis-args.sh)
+  #shellcheck disable=SC2207
+  #shellcheck disable=SC2206
+  args+=($CORE_BPF_GENESIS_ARGS)
+fi
+
 "$SOLANA_ROOT"/fetch-spl.sh
 if [[ -r spl-genesis-args.sh ]]; then
   SPL_GENESIS_ARGS=$(cat "$SOLANA_ROOT"/spl-genesis-args.sh)
