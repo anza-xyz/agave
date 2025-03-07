@@ -101,20 +101,20 @@ pub fn main() {
 
     let destinations = args.destination;
 
-    let rpc_servers = values_t!(matches, "rpc_server", String)
+    let rpc_servers = matches
+        .get_many::<String>("rpc_server")
         .unwrap_or_default()
-        .into_iter()
         .collect::<Vec<_>>();
 
-    let websocket_servers = values_t!(matches, "websocket_server", String)
+    let websocket_servers = matches
+        .get_many::<String>("websocket_server")
         .unwrap_or_default()
-        .into_iter()
         .collect::<Vec<_>>();
 
     let servers = rpc_servers
         .iter()
         .zip(websocket_servers.iter())
-        .map(|(rpc, ws)| (rpc.clone(), ws.clone()))
+        .map(|(rpc, ws)| (rpc.to_string(), ws.to_string()))
         .collect::<Vec<_>>();
 
     info!("Creating the PacketBatchSender: at address: {:?} for the following initial destinations: {destinations:?}",
