@@ -468,14 +468,14 @@ solana-poseidon = { path = "poseidon", version = "=2.2.2" }
 solana-precompile-error = "=2.2.1"
 solana-precompiles = "=2.2.1"
 solana-presigner = "=2.2.1"
-solana-program = "=2.2.1"
+solana-program = { version = "=2.2.1", default-features = false }
 solana-program-error = "=2.2.1"
 solana-program-memory = "=2.2.1"
 solana-program-option = "=2.2.1"
 solana-program-pack = "=2.2.1"
 solana-program-runtime = { path = "program-runtime", version = "=2.2.2" }
 solana-program-test = { path = "program-test", version = "=2.2.2" }
-solana-pubkey = "=2.2.1"
+solana-pubkey = { version = "=2.2.1", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=2.2.2" }
 solana-quic-client = { path = "quic-client", version = "=2.2.2" }
 solana-quic-definitions = "=2.2.1"
@@ -494,7 +494,7 @@ solana-serde = "=2.2.1"
 solana-serde-varint = "=2.2.1"
 solana-serialize-utils = "=2.2.1"
 solana-sha256-hasher = "=2.2.1"
-solana-signature = "=2.2.1"
+solana-signature = { version = "=2.2.1", default-features = false }
 solana-signer = "=2.2.1"
 solana-slot-hashes = "=2.2.1"
 solana-slot-history = "=2.2.1"
