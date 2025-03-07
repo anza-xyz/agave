@@ -2666,14 +2666,18 @@ fn svm_metrics_accumulation() {
             &env.processing_config,
         );
 
-        assert_ne!(
-            result
-                .execute_timings
-                .details
-                .create_executor_jit_compile_us
-                .0,
-            0
-        );
+        // jit compilation only happens on non-windows && x86_64
+        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+        {
+            assert_ne!(
+                result
+                    .execute_timings
+                    .details
+                    .create_executor_jit_compile_us
+                    .0,
+                0
+            );
+        }
         assert_ne!(
             result.execute_timings.details.create_executor_load_elf_us.0,
             0
