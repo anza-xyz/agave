@@ -6940,8 +6940,8 @@ version = "2.3.0"
 dependencies = [
  "crossbeam-channel",
  "futures-util",
+ "http 0.2.12",
  "log",
- "reqwest 0.12.12",
  "semver",
  "serde",
  "serde_derive",
