@@ -793,13 +793,11 @@ pub fn process_deploy_program(
         final_messages,
         buffer_signer,
         lamports_required.saturating_sub(existing_lamports),
-    )?;
-
-    let program_id = CliProgramId {
-        program_id: program_address.to_string(),
-        signature: None,
-    };
-    Ok(config.output_format.formatted_string(&program_id))
+        config.output_format.formatted_string(&CliProgramId {
+            program_id: program_address.to_string(),
+            signature: None,
+        }),
+    )
 }
 
 fn process_close_program(
@@ -841,13 +839,11 @@ fn process_close_program(
         Vec::default(),
         None,
         0,
-    )?;
-
-    let program_id = CliProgramId {
-        program_id: program_address.to_string(),
-        signature: None,
-    };
-    Ok(config.output_format.formatted_string(&program_id))
+        config.output_format.formatted_string(&CliProgramId {
+            program_id: program_address.to_string(),
+            signature: None,
+        }),
+    )
 }
 
 fn process_transfer_authority_of_program(
@@ -876,13 +872,11 @@ fn process_transfer_authority_of_program(
         Vec::default(),
         None,
         0,
-    )?;
-
-    let program_id = CliProgramId {
-        program_id: program_address.to_string(),
-        signature: None,
-    };
-    Ok(config.output_format.formatted_string(&program_id))
+        config.output_format.formatted_string(&CliProgramId {
+            program_id: program_address.to_string(),
+            signature: None,
+        }),
+    )
 }
 
 fn process_finalize_program(
@@ -911,13 +905,11 @@ fn process_finalize_program(
         Vec::default(),
         None,
         0,
-    )?;
-
-    let program_id = CliProgramId {
-        program_id: program_address.to_string(),
-        signature: None,
-    };
-    Ok(config.output_format.formatted_string(&program_id))
+        config.output_format.formatted_string(&CliProgramId {
+            program_id: program_address.to_string(),
+            signature: None,
+        }),
+    )
 }
 
 fn process_show(
@@ -992,6 +984,7 @@ pub fn process_dump(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_messages(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig,
@@ -1002,7 +995,8 @@ fn send_messages(
     final_messages: Vec<Vec<Instruction>>,
     program_signer: Option<&dyn Signer>,
     balance_needed: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
+    ok_result: String,
+) -> ProcessResult {
     let payer_pubkey = config.signers[0].pubkey();
     let blockhash = rpc_client.get_latest_blockhash()?;
     let compute_unit_config = ComputeUnitConfig {
@@ -1149,7 +1143,7 @@ fn send_messages(
         )?;
     }
 
-    Ok(())
+    Ok(ok_result)
 }
 
 fn build_retract_instruction(
