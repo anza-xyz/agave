@@ -1,10 +1,7 @@
 use {
     crate::{
         checks::*,
-        cli::{
-            common_error_adapter, log_instruction_custom_error_ex, CliCommand, CliCommandInfo,
-            CliConfig, CliError, ProcessResult,
-        },
+        cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
         compute_budget::{
             simulate_and_update_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
         },
@@ -52,9 +49,7 @@ use {
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_sdk_ids::{loader_v4, system_program},
     solana_signer::Signer,
-    solana_system_interface::{
-        error::SystemError, instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH,
-    },
+    solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction::Transaction,
     std::{
         cmp::Ordering,
@@ -1061,46 +1056,41 @@ fn send_messages(
         config.commitment,
     )?;
 
-    for message in initial_messages.iter() {
+    let send_tx = |mut tx: Transaction, signers: &[&dyn Signer]| {
         let blockhash = rpc_client.get_latest_blockhash()?;
-        let mut initial_transaction = Transaction::new_unsigned(message.clone());
-        if message.account_keys.contains(&system_program::id()) {
+        tx.try_sign(signers, blockhash)?;
+        let result: Result<solana_signature::Signature, Box<dyn std::error::Error>> = rpc_client
+            .send_and_confirm_transaction_with_spinner_and_config(
+                &tx,
+                config.commitment,
+                config.send_transaction_config,
+            )
+            .map_err(|err| format!("Failed to send message: {err}").into());
+        result
+    };
+
+    for message in initial_messages.iter() {
+        let tx = Transaction::new_unsigned(message.clone());
+        let signers: &[_] = if message.account_keys.contains(&system_program::id()) {
             // The initial message that creates and initializes the account
             // has up to 3 signatures (payer, program, and authority).
             if let Some(initial_signer) = program_signer {
-                initial_transaction.try_sign(
-                    &[
-                        config.signers[0],
-                        initial_signer,
-                        config.signers[*auth_signer_index],
-                    ],
-                    blockhash,
-                )?;
+                &[
+                    config.signers[0],
+                    initial_signer,
+                    config.signers[*auth_signer_index],
+                ]
             } else {
                 return Err("Buffer account not created yet, must provide a key pair".into());
             }
         } else {
             // All other messages have up to 2 signatures (payer, and authority).
-            initial_transaction.try_sign(
-                &[config.signers[0], config.signers[*auth_signer_index]],
-                blockhash,
-            )?;
-        }
-        let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
-            &initial_transaction,
-            config.commitment,
-            config.send_transaction_config,
-        );
-        log_instruction_custom_error_ex::<SystemError, _>(
-            result,
-            &config.output_format,
-            common_error_adapter,
-        )
-        .map_err(|err| format!("Failed to send initial message: {err}"))?;
+            &[config.signers[0], config.signers[*auth_signer_index]]
+        };
+        send_tx(tx, signers)?;
     }
 
     if !write_messages.is_empty() {
-        trace!("Writing program data");
         let connection_cache = if config.use_quic {
             ConnectionCache::new_quic("connection_cache_cli_program_v4_quic", 1)
         } else {
@@ -1159,19 +1149,8 @@ fn send_messages(
     }
 
     for message in final_messages {
-        let blockhash = rpc_client.get_latest_blockhash()?;
-        let mut final_tx = Transaction::new_unsigned(message.clone());
-        final_tx.try_sign(
-            &[config.signers[0], config.signers[*auth_signer_index]],
-            blockhash,
-        )?;
-        rpc_client
-            .send_and_confirm_transaction_with_spinner_and_config(
-                &final_tx,
-                config.commitment,
-                config.send_transaction_config,
-            )
-            .map_err(|e| format!("Deploying program failed: {e}"))?;
+        let tx = Transaction::new_unsigned(message.clone());
+        send_tx(tx, &[config.signers[0], config.signers[*auth_signer_index]])?;
     }
 
     Ok(())
