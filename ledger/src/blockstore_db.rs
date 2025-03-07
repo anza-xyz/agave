@@ -1182,6 +1182,7 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
 
     // Limit the size and the number of logging files to 10/10MB
     // 100MB in total
+    // Logs grow at ~ 1MB/hour, so this should provide ~ 4 days of logs
     options.set_max_log_file_size(10 * 1024 * 1024);
     options.set_keep_log_file_num(10);
 
