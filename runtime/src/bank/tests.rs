@@ -8393,6 +8393,46 @@ fn test_program_is_native_loader() {
 }
 
 #[test]
+fn test_invoke_non_program_account_owned_by_a_builtin() {
+    let (genesis_config, mint_keypair) = create_genesis_config(10000000);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.activate_feature(&feature_set::remove_accounts_executable_flag_checks::id());
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+    let bogus_program = Pubkey::new_unique();
+    bank.transfer(
+        genesis_config.rent.minimum_balance(0),
+        &mint_keypair,
+        &bogus_program,
+    )
+    .unwrap();
+
+    let created_account_keypair = Keypair::new();
+    let mut ix = system_instruction::create_account(
+        &mint_keypair.pubkey(),
+        &created_account_keypair.pubkey(),
+        genesis_config.rent.minimum_balance(0),
+        0,
+        &system_program::id(),
+    );
+    // Calling an account owned by the system program, instead of calling the system program itself
+    ix.program_id = bogus_program;
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&mint_keypair.pubkey()),
+        &[&mint_keypair, &created_account_keypair],
+        bank.last_blockhash(),
+    );
+    assert_eq!(
+        bank.process_transaction(&tx),
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::UnsupportedProgramId
+        ))
+    );
+}
+
+#[test]
 fn test_debug_bank() {
     let (genesis_config, _mint_keypair) = create_genesis_config(50000);
     let mut bank = Bank::new_for_tests(&genesis_config);
@@ -13556,7 +13596,7 @@ fn test_loader_v3_to_v4_migration() {
             finalized_migration_transaction.clone(),
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::InvalidInstructionData,
+                InstructionError::UnsupportedProgramId,
             )),
         ),
         (
@@ -13564,7 +13604,7 @@ fn test_loader_v3_to_v4_migration() {
             finalized_migration_transaction.clone(),
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::InvalidInstructionData,
+                InstructionError::UnsupportedProgramId,
             )),
         ),
         (
