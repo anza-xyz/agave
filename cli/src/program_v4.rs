@@ -788,13 +788,11 @@ pub fn process_deploy_program(
         write_messages,
         final_messages,
         buffer_signer,
-    )?;
-
-    let program_id = CliProgramId {
-        program_id: program_address.to_string(),
-        signature: None,
-    };
-    Ok(config.output_format.formatted_string(&program_id))
+        config.output_format.formatted_string(&CliProgramId {
+            program_id: program_address.to_string(),
+            signature: None,
+        }),
+    )
 }
 
 fn process_close_program(
@@ -835,13 +833,11 @@ fn process_close_program(
         Vec::default(),
         Vec::default(),
         None,
-    )?;
-
-    let program_id = CliProgramId {
-        program_id: program_address.to_string(),
-        signature: None,
-    };
-    Ok(config.output_format.formatted_string(&program_id))
+        config.output_format.formatted_string(&CliProgramId {
+            program_id: program_address.to_string(),
+            signature: None,
+        }),
+    )
 }
 
 fn process_transfer_authority_of_program(
@@ -869,13 +865,11 @@ fn process_transfer_authority_of_program(
         Vec::default(),
         Vec::default(),
         None,
-    )?;
-
-    let program_id = CliProgramId {
-        program_id: program_address.to_string(),
-        signature: None,
-    };
-    Ok(config.output_format.formatted_string(&program_id))
+        config.output_format.formatted_string(&CliProgramId {
+            program_id: program_address.to_string(),
+            signature: None,
+        }),
+    )
 }
 
 fn process_finalize_program(
@@ -903,13 +897,11 @@ fn process_finalize_program(
         Vec::default(),
         Vec::default(),
         None,
-    )?;
-
-    let program_id = CliProgramId {
-        program_id: program_address.to_string(),
-        signature: None,
-    };
-    Ok(config.output_format.formatted_string(&program_id))
+        config.output_format.formatted_string(&CliProgramId {
+            program_id: program_address.to_string(),
+            signature: None,
+        }),
+    )
 }
 
 fn process_show(
@@ -993,7 +985,8 @@ fn send_messages(
     write_messages: Vec<Vec<Instruction>>,
     final_messages: Vec<Vec<Instruction>>,
     program_signer: Option<&dyn Signer>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    ok_result: String,
+) -> ProcessResult {
     let payer_pubkey = config.signers[0].pubkey();
     let blockhash = rpc_client.get_latest_blockhash()?;
     let compute_unit_config = ComputeUnitConfig {
@@ -1141,7 +1134,7 @@ fn send_messages(
         )?;
     }
 
-    Ok(())
+    Ok(ok_result)
 }
 
 fn build_retract_instruction(
