@@ -681,9 +681,14 @@ mod tests {
         crate::banking_stage::tests::create_slow_genesis_config,
         crossbeam_channel::{unbounded, Receiver},
         solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_perf::packet::to_packet_batches,
+        solana_perf::packet::{to_packet_batches, Packet, PacketBatch},
         solana_pubkey::Pubkey,
-        solana_sdk::{hash::Hash, signature::Keypair, system_transaction::transfer},
+        solana_sdk::{
+            hash::Hash,
+            packet::{Meta, PACKET_DATA_SIZE},
+            signature::Keypair,
+            system_transaction::transfer,
+        },
         test_case::test_case,
     };
 
@@ -879,6 +884,44 @@ mod tests {
             .unwrap();
 
         assert_eq!(num_received, 0);
+        verify_container(&mut container, 0);
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer, 0; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer, 1; "testcase-view")]
+    fn test_receive_and_buffer_invalid_transaction_format<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+        expected_num_received: usize,
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, _mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let packet_batches = Arc::new(vec![PacketBatch::new(vec![Packet::new(
+            [1u8; PACKET_DATA_SIZE],
+            Meta::default(),
+        )])]);
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Hold,
+            )
+            .unwrap();
+
+        // Currently the different approaches have slightly different accounting.
+        // - sdk: only valid deserializable packets count as received
+        // - view: all valid packets count as received, even if invalid tx format
+        assert_eq!(num_received, expected_num_received);
         verify_container(&mut container, 0);
     }
 
