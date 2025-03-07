@@ -1094,4 +1094,45 @@ mod tests {
         assert_eq!(num_received, 1);
         verify_container(&mut container, 1);
     }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_overfull<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let num_transactions = 3 * TEST_CONTAINER_CAPACITY;
+        let transactions = Vec::from_iter((0..num_transactions).map(|_| {
+            transfer(
+                &mint_keypair,
+                &Pubkey::new_unique(),
+                1,
+                bank_forks.read().unwrap().root_bank().last_blockhash(),
+            )
+        }));
+
+        let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Hold,
+            )
+            .unwrap();
+
+        assert_eq!(num_received, num_transactions);
+        verify_container(&mut container, TEST_CONTAINER_CAPACITY);
+    }
 }
