@@ -4255,8 +4255,7 @@ fn test_bank_epoch_vote_accounts() {
 fn test_zero_signatures() {
     solana_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(500);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.fee_rate_governor.lamports_per_signature = 2;
+    let bank = Bank::new_for_tests(&genesis_config);
     let key = solana_pubkey::new_rand();
 
     let mut transfer_instruction = system_instruction::transfer(&mint_keypair.pubkey(), &key, 0);
@@ -4390,24 +4389,6 @@ fn test_bank_inherit_tx_count() {
     bank6.squash();
     assert_eq!(bank6.transaction_count(), 1);
     assert_eq!(bank6.non_vote_transaction_count_since_restart(), 1);
-}
-
-#[test]
-fn test_bank_inherit_fee_rate_governor() {
-    let (mut genesis_config, _mint_keypair) = create_genesis_config(500);
-    genesis_config
-        .fee_rate_governor
-        .target_lamports_per_signature = 123;
-
-    let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
-    let bank1 = Arc::new(new_from_parent(bank0.clone()));
-    assert_eq!(
-        bank0.fee_rate_governor.target_lamports_per_signature / 2,
-        bank1
-            .fee_rate_governor
-            .create_fee_calculator()
-            .lamports_per_signature
-    );
 }
 
 #[test]

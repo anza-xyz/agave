@@ -80,11 +80,23 @@ impl Bank {
         fee_details: &CollectorFeeDetails,
     ) -> (u64, u64) {
         let (deposit, burn) = if fee_details.transaction_fee != 0 {
-            self.fee_rate_governor.burn(fee_details.transaction_fee)
+            self.burn_transaction_fee(fee_details.transaction_fee)
         } else {
             (0, 0)
         };
         (deposit.saturating_add(fee_details.priority_fee), burn)
+    }
+
+    fn burn_transaction_fee(&self, fees: u64) -> (u64, u64) {
+        let burned = fees * u64::from(self.burn_percent()) / 100;
+        (fees - burned, burned)
+    }
+
+    fn burn_percent(&self) -> u8 {
+        // NOTE: burn percent is practically static 50%, in case it needs to change in the future,
+        // burnPercent can be bank property that being passed down from bank to bank, without
+        // needing fee-rate-governor
+        solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT
     }
 
     fn deposit_or_burn_fee(&self, deposit: u64, burn: &mut u64) {
@@ -679,7 +691,7 @@ pub mod tests {
             transaction_fee,
             priority_fee,
         });
-        let (expected_deposit, expected_burn) = bank.fee_rate_governor.burn(transaction_fee);
+        let (expected_deposit, expected_burn) = bank.burn_transaction_fee(transaction_fee);
         let expected_rewards = expected_deposit + priority_fee;
 
         let initial_capitalization = bank.capitalization();
