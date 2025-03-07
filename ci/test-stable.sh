@@ -64,6 +64,9 @@ test-stable-sbf)
   # SBPFv2 program tests
   _ make -C programs/sbf clean-all test-v2
 
+  # SBPFv3 program tests
+  _ make -C programs/sbf clean-all test-v3
+
   exit 0
   ;;
 test-docs)
