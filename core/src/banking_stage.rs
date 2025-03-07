@@ -68,15 +68,28 @@ pub mod unprocessed_packet_batches;
 pub mod vote_storage;
 
 mod consume_worker;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod decision_maker;
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod decision_maker;
 mod immutable_deserialized_packet;
 mod latest_unprocessed_votes;
 mod leader_slot_timing_metrics;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod packet_deserializer;
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod packet_deserializer;
 mod packet_filter;
 mod packet_receiver;
 mod read_write_account_set;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod scheduler_messages;
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod scheduler_messages;
+
+#[cfg(feature = "dev-context-only-utils")]
+pub mod transaction_scheduler;
+#[cfg(not(feature = "dev-context-only-utils"))]
 mod transaction_scheduler;
 
 // proc_macro_hygiene needs to be stabilzied to use qualifier_attr...
