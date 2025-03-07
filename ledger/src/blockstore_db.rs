@@ -1180,6 +1180,11 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
         options.set_disable_auto_compactions(true);
     }
 
+    // Limit the size and the number of logging files to 10/10MB
+    // 100MB in total
+    options.set_max_log_file_size(10 * 1024 * 1024);
+    options.set_keep_log_file_num(10);
+
     // Allow Rocks to open/keep open as many files as it needs for performance;
     // however, this is also explicitly required for a secondary instance.
     // See https://github.com/facebook/rocksdb/wiki/Secondary-instance
