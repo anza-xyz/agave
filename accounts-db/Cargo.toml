@@ -148,7 +148,3 @@ harness = false
 
 [lints]
 workspace = true
-
-# Enable basic optimizations for unittests
-[profile.test]
-opt-level = 0
