@@ -53,6 +53,7 @@ fn get_costs(
                 transaction,
                 signature_cost: 0,
                 write_lock_cost: 0,
+                tx_bytes: 0,
                 data_bytes_cost: 0,
                 programs_execution_cost: 9999,
                 loaded_accounts_data_size_cost: 0,
