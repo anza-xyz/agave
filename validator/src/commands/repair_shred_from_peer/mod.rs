@@ -1,5 +1,5 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs, commands::FromClapArgMatches},
+    crate::{admin_rpc_service, commands::FromClapArgMatches},
     clap::{value_t, App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::{is_parsable, is_pubkey},
     solana_sdk::pubkey::Pubkey,
@@ -25,7 +25,7 @@ impl FromClapArgMatches for RepairShredFromPeerArgs {
     }
 }
 
-pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
+pub fn command<'a>() -> App<'a, 'a> {
     SubCommand::with_name(COMMAND)
         .about("Request a repair from the specified validator")
         .arg(
@@ -79,8 +79,7 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_repair_shred_from_peer_missing_slot() {
-        let default_args = DefaultArgs::default();
-        let app = command(&default_args);
+        let app = command();
         let matches = app.get_matches_from(vec![COMMAND]);
         let args = RepairShredFromPeerArgs::from_clap_arg_match(&matches);
         assert_eq!(args, Err("slot is not a valid number".to_string()));
@@ -88,8 +87,7 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_repair_shred_from_peer_missing_shred() {
-        let default_args = DefaultArgs::default();
-        let app = command(&default_args);
+        let app = command();
         let matches = app.get_matches_from(vec![COMMAND, "--slot", "1"]);
         let args = RepairShredFromPeerArgs::from_clap_arg_match(&matches);
         assert_eq!(args, Err("shred is not a valid number".to_string()));
@@ -98,7 +96,7 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_repair_shred_from_peer_missing_pubkey() {
         verify_args_struct_by_command(
-            command(&DefaultArgs::default()),
+            command(),
             vec![COMMAND, "--slot", "1", "--shred", "2"],
             RepairShredFromPeerArgs {
                 pubkey: None,
@@ -111,7 +109,7 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_repair_shred_from_peer_with_pubkey() {
         verify_args_struct_by_command(
-            command(&DefaultArgs::default()),
+            command(),
             vec![
                 COMMAND,
                 "--slot",
