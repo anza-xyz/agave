@@ -444,6 +444,7 @@ impl TransactionViewReceiveAndBuffer {
                         *result = Err(err);
                         num_dropped_on_status_age_checks += 1;
                         container.remove_by_id(priority_id.id);
+                        continue;
                     }
                 }
                 // Push non-errored transaction into queue.
