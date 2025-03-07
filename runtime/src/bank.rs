@@ -6560,7 +6560,11 @@ impl Bank {
             }
         }
 
-        if new_feature_activations.contains(&feature_set::raise_block_limits_to_50m::id()) {
+        if new_feature_activations.contains(&feature_set::raise_block_limits_to_50m::id())
+            && !self
+                .feature_set
+                .is_active(&feature_set::raise_block_limits_to_60m::id())
+        {
             let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
             self.write_cost_tracker().unwrap().set_limits(
                 account_cost_limit,
