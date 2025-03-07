@@ -63,30 +63,6 @@ use {
     },
 };
 
-fn message_factory<'a>(
-    rpc_client: &'a RpcClient,
-    config: &CliConfig,
-    additional_cli_config: &AdditionalCliConfig,
-) -> impl Fn(Vec<Instruction>) -> Result<Message, Box<dyn std::error::Error>> + use<'a> {
-    let blockhash = rpc_client.get_latest_blockhash().unwrap();
-    let payer_pubkey = config.signers[0].pubkey();
-    let compute_unit_price = additional_cli_config.compute_unit_price;
-    move |mut instructions: Vec<Instruction>| {
-        instructions = instructions.with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Simulated,
-        });
-        let mut message =
-            Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash);
-        simulate_and_update_compute_unit_limit(
-            &ComputeUnitLimit::Simulated,
-            rpc_client,
-            &mut message,
-        )
-        .map(|_| message)
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct AdditionalCliConfig {
     pub use_rpc: bool,
@@ -632,7 +608,6 @@ pub fn process_deploy_program(
 ) -> ProcessResult {
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-    let message = message_factory(&rpc_client, config, additional_cli_config);
 
     // Download feature set
     let mut feature_set = FeatureSet::default();
@@ -720,14 +695,14 @@ pub fn process_deploy_program(
             .value;
         if buffer_account.is_none() {
             // Create and add create_buffer message
-            initial_messages.push(message(instruction::create_buffer(
+            initial_messages.push(instruction::create_buffer(
                 &payer_pubkey,
                 &buffer_address,
                 lamports_required,
                 &authority_pubkey,
                 program_data.len() as u32,
                 &payer_pubkey,
-            ))?);
+            ));
         }
         (buffer_address, buffer_account)
     } else {
@@ -759,32 +734,36 @@ pub fn process_deploy_program(
                 program_data.len() as u32,
             )?;
         if !set_program_length_instructions.is_empty() {
-            initial_messages.push(message(set_program_length_instructions)?);
+            initial_messages.push(set_program_length_instructions);
         }
     }
 
     // Create and add write messages
     let mut write_messages = vec![];
-    let chunk_size = calculate_max_chunk_size(message(vec![instruction::write(
-        &buffer_address,
-        &authority_pubkey,
-        0,
-        Vec::new(),
-    )])?);
+    let first_write_message = Message::new(
+        &[instruction::write(
+            &buffer_address,
+            &authority_pubkey,
+            0,
+            Vec::new(),
+        )],
+        Some(&payer_pubkey),
+    );
+    let chunk_size = calculate_max_chunk_size(first_write_message);
     for (chunk, i) in program_data[upload_range.clone()]
         .chunks(chunk_size)
         .zip(0usize..)
     {
-        write_messages.push(message(vec![instruction::write(
+        write_messages.push(vec![instruction::write(
             &buffer_address,
             &authority_pubkey,
             (upload_range.start as u32).saturating_add(i.saturating_mul(chunk_size) as u32),
             chunk.to_vec(),
-        )])?);
+        )]);
     }
 
     // Create and add deploy messages
-    let final_messages = [if &buffer_address != program_address {
+    let final_messages = vec![if &buffer_address != program_address {
         // Redeploy with a buffer account
         let mut instructions = Vec::default();
         if let Some(retract_instruction) = retract_instruction {
@@ -795,27 +774,23 @@ pub fn process_deploy_program(
             &authority_pubkey,
             &buffer_address,
         ));
-        message(instructions)?
+        instructions
     } else {
         // Deploy new program or redeploy without a buffer account
         if let Some(retract_instruction) = retract_instruction {
-            initial_messages.insert(0, message(vec![retract_instruction])?);
+            initial_messages.insert(0, vec![retract_instruction]);
         }
-        message(vec![instruction::deploy(
-            program_address,
-            &authority_pubkey,
-        )])?
+        vec![instruction::deploy(program_address, &authority_pubkey)]
     }];
 
-    drop(message);
     send_messages(
         rpc_client,
         config,
         additional_cli_config,
         auth_signer_index,
-        &initial_messages,
-        &write_messages,
-        &final_messages,
+        initial_messages,
+        write_messages,
+        final_messages,
         buffer_signer,
         lamports_required.saturating_sub(existing_lamports),
     )?;
@@ -836,7 +811,6 @@ fn process_close_program(
 ) -> ProcessResult {
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-    let message = message_factory(&rpc_client, config, additional_cli_config);
 
     let Some(program_account) = rpc_client
         .get_account_with_commitment(program_address, config.commitment)?
@@ -855,17 +829,16 @@ fn process_close_program(
     let set_program_length_instruction =
         instruction::set_program_length(program_address, &authority_pubkey, 0, &payer_pubkey);
     instructions.push(set_program_length_instruction);
-    let initial_messages = [message(instructions)?];
+    let messages = vec![instructions];
 
-    drop(message);
     send_messages(
         rpc_client,
         config,
         additional_cli_config,
         auth_signer_index,
-        &initial_messages,
-        &[],
-        &[],
+        messages,
+        Vec::default(),
+        Vec::default(),
         None,
         0,
     )?;
@@ -886,23 +859,21 @@ fn process_transfer_authority_of_program(
     new_authority: &dyn Signer,
 ) -> ProcessResult {
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-    let message = message_factory(&rpc_client, config, additional_cli_config);
 
-    let messages = [message(vec![instruction::transfer_authority(
+    let messages = vec![vec![instruction::transfer_authority(
         program_address,
         &authority_pubkey,
         &new_authority.pubkey(),
-    )])?];
+    )]];
 
-    drop(message);
     send_messages(
         rpc_client,
         config,
         additional_cli_config,
         auth_signer_index,
-        &messages,
-        &[],
-        &[],
+        messages,
+        Vec::default(),
+        Vec::default(),
         None,
         0,
     )?;
@@ -923,23 +894,21 @@ fn process_finalize_program(
     next_version: &dyn Signer,
 ) -> ProcessResult {
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-    let message = message_factory(&rpc_client, config, additional_cli_config);
 
-    let messages = [message(vec![instruction::finalize(
+    let messages = vec![vec![instruction::finalize(
         program_address,
         &authority_pubkey,
         &next_version.pubkey(),
-    )])?];
+    )]];
 
-    drop(message);
     send_messages(
         rpc_client,
         config,
         additional_cli_config,
         auth_signer_index,
-        &messages,
-        &[],
-        &[],
+        messages,
+        Vec::default(),
+        Vec::default(),
         None,
         0,
     )?;
@@ -1028,18 +997,44 @@ fn send_messages(
     config: &CliConfig,
     additional_cli_config: &AdditionalCliConfig,
     auth_signer_index: &SignerIndex,
-    initial_messages: &[Message],
-    write_messages: &[Message],
-    final_messages: &[Message],
+    initial_messages: Vec<Vec<Instruction>>,
+    write_messages: Vec<Vec<Instruction>>,
+    final_messages: Vec<Vec<Instruction>>,
     program_signer: Option<&dyn Signer>,
     balance_needed: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let payer_pubkey = config.signers[0].pubkey();
+    let blockhash = rpc_client.get_latest_blockhash()?;
+    let compute_unit_config = ComputeUnitConfig {
+        compute_unit_price: additional_cli_config.compute_unit_price,
+        compute_unit_limit: ComputeUnitLimit::Simulated,
+    };
+    let simulate_messages = |message_prototypes: Vec<Vec<Instruction>>| {
+        let mut messages = Vec::with_capacity(message_prototypes.len());
+        for instructions in message_prototypes.into_iter() {
+            let mut message = Message::new_with_blockhash(
+                &instructions.with_compute_unit_config(&compute_unit_config),
+                Some(&payer_pubkey),
+                &blockhash,
+            );
+            simulate_and_update_compute_unit_limit(
+                &ComputeUnitLimit::Simulated,
+                &rpc_client,
+                &mut message,
+            )?;
+            messages.push(message);
+        }
+        Ok::<Vec<solana_message::Message>, Box<dyn std::error::Error>>(messages)
+    };
+    let initial_messages = simulate_messages(initial_messages)?;
+    let write_messages = simulate_messages(write_messages)?;
+    let final_messages = simulate_messages(final_messages)?;
+
     let mut fee = Saturating(0);
-    for message in initial_messages {
+    for message in initial_messages.iter() {
         fee += rpc_client.get_fee_for_message(message)?;
     }
-    for message in final_messages {
+    for message in final_messages.iter() {
         fee += rpc_client.get_fee_for_message(message)?;
     }
     // Assume all write messages cost the same
@@ -1056,8 +1051,8 @@ fn send_messages(
         config.commitment,
     )?;
 
-    let send_tx = |mut tx: Transaction, signers: &[&dyn Signer]| {
-        let blockhash = rpc_client.get_latest_blockhash()?;
+    let send_message = |message: Message, signers: &[&dyn Signer]| {
+        let mut tx = Transaction::new_unsigned(message);
         tx.try_sign(signers, blockhash)?;
         let result: Result<solana_signature::Signature, Box<dyn std::error::Error>> = rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
@@ -1069,8 +1064,7 @@ fn send_messages(
         result
     };
 
-    for message in initial_messages.iter() {
-        let tx = Transaction::new_unsigned(message.clone());
+    for message in initial_messages.into_iter() {
         let signers: &[_] = if message.account_keys.contains(&system_program::id()) {
             // The initial message that creates and initializes the account
             // has up to 3 signatures (payer, program, and authority).
@@ -1087,7 +1081,7 @@ fn send_messages(
             // All other messages have up to 2 signatures (payer, and authority).
             &[config.signers[0], config.signers[*auth_signer_index]]
         };
-        send_tx(tx, signers)?;
+        send_message(message, signers)?;
     }
 
     if !write_messages.is_empty() {
@@ -1104,7 +1098,7 @@ fn send_messages(
                 cache,
             )?
             .send_and_confirm_messages_with_spinner(
-                write_messages,
+                &write_messages,
                 &[config.signers[0], config.signers[*auth_signer_index]],
             ),
             ConnectionCache::Quic(cache) => {
@@ -1125,7 +1119,7 @@ fn send_messages(
                 send_and_confirm_transactions_in_parallel_blocking_v2(
                     rpc_client.clone(),
                     tpu_client,
-                    write_messages,
+                    &write_messages,
                     &[config.signers[0], config.signers[*auth_signer_index]],
                     SendAndConfirmConfigV2 {
                         resign_txs_count: Some(5),
@@ -1148,9 +1142,11 @@ fn send_messages(
         }
     }
 
-    for message in final_messages {
-        let tx = Transaction::new_unsigned(message.clone());
-        send_tx(tx, &[config.signers[0], config.signers[*auth_signer_index]])?;
+    for message in final_messages.into_iter() {
+        send_message(
+            message,
+            &[config.signers[0], config.signers[*auth_signer_index]],
+        )?;
     }
 
     Ok(())
