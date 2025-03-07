@@ -3,7 +3,6 @@ use {
         in_flight_tracker::InFlightTracker,
         scheduler_error::SchedulerError,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet},
-        transaction_state::SanitizedTransactionTTL,
         transaction_state_container::StateContainer,
     },
     crate::banking_stage::{
@@ -196,7 +195,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                         batch_id,
                         ids,
                         transactions,
-                        max_ages,
+                        max_ages: _,
                     },
                 retryable_indexes,
             }) => {
@@ -208,18 +207,10 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
 
                 // Retryable transactions should be inserted back into the container
                 let mut retryable_iter = retryable_indexes.into_iter().peekable();
-                for (index, (id, transaction, max_age)) in
-                    izip!(ids, transactions, max_ages).enumerate()
-                {
+                for (index, (id, transaction)) in izip!(ids, transactions).enumerate() {
                     if let Some(retryable_index) = retryable_iter.peek() {
                         if *retryable_index == index {
-                            container.retry_transaction(
-                                id,
-                                SanitizedTransactionTTL {
-                                    transaction,
-                                    max_age,
-                                },
-                            );
+                            container.retry_transaction(id, transaction);
                             retryable_iter.next();
                             continue;
                         }
