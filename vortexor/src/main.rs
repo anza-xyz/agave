@@ -5,7 +5,9 @@ use {
     solana_core::banking_trace::BankingTracer,
     solana_logger::redirect_stderr_to_file,
     solana_net_utils::{bind_in_range_with_config, SocketConfig},
-    solana_sdk::{net::DEFAULT_TPU_COALESCE, signature::read_keypair_file, pubkey::Pubkey, signer::Signer},
+    solana_sdk::{
+        net::DEFAULT_TPU_COALESCE, pubkey::Pubkey, signature::read_keypair_file, signer::Signer,
+    },
     solana_streamer::streamer::StakedNodes,
     solana_vortexor::{
         cli::{command, DefaultArgs},
@@ -130,20 +132,20 @@ pub fn main() {
         .into_iter()
         .collect::<Vec<_>>();
 
-    let rpc_servers = values_t!(matches, "rpc_server", String)
+    let rpc_servers = matches
+        .get_many::<String>("rpc_server")
         .unwrap_or_default()
-        .into_iter()
         .collect::<Vec<_>>();
 
-    let websocket_servers = values_t!(matches, "websocket_server", String)
+    let websocket_servers = matches
+        .get_many::<String>("websocket_server")
         .unwrap_or_default()
-        .into_iter()
         .collect::<Vec<_>>();
 
     let servers = rpc_servers
         .iter()
         .zip(websocket_servers.iter())
-        .map(|(rpc, ws)| (rpc.clone(), ws.clone()))
+        .map(|(rpc, ws)| (rpc.to_string(), ws.to_string()))
         .collect::<Vec<_>>();
 
     info!("Creating the PacketBatchSender: at address: {:?} for the following initial destinations: {destinations:?}",
