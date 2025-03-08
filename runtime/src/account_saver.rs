@@ -177,7 +177,7 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
 mod tests {
     use {
         super::*,
-        solana_program_runtime::execution_budget::SVMTransactionExecutionBudget,
+        solana_program_runtime::execution_budget::SVMTransactionBudgetOverrides,
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount},
             fee::FeeDetails,
@@ -279,7 +279,7 @@ mod tests {
             program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
-            compute_budget: SVMTransactionExecutionBudget::default(),
+            compute_budget_overrides: SVMTransactionBudgetOverrides::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -290,7 +290,7 @@ mod tests {
             program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
-            compute_budget: SVMTransactionExecutionBudget::default(),
+            compute_budget_overrides: SVMTransactionBudgetOverrides::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -353,7 +353,7 @@ mod tests {
             rollback_accounts: RollbackAccounts::FeePayerOnly {
                 fee_payer_account: from_account_pre.clone(),
             },
-            compute_budget: SVMTransactionExecutionBudget::default(),
+            compute_budget_overrides: SVMTransactionBudgetOverrides::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -448,7 +448,7 @@ mod tests {
                 nonce: nonce.clone(),
                 fee_payer_account: from_account_pre.clone(),
             },
-            compute_budget: SVMTransactionExecutionBudget::default(),
+            compute_budget_overrides: SVMTransactionBudgetOverrides::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -556,7 +556,7 @@ mod tests {
             rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
                 nonce: nonce.clone(),
             },
-            compute_budget: SVMTransactionExecutionBudget::default(),
+            compute_budget_overrides: SVMTransactionBudgetOverrides::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,

@@ -1149,6 +1149,11 @@ impl Bank {
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
 
+        if let Some(compute_budget) = bank.compute_budget {
+            bank.transaction_processor
+                .set_execution_budget(compute_budget);
+        }
+
         let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
         bank.accounts_data_size_initial = accounts_data_size_initial;
 
@@ -1401,6 +1406,11 @@ impl Bank {
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
         };
+
+        if let Some(compute_budget) = new.compute_budget {
+            new.transaction_processor
+                .set_execution_budget(compute_budget);
+        }
 
         let (_, ancestors_time_us) = measure_us!({
             let mut ancestors = Vec::with_capacity(1 + new.parents().len());
@@ -1803,6 +1813,11 @@ impl Bank {
 
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
+
+        if let Some(compute_budget) = bank.compute_budget {
+            bank.transaction_processor
+                .set_execution_budget(compute_budget);
+        }
 
         let thread_pool = ThreadPoolBuilder::new()
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))

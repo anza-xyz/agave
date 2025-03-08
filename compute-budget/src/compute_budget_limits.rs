@@ -1,11 +1,10 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    crate::compute_budget::ComputeBudget,
     solana_fee_structure::FeeBudgetLimits,
     solana_program_runtime::execution_budget::{
-        SVMTransactionComputeBudgetAndLimits, DEFAULT_HEAP_COST, MAX_COMPUTE_UNIT_LIMIT,
-        MIN_HEAP_FRAME_BYTES,
+        SVMTransactionBudgetOverrides, SVMTransactionComputeBudgetAndLimits, DEFAULT_HEAP_COST,
+        MAX_COMPUTE_UNIT_LIMIT, MIN_HEAP_FRAME_BYTES,
     },
     std::num::NonZeroU32,
 };
@@ -46,22 +45,21 @@ impl ComputeBudgetLimits {
     }
 
     pub fn get_compute_budget_and_limits(&self) -> SVMTransactionComputeBudgetAndLimits {
-        let budget = ComputeBudget::from(*self);
         let fee_budget = FeeBudgetLimits::from(self);
         SVMTransactionComputeBudgetAndLimits {
-            budget,
+            budget_overrides: SVMTransactionBudgetOverrides {
+                compute_unit_limit: Some(u64::from(self.compute_unit_limit)),
+                heap_size: Some(self.updated_heap_bytes),
+            },
             loaded_accounts_bytes: fee_budget.loaded_accounts_data_size_limit,
             priority_fee: fee_budget.prioritization_fee,
         }
     }
 
-    pub fn get_limits_using_compute_budget(
-        &self,
-        budget: ComputeBudget,
-    ) -> SVMTransactionComputeBudgetAndLimits {
+    pub fn get_limits_with_no_overrides(&self) -> SVMTransactionComputeBudgetAndLimits {
         let fee_budget = FeeBudgetLimits::from(self);
         SVMTransactionComputeBudgetAndLimits {
-            budget,
+            budget_overrides: SVMTransactionBudgetOverrides::no_overrides(),
             loaded_accounts_bytes: fee_budget.loaded_accounts_data_size_limit,
             priority_fee: fee_budget.prioritization_fee,
         }

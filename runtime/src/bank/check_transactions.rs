@@ -102,8 +102,8 @@ impl Bank {
                         &self.feature_set,
                     )
                     .map(|limit| {
-                        if let Some(compute_budget) = self.compute_budget {
-                            limit.get_limits_using_compute_budget(compute_budget)
+                        if self.compute_budget.is_some() {
+                            limit.get_limits_with_no_overrides()
                         } else {
                             limit.get_compute_budget_and_limits()
                         }

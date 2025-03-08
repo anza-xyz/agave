@@ -85,30 +85,6 @@ mod tests {
         );
         test!(
             &[
-                ComputeBudgetInstruction::set_compute_unit_limit(2000u32),
-                ComputeBudgetInstruction::set_compute_unit_price(1_000_000_000),
-            ],
-            Ok(ComputeBudgetLimits {
-                compute_unit_limit: 2000u32,
-                compute_unit_price: 1_000_000_000u64,
-                ..ComputeBudgetLimits::default()
-            })
-        );
-        test!(
-            &[
-                ComputeBudgetInstruction::set_compute_unit_limit(
-                    2 * solana_compute_budget_program::DEFAULT_COMPUTE_UNITS as u32
-                ),
-                ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
-            ],
-            Ok(ComputeBudgetLimits {
-                compute_unit_limit: 2 * solana_compute_budget_program::DEFAULT_COMPUTE_UNITS as u32,
-                compute_unit_price: 1_000_000u64,
-                ..ComputeBudgetLimits::default()
-            })
-        );
-        test!(
-            &[
                 ComputeBudgetInstruction::set_compute_unit_limit(MAX_COMPUTE_UNIT_LIMIT + 1),
                 Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
             ],

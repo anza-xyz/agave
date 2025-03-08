@@ -231,11 +231,37 @@ impl SVMTransactionExecutionBudget {
 
         Some(final_result)
     }
+
+    pub fn apply_overrides(&self, overrides: &SVMTransactionBudgetOverrides) -> Self {
+        let mut budget = *self;
+        if let Some(compute_unit_limit) = overrides.compute_unit_limit {
+            budget.compute_unit_limit = compute_unit_limit;
+        }
+        if let Some(heap_size) = overrides.heap_size {
+            budget.heap_size = heap_size;
+        }
+        budget
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SVMTransactionBudgetOverrides {
+    pub compute_unit_limit: Option<u64>,
+    pub heap_size: Option<u32>,
+}
+
+impl SVMTransactionBudgetOverrides {
+    pub fn no_overrides() -> Self {
+        Self {
+            compute_unit_limit: None,
+            heap_size: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SVMTransactionComputeBudgetAndLimits {
-    pub budget: SVMTransactionExecutionBudget,
+    pub budget_overrides: SVMTransactionBudgetOverrides,
     pub loaded_accounts_bytes: NonZeroU32,
     pub priority_fee: u64,
 }
@@ -244,7 +270,7 @@ pub struct SVMTransactionComputeBudgetAndLimits {
 impl Default for SVMTransactionComputeBudgetAndLimits {
     fn default() -> Self {
         Self {
-            budget: SVMTransactionExecutionBudget::default(),
+            budget_overrides: SVMTransactionBudgetOverrides::default(),
             loaded_accounts_bytes: NonZeroU32::new(64 * 1024 * 1024).unwrap(),
             priority_fee: 0,
         }
