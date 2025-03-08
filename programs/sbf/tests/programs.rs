@@ -713,6 +713,7 @@ fn test_program_sbf_invoke_sanity() {
                 invoked_program_id.clone(),
                 invoked_program_id.clone(),
                 invoked_program_id.clone(),
+                invoked_program_id.clone(),
             ],
             Languages::Rust => vec![
                 system_program::id(),
@@ -737,6 +738,7 @@ fn test_program_sbf_invoke_sanity() {
                 invoked_program_id.clone(),
                 invoked_program_id.clone(),
                 system_program::id(),
+                invoked_program_id.clone(),
                 invoked_program_id.clone(),
                 invoked_program_id.clone(),
             ],
