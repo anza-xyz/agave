@@ -137,7 +137,6 @@ dependencies = [
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-ledger",
- "solana-log-utils",
  "solana-logger",
  "solana-metrics",
  "solana-net-utils",
@@ -6629,17 +6628,6 @@ name = "solana-log-collector"
 version = "2.3.0"
 dependencies = [
  "log",
-]
-
-[[package]]
-name = "solana-log-utils"
-version = "2.3.0"
-dependencies = [
- "clap",
- "libc",
- "log",
- "signal-hook",
- "solana-logger",
 ]
 
 [[package]]
