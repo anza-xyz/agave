@@ -12,6 +12,10 @@ use {
     std::sync::Arc,
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 // simultaneous transactions locked
 const BATCH_SIZES: [usize; 3] = [1, 32, 64];
 
