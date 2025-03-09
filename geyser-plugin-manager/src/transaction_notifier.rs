@@ -1,7 +1,3 @@
-use agave_geyser_plugin_interface::geyser_plugin_interface::TxnReplicaAccountInfo;
-use solana_account::AccountSharedData;
-use solana_account::ReadableAccount;
-use solana_pubkey::Pubkey;
 /// Module responsible for notifying plugins of transactions
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
@@ -9,9 +5,11 @@ use {
         ReplicaTransactionInfoV3, ReplicaTransactionInfoVersions,
     },
     log::*,
+    solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::*,
+    solana_pubkey::Pubkey,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
     solana_transaction::sanitized::SanitizedTransaction,
@@ -43,7 +41,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
             signature,
             transaction_status_meta,
             transaction,
-            &post_accounts_states,
+            post_accounts_states,
         );
 
         let plugin_manager = self.plugin_manager.read().unwrap();
@@ -95,7 +93,7 @@ impl TransactionNotifierImpl {
         signature: &'a Signature,
         transaction_status_meta: &'a TransactionStatusMeta,
         transaction: &'a SanitizedTransaction,
-        post_accounts_states: &'a [(Pubkey, AccountSharedData)],
+        post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
     ) -> ReplicaTransactionInfoV3<'a> {
         ReplicaTransactionInfoV3 {
             index,
@@ -103,24 +101,7 @@ impl TransactionNotifierImpl {
             is_vote: transaction.is_simple_vote_transaction(),
             transaction,
             transaction_status_meta,
-            post_accounts_states: post_accounts_states
-                .iter()
-                .map(|(pubkey, data)| {
-                    (
-                        pubkey.as_ref(),
-                        Self::accountinfo_from_shared_account_data(data),
-                    )
-                })
-                .collect(),
-        }
-    }
-    fn accountinfo_from_shared_account_data(account: &AccountSharedData) -> TxnReplicaAccountInfo {
-        TxnReplicaAccountInfo {
-            lamports: account.lamports(),
-            owner: account.owner().as_array(),
-            executable: account.executable(),
-            rent_epoch: account.rent_epoch(),
-            data: account.data(),
+            post_accounts_states,
         }
     }
 }

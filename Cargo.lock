@@ -150,7 +150,9 @@ name = "agave-geyser-plugin-interface"
 version = "2.3.0"
 dependencies = [
  "log",
+ "solana-account",
  "solana-clock",
+ "solana-pubkey",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-status",
