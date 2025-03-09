@@ -146,6 +146,7 @@ impl Default for Config {
 pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
 
 impl SendTransactionService {
+    #[deprecated(since = "2.2.0", note = "Please use `new_with_client` instead.")]
     pub fn new<T: TpuInfo + std::marker::Send + 'static>(
         tpu_address: SocketAddr,
         bank_forks: &Arc<RwLock<BankForks>>,
@@ -161,6 +162,7 @@ impl SendTransactionService {
             leader_forward_count,
             ..Config::default()
         };
+        #[allow(deprecated)]
         Self::new_with_config(
             tpu_address,
             bank_forks,
@@ -172,6 +174,7 @@ impl SendTransactionService {
         )
     }
 
+    #[deprecated(since = "2.2.0", note = "Please use `new_with_client` instead.")]
     pub fn new_with_config<T: TpuInfo + std::marker::Send + 'static>(
         tpu_address: SocketAddr,
         bank_forks: &Arc<RwLock<BankForks>>,
