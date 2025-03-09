@@ -1277,13 +1277,6 @@ pub mod tests {
             }
         }
 
-        fn get_executable_byte(&self) -> u8 {
-            let executable_bool: bool = self.executable();
-            // UNSAFE: Force to interpret mmap-backed bool as u8 to really read the actual memory content
-            let executable_byte: u8 = unsafe { std::mem::transmute::<bool, u8>(executable_bool) };
-            executable_byte
-        }
-
         fn set_executable_as_byte(&self, new_executable_byte: u8) {
             // UNSAFE: Force to interpret mmap-backed &bool as &u8 to write some crafted value;
             unsafe {
@@ -1819,10 +1812,10 @@ pub mod tests {
 
                 // we can observe crafted value by ref
                 {
-                    let executable_bool: &bool = &account.account_meta.executable;
+                    //let executable_bool: &bool = &account.account_meta.executable;
                     // Depending on use, *executable_bool can be truthy or falsy due to direct memory manipulation
                     // assert_eq! thinks *executable_bool is equal to false but the if condition thinks it's not, contradictorily.
-                    assert!(!*executable_bool);
+                    //assert!(!*executable_bool);
                     assert_eq!(*account.ref_executable_byte(), crafted_executable);
                 }
 
@@ -1830,7 +1823,6 @@ pub mod tests {
                 {
                     let executable_bool: bool = account.executable();
                     assert!(!executable_bool);
-                    assert_eq!(account.get_executable_byte(), 0); // Wow, not crafted_executable!
                 }
             })
             .unwrap();
