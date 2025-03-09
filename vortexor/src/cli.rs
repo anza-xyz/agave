@@ -1,12 +1,13 @@
 use {
-    clap::{crate_description, crate_name, App, AppSettings, Arg},
-    solana_clap_utils::input_validators::{is_keypair_or_ask_keyword, is_parsable},
+    clap::{crate_description, crate_name, Arg, ArgAction, ColorChoice, Command},
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_sdk::quic::QUIC_PORT_OFFSET,
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
         DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
     },
+    std::path::PathBuf,
+    url::Url,
 };
 
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
@@ -45,8 +46,8 @@ impl Default for DefaultArgs {
     }
 }
 
-fn port_range_validator(port_range: String) -> Result<(), String> {
-    if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
+fn port_range_validator(port_range: &str) -> Result<(u16, u16), String> {
+    if let Some((start, end)) = solana_net_utils::parse_port_range(port_range) {
         if end.saturating_sub(start) < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
             Err(format!(
                 "Port range is too small.  Try --dynamic-port-range {}-{}",
@@ -56,139 +57,205 @@ fn port_range_validator(port_range: String) -> Result<(), String> {
         } else if end.checked_add(QUIC_PORT_OFFSET).is_none() {
             Err("Invalid dynamic_port_range.".to_string())
         } else {
-            Ok(())
+            Ok((start, end))
         }
     } else {
         Err("Invalid port range".to_string())
     }
 }
 
-pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
-    App::new(crate_name!())
+fn validate_http_url(input: &str) -> Result<(), String> {
+    // Attempt to parse the input as a URL
+    let parsed_url = Url::parse(input).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Check the scheme of the URL
+    match parsed_url.scheme() {
+        "http" | "https" => Ok(()),
+        scheme => Err(format!("Invalid scheme: {}. Must be http, https.", scheme)),
+    }
+}
+
+fn validate_websocket_url(input: &str) -> Result<(), String> {
+    // Attempt to parse the input as a URL
+    let parsed_url = Url::parse(input).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Check the scheme of the URL
+    match parsed_url.scheme() {
+        "ws" | "wss" => Ok(()),
+        scheme => Err(format!("Invalid scheme: {}. Must be ws, or wss.", scheme)),
+    }
+}
+
+pub fn command(version: &str, default_args: DefaultArgs) -> Command {
+    // The default values need to be static:
+    let version_static: &'static str = Box::leak(version.to_string().into_boxed_str());
+    let bind_address_static: &'static str = Box::leak(default_args.bind_address.into_boxed_str());
+    let port_range_static: &'static str =
+        Box::leak(default_args.dynamic_port_range.into_boxed_str());
+    let max_connections_per_peer_static: &'static str =
+        Box::leak(default_args.max_connections_per_peer.into_boxed_str());
+    let max_tpu_staked_connections_static: &'static str =
+        Box::leak(default_args.max_tpu_staked_connections.into_boxed_str());
+    let max_tpu_unstaked_connections_static: &'static str =
+        Box::leak(default_args.max_tpu_unstaked_connections.into_boxed_str());
+    let max_fwd_staked_connections_static: &'static str =
+        Box::leak(default_args.max_fwd_staked_connections.into_boxed_str());
+    let max_fwd_unstaked_connections_static: &'static str =
+        Box::leak(default_args.max_fwd_unstaked_connections.into_boxed_str());
+    let max_connections_per_ipaddr_per_min_static: &'static str = Box::leak(
+        default_args
+            .max_connections_per_ipaddr_per_min
+            .into_boxed_str(),
+    );
+    let num_quic_endpoints_static: &'static str =
+        Box::leak(default_args.num_quic_endpoints.into_boxed_str());
+    let max_streams_per_ms_static: &'static str =
+        Box::leak(default_args.max_streams_per_ms.into_boxed_str());
+
+    Command::new(crate_name!())
         .about(crate_description!())
-        .version(version)
-        .global_setting(AppSettings::ColoredHelp)
-        .global_setting(AppSettings::InferSubcommands)
-        .global_setting(AppSettings::UnifiedHelpMessage)
-        .global_setting(AppSettings::VersionlessSubcommands)
+        .version(version_static)
+        .infer_subcommands(true)
+        .color(ColorChoice::Auto)
         .arg(
-            Arg::with_name("identity")
-                .short("i")
+            Arg::new("identity")
                 .long("identity")
                 .value_name("KEYPAIR")
-                .takes_value(true)
-                .validator(is_keypair_or_ask_keyword)
+                .num_args(1)
+                .required(true)
+                .value_parser(clap::value_parser!(PathBuf))
                 .help("Vortexor identity keypair"),
         )
         .arg(
-            Arg::with_name("bind_address")
+            Arg::new("bind_address")
                 .long("bind-address")
                 .value_name("HOST")
-                .takes_value(true)
-                .validator(solana_net_utils::is_host)
-                .default_value(&default_args.bind_address)
+                .num_args(1)
+                .value_parser(solana_net_utils::parse_host)
+                .default_value(bind_address_static)
                 .help("IP address to bind the validator ports"),
         )
         .arg(
-            Arg::with_name("dynamic_port_range")
+            Arg::new("dynamic_port_range")
                 .long("dynamic-port-range")
                 .value_name("MIN_PORT-MAX_PORT")
-                .takes_value(true)
-                .default_value(&default_args.dynamic_port_range)
-                .validator(port_range_validator)
+                .num_args(1)
+                .default_value(port_range_static)
+                .value_parser(port_range_validator)
                 .help("Range to use for dynamically assigned ports"),
         )
         .arg(
-            Arg::with_name("max_connections_per_peer")
+            Arg::new("max_connections_per_peer")
                 .long("max-connections-per-peer")
-                .takes_value(true)
-                .default_value(&default_args.max_connections_per_peer)
-                .validator(is_parsable::<u32>)
+                .num_args(1)
+                .default_value(max_connections_per_peer_static)
+                .value_parser(clap::value_parser!(u64))
                 .help("Controls the max concurrent connections per IpAddr."),
         )
         .arg(
-            Arg::with_name("max_tpu_staked_connections")
+            Arg::new("max_tpu_staked_connections")
                 .long("max-tpu-staked-connections")
-                .takes_value(true)
-                .default_value(&default_args.max_tpu_staked_connections)
-                .validator(is_parsable::<u32>)
+                .num_args(1)
+                .default_value(max_tpu_staked_connections_static)
+                .value_parser(clap::value_parser!(u64))
                 .help("Controls the max concurrent connections for TPU from staked nodes."),
         )
         .arg(
-            Arg::with_name("max_tpu_unstaked_connections")
+            Arg::new("max_tpu_unstaked_connections")
                 .long("max-tpu-unstaked-connections")
-                .takes_value(true)
-                .default_value(&default_args.max_tpu_unstaked_connections)
-                .validator(is_parsable::<u32>)
+                .num_args(1)
+                .default_value(max_tpu_unstaked_connections_static)
+                .value_parser(clap::value_parser!(u64))
                 .help("Controls the max concurrent connections fort TPU from unstaked nodes."),
         )
         .arg(
-            Arg::with_name("max_fwd_staked_connections")
+            Arg::new("max_fwd_staked_connections")
                 .long("max-fwd-staked-connections")
-                .takes_value(true)
-                .default_value(&default_args.max_fwd_staked_connections)
-                .validator(is_parsable::<u32>)
+                .num_args(1)
+                .default_value(max_fwd_staked_connections_static)
+                .value_parser(clap::value_parser!(u64))
                 .help("Controls the max concurrent connections for TPU-forward from staked nodes."),
         )
         .arg(
-            Arg::with_name("max_fwd_unstaked_connections")
+            Arg::new("max_fwd_unstaked_connections")
                 .long("max-fwd-unstaked-connections")
-                .takes_value(true)
-                .default_value(&default_args.max_fwd_unstaked_connections)
-                .validator(is_parsable::<u32>)
+                .num_args(1)
+                .default_value(max_fwd_unstaked_connections_static)
+                .value_parser(clap::value_parser!(u64))
                 .help("Controls the max concurrent connections for TPU-forward from unstaked nodes."),
         )
         .arg(
-            Arg::with_name("max_connections_per_ipaddr_per_minute")
+            Arg::new("max_connections_per_ipaddr_per_minute")
                 .long("max-connections-per-ipaddr-per-minute")
-                .takes_value(true)
-                .default_value(&default_args.max_connections_per_ipaddr_per_min)
-                .validator(is_parsable::<u32>)
+                .num_args(1)
+                .default_value(max_connections_per_ipaddr_per_min_static)
+                .value_parser(clap::value_parser!(u64))
                 .help("Controls the rate of the clients connections per IpAddr per minute."),
         )
         .arg(
-            Arg::with_name("num_quic_endpoints")
+            Arg::new("num_quic_endpoints")
                 .long("num-quic-endpoints")
-                .takes_value(true)
-                .default_value(&default_args.num_quic_endpoints)
-                .validator(is_parsable::<usize>)
+                .num_args(1)
+                .default_value(num_quic_endpoints_static)
+                .value_parser(clap::value_parser!(u64))
                 .help("The number of QUIC endpoints used for TPU and TPU-Forward. It can be increased to \
                        increase network ingest throughput, at the expense of higher CPU and general \
                        validator load."),
         )
         .arg(
-            Arg::with_name("max_streams_per_ms")
+            Arg::new("max_streams_per_ms")
                 .long("max-streams-per-ms")
-                .takes_value(true)
-                .default_value(&default_args.max_streams_per_ms)
-                .validator(is_parsable::<usize>)
+                .num_args(1)
+                .default_value(max_streams_per_ms_static)
+                .value_parser(clap::value_parser!(u64))
                 .help("Max streams per second for a streamer."),
         )
         .arg(
-            Arg::with_name("tpu_coalesce_ms")
+            Arg::new("tpu_coalesce_ms")
                 .long("tpu-coalesce-ms")
                 .value_name("MILLISECS")
-                .takes_value(true)
-                .validator(is_parsable::<u64>)
+                .num_args(1)
+                .value_parser(clap::value_parser!(u64))
                 .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
         )
         .arg(
-            Arg::with_name("logfile")
+            Arg::new("logfile")
                 .long("log")
                 .value_name("FILE")
-                .takes_value(true)
+                .num_args(1)
                 .help(
                     "Redirect logging to the specified file, '-' for standard error. Sending the \
                      SIGUSR1 signal to the vortexor process will cause it to re-open the log file.",
                 ),
         )
         .arg(
-            Arg::with_name("destination")
+            Arg::new("destination")
                 .long("destination")
                 .value_name("HOST:PORT")
-                .takes_value(true)
-                .multiple(true)
-                .validator(solana_net_utils::is_host_port)
+                .action(ArgAction::Append)
+                .num_args(1)
+                .value_parser(solana_net_utils::parse_host_port)
                 .help("The destination validator address to which the vortexor will forward transactions."),
+        )
+        .arg(
+            Arg::new("rpc_server")
+                .short('r')
+                .long("rpc-server")
+                .value_name("HOST:PORT")
+                .num_args(1)
+                .action(ArgAction::Append)
+                .value_parser(validate_http_url)
+                .help("The address of RPC server to which the vortexor will forward transaction"),
+        )
+        .arg(
+            Arg::new("websocket_server")
+                .short('w')
+                .long("websocket-server")
+                .value_name("HOST:PORT")
+                .num_args(1)
+                .action(ArgAction::Append)
+                .value_parser(validate_websocket_url)
+                .help("The address of websocket server to which the vortexor will forward transaction.  \
+                 If multiple rpc servers are set, the count of websocket servers must match that of the rpc servers."),
         )
 }
