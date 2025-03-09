@@ -24,7 +24,6 @@ use {
         env,
         net::{IpAddr, SocketAddr},
         path::PathBuf,
-        process::exit,
         sync::{atomic::AtomicBool, Arc, RwLock},
         time::Duration,
     },
