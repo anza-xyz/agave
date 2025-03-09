@@ -392,7 +392,7 @@ impl SendTransactionService {
                     );
                     stats_report.report();
 
-                    // to send transactions as soon as possible we adjust retry interval
+                    // Adjust retry interval taking into account the time since the last send.
                     retry_interval_ms = retry_interval_ms_default
                         .checked_sub(
                             result
@@ -463,10 +463,8 @@ impl SendTransactionService {
                 return false;
             }
 
-            let max_retries = transaction_info
-                .max_retries
-                .or(default_max_retries)
-                .map(|max_retries| max_retries.min(service_max_retries));
+            let max_retries =
+                transaction_info.get_max_retries(default_max_retries, service_max_retries);
 
             if let Some(max_retries) = max_retries {
                 if transaction_info.retries >= max_retries {
