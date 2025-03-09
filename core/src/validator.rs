@@ -80,6 +80,7 @@ use {
         poh_service::{self, PohService},
     },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
+    solana_rpc::cluster_tpu_info::ClusterTpuInfo,
     solana_rpc::{
         block_meta_service::{BlockMetaSender, BlockMetaService},
         max_slots::MaxSlots,
@@ -119,11 +120,15 @@ use {
         hard_forks::HardForks,
         hash::Hash,
         pubkey::Pubkey,
+        quic::NotifyKeyUpdate,
         shred_version::compute_shred_version,
         signature::{Keypair, Signer},
         timing::timestamp,
     },
-    solana_send_transaction_service::send_transaction_service,
+    solana_send_transaction_service::{
+        send_transaction_service,
+        transaction_client::{ConnectionCacheClient, TpuClientNextClient},
+    },
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
@@ -315,6 +320,7 @@ pub struct ValidatorConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
+    pub use_tpu_client_next: bool,
 }
 
 impl Default for ValidatorConfig {
@@ -388,6 +394,7 @@ impl Default for ValidatorConfig {
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
+            use_tpu_client_next: false,
         }
     }
 }
@@ -1087,6 +1094,9 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
+        // ConnectionCache might be used for JsonRpc and for Forwarding. Since
+        // the latter is not migrated yet to the tpu-client-next, create
+        // ConnectionCache regardless of config.use_tpu_client_next for now.
         let connection_cache = if use_quic {
             let connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
@@ -1145,6 +1155,7 @@ impl Validator {
             rpc_completed_slots_service,
             optimistically_confirmed_bank_tracker,
             bank_notification_sender,
+            client_updater,
         ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
             assert_eq!(
                 node.info.rpc().map(|addr| socket_addr_space.check(&addr)),
@@ -1159,31 +1170,111 @@ impl Validator {
                 None
             };
 
-            let json_rpc_service = JsonRpcService::new(
-                rpc_addr,
-                config.rpc_config.clone(),
-                Some(config.snapshot_config.clone()),
-                bank_forks.clone(),
-                block_commitment_cache.clone(),
-                blockstore.clone(),
-                cluster_info.clone(),
-                Some(poh_recorder.clone()),
-                genesis_config.hash(),
-                ledger_path,
-                config.validator_exit.clone(),
-                exit.clone(),
-                rpc_override_health_check.clone(),
-                startup_verification_complete,
-                optimistically_confirmed_bank.clone(),
-                config.send_transaction_service_config.clone(),
-                max_slots.clone(),
-                leader_schedule_cache.clone(),
-                connection_cache.clone(),
-                max_complete_transaction_status_slot,
-                max_complete_rewards_slot,
-                prioritization_fee_cache.clone(),
-            )
-            .map_err(ValidatorError::Other)?;
+            //TODO(klykov): There are two options (not sure which one is
+            //better):
+            // 1. Use one runtime for RPC and for the client
+            // 2. Use different runtimes
+            //
+            // Beside of that there are two options of Runtime ownership --
+            // make it part of Rpc as it is now or to move it to validator
+            // like other runtimes.
+            let rpc_config = &config.rpc_config;
+            let rpc_runtime = solana_rpc::rpc_service::service_runtime(
+                rpc_config.rpc_threads,
+                rpc_config.rpc_blocking_threads,
+                rpc_config.rpc_niceness_adj,
+            );
+            let leader_info = ClusterTpuInfo::new(cluster_info.clone(), poh_recorder.clone());
+            let (json_rpc_service, client_updater) = if config.use_tpu_client_next {
+                let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).ok_or(
+                    ValidatorError::Other(format!(
+                        "Invalid {:?} socket address for TPU",
+                        Protocol::QUIC
+                    )),
+                )?;
+
+                let client = TpuClientNextClient::new(
+                    rpc_runtime.handle().clone(),
+                    my_tpu_address,
+                    config.send_transaction_service_config.tpu_peers.clone(),
+                    Some(leader_info),
+                    config.send_transaction_service_config.leader_forward_count,
+                    Some(Arc::as_ref(&identity_keypair)),
+                );
+
+                let json_rpc_service = JsonRpcService::new_with_client(
+                    rpc_addr,
+                    rpc_config.clone(),
+                    Some(config.snapshot_config.clone()),
+                    bank_forks.clone(),
+                    block_commitment_cache.clone(),
+                    blockstore.clone(),
+                    cluster_info.clone(),
+                    genesis_config.hash(),
+                    ledger_path,
+                    config.validator_exit.clone(),
+                    exit.clone(),
+                    rpc_override_health_check.clone(),
+                    startup_verification_complete,
+                    optimistically_confirmed_bank.clone(),
+                    config.send_transaction_service_config.clone(),
+                    max_slots.clone(),
+                    leader_schedule_cache.clone(),
+                    client.clone(),
+                    max_complete_transaction_status_slot,
+                    max_complete_rewards_slot,
+                    prioritization_fee_cache.clone(),
+                    rpc_runtime,
+                )
+                .map_err(ValidatorError::Other)?;
+                (
+                    json_rpc_service,
+                    Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+                )
+            } else {
+                let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).ok_or(
+                    ValidatorError::Other(format!(
+                        "Invalid {:?} socket address for TPU",
+                        Protocol::QUIC
+                    )),
+                )?;
+                let client = ConnectionCacheClient::new(
+                    connection_cache.clone(),
+                    my_tpu_address,
+                    config.send_transaction_service_config.tpu_peers.clone(),
+                    Some(leader_info),
+                    config.send_transaction_service_config.leader_forward_count,
+                );
+                let json_rpc_service = JsonRpcService::new_with_client(
+                    rpc_addr,
+                    config.rpc_config.clone(),
+                    Some(config.snapshot_config.clone()),
+                    bank_forks.clone(),
+                    block_commitment_cache.clone(),
+                    blockstore.clone(),
+                    cluster_info.clone(),
+                    genesis_config.hash(),
+                    ledger_path,
+                    config.validator_exit.clone(),
+                    exit.clone(),
+                    rpc_override_health_check.clone(),
+                    startup_verification_complete,
+                    optimistically_confirmed_bank.clone(),
+                    config.send_transaction_service_config.clone(),
+                    max_slots.clone(),
+                    leader_schedule_cache.clone(),
+                    client.clone(),
+                    max_complete_transaction_status_slot,
+                    max_complete_rewards_slot,
+                    prioritization_fee_cache.clone(),
+                    rpc_runtime,
+                )
+                .map_err(ValidatorError::Other)?;
+                (
+                    json_rpc_service,
+                    Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+                )
+            };
 
             let pubsub_service = if !config.rpc_config.full_api {
                 None
@@ -1259,9 +1350,10 @@ impl Validator {
                 rpc_completed_slots_service,
                 optimistically_confirmed_bank_tracker,
                 bank_notification_sender_config,
+                Some(client_updater),
             )
         } else {
-            (None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None)
         };
 
         if config.halt_at_slot.is_some() {
@@ -1468,6 +1560,11 @@ impl Validator {
         let cluster_slots =
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
 
+        // If RPC is supported and ConnectionCache is used, pass ConnectionCache for being warmup inside Tvu.
+        let connection_cache_for_warmup = (json_rpc_service.is_some()
+            && !config.use_tpu_client_next)
+            .then_some(&connection_cache);
+
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1515,7 +1612,7 @@ impl Validator {
             config.wait_to_vote_slot,
             accounts_background_request_sender.clone(),
             config.runtime_config.log_messages_bytes_limit,
-            json_rpc_service.is_some().then_some(&connection_cache), // for the cache warmer only used for STS for RPC service
+            connection_cache_for_warmup,
             &prioritization_fee_cache,
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
@@ -1613,6 +1710,10 @@ impl Validator {
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::Running;
+        if let Some(client_updater) = client_updater {
+            key_notifies.push(client_updater);
+        }
+        // add connection_cache because it is still used in Forwarder.
         key_notifies.push(connection_cache);
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {

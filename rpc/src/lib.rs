@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 pub mod block_meta_service;
-mod cluster_tpu_info;
+//TODO(klykov): maybe there is a way to avoid exporting?
+pub mod cluster_tpu_info;
 pub mod filter;
 pub mod max_slots;
 pub mod optimistically_confirmed_bank_tracker;
