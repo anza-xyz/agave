@@ -195,7 +195,8 @@ pub fn load_bank_forks(
                 entry_notification_sender,
                 accounts_update_notifier,
                 exit,
-            );
+            )
+            .map_err(BankForksUtilsError::ProcessBlockstoreFromRoot)?;
             bank_forks
                 .read()
                 .unwrap()
