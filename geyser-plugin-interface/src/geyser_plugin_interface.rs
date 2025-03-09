@@ -3,7 +3,9 @@
 /// In addition, the dynamic library must export a "C" function _create_plugin which
 /// creates the implementation of the plugin.
 use {
+    solana_account::AccountSharedData,
     solana_clock::{Slot, UnixTimestamp},
+    solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
@@ -176,26 +178,7 @@ pub struct ReplicaTransactionInfoV3<'a> {
     /// The transaction's index in the block
     pub index: usize,
     /// States of accounts that was in transaction
-    pub post_accounts_states: Vec<(&'a [u8], TxnReplicaAccountInfo<'a>)>,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[repr(C)]
-/// Information about an account being updated in txn
-pub struct TxnReplicaAccountInfo<'a> {
-    /// The lamports for the account
-    pub lamports: u64,
-
-    /// The Pubkey of the owner program account
-    pub owner: &'a [u8],
-
-    /// This account's data contains a loaded program (and is now read-only)
-    pub executable: bool,
-
-    /// The epoch at which this account will next owe rent
-    pub rent_epoch: u64,
-
-    /// The data held in this account.
-    pub data: &'a [u8],
+    pub post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
 }
 
 /// A wrapper to future-proof ReplicaTransactionInfo handling.

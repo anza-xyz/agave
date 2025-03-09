@@ -264,8 +264,6 @@ impl TransactionStatusService {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use solana_sdk::account::AccountSharedData;
-
     use {
         super::*,
         crate::transaction_notifier_interface::TransactionNotifier,
@@ -277,6 +275,7 @@ pub(crate) mod tests {
         },
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
         solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_sdk::account::AccountSharedData,
         solana_sdk::{
             account_utils::StateMut,
             clock::Slot,
