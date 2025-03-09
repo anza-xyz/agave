@@ -9194,7 +9194,8 @@ pub(crate) mod tests {
             &recyclers,
             None,
             None,
-        );
+        )
+        .unwrap();
 
         // Mark block 1, 3, 4, 5 as duplicate
         blockstore.store_duplicate_slot(1, vec![], vec![]).unwrap();
