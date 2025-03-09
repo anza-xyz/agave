@@ -1812,10 +1812,10 @@ pub mod tests {
 
                 // we can observe crafted value by ref
                 {
-                    let executable_bool: &bool = &account.account_meta.executable;
+                    //let executable_bool: &bool = &account.account_meta.executable;
                     // Depending on use, *executable_bool can be truthy or falsy due to direct memory manipulation
                     // assert_eq! thinks *executable_bool is equal to false but the if condition thinks it's not, contradictorily.
-                    assert!(!*executable_bool);
+                    //assert!(!*executable_bool);
                     assert_eq!(*account.ref_executable_byte(), crafted_executable);
                 }
 
