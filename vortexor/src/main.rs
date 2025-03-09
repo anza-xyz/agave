@@ -91,7 +91,7 @@ pub fn main() {
     let config = SocketConfig::default().reuseport(false);
 
     let sender_socket =
-        bind_in_range_with_config(*bind_address, dynamic_port_range, config).unwrap();
+        bind_in_range_with_config(*bind_address, *dynamic_port_range, config).unwrap();
 
     // The non_vote_receiver will forward the verified transactions to its configured validator
     let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
