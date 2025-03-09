@@ -8,8 +8,8 @@ use {
         WALLCLOCK_TIME,
     },
     solana_account::PROGRAM_OWNERS,
-    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
+    solana_program_runtime::execution_budget::SVMTransactionComputeBudgetAndLimits,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable,
@@ -436,13 +436,16 @@ impl SvmTestEntry {
             .map(|item| {
                 let message = SanitizedTransaction::from_transaction_for_tests(item.transaction);
                 let check_result = item.check_result.map(|tx_details| {
+                    let compute_budget_limits = process_compute_budget_instructions(
+                        SVMMessage::program_instructions_iter(&message),
+                        &FeatureSet::default(),
+                    );
+                    let compute_budget =
+                        compute_budget_limits.map(|v| v.get_compute_budget_and_limits());
                     CheckedTransactionDetails::new(
                         tx_details.nonce,
                         tx_details.lamports_per_signature,
-                        process_compute_budget_instructions(
-                            SVMMessage::program_instructions_iter(&message),
-                            &FeatureSet::default(),
-                        ),
+                        compute_budget,
                     )
                 });
 
@@ -475,7 +478,7 @@ impl TransactionBatchItem {
             check_result: Ok(CheckedTransactionDetails::new(
                 Some(nonce_info),
                 LAMPORTS_PER_SIGNATURE,
-                Ok(ComputeBudgetLimits::default()),
+                Ok(SVMTransactionComputeBudgetAndLimits::default()),
             )),
             ..Self::default()
         }
@@ -489,7 +492,7 @@ impl Default for TransactionBatchItem {
             check_result: Ok(CheckedTransactionDetails::new(
                 None,
                 LAMPORTS_PER_SIGNATURE,
-                Ok(ComputeBudgetLimits::default()),
+                Ok(SVMTransactionComputeBudgetAndLimits::default()),
             )),
             asserts: TransactionBatchItemAsserts::default(),
         }

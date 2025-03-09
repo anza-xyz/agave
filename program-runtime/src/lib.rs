@@ -7,12 +7,14 @@
 extern crate solana_metrics;
 
 pub use solana_sbpf;
+pub mod execution_budget;
 pub mod invoke_context;
 pub mod loaded_programs;
 pub mod mem_pool;
 pub mod serialization;
 pub mod stable_log;
 pub mod sysvar_cache;
+
 // re-exports for macros
 pub mod __private {
     pub use {

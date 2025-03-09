@@ -6,10 +6,10 @@ use {
         SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
         SyscallLog, SyscallMemcpy, SyscallMemset, SyscallSetReturnData,
     },
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::FeatureSet,
     solana_fee_structure::FeeDetails,
     solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionBudget,
         invoke_context::InvokeContext,
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
         solana_sbpf::{
@@ -350,7 +350,7 @@ pub fn register_builtins(
 }
 
 pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
-    let compute_budget = ComputeBudget::default();
+    let compute_budget = SVMTransactionExecutionBudget::default();
     let vm_config = Config {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,

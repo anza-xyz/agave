@@ -1,10 +1,10 @@
 use {
     solana_borsh::v1::try_from_slice_unchecked,
     solana_clap_utils::compute_budget::ComputeUnitLimit,
-    solana_compute_budget::compute_budget_limits::MAX_COMPUTE_UNIT_LIMIT,
     solana_compute_budget_interface::{self as compute_budget, ComputeBudgetInstruction},
     solana_instruction::Instruction,
     solana_message::Message,
+    solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSimulateTransactionConfig,
     solana_transaction::Transaction,

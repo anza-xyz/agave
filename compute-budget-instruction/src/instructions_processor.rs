@@ -22,11 +22,16 @@ pub fn process_compute_budget_instructions<'a>(
 mod tests {
     use {
         super::*,
+        solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_hash::Hash,
         solana_instruction::{error::InstructionError, Instruction},
         solana_keypair::Keypair,
         solana_message::Message,
+        solana_program_runtime::execution_budget::{
+            DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
+            MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES,
+        },
         solana_pubkey::Pubkey,
         solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMMessage,
@@ -277,6 +282,14 @@ mod tests {
                 ComputeBudgetInstruction::set_compute_unit_limit(MAX_COMPUTE_UNIT_LIMIT - 1),
             ],
             Err(TransactionError::DuplicateInstruction(2))
+        );
+
+        test!(
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(2000u32),
+                ComputeBudgetInstruction::set_compute_unit_limit(42u32),
+            ],
+            Err(TransactionError::DuplicateInstruction(1))
         );
 
         test!(
