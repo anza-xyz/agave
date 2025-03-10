@@ -4121,9 +4121,10 @@ fn test_cpi_invalid_account_info_pointers() {
 
     let mut program_ids: Vec<Pubkey> = Vec::with_capacity(2);
 
+    let mut bank;
     #[cfg(feature = "sbf_rust")]
     {
-        let (_bank, invoke_program_id) = load_program_of_loader_v4(
+        let (new_bank, invoke_program_id) = load_program_of_loader_v4(
             &mut bank_client,
             &bank_forks,
             &mint_keypair,
@@ -4132,11 +4133,15 @@ fn test_cpi_invalid_account_info_pointers() {
         );
         account_metas.push(AccountMeta::new_readonly(invoke_program_id, false));
         program_ids.push(invoke_program_id);
+        #[allow(unused)]
+        {
+            bank = new_bank;
+        }
     }
 
     #[cfg(feature = "sbf_c")]
     {
-        let (_bank, c_invoke_program_id) = load_program_of_loader_v4(
+        let (new_bank, c_invoke_program_id) = load_program_of_loader_v4(
             &mut bank_client,
             &bank_forks,
             &mint_keypair,
@@ -4145,11 +4150,11 @@ fn test_cpi_invalid_account_info_pointers() {
         );
         account_metas.push(AccountMeta::new_readonly(c_invoke_program_id, false));
         program_ids.push(c_invoke_program_id);
+        #[allow(unused)]
+        {
+            bank = new_bank;
+        }
     }
-
-    let bank = bank_client
-        .advance_slot(1, &bank_forks, &Pubkey::default())
-        .expect("Failed to advance the slot");
 
     for invoke_program_id in &program_ids {
         for ix in [
