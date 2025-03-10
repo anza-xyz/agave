@@ -446,6 +446,7 @@ impl TransactionViewReceiveAndBuffer {
                     if result.is_err() {
                         num_dropped_on_status_age_checks += 1;
                         container.remove_by_id(priority_id.id);
+                        continue;
                     }
                     let transaction = &container
                         .get_transaction_ttl(priority_id.id)
@@ -459,6 +460,7 @@ impl TransactionViewReceiveAndBuffer {
                         *result = Err(err);
                         num_dropped_on_status_age_checks += 1;
                         container.remove_by_id(priority_id.id);
+                        continue;
                     }
                 }
                 // Push non-errored transaction into queue.
@@ -692,7 +694,90 @@ fn calculate_max_age(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        crate::banking_stage::tests::create_slow_genesis_config,
+        crossbeam_channel::{unbounded, Receiver},
+        solana_ledger::genesis_utils::GenesisConfigInfo,
+        solana_perf::packet::{to_packet_batches, Packet, PacketBatch},
+        solana_pubkey::Pubkey,
+        solana_sdk::{
+            hash::Hash,
+            message::{v0, AddressLookupTableAccount, VersionedMessage},
+            packet::{Meta, PACKET_DATA_SIZE},
+            signature::Keypair,
+            signer::Signer,
+            system_instruction,
+            system_transaction::transfer,
+            transaction::VersionedTransaction,
+        },
+        test_case::test_case,
+    };
+
+    fn test_bank_forks() -> (Arc<RwLock<BankForks>>, Keypair) {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(u64::MAX);
+
+        let (_bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        (bank_forks, mint_keypair)
+    }
+
+    const TEST_CONTAINER_CAPACITY: usize = 100;
+
+    fn setup_sanitized_transaction_receive_and_buffer(
+        receiver: Receiver<BankingPacketBatch>,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> (
+        SanitizedTransactionReceiveAndBuffer,
+        TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+    ) {
+        let receive_and_buffer = SanitizedTransactionReceiveAndBuffer {
+            packet_receiver: PacketDeserializer::new(receiver),
+            bank_forks,
+            forwarding_enabled: false,
+        };
+        let container = TransactionStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
+        (receive_and_buffer, container)
+    }
+
+    fn setup_transaction_view_receive_and_buffer(
+        receiver: Receiver<BankingPacketBatch>,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> (
+        TransactionViewReceiveAndBuffer,
+        TransactionViewStateContainer,
+    ) {
+        let receive_and_buffer = TransactionViewReceiveAndBuffer {
+            receiver,
+            bank_forks,
+        };
+        let container = TransactionViewStateContainer::with_capacity(TEST_CONTAINER_CAPACITY);
+        (receive_and_buffer, container)
+    }
+
+    // verify container state makes sense:
+    // 1. Number of transactions matches expectation
+    // 2. All transactions IDs in priority queue exist in the map
+    fn verify_container<Tx: TransactionWithMeta>(
+        container: &mut impl StateContainer<Tx>,
+        expected_length: usize,
+    ) {
+        let mut actual_length: usize = 0;
+        while let Some(id) = container.pop() {
+            let Some(_) = container.get_transaction_ttl(id.id) else {
+                panic!(
+                    "transaction in queue position {} with id {} must exist.",
+                    actual_length, id.id
+                );
+            };
+            actual_length += 1;
+        }
+
+        assert_eq!(actual_length, expected_length);
+    }
 
     #[test]
     fn test_calculate_max_age() {
@@ -717,5 +802,348 @@ mod tests {
                 alt_invalidation_slot: current_slot + solana_sdk::slot_hashes::get_entries() as u64,
             }
         );
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_disconnected_channel<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, _mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks);
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        drop(sender); // disconnect channel
+        let r = receive_and_buffer.receive_and_buffer_packets(
+            &mut container,
+            &mut timing_metrics,
+            &mut count_metrics,
+            &BufferedPacketsDecision::Hold,
+        );
+        assert!(r.is_err());
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer, 1; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer, 0; "testcase-view")]
+    fn test_receive_and_buffer_no_hold<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+        expected_num_received: usize,
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Forward, // no packets should be held
+            )
+            .unwrap();
+
+        // Currently the different approaches have slightly different accounting.
+        // - sdk: all valid deserializable packets count as received
+        // - view: immediately drops all packets without counting due to decision
+        assert_eq!(num_received, expected_num_received);
+        verify_container(&mut container, 0);
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_discard<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let mut packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        Arc::make_mut(&mut packet_batches)[0][0]
+            .meta_mut()
+            .set_discard(true);
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Hold,
+            )
+            .unwrap();
+
+        assert_eq!(num_received, 0);
+        verify_container(&mut container, 0);
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer, 0; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer, 1; "testcase-view")]
+    fn test_receive_and_buffer_invalid_transaction_format<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+        expected_num_received: usize,
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, _mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let packet_batches = Arc::new(vec![PacketBatch::new(vec![Packet::new(
+            [1u8; PACKET_DATA_SIZE],
+            Meta::default(),
+        )])]);
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Hold,
+            )
+            .unwrap();
+
+        // Currently the different approaches have slightly different accounting.
+        // - sdk: only valid deserializable packets count as received
+        // - view: all valid packets count as received, even if invalid tx format
+        assert_eq!(num_received, expected_num_received);
+        verify_container(&mut container, 0);
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_invalid_blockhash<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let transaction = transfer(&mint_keypair, &Pubkey::new_unique(), 1, Hash::new_unique());
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Hold,
+            )
+            .unwrap();
+
+        assert_eq!(num_received, 1);
+        verify_container(&mut container, 0);
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_simple_transfer_unfunded_fee_payer<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, _mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let transaction = transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Hold,
+            )
+            .unwrap();
+
+        assert_eq!(num_received, 1);
+        verify_container(&mut container, 0);
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_failed_alt_resolve<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let to_pubkey = Pubkey::new_unique();
+        let transaction = VersionedTransaction::try_new(
+            VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &mint_keypair.pubkey(),
+                    &[system_instruction::transfer(
+                        &mint_keypair.pubkey(),
+                        &to_pubkey,
+                        1,
+                    )],
+                    &[AddressLookupTableAccount {
+                        key: Pubkey::new_unique(), // will fail if using **bank** to lookup
+                        addresses: vec![to_pubkey],
+                    }],
+                    bank_forks.read().unwrap().root_bank().last_blockhash(),
+                )
+                .unwrap(),
+            ),
+            &[&mint_keypair],
+        )
+        .unwrap();
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Hold,
+            )
+            .unwrap();
+
+        assert_eq!(num_received, 1);
+        verify_container(&mut container, 0);
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_simple_transfer<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank_forks.read().unwrap().root_bank().last_blockhash(),
+        );
+        let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Hold,
+            )
+            .unwrap();
+
+        assert_eq!(num_received, 1);
+        verify_container(&mut container, 1);
+    }
+
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_overfull<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+        let mut timing_metrics = SchedulerTimingMetrics::default();
+        let mut count_metrics = SchedulerCountMetrics::default();
+
+        let num_transactions = 3 * TEST_CONTAINER_CAPACITY;
+        let transactions = Vec::from_iter((0..num_transactions).map(|_| {
+            transfer(
+                &mint_keypair,
+                &Pubkey::new_unique(),
+                1,
+                bank_forks.read().unwrap().root_bank().last_blockhash(),
+            )
+        }));
+
+        let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
+        sender.send(packet_batches).unwrap();
+
+        let num_received = receive_and_buffer
+            .receive_and_buffer_packets(
+                &mut container,
+                &mut timing_metrics,
+                &mut count_metrics,
+                &BufferedPacketsDecision::Hold,
+            )
+            .unwrap();
+
+        assert_eq!(num_received, num_transactions);
+        verify_container(&mut container, TEST_CONTAINER_CAPACITY);
     }
 }
