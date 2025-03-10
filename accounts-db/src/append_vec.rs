@@ -1265,39 +1265,11 @@ pub mod tests {
         }
     }
 
-    impl AppendVecStoredAccountMeta<'_> {
-        fn set_data_len_unsafe(&self, new_data_len: u64) {
-            // UNSAFE: cast away & (= const ref) to &mut to force to mutate append-only (=read-only) AppendVec
-            unsafe {
-                #[allow(invalid_reference_casting)]
-                ptr::write(
-                    std::mem::transmute::<*const u64, *mut u64>(&self.meta.data_len),
-                    new_data_len,
-                );
-            }
-        }
-
-        fn get_executable_byte(&self) -> u8 {
-            let executable_bool: bool = self.executable();
-            // UNSAFE: Force to interpret mmap-backed bool as u8 to really read the actual memory content
-            let executable_byte: u8 = unsafe { std::mem::transmute::<bool, u8>(executable_bool) };
-            executable_byte
-        }
-
-        fn set_executable_as_byte(&self, new_executable_byte: u8) {
-            // UNSAFE: Force to interpret mmap-backed &bool as &u8 to write some crafted value;
-            unsafe {
-                #[allow(invalid_reference_casting)]
-                ptr::write(
-                    std::mem::transmute::<*const bool, *mut u8>(&self.account_meta.executable),
-                    new_executable_byte,
-                );
-            }
-        }
-    }
-
     // Hash is [u8; 32], which has no alignment
     static_assertions::assert_eq_align!(u64, StoredMeta, AccountMeta);
+
+    // Offset of the first account's `data_len` field.
+    const ACCOUNT_0_DATA_LEN_OFFSET: u64 = core::mem::offset_of!(StoredMeta, data_len) as u64;
 
     #[test]
     fn test_account_meta_default() {
@@ -1668,26 +1640,29 @@ pub mod tests {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
 
-            let crafted_data_len = 1;
-
             av.append_account_test(&create_test_account(10)).unwrap();
-
-            av.get_stored_account_meta_callback(0, |account| {
-                let StoredAccountMeta::AppendVec(account) = account else {
-                    panic!("StoredAccountMeta can only be AppendVec in this test.");
-                };
-                account.set_data_len_unsafe(crafted_data_len);
-                assert_eq!(account.data_len(), crafted_data_len);
-
-                // Reload accounts and observe crafted_data_len
-                av.get_stored_account_meta_callback(0, |account| {
-                    assert_eq!(account.data_len() as u64, crafted_data_len);
-                });
-            });
-
             av.flush().unwrap();
             av.len()
         };
+
+        // Assert that the file is currently valid.
+        {
+            let av =
+                ManuallyDrop::new(AppendVec::new_from_file(path, accounts_len, storage_access));
+            assert!(av.is_ok());
+        }
+
+        // Manually manipulate the `data_len` bytes of the first account.
+        {
+            let crafted_data_len = 1u64;
+
+            let mut file = OpenOptions::new().write(true).open(path).unwrap();
+            file.seek(SeekFrom::Start(ACCOUNT_0_DATA_LEN_OFFSET))
+                .unwrap();
+            file.write_all(&crafted_data_len.to_ne_bytes()).unwrap();
+            file.flush().unwrap();
+        }
+
         let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
@@ -1751,27 +1726,30 @@ pub mod tests {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
 
-            let too_large_data_len = u64::MAX;
             av.append_account_test(&create_test_account(10)).unwrap();
 
-            av.get_stored_account_meta_callback(0, |account| {
-                let StoredAccountMeta::AppendVec(account) = account else {
-                    panic!("StoredAccountMeta can only be AppendVec in this test.");
-                };
-                account.set_data_len_unsafe(too_large_data_len);
-                assert_eq!(account.data_len(), too_large_data_len);
-            })
-            .unwrap();
-
-            // Reload accounts and observe no account with bad offset
-            assert!(av
-                .get_stored_account_meta_callback(0, |_| {
-                    panic!("unexpected");
-                })
-                .is_none());
             av.flush().unwrap();
             av.len()
         };
+
+        // Assert that the file is currently valid.
+        {
+            let av =
+                ManuallyDrop::new(AppendVec::new_from_file(path, accounts_len, storage_access));
+            assert!(av.is_ok());
+        }
+
+        // Manually manipulate the `data_len` bytes of the first account.
+        {
+            let too_large_data_len = u64::MAX;
+
+            let mut file = OpenOptions::new().write(true).open(path).unwrap();
+            file.seek(SeekFrom::Start(ACCOUNT_0_DATA_LEN_OFFSET))
+                .unwrap();
+            file.write_all(&too_large_data_len.to_ne_bytes()).unwrap();
+            file.flush().unwrap();
+        }
+
         let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
@@ -1781,6 +1759,8 @@ pub mod tests {
     fn test_new_from_file_crafted_executable(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_new_from_crafted_executable");
         let path = &file.path;
+
+        // Write a valid append vec file.
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
@@ -1791,16 +1771,10 @@ pub mod tests {
                 av.append_account_test(&executable_account).unwrap()
             };
 
-            let crafted_executable = u8::MAX - 1;
-
             // reload accounts
             // ensure false is 0u8 and true is 1u8 actually
             av.get_stored_account_meta_callback(0, |account| {
                 assert_eq!(*account.ref_executable_byte(), 0);
-                let StoredAccountMeta::AppendVec(account) = account else {
-                    panic!("StoredAccountMeta can only be AppendVec in this test.");
-                };
-                account.set_executable_as_byte(crafted_executable);
             })
             .unwrap();
             av.get_stored_account_meta_callback(offset_1, |account| {
@@ -1808,36 +1782,31 @@ pub mod tests {
             })
             .unwrap();
 
-            // reload crafted accounts
-            av.get_stored_account_meta_callback(0, |account| {
-                let StoredAccountMeta::AppendVec(account) = account else {
-                    panic!("StoredAccountMeta can only be AppendVec in this test.");
-                };
-
-                // upper 7-bits are not 0, so sanitization should fail
-                assert!(!account.sanitize_executable());
-
-                // we can observe crafted value by ref
-                {
-                    let executable_bool: &bool = &account.account_meta.executable;
-                    // Depending on use, *executable_bool can be truthy or falsy due to direct memory manipulation
-                    // assert_eq! thinks *executable_bool is equal to false but the if condition thinks it's not, contradictorily.
-                    assert!(!*executable_bool);
-                    assert_eq!(*account.ref_executable_byte(), crafted_executable);
-                }
-
-                // we can NOT observe crafted value by value
-                {
-                    let executable_bool: bool = account.executable();
-                    assert!(!executable_bool);
-                    assert_eq!(account.get_executable_byte(), 0); // Wow, not crafted_executable!
-                }
-            })
-            .unwrap();
-
             av.flush().unwrap();
             av.len()
         };
+
+        // Assert that the file is currently valid.
+        {
+            let av =
+                ManuallyDrop::new(AppendVec::new_from_file(path, accounts_len, storage_access));
+            assert!(av.is_ok());
+        }
+
+        // Manually manipulate the `executable` byte of the first account.
+        {
+            const ACCOUNT_0_EXECUTABLE_OFFSET: u64 = (core::mem::size_of::<StoredMeta>()
+                + core::mem::offset_of!(AccountMeta, executable))
+                as u64;
+            let crafted_executable = u8::MAX - 1;
+
+            let mut file = OpenOptions::new().write(true).open(path).unwrap();
+            file.seek(SeekFrom::Start(ACCOUNT_0_EXECUTABLE_OFFSET))
+                .unwrap();
+            file.write_all(&[crafted_executable]).unwrap();
+            file.flush().unwrap();
+        }
+
         let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
