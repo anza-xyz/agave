@@ -4121,6 +4121,7 @@ fn test_cpi_invalid_account_info_pointers() {
 
     let mut program_ids: Vec<Pubkey> = Vec::with_capacity(2);
 
+    #[allow(unused_mut)]
     let mut bank;
     #[cfg(feature = "sbf_rust")]
     {
