@@ -644,7 +644,6 @@ pub trait ZeroLamport {
     fn is_zero_lamport(&self) -> bool;
 }
 
-type LockMapType<T, U> = Vec<AccountMap<T, U>>;
 type AccountMaps<'a, T, U> = &'a AccountMap<T, U>;
 
 #[derive(Debug, Default)]
@@ -680,7 +679,7 @@ pub enum AccountsIndexScanResult {
 /// T: account info type to interact in in-memory items
 /// U: account info type to be persisted to disk
 pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
-    pub account_maps: LockMapType<T, U>,
+    pub account_maps: Vec<AccountMap<T, U>>,
     pub bin_calculator: PubkeyBinCalculator24,
     program_id_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_mint_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
@@ -762,7 +761,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         config: Option<AccountsIndexConfig>,
         exit: Arc<AtomicBool>,
     ) -> (
-        LockMapType<T, U>,
+        Vec<AccountMap<T, U>>,
         PubkeyBinCalculator24,
         AccountsIndexStorage<T, U>,
     ) {
