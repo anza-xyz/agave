@@ -13,6 +13,10 @@ use {
     test::Bencher,
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 const NUM: usize = 4096;
 
 fn test_packet_with_size(size: usize, rng: &mut ThreadRng) -> Vec<u8> {

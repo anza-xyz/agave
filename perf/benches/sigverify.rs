@@ -14,6 +14,10 @@ use {
     test::Bencher,
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 const NUM: usize = 256;
 const LARGE_BATCH_PACKET_COUNT: usize = 128;
 

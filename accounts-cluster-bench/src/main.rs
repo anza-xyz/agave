@@ -47,6 +47,10 @@ use {
     },
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 pub const MAX_RPC_CALL_RETRIES: usize = 5;
 
 pub fn poll_slot_height(client: &RpcClient) -> Slot {
