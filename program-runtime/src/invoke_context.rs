@@ -1,5 +1,6 @@
 use {
     crate::{
+        execution_budget::SVMTransactionExecutionBudget,
         loaded_programs::{
             ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch,
             ProgramRuntimeEnvironments,
@@ -9,7 +10,6 @@ use {
     },
     solana_account::{create_account_shared_data_for_test, AccountSharedData},
     solana_clock::Slot,
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_set::{
         lift_cpi_caller_restriction, move_precompile_verification_to_svm,
@@ -196,7 +196,7 @@ pub struct InvokeContext<'a> {
     /// Runtime configurations used to provision the invocation environment.
     pub environment_config: EnvironmentConfig<'a>,
     /// The compute budget for the current invocation.
-    compute_budget: ComputeBudget,
+    compute_budget: SVMTransactionExecutionBudget,
     /// Instruction compute meter, for tracking compute units consumed against
     /// the designated compute budget during program execution.
     compute_meter: RefCell<u64>,
@@ -215,7 +215,7 @@ impl<'a> InvokeContext<'a> {
         program_cache_for_tx_batch: &'a mut ProgramCacheForTxBatch,
         environment_config: EnvironmentConfig<'a>,
         log_collector: Option<Rc<RefCell<LogCollector>>>,
-        compute_budget: ComputeBudget,
+        compute_budget: SVMTransactionExecutionBudget,
     ) -> Self {
         Self {
             transaction_context,
@@ -642,7 +642,7 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get this invocation's compute budget
-    pub fn get_compute_budget(&self) -> &ComputeBudget {
+    pub fn get_compute_budget(&self) -> &SVMTransactionExecutionBudget {
         &self.compute_budget
     }
 
@@ -731,18 +731,18 @@ macro_rules! with_mock_invoke_context {
         $transaction_accounts:expr $(,)?
     ) => {
         use {
-            solana_compute_budget::compute_budget::ComputeBudget,
             solana_feature_set::FeatureSet,
             solana_log_collector::LogCollector,
             solana_type_overrides::sync::Arc,
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
+                execution_budget::SVMTransactionExecutionBudget,
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::ProgramCacheForTxBatch,
                 sysvar_cache::SysvarCache,
             },
         };
-        let compute_budget = ComputeBudget::default();
+        let compute_budget = SVMTransactionExecutionBudget::default();
         let mut $transaction_context = TransactionContext::new(
             $transaction_accounts,
             Rent::default(),
@@ -867,9 +867,9 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
 mod tests {
     use {
         super::*,
+        crate::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
         serde::{Deserialize, Serialize},
         solana_account::WritableAccount,
-        solana_compute_budget::compute_budget_limits,
         solana_instruction::Instruction,
         solana_rent::Rent,
     };
@@ -996,7 +996,7 @@ mod tests {
 
     #[test]
     fn test_instruction_stack_height() {
-        let one_more_than_max_depth = ComputeBudget::default()
+        let one_more_than_max_depth = SVMTransactionExecutionBudget::default()
             .max_instruction_stack_depth
             .saturating_add(1);
         let mut invoke_stack = vec![];
@@ -1032,7 +1032,7 @@ mod tests {
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
         // Check call depth increases and has a limit
-        let mut depth_reached = 0;
+        let mut depth_reached: usize = 0;
         for _ in 0..invoke_stack.len() {
             invoke_context
                 .transaction_context
@@ -1196,9 +1196,8 @@ mod tests {
         let transaction_accounts = vec![(solana_pubkey::new_rand(), AccountSharedData::default())];
 
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-        invoke_context.compute_budget = ComputeBudget::new(
-            compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
-        );
+        invoke_context.compute_budget =
+            SVMTransactionExecutionBudget::new(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64);
 
         invoke_context
             .transaction_context
@@ -1208,9 +1207,7 @@ mod tests {
         invoke_context.push().unwrap();
         assert_eq!(
             *invoke_context.get_compute_budget(),
-            ComputeBudget::new(
-                compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64
-            )
+            SVMTransactionExecutionBudget::new(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64)
         );
         invoke_context.pop().unwrap();
     }

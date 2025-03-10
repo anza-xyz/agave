@@ -14,7 +14,6 @@ qualifier_attr = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-bpf-loader-program = { workspace = true, features = ["svm-internal"] }
-solana-compute-budget = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
 solana-loader-v4-interface = { workspace = true, features = ["serde"] }
