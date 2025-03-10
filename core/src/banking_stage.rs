@@ -39,6 +39,7 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
+    solana_unified_scheduler_logic::SchedulingMode,
     std::{
         cmp, env,
         ops::Deref,
@@ -391,6 +392,9 @@ impl BankingStage {
                     prioritization_fee_cache,
                 )
             }
+            BlockProductionMethod::UnifiedScheduler => Self {
+                bank_thread_hdls: vec![],
+            },
         }
     }
 
@@ -729,11 +733,15 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     tpu_bank: Bank,
     track_transaction_indexes: bool,
 ) {
-    let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
+    let tpu_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
     poh_recorder
         .write()
         .unwrap()
-        .set_bank(tpu_bank, track_transaction_indexes);
+        .set_bank(tpu_bank.clone_with_scheduler(), track_transaction_indexes);
+    tpu_bank.unblock_block_production();
 }
 
 #[cfg(test)]
