@@ -11,6 +11,12 @@ edition = { workspace = true }
 
 [dependencies]
 log = { workspace = true }
+criterion = { workspace = true }
+criterion-stats = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+[[bench]]
+name = "logging_benchmark"
+harness = false
