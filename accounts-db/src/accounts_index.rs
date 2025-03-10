@@ -494,7 +494,7 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
 
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIterator<'a, T, U> {
     fn range<R>(
-        map: &&AccountMap<T, U>,
+        map: &AccountMap<T, U>,
         range: R,
         returns_items: AccountsIndexIteratorReturnsItems,
     ) -> Vec<(Pubkey, AccountMapEntry<T>)>
@@ -604,7 +604,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
         let mut chunk = Vec::with_capacity(ITER_BATCH_SIZE);
         'outer: for i in self.account_maps.iter().skip(start_bin).take(bin_range) {
             for (pubkey, account_map_entry) in
-                Self::range(&i, (self.start_bound, self.end_bound), self.returns_items)
+                Self::range(i, (self.start_bound, self.end_bound), self.returns_items)
             {
                 if chunk.len() >= ITER_BATCH_SIZE
                     && self.returns_items == AccountsIndexIteratorReturnsItems::Sorted
