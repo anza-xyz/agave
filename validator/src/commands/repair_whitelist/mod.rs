@@ -160,6 +160,15 @@ mod tests {
     }
 
     #[test]
+    fn verify_args_struct_by_command_repair_whitelist_set_required() {
+        use crate::commands::tests::verify_args_struct_by_command_is_error;
+        verify_args_struct_by_command_is_error::<RepairWhitelistSetArgs>(
+            command(),
+            vec![COMMAND, "set"],
+        );
+    }
+
+    #[test]
     fn verify_args_struct_by_command_repair_whitelist_set_with_single_whitelist() {
         let app = command();
         let matches = app.get_matches_from(vec![
