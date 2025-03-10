@@ -1,10 +1,11 @@
 use {
     crate::{admin_rpc_service, commands::FromClapArgMatches},
-    clap::{values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
+    clap::{values_t, App, AppSettings, Arg, ArgMatches, SubCommand},
+    itertools::Itertools,
     solana_clap_utils::input_validators::is_pubkey,
     solana_cli_output::OutputFormat,
     solana_sdk::pubkey::Pubkey,
-    std::{collections::HashSet, path::Path},
+    std::path::Path,
 };
 
 pub const COMMAND: &str = "repair-whitelist";
@@ -29,15 +30,11 @@ pub struct RepairWhitelistSetArgs {
 
 impl FromClapArgMatches for RepairWhitelistSetArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
-        let whitelist = if matches.is_present("whitelist") {
-            let validators_set: HashSet<_> = values_t_or_exit!(matches, "whitelist", Pubkey)
-                .into_iter()
-                .collect();
-            validators_set.into_iter().collect::<Vec<_>>()
-        } else {
-            return Ok(RepairWhitelistSetArgs { whitelist: vec![] });
-        };
-
+        let whitelist = values_t!(matches, "whitelist", Pubkey)
+            .map_err(|err| err.to_string())?
+            .into_iter()
+            .unique()
+            .collect::<Vec<_>>();
         Ok(RepairWhitelistSetArgs { whitelist })
     }
 }
@@ -70,6 +67,7 @@ pub fn command<'a>() -> App<'a, 'a> {
                         .value_name("VALIDATOR IDENTITY")
                         .multiple(true)
                         .takes_value(true)
+                        .required(true)
                         .help("Set the validator's repair protocol whitelist"),
                 )
                 .after_help(
