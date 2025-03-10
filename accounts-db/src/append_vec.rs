@@ -1265,19 +1265,6 @@ pub mod tests {
         }
     }
 
-    impl AppendVecStoredAccountMeta<'_> {
-        fn set_data_len_unsafe(&self, new_data_len: u64) {
-            // UNSAFE: cast away & (= const ref) to &mut to force to mutate append-only (=read-only) AppendVec
-            unsafe {
-                #[allow(invalid_reference_casting)]
-                ptr::write(
-                    std::mem::transmute::<*const u64, *mut u64>(&self.meta.data_len),
-                    new_data_len,
-                );
-            }
-        }
-    }
-
     // Hash is [u8; 32], which has no alignment
     static_assertions::assert_eq_align!(u64, StoredMeta, AccountMeta);
 
@@ -1650,26 +1637,31 @@ pub mod tests {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
 
-            let crafted_data_len = 1;
-
             av.append_account_test(&create_test_account(10)).unwrap();
-
-            av.get_stored_account_meta_callback(0, |account| {
-                let StoredAccountMeta::AppendVec(account) = account else {
-                    panic!("StoredAccountMeta can only be AppendVec in this test.");
-                };
-                account.set_data_len_unsafe(crafted_data_len);
-                assert_eq!(account.data_len(), crafted_data_len);
-
-                // Reload accounts and observe crafted_data_len
-                av.get_stored_account_meta_callback(0, |account| {
-                    assert_eq!(account.data_len() as u64, crafted_data_len);
-                });
-            });
-
             av.flush().unwrap();
             av.len()
         };
+
+        // Assert that the file is currently valid.
+        {
+            let av =
+                ManuallyDrop::new(AppendVec::new_from_file(path, accounts_len, storage_access));
+            assert!(av.is_ok());
+        }
+
+        // Manually manipulate the `data_len` bytes of the first account.
+        {
+            const ACCOUNT_0_DATA_LEN_OFFSET: u64 =
+                core::mem::offset_of!(StoredMeta, data_len) as u64;
+            let crafted_data_len = 1u64;
+
+            let mut file = OpenOptions::new().write(true).open(path).unwrap();
+            file.seek(SeekFrom::Start(ACCOUNT_0_DATA_LEN_OFFSET))
+                .unwrap();
+            file.write_all(&crafted_data_len.to_le_bytes()).unwrap();
+            file.flush().unwrap();
+        }
+
         let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
@@ -1733,27 +1725,32 @@ pub mod tests {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
 
-            let too_large_data_len = u64::MAX;
             av.append_account_test(&create_test_account(10)).unwrap();
 
-            av.get_stored_account_meta_callback(0, |account| {
-                let StoredAccountMeta::AppendVec(account) = account else {
-                    panic!("StoredAccountMeta can only be AppendVec in this test.");
-                };
-                account.set_data_len_unsafe(too_large_data_len);
-                assert_eq!(account.data_len(), too_large_data_len);
-            })
-            .unwrap();
-
-            // Reload accounts and observe no account with bad offset
-            assert!(av
-                .get_stored_account_meta_callback(0, |_| {
-                    panic!("unexpected");
-                })
-                .is_none());
             av.flush().unwrap();
             av.len()
         };
+
+        // Assert that the file is currently valid.
+        {
+            let av =
+                ManuallyDrop::new(AppendVec::new_from_file(path, accounts_len, storage_access));
+            assert!(av.is_ok());
+        }
+
+        // Manually manipulate the `data_len` bytes of the first account.
+        {
+            const ACCOUNT_0_DATA_LEN_OFFSET: u64 =
+                core::mem::offset_of!(StoredMeta, data_len) as u64;
+            let too_large_data_len = u64::MAX;
+
+            let mut file = OpenOptions::new().write(true).open(path).unwrap();
+            file.seek(SeekFrom::Start(ACCOUNT_0_DATA_LEN_OFFSET))
+                .unwrap();
+            file.write_all(&too_large_data_len.to_le_bytes()).unwrap();
+            file.flush().unwrap();
+        }
+
         let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
