@@ -5,10 +5,13 @@ OUT_DIR := target/deploy
 clean-all: clean
 	cargo clean
 
-test:
+test-all:
 	SBF_OUT_DIR=$(OUT_DIR) cargo test --features="sbf_rust,sbf_c" $(TEST_ARGS)
 
-test-v0: all rust-v0 test
+test-rust:
+	SBF_OUT_DIR=$(OUT_DIR) cargo test --features="sbf_rust" $(TEST_ARGS)
+
+test-v0: all rust-v0 test-all
 
 test-v1:
 	VER=v1 $(MAKE) test-version
@@ -16,17 +19,22 @@ test-v1:
 test-v2:
 	VER=v2 $(MAKE) test-version
 
+test-v3:
+	mkdir -p target/deploy ; \
+	VER=v3 $(MAKE) rust-new ; \
+	$(MAKE) test-rust
+
 test-version:
-	SBPF_CPU=$(VER) $(MAKE) all; \
+	SBPF_CPU=$(VER) $(MAKE) all ; \
 	$(MAKE) rust-new ; \
-	$(MAKE) test
+	$(MAKE) test-all
 
 rust-v0:
 	cargo +solana build --release --target sbpf-solana-solana --workspace ; \
 	cp -r target/sbpf-solana-solana/release/* target/deploy
 
 rust-new:
-	cargo +solana build --release --target sbpf$(VER)-solana-solana --workspace --features dynamic-frames ; \
+	RUSTFLAGS="-C instrument-coverage=no" cargo +solana build --release --target sbpf$(VER)-solana-solana --workspace --features dynamic-frames ; \
 	cp -r target/sbpf$(VER)-solana-solana/release/* target/deploy
 
 .PHONY: rust-v0

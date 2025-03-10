@@ -570,6 +570,7 @@ fn test_program_sbf_invoke_sanity() {
     solana_logger::setup();
 
     #[derive(Debug)]
+    #[allow(dead_code)]
     enum Languages {
         C,
         Rust,
@@ -3348,7 +3349,7 @@ fn test_program_sbf_processed_inner_instruction() {
         &bank_forks,
         &mint_keypair,
         &authority_keypair,
-        "noop",
+        "solana_sbf_rust_noop",
     );
     let (_bank, invoke_and_return_program_id) = load_program_of_loader_v4(
         &mut bank_client,
@@ -4097,7 +4098,6 @@ fn test_cpi_change_account_data_memory_allocation() {
 }
 
 #[test]
-#[cfg(feature = "sbf_rust")]
 fn test_cpi_invalid_account_info_pointers() {
     solana_logger::setup();
 
@@ -4112,41 +4112,62 @@ fn test_cpi_invalid_account_info_pointers() {
     let mut bank_client = BankClient::new_shared(bank);
     let authority_keypair = Keypair::new();
 
-    let (_bank, c_invoke_program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "invoke",
-    );
-    let (bank, invoke_program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_invoke",
-    );
-
     let account_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let account_metas = vec![
+    let mut account_metas = vec![
         AccountMeta::new(mint_pubkey, true),
         AccountMeta::new(account_keypair.pubkey(), false),
-        AccountMeta::new_readonly(invoke_program_id, false),
-        AccountMeta::new_readonly(c_invoke_program_id, false),
     ];
 
-    for invoke_program_id in [invoke_program_id, c_invoke_program_id] {
+    let mut program_ids: Vec<Pubkey> = Vec::with_capacity(2);
+
+    #[allow(unused_mut)]
+    let mut bank;
+    #[cfg(feature = "sbf_rust")]
+    {
+        let (new_bank, invoke_program_id) = load_program_of_loader_v4(
+            &mut bank_client,
+            &bank_forks,
+            &mint_keypair,
+            &authority_keypair,
+            "solana_sbf_rust_invoke",
+        );
+        account_metas.push(AccountMeta::new_readonly(invoke_program_id, false));
+        program_ids.push(invoke_program_id);
+        #[allow(unused)]
+        {
+            bank = new_bank;
+        }
+    }
+
+    #[cfg(feature = "sbf_c")]
+    {
+        let (new_bank, c_invoke_program_id) = load_program_of_loader_v4(
+            &mut bank_client,
+            &bank_forks,
+            &mint_keypair,
+            &authority_keypair,
+            "invoke",
+        );
+        account_metas.push(AccountMeta::new_readonly(c_invoke_program_id, false));
+        program_ids.push(c_invoke_program_id);
+        #[allow(unused)]
+        {
+            bank = new_bank;
+        }
+    }
+
+    for invoke_program_id in &program_ids {
         for ix in [
             TEST_CPI_INVALID_KEY_POINTER,
             TEST_CPI_INVALID_LAMPORTS_POINTER,
             TEST_CPI_INVALID_OWNER_POINTER,
             TEST_CPI_INVALID_DATA_POINTER,
         ] {
-            let account = AccountSharedData::new(42, 5, &invoke_program_id);
+            let account = AccountSharedData::new(42, 5, invoke_program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
             let instruction = Instruction::new_with_bytes(
-                invoke_program_id,
+                *invoke_program_id,
                 &[ix, 42, 42, 42],
                 account_metas.clone(),
             );
