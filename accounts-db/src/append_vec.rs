@@ -1658,7 +1658,7 @@ pub mod tests {
             let mut file = OpenOptions::new().write(true).open(path).unwrap();
             file.seek(SeekFrom::Start(ACCOUNT_0_DATA_LEN_OFFSET))
                 .unwrap();
-            file.write_all(&crafted_data_len.to_le_bytes()).unwrap();
+            file.write_all(&crafted_data_len.to_ne_bytes()).unwrap();
             file.flush().unwrap();
         }
 
@@ -1747,7 +1747,7 @@ pub mod tests {
             let mut file = OpenOptions::new().write(true).open(path).unwrap();
             file.seek(SeekFrom::Start(ACCOUNT_0_DATA_LEN_OFFSET))
                 .unwrap();
-            file.write_all(&too_large_data_len.to_le_bytes()).unwrap();
+            file.write_all(&too_large_data_len.to_ne_bytes()).unwrap();
             file.flush().unwrap();
         }
 
