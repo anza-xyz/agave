@@ -182,7 +182,6 @@ impl ShredFetchStage {
         repair_context: Option<RepairContext>,
         turbine_disabled: Arc<AtomicBool>,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
-        const PACKET_COALESCE_DURATION: Option<Duration> = Some(Duration::from_millis(1));
         let (packet_sender, packet_receiver) = unbounded();
         let streamers = sockets
             .into_iter()
@@ -195,10 +194,10 @@ impl ShredFetchStage {
                     packet_sender.clone(),
                     recycler.clone(),
                     Arc::new(StreamerReceiveStats::new("packet_modifier")),
-                    PACKET_COALESCE_DURATION,
-                    true, // use_pinned_memory
-                    None, // in_vote_only_mode
-                    false,
+                    None,  // coalesce
+                    true,  // use_pinned_memory
+                    None,  // in_vote_only_mode
+                    false, // is_staked_service
                 )
             })
             .collect();
