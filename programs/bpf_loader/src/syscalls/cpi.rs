@@ -2212,9 +2212,9 @@ mod tests {
         {
             let mut account = invoke_context
                 .transaction_context
-                .get_account_at_index(1)
-                .unwrap()
-                .borrow_mut();
+                .accounts()
+                .try_borrow_mut(1)
+                .unwrap();
             account.set_data(b"baz".to_vec());
         }
 

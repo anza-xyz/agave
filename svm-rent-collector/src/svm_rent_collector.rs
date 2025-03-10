@@ -44,9 +44,9 @@ pub trait SVMRentCollector {
                     .get_key_of_account_at_index(index)
                     .expect(expect_msg),
                 &transaction_context
-                    .get_account_at_index(index)
-                    .expect(expect_msg)
-                    .borrow(),
+                    .accounts()
+                    .try_borrow(index)
+                    .expect(expect_msg),
                 index,
             )?;
         }

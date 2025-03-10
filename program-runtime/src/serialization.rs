@@ -761,9 +761,9 @@ mod tests {
                         .unwrap();
                     let account = invoke_context
                         .transaction_context
-                        .get_account_at_index(index_in_transaction)
-                        .unwrap()
-                        .borrow();
+                        .accounts()
+                        .try_borrow(index_in_transaction)
+                        .unwrap();
                     assert_eq!(account.lamports(), account_info.lamports());
                     assert_eq!(account.data(), &account_info.data.borrow()[..]);
                     assert_eq!(account.owner(), account_info.owner);
@@ -915,9 +915,9 @@ mod tests {
                     .unwrap();
                 let account = invoke_context
                     .transaction_context
-                    .get_account_at_index(index_in_transaction)
-                    .unwrap()
-                    .borrow();
+                    .accounts()
+                    .try_borrow(index_in_transaction)
+                    .unwrap();
                 assert_eq!(account.lamports(), account_info.lamports());
                 assert_eq!(account.data(), &account_info.data.borrow()[..]);
                 assert_eq!(account.owner(), account_info.owner);
@@ -951,9 +951,9 @@ mod tests {
             {
                 let account = invoke_context
                     .transaction_context
-                    .get_account_at_index(index_in_transaction as IndexOfAccount)
-                    .unwrap()
-                    .borrow();
+                    .accounts()
+                    .try_borrow(index_in_transaction as IndexOfAccount)
+                    .unwrap();
                 assert_eq!(&*account, original_account);
             }
 
@@ -965,9 +965,9 @@ mod tests {
                 .set_owner(bpf_loader_deprecated::id());
             invoke_context
                 .transaction_context
-                .get_account_at_index(0)
+                .accounts()
+                .try_borrow_mut(0)
                 .unwrap()
-                .borrow_mut()
                 .set_owner(bpf_loader_deprecated::id());
 
             let (mut serialized, regions, account_lengths) = serialize_parameters(
@@ -998,9 +998,9 @@ mod tests {
                     .unwrap();
                 let account = invoke_context
                     .transaction_context
-                    .get_account_at_index(index_in_transaction)
-                    .unwrap()
-                    .borrow();
+                    .accounts()
+                    .try_borrow(index_in_transaction)
+                    .unwrap();
                 assert_eq!(account.lamports(), account_info.lamports());
                 assert_eq!(account.data(), &account_info.data.borrow()[..]);
                 assert_eq!(account.owner(), account_info.owner);
@@ -1021,9 +1021,9 @@ mod tests {
             {
                 let account = invoke_context
                     .transaction_context
-                    .get_account_at_index(index_in_transaction as IndexOfAccount)
-                    .unwrap()
-                    .borrow();
+                    .accounts()
+                    .try_borrow(index_in_transaction as IndexOfAccount)
+                    .unwrap();
                 assert_eq!(&*account, original_account);
             }
         }

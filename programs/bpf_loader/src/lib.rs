@@ -1787,9 +1787,9 @@ mod test_utils {
         for index in 0..num_accounts {
             let account = invoke_context
                 .transaction_context
-                .get_account_at_index(index)
-                .expect("Failed to get the account")
-                .borrow();
+                .accounts()
+                .try_borrow(index)
+                .expect("Failed to get the account");
 
             let owner = account.owner();
             if check_loader_id(owner) {

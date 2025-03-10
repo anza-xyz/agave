@@ -759,9 +759,9 @@ macro_rules! with_mock_invoke_context {
                 {
                     callback(
                         $transaction_context
-                            .get_account_at_index(index)
+                            .accounts()
+                            .try_borrow(index)
                             .unwrap()
-                            .borrow()
                             .data(),
                     );
                 }
