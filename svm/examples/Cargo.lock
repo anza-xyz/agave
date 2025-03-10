@@ -8286,7 +8286,6 @@ dependencies = [
  "rustls 0.23.23",
  "solana-entry",
  "solana-feature-set",
- "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-ledger",
  "solana-measure",
