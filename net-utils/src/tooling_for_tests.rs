@@ -79,12 +79,14 @@ where
     );
     let reader = PcapReader::new(filename)?;
     let mut number = 0;
+    let mut errors = 0;
     for data in reader.into_iter() {
         number += 1;
         match parse_packet(&data) {
             Ok(pkt) => {
                 let reconstructed_bytes = serialize_packet(pkt);
                 if reconstructed_bytes != data {
+                    errors += 1;
                     error!("Reserialization failed for packet {number} in {filename:?}!");
                     error!("Original packet bytes:");
                     hexdump(&data)?;
@@ -94,12 +96,18 @@ where
                 }
             }
             Err(e) => {
+                errors += 1;
                 error!("Found packet {number} that failed to parse with error {e}");
                 error!("Problematic packet bytes:");
                 hexdump(&data)?;
+                break;
             }
         }
     }
-    info!("Packet format checks passed for {number} packets");
-    Ok(number)
+    info!("Packet format checks passed for {number} packets, failed for {errors} packets.");
+    if errors > 0 {
+        Err(anyhow::anyhow!("Failed checks for {errors} packets"))
+    } else {
+        Ok(number)
+    }
 }
