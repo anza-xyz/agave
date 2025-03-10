@@ -1268,6 +1268,9 @@ pub mod tests {
     // Hash is [u8; 32], which has no alignment
     static_assertions::assert_eq_align!(u64, StoredMeta, AccountMeta);
 
+    // Offset of the first account's `data_len` field.
+    const ACCOUNT_0_DATA_LEN_OFFSET: u64 = core::mem::offset_of!(StoredMeta, data_len) as u64;
+
     #[test]
     fn test_account_meta_default() {
         let def1 = AccountMeta::default();
@@ -1651,8 +1654,6 @@ pub mod tests {
 
         // Manually manipulate the `data_len` bytes of the first account.
         {
-            const ACCOUNT_0_DATA_LEN_OFFSET: u64 =
-                core::mem::offset_of!(StoredMeta, data_len) as u64;
             let crafted_data_len = 1u64;
 
             let mut file = OpenOptions::new().write(true).open(path).unwrap();
@@ -1740,8 +1741,6 @@ pub mod tests {
 
         // Manually manipulate the `data_len` bytes of the first account.
         {
-            const ACCOUNT_0_DATA_LEN_OFFSET: u64 =
-                core::mem::offset_of!(StoredMeta, data_len) as u64;
             let too_large_data_len = u64::MAX;
 
             let mut file = OpenOptions::new().write(true).open(path).unwrap();
