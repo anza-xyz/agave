@@ -10,6 +10,7 @@ use {
         quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
         streamer::StakedNodes,
     },
+    ahash::AHashSet,
     async_channel::{bounded as async_bounded, Receiver as AsyncReceiver, Sender as AsyncSender},
     bytes::Bytes,
     crossbeam_channel::Sender,
@@ -904,6 +905,7 @@ async fn packet_batch_sender(
         let mut packet_batch =
             PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "quic_packet_coalescer");
         let mut total_bytes: usize = 0;
+        let mut packet_batch_deduper = AHashSet::with_capacity(PACKETS_PER_BATCH);
 
         stats
             .total_packet_batches_allocated
@@ -966,29 +968,64 @@ async fn packet_batch_sender(
                     batch_start_time = Instant::now();
                 }
 
-                unsafe {
-                    packet_batch.set_len(packet_batch.len() + 1);
-                }
+                let discard = {
+                    let mut discard = false;
+                    let packet_len: usize = packet_accumulator.chunks.iter().map(|c| c.len()).sum();
+                    if packet_len < 128 {
+                        discard = true;
+                        stats
+                            .total_packets_too_small
+                            .fetch_add(1, Ordering::Relaxed);
+                    } else if packet_accumulator.chunks[0].len() < 65 {
+                        stats
+                            .total_chunks_first_too_small
+                            .fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        // let's assume this quic server is for transactions only
+                        let signature: [u8; 64] = packet_accumulator.chunks[0].as_ref()[1..65]
+                            .try_into()
+                            .unwrap();
+                        if !packet_batch_deduper.insert(signature) {
+                            discard = true;
+                            stats
+                                .total_chunks_deduped_by_batcher
+                                .fetch_add(packet_accumulator.chunks.len(), Ordering::Relaxed);
+                            stats
+                                .total_packets_deduped_by_batcher
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    discard
+                };
+                stats
+                    .total_packets_processed_by_batcher
+                    .fetch_add(1, Ordering::Relaxed);
 
-                let i = packet_batch.len() - 1;
-                *packet_batch[i].meta_mut() = packet_accumulator.meta;
                 let num_chunks = packet_accumulator.chunks.len();
-                let mut offset = 0;
-                for chunk in packet_accumulator.chunks {
-                    packet_batch[i].buffer_mut()[offset..offset + chunk.len()]
-                        .copy_from_slice(&chunk);
-                    offset += chunk.len();
-                }
+                if !discard {
+                    unsafe {
+                        packet_batch.set_len(packet_batch.len() + 1);
+                    }
 
-                total_bytes += packet_batch[i].meta().size;
+                    let i = packet_batch.len() - 1;
+                    *packet_batch[i].meta_mut() = packet_accumulator.meta;
+                    let mut offset = 0;
+                    for chunk in packet_accumulator.chunks {
+                        packet_batch[i].buffer_mut()[offset..offset + chunk.len()]
+                            .copy_from_slice(&chunk);
+                        offset += chunk.len();
+                    }
 
-                if let Some(signature) = signature_if_should_track_packet(&packet_batch[i])
-                    .ok()
-                    .flatten()
-                {
-                    packet_perf_measure.push((*signature, packet_accumulator.start_time));
-                    // we set the PERF_TRACK_PACKET on
-                    packet_batch[i].meta_mut().set_track_performance(true);
+                    total_bytes += packet_batch[i].meta().size;
+
+                    if let Some(signature) = signature_if_should_track_packet(&packet_batch[i])
+                        .ok()
+                        .flatten()
+                    {
+                        packet_perf_measure.push((*signature, packet_accumulator.start_time));
+                        // we set the PERF_TRACK_PACKET on
+                        packet_batch[i].meta_mut().set_track_performance(true);
+                    }
                 }
                 stats
                     .total_chunks_processed_by_batcher
