@@ -13,21 +13,6 @@ use {
     },
 };
 
-/// A metric that records the maximum value between reporting intervals.
-#[derive(Default)]
-pub(crate) struct Max(AtomicU64);
-
-impl Max {
-    /// Max the given value against the current maximum, retaining the greater of the two.
-    pub(crate) fn max_relaxed(&self, x: u64) {
-        self.0.fetch_max(x, Ordering::Relaxed);
-    }
-
-    fn clear(&self) -> u64 {
-        self.0.swap(0, Ordering::Relaxed)
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct Counter(AtomicU64);
 
@@ -130,7 +115,6 @@ pub struct GossipStats {
     pub(crate) handle_batch_pull_requests_time: Counter,
     pub(crate) handle_batch_pull_responses_time: Counter,
     pub(crate) handle_batch_push_messages_time: Counter,
-    pub(crate) listen_packet_buf_capacity: Max,
     pub(crate) new_pull_requests: Counter,
     pub(crate) new_push_requests2: Counter,
     pub(crate) new_push_requests: Counter,
@@ -175,7 +159,6 @@ pub struct GossipStats {
     pub(crate) skip_pull_response_shred_version: Counter,
     pub(crate) skip_pull_shred_version: Counter,
     pub(crate) skip_push_message_shred_version: Counter,
-    pub(crate) socket_consume_packet_buf_capacity: Max,
     pub(crate) trim_crds_table: Counter,
     pub(crate) trim_crds_table_failed: Counter,
     pub(crate) trim_crds_table_purged_values_count: Counter,
@@ -217,29 +200,6 @@ impl GossipStats {
         }
         .add_relaxed(1);
         Some(protocol)
-    }
-
-    // Updates metrics from count of dropped packets.
-    pub(crate) fn record_dropped_packets(&self, counts: &[u64; 7]) -> u64 {
-        let num_packets_dropped = counts.iter().sum::<u64>();
-        if num_packets_dropped > 0u64 {
-            self.gossip_packets_dropped_count
-                .add_relaxed(num_packets_dropped);
-            self.packets_received_pull_requests_count
-                .add_relaxed(counts[0]);
-            self.packets_received_pull_responses_count
-                .add_relaxed(counts[1]);
-            self.packets_received_push_messages_count
-                .add_relaxed(counts[2]);
-            self.packets_received_prune_messages_count
-                .add_relaxed(counts[3]);
-            self.packets_received_ping_messages_count
-                .add_relaxed(counts[4]);
-            self.packets_received_pong_messages_count
-                .add_relaxed(counts[5]);
-            self.packets_received_unknown_count.add_relaxed(counts[6]);
-        }
-        num_packets_dropped
     }
 }
 
@@ -622,16 +582,6 @@ pub(crate) fn submit_gossip_stats(
         (
             "trim_crds_table_purged_values_count",
             stats.trim_crds_table_purged_values_count.clear(),
-            i64
-        ),
-        (
-            "listen_packet_buf_capacity",
-            stats.listen_packet_buf_capacity.clear(),
-            i64
-        ),
-        (
-            "socket_consume_packet_buf_capacity",
-            stats.socket_consume_packet_buf_capacity.clear(),
             i64
         ),
     );
