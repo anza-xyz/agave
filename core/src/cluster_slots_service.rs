@@ -100,12 +100,24 @@ impl ClusterSlotsService {
             lowest_slot_elapsed.stop();
             let mut process_cluster_slots_updates_elapsed =
                 Measure::start("process_cluster_slots_updates_elapsed");
-            if let Some(slots) = slots {
-                Self::process_cluster_slots_updates(
-                    slots,
-                    &cluster_slots_update_receiver,
-                    &cluster_info,
-                );
+
+            let node_id = cluster_info.id();
+            let my_stake = bank_forks
+                .read()
+                .unwrap()
+                .root_bank()
+                .current_epoch_stakes()
+                .node_id_to_stake(&node_id)
+                .unwrap_or_default();
+            // only staked nodes should push EpochSlots into CRDS to save gossip bandwidth
+            if my_stake > 0 {
+                if let Some(slots) = slots {
+                    Self::process_cluster_slots_updates(
+                        slots,
+                        &cluster_slots_update_receiver,
+                        &cluster_info,
+                    );
+                }
             }
             let root_bank = bank_forks.read().unwrap().root_bank();
             cluster_slots.update(&root_bank, &cluster_info);
