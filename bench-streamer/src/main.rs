@@ -116,7 +116,7 @@ fn main() -> Result<()> {
             s_reader,
             recycler.clone(),
             stats.clone(),
-            Duration::from_millis(1), // coalesce
+            Some(Duration::from_millis(1)), // coalesce
             true,
             None,
             false,
