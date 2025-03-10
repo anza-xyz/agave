@@ -238,6 +238,7 @@ dependencies = [
  "solana-type-overrides",
  "solana-unified-scheduler-pool",
  "solana-version",
+ "solana-vote",
  "solana-vote-program",
  "thiserror 2.0.11",
  "tikv-jemallocator",
@@ -521,6 +522,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.99",
+]
+
+[[package]]
+name = "arbitrary"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dde20b3d026af13f561bdd0f15edf01fc734f0dafcedbaf42bba506a9517f223"
+dependencies = [
+ "derive_arbitrary",
 ]
 
 [[package]]
@@ -2023,6 +2033,17 @@ name = "derive-where"
 version = "1.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62d671cc41a825ebabc75757b62d3d168c577f9149b2d49ece1dad1f72119d25"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.99",
+]
+
+[[package]]
+name = "derive_arbitrary"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30542c1ad912e0e3d22a1935c290e12e8a29d704a420177a31faad4a601a0800"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8945,6 +8966,7 @@ version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40db1ff5a0f8aea2c158d78ab5f2cf897848964251d1df42fef78efd3c85b863"
 dependencies = [
+ "arbitrary",
  "borsh 0.10.3",
  "borsh 1.5.5",
  "bs58",
@@ -10812,6 +10834,7 @@ dependencies = [
 name = "solana-vote"
 version = "2.3.0"
 dependencies = [
+ "arbitrary",
  "bincode",
  "itertools 0.12.1",
  "log",
@@ -10830,12 +10853,14 @@ dependencies = [
  "solana-packet",
  "solana-pubkey",
  "solana-sdk-ids",
+ "solana-serialize-utils",
  "solana-sha256-hasher",
  "solana-signature",
  "solana-signer",
  "solana-svm-transaction",
  "solana-transaction",
  "solana-vote-interface",
+ "static_assertions",
  "thiserror 2.0.11",
 ]
 
@@ -10845,6 +10870,7 @@ version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1e9f6a1651310a94cd5a1a6b7f33ade01d9e5ea38a2220becb5fd737b756514"
 dependencies = [
+ "arbitrary",
  "bincode",
  "num-derive",
  "num-traits",
