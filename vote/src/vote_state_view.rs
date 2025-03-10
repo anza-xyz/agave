@@ -27,7 +27,13 @@ mod list_view;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum VoteStateViewError {
-    ParseError,
+    AccountDataTooSmall,
+    InvalidVotesLength,
+    InvalidRootSlotOption,
+    InvalidAuthorizedVotersLength,
+    InvalidEpochCreditsLength,
+    OldVersion,
+    UnsupportedVersion,
 }
 
 pub type Result<T> = core::result::Result<T, VoteStateViewError>;
@@ -169,14 +175,14 @@ impl VoteStateFrame {
         let version = {
             let mut cursor = std::io::Cursor::new(bytes);
             solana_serialize_utils::cursor::read_u32(&mut cursor)
-                .map_err(|_err| VoteStateViewError::ParseError)?
+                .map_err(|_err| VoteStateViewError::AccountDataTooSmall)?
         };
 
         Ok(match version {
-            0 => return Err(VoteStateViewError::ParseError),
+            0 => return Err(VoteStateViewError::OldVersion),
             1 => Self::V1_14_11(VoteStateFrameV1_14_11::try_new(bytes)?),
             2 => Self::V3(VoteStateFrameV3::try_new(bytes)?),
-            _ => return Err(VoteStateViewError::ParseError),
+            _ => return Err(VoteStateViewError::UnsupportedVersion),
         })
     }
 
@@ -221,26 +227,75 @@ mod tests {
     use {
         super::*,
         arbitrary::{Arbitrary, Unstructured},
+        solana_clock::Clock,
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
             state::{
-                vote_state_1_14_11::VoteState1_14_11, VoteState, VoteStateVersions,
-                MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
+                vote_state_1_14_11::VoteState1_14_11, LandedVote, VoteInit, VoteState,
+                VoteStateVersions, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
             },
         },
         std::collections::VecDeque,
     };
 
+    fn new_test_vote_state() -> VoteState {
+        let mut target_vote_state = VoteState::new(
+            &VoteInit {
+                node_pubkey: Pubkey::new_unique(),
+                authorized_voter: Pubkey::new_unique(),
+                authorized_withdrawer: Pubkey::new_unique(),
+                commission: 42,
+            },
+            &Clock::default(),
+        );
+
+        target_vote_state
+            .set_new_authorized_voter(
+                &Pubkey::new_unique(), // authorized_pubkey
+                0,                     // current_epoch
+                1,                     // target_epoch
+                |_| Ok(()),
+            )
+            .unwrap();
+
+        target_vote_state.root_slot = Some(42);
+        target_vote_state.epoch_credits.push((42, 42, 42));
+        target_vote_state.last_timestamp = BlockTimestamp {
+            slot: 42,
+            timestamp: 42,
+        };
+        for i in 0..MAX_LOCKOUT_HISTORY {
+            target_vote_state.votes.push_back(LandedVote {
+                latency: i as u8,
+                lockout: Lockout::new_with_confirmation_count(i as u64, i as u32),
+            });
+        }
+
+        target_vote_state
+    }
+
     #[test]
     fn test_vote_state_view_v3() {
-        // base case
+        let target_vote_state = new_test_vote_state();
+        let target_vote_state_versions =
+            VoteStateVersions::Current(Box::new(target_vote_state.clone()));
+        let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+        let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
+        assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
+    }
+
+    #[test]
+    fn test_vote_state_view_v3_default() {
         let target_vote_state = VoteState::default();
         let target_vote_state_versions =
             VoteStateVersions::Current(Box::new(target_vote_state.clone()));
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
+    }
 
+    #[test]
+    fn test_vote_state_view_v3_arbitrary() {
         // variant
         // provide 4x the minimum struct size in bytes to ensure we typically touch every field
         let struct_bytes_x4 = VoteState::size_of() * 4;
@@ -267,14 +322,26 @@ mod tests {
 
     #[test]
     fn test_vote_state_view_1_14_11() {
-        // base case
+        let target_vote_state: VoteState1_14_11 = new_test_vote_state().into();
+        let target_vote_state_versions =
+            VoteStateVersions::V1_14_11(Box::new(target_vote_state.clone()));
+        let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+        let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
+        assert_eq_vote_state_1_14_11(&vote_state_view, &target_vote_state);
+    }
+
+    #[test]
+    fn test_vote_state_view_1_14_11_default() {
         let target_vote_state = VoteState1_14_11::default();
         let target_vote_state_versions =
             VoteStateVersions::V1_14_11(Box::new(target_vote_state.clone()));
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_1_14_11(&vote_state_view, &target_vote_state);
+    }
 
+    #[test]
+    fn test_vote_state_view_1_14_11_arbitrary() {
         // variant
         // provide 4x the minimum struct size in bytes to ensure we typically touch every field
         let struct_bytes_x4 = std::mem::size_of::<VoteState1_14_11>() * 4;
@@ -412,5 +479,28 @@ mod tests {
             vote_state.epoch_credits.last().map(|x| x.1).unwrap_or(0)
         );
         assert_eq!(vote_state_view.last_timestamp(), vote_state.last_timestamp);
+    }
+
+    #[test]
+    fn test_vote_state_view_too_small() {
+        for i in 0..4 {
+            let vote_data = Arc::new(vec![0; i]);
+            let vote_state_view_err = VoteStateView::try_new(vote_data).unwrap_err();
+            assert_eq!(vote_state_view_err, VoteStateViewError::AccountDataTooSmall);
+        }
+    }
+
+    #[test]
+    fn test_vote_state_view_old_version() {
+        let vote_data = Arc::new(0u32.to_le_bytes().to_vec());
+        let vote_state_view_err = VoteStateView::try_new(vote_data).unwrap_err();
+        assert_eq!(vote_state_view_err, VoteStateViewError::OldVersion);
+    }
+
+    #[test]
+    fn test_vote_state_view_unsupported_version() {
+        let vote_data = Arc::new(3u32.to_le_bytes().to_vec());
+        let vote_state_view_err = VoteStateView::try_new(vote_data).unwrap_err();
+        assert_eq!(vote_state_view_err, VoteStateViewError::UnsupportedVersion);
     }
 }

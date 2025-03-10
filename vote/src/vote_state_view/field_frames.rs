@@ -91,17 +91,17 @@ impl LockoutItem {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct LockoutListFrame {
-    len: u8,
+    pub(super) len: u8,
 }
 
 impl LockoutListFrame {
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
-            .map_err(|_err| VoteStateViewError::ParseError)? as usize;
-        let len = u8::try_from(len).map_err(|_| VoteStateViewError::ParseError)?;
+            .map_err(|_err| VoteStateViewError::AccountDataTooSmall)? as usize;
+        let len = u8::try_from(len).map_err(|_| VoteStateViewError::InvalidVotesLength)?;
         let frame = Self { len };
         cursor.consume(frame.total_item_size());
         Ok(frame)
@@ -121,17 +121,17 @@ impl ListFrame for LockoutListFrame {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct LandedVotesListFrame {
-    len: u8,
+    pub(super) len: u8,
 }
 
 impl LandedVotesListFrame {
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
-            .map_err(|_err| VoteStateViewError::ParseError)? as usize;
-        let len = u8::try_from(len).map_err(|_| VoteStateViewError::ParseError)?;
+            .map_err(|_err| VoteStateViewError::AccountDataTooSmall)? as usize;
+        let len = u8::try_from(len).map_err(|_| VoteStateViewError::InvalidVotesLength)?;
         let frame = Self { len };
         cursor.consume(frame.total_item_size());
         Ok(frame)
@@ -166,17 +166,18 @@ impl ListFrame for LandedVotesListFrame {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct AuthorizedVotersListFrame {
-    len: u8,
+    pub(super) len: u8,
 }
 
 impl AuthorizedVotersListFrame {
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
-            .map_err(|_err| VoteStateViewError::ParseError)? as usize;
-        let len = u8::try_from(len).map_err(|_| VoteStateViewError::ParseError)?;
+            .map_err(|_err| VoteStateViewError::AccountDataTooSmall)? as usize;
+        let len =
+            u8::try_from(len).map_err(|_| VoteStateViewError::InvalidAuthorizedVotersLength)?;
         let frame = Self { len };
         cursor.consume(frame.total_item_size());
         Ok(frame)
@@ -222,17 +223,17 @@ pub struct EpochCreditsItem {
     prev_credits: [u8; 8],
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct EpochCreditsListFrame {
-    len: u8,
+    pub(super) len: u8,
 }
 
 impl EpochCreditsListFrame {
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
-            .map_err(|_err| VoteStateViewError::ParseError)? as usize;
-        let len = u8::try_from(len).map_err(|_| VoteStateViewError::ParseError)?;
+            .map_err(|_err| VoteStateViewError::AccountDataTooSmall)? as usize;
+        let len = u8::try_from(len).map_err(|_| VoteStateViewError::InvalidEpochCreditsLength)?;
         let frame = Self { len };
         cursor.consume(frame.total_item_size());
         Ok(frame)
@@ -299,10 +300,10 @@ impl RootSlotView<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 pub(super) struct RootSlotFrame {
-    has_root_slot: bool,
+    pub(super) has_root_slot: bool,
 }
 
 impl RootSlotFrame {
@@ -319,8 +320,14 @@ impl RootSlotFrame {
     }
 
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
-        let has_root_slot = solana_serialize_utils::cursor::read_bool(cursor)
-            .map_err(|_err| VoteStateViewError::ParseError)?;
+        let byte = solana_serialize_utils::cursor::read_u8(cursor)
+            .map_err(|_err| VoteStateViewError::AccountDataTooSmall)?;
+        let has_root_slot = match byte {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(VoteStateViewError::InvalidRootSlotOption),
+        }?;
+
         let frame = Self { has_root_slot };
         cursor.consume(frame.size());
         Ok(frame)
@@ -328,36 +335,33 @@ impl RootSlotFrame {
 }
 
 pub(super) struct PriorVotersFrame;
-
-impl ListFrame for PriorVotersFrame {
-    type Item = PriorVotersItem;
-
-    #[cfg(test)]
-    const ASSERT_ITEM_ALIGNMENT: () = {
-        static_assertions::const_assert!(core::mem::align_of::<PriorVotersItem>() == 1);
-    };
-
-    fn len(&self) -> usize {
-        const MAX_ITEMS: usize = 32;
-        MAX_ITEMS
-    }
-
-    fn total_size(&self) -> usize {
-        self.total_item_size() +
-            core::mem::size_of::<u64>() /* idx */ +
-            core::mem::size_of::<bool>() /* is_empty */
-    }
-}
-
-#[repr(C)]
-pub(super) struct PriorVotersItem {
-    voter: Pubkey,
-    start_epoch_inclusive: [u8; 8],
-    end_epoch_exclusive: [u8; 8],
-}
-
 impl PriorVotersFrame {
+    pub(super) const fn total_size() -> usize {
+        1545 // see test_prior_voters_total_size
+    }
+
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) {
-        cursor.consume(PriorVotersFrame.total_size());
+        cursor.consume(PriorVotersFrame::total_size());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_vote_interface::state::CircBuf};
+
+    #[test]
+    fn test_prior_voters_total_size() {
+        #[repr(C)]
+        pub(super) struct PriorVotersItem {
+            voter: Pubkey,
+            start_epoch_inclusive: [u8; 8],
+            end_epoch_exclusive: [u8; 8],
+        }
+
+        let prior_voters_len = CircBuf::<()>::default().buf().len();
+        let expected_total_size = prior_voters_len * core::mem::size_of::<PriorVotersItem>() +
+            core::mem::size_of::<u64>() /* idx */ +
+            core::mem::size_of::<bool>() /* is_empty */;
+        assert_eq!(PriorVotersFrame::total_size(), expected_total_size);
     }
 }
