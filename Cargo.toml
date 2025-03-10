@@ -16,9 +16,11 @@ opt-level = 1
 [profile.dev.build-override]
 opt-level = 1
 
-# Enable heavier optimizations in deps (we do not rebuild them every time in dev cycle)
-[profile.dev.package."*"]
-opt-level = 2
+# Disable optimizations for some crates as they interfere with tests there
+[profile.dev.package."solana-accounts-db"]
+opt-level = 0
+[profile.dev.package."solana-core"]
+opt-level = 0
 
 [workspace]
 members = [
