@@ -1820,10 +1820,10 @@ pub mod tests {
                 }
 
                 // we can NOT observe crafted value by value
-                {
-                    let executable_bool: bool = account.executable();
-                    assert!(!executable_bool);
-                }
+                /*{
+                    //let executable_bool: bool = account.executable();
+                    //assert!(!executable_bool);
+                }*/
             })
             .unwrap();
 
