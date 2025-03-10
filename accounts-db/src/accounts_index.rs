@@ -494,7 +494,7 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
 
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIterator<'a, T, U> {
     fn range<R>(
-        map: &AccountMaps<T, U>,
+        map: &&AccountMap<T, U>,
         range: R,
         returns_items: AccountsIndexIteratorReturnsItems,
     ) -> Vec<(Pubkey, AccountMapEntry<T>)>
@@ -643,8 +643,6 @@ pub enum AccountsIndexIteratorReturnsItems {
 pub trait ZeroLamport {
     fn is_zero_lamport(&self) -> bool;
 }
-
-type AccountMaps<'a, T, U> = &'a AccountMap<T, U>;
 
 #[derive(Debug, Default)]
 pub struct ScanSlotTracker {
@@ -1685,7 +1683,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         );
     }
 
-    pub(crate) fn get_bin(&self, pubkey: &Pubkey) -> AccountMaps<T, U> {
+    pub(crate) fn get_bin(&self, pubkey: &Pubkey) -> &AccountMap<T, U> {
         &self.account_maps[self.bin_calculator.bin_from_pubkey(pubkey)]
     }
 
