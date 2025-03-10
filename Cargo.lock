@@ -7970,6 +7970,7 @@ dependencies = [
  "solana-vote-interface",
  "solana-vote-program",
  "static_assertions",
+ "strum",
  "test-case",
  "thiserror 2.0.11",
 ]
