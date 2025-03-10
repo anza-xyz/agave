@@ -38,7 +38,7 @@ use {
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
-        transaction_client::ConnectionCacheClient,
+        transaction_client::{ConnectionCacheClient, TransactionClient},
     },
     solana_storage_bigtable::CredentialType,
     std::{
@@ -50,6 +50,7 @@ use {
         },
         thread::{self, Builder, JoinHandle},
     },
+    tokio::{runtime::Builder as TokioBuilder, runtime::Runtime as TokioRuntime},
     tokio_util::codec::{BytesCodec, FramedRead},
 };
 
@@ -335,7 +336,7 @@ fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<Strin
 
 impl JsonRpcService {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new_with_client<Client: TransactionClient + Clone + std::marker::Send + 'static>(
         rpc_addr: SocketAddr,
         config: JsonRpcConfig,
         snapshot_config: Option<SnapshotConfig>,
@@ -343,7 +344,6 @@ impl JsonRpcService {
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         blockstore: Arc<Blockstore>,
         cluster_info: Arc<ClusterInfo>,
-        poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
         genesis_hash: Hash,
         ledger_path: &Path,
         validator_exit: Arc<RwLock<Exit>>,
@@ -354,15 +354,14 @@ impl JsonRpcService {
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        connection_cache: Arc<ConnectionCache>,
+        client: Client,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        runtime: Arc<TokioRuntime>,
     ) -> Result<Self, String> {
         info!("rpc bound to {:?}", rpc_addr);
         info!("rpc configuration: {:?}", config);
-        let rpc_threads = 1.max(config.rpc_threads);
-        let rpc_blocking_threads = 1.max(config.rpc_blocking_threads);
         let rpc_niceness_adj = config.rpc_niceness_adj;
 
         let health = Arc::new(RpcHealth::new(
@@ -376,18 +375,6 @@ impl JsonRpcService {
         let largest_accounts_cache = Arc::new(RwLock::new(LargestAccountsCache::new(
             LARGEST_ACCOUNTS_CACHE_DURATION,
         )));
-
-        let tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-            .ok_or_else(|| {
-                format!(
-                    "Invalid {:?} socket address for TPU",
-                    connection_cache.protocol()
-                )
-            })?;
-
-        let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
 
         let exit_bigtable_ledger_upload_service = Arc::new(AtomicBool::new(false));
 
@@ -468,15 +455,6 @@ impl JsonRpcService {
             Arc::clone(&runtime),
         );
 
-        let leader_info =
-            poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
-        let client = ConnectionCacheClient::new(
-            connection_cache,
-            tpu_address,
-            send_transaction_service_config.tpu_peers.clone(),
-            leader_info,
-            send_transaction_service_config.leader_forward_count,
-        );
         let _send_transaction_service = Arc::new(SendTransactionService::new_with_client(
             &bank_forks,
             receiver,
@@ -567,6 +545,82 @@ impl JsonRpcService {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        rpc_addr: SocketAddr,
+        config: JsonRpcConfig,
+        snapshot_config: Option<SnapshotConfig>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+        blockstore: Arc<Blockstore>,
+        cluster_info: Arc<ClusterInfo>,
+        poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
+        genesis_hash: Hash,
+        ledger_path: &Path,
+        validator_exit: Arc<RwLock<Exit>>,
+        exit: Arc<AtomicBool>,
+        override_health_check: Arc<AtomicBool>,
+        startup_verification_complete: Arc<AtomicBool>,
+        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        send_transaction_service_config: send_transaction_service::Config,
+        max_slots: Arc<MaxSlots>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        connection_cache: Arc<ConnectionCache>,
+        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_rewards_slot: Arc<AtomicU64>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    ) -> Result<Self, String> {
+        let runtime = service_runtime(
+            config.rpc_threads,
+            config.rpc_blocking_threads,
+            config.rpc_niceness_adj,
+        );
+
+        let tpu_address = cluster_info
+            .my_contact_info()
+            .tpu(connection_cache.protocol())
+            .ok_or_else(|| {
+                format!(
+                    "Invalid {:?} socket address for TPU",
+                    connection_cache.protocol()
+                )
+            })?;
+
+        let leader_info =
+            poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
+        let client = ConnectionCacheClient::new(
+            connection_cache,
+            tpu_address,
+            send_transaction_service_config.tpu_peers.clone(),
+            leader_info,
+            send_transaction_service_config.leader_forward_count,
+        );
+        Self::new_with_client(
+            rpc_addr,
+            config,
+            snapshot_config,
+            bank_forks,
+            block_commitment_cache,
+            blockstore,
+            cluster_info,
+            genesis_hash,
+            ledger_path,
+            validator_exit,
+            exit,
+            override_health_check,
+            startup_verification_complete,
+            optimistically_confirmed_bank,
+            send_transaction_service_config,
+            max_slots,
+            leader_schedule_cache,
+            client,
+            max_complete_transaction_status_slot,
+            max_complete_rewards_slot,
+            prioritization_fee_cache,
+            runtime,
+        )
+    }
+
     pub fn exit(&mut self) {
         if let Some(c) = self.close_handle.take() {
             c.close()
@@ -583,7 +637,7 @@ pub fn service_runtime(
     rpc_threads: usize,
     rpc_blocking_threads: usize,
     rpc_niceness_adj: i8,
-) -> Arc<tokio::runtime::Runtime> {
+) -> Arc<TokioRuntime> {
     // The jsonrpc_http_server crate supports two execution models:
     //
     // - By default, it spawns a number of threads - configured with .threads(N) - and runs a
@@ -600,8 +654,11 @@ pub fn service_runtime(
     // NB: `rpc_blocking_threads` shouldn't be set too high (defaults to num_cpus / 2). Too many
     // (busy) blocking threads could compete with CPU time with other validator threads and
     // negatively impact performance.
+    let rpc_threads = 1.max(rpc_threads);
+    let rpc_blocking_threads = 1.max(rpc_blocking_threads);
+    let rpc_niceness_adj = rpc_niceness_adj;
     let runtime = Arc::new(
-        tokio::runtime::Builder::new_multi_thread()
+        TokioBuilder::new_multi_thread()
             .worker_threads(rpc_threads)
             .max_blocking_threads(rpc_blocking_threads)
             .on_thread_start(move || renice_this_thread(rpc_niceness_adj).unwrap())
