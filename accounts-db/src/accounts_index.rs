@@ -484,7 +484,7 @@ pub struct AccountsIndexRootsStats {
 }
 
 pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
-    account_maps: &'a LockMapTypeSlice<T, U>,
+    account_maps: &'a [MapType<T, U>],
     bin_calculator: &'a PubkeyBinCalculator24,
     start_bound: Bound<Pubkey>,
     end_bound: Bound<Pubkey>,
@@ -646,7 +646,6 @@ pub trait ZeroLamport {
 
 type MapType<T, U> = AccountMap<T, U>;
 type LockMapType<T, U> = Vec<MapType<T, U>>;
-type LockMapTypeSlice<T, U> = [MapType<T, U>];
 type AccountMaps<'a, T, U> = &'a MapType<T, U>;
 
 #[derive(Debug, Default)]
