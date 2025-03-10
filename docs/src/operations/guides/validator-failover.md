@@ -6,144 +6,99 @@ pagination_label: "Validator Guides: Node Failover"
 ---
 
 A simple two machine instance failover method is described here, which allows you to:
-* upgrade your validator software with virtually no down time, and
-* failover to the secondary instance when your monitoring detects a problem with
-  the primary instance
-without any safety issues that would otherwise be associated with running two
-instances of your validator.
+* Upgrade your validator software with virtually no down time, and
+* Failover to the secondary instance when your monitoring detects a problem with the primary instance
+without any safety issues that would otherwise be associated with running two instances of your validator.
 
-You will need two validator-class machines for your primary and secondary
-validator. A third machine for running an [etcd](https://etcd.io/) cluster,
-which is used to store the tower voting record for your validator.
+You will need:
+* Two non-delinquent validator nodes
+* Identities that are not associated with a staked vote account on both validators to use when not actively voting
+* Validator startup scripts both modified to use symbolic link as the identity
+* Validator startup scripts both modified to include staked identity as authorized voter
 
 ## Setup
 
-### etcd cluster setup
+### Generating an Unstaked Secondary Identity
 
-There is ample documentation regarding etcd setup and configuration at
-https://etcd.io/, please generally familiarize yourself with etcd before
-continuing.
-
-It's recommended that etcd be installed on a separate machine from your primary
-and secondary validator machines. This machine must be highly available, and
-depending on your needs you may wish to configure etcd with more than just
-one node.
-
-First install `etcd` as desired for your machine. Then TLS certificates must be
-created for authentication between the etcd cluster and your validator.  Here is
-one way to do this:
-
-With [Golang](https://golang.org/) installed, run
-`go install github.com/cloudflare/cfssl/cmd/cfssl@latest`.  The `cfssl` program
-should now be available at `~/go/bin/cfssl`.  Ensure `~/go/bin` is in your PATH
-by running `PATH=$PATH:~/go/bin/`.
-
-Now create a certificate directory and configuration file:
+Both validators need to have secondary (unstaked) identities to assume when not actively voting.
+You can generate these secondary identities on each of your validators like so:
 ```
-mkdir -p certs/
-echo '{"CN":"etcd","hosts":["localhost", "127.0.0.1"],"key":{"algo":"rsa","size":2048}}' > certs/config.json
+solana-keygen new -s --no-bip39-passphrase -o unstaked-identity.json
 ```
+### Validator Startup Script Modifications
 
-then create certificates for the etcd server and the validator:
-```
-cfssl gencert -initca certs/config.json | cfssljson -bare certs/etcd-ca
-cfssl gencert -ca certs/etcd-ca.pem -ca-key certs/etcd-ca-key.pem certs/config.json | cfssljson -bare certs/validator
-cfssl gencert -ca certs/etcd-ca.pem -ca-key certs/etcd-ca-key.pem certs/config.json | cfssljson -bare certs/etcd
-```
+The identity flag and authorized voter flags should be modified on both validators.
 
-Copy these files to your primary and secondary validator machines:
-* `certs/validator-key.pem`
-* `certs/validator.pem`
-* `certs/etcd-ca.pem`
-
-and these files to the machine running the etcd server:
-* `certs/etcd.pem`
-* `certs/etcd-key.pem`
-* `certs/etcd-ca.pem`
-
-With this configuration, both the validator and etdc will share the same
-TLS certificate authority and will each authenticate the other with it.
-
-
-Start `etcd` with the following arguments:
-```bash
-etcd --auto-compaction-retention 2 --auto-compaction-mode revision \
-  --cert-file=certs/etcd.pem --key-file=certs/etcd-key.pem \
-  --client-cert-auth \
-  --trusted-ca-file=certs/etcd-ca.pem \
-  --listen-client-urls=https://127.0.0.1:2379 \
-  --advertise-client-urls=https://127.0.0.1:2379
-```
-
-and use `curl` to confirm the etcd TLS certificates are properly configured:
-```bash
-curl --cacert certs/etcd-ca.pem https://127.0.0.1:2379/ --cert certs/validator.pem --key certs/validator-key.pem
-```
-On success, curl will return a 404 response.
-
-For more information on etcd TLS setup, please refer to
-https://etcd.io/docs/v3.5/op-guide/security/#example-2-client-to-server-authentication-with-https-client-certificates
-
-### Primary Validator
-The following additional `agave-validator` parameters are required to enable
-tower storage into etcd:
+Note that `identity.json` is not a real file but a symbolic link we will create shortly.
+However, the authorized voter flag does need to point to the staked identity file (your main identity).
+In this guide, the main identity is renamed to `staked-identity.json` for clarity and simplicity.
+You can certainly name your main identity file however you'd like; just make sure it is specified as an authorized voter as shown below:
 
 ```
-agave-validator ... \
-  --tower-storage etcd \
-  --etcd-cacert-file certs/etcd-ca.pem \
-  --etcd-cert-file certs/validator.pem \
-  --etcd-key-file certs/validator-key.pem \
-  --etcd-endpoint 127.0.0.1:2379  # <-- replace 127.0.0.1 with the actual IP address
+exec /home/sol/bin/agave-validator \
+    --identity /home/sol/identity.json \
+    --vote-account /home/sol/vote.json \
+    --authorized-voter /home/sol/staked-identity.json \
 ```
 
-Note that once running your validator *will terminate* if it's not able to write
-its tower into etcd before submitting a vote transaction, so it's essential
-that your etcd endpoint remain accessible at all times.
+Summary:
 
-### Secondary Validator
-Configure the secondary validator like the primary with the exception of the
-following `agave-validator` command-line argument changes:
-* Generate and use a secondary validator identity: `--identity secondary-validator-keypair.json`
-* Add `--no-check-vote-account`
-* Add `--authorized-voter validator-keypair.json` (where
-  `validator-keypair.json` is the identity keypair for your primary validator)
+* Identity is a symbolic link we will create in the next section. It may point to your staked identity or your inactive unstaked identity.
+* No changed to the vote account, just shown for context.
+* Authorized voter points to your main, staked identity.
 
-## Triggering a failover manually
-When both validators are running normally and caught up to the cluster, a
-failover from primary to secondary can be triggered by running the following
-command on the secondary validator:
-```bash
-$ agave-validator wait-for-restart-window --identity validator-keypair.json \
-  && agave-validator set-identity validator-keypair.json
+### Creating Identity Symlinks
+An important part of how this system functions is the identity.json symbolic link.
+This link allows us to soft link the desired identity so that the validator can restart or stop/start with the same identity we last intended it to have.
+
+On your actively voting validator, link this to your staked identity
+```
+ln -sf /home/sol/staked-identity.json /home/sol/identity.json
 ```
 
-The secondary validator will acquire a lock on the tower in etcd to ensure
-voting and block production safely switches over from the primary validator.
+On your inactive, non-voting validator, link this to your unstaked identity
+```
+ln -sf /home/sol/unstaked-identity.json /home/sol/identity.json
+```
 
-The primary validator will then terminate as soon as it detects the secondary
-validator using its identity.
+### Transition Preparation Checklist
+At this point, you should have completed the following on each validator:
+* Generated an unstaked identity
+* Updated your validator startup script
+* Created a symbolic link to point to the respective identity file
 
-Note: When the primary validator restarts (which may be immediate if you have
-configured your primary validator to do so) it will reclaim its identity
-from the secondary validator. This will in turn cause the secondary validator to
-exit. However if/when the secondary validator restarts, it will do so using the
-secondary validator identity and thus the restart cycle is broken.
+If you have done this - great! You're ready to transition!
 
-## Triggering a failover via monitoring
-Monitoring of your choosing can invoke the `agave-validator set-identity
-validator-keypair.json` command mentioned in the previous section.
+###  Transition Process
+#### Active Validator
+* Wait for a restart window
+* Set identity to unstaked identity
+* Correct symbolic link to reflect this change
+* Copy the tower file to the inactive validator
 
-It is not necessary to guarantee the primary validator has halted before failing
-over to the secondary, as the failover process will prevent the primary
-validator from voting and producing blocks even if it is in an unknown state.
+```
+#!/bin/bash
 
-## Validator Software Upgrades
-To perform a software upgrade using this failover method:
-1. Install the new software version on your primary validator system but do not
-   restart it yet.
-2. Trigger a manual failover to your secondary validator. This should cause your
-   primary validator to terminate.
-3. When your primary validator restarts it will now be using the new software version.
-4. Once the primary validator catches up upgrade the secondary validator at
-   your convenience.
+# example script of the above steps - change specifics such as user / IP / ledger path
+agave-validator -l /mnt/ledger wait-for-restart-window --min-idle-time 2 --skip-new-snapshot-check
+agave-validator -l /mnt/ledger set-identity /home/sol/unstaked-identity.json
+ln -sf /home/sol/unstaked-identity.json /home/sol/identity.json
+scp /mnt/ledger/tower-1_9-$(solana-keygen pubkey /home/sol/staked-identity.json).bin <user>@<IP>/mnt/ledger
+```
+
+(At this point your primary identity is no longer voting)
+
+#### Inactive Validator
+* Set identity to your staked identity (requiring the tower)
+* Rewrite symbolic link to reflect this
+
+```
+#!/bin/bash
+
+# example script of the above steps
+agave-validator -l /mnt/ledger set-identity --require-tower /home/sol/staked-identity.json
+ln -sf /home/sol/staked-identity.json /home/sol/identity.json
+```
+
+### Verification
+Verify identities transitioned successfully using either `agave-validator monitor` or `solana catchup --our-localhost 8899`
