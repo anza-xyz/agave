@@ -36,7 +36,7 @@ impl FetchStage {
         tpu_vote_sockets: Vec<UdpSocket>,
         exit: Arc<AtomicBool>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
-        coalesce: Duration,
+        coalesce: Option<Duration>,
     ) -> (Self, PacketBatchReceiver, PacketBatchReceiver) {
         let (sender, receiver) = unbounded();
         let (vote_sender, vote_receiver) = unbounded();
@@ -72,7 +72,7 @@ impl FetchStage {
         forward_sender: &PacketBatchSender,
         forward_receiver: PacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
-        coalesce: Duration,
+        coalesce: Option<Duration>,
         in_vote_only_mode: Option<Arc<AtomicBool>>,
         tpu_enable_udp: bool,
     ) -> Self {
@@ -148,7 +148,7 @@ impl FetchStage {
         forward_sender: &PacketBatchSender,
         forward_receiver: PacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
-        coalesce: Duration,
+        coalesce: Option<Duration>,
         in_vote_only_mode: Option<Arc<AtomicBool>>,
         tpu_enable_udp: bool,
     ) -> Self {
