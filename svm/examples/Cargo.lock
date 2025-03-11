@@ -2748,6 +2748,7 @@ dependencies = [
  "solana-sdk",
  "solana-svm",
  "solana-system-program",
+ "solana-transaction-context 2.3.0",
  "solana-transaction-status",
  "solana-version",
  "spl-token-2022 7.0.0",
