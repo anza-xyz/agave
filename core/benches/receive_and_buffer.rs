@@ -3,7 +3,6 @@ use {
     criterion::{black_box, criterion_group, criterion_main, Criterion},
     crossbeam_channel::{unbounded, Receiver},
     rand::prelude::*,
-    rand_distr::{Distribution, Normal, Uniform, WeightedIndex},
     solana_core::banking_stage::{
         decision_maker::BufferedPacketsDecision,
         packet_deserializer::PacketDeserializer,
@@ -39,6 +38,9 @@ use {
     },
 };
 
+// the max number of instructions of given type that we can put into packet.
+const MAX_INSTRUCTIONS_PER_TRANSACTION: usize = 204;
+
 fn create_accounts(num_accounts: usize, genesis_config: &mut GenesisConfig) -> Vec<Keypair> {
     let owner = &system_program::id();
 
@@ -47,93 +49,6 @@ fn create_accounts(num_accounts: usize, genesis_config: &mut GenesisConfig) -> V
         genesis_config.add_account(keypair.pubkey(), AccountSharedData::new(10000, 0, &owner));
     }
     account_keypairs
-}
-pub trait DistributionSource {
-    fn sample(&self, rng: &mut ThreadRng) -> u64;
-}
-
-pub struct UniformDist {
-    dist: Uniform<u64>,
-}
-
-impl UniformDist {
-    pub fn new(min: u64, max: u64) -> Self {
-        Self {
-            dist: Uniform::new(min, max),
-        }
-    }
-}
-
-impl DistributionSource for UniformDist {
-    fn sample(&self, rng: &mut ThreadRng) -> u64 {
-        self.dist.sample(rng)
-    }
-}
-
-pub struct NormalDist {
-    dist: Normal<f64>,
-}
-
-impl NormalDist {
-    pub fn new(mean: f64, std_dev: f64) -> Self {
-        Self {
-            dist: Normal::new(mean, std_dev).unwrap(),
-        }
-    }
-}
-
-impl DistributionSource for NormalDist {
-    fn sample(&self, rng: &mut ThreadRng) -> u64 {
-        self.dist.sample(rng) as u64
-    }
-}
-
-pub struct ConstantValue {
-    value: u64,
-}
-
-impl ConstantValue {
-    pub fn new(value: u64) -> Self {
-        Self { value }
-    }
-}
-
-impl DistributionSource for ConstantValue {
-    fn sample(&self, _rng: &mut ThreadRng) -> u64 {
-        self.value
-    }
-}
-
-/// Implementation of a discrete probability distribution
-pub struct DiscreteDistribution {
-    values: Vec<u64>,
-    weights: WeightedIndex<f64>,
-}
-
-impl DiscreteDistribution {
-    pub fn new(values: Vec<u64>, probabilities: Vec<f64>) -> Self {
-        assert_eq!(
-            values.len(),
-            probabilities.len(),
-            "Values and probabilities must have the same length"
-        );
-        assert!(
-            probabilities.iter().all(|&p| p >= 0.0),
-            "Probabilities must be non-negative"
-        );
-
-        let weights =
-            WeightedIndex::new(&probabilities).expect("Invalid probabilities (must sum to > 0)");
-
-        Self { values, weights }
-    }
-}
-
-impl DistributionSource for DiscreteDistribution {
-    fn sample(&self, rng: &mut ThreadRng) -> u64 {
-        let index = self.weights.sample(rng);
-        self.values[index]
-    }
 }
 
 /// Structure that returns correct provided blockhash or some incorrect hash
@@ -165,13 +80,14 @@ fn generate_transactions(
     num_txs: usize,
     bank: Arc<Bank>,
     fee_payers: &[Keypair],
-    compute_unit_price: Box<dyn DistributionSource>,
+    num_instructions_per_tx: usize,
     probability_invalid_blockhash: f64,
 ) -> BankingPacketBatch {
-    let mut rng: ThreadRng = thread_rng();
+    assert!(num_instructions_per_tx <= MAX_INSTRUCTIONS_PER_TRANSACTION);
     let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
 
-    const MAX_INSTRUCTIONS_PER_TRANSACTION: usize = 205;
+    let mut rng = rand::thread_rng();
+
     let mut fee_payers = fee_payers.iter().cycle();
 
     let txs: Vec<VersionedTransaction> = (0..num_txs)
@@ -179,11 +95,13 @@ fn generate_transactions(
             let fee_payer = fee_payers.next().unwrap();
             let program_id = Pubkey::new_unique();
 
-            let mut instructions = Vec::with_capacity(MAX_INSTRUCTIONS_PER_TRANSACTION);
+            let mut instructions = Vec::with_capacity(num_instructions_per_tx);
+            // Experiments with different distributions didn't show much of the effect on the performance.
+            let compute_unit_price = rng.gen_range(0..1000);
             instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
-                compute_unit_price.sample(&mut rng),
+                compute_unit_price,
             ));
-            for _ in 0..MAX_INSTRUCTIONS_PER_TRANSACTION - 1 {
+            for _ in 0..num_instructions_per_tx - 1 {
                 instructions.push(Instruction::new_with_bytes(
                     program_id,
                     &[0],
@@ -242,12 +160,15 @@ impl ReceiveAndBufferCreator for SanitizedTransactionReceiveAndBuffer {
 fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
     c: &mut Criterion,
     bench_name: &str,
+    num_instructions_per_tx: usize,
+    probability_invalid_blockhash: f64,
 ) {
     let GenesisConfigInfo {
         mut genesis_config, ..
     } = create_genesis_config(100_000);
-    let num_txs = 1024;
-    let num_fee_payers = 128;
+    let num_txs = 16 * 1024;
+    // This doesn't change the time to execute
+    let num_fee_payers = 1;
     // fee payers will be verified, so have to create them properly
     let fee_payers = create_accounts(num_fee_payers, &mut genesis_config);
 
@@ -271,8 +192,8 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
         num_txs,
         bank.clone(),
         &fee_payers,
-        Box::new(UniformDist::new(1, 100)),
-        0.0,
+        num_instructions_per_tx,
+        probability_invalid_blockhash,
     );
     c.bench_function(bench_name, |bencher| {
         bencher.iter_with_setup(
@@ -302,14 +223,31 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
 fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
     bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
         c,
-        "sanitized_transaction_receive_and_buffer",
+        "sanitized_transaction_receive_and_buffer_max_instructions",
+        MAX_INSTRUCTIONS_PER_TRANSACTION,
+        0.0,
+    );
+
+    bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
+        c,
+        "sanitized_transaction_receive_and_buffer_max_instructions_10p_invalid_blockhash",
+        MAX_INSTRUCTIONS_PER_TRANSACTION,
+        0.1,
     );
 }
 
 fn bench_transaction_view_receive_and_buffer(c: &mut Criterion) {
     bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
         c,
-        "transaction_view_receive_and_buffer",
+        "transaction_view_receive_and_buffer_uniform_max_instructions",
+        MAX_INSTRUCTIONS_PER_TRANSACTION,
+        0.0,
+    );
+    bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
+        c,
+        "transaction_view_receive_and_buffer_max_instructions_uniform_10p_invalid_blockhash",
+        MAX_INSTRUCTIONS_PER_TRANSACTION,
+        0.1,
     );
 }
 
