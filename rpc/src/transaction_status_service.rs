@@ -176,6 +176,8 @@ impl TransactionStatusService {
                         loaded_addresses,
                         return_data,
                         compute_units_consumed: Some(executed_units),
+                        // TODO: populate me later
+                        cost_units: None,
                     };
 
                     if let Some(transaction_notifier) = transaction_notifier.as_ref() {

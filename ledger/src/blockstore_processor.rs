@@ -265,6 +265,7 @@ pub fn execute_batch<'a>(
         let token_balances =
             TransactionTokenBalancesSet::new(pre_token_balances, post_token_balances);
 
+        // TODO: pass costs along here
         transaction_status_sender.send_transaction_status_batch(
             bank.slot(),
             transactions,
