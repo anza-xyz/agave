@@ -6,9 +6,9 @@ pub struct PubkeyBinCalculator24 {
     shift_bits: u32,
 }
 
-const MAX_BITS: u32 = 24;
-
 impl PubkeyBinCalculator24 {
+    const MAX_BITS: u32 = 24;
+
     const fn num_bits<T>() -> usize {
         std::mem::size_of::<T>() * 8
     }
@@ -20,17 +20,17 @@ impl PubkeyBinCalculator24 {
 
     pub fn new(bins: usize) -> Self {
         assert!(bins > 0);
-        let max_plus_1 = 1 << MAX_BITS;
+        let max_plus_1 = 1 << Self::MAX_BITS;
         assert!(bins <= max_plus_1);
         assert!(bins.is_power_of_two());
         let bits = Self::log_2(bins as u32);
         Self {
-            shift_bits: MAX_BITS - bits,
+            shift_bits: Self::MAX_BITS - bits,
         }
     }
 
     pub fn bins(&self) -> usize {
-        1 << (MAX_BITS - self.shift_bits)
+        1 << (Self::MAX_BITS - self.shift_bits)
     }
 
     #[inline]
