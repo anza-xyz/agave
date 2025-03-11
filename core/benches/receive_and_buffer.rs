@@ -195,28 +195,36 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
         num_instructions_per_tx,
         probability_invalid_blockhash,
     );
+    let mut container = <T as ReceiveAndBuffer>::Container::with_capacity(TOTAL_BUFFERED_PACKETS);
     c.bench_function(bench_name, |bencher| {
-        bencher.iter_with_setup(
-            || {
-                if sender.send(txs.clone()).is_err() {
-                    panic!("Unexpectedly dropped receiver!");
+        bencher.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                // Setup
+                {
+                    if sender.send(txs.clone()).is_err() {
+                        panic!("Unexpectedly dropped receiver!");
+                    }
+
+                    // make sure container is empty.
+                    container.clear();
                 }
 
-                let container =
-                    <T as ReceiveAndBuffer>::Container::with_capacity(TOTAL_BUFFERED_PACKETS);
-                container
-            },
-            |mut container| {
-                let res = rb.receive_and_buffer_packets(
-                    &mut container,
-                    &mut timing_metrics,
-                    &mut count_metrics,
-                    &decision,
-                );
-                assert!(res.unwrap() == num_txs && !container.is_empty());
-                black_box(container);
-            },
-        )
+                let start = Instant::now();
+                {
+                    let res = rb.receive_and_buffer_packets(
+                        &mut container,
+                        &mut timing_metrics,
+                        &mut count_metrics,
+                        &decision,
+                    );
+                    assert!(res.unwrap() == num_txs && !container.is_empty());
+                    black_box(&container);
+                }
+                total += start.elapsed();
+            }
+            total
+        })
     });
 }
 
@@ -227,27 +235,38 @@ fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
         MAX_INSTRUCTIONS_PER_TRANSACTION,
         0.0,
     );
-
     bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
         c,
         "sanitized_transaction_receive_and_buffer_max_instructions_10p_invalid_blockhash",
         MAX_INSTRUCTIONS_PER_TRANSACTION,
         0.1,
     );
+    bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
+        c,
+        "sanitized_transaction_receive_and_buffer_min_instructions",
+        0,
+        0.0,
+    );
 }
 
 fn bench_transaction_view_receive_and_buffer(c: &mut Criterion) {
     bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
         c,
-        "transaction_view_receive_and_buffer_uniform_max_instructions",
+        "transaction_view_receive_and_buffer_max_instructions",
         MAX_INSTRUCTIONS_PER_TRANSACTION,
         0.0,
     );
     bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
         c,
-        "transaction_view_receive_and_buffer_max_instructions_uniform_10p_invalid_blockhash",
+        "transaction_view_receive_and_buffer_max_instructions_10p_invalid_blockhash",
         MAX_INSTRUCTIONS_PER_TRANSACTION,
         0.1,
+    );
+    bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
+        c,
+        "transaction_view_receive_and_buffer_min_instructions",
+        0,
+        0.0,
     );
 }
 
