@@ -23,7 +23,7 @@ opt-level = 1
 opt-level = 1
 
 # Disable optimizations for some crates as they interfere with tests there
-[profile.dev.package."solana-core"]
+[profile.dev.package."solana-gossip"]
 opt-level = 0
 
 [workspace]
