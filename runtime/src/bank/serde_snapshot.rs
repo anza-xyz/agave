@@ -225,7 +225,7 @@ mod tests {
                     expected_accounts_hash,
                     &get_storages_to_serialize(&bank2.get_snapshot_storages(None)),
                     ExtraFieldsToSerialize {
-                        lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
+                        lamports_per_signature: bank2.get_lamports_per_signature(),
                         incremental_snapshot_persistence: expected_incremental_snapshot_persistence
                             .as_ref(),
                         epoch_accounts_hash: expected_epoch_accounts_hash,
@@ -334,8 +334,6 @@ mod tests {
             (AccountsHash(Hash::new_unique()), u64::default()),
         );
 
-        // Set extra fields
-        bank.fee_rate_governor.lamports_per_signature = 7000;
         // Note that epoch_stakes already has two epoch stakes entries for epochs 0 and 1
         // which will also be serialized to the versioned epoch stakes extra field. Those
         // entries are of type Stakes<StakeAccount> so add a new entry for Stakes<Stake>.
@@ -395,8 +393,8 @@ mod tests {
 
         assert_eq!(bank.epoch_stakes, dbank.epoch_stakes);
         assert_eq!(
-            bank.fee_rate_governor.lamports_per_signature,
-            dbank.fee_rate_governor.lamports_per_signature
+            bank.get_lamports_per_signature(),
+            dbank.get_lamports_per_signature()
         );
     }
 
@@ -408,13 +406,10 @@ mod tests {
         activate_all_features(&mut genesis_config);
 
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
-        let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+        let bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
         while !bank.is_complete() {
             bank.fill_bank_with_ticks_for_tests();
         }
-
-        // Set extra field
-        bank.fee_rate_governor.lamports_per_signature = 7000;
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = TempDir::new().unwrap();
@@ -454,8 +449,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            bank.fee_rate_governor.lamports_per_signature,
-            dbank.fee_rate_governor.lamports_per_signature
+            bank.get_lamports_per_signature(),
+            dbank.get_lamports_per_signature()
         );
     }
 
@@ -467,7 +462,7 @@ mod tests {
 
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         bank0.squash();
-        let mut bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
+        let bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
         bank.freeze();
         add_root_and_flush_write_cache(&bank0);
         bank.rc
@@ -478,9 +473,6 @@ mod tests {
             bank.slot(),
             (AccountsHash(Hash::new_unique()), u64::default()),
         );
-
-        // Set extra fields
-        bank.fee_rate_governor.lamports_per_signature = 7000;
 
         // Serialize, but don't serialize the extra fields
         let snapshot_storages = bank.get_snapshot_storages(None);
@@ -526,7 +518,7 @@ mod tests {
         .unwrap();
 
         // Defaults to 0
-        assert_eq!(0, dbank.fee_rate_governor.lamports_per_signature);
+        assert_eq!(0, dbank.get_lamports_per_signature());
 
         // The snapshot epoch_reward_status always equals `None`, so the bank
         // field should default to `Inactive`
@@ -603,7 +595,7 @@ mod tests {
                 AccountsHash(Hash::new_unique()),
                 &get_storages_to_serialize(&snapshot_storages),
                 ExtraFieldsToSerialize {
-                    lamports_per_signature: bank.fee_rate_governor.lamports_per_signature,
+                    lamports_per_signature: bank.get_lamports_per_signature(),
                     incremental_snapshot_persistence: Some(&incremental_snapshot_persistence),
                     epoch_accounts_hash: Some(EpochAccountsHash::new(Hash::new_unique())),
                     versioned_epoch_stakes,
