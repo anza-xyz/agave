@@ -4966,7 +4966,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f949fe4edaeaea78c844023bfc1c898e0b1f5a100f8a8d2d0f85d0a7b090258"
 dependencies = [
  "bincode",
- "qualifier_attr",
  "serde",
  "serde_bytes",
  "serde_derive",
