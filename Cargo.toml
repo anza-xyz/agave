@@ -537,7 +537,7 @@ solana-transaction = "=2.2.1"
 solana-transaction-error = "=2.2.1"
 solana-tpu-client = { path = "tpu-client", version = "=2.3.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=2.3.0" }
-solana-transaction-context = { path = "transaction-context", version = "2.2.1", features = [ "bincode", "dev-context-only-utils" ] }
+solana-transaction-context = { path = "transaction-context", version = "=2.3.0", features = [ "bincode", "debug-signature" ] }
 solana-transaction-status = { path = "transaction-status", version = "=2.3.0" }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=2.3.0" }
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.3.0" }
