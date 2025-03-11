@@ -46,7 +46,7 @@ module.exports = {
   },
   themeConfig: {
     prism: {
-      additionalLanguages: ["rust"],
+      additionalLanguages: ["rust", "bash"],
     },
     navbar: {
       logo: {
