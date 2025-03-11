@@ -16,7 +16,7 @@ use {
         RequestMiddlewareAction, ServerBuilder,
     },
     regex::Regex,
-    solana_client::connection_cache::ConnectionCache,
+    solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         bigtable_upload::ConfirmedBlockUploadConfig,
@@ -26,6 +26,7 @@ use {
     solana_metrics::inc_new_counter_info,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
         bank_forks::BankForks, commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -34,11 +35,11 @@ use {
     },
     solana_sdk::{
         exit::Exit, genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH, hash::Hash,
-        native_token::lamports_to_sol,
+        native_token::lamports_to_sol, signature::Keypair,
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
-        transaction_client::{ConnectionCacheClient, TransactionClient},
+        transaction_client::{ConnectionCacheClient, TpuClientNextClient, TransactionClient},
     },
     solana_storage_bigtable::CredentialType,
     std::{
@@ -50,7 +51,7 @@ use {
         },
         thread::{self, Builder, JoinHandle},
     },
-    tokio::{runtime::Builder as TokioBuilder, runtime::Runtime as TokioRuntime},
+    tokio::runtime::{Builder as TokioBuilder, Runtime as TokioRuntime},
     tokio_util::codec::{BytesCodec, FramedRead},
 };
 
@@ -336,7 +337,218 @@ fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<Strin
 
 impl JsonRpcService {
     #[allow(clippy::too_many_arguments)]
-    pub fn new_with_client<Client: TransactionClient + Clone + std::marker::Send + 'static>(
+    pub fn create_service_with_tpu_client_next(
+        rpc_addr: SocketAddr,
+        config: JsonRpcConfig,
+        snapshot_config: Option<SnapshotConfig>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+        blockstore: Arc<Blockstore>,
+        cluster_info: Arc<ClusterInfo>,
+        poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
+        genesis_hash: Hash,
+        ledger_path: &Path,
+        validator_exit: Arc<RwLock<Exit>>,
+        exit: Arc<AtomicBool>,
+        override_health_check: Arc<AtomicBool>,
+        startup_verification_complete: Arc<AtomicBool>,
+        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        send_transaction_service_config: send_transaction_service::Config,
+        max_slots: Arc<MaxSlots>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        identity_keypair: Option<&Keypair>,
+        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_rewards_slot: Arc<AtomicU64>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    ) -> Result<(Self, Arc<dyn NotifyKeyUpdate + Send + Sync>), String> {
+        let runtime = service_runtime(
+            config.rpc_threads,
+            config.rpc_blocking_threads,
+            config.rpc_niceness_adj,
+        );
+        let leader_info =
+            poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
+        let my_tpu_address = cluster_info
+            .my_contact_info()
+            .tpu(Protocol::QUIC)
+            .ok_or(format!(
+                "Invalid {:?} socket address for TPU",
+                Protocol::QUIC
+            ))?;
+
+        let client = TpuClientNextClient::new(
+            runtime.handle().clone(),
+            my_tpu_address,
+            send_transaction_service_config.tpu_peers.clone(),
+            leader_info,
+            send_transaction_service_config.leader_forward_count,
+            identity_keypair,
+        );
+
+        let json_rpc_service = JsonRpcService::new_with_client(
+            rpc_addr,
+            config.clone(),
+            snapshot_config,
+            bank_forks.clone(),
+            block_commitment_cache.clone(),
+            blockstore.clone(),
+            cluster_info.clone(),
+            genesis_hash,
+            ledger_path,
+            validator_exit,
+            exit,
+            override_health_check,
+            startup_verification_complete,
+            optimistically_confirmed_bank,
+            send_transaction_service_config,
+            max_slots,
+            leader_schedule_cache,
+            client.clone(),
+            max_complete_transaction_status_slot,
+            max_complete_rewards_slot,
+            prioritization_fee_cache,
+            runtime,
+        )?;
+        Ok((
+            json_rpc_service,
+            Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_service_with_connection_cache(
+        rpc_addr: SocketAddr,
+        config: JsonRpcConfig,
+        snapshot_config: Option<SnapshotConfig>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+        blockstore: Arc<Blockstore>,
+        cluster_info: Arc<ClusterInfo>,
+        poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
+        genesis_hash: Hash,
+        ledger_path: &Path,
+        validator_exit: Arc<RwLock<Exit>>,
+        exit: Arc<AtomicBool>,
+        override_health_check: Arc<AtomicBool>,
+        startup_verification_complete: Arc<AtomicBool>,
+        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        send_transaction_service_config: send_transaction_service::Config,
+        max_slots: Arc<MaxSlots>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        connection_cache: Arc<ConnectionCache>,
+        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_rewards_slot: Arc<AtomicU64>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    ) -> Result<(Self, Arc<dyn NotifyKeyUpdate + Send + Sync>), String> {
+        let runtime = service_runtime(
+            config.rpc_threads,
+            config.rpc_blocking_threads,
+            config.rpc_niceness_adj,
+        );
+
+        let tpu_address = cluster_info
+            .my_contact_info()
+            .tpu(connection_cache.protocol())
+            .ok_or_else(|| {
+                format!(
+                    "Invalid {:?} socket address for TPU",
+                    connection_cache.protocol()
+                )
+            })?;
+
+        let leader_info =
+            poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
+        let client = ConnectionCacheClient::new(
+            connection_cache,
+            tpu_address,
+            send_transaction_service_config.tpu_peers.clone(),
+            leader_info,
+            send_transaction_service_config.leader_forward_count,
+        );
+        let json_rpc_service = Self::new_with_client(
+            rpc_addr,
+            config,
+            snapshot_config,
+            bank_forks,
+            block_commitment_cache,
+            blockstore,
+            cluster_info,
+            genesis_hash,
+            ledger_path,
+            validator_exit,
+            exit,
+            override_health_check,
+            startup_verification_complete,
+            optimistically_confirmed_bank,
+            send_transaction_service_config,
+            max_slots,
+            leader_schedule_cache,
+            client.clone(),
+            max_complete_transaction_status_slot,
+            max_complete_rewards_slot,
+            prioritization_fee_cache,
+            runtime,
+        )?;
+        Ok((
+            json_rpc_service,
+            Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        rpc_addr: SocketAddr,
+        config: JsonRpcConfig,
+        snapshot_config: Option<SnapshotConfig>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+        blockstore: Arc<Blockstore>,
+        cluster_info: Arc<ClusterInfo>,
+        poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
+        genesis_hash: Hash,
+        ledger_path: &Path,
+        validator_exit: Arc<RwLock<Exit>>,
+        exit: Arc<AtomicBool>,
+        override_health_check: Arc<AtomicBool>,
+        startup_verification_complete: Arc<AtomicBool>,
+        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        send_transaction_service_config: send_transaction_service::Config,
+        max_slots: Arc<MaxSlots>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        connection_cache: Arc<ConnectionCache>,
+        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_rewards_slot: Arc<AtomicU64>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    ) -> Result<Self, String> {
+        let (service, _) = Self::create_service_with_connection_cache(
+            rpc_addr,
+            config,
+            snapshot_config,
+            bank_forks,
+            block_commitment_cache,
+            blockstore,
+            cluster_info,
+            poh_recorder,
+            genesis_hash,
+            ledger_path,
+            validator_exit,
+            exit,
+            override_health_check,
+            startup_verification_complete,
+            optimistically_confirmed_bank,
+            send_transaction_service_config,
+            max_slots,
+            leader_schedule_cache,
+            connection_cache,
+            max_complete_transaction_status_slot,
+            max_complete_rewards_slot,
+            prioritization_fee_cache,
+        )?;
+        Ok(service)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_client<Client: TransactionClient + Clone + std::marker::Send + 'static>(
         rpc_addr: SocketAddr,
         config: JsonRpcConfig,
         snapshot_config: Option<SnapshotConfig>,
@@ -545,82 +757,6 @@ impl JsonRpcService {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        rpc_addr: SocketAddr,
-        config: JsonRpcConfig,
-        snapshot_config: Option<SnapshotConfig>,
-        bank_forks: Arc<RwLock<BankForks>>,
-        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-        blockstore: Arc<Blockstore>,
-        cluster_info: Arc<ClusterInfo>,
-        poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
-        genesis_hash: Hash,
-        ledger_path: &Path,
-        validator_exit: Arc<RwLock<Exit>>,
-        exit: Arc<AtomicBool>,
-        override_health_check: Arc<AtomicBool>,
-        startup_verification_complete: Arc<AtomicBool>,
-        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
-        send_transaction_service_config: send_transaction_service::Config,
-        max_slots: Arc<MaxSlots>,
-        leader_schedule_cache: Arc<LeaderScheduleCache>,
-        connection_cache: Arc<ConnectionCache>,
-        max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-    ) -> Result<Self, String> {
-        let runtime = service_runtime(
-            config.rpc_threads,
-            config.rpc_blocking_threads,
-            config.rpc_niceness_adj,
-        );
-
-        let tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-            .ok_or_else(|| {
-                format!(
-                    "Invalid {:?} socket address for TPU",
-                    connection_cache.protocol()
-                )
-            })?;
-
-        let leader_info =
-            poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
-        let client = ConnectionCacheClient::new(
-            connection_cache,
-            tpu_address,
-            send_transaction_service_config.tpu_peers.clone(),
-            leader_info,
-            send_transaction_service_config.leader_forward_count,
-        );
-        Self::new_with_client(
-            rpc_addr,
-            config,
-            snapshot_config,
-            bank_forks,
-            block_commitment_cache,
-            blockstore,
-            cluster_info,
-            genesis_hash,
-            ledger_path,
-            validator_exit,
-            exit,
-            override_health_check,
-            startup_verification_complete,
-            optimistically_confirmed_bank,
-            send_transaction_service_config,
-            max_slots,
-            leader_schedule_cache,
-            client,
-            max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
-            prioritization_fee_cache,
-            runtime,
-        )
-    }
-
     pub fn exit(&mut self) {
         if let Some(c) = self.close_handle.take() {
             c.close()
@@ -656,7 +792,6 @@ pub fn service_runtime(
     // negatively impact performance.
     let rpc_threads = 1.max(rpc_threads);
     let rpc_blocking_threads = 1.max(rpc_blocking_threads);
-    let rpc_niceness_adj = rpc_niceness_adj;
     let runtime = Arc::new(
         TokioBuilder::new_multi_thread()
             .worker_threads(rpc_threads)

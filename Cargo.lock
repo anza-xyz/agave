@@ -9180,6 +9180,7 @@ dependencies = [
  "solana-perf",
  "solana-poh",
  "solana-pubkey",
+ "solana-quic-definitions",
  "solana-rayon-threadlimit",
  "solana-rpc",
  "solana-rpc-client-api",
