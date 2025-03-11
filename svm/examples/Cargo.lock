@@ -7132,6 +7132,7 @@ dependencies = [
  "solana-perf",
  "solana-poh",
  "solana-pubkey",
+ "solana-quic-definitions",
  "solana-rayon-threadlimit",
  "solana-rpc-client-api",
  "solana-runtime",
