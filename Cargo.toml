@@ -578,7 +578,7 @@ tar = "0.4.44"
 tarpc = "0.29.0"
 tempfile = "3.17.1"
 test-case = "3.3.1"
-thiserror = "2.0.11"
+thiserror = "2.0.12"
 thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
