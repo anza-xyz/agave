@@ -259,33 +259,27 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
 
         let m = Measure::start("items");
+
+        // For simplicity, we check the range for every pubkey in the map. This
+        // can be further optimized for case, such as the range contains lowest
+        // and highest pubkey for this bin. In such case, we can return all
+        // items in the map without range check on item's pubkey. Since the
+        // check is cheap when compared with the cost of reading from disk, we
+        // are not optimizing it for now.
         self.hold_range_in_memory(range, true);
-        let result = if start < self.lowest_pubkey && end > self.highest_pubkey {
-            // range contains all keys in this bin. Should return all items in the map.
-            // Example:
-            //    |-------------------|  |-------------------|  |-------------------|
-            //           start           low               high        end
-            self.map_internal
-                .read()
-                .unwrap()
-                .iter()
-                .map(|(k, v)| (*k, Arc::clone(v)))
-                .collect()
-        } else {
-            // range contains some keys in this bin
-            self.map_internal
-                .read()
-                .unwrap()
-                .iter()
-                .filter_map(|(k, v)| {
-                    if range.contains(k) {
-                        Some((*k, Arc::clone(v)))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        };
+        let result = self
+            .map_internal
+            .read()
+            .unwrap()
+            .iter()
+            .filter_map(|(k, v)| {
+                if range.contains(k) {
+                    Some((*k, Arc::clone(v)))
+                } else {
+                    None
+                }
+            })
+            .collect();
         self.hold_range_in_memory(range, false);
         Self::update_stat(&self.stats().items, 1);
         Self::update_time_stat(&self.stats().items_us, m);
