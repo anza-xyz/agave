@@ -7558,6 +7558,7 @@ dependencies = [
  "solana-svm",
  "solana-svm-transaction",
  "solana-timings",
+ "solana-transaction-context 2.3.0",
  "solana-transaction-status",
  "solana-type-overrides",
  "solana-vote",
