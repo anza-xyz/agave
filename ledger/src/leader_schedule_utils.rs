@@ -102,7 +102,7 @@ mod tests {
         let leader_schedule = leader_schedule(0, &bank).unwrap();
 
         assert_eq!(
-            leader_schedule.is_vote_keyed(),
+            leader_schedule.get_vote_key_at_slot_index(0).is_some(),
             use_vote_keyed_leader_schedule
         );
 

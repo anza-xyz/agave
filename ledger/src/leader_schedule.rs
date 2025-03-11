@@ -27,9 +27,6 @@ pub trait LeaderScheduleVariant:
 {
     fn get_slot_leaders(&self) -> &[Pubkey];
     fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>>;
-    fn is_vote_keyed(&self) -> bool {
-        false
-    }
 
     /// Get the vote account address for the given epoch slot index. This is
     /// guaranteed to be Some if the leader schedule is keyed by vote account

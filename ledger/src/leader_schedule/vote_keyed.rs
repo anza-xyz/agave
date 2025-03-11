@@ -83,10 +83,6 @@ impl LeaderScheduleVariant for LeaderSchedule {
         self.identity_keyed_leader_schedule.get_leader_slots_map()
     }
 
-    fn is_vote_keyed(&self) -> bool {
-        true
-    }
-
     fn get_vote_key_at_slot_index(&self, index: usize) -> Option<&Pubkey> {
         let slot_vote_addresses = &self.vote_keyed_slot_leaders;
         Some(&slot_vote_addresses[index % slot_vote_addresses.len()])
