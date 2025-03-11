@@ -5425,9 +5425,9 @@ pub mod tests {
             pubkey::Pubkey,
             signature::Signature,
             transaction::{Transaction, TransactionError},
-            transaction_context::TransactionReturnData,
         },
         solana_storage_proto::convert::generated,
+        solana_transaction_context::TransactionReturnData,
         solana_transaction_status::{
             InnerInstruction, InnerInstructions, Reward, Rewards, TransactionTokenBalance,
         },

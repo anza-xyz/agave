@@ -9,8 +9,8 @@ use {
         rent::{Rent, RentDue},
         rent_collector::CollectedInfo,
         transaction::{Result, TransactionError},
-        transaction_context::{IndexOfAccount, TransactionContext},
     },
+    solana_transaction_context::{IndexOfAccount, TransactionContext},
 };
 
 mod rent_collector;
