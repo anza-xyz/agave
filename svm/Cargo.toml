@@ -95,6 +95,7 @@ solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils" ] }
 test-case = { workspace = true }
 
 [package.metadata.docs.rs]
