@@ -52,26 +52,20 @@ impl Iterator for PcapReader {
             };
 
             let pkt_payload = data;
-            // Check if IP header is present, if it is we can safely skip it
-            // let pkt_payload = if data[0] == 69 {
-            //     &data[20 + 8..]
-            // } else {
-            //     &data[0..]
-            // };
-            //return Some(data.to_vec().into_boxed_slice());
             return Some(pkt_payload.to_vec());
         }
     }
 }
 
-pub fn validate_packet_format<T, P, S>(
+pub fn validate_packet_format<T>(
     filename: &PathBuf,
-    parse_packet: P,
-    serialize_packet: S,
+    parse_packet: fn(&[u8]) -> anyhow::Result<T>,
+    serialize_packet: fn(T) -> Vec<u8>,
+    show_packet: fn(&[u8]) -> anyhow::Result<()>,
+    custom_compare: fn(&[u8], &[u8]) -> Option<usize>,
 ) -> anyhow::Result<usize>
 where
-    P: Fn(&[u8]) -> anyhow::Result<T>,
-    S: Fn(T) -> Vec<u8>,
+    T: Sized,
 {
     info!(
         "Validating packet format for {} using samples from {filename:?}",
@@ -85,29 +79,34 @@ where
         match parse_packet(&data) {
             Ok(pkt) => {
                 let reconstructed_bytes = serialize_packet(pkt);
-                if reconstructed_bytes != data {
+                let diff = custom_compare(&reconstructed_bytes, &data);
+                if let Some(pos) = diff {
                     errors += 1;
-                    error!("Reserialization failed for packet {number} in {filename:?}!");
-                    error!("Original packet bytes:");
-                    hexdump(&data)?;
-                    error!("Reserialized bytes:");
-                    hexdump(&reconstructed_bytes)?;
+                    error!(
+                        "Reserialization differences found for packet {number} in {filename:?}!"
+                    );
+                    error!("Differences start at byte {pos}");
+                    error!("Original packet:");
+                    show_packet(&data)?;
+                    error!("Reserialized:");
+                    show_packet(&reconstructed_bytes)?;
                     break;
                 }
             }
             Err(e) => {
                 errors += 1;
                 error!("Found packet {number} that failed to parse with error {e}");
-                error!("Problematic packet bytes:");
-                hexdump(&data)?;
+                error!("Problematic packet:");
+                show_packet(&data)?;
                 break;
             }
         }
     }
-    info!("Packet format checks passed for {number} packets, failed for {errors} packets.");
     if errors > 0 {
+        error!("Packet format checks passed for {number} packets, failed for {errors} packets.");
         Err(anyhow::anyhow!("Failed checks for {errors} packets"))
     } else {
+        info!("Packet format checks passed for {number} packets.");
         Ok(number)
     }
 }
