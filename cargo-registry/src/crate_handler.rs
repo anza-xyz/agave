@@ -12,7 +12,7 @@ use {
     serde_derive::{Deserialize, Serialize},
     serde_json::from_slice,
     sha2::{Digest, Sha256},
-    solana_cli::program_v4::{process_deploy_program, process_dump},
+    solana_cli::program_v4::{process_deploy_program, process_dump, AdditionalCliConfig},
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_signer::{EncodableKey, Signer},
@@ -107,6 +107,8 @@ impl Program {
         if self.id != signer.pubkey() {
             return Err("Signer doesn't match program ID".into());
         }
+        let mut cli_config = client.get_cli_config();
+        cli_config.signers.push(signer);
 
         let mut file = fs::File::open(&self.path)
             .map_err(|err| format!("Unable to open program file: {err}"))?;
@@ -125,14 +127,13 @@ impl Program {
 
         process_deploy_program(
             client.rpc_client.clone(),
-            &client.get_cli_config(),
+            &cli_config,
+            &AdditionalCliConfig::default(),
             &client.authority_signer_index,
             &signer.pubkey(),
             &program_data,
             None..None,
-            Some(signer),
-            false,
-            None,
+            Some(&2),
         )
         .map_err(|e| {
             error!("Failed to deploy the program: {}", e);
