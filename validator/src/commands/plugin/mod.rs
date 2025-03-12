@@ -1,10 +1,10 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs},
+    crate::admin_rpc_service,
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     std::path::Path,
 };
 
-pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
+pub fn command<'a>() -> App<'a, 'a> {
     let name_arg = Arg::with_name("name").required(true).takes_value(true);
     let config_arg = Arg::with_name("config").required(true).takes_value(true);
 
