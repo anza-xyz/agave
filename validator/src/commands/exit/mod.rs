@@ -5,8 +5,10 @@ use {
     std::path::Path,
 };
 
+const COMMAND: &str = "exit";
+
 pub fn command(default_args: &DefaultArgs) -> App<'_, '_> {
-    SubCommand::with_name("exit")
+    SubCommand::with_name(COMMAND)
         .about("Send an exit request to the validator")
         .arg(
             Arg::with_name("force")
