@@ -296,26 +296,31 @@ const fn page_align(size: u64) -> u64 {
 const SCAN_BUFFER_SIZE_WITHOUT_DATA: usize = 1 << 16;
 
 pub struct AppendVecStat {
-    pub mmap_files_open: AtomicU64,
+    pub open_as_mmap: AtomicU64,
     pub mmap_files_dirty: AtomicU64,
     pub open_as_file_io: AtomicU64,
+    pub files_open: AtomicU64,
 }
 
 lazy_static! {
     pub static ref APPEND_VEC_STATS: AppendVecStat = AppendVecStat {
-        mmap_files_open: AtomicU64::new(0),
+        open_as_mmap: AtomicU64::new(0),
         mmap_files_dirty: AtomicU64::new(0),
         open_as_file_io: AtomicU64::new(0),
+        files_open: AtomicU64::new(0),
     };
 }
 
 impl Drop for AppendVec {
     fn drop(&mut self) {
-        APPEND_VEC_STATS
-            .mmap_files_open
-            .fetch_sub(1, Ordering::Relaxed);
+        APPEND_VEC_STATS.files_open.fetch_sub(1, Ordering::Relaxed);
+
         match &self.backing {
             AppendVecFileBacking::Mmap(mmap_only) => {
+                APPEND_VEC_STATS
+                    .open_as_mmap
+                    .fetch_sub(1, Ordering::Relaxed);
+
                 if mmap_only.is_dirty.load(Ordering::Acquire) {
                     APPEND_VEC_STATS
                         .mmap_files_dirty
@@ -386,8 +391,10 @@ impl AppendVec {
             );
             std::process::exit(1);
         });
+        APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
+
         APPEND_VEC_STATS
-            .mmap_files_open
+            .open_as_mmap
             .fetch_add(1, Ordering::Relaxed);
 
         AppendVec {
@@ -542,9 +549,8 @@ impl AppendVec {
         #[cfg(unix)]
         // we must use mmap on non-linux
         if storage_access == StorageAccess::File {
-            APPEND_VEC_STATS
-                .mmap_files_open
-                .fetch_add(1, Ordering::Relaxed);
+            APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
+
             APPEND_VEC_STATS
                 .open_as_file_io
                 .fetch_add(1, Ordering::Relaxed);
@@ -567,8 +573,11 @@ impl AppendVec {
             }
             result?
         };
+
+        APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
+
         APPEND_VEC_STATS
-            .mmap_files_open
+            .open_as_mmap
             .fetch_add(1, Ordering::Relaxed);
 
         Ok(AppendVec {
