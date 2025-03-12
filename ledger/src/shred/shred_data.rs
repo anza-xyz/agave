@@ -21,6 +21,8 @@ impl ShredData {
     dispatch!(fn data_header(&self) -> &DataShredHeader);
 
     dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
+    #[cfg(feature = "dev-context-only-utils")]
+    dispatch!(pub(super) fn common_header_mut(&mut self) -> &mut ShredCommonHeader);
     dispatch!(pub(super) fn erasure_shard(&self) -> Result<&[u8], Error>);
     dispatch!(pub(super) fn erasure_shard_index(&self) -> Result<usize, Error>);
     dispatch!(pub(super) fn into_payload(self) -> Payload);

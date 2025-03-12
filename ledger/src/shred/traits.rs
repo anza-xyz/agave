@@ -18,6 +18,9 @@ pub(super) trait Shred<'a>: Sized {
     where
         Payload: From<T>;
     fn common_header(&self) -> &ShredCommonHeader;
+    #[cfg(feature = "dev-context-only-utils")]
+    fn common_header_mut(&mut self) -> &mut ShredCommonHeader;
+
     fn sanitize(&self) -> Result<(), Error>;
 
     fn set_signature(&mut self, signature: Signature);

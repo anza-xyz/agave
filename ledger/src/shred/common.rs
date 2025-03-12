@@ -35,6 +35,12 @@ macro_rules! impl_shred_common {
             &self.common_header
         }
 
+        #[cfg(feature = "dev-context-only-utils")]
+        #[inline]
+        fn common_header_mut(&mut self) -> &mut ShredCommonHeader {
+            &mut self.common_header
+        }
+
         #[inline]
         fn payload(&self) -> &Payload {
             &self.payload

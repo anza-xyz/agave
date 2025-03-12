@@ -374,6 +374,8 @@ use dispatch;
 
 impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
+    #[cfg(feature = "dev-context-only-utils")]
+    dispatch!(fn common_header_mut(&mut self) -> &mut ShredCommonHeader);
     dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<SignedData, Error>);
 
@@ -394,6 +396,16 @@ impl Shred {
         let size = payload.len();
         packet.buffer_mut()[..size].copy_from_slice(&payload[..]);
         packet.meta_mut().size = size;
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn set_slot(&mut self, slot: u64) {
+        self.common_header_mut().slot = slot;
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn set_index(&mut self, index: u32) {
+        self.common_header_mut().index = index;
     }
 
     // TODO: Should this sanitize output?
