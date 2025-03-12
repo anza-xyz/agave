@@ -1,10 +1,23 @@
 use {
-    crate::admin_rpc_service,
+    crate::{admin_rpc_service, commands::FromClapArgMatches},
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     std::path::Path,
 };
 
 const COMMAND: &str = "plugin";
+
+#[derive(Debug, PartialEq)]
+pub struct PluginUnloadArgs {
+    pub name: String,
+}
+
+impl FromClapArgMatches for PluginUnloadArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+        Ok(PluginUnloadArgs {
+            name: value_t!(matches, "name", String).map_err(|_| "invalid name".to_string())?,
+        })
+    }
+}
 
 pub fn command<'a>() -> App<'a, 'a> {
     let name_arg = Arg::with_name("name").required(true).takes_value(true);
@@ -56,13 +69,14 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
             }
         }
         ("unload", Some(subcommand_matches)) => {
-            if let Ok(name) = value_t!(subcommand_matches, "name", String) {
-                let admin_client = admin_rpc_service::connect(ledger_path);
-                admin_rpc_service::runtime()
-                    .block_on(async { admin_client.await?.unload_plugin(name.clone()).await })
-                    .map_err(|err| format!("unload plugin request failed: {err:?}"))?;
-                println!("Successfully unloaded plugin: {name}");
-            }
+            let PluginUnloadArgs { name } =
+                PluginUnloadArgs::from_clap_arg_match(subcommand_matches)?;
+
+            let admin_client = admin_rpc_service::connect(ledger_path);
+            admin_rpc_service::runtime()
+                .block_on(async { admin_client.await?.unload_plugin(name.clone()).await })
+                .map_err(|err| format!("unload plugin request failed: {err:?}"))?;
+            println!("Successfully unloaded plugin: {name}");
         }
         ("load", Some(subcommand_matches)) => {
             if let Ok(config) = value_t!(subcommand_matches, "config", String) {
@@ -93,4 +107,30 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_args_struct_by_command_plugin_unload_default() {
+        let app = command();
+        let matches = app.get_matches_from_safe(vec![COMMAND, "unload"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_plugin_unload_with_name() {
+        let app = command();
+        let matches = app.get_matches_from(vec![COMMAND, "unload", "testname"]);
+        let subcommand_matches = matches.subcommand_matches("unload").unwrap();
+        let args = PluginUnloadArgs::from_clap_arg_match(subcommand_matches).unwrap();
+        assert_eq!(
+            args,
+            PluginUnloadArgs {
+                name: "testname".to_string(),
+            }
+        );
+    }
 }
