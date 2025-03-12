@@ -31,7 +31,6 @@ use {
     },
 };
 
-const PACKET_COALESCE_DURATION: Duration = Duration::from_millis(1);
 // When running with very short epochs (e.g. for testing), we want to avoid
 // filtering out shreds that we actually need. This value was chosen empirically
 // because it's large enough to protect against observed short epoch problems
@@ -183,6 +182,7 @@ impl ShredFetchStage {
         repair_context: Option<RepairContext>,
         turbine_disabled: Arc<AtomicBool>,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
+        const PACKET_COALESCE_DURATION: Option<Duration> = Some(Duration::from_millis(1));
         let (packet_sender, packet_receiver) = unbounded();
         let streamers = sockets
             .into_iter()
@@ -387,6 +387,7 @@ pub(crate) fn receive_quic_datagrams(
     exit: Arc<AtomicBool>,
 ) {
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
+    const PACKET_COALESCE_DURATION: Duration = Duration::from_millis(1);
     while !exit.load(Ordering::Relaxed) {
         let entry = match quic_datagrams_receiver.recv_timeout(RECV_TIMEOUT) {
             Ok(entry) => entry,
