@@ -33,6 +33,22 @@ impl FromClapArgMatches for PluginLoadArgs {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct PluginReloadArgs {
+    pub name: String,
+    pub config: String,
+}
+
+impl FromClapArgMatches for PluginReloadArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+        Ok(PluginReloadArgs {
+            name: value_t!(matches, "name", String).map_err(|_| "invalid name".to_string())?,
+            config: value_t!(matches, "config", String)
+                .map_err(|_| "invalid config".to_string())?,
+        })
+    }
+}
+
 pub fn command<'a>() -> App<'a, 'a> {
     let name_arg = Arg::with_name("name").required(true).takes_value(true);
     let config_arg = Arg::with_name("config").required(true).takes_value(true);
@@ -103,20 +119,19 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
             println!("Successfully loaded plugin: {name}");
         }
         ("reload", Some(subcommand_matches)) => {
-            if let Ok(name) = value_t!(subcommand_matches, "name", String) {
-                if let Ok(config) = value_t!(subcommand_matches, "config", String) {
-                    let admin_client = admin_rpc_service::connect(ledger_path);
-                    admin_rpc_service::runtime()
-                        .block_on(async {
-                            admin_client
-                                .await?
-                                .reload_plugin(name.clone(), config.clone())
-                                .await
-                        })
-                        .map_err(|err| format!("reload plugin request failed {name}: {err:?}"))?;
-                    println!("Successfully reloaded plugin: {name}");
-                }
-            }
+            let PluginReloadArgs { name, config } =
+                PluginReloadArgs::from_clap_arg_match(subcommand_matches)?;
+
+            let admin_client = admin_rpc_service::connect(ledger_path);
+            admin_rpc_service::runtime()
+                .block_on(async {
+                    admin_client
+                        .await?
+                        .reload_plugin(name.clone(), config.clone())
+                        .await
+                })
+                .map_err(|err| format!("reload plugin request failed {name}: {err:?}"))?;
+            println!("Successfully reloaded plugin: {name}");
         }
         _ => unreachable!(),
     }
@@ -165,6 +180,35 @@ mod tests {
         assert_eq!(
             args,
             PluginLoadArgs {
+                config: "testconfig".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_plugin_reload_default() {
+        let app = command();
+        let matches = app.get_matches_from_safe(vec![COMMAND, "reload"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_plugin_reload_with_name() {
+        let app = command();
+        let matches = app.get_matches_from_safe(vec![COMMAND, "reload", "testname"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_plugin_reload_with_name_and_config() {
+        let app = command();
+        let matches = app.get_matches_from(vec![COMMAND, "reload", "testname", "testconfig"]);
+        let subcommand_matches = matches.subcommand_matches("reload").unwrap();
+        let args = PluginReloadArgs::from_clap_arg_match(subcommand_matches).unwrap();
+        assert_eq!(
+            args,
+            PluginReloadArgs {
+                name: "testname".to_string(),
                 config: "testconfig".to_string(),
             }
         );
