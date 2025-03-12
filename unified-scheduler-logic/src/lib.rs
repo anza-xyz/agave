@@ -636,9 +636,18 @@ const_assert_eq!(mem::size_of::<UsageQueue>(), 8);
 /// `solana-unified-scheduler-pool`.
 pub struct SchedulingStateMachine {
     unblocked_task_queue: VecDeque<Task>,
+    /// The number of all tasks which aren't `deschedule_task()`-ed yet while their ownership has
+    /// already been transferred to SchedulingStateMachine by `schedule_or_buffer_task()`. In other
+    /// words, they are running right now or buffered by explicit request or by implicit blocking
+    /// due to one of other _active_ (= running or buffered) conflicting tasks.
     active_task_count: ShortCounter,
-    executing_task_count: ShortCounter,
-    max_executing_task_count: CounterInner,
+    /// The number of tasks which are running right now.
+    running_task_count: ShortCounter,
+    /// The maximum number of running tasks at any given moment. While this could be tightly
+    /// related to the number of threads, terminology here is intentionally abstracted away to make
+    /// this struct purely logic only. As a hypothetical counter-example, tasks could be IO-bound,
+    /// in that case max_running_task_count will be coupled with the IO queue depth instead.
+    max_running_task_count: CounterInner,
     handled_task_count: ShortCounter,
     unblocked_task_count: ShortCounter,
     total_task_count: ShortCounter,
@@ -648,8 +657,8 @@ pub struct SchedulingStateMachine {
 const_assert_eq!(mem::size_of::<SchedulingStateMachine>(), 56);
 
 impl SchedulingStateMachine {
-    pub fn has_no_executing_task(&self) -> bool {
-        self.executing_task_count.is_zero()
+    pub fn has_no_running_task(&self) -> bool {
+        self.running_task_count.is_zero()
     }
 
     pub fn has_no_active_task(&self) -> bool {
@@ -665,7 +674,7 @@ impl SchedulingStateMachine {
     }
 
     fn is_task_runnable(&self) -> bool {
-        self.executing_task_count.current() < self.max_executing_task_count
+        self.running_task_count.current() < self.max_running_task_count
     }
 
     pub fn unblocked_task_queue_count(&self) -> usize {
@@ -738,7 +747,7 @@ impl SchedulingStateMachine {
                 None
             } else {
                 // ... return the task back as schedulable to the caller as-is otherwise.
-                self.executing_task_count.increment_self();
+                self.running_task_count.increment_self();
                 Some(task)
             }
         })
@@ -746,8 +755,12 @@ impl SchedulingStateMachine {
 
     #[must_use]
     pub fn schedule_next_unblocked_task(&mut self) -> Option<Task> {
+        if !self.is_task_runnable() {
+            return None;
+        }
+
         self.unblocked_task_queue.pop_front().inspect(|_| {
-            self.executing_task_count.increment_self();
+            self.running_task_count.increment_self();
             self.unblocked_task_count.increment_self();
         })
     }
@@ -763,7 +776,7 @@ impl SchedulingStateMachine {
     /// tasks inside `SchedulingStateMachine` to provide an offloading-based optimization
     /// opportunity for callers.
     pub fn deschedule_task(&mut self, task: &Task) {
-        self.executing_task_count.decrement_self();
+        self.running_task_count.decrement_self();
         self.active_task_count.decrement_self();
         self.handled_task_count.increment_self();
         self.unlock_usage_queues(task);
@@ -919,14 +932,14 @@ impl SchedulingStateMachine {
     /// other slots.
     pub fn reinitialize(&mut self) {
         assert!(self.has_no_active_task());
-        assert_eq!(self.executing_task_count.current(), 0);
+        assert_eq!(self.running_task_count.current(), 0);
         assert_eq!(self.unblocked_task_queue.len(), 0);
         // nice trick to ensure all fields are handled here if new one is added.
         let Self {
             unblocked_task_queue: _,
             active_task_count,
-            executing_task_count: _,
-            max_executing_task_count: _,
+            running_task_count: _,
+            max_running_task_count: _,
             handled_task_count,
             unblocked_task_count,
             total_task_count,
@@ -947,12 +960,12 @@ impl SchedulingStateMachine {
     /// Call this exactly once for each thread. See [`TokenCell`] for details.
     #[must_use]
     pub unsafe fn exclusively_initialize_current_thread_for_scheduling(
-        max_executing_task_count: Option<usize>,
+        max_running_task_count: Option<usize>,
     ) -> Self {
         // As documented at `CounterInner`, don't expose rather opinionated choice of unsigned
         // integer type (`u32`) to outer world. So, take more conventional `usize` and convert it
         // to `ShortCounter` here while uncontroversially treating `None` as no limit effectively.
-        let max_executing_task_count = max_executing_task_count
+        let max_running_task_count = max_running_task_count
             .unwrap_or(CounterInner::MAX as usize)
             .try_into()
             .unwrap();
@@ -962,8 +975,8 @@ impl SchedulingStateMachine {
             // `UsageQueueInner::blocked_usages_from_tasks`'s cap.
             unblocked_task_queue: VecDeque::with_capacity(1024),
             active_task_count: ShortCounter::zero(),
-            executing_task_count: ShortCounter::zero(),
-            max_executing_task_count,
+            running_task_count: ShortCounter::zero(),
+            max_running_task_count,
             handled_task_count: ShortCounter::zero(),
             unblocked_task_count: ShortCounter::zero(),
             total_task_count: ShortCounter::zero(),

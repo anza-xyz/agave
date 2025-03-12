@@ -298,10 +298,6 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
-// Not rigidly tested yet; but capping to 2x of handler thread should be enough because unified
-// scheduler is latency optimized...
-const BLOCK_PRODUCTION_SCHEDULER_MAX_EXECUTING_TASK_COUNT_FACTOR: usize = 2;
-
 impl<S, TH> SchedulerPool<S, TH>
 where
     S: SpawnableScheduler<TH>,
@@ -1196,7 +1192,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         );
     }
 
-    fn max_executing_task_count(mode: SchedulingMode, handler_count: usize) -> Option<usize> {
+    fn max_running_task_count(mode: SchedulingMode, handler_count: usize) -> Option<usize> {
         match mode {
             BlockVerification => None,
             BlockProduction => {
@@ -1204,9 +1200,30 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 // interrupted as soon as possible after session is ending. Thus, don't take
                 // unbounded number of non-conflicting tasks out of SchedulingStateMachine, which
                 // all needs to be descheduled before finishing session.
+                //
+                // That said, max_running_task_count shouldn't naively be matched to
+                // handler_count (i.e. the number of handler threads). Actually, it should account
+                // for some extra queue depth to avoid depletions at the runnable task channel.
+                // Otherwise, handler thread could be busy-looping at best or stalled on syscall at
+                // worst for the next runnable task to be scheduled by the scheduler thread even
+                // though there are actually more runnable tasks at hand in fact. That would
+                // significantly hurt concurrency, and eventually throughput. While throughput
+                // isn't the primary design target (= low latency) of unified scheduler, this
+                // warrants some compromise here. Note that increasing the buffering at crossbeam
+                // channels hampers timing sensitivity of task reprioritization on higher-paying
+                // transaction arrival at the middle of slot, which is selling point of unified
+                // schduler to recite. This is because there is no efficient way to selectively
+                // remove messages from them. Put differently, sent tasks aren't interruptable.
+                //
+                // So, all in all, we need to strike some nuanced balance here. Currently, this has
+                // not rigidly been tested yet; but capping to 2x of handler thread should be
+                // enough, because unified scheduler is latency optimized... This means each thread
+                // has extra pseudo task queue entry.
+                const MAX_RUNNING_TASK_COUNT_FACTOR: usize = 2;
+
                 Some(
                     handler_count
-                        .checked_mul(BLOCK_PRODUCTION_SCHEDULER_MAX_EXECUTING_TASK_COUNT_FACTOR)
+                        .checked_mul(MAX_RUNNING_TASK_COUNT_FACTOR)
                         .unwrap(),
                 )
             }
@@ -1221,7 +1238,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         match mode {
             BlockVerification => state_machine.has_unblocked_task(),
             BlockProduction => {
-                // Much like max_executing_task_count() reasonings, stop taking runnable and
+                // Much like max_running_task_count() reasonings, stop taking runnable and
                 // unblocked tasks out of SchedulingStateMachine as soon as session is ending.
                 !session_ending && state_machine.has_runnable_task()
             }
@@ -1238,7 +1255,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             BlockProduction => {
                 // No need to wait to execute all active tasks unlike block verification. Just wind
                 // down all tasks which has already been passed down to handler threads.
-                session_ending && state_machine.has_no_executing_task()
+                session_ending && state_machine.has_no_running_task()
             }
         }
     }
@@ -1450,7 +1467,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 let mut state_machine = unsafe {
                     SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
-                        Self::max_executing_task_count(scheduling_mode, handler_count),
+                        Self::max_running_task_count(scheduling_mode, handler_count),
                     )
                 };
 
