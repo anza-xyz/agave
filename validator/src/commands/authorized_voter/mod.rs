@@ -1,5 +1,5 @@
 use {
-    crate::admin_rpc_service,
+    crate::{admin_rpc_service, commands::FromClapArgMatches},
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::is_keypair,
     solana_sdk::signature::{read_keypair, Signer},
@@ -7,6 +7,19 @@ use {
 };
 
 const COMMAND: &str = "authorized-voter";
+
+#[derive(Debug, PartialEq, Default)]
+pub struct AuthorizedVoterAddArgs {
+    pub authorized_voter_keypair: Option<String>,
+}
+
+impl FromClapArgMatches for AuthorizedVoterAddArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+        Ok(AuthorizedVoterAddArgs {
+            authorized_voter_keypair: value_t!(matches, "authorized_voter_keypair", String).ok(),
+        })
+    }
+}
 
 pub fn command<'a>() -> App<'a, 'a> {
     SubCommand::with_name(COMMAND)
@@ -43,8 +56,11 @@ pub fn command<'a>() -> App<'a, 'a> {
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     match matches.subcommand() {
         ("add", Some(subcommand_matches)) => {
-            if let Ok(authorized_voter_keypair) =
-                value_t!(subcommand_matches, "authorized_voter_keypair", String)
+            let authorized_voter_add_args =
+                AuthorizedVoterAddArgs::from_clap_arg_match(subcommand_matches)?;
+
+            if let Some(authorized_voter_keypair) =
+                authorized_voter_add_args.authorized_voter_keypair
             {
                 let authorized_voter_keypair = fs::canonicalize(&authorized_voter_keypair)
                     .map_err(|err| {
@@ -98,4 +114,40 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_sdk::signature::Keypair};
+
+    #[test]
+    fn verify_args_struct_by_command_authorized_voter_add_default() {
+        let app = command();
+        let matches = app.get_matches_from(vec![COMMAND, "add"]);
+        let subcommand_matches = matches.subcommand_matches("add").unwrap();
+        let args = AuthorizedVoterAddArgs::from_clap_arg_match(subcommand_matches).unwrap();
+
+        assert_eq!(args, AuthorizedVoterAddArgs::default());
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_authorized_voter_add_with_authorized_voter_keypair() {
+        // generate a keypair
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file = tmp_dir.path().join("id.json");
+        let keypair = Keypair::new();
+        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+
+        let app = command();
+        let matches = app.get_matches_from(vec![COMMAND, "add", file.to_str().unwrap()]);
+        let subcommand_matches = matches.subcommand_matches("add").unwrap();
+        let args = AuthorizedVoterAddArgs::from_clap_arg_match(subcommand_matches).unwrap();
+
+        assert_eq!(
+            args,
+            AuthorizedVoterAddArgs {
+                authorized_voter_keypair: Some(file.to_str().unwrap().to_string()),
+            }
+        );
+    }
 }
