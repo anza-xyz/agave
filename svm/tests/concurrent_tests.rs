@@ -252,6 +252,7 @@ fn svm_concurrent() {
                     enable_log_recording: true,
                     enable_return_data_recording: false,
                     enable_cpi_recording: false,
+                    enable_balance_recording: true, // HANA maybe test bals in this test
                 },
                 ..Default::default()
             };

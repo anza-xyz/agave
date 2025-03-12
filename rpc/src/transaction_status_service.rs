@@ -267,7 +267,7 @@ pub(crate) mod tests {
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
-        solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_runtime::bank::Bank,
         solana_sdk::{
             account_utils::StateMut,
             clock::Slot,
@@ -285,7 +285,10 @@ pub(crate) mod tests {
                 VersionedTransaction,
             },
         },
-        solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
+        solana_svm::{
+            transaction_balances::TransactionBalancesSet,
+            transaction_execution_result::TransactionLoadedAccountsStats,
+        },
         solana_transaction_status::{
             token_balances::TransactionTokenBalancesSet, TransactionStatusMeta,
             TransactionTokenBalance,

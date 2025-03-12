@@ -103,6 +103,7 @@ impl SvmTestEnvironment<'_> {
                 enable_log_recording: true,
                 enable_return_data_recording: true,
                 enable_cpi_recording: false,
+                enable_balance_recording: true,
             },
             ..Default::default()
         };

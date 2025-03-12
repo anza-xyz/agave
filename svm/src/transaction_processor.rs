@@ -563,13 +563,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             execution_us = execution_us.saturating_add(single_execution_us);
 
             processing_results.push(processing_result);
-            match native_balance_vecs {
-                Some((ref mut pre_balances, ref mut post_balances)) => {
-                    pre_balances.push(native_pre_balances_for_tx);
-                    post_balances.push(native_post_balances_for_tx);
-                }
-                None => (),
-            }
+            if let Some((ref mut pre_balances, ref mut post_balances)) = native_balance_vecs {
+                pre_balances.push(native_pre_balances_for_tx);
+                post_balances.push(native_post_balances_for_tx);
+            };
         }
 
         let native_balances = native_balance_vecs.map(|(pre_balances, post_balances)| {
