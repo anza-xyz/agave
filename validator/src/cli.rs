@@ -72,7 +72,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(
             SubCommand::with_name("init").about("Initialize the ledger directory then exit"),
         )
-        .subcommand(commands::monitor::command(default_args))
+        .subcommand(commands::monitor::command())
         .subcommand(SubCommand::with_name("run").about("Run the validator"))
         .subcommand(commands::plugin::command(default_args))
         .subcommand(commands::set_identity::command())
