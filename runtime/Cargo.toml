@@ -81,6 +81,7 @@ solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-program = { workspace = true, optional = true }
 solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 solana-version = { workspace = true }
@@ -119,6 +120,7 @@ solana-runtime-transaction = { workspace = true, features = [
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
 solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils" ] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

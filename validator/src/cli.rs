@@ -67,15 +67,15 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::exit::command(default_args))
         .subcommand(commands::authorized_voter::command(default_args))
         .subcommand(commands::contact_info::command(default_args))
-        .subcommand(commands::repair_shred_from_peer::command(default_args))
-        .subcommand(commands::repair_whitelist::command(default_args))
+        .subcommand(commands::repair_shred_from_peer::command())
+        .subcommand(commands::repair_whitelist::command())
         .subcommand(
             SubCommand::with_name("init").about("Initialize the ledger directory then exit"),
         )
         .subcommand(commands::monitor::command(default_args))
         .subcommand(SubCommand::with_name("run").about("Run the validator"))
         .subcommand(commands::plugin::command(default_args))
-        .subcommand(commands::set_identity::command(default_args))
+        .subcommand(commands::set_identity::command())
         .subcommand(commands::set_log_filter::command())
         .subcommand(commands::staked_nodes_overrides::command())
         .subcommand(commands::wait_for_restart_window::command())

@@ -58,6 +58,9 @@ pub enum BankForksUtilsError {
         path: PathBuf,
     },
 
+    #[error("failed to process blockstore from genesis: {0}")]
+    ProcessBlockstoreFromGenesis(#[source] BlockstoreProcessorError),
+
     #[error("failed to process blockstore from root: {0}")]
     ProcessBlockstoreFromRoot(#[source] BlockstoreProcessorError),
 }
@@ -195,7 +198,8 @@ pub fn load_bank_forks(
                 entry_notification_sender,
                 accounts_update_notifier,
                 exit,
-            );
+            )
+            .map_err(BankForksUtilsError::ProcessBlockstoreFromGenesis)?;
             bank_forks
                 .read()
                 .unwrap()

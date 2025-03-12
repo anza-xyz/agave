@@ -859,6 +859,9 @@ pub enum BlockstoreProcessorError {
     #[error("failed to load meta")]
     FailedToLoadMeta,
 
+    #[error("failed to replay bank 0, did you forget to provide a snapshot")]
+    FailedToReplayBank0,
+
     #[error("invalid block error: {0}")]
     InvalidBlock(#[from] BlockError),
 
@@ -994,7 +997,7 @@ pub(crate) fn process_blockstore_for_bank_0(
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Arc<RwLock<BankForks>> {
+) -> result::Result<Arc<RwLock<BankForks>>, BlockstoreProcessorError> {
     // Setup bank for slot 0
     let bank0 = Bank::new_with_paths(
         genesis_config,
@@ -1027,8 +1030,9 @@ pub(crate) fn process_blockstore_for_bank_0(
         &VerifyRecyclers::default(),
         block_meta_sender,
         entry_notification_sender,
-    );
-    bank_forks
+    )?;
+
+    Ok(bank_forks)
 }
 
 /// Process blockstore from a known root bank
@@ -1818,7 +1822,7 @@ fn process_bank_0(
     recyclers: &VerifyRecyclers,
     block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
-) {
+) -> result::Result<(), BlockstoreProcessorError> {
     assert_eq!(bank0.slot(), 0);
     let mut progress = ConfirmationProgress::new(bank0.last_blockhash());
     confirm_full_slot(
@@ -1833,7 +1837,7 @@ fn process_bank_0(
         None,
         &mut ExecuteTimings::default(),
     )
-    .expect("Failed to process bank 0 from ledger. Did you forget to provide a snapshot?");
+    .map_err(|_| BlockstoreProcessorError::FailedToReplayBank0)?;
     if let Some((result, _timings)) = bank0.wait_for_completed_scheduler() {
         result.unwrap();
     }
@@ -1842,6 +1846,8 @@ fn process_bank_0(
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
     }
     send_block_meta(bank0, block_meta_sender);
+
+    Ok(())
 }
 
 // Given a bank, add its children to the pending slots queue if those children slots are
@@ -3494,12 +3500,16 @@ pub mod tests {
         assert_eq!(bank.get_balance(&keypair1.pubkey()), 3);
     }
 
-    #[test_case(true; "rent_collected")]
-    #[test_case(false; "rent_not_collected")]
-    fn test_transaction_result_does_not_affect_bankhash(fee_payer_in_rent_partition: bool) {
+    #[test_case(true, true; "rent_collected")]
+    #[test_case(false, true; "rent_not_collected")]
+    #[test_case(true, false; "rent_not-collected_part_rent_disabled")]
+    fn test_transaction_result_does_not_affect_bankhash(
+        fee_payer_in_rent_partition: bool,
+        should_run_partitioned_rent_collection: bool,
+    ) {
         solana_logger::setup();
         let GenesisConfigInfo {
-            genesis_config,
+            mut genesis_config,
             mint_keypair,
             ..
         } = if fee_payer_in_rent_partition {
@@ -3507,6 +3517,12 @@ pub mod tests {
         } else {
             create_genesis_config_with_mint_keypair(Keypair::from_seed(&[1u8; 32]).unwrap(), 1000)
         };
+
+        if should_run_partitioned_rent_collection {
+            genesis_config
+                .accounts
+                .remove(&solana_feature_set::disable_partitioned_rent_collection::id());
+        }
 
         fn get_instruction_errors() -> Vec<InstructionError> {
             vec![
@@ -3655,7 +3671,10 @@ pub mod tests {
                     .last_blockhash
             );
             // AND should not affect bankhash IF the rent is collected during freeze.
-            assert_eq!(ok_bank_details == bank_details, fee_payer_in_rent_partition);
+            assert_eq!(
+                ok_bank_details == bank_details,
+                fee_payer_in_rent_partition && should_run_partitioned_rent_collection
+            );
             // Different types of transaction failure should not affect bank hash
             if let Some(prev_bank_details) = &err_bank_details {
                 assert_eq!(
@@ -4201,7 +4220,8 @@ pub mod tests {
             &recyclers,
             None,
             None,
-        );
+        )
+        .unwrap();
         let bank0_last_blockhash = bank0.last_blockhash();
         let bank1 = bank_forks.write().unwrap().insert(Bank::new_from_parent(
             bank0.clone_without_scheduler(),

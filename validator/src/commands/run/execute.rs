@@ -1,10 +1,9 @@
 use {
     crate::{
-        admin_rpc_service,
-        admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
+        admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
         bootstrap,
         cli::{self},
-        ledger_lockfile, lock_ledger, redirect_stderr_to_file,
+        ledger_lockfile, lock_ledger,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
@@ -46,6 +45,7 @@ use {
         },
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
+    solana_logger::redirect_stderr_to_file,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_rpc::{

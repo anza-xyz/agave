@@ -3677,12 +3677,13 @@ mod tests {
             let mut got_clock_buf = vec![0; Clock::size_of()];
             let got_clock_buf_va = 0x200000000;
             let clock_id_va = 0x300000000;
+            let clock_id = Clock::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(bytes_of_mut(&mut got_clock_obj), got_clock_obj_va),
                     MemoryRegion::new_writable(&mut got_clock_buf, got_clock_buf_va),
-                    MemoryRegion::new_readonly(&Clock::id().to_bytes(), clock_id_va),
+                    MemoryRegion::new_readonly(&clock_id, clock_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -3698,7 +3699,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_clock_obj, src_clock);
 
             let mut clean_clock = create_filled_type::<Clock>(true);
@@ -3718,7 +3719,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let clock_from_buf = bincode::deserialize::<Clock>(&got_clock_buf).unwrap();
 
@@ -3734,6 +3735,7 @@ mod tests {
             let mut got_epochschedule_buf = vec![0; EpochSchedule::size_of()];
             let got_epochschedule_buf_va = 0x200000000;
             let epochschedule_id_va = 0x300000000;
+            let epochschedule_id = EpochSchedule::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
@@ -3745,10 +3747,7 @@ mod tests {
                         &mut got_epochschedule_buf,
                         got_epochschedule_buf_va,
                     ),
-                    MemoryRegion::new_readonly(
-                        &EpochSchedule::id().to_bytes(),
-                        epochschedule_id_va,
-                    ),
+                    MemoryRegion::new_readonly(&epochschedule_id, epochschedule_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -3764,7 +3763,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_epochschedule_obj, src_epochschedule);
 
             let mut clean_epochschedule = create_filled_type::<EpochSchedule>(true);
@@ -3788,7 +3787,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let epochschedule_from_buf =
                 bincode::deserialize::<EpochSchedule>(&got_epochschedule_buf).unwrap();
@@ -3826,7 +3825,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_fees, src_fees);
 
             let mut clean_fees = create_filled_type::<Fees>(true);
@@ -3844,12 +3843,13 @@ mod tests {
             let mut got_rent_buf = vec![0; Rent::size_of()];
             let got_rent_buf_va = 0x200000000;
             let rent_id_va = 0x300000000;
+            let rent_id = Rent::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(bytes_of_mut(&mut got_rent_obj), got_rent_obj_va),
                     MemoryRegion::new_writable(&mut got_rent_buf, got_rent_buf_va),
-                    MemoryRegion::new_readonly(&Rent::id().to_bytes(), rent_id_va),
+                    MemoryRegion::new_readonly(&rent_id, rent_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -3865,7 +3865,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_rent_obj, src_rent);
 
             let mut clean_rent = create_filled_type::<Rent>(true);
@@ -3883,7 +3883,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let rent_from_buf = bincode::deserialize::<Rent>(&got_rent_buf).unwrap();
 
@@ -3901,6 +3901,7 @@ mod tests {
             let mut got_rewards_buf = vec![0; EpochRewards::size_of()];
             let got_rewards_buf_va = 0x200000000;
             let rewards_id_va = 0x300000000;
+            let rewards_id = EpochRewards::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
@@ -3909,7 +3910,7 @@ mod tests {
                         got_rewards_obj_va,
                     ),
                     MemoryRegion::new_writable(&mut got_rewards_buf, got_rewards_buf_va),
-                    MemoryRegion::new_readonly(&EpochRewards::id().to_bytes(), rewards_id_va),
+                    MemoryRegion::new_readonly(&rewards_id, rewards_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -3925,7 +3926,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_rewards_obj, src_rewards);
 
             let mut clean_rewards = create_filled_type::<EpochRewards>(true);
@@ -3948,7 +3949,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let rewards_from_buf = bincode::deserialize::<EpochRewards>(&got_rewards_buf).unwrap();
 
@@ -3966,6 +3967,7 @@ mod tests {
             let mut got_restart_buf = vec![0; LastRestartSlot::size_of()];
             let got_restart_buf_va = 0x200000000;
             let restart_id_va = 0x300000000;
+            let restart_id = LastRestartSlot::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
@@ -3974,7 +3976,7 @@ mod tests {
                         got_restart_obj_va,
                     ),
                     MemoryRegion::new_writable(&mut got_restart_buf, got_restart_buf_va),
-                    MemoryRegion::new_readonly(&LastRestartSlot::id().to_bytes(), restart_id_va),
+                    MemoryRegion::new_readonly(&restart_id, restart_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -3990,7 +3992,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_restart_obj, src_restart);
 
             let mut clean_restart = create_filled_type::<LastRestartSlot>(true);
@@ -4006,7 +4008,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let restart_from_buf =
                 bincode::deserialize::<LastRestartSlot>(&got_restart_buf).unwrap();
@@ -4055,11 +4057,12 @@ mod tests {
             let mut got_history_buf = vec![0; StakeHistory::size_of()];
             let got_history_buf_va = 0x100000000;
             let history_id_va = 0x200000000;
+            let history_id = StakeHistory::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(&mut got_history_buf, got_history_buf_va),
-                    MemoryRegion::new_readonly(&StakeHistory::id().to_bytes(), history_id_va),
+                    MemoryRegion::new_readonly(&history_id, history_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -4075,7 +4078,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let history_from_buf = bincode::deserialize::<StakeHistory>(&got_history_buf).unwrap();
             assert_eq!(history_from_buf, src_history);
@@ -4114,11 +4117,12 @@ mod tests {
             let mut got_hashes_buf = vec![0; SlotHashes::size_of()];
             let got_hashes_buf_va = 0x100000000;
             let hashes_id_va = 0x200000000;
+            let hashes_id = SlotHashes::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(&mut got_hashes_buf, got_hashes_buf_va),
-                    MemoryRegion::new_readonly(&SlotHashes::id().to_bytes(), hashes_id_va),
+                    MemoryRegion::new_readonly(&hashes_id, hashes_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -4134,7 +4138,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let hashes_from_buf = bincode::deserialize::<SlotHashes>(&got_hashes_buf).unwrap();
             assert_eq!(hashes_from_buf, src_hashes);
@@ -4153,6 +4157,7 @@ mod tests {
         src_clock.unix_timestamp = 5;
 
         let clock_id_va = 0x100000000;
+        let clock_id = Clock::id().to_bytes();
 
         let mut got_clock_buf_rw = vec![0; Clock::size_of()];
         let got_clock_buf_rw_va = 0x200000000;
@@ -4162,7 +4167,7 @@ mod tests {
 
         let mut memory_mapping = MemoryMapping::new(
             vec![
-                MemoryRegion::new_readonly(&Clock::id().to_bytes(), clock_id_va),
+                MemoryRegion::new_readonly(&clock_id, clock_id_va),
                 MemoryRegion::new_writable(&mut got_clock_buf_rw, got_clock_buf_rw_va),
                 MemoryRegion::new_readonly(&got_clock_buf_ro, got_clock_buf_ro_va),
             ],

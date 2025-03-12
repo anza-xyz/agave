@@ -40,6 +40,7 @@ jobs:
   check:
     if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       matrix:
         programs:
@@ -77,6 +78,7 @@ jobs:
   test_cli:
     if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       matrix:
         programs:
@@ -106,6 +108,7 @@ jobs:
   cargo-test-sbf:
     if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       matrix:
         programs:

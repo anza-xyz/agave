@@ -6,14 +6,18 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
 };
 
-/// TransactionCost is used to represent resources required to process
-/// a transaction, denominated in CU (eg. Compute Units).
-/// Resources required to process a regular transaction often include
-/// an array of variables, such as execution cost, loaded bytes, write
-/// lock and read lock etc.
-/// SimpleVote has a simpler and pre-determined format: it has 1 or 2 signatures,
-/// 2 write locks, a vote instruction and less than 32k (page size) accounts to load.
-/// It's cost therefore can be static #33269.
+/// `TransactionCost`` is used to represent resources required to process a
+/// transaction, denominated in Compute Units (CUs). Resources required to
+/// process a regular transaction often include an array of variables, such as
+/// execution cost, loaded bytes, write lock and read lock etc.
+///
+/// SimpleVote has a simpler and pre-determined format. It has:
+///  - 1 or 2 signatures
+///  - 2 write locks
+///  - 1 vote instruction
+///  - less than 32k (page size) accounts to load
+///
+/// Its cost therefore can be static #33269.
 const SIMPLE_VOTE_USAGE_COST: u64 = 3428;
 
 #[derive(Debug)]
@@ -302,9 +306,7 @@ mod tests {
         solana_vote_program::vote_state::TowerSync,
     };
 
-    #[test]
-    fn test_vote_transaction_cost() {
-        solana_logger::setup();
+    fn get_example_transaction() -> VersionedTransaction {
         let node_keypair = Keypair::new();
         let vote_keypair = Keypair::new();
         let auth_keypair = Keypair::new();
@@ -317,9 +319,16 @@ mod tests {
             None,
         );
 
-        // create a sanitized vote transaction
+        VersionedTransaction::from(transaction)
+    }
+
+    #[test]
+    fn test_vote_transaction_cost() {
+        solana_logger::setup();
+
+        // Create a sanitized vote transaction.
         let vote_transaction = RuntimeTransaction::try_create(
-            VersionedTransaction::from(transaction.clone()),
+            get_example_transaction(),
             MessageHash::Compute,
             Some(true),
             SimpleAddressLoader::Disabled,
@@ -327,9 +336,18 @@ mod tests {
         )
         .unwrap();
 
-        // create a identical sanitized transaction, but identified as non-vote
-        let none_vote_transaction = RuntimeTransaction::try_create(
-            VersionedTransaction::from(transaction),
+        // Verify actual cost matches expected.
+        let vote_cost = CostModel::calculate_cost(&vote_transaction, &FeatureSet::all_enabled());
+        assert_eq!(SIMPLE_VOTE_USAGE_COST, vote_cost.sum());
+    }
+
+    #[test]
+    fn test_non_vote_transaction_cost() {
+        solana_logger::setup();
+
+        // Create a sanitized non-vote transaction.
+        let non_vote_transaction = RuntimeTransaction::try_create(
+            get_example_transaction(),
             MessageHash::Compute,
             Some(false),
             SimpleAddressLoader::Disabled,
@@ -337,16 +355,21 @@ mod tests {
         )
         .unwrap();
 
-        // expected vote tx cost: 2 write locks, 1 sig, 1 vote ix, 8cu of loaded accounts size,
-        let expected_vote_cost = SIMPLE_VOTE_USAGE_COST;
-        // expected non-vote tx cost would include default loaded accounts size cost (16384) additionally, and 3_000 for instruction
-        let expected_none_vote_cost = 21443;
+        // Compute expected cost.
+        let signature_cost = 1440;
+        let write_lock_cost = 600;
+        let data_bytes_cost = 19;
+        let programs_execution_cost = 3000;
+        let loaded_accounts_data_size_cost = 16384;
+        let expected_non_vote_cost = signature_cost
+            + write_lock_cost
+            + data_bytes_cost
+            + programs_execution_cost
+            + loaded_accounts_data_size_cost;
 
-        let vote_cost = CostModel::calculate_cost(&vote_transaction, &FeatureSet::all_enabled());
-        let none_vote_cost =
-            CostModel::calculate_cost(&none_vote_transaction, &FeatureSet::all_enabled());
-
-        assert_eq!(expected_vote_cost, vote_cost.sum());
-        assert_eq!(expected_none_vote_cost, none_vote_cost.sum());
+        // Verify actual cost matches expected.
+        let non_vote_cost =
+            CostModel::calculate_cost(&non_vote_transaction, &FeatureSet::all_enabled());
+        assert_eq!(expected_non_vote_cost, non_vote_cost.sum());
     }
 }

@@ -36,9 +36,9 @@ pub(crate) fn process_message(
         {
             let mut mut_account_ref = invoke_context
                 .transaction_context
-                .get_account_at_index(account_index)
-                .map_err(|_| TransactionError::InvalidAccountIndex)?
-                .borrow_mut();
+                .accounts()
+                .try_borrow_mut(account_index)
+                .map_err(|_| TransactionError::InvalidAccountIndex)?;
             instructions::store_current_index(
                 mut_account_ref.data_as_mut_slice(),
                 instruction_index as u16,
@@ -264,17 +264,17 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(
             transaction_context
-                .get_account_at_index(0)
+                .accounts()
+                .try_borrow(0)
                 .unwrap()
-                .borrow()
                 .lamports(),
             100
         );
         assert_eq!(
             transaction_context
-                .get_account_at_index(1)
+                .accounts()
+                .try_borrow(1)
                 .unwrap()
-                .borrow()
                 .lamports(),
             0
         );
@@ -572,26 +572,22 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(
             transaction_context
-                .get_account_at_index(0)
+                .accounts()
+                .try_borrow(0)
                 .unwrap()
-                .borrow()
                 .lamports(),
             80
         );
         assert_eq!(
             transaction_context
-                .get_account_at_index(1)
+                .accounts()
+                .try_borrow(1)
                 .unwrap()
-                .borrow()
                 .lamports(),
             20
         );
         assert_eq!(
-            transaction_context
-                .get_account_at_index(0)
-                .unwrap()
-                .borrow()
-                .data(),
+            transaction_context.accounts().try_borrow(0).unwrap().data(),
             &vec![42]
         );
     }

@@ -33,7 +33,7 @@ use {
 const SINK_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const SINK_RECEIVE_TIMEOUT: Duration = Duration::from_secs(1);
 const SOCKET_RECEIVE_TIMEOUT: Duration = Duration::from_secs(1);
-const COALESCE_TIME: Duration = Duration::from_millis(1);
+const COALESCE_TIME: Option<Duration> = Some(Duration::from_millis(1));
 
 fn sink(
     exit: Arc<AtomicBool>,

@@ -5,11 +5,13 @@ use {
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
     },
+    arrayvec::ArrayVec,
     bincode::serialize,
     rand::Rng,
     serde::de::{Deserialize, Deserializer},
     solana_hash::Hash,
     solana_keypair::{signable::Signable, Keypair},
+    solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_signature::Signature,
@@ -227,8 +229,12 @@ impl<'de> Deserialize<'de> for CrdsValue {
             data: CrdsData,
         }
         let CrdsValue { signature, data } = CrdsValue::deserialize(deserializer)?;
-        let bincode_serialized_data = bincode::serialize(&data).unwrap();
-        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        // To compute the hash of the received CrdsData we need to re-serialize it
+        // PACKET_DATA_SIZE is always enough since we have just received the value in a packet
+        // ArrayVec allows us to write serialized data into stack memory without initializing it
+        let mut buffer = ArrayVec::<u8, PACKET_DATA_SIZE>::new();
+        bincode::serialize_into(&mut buffer, &data).map_err(serde::de::Error::custom)?;
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &buffer]);
         Ok(Self {
             signature,
             data,

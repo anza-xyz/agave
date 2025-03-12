@@ -116,7 +116,7 @@ fn recv_loop(
     packet_batch_sender: &PacketBatchSender,
     recycler: &PacketBatchRecycler,
     stats: &StreamerReceiveStats,
-    coalesce: Duration,
+    coalesce: Option<Duration>,
     use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
@@ -178,7 +178,7 @@ pub fn receiver(
     packet_batch_sender: PacketBatchSender,
     recycler: PacketBatchRecycler,
     stats: Arc<StreamerReceiveStats>,
-    coalesce: Duration,
+    coalesce: Option<Duration>,
     use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
@@ -504,7 +504,7 @@ mod test {
             s_reader,
             Recycler::default(),
             stats.clone(),
-            Duration::from_millis(1), // coalesce
+            Some(Duration::from_millis(1)), // coalesce
             true,
             None,
             false,
