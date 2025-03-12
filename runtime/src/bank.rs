@@ -155,6 +155,7 @@ use {
     solana_svm::{
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
+        transaction_balances::{TransactionBalances, TransactionBalancesSet},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -339,23 +340,6 @@ pub struct TransactionSimulationResult {
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
 }
-
-#[derive(Clone, Debug)]
-pub struct TransactionBalancesSet {
-    pub pre_balances: TransactionBalances,
-    pub post_balances: TransactionBalances,
-}
-
-impl TransactionBalancesSet {
-    pub fn new(pre_balances: TransactionBalances, post_balances: TransactionBalances) -> Self {
-        assert_eq!(pre_balances.len(), post_balances.len());
-        Self {
-            pre_balances,
-            post_balances,
-        }
-    }
-}
-pub type TransactionBalances = Vec<Vec<u64>>;
 
 pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
 

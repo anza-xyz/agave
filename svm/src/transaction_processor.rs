@@ -318,6 +318,27 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.sysvar_cache.read().unwrap()
     }
 
+    // HANA ok wtf am i doing this
+    // i think what i want is a new TransactionProcessingConfig option for whether to record bals
+    // if yes, we get pre and post bals for every account in svm using two callbacks
+    // im not sure exactly how to provide them... ideally in CB but its a bit tricky
+    // because consumer calls into bank, not into this, so CB is non-generic at that stage
+    // ok andrew suggested putting optional function pointers in config
+    // instead of making the config generic so we could attach a trait
+    // the next qestion is where to put the result... well, on the output, again optional
+    //
+    // ok so this isnt so bad...
+    // after load, map over loaded accounts. pre-lamps are lamps. pre-token use callback
+    // (i also dont actually need two callbacks for this, just need a token validator/parser)
+    // so map to two vecs. then execute, update cache. now map account keys
+    // load each and do the same as we did above. we now have four vecs of this shit
+    // maybe we have our own TokenInfo thing so we dont pull in fucking UiToken etc shit
+    // and we can impl a From<T> in consumer or whatever that map converts
+    //
+    // note TransactionBalancesSet is in runtime but TransactionTokenBalancesSet is in uhh tx status
+    // maybe move tx balance set down to svm then and use it as-is
+    // ok and use a tuple of two custom structs for token bullshit for now
+
     /// Main entrypoint to the SVM.
     pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
         &self,
@@ -430,6 +451,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
+            // HANA do pre-bals
+
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
@@ -459,6 +482,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // Also update local program cache with modifications made by the transaction,
                     // if it executed successfully.
                     account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
+
+                    // HANA do post-bals here
+
                     if executed_tx.was_successful() {
                         program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
                     }
