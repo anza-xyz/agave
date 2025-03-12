@@ -8,7 +8,8 @@ use {
 
 const COMMAND: &str = "authorized-voter";
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(test, derive(Default))]
 pub struct AuthorizedVoterAddArgs {
     pub authorized_voter_keypair: Option<String>,
 }
