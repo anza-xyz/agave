@@ -5191,6 +5191,29 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                     assert!(!logs.last().unwrap().ends_with(" failed: InvalidLength"));
                 }
             }
+
+            let account = AccountSharedData::new(42, 0, &program_id);
+            bank.store_account(&account_keypair.pubkey(), &account);
+
+            for instr in 0..=15 {
+                println!("Testing deprecated:{deprecated} direct_mapping:{direct_mapping} instruction:{instr} zero-length account");
+                let instruction =
+                    Instruction::new_with_bytes(program_id, &[instr, 0], account_metas.clone());
+
+                let message = Message::new(&[instruction], Some(&mint_pubkey));
+                let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+                let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+
+                if direct_mapping && !deprecated {
+                    // we have a resize area
+                    assert!(
+                        logs.last().unwrap().ends_with(" failed: InvalidLength"),
+                        "{logs:?}"
+                    );
+                } else {
+                    assert!(result.is_ok(), "{logs:?}");
+                }
+            }
         }
     }
 }
