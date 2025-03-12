@@ -3061,6 +3061,16 @@ mod tests {
         assert!(*TASK_COUNT.lock().unwrap() < 10);
     }
 
+    fn create_genesis_config_for_block_production(lamports: u64) -> GenesisConfigInfo {
+        // The in-scope create_genesis_config(), which is imported from the `solana-runtime`,
+        // doesn't properly setup leader schedule, causing the following panic if used for poh
+        // recorder, so use the one from the `solana-ledger` crate:
+        //
+        //   thread 'tests::...' panicked at ledger/src/leader_schedule.rs:LL:CC:
+        //   called `Result::unwrap()` on an `Err` value: NoItem
+        solana_ledger::genesis_utils::create_genesis_config(lamports)
+    }
+
     #[test_matrix(
         [BlockVerification, BlockProduction]
     )]
@@ -3097,7 +3107,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        } = create_genesis_config_for_block_production(10_000);
 
         // tx0 and tx1 is definitely conflicting to write-lock the mint address
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -3594,7 +3604,7 @@ mod tests {
             genesis_config,
             ref mint_keypair,
             ..
-        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        } = create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank = bank_forks.read().unwrap().working_bank_with_scheduler();
@@ -3723,7 +3733,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        } = create_genesis_config_for_block_production(10_000);
 
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
@@ -3781,7 +3791,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        } = create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
@@ -3852,7 +3862,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        } = create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
@@ -3937,7 +3947,7 @@ mod tests {
         solana_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
-            solana_ledger::genesis_utils::create_genesis_config(10_000);
+            create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
@@ -3978,7 +3988,7 @@ mod tests {
         solana_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
-            solana_ledger::genesis_utils::create_genesis_config(10_000);
+            create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
@@ -4042,7 +4052,7 @@ mod tests {
         solana_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
-            solana_ledger::genesis_utils::create_genesis_config(10_000);
+            create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
