@@ -6,8 +6,10 @@ use {
     std::{fs, path::Path},
 };
 
+const COMMAND: &str = "authorized-voter";
+
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
-    SubCommand::with_name("authorized-voter")
+    SubCommand::with_name(COMMAND)
         .about("Adjust the validator authorized voters")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .setting(AppSettings::InferSubcommands)
