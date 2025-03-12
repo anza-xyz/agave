@@ -66,6 +66,8 @@ pub struct JsonRpcService {
     pub request_processor: JsonRpcRequestProcessor, // Used only by test_rpc_new()...
 
     close_handle: Option<CloseHandle>,
+
+    client_updater: Arc<dyn NotifyKeyUpdate + Send + Sync>,
 }
 
 struct RpcRequestMiddleware {
@@ -335,9 +337,37 @@ fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<Strin
     }
 }
 
-impl JsonRpcService {
+/// [`JsonRpcServiceBuilder`] is a helper structure that simplifies the creation
+/// of a [`JsonRpcService`] with a target TPU client. It supports two types of clients:
+/// * [`ConnectionCacheClient`], which is based on [`ConnectionCache`].
+/// * [`TpuClientNextClient`], which is based on the `tpu-client-next` crate.
+pub struct JsonRpcServiceBuilder {
+    rpc_addr: SocketAddr,
+    config: JsonRpcConfig,
+    snapshot_config: Option<SnapshotConfig>,
+    bank_forks: Arc<RwLock<BankForks>>,
+    block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+    blockstore: Arc<Blockstore>,
+    cluster_info: Arc<ClusterInfo>,
+    poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
+    genesis_hash: Hash,
+    ledger_path: PathBuf,
+    validator_exit: Arc<RwLock<Exit>>,
+    exit: Arc<AtomicBool>,
+    override_health_check: Arc<AtomicBool>,
+    startup_verification_complete: Arc<AtomicBool>,
+    optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+    send_transaction_service_config: send_transaction_service::Config,
+    max_slots: Arc<MaxSlots>,
+    leader_schedule_cache: Arc<LeaderScheduleCache>,
+    max_complete_transaction_status_slot: Arc<AtomicU64>,
+    max_complete_rewards_slot: Arc<AtomicU64>,
+    prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+}
+
+impl JsonRpcServiceBuilder {
     #[allow(clippy::too_many_arguments)]
-    pub fn create_service_with_tpu_client_next(
+    pub fn new(
         rpc_addr: SocketAddr,
         config: JsonRpcConfig,
         snapshot_config: Option<SnapshotConfig>,
@@ -356,45 +386,21 @@ impl JsonRpcService {
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        identity_keypair: Option<&Keypair>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-    ) -> Result<(Self, Arc<dyn NotifyKeyUpdate + Send + Sync>), String> {
-        let runtime = service_runtime(
-            config.rpc_threads,
-            config.rpc_blocking_threads,
-            config.rpc_niceness_adj,
-        );
-        let leader_info =
-            poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
-        let my_tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(Protocol::QUIC)
-            .ok_or(format!(
-                "Invalid {:?} socket address for TPU",
-                Protocol::QUIC
-            ))?;
-
-        let client = TpuClientNextClient::new(
-            runtime.handle().clone(),
-            my_tpu_address,
-            send_transaction_service_config.tpu_peers.clone(),
-            leader_info,
-            send_transaction_service_config.leader_forward_count,
-            identity_keypair,
-        );
-
-        let json_rpc_service = JsonRpcService::new_with_client(
+    ) -> Self {
+        Self {
             rpc_addr,
-            config.clone(),
+            config,
             snapshot_config,
-            bank_forks.clone(),
-            block_commitment_cache.clone(),
-            blockstore.clone(),
-            cluster_info.clone(),
+            bank_forks,
+            block_commitment_cache,
+            blockstore,
+            cluster_info,
+            poh_recorder,
             genesis_hash,
-            ledger_path,
+            ledger_path: ledger_path.to_path_buf(),
             validator_exit,
             exit,
             override_health_check,
@@ -403,20 +409,116 @@ impl JsonRpcService {
             send_transaction_service_config,
             max_slots,
             leader_schedule_cache,
-            client.clone(),
             max_complete_transaction_status_slot,
             max_complete_rewards_slot,
             prioritization_fee_cache,
-            runtime,
-        )?;
-        Ok((
-            json_rpc_service,
-            Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
-        ))
+        }
     }
 
+    /// The `build` method creates an instance of [`JsonRpcService`]. If
+    /// `connection_cache` is provided, the service will use a TPU client based
+    /// on the connection_cache crate. Otherwise, it will internally use
+    /// [`TpuClientNextClient`].
+    pub fn build(
+        self,
+        connection_cache: Option<Arc<ConnectionCache>>,
+        identity_keypair: Option<&Keypair>,
+    ) -> Result<JsonRpcService, String> {
+        let runtime = service_runtime(
+            self.config.rpc_threads,
+            self.config.rpc_blocking_threads,
+            self.config.rpc_niceness_adj,
+        );
+        let leader_info = self
+            .poh_recorder
+            .map(|recorder| ClusterTpuInfo::new(self.cluster_info.clone(), recorder));
+        let protocol = connection_cache
+            .as_ref()
+            .map_or(Protocol::QUIC, |cache| cache.protocol());
+        let my_tpu_address = self
+            .cluster_info
+            .my_contact_info()
+            .tpu(Protocol::QUIC)
+            .ok_or(format!("Invalid {:?} socket address for TPU", protocol))?;
+
+        match connection_cache {
+            Some(connection_cache) => {
+                let client = ConnectionCacheClient::new(
+                    connection_cache,
+                    my_tpu_address,
+                    self.send_transaction_service_config.tpu_peers.clone(),
+                    leader_info,
+                    self.send_transaction_service_config.leader_forward_count,
+                );
+                let json_rpc_service = JsonRpcService::new_with_client(
+                    self.rpc_addr,
+                    self.config,
+                    self.snapshot_config,
+                    self.bank_forks,
+                    self.block_commitment_cache,
+                    self.blockstore,
+                    self.cluster_info,
+                    self.genesis_hash,
+                    self.ledger_path.as_path(),
+                    self.validator_exit,
+                    self.exit,
+                    self.override_health_check,
+                    self.startup_verification_complete,
+                    self.optimistically_confirmed_bank,
+                    self.send_transaction_service_config,
+                    self.max_slots,
+                    self.leader_schedule_cache,
+                    client.clone(),
+                    self.max_complete_transaction_status_slot,
+                    self.max_complete_rewards_slot,
+                    self.prioritization_fee_cache,
+                    runtime,
+                )?;
+                Ok(json_rpc_service)
+            }
+            None => {
+                let client = TpuClientNextClient::new(
+                    runtime.handle().clone(),
+                    my_tpu_address,
+                    self.send_transaction_service_config.tpu_peers.clone(),
+                    leader_info,
+                    self.send_transaction_service_config.leader_forward_count,
+                    identity_keypair,
+                );
+
+                let json_rpc_service = JsonRpcService::new_with_client(
+                    self.rpc_addr,
+                    self.config.clone(),
+                    self.snapshot_config,
+                    self.bank_forks.clone(),
+                    self.block_commitment_cache.clone(),
+                    self.blockstore.clone(),
+                    self.cluster_info.clone(),
+                    self.genesis_hash,
+                    self.ledger_path.as_path(),
+                    self.validator_exit,
+                    self.exit,
+                    self.override_health_check,
+                    self.startup_verification_complete,
+                    self.optimistically_confirmed_bank,
+                    self.send_transaction_service_config,
+                    self.max_slots,
+                    self.leader_schedule_cache,
+                    client.clone(),
+                    self.max_complete_transaction_status_slot,
+                    self.max_complete_rewards_slot,
+                    self.prioritization_fee_cache,
+                    runtime,
+                )?;
+                Ok(json_rpc_service)
+            }
+        }
+    }
+}
+
+impl JsonRpcService {
     #[allow(clippy::too_many_arguments)]
-    pub fn create_service_with_connection_cache(
+    pub fn new(
         rpc_addr: SocketAddr,
         config: JsonRpcConfig,
         snapshot_config: Option<SnapshotConfig>,
@@ -439,7 +541,7 @@ impl JsonRpcService {
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-    ) -> Result<(Self, Arc<dyn NotifyKeyUpdate + Send + Sync>), String> {
+    ) -> Result<Self, String> {
         let runtime = service_runtime(
             config.rpc_threads,
             config.rpc_blocking_threads,
@@ -489,66 +591,18 @@ impl JsonRpcService {
             prioritization_fee_cache,
             runtime,
         )?;
-        Ok((
-            json_rpc_service,
-            Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
-        ))
+        Ok(json_rpc_service)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        rpc_addr: SocketAddr,
-        config: JsonRpcConfig,
-        snapshot_config: Option<SnapshotConfig>,
-        bank_forks: Arc<RwLock<BankForks>>,
-        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-        blockstore: Arc<Blockstore>,
-        cluster_info: Arc<ClusterInfo>,
-        poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
-        genesis_hash: Hash,
-        ledger_path: &Path,
-        validator_exit: Arc<RwLock<Exit>>,
-        exit: Arc<AtomicBool>,
-        override_health_check: Arc<AtomicBool>,
-        startup_verification_complete: Arc<AtomicBool>,
-        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
-        send_transaction_service_config: send_transaction_service::Config,
-        max_slots: Arc<MaxSlots>,
-        leader_schedule_cache: Arc<LeaderScheduleCache>,
-        connection_cache: Arc<ConnectionCache>,
-        max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-    ) -> Result<Self, String> {
-        let (service, _) = Self::create_service_with_connection_cache(
-            rpc_addr,
-            config,
-            snapshot_config,
-            bank_forks,
-            block_commitment_cache,
-            blockstore,
-            cluster_info,
-            poh_recorder,
-            genesis_hash,
-            ledger_path,
-            validator_exit,
-            exit,
-            override_health_check,
-            startup_verification_complete,
-            optimistically_confirmed_bank,
-            send_transaction_service_config,
-            max_slots,
-            leader_schedule_cache,
-            connection_cache,
-            max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
-            prioritization_fee_cache,
-        )?;
-        Ok(service)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn new_with_client<Client: TransactionClient + Clone + std::marker::Send + 'static>(
+    fn new_with_client<
+        Client: TransactionClient
+            + NotifyKeyUpdate
+            + Clone
+            + std::marker::Send
+            + std::marker::Sync
+            + 'static,
+    >(
         rpc_addr: SocketAddr,
         config: JsonRpcConfig,
         snapshot_config: Option<SnapshotConfig>,
@@ -670,7 +724,7 @@ impl JsonRpcService {
         let _send_transaction_service = Arc::new(SendTransactionService::new_with_client(
             &bank_forks,
             receiver,
-            client,
+            client.clone(),
             send_transaction_service_config,
             exit,
         ));
@@ -754,6 +808,7 @@ impl JsonRpcService {
             #[cfg(test)]
             request_processor: test_request_processor,
             close_handle: Some(close_handle),
+            client_updater: Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
         })
     }
 
@@ -766,6 +821,10 @@ impl JsonRpcService {
     pub fn join(mut self) -> thread::Result<()> {
         self.exit();
         self.thread_hdl.join()
+    }
+
+    pub fn get_client_key_updater(&self) -> Arc<dyn NotifyKeyUpdate + Send + Sync> {
+        self.client_updater.clone()
     }
 }
 

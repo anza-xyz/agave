@@ -91,6 +91,7 @@ use {
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
         rpc_service::JsonRpcService,
+        rpc_service::JsonRpcServiceBuilder,
         rpc_subscriptions::RpcSubscriptions,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
@@ -1150,7 +1151,6 @@ impl Validator {
             rpc_completed_slots_service,
             optimistically_confirmed_bank_tracker,
             bank_notification_sender,
-            client_updater,
         ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
             assert_eq!(
                 node.info.rpc().map(|addr| socket_addr_space.check(&addr)),
@@ -1165,58 +1165,37 @@ impl Validator {
                 None
             };
 
-            let (json_rpc_service, client_updater) = if config.use_tpu_client_next {
-                JsonRpcService::create_service_with_tpu_client_next(
-                    rpc_addr,
-                    config.rpc_config.clone(),
-                    Some(config.snapshot_config.clone()),
-                    bank_forks.clone(),
-                    block_commitment_cache.clone(),
-                    blockstore.clone(),
-                    cluster_info.clone(),
-                    Some(poh_recorder.clone()),
-                    genesis_config.hash(),
-                    ledger_path,
-                    config.validator_exit.clone(),
-                    exit.clone(),
-                    rpc_override_health_check.clone(),
-                    startup_verification_complete,
-                    optimistically_confirmed_bank.clone(),
-                    config.send_transaction_service_config.clone(),
-                    max_slots.clone(),
-                    leader_schedule_cache.clone(),
-                    Some(Arc::as_ref(&identity_keypair)),
-                    max_complete_transaction_status_slot,
-                    max_complete_rewards_slot,
-                    prioritization_fee_cache.clone(),
-                )
-                .map_err(ValidatorError::Other)?
+            let rpc_builder = JsonRpcServiceBuilder::new(
+                rpc_addr,
+                config.rpc_config.clone(),
+                Some(config.snapshot_config.clone()),
+                bank_forks.clone(),
+                block_commitment_cache.clone(),
+                blockstore.clone(),
+                cluster_info.clone(),
+                Some(poh_recorder.clone()),
+                genesis_config.hash(),
+                ledger_path,
+                config.validator_exit.clone(),
+                exit.clone(),
+                rpc_override_health_check.clone(),
+                startup_verification_complete,
+                optimistically_confirmed_bank.clone(),
+                config.send_transaction_service_config.clone(),
+                max_slots.clone(),
+                leader_schedule_cache.clone(),
+                max_complete_transaction_status_slot,
+                max_complete_rewards_slot,
+                prioritization_fee_cache.clone(),
+            );
+            let json_rpc_service = if config.use_tpu_client_next {
+                rpc_builder
+                    .build(None, Some(Arc::as_ref(&identity_keypair)))
+                    .map_err(ValidatorError::Other)?
             } else {
-                JsonRpcService::create_service_with_connection_cache(
-                    rpc_addr,
-                    config.rpc_config.clone(),
-                    Some(config.snapshot_config.clone()),
-                    bank_forks.clone(),
-                    block_commitment_cache.clone(),
-                    blockstore.clone(),
-                    cluster_info.clone(),
-                    Some(poh_recorder.clone()),
-                    genesis_config.hash(),
-                    ledger_path,
-                    config.validator_exit.clone(),
-                    exit.clone(),
-                    rpc_override_health_check.clone(),
-                    startup_verification_complete,
-                    optimistically_confirmed_bank.clone(),
-                    config.send_transaction_service_config.clone(),
-                    max_slots.clone(),
-                    leader_schedule_cache.clone(),
-                    connection_cache.clone(),
-                    max_complete_transaction_status_slot,
-                    max_complete_rewards_slot,
-                    prioritization_fee_cache.clone(),
-                )
-                .map_err(ValidatorError::Other)?
+                rpc_builder
+                    .build(Some(connection_cache.clone()), None)
+                    .map_err(ValidatorError::Other)?
             };
 
             let pubsub_service = if !config.rpc_config.full_api {
@@ -1293,10 +1272,9 @@ impl Validator {
                 rpc_completed_slots_service,
                 optimistically_confirmed_bank_tracker,
                 bank_notification_sender_config,
-                Some(client_updater),
             )
         } else {
-            (None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None)
         };
 
         if config.halt_at_slot.is_some() {
@@ -1653,8 +1631,10 @@ impl Validator {
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::Running;
-        if let Some(client_updater) = client_updater {
-            key_notifies.push(client_updater);
+        if config.use_tpu_client_next {
+            if let Some(json_rpc_service) = &json_rpc_service {
+                key_notifies.push(json_rpc_service.get_client_key_updater())
+            }
         }
         // add connection_cache because it is still used in Forwarder.
         key_notifies.push(connection_cache);
