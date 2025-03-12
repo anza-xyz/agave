@@ -207,6 +207,12 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         })
     }
 
+    pub(crate) fn lamports(&mut self, account_key: &Pubkey) -> u64 {
+        self.load_account(account_key, false)
+            .map(|loaded| loaded.account.lamports())
+            .unwrap_or(0)
+    }
+
     pub(crate) fn update_accounts_for_executed_tx(
         &mut self,
         message: &impl SVMMessage,
