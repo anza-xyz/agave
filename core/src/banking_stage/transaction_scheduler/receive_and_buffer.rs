@@ -734,7 +734,7 @@ mod tests {
     ) {
         let mut actual_length: usize = 0;
         while let Some(id) = container.pop() {
-            let Some(_) = container.get_transaction_ttl(id.id) else {
+            let Some(_) = container.get_transaction(id.id) else {
                 panic!(
                     "transaction in queue position {} with id {} must exist.",
                     actual_length, id.id
