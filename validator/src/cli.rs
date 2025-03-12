@@ -66,7 +66,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .global_setting(AppSettings::VersionlessSubcommands)
         .subcommand(commands::exit::command(default_args))
         .subcommand(commands::authorized_voter::command(default_args))
-        .subcommand(commands::contact_info::command(default_args))
+        .subcommand(commands::contact_info::command())
         .subcommand(commands::repair_shred_from_peer::command())
         .subcommand(commands::repair_whitelist::command())
         .subcommand(
