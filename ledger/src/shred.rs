@@ -389,10 +389,6 @@ impl Shred {
     dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
 
-    // Only for tests.
-    dispatch!(pub fn set_index(&mut self, index: u32));
-    dispatch!(pub fn set_slot(&mut self, slot: Slot));
-
     pub fn copy_to_packet(&self, packet: &mut Packet) {
         let payload = self.payload();
         let size = payload.len();

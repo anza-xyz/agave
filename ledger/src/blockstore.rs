@@ -5966,45 +5966,6 @@ pub mod tests {
         );
     }
 
-    // This test seems to be unnecessary with introduction of data shreds. There are no
-    // guarantees that a particular shred index contains a complete entry
-    #[test]
-    #[ignore]
-    pub fn test_get_slot_entries2() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        // Write entries
-        let num_slots = 5_u64;
-        let mut index = 0;
-        for slot in 0..num_slots {
-            let entries = create_ticks(slot + 1, 0, Hash::default());
-            let last_entry = entries.last().unwrap().clone();
-            let mut shreds = entries_to_test_shreds(
-                &entries,
-                slot,
-                slot.saturating_sub(1),
-                false,
-                0,
-                true, // merkle_variant
-            );
-            for b in shreds.iter_mut() {
-                b.set_index(index);
-                b.set_slot(slot);
-                index += 1;
-            }
-            blockstore
-                .insert_shreds(shreds, None, false)
-                .expect("Expected successful write of shreds");
-            assert_eq!(
-                blockstore
-                    .get_slot_entries(slot, u64::from(index - 1))
-                    .unwrap(),
-                vec![last_entry],
-            );
-        }
-    }
-
     #[test]
     fn test_get_slot_entries3() {
         // Test inserting/fetching shreds which contain multiple entries per shred
