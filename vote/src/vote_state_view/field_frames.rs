@@ -1,5 +1,3 @@
-#[cfg(test)]
-use static_assertions::const_assert;
 use {
     super::{list_view::ListView, Result, VoteStateViewError},
     solana_clock::{Epoch, Slot},
