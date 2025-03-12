@@ -437,14 +437,6 @@ impl Shred {
         Payload: From<T>,
     {
         Ok(match layout::get_shred_variant(shred.as_ref())? {
-            ShredVariant::LegacyCode => {
-                let shred = legacy::ShredCode::from_payload(shred)?;
-                Self::from(ShredCode::from(shred))
-            }
-            ShredVariant::LegacyData => {
-                let shred = legacy::ShredData::from_payload(shred)?;
-                Self::from(ShredData::from(shred))
-            }
             ShredVariant::MerkleCode { .. } => {
                 let shred = merkle::ShredCode::from_payload(shred)?;
                 Self::from(ShredCode::from(shred))
@@ -452,6 +444,9 @@ impl Shred {
             ShredVariant::MerkleData { .. } => {
                 let shred = merkle::ShredData::from_payload(shred)?;
                 Self::from(ShredData::from(shred))
+            }
+            _ => {
+                return Err(Error::InvalidShredVariant);
             }
         })
     }
@@ -745,9 +740,9 @@ impl TryFrom<u8> for ShredVariant {
     #[inline]
     fn try_from(shred_variant: u8) -> Result<Self, Self::Error> {
         if shred_variant == u8::from(ShredType::Code) {
-            Ok(ShredVariant::LegacyCode)
+            Err(Error::InvalidShredVariant)
         } else if shred_variant == u8::from(ShredType::Data) {
-            Ok(ShredVariant::LegacyData)
+            Err(Error::InvalidShredVariant)
         } else {
             let proof_size = shred_variant & 0x0F;
             match shred_variant & 0xF0 {

@@ -2,16 +2,14 @@ use {
     crate::shred::{
         self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags, DATA_SHREDS_PER_FEC_BLOCK,
     },
-    itertools::Itertools,
     lazy_lru::LruCache,
     lazy_static::lazy_static,
-    rayon::{prelude::*, ThreadPool},
+    rayon::ThreadPool,
     reed_solomon_erasure::{
         galois_8::ReedSolomon,
         Error::{InvalidIndex, TooFewDataShards, TooFewShardsPresent},
     },
     solana_entry::entry::Entry,
-    solana_measure::measure::Measure,
     solana_rayon_threadlimit::get_thread_count,
     solana_sdk::{clock::Slot, hash::Hash, signature::Keypair},
     std::{
@@ -20,6 +18,8 @@ use {
         sync::{Arc, OnceLock, RwLock},
     },
 };
+#[cfg(test)]
+use {itertools::Itertools, rayon::prelude::*, solana_measure::measure::Measure};
 
 lazy_static! {
     static ref PAR_THREAD_POOL: ThreadPool = rayon::ThreadPoolBuilder::new()
@@ -116,40 +116,26 @@ impl Shredder {
         chained_merkle_root: Option<Hash>,
         next_shred_index: u32,
         next_code_index: u32,
-        merkle_variant: bool,
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> (
         Vec<Shred>, // data shreds
         Vec<Shred>, // coding shreds
     ) {
-        if merkle_variant {
-            return self
-                .make_merkle_shreds_from_entries(
-                    keypair,
-                    entries,
-                    is_last_in_slot,
-                    chained_merkle_root,
-                    next_shred_index,
-                    next_code_index,
-                    reed_solomon_cache,
-                    stats,
-                )
-                .partition(Shred::is_data);
-        }
-        let data_shreds =
-            self.entries_to_data_shreds(keypair, entries, is_last_in_slot, next_shred_index, stats);
-        let coding_shreds = Self::data_shreds_to_coding_shreds(
+        self.make_merkle_shreds_from_entries(
             keypair,
-            &data_shreds,
+            entries,
+            is_last_in_slot,
+            chained_merkle_root,
+            next_shred_index,
             next_code_index,
             reed_solomon_cache,
             stats,
         )
-        .unwrap();
-        (data_shreds, coding_shreds)
+        .partition(Shred::is_data)
     }
 
+    #[cfg(test)]
     fn entries_to_data_shreds(
         &self,
         keypair: &Keypair,
@@ -219,6 +205,7 @@ impl Shredder {
         shreds
     }
 
+    #[cfg(test)]
     fn data_shreds_to_coding_shreds(
         keypair: &Keypair,
         data_shreds: &[Shred],
@@ -514,7 +501,8 @@ pub(crate) fn get_erasure_batch_size(num_data_shreds: usize, is_last_in_slot: bo
     }
 }
 
-// Returns offsets to fec_set_index when spliting shreds into erasure batches.
+#[cfg(test)]
+/// Returns offsets to fec_set_index when spliting shreds into erasure batches.
 fn get_fec_set_offsets(
     mut num_shreds: usize,
     min_chunk_size: usize,
@@ -613,7 +601,6 @@ mod tests {
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
             start_index, // next_shred_index
             start_index, // next_code_index
-            true,        // merkle_variant
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -705,9 +692,8 @@ mod tests {
             is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            369,  // next_shred_index
-            776,  // next_code_index
-            true, // merkle_variant
+            369, // next_shred_index
+            776, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -742,9 +728,8 @@ mod tests {
             is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -784,9 +769,8 @@ mod tests {
             is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -832,9 +816,8 @@ mod tests {
             is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -892,10 +875,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            None,  // chained_merkle_root
-            0,     // next_shred_index
-            0,     // next_code_index
-            false, // merkle_variant
+            None, // chained_merkle_root
+            0,    // next_shred_index
+            0,    // next_code_index
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -1036,10 +1018,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            None,  // chained_merkle_root
-            25,    // next_shred_index,
-            25,    // next_code_index
-            false, // merkle_variant
+            None, // chained_merkle_root
+            25,   // next_shred_index,
+            25,   // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -1139,7 +1120,6 @@ mod tests {
             None, // chained_merkle_root
             next_shred_index,
             next_shred_index, // next_code_index
-            false,            // merkle_variant
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -1204,9 +1184,8 @@ mod tests {
             is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -1245,7 +1224,6 @@ mod tests {
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
             start_index, // next_shred_index
             start_index, // next_code_index
-            true,        // merkle_variant
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
