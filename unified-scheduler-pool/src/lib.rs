@@ -2009,7 +2009,7 @@ mod tests {
             create_new_tmp_ledger_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_poh::poh_recorder::create_test_recorder_with_index_tracking,
+        solana_poh::poh_recorder::{create_test_recorder_with_index_tracking, PohRecorder},
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -3071,6 +3071,23 @@ mod tests {
         solana_ledger::genesis_utils::create_genesis_config(lamports)
     }
 
+    fn wait_poh_recorder_for_max_tick_height(poh_recorder: &RwLock<PohRecorder>) {
+        // Wait until the working bank reaches its tick height..., otherwise the following panics
+        // will be encountered:
+        //    thread 'solPohTickProd' panicked at runtime/src/bank.rs:LL:CC:
+        //    register_tick() working on a bank that is already frozen or is undergoing freezing!
+        //
+        //    thread 'tests::...' panicked at poh/src/poh_recorder.rs:LL:CC:
+        //    assertion failed: self.working_bank.is_none()
+        let started = Instant::now();
+        while poh_recorder.read().unwrap().bank().is_some() {
+            sleep(Duration::from_millis(100));
+            if Instant::now().duration_since(started) > Duration::from_secs(10) {
+                panic!("timed out...");
+            }
+        }
+    }
+
     #[test_matrix(
         [BlockVerification, BlockProduction]
     )]
@@ -3153,10 +3170,7 @@ mod tests {
             );
         }
 
-        // Wait until genesis_bank reaches its tick height...
-        while poh_recorder.read().unwrap().bank().is_some() {
-            sleep(Duration::from_millis(100));
-        }
+        wait_poh_recorder_for_max_tick_height(&poh_recorder);
 
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone(),
@@ -3204,10 +3218,7 @@ mod tests {
         }
         assert_eq!(bank.transaction_count(), current_transaction_count.0);
 
-        // Wait until genesis_bank reaches its tick height...
-        while poh_recorder.read().unwrap().bank().is_some() {
-            sleep(Duration::from_millis(100));
-        }
+        wait_poh_recorder_for_max_tick_height(&poh_recorder);
 
         // Create new bank to observe behavior difference around session ending
         let bank = Arc::new(Bank::new_from_parent(
@@ -3672,9 +3683,7 @@ mod tests {
         // wait until the poh's working bank is cleared.
         // also flush signal_receiver after that.
         if !should_succeed_to_record_to_poh {
-            while poh_recorder.read().unwrap().bank().is_some() {
-                sleep(Duration::from_millis(100));
-            }
+            wait_poh_recorder_for_max_tick_height(&poh_recorder);
             while signal_receiver.try_recv().is_ok() {}
         }
 
