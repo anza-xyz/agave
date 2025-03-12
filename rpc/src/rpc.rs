@@ -466,6 +466,9 @@ impl JsonRpcRequestProcessor {
             );
             ClusterInfo::new(contact_info, keypair, socket_addr_space)
         });
+        // QUIC is the default TPU protocol and is used by ConnectionCache
+        // by default (see `DEFAULT_CONNECTION_CACHE_USE_QUIC`).
+        // Therefore, explicitly specifying QUIC here does not change the test behavior.
         let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
         let (transaction_sender, transaction_receiver) = unbounded();
 
