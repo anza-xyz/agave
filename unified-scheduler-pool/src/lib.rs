@@ -1194,7 +1194,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
     fn max_running_task_count(mode: SchedulingMode, handler_count: usize) -> Option<usize> {
         match mode {
-            BlockVerification => None,
+            BlockVerification => {
+                // Unlike block production, there is no agony for block verification with regards
+                // to max_running_task_count. Its responsibility is to execute all transactions by
+                // _the pre-determined order_ and no reprioritization or interruption whatsoever.
+                // So, just specify no limit and buffer everything as much as possible at the
+                // runnable task channel.
+                None
+            }
             BlockProduction => {
                 // Unlike block verification, it's desired for block production to be safely
                 // interrupted as soon as possible after session is ending. Thus, don't take
@@ -1212,8 +1219,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 // warrants some compromise here. Note that increasing the buffering at crossbeam
                 // channels hampers timing sensitivity of task reprioritization on higher-paying
                 // transaction arrival at the middle of slot, which is selling point of unified
-                // schduler to recite. This is because there is no efficient way to selectively
-                // remove messages from them. Put differently, sent tasks aren't interruptable.
+                // scheduler to recite. This is because there is no efficient way to selectively
+                // remove messages from them. Put differently, sent tasks aren't interruptible.
                 //
                 // So, all in all, we need to strike some nuanced balance here. Currently, this has
                 // not rigidly been tested yet; but capping to 2x of handler thread should be
@@ -1236,7 +1243,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         state_machine: &SchedulingStateMachine,
     ) -> bool {
         match mode {
-            BlockVerification => state_machine.has_unblocked_task(),
+            BlockVerification => {
+                // Always take as much as possible out of SchedulingStateMachine to avoid crossbeam
+                // channel internal message buffering depletion with much relaxed condition than
+                // block production.
+                state_machine.has_unblocked_task()
+            }
             BlockProduction => {
                 // Much like max_running_task_count() reasonings, stop taking runnable and
                 // unblocked tasks out of SchedulingStateMachine as soon as session is ending.
@@ -1251,7 +1263,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         state_machine: &SchedulingStateMachine,
     ) -> bool {
         match mode {
-            BlockVerification => session_ending && state_machine.has_no_active_task(),
+            BlockVerification => {
+                // It's needed to wait to execute all active tasks without any shortcircuting, even
+                // if the session has been signalled for ending; otherwise verification outcome
+                // could differ.
+                session_ending && state_machine.has_no_active_task()
+            }
             BlockProduction => {
                 // No need to wait to execute all active tasks unlike block verification. Just wind
                 // down all tasks which has already been passed down to handler threads.
