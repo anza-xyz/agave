@@ -272,7 +272,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             .read()
             .unwrap()
             .iter()
-            .filter(|&(k, v)| range.contains(k))
+            .filter(|&(k, _v)| range.contains(k))
             .map(|(k, v)| (*k, Arc::clone(v)))
             .collect();
         self.hold_range_in_memory(range, false);
