@@ -1,5 +1,5 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs},
+    crate::admin_rpc_service,
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::is_keypair,
     solana_sdk::signature::{read_keypair, Signer},
@@ -8,7 +8,7 @@ use {
 
 const COMMAND: &str = "authorized-voter";
 
-pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
+pub fn command<'a>() -> App<'a, 'a> {
     SubCommand::with_name(COMMAND)
         .about("Adjust the validator authorized voters")
         .setting(AppSettings::SubcommandRequiredElseHelp)
