@@ -68,7 +68,7 @@ solana-secp256k1-recover = "=2.2.1"
 solana-svm = { path = "../../svm", version = "=2.2.8" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=2.2.8" }
 solana-timings = { path = "../../timings", version = "=2.2.8" }
-solana-transaction-context = "=2.2.1"
+solana-transaction-context = { path = "../../transaction-context", version = "=2.2.8" }
 solana-transaction-status = { path = "../../transaction-status", version = "=2.2.8" }
 solana-type-overrides = { path = "../../type-overrides", version = "=2.2.8" }
 solana-vote = { path = "../../vote", version = "=2.2.8" }
