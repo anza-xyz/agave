@@ -77,6 +77,63 @@ pub mod tests {
     }
 
     #[test]
+    fn test_pubkey_lowest_highest_bin4() {
+        let calc = PubkeyBinCalculator24::new(4);
+
+        // bin 0
+        let expected_lowest = Pubkey::from([
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0,
+        ]);
+        let expected_highest = Pubkey::from([
+            0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF,
+        ]);
+        assert_eq!(calc.lowest_pubkey_from_bin(0), expected_lowest);
+        assert_eq!(calc.highest_pubkey_from_bin(0), expected_highest);
+
+        // bin 1
+        let expected_lowest = Pubkey::from([
+            0x40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ]);
+        let expected_highest = Pubkey::from([
+            0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF,
+        ]);
+        assert_eq!(calc.lowest_pubkey_from_bin(1), expected_lowest,);
+        assert_eq!(calc.highest_pubkey_from_bin(1), expected_highest);
+
+        // bin 2
+        let expected_lowest = Pubkey::from([
+            0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ]);
+        let expected_highest = Pubkey::from([
+            0xBF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF,
+        ]);
+        assert_eq!(calc.lowest_pubkey_from_bin(2), expected_lowest);
+        assert_eq!(calc.highest_pubkey_from_bin(2), expected_highest);
+
+        // bin 3
+        let expected_lowest = Pubkey::from([
+            0xC0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ]);
+        let expected_highest = Pubkey::from([
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF,
+        ]);
+        assert_eq!(calc.lowest_pubkey_from_bin(3), expected_lowest);
+        assert_eq!(calc.highest_pubkey_from_bin(3), expected_highest);
+    }
+
+    #[test]
     fn test_pubkey_bins() {
         for i in 0..=24 {
             let bins = 2u32.pow(i);

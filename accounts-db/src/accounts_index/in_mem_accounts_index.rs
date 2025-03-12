@@ -240,16 +240,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
         let start = match range.start_bound() {
-            Bound::Included(bound) | Bound::Excluded(bound) => *bound,
-            Bound::Unbounded => Pubkey::from([0; 32]),
+            Bound::Included(bound) | Bound::Excluded(bound) => bound,
+            Bound::Unbounded => &Pubkey::from([0; 32]),
         };
 
         let end = match range.end_bound() {
-            Bound::Included(bound) | Bound::Excluded(bound) => *bound,
-            Bound::Unbounded => Pubkey::from([0xff; 32]),
+            Bound::Included(bound) | Bound::Excluded(bound) => bound,
+            Bound::Unbounded => &Pubkey::from([0xff; 32]),
         };
 
-        if start > self.highest_pubkey || end < self.lowest_pubkey {
+        if start > &self.highest_pubkey || end < &self.lowest_pubkey {
             // range does not contain any of the keys in this bin. No need to
             // load and scan the map.
             // Example:
@@ -272,13 +272,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             .read()
             .unwrap()
             .iter()
-            .filter_map(|(k, v)| {
-                if range.contains(k) {
-                    Some((*k, Arc::clone(v)))
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(k, v)| range.contains(k).then(|| (*k, Arc::clone(v))))
             .collect();
         self.hold_range_in_memory(range, false);
         Self::update_stat(&self.stats().items, 1);
