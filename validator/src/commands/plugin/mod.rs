@@ -4,11 +4,13 @@ use {
     std::path::Path,
 };
 
+const COMMAND: &str = "plugin";
+
 pub fn command<'a>() -> App<'a, 'a> {
     let name_arg = Arg::with_name("name").required(true).takes_value(true);
     let config_arg = Arg::with_name("config").required(true).takes_value(true);
 
-    SubCommand::with_name("plugin")
+    SubCommand::with_name(COMMAND)
         .about("Manage and view geyser plugins")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .setting(AppSettings::InferSubcommands)
