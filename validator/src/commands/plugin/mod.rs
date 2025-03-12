@@ -19,6 +19,20 @@ impl FromClapArgMatches for PluginUnloadArgs {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct PluginLoadArgs {
+    pub config: String,
+}
+
+impl FromClapArgMatches for PluginLoadArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+        Ok(PluginLoadArgs {
+            config: value_t!(matches, "config", String)
+                .map_err(|_| "invalid config".to_string())?,
+        })
+    }
+}
+
 pub fn command<'a>() -> App<'a, 'a> {
     let name_arg = Arg::with_name("name").required(true).takes_value(true);
     let config_arg = Arg::with_name("config").required(true).takes_value(true);
@@ -79,13 +93,14 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
             println!("Successfully unloaded plugin: {name}");
         }
         ("load", Some(subcommand_matches)) => {
-            if let Ok(config) = value_t!(subcommand_matches, "config", String) {
-                let admin_client = admin_rpc_service::connect(ledger_path);
-                let name = admin_rpc_service::runtime()
-                    .block_on(async { admin_client.await?.load_plugin(config.clone()).await })
-                    .map_err(|err| format!("load plugin request failed {config}: {err:?}"))?;
-                println!("Successfully loaded plugin: {name}");
-            }
+            let PluginLoadArgs { config } =
+                PluginLoadArgs::from_clap_arg_match(subcommand_matches)?;
+
+            let admin_client = admin_rpc_service::connect(ledger_path);
+            let name = admin_rpc_service::runtime()
+                .block_on(async { admin_client.await?.load_plugin(config.clone()).await })
+                .map_err(|err| format!("load plugin request failed {config}: {err:?}"))?;
+            println!("Successfully loaded plugin: {name}");
         }
         ("reload", Some(subcommand_matches)) => {
             if let Ok(name) = value_t!(subcommand_matches, "name", String) {
@@ -130,6 +145,27 @@ mod tests {
             args,
             PluginUnloadArgs {
                 name: "testname".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_plugin_load_default() {
+        let app = command();
+        let matches = app.get_matches_from_safe(vec![COMMAND, "load"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_plugin_load_with_config() {
+        let app = command();
+        let matches = app.get_matches_from(vec![COMMAND, "load", "testconfig"]);
+        let subcommand_matches = matches.subcommand_matches("load").unwrap();
+        let args = PluginLoadArgs::from_clap_arg_match(subcommand_matches).unwrap();
+        assert_eq!(
+            args,
+            PluginLoadArgs {
+                config: "testconfig".to_string(),
             }
         );
     }
