@@ -74,6 +74,8 @@ pub enum TransactionSchedulingError {
     UnschedulableConflicts,
     /// Thread is not allowed to be scheduled on at this time.
     UnschedulableThread,
+    /// Transaction was skipped by pre-filter logic.
+    Skipped,
 }
 
 /// Given the schedulable `thread_set`, select the thread with the least amount

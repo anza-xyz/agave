@@ -197,6 +197,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         let mut num_sent: usize = 0;
         let mut num_unschedulable_conflicts: usize = 0;
         let mut num_unschedulable_threads: usize = 0;
+        let mut num_skipped_retry: usize = 0;
         while num_scanned < self.config.max_scanned_transactions_per_scheduling_pass {
             // If nothing is in the main-queue of the `PrioGraph` then there's nothing left to schedule.
             if self.prio_graph.is_empty() {
@@ -237,6 +238,10 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                     }
                     Err(TransactionSchedulingError::UnschedulableThread) => {
                         num_unschedulable_threads += 1;
+                        unschedulable_ids.push(id);
+                    }
+                    Err(TransactionSchedulingError::Skipped) => {
+                        num_skipped_retry += 1;
                         unschedulable_ids.push(id);
                     }
                     Ok(TransactionSchedulingInfo {
@@ -331,6 +336,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
             num_scheduled,
             num_unschedulable_conflicts,
             num_unschedulable_threads,
+            num_skipped_retry,
             num_filtered_out,
             filter_time_us: total_filter_time_us,
         })
@@ -370,6 +376,7 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
 ) -> Result<TransactionSchedulingInfo<Tx>, TransactionSchedulingError> {
     match pre_lock_filter(transaction_state) {
         PreLockFilterAction::AttemptToSchedule => {}
+        PreLockFilterAction::SkipAndRetain => return Err(TransactionSchedulingError::Skipped),
     }
 
     // Check if this transaction conflicts with any blocked transactions

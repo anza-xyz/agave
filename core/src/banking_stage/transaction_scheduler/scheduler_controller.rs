@@ -147,7 +147,13 @@ where
                             MAX_PROCESSING_AGE,
                         )
                     },
-                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
+                    |state| {
+                        if state.last_tried_slot() == Some(bank_start.working_bank.slot()) {
+                            PreLockFilterAction::SkipAndRetain
+                        } else {
+                            PreLockFilterAction::AttemptToSchedule
+                        }
+                    }
                 )?);
 
                 self.count_metrics.update(|count_metrics| {
