@@ -1,5 +1,5 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs, commands},
+    crate::{admin_rpc_service, commands},
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::{is_parsable, is_valid_percentage},
     std::path::Path,
@@ -7,7 +7,10 @@ use {
 
 const COMMAND: &str = "exit";
 
-pub fn command(default_args: &DefaultArgs) -> App<'_, '_> {
+const DEFAULT_MIN_IDLE_TIME: &str = "10";
+const DEFAULT_MAX_DELINQUENT_STAKE: &str = "5";
+
+pub fn command<'a>() -> App<'a, 'a> {
     SubCommand::with_name(COMMAND)
         .about("Send an exit request to the validator")
         .arg(
@@ -32,7 +35,7 @@ pub fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .takes_value(true)
                 .validator(is_parsable::<usize>)
                 .value_name("MINUTES")
-                .default_value(&default_args.exit_min_idle_time)
+                .default_value(DEFAULT_MIN_IDLE_TIME)
                 .help(
                     "Minimum time that the validator should not be leader before restarting",
                 ),
@@ -42,7 +45,7 @@ pub fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .long("max-delinquent-stake")
                 .takes_value(true)
                 .validator(is_valid_percentage)
-                .default_value(&default_args.exit_max_delinquent_stake)
+                .default_value(DEFAULT_MAX_DELINQUENT_STAKE)
                 .value_name("PERCENT")
                 .help("The maximum delinquent stake % permitted for an exit"),
         )
