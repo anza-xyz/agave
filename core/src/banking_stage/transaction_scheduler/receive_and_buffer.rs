@@ -47,6 +47,9 @@ use {
     },
 };
 
+#[derive(Debug)]
+pub(crate) struct DisconnectedError;
+
 pub(crate) trait ReceiveAndBuffer {
     type Transaction: TransactionWithMeta + Send + Sync;
     type Container: StateContainer<Self::Transaction> + Send + Sync;
@@ -59,7 +62,7 @@ pub(crate) trait ReceiveAndBuffer {
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, ()>;
+    ) -> Result<usize, DisconnectedError>;
 }
 
 pub(crate) struct SanitizedTransactionReceiveAndBuffer {
@@ -79,7 +82,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, ()> {
+    ) -> Result<usize, DisconnectedError> {
         const MAX_RECEIVE_PACKETS: usize = 5_000;
         const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(10);
         let (recv_timeout, should_buffer) = match decision {
@@ -135,7 +138,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                 num_received_packets
             }
             Err(RecvTimeoutError::Timeout) => 0,
-            Err(RecvTimeoutError::Disconnected) => return Err(()),
+            Err(RecvTimeoutError::Disconnected) => return Err(DisconnectedError),
         };
 
         Ok(num_received)
@@ -295,7 +298,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, ()> {
+    ) -> Result<usize, DisconnectedError> {
         let (root_bank, working_bank) = {
             let bank_forks = self.bank_forks.read().unwrap();
             let root_bank = bank_forks.root_bank();
@@ -337,7 +340,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                 }
                 Err(RecvTimeoutError::Timeout) => return Ok(num_received),
                 Err(RecvTimeoutError::Disconnected) => {
-                    return received_message.then_some(num_received).ok_or(());
+                    return received_message
+                        .then_some(num_received)
+                        .ok_or(DisconnectedError);
                 }
             }
         }
@@ -358,7 +363,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                 }
                 Err(TryRecvError::Empty) => return Ok(num_received),
                 Err(TryRecvError::Disconnected) => {
-                    return received_message.then_some(num_received).ok_or(());
+                    return received_message
+                        .then_some(num_received)
+                        .ok_or(DisconnectedError);
                 }
             }
         }
