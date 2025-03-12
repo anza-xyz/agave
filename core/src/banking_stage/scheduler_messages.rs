@@ -46,7 +46,7 @@ pub struct ConsumeWork<Tx> {
 /// Message: [Worker -> Scheduler]
 /// Processed transactions.
 pub struct FinishedConsumeWork<Tx> {
-    /// Slot that work was attempted on. `None` if sent back wthout attempt.
+    /// Slot that work was attempted on. `None` if sent back without attempt.
     pub slot: Option<Slot>,
     pub work: ConsumeWork<Tx>,
     pub retryable_indexes: Vec<usize>,
