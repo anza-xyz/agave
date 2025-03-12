@@ -50,6 +50,8 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
 pub(crate) enum PreLockFilterAction {
     /// Attempt to schedule the transaction.
     AttemptToSchedule,
+    /// Skip the transaction but do not drop it.
+    SkipAndRetain,
 }
 
 /// Metrics from scheduling transactions.
@@ -67,6 +69,8 @@ pub(crate) struct SchedulingSummary {
     pub num_unschedulable_conflicts: usize,
     /// Number of transactions that were skipped due to thread capacity.
     pub num_unschedulable_threads: usize,
+    /// Number of transactions that were skipped due too recently attempted.
+    pub num_skipped_retry: usize,
     /// Number of transactions that were dropped due to filter.
     pub num_filtered_out: usize,
     /// Time spent filtering transactions
