@@ -112,21 +112,32 @@ pub enum SchedulingMode {
     BlockProduction,
 }
 
+/// This type alias is intentionally not exposed to public API with `pub`. The choice of explicit
+/// `u32`, rather than more neutral `usize`, is an implementation detail to squeeze out CPU-cache
+/// footprint as much as possible.
+/// Note that usage of `u32` is safe because it's expected `SchedulingStateMachine` to be
+/// `reinitialize()`-d rather quickly after short period: 1 slot for block verification, 4 (or up to
+/// 8) consecutive slots for block production.
+type CounterInner = u32;
+
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
 mod utils {
-    use std::{
-        any::{self, TypeId},
-        cell::{RefCell, UnsafeCell},
-        collections::BTreeSet,
-        marker::PhantomData,
-        thread,
+    use {
+        crate::CounterInner,
+        std::{
+            any::{self, TypeId},
+            cell::{RefCell, UnsafeCell},
+            collections::BTreeSet,
+            marker::PhantomData,
+            thread,
+        },
     };
 
     /// A really tiny counter to hide `.checked_{add,sub}` all over the place.
     ///
-    /// It's caller's reponsibility to ensure this (backed by [`u32`]) never overflow.
+    /// It's caller's reponsibility to ensure this (backed by [`CounterInner`]) never overflow.
     #[derive(Debug, Clone, Copy)]
-    pub(super) struct ShortCounter(u32);
+    pub(super) struct ShortCounter(CounterInner);
 
     impl ShortCounter {
         pub(super) fn zero() -> Self {
@@ -145,7 +156,7 @@ mod utils {
             self.0 == 0
         }
 
-        pub(super) fn current(&self) -> u32 {
+        pub(super) fn current(&self) -> CounterInner {
             self.0
         }
 
@@ -627,7 +638,7 @@ pub struct SchedulingStateMachine {
     unblocked_task_queue: VecDeque<Task>,
     active_task_count: ShortCounter,
     executing_task_count: ShortCounter,
-    max_executing_task_count: u32,
+    max_executing_task_count: CounterInner,
     handled_task_count: ShortCounter,
     unblocked_task_count: ShortCounter,
     total_task_count: ShortCounter,
@@ -661,19 +672,23 @@ impl SchedulingStateMachine {
         self.unblocked_task_queue.len()
     }
 
-    pub fn active_task_count(&self) -> u32 {
+    #[cfg(test)]
+    fn active_task_count(&self) -> CounterInner {
         self.active_task_count.current()
     }
 
-    pub fn handled_task_count(&self) -> u32 {
+    #[cfg(test)]
+    fn handled_task_count(&self) -> CounterInner {
         self.handled_task_count.current()
     }
 
-    pub fn unblocked_task_count(&self) -> u32 {
+    #[cfg(test)]
+    fn unblocked_task_count(&self) -> CounterInner {
         self.unblocked_task_count.current()
     }
 
-    pub fn total_task_count(&self) -> u32 {
+    #[cfg(test)]
+    fn total_task_count(&self) -> CounterInner {
         self.total_task_count.current()
     }
 
@@ -934,16 +949,21 @@ impl SchedulingStateMachine {
     pub unsafe fn exclusively_initialize_current_thread_for_scheduling(
         max_executing_task_count: Option<usize>,
     ) -> Self {
+        // As documented at `CounterInner`, don't expose rather opinionated choice of unsigned
+        // integer type (`u32`) to outer world. So, take more conventional `usize` and convert it
+        // to `ShortCounter` here while uncontroversially treating `None` as no limit effectively.
+        let max_executing_task_count = max_executing_task_count
+            .unwrap_or(CounterInner::MAX as usize)
+            .try_into()
+            .unwrap();
+
         Self {
             // It's very unlikely this is desired to be configurable, like
             // `UsageQueueInner::blocked_usages_from_tasks`'s cap.
             unblocked_task_queue: VecDeque::with_capacity(1024),
             active_task_count: ShortCounter::zero(),
             executing_task_count: ShortCounter::zero(),
-            max_executing_task_count: max_executing_task_count
-                .unwrap_or(u32::MAX as usize)
-                .try_into()
-                .unwrap(),
+            max_executing_task_count,
             handled_task_count: ShortCounter::zero(),
             unblocked_task_count: ShortCounter::zero(),
             total_task_count: ShortCounter::zero(),
