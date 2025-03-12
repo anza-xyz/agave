@@ -6,7 +6,7 @@ use {
     std::{fs::File, io::Write, path::PathBuf},
 };
 
-/// Prints a hexdump of a given byte buffer into stdout
+/// Prints a hexdump of a given byte buffer into stderr
 pub fn hexdump(bytes: &[u8]) -> anyhow::Result<()> {
     hxdmp::hexdump(bytes, &mut std::io::stderr())?;
     std::io::stderr().write_all(b"\n")?;
@@ -17,6 +17,7 @@ pub fn hexdump(bytes: &[u8]) -> anyhow::Result<()> {
 pub struct PcapReader {
     reader: PcapNgReader<File>,
 }
+
 impl PcapReader {
     pub fn new(filename: &PathBuf) -> anyhow::Result<Self> {
         let file_in = File::open(filename).with_context(|| format!("opening file {filename:?}"))?;
@@ -57,6 +58,15 @@ impl Iterator for PcapReader {
     }
 }
 
+/// Helper function to validate packet parsing capabilities across agave.
+/// It will read all packets from file identified by `filename`, then parse them
+/// using parse_packet, re-serialize using `serialize_packet`, and finally compare
+/// whether the original packet matches the reserialized version.
+/// If parser returns errors, the test fails and offending packet is reported.
+/// If any differences are found using `custom_compare`, they are reported as errors.
+///
+/// Note that no matter how many packets are present in a given file, one can never be 100%
+/// certain this will catch all wire format issues.
 pub fn validate_packet_format<T>(
     filename: &PathBuf,
     parse_packet: fn(&[u8]) -> anyhow::Result<T>,

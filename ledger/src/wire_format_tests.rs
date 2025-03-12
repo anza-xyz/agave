@@ -2,7 +2,6 @@
 
 #[cfg(test)]
 mod tests {
-
     use {
         crate::shred::Shred,
         solana_net_utils::tooling_for_tests::{hexdump, validate_packet_format},
@@ -61,11 +60,12 @@ mod tests {
         println!("===");
         Ok(())
     }
-    /// Test the ability of gossip parsers to understand and re-serialize a corpus of
+
+    /// Test the ability of turbine parser to understand and re-serialize a corpus of
     /// packets captured from mainnet.
     ///
     /// This test requires external files and is not run by default.
-    /// Export the "GOSSIP_WIRE_FORMAT_PACKETS" variable to run this test
+    /// Export the "TURBINE_WIRE_FORMAT_PACKETS" env variable to run this test.
     #[test]
     fn test_turbine_wire_format() {
         solana_logger::setup();
