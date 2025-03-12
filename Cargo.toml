@@ -26,6 +26,9 @@ opt-level = 1
 [profile.dev.package."solana-gossip"]
 opt-level = 0
 
+[profile.dev.package."solana-core"]
+opt-level = 0
+
 [workspace]
 members = [
     "account-decoder",
