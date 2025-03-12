@@ -6,7 +6,7 @@ use {
     },
     solana_measure::measure_us,
     solana_runtime::{
-        bank::{Bank, ProcessedTransactionCounts, TransactionBalancesSet},
+        bank::{Bank, ProcessedTransactionCounts},
         bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::TransactionBatch,
@@ -15,6 +15,7 @@ use {
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{pubkey::Pubkey, saturating_add_assign},
     solana_svm::{
+        transaction_balances::TransactionBalancesSet,
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::{
             TransactionProcessingResult, TransactionProcessingResultExtensions,

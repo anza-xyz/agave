@@ -90,14 +90,19 @@ pub struct ExecutionRecordingConfig {
     pub enable_cpi_recording: bool,
     pub enable_log_recording: bool,
     pub enable_return_data_recording: bool,
+    pub enable_balance_recording: bool,
 }
 
+// HANA i need to look at ALL callers of this... if the rpc thing Does Not Belong
+// as in, are there things that legit want to enable the three existing ones but NOT the fourth
+// ooh promising tho, consumer uses this in a way that is *already correct* for our new intent
 impl ExecutionRecordingConfig {
     pub fn new_single_setting(option: bool) -> Self {
         ExecutionRecordingConfig {
             enable_return_data_recording: option,
             enable_log_recording: option,
             enable_cpi_recording: option,
+            enable_balance_recording: option,
         }
     }
 }

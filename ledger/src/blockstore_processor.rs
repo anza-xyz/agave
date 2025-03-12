@@ -27,7 +27,7 @@ use {
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
-        bank::{Bank, PreCommitResult, TransactionBalancesSet},
+        bank::{Bank, PreCommitResult},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -52,6 +52,7 @@ use {
         },
     },
     solana_svm::{
+        transaction_balances::TransactionBalancesSet,
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
         transaction_processor::ExecutionRecordingConfig,
