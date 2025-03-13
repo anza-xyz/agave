@@ -1,0 +1,13 @@
+[package]
+name = "crds_node"
+version = "0.1.0"
+edition = "2021"
+description = "A standalone CRDS node for simulations and tests"
+
+[dependencies]
+clap = "4.5.32"
+solana-gossip.workspace = true
+solana-keypair.workspace = true
+solana-pubkey.workspace = true
+solana-signer.workspace = true
+solana-streamer.workspace = true
