@@ -2,45 +2,6 @@
 //! network. There are two types of shreds: data and coding. Data shreds contain entry information
 //! while coding shreds provide redundancy to protect against dropped network packets (erasures).
 //!
-//! +---------------------------------------------------------------------------------------------+
-//! | Data Shred                                                                                  |
-//! +---------------------------------------------------------------------------------------------+
-//! | common       | data       | payload                                                         |
-//! | header       | header     |                                                                 |
-//! |+---+---+---  |+---+---+---|+----------------------------------------------------------+----+|
-//! || s | s | .   || p | f | s || data (ie ledger entries)                                 | r  ||
-//! || i | h | .   || a | l | i ||                                                          | e  ||
-//! || g | r | .   || r | a | z || See notes immediately after shred diagrams for an        | s  ||
-//! || n | e |     || e | g | e || explanation of the "restricted" section in this payload  | t  ||
-//! || a | d |     || n | s |   ||                                                          | r  ||
-//! || t |   |     || t |   |   ||                                                          | i  ||
-//! || u | t |     ||   |   |   ||                                                          | c  ||
-//! || r | y |     || o |   |   ||                                                          | t  ||
-//! || e | p |     || f |   |   ||                                                          | e  ||
-//! ||   | e |     || f |   |   ||                                                          | d  ||
-//! |+---+---+---  |+---+---+---+|----------------------------------------------------------+----+|
-//! +---------------------------------------------------------------------------------------------+
-//!
-//! +---------------------------------------------------------------------------------------------+
-//! | Coding Shred                                                                                |
-//! +---------------------------------------------------------------------------------------------+
-//! | common       | coding     | payload                                                         |
-//! | header       | header     |                                                                 |
-//! |+---+---+---  |+---+---+---+----------------------------------------------------------------+|
-//! || s | s | .   || n | n | p || data (encoded data shred data)                                ||
-//! || i | h | .   || u | u | o ||                                                               ||
-//! || g | r | .   || m | m | s ||                                                               ||
-//! || n | e |     ||   |   | i ||                                                               ||
-//! || a | d |     || d | c | t ||                                                               ||
-//! || t |   |     ||   |   | i ||                                                               ||
-//! || u | t |     || s | s | o ||                                                               ||
-//! || r | y |     || h | h | n ||                                                               ||
-//! || e | p |     || r | r |   ||                                                               ||
-//! ||   | e |     || e | e |   ||                                                               ||
-//! ||   |   |     || d | d |   ||                                                               ||
-//! |+---+---+---  |+---+---+---+|+--------------------------------------------------------------+|
-//! +---------------------------------------------------------------------------------------------+
-//!
 //! Notes:
 //! a) Coding shreds encode entire data shreds: both of the headers AND the payload.
 //! b) Coding shreds require their own headers for identification and etc.
@@ -374,8 +335,6 @@ use dispatch;
 
 impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
-    #[cfg(feature = "dev-context-only-utils")]
-    dispatch!(fn common_header_mut(&mut self) -> &mut ShredCommonHeader);
     dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<SignedData, Error>);
 
@@ -398,17 +357,15 @@ impl Shred {
         packet.meta_mut().size = size;
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn set_slot(&mut self, slot: u64) {
-        self.common_header_mut().slot = slot;
+    pub fn set_slot(&mut self, _slot: u64) {
+        unreachable!("This function should not be used anymore");
+    }
+
+    pub fn set_index(&mut self, _index: u32) {
+        unreachable!("This function should not be used anymore");
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn set_index(&mut self, index: u32) {
-        self.common_header_mut().index = index;
-    }
-
-    // TODO: Should this sanitize output?
     pub fn new_from_data(
         slot: Slot,
         index: u32,

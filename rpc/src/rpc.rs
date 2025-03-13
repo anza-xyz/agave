@@ -4467,7 +4467,6 @@ pub fn populate_blockstore_for_tests(
         parent_slot,
         true,
         0,
-        true, // merkle_variant
     );
     blockstore.insert_shreds(shreds, None, false).unwrap();
     blockstore.set_roots(std::iter::once(&slot)).unwrap();

@@ -196,46 +196,6 @@ impl ShredData {
     pub(super) const CAPACITY: usize =
         Self::SIZE_OF_PAYLOAD - Self::SIZE_OF_HEADERS - ShredCode::SIZE_OF_HEADERS;
 
-    pub(super) fn new_from_data(
-        slot: Slot,
-        index: u32,
-        parent_offset: u16,
-        data: &[u8],
-        flags: ShredFlags,
-        reference_tick: u8,
-        version: u16,
-        fec_set_index: u32,
-    ) -> Self {
-        let mut payload = vec![0; Self::SIZE_OF_PAYLOAD];
-        let common_header = ShredCommonHeader {
-            signature: Signature::default(),
-            shred_variant: ShredVariant::LegacyData,
-            slot,
-            index,
-            version,
-            fec_set_index,
-        };
-        let size = (data.len() + Self::SIZE_OF_HEADERS) as u16;
-        let flags = flags | ShredFlags::from_reference_tick(reference_tick);
-        let data_header = DataShredHeader {
-            parent_offset,
-            flags,
-            size,
-        };
-        let mut cursor = Cursor::new(&mut payload[..]);
-        bincode::serialize_into(&mut cursor, &common_header).unwrap();
-        bincode::serialize_into(&mut cursor, &data_header).unwrap();
-        // TODO: Need to check if data is too large!
-        let offset = cursor.position() as usize;
-        debug_assert_eq!(offset, Self::SIZE_OF_HEADERS);
-        payload[offset..offset + data.len()].copy_from_slice(data);
-        Self {
-            common_header,
-            data_header,
-            payload: Payload::from(payload),
-        }
-    }
-
     // Given shred payload and DataShredHeader.size, returns the slice storing
     // ledger entries in the shred.
     pub(super) fn get_data(shred: &[u8], size: u16) -> Result<&[u8], Error> {
@@ -315,87 +275,6 @@ impl ShredCode {
             common_header,
             coding_header,
             payload: Payload::from(payload),
-        }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use {
-        super::*,
-        crate::shred::{ShredType, MAX_DATA_SHREDS_PER_SLOT},
-        assert_matches::assert_matches,
-    };
-
-    #[test]
-    fn test_sanitize_data_shred() {
-        let data = [0xa5u8; ShredData::CAPACITY];
-        let mut shred = ShredData::new_from_data(
-            420, // slot
-            19,  // index
-            5,   // parent_offset
-            &data,
-            ShredFlags::DATA_COMPLETE_SHRED,
-            3,  // reference_tick
-            1,  // version
-            16, // fec_set_index
-        );
-        assert_matches!(shred.sanitize(), Ok(()));
-        // Corrupt shred by making it too large
-        {
-            let mut shred = shred.clone();
-            shred.payload.push(10u8);
-            assert_matches!(shred.sanitize(), Err(Error::InvalidPayloadSize(1229)));
-        }
-        {
-            let mut shred = shred.clone();
-            shred.data_header.size += 1;
-            assert_matches!(
-                shred.sanitize(),
-                Err(Error::InvalidDataSize {
-                    size: 1140,
-                    payload: 1228,
-                })
-            );
-        }
-        {
-            let mut shred = shred.clone();
-            shred.data_header.size = 0;
-            assert_matches!(
-                shred.sanitize(),
-                Err(Error::InvalidDataSize {
-                    size: 0,
-                    payload: 1228,
-                })
-            );
-        }
-        {
-            let mut shred = shred.clone();
-            shred.common_header.index = MAX_DATA_SHREDS_PER_SLOT as u32;
-            assert_matches!(
-                shred.sanitize(),
-                Err(Error::InvalidShredIndex(ShredType::Data, 32768))
-            );
-        }
-        {
-            let mut shred = shred.clone();
-            shred.data_header.flags |= ShredFlags::LAST_SHRED_IN_SLOT;
-            assert_matches!(shred.sanitize(), Ok(()));
-            shred.data_header.flags &=
-                ShredFlags::from_bits_retain(!ShredFlags::DATA_COMPLETE_SHRED.bits());
-            assert_matches!(shred.sanitize(), Err(Error::InvalidShredFlags(131u8)));
-            shred.data_header.flags |= ShredFlags::SHRED_TICK_REFERENCE_MASK;
-            assert_matches!(shred.sanitize(), Err(Error::InvalidShredFlags(191u8)));
-        }
-        {
-            shred.data_header.size = shred.payload().len() as u16 + 1;
-            assert_matches!(
-                shred.sanitize(),
-                Err(Error::InvalidDataSize {
-                    size: 1229,
-                    payload: 1228,
-                })
-            );
         }
     }
 }

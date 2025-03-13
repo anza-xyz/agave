@@ -217,6 +217,7 @@ impl LastFECSetCheckResults {
     }
 }
 
+#[derive(Debug)]
 pub struct InsertResults {
     completed_data_set_infos: Vec<CompletedDataSetInfo>,
     duplicate_shreds: Vec<PossibleDuplicateShred>,
@@ -1415,6 +1416,7 @@ impl Blockstore {
             None, // (reed_solomon_cache, retransmit_sender)
             &mut BlockstoreInsertionMetrics::default(),
         )?;
+        dbg!(&insert_results);
         Ok(insert_results.completed_data_set_infos)
     }
 
@@ -7214,14 +7216,9 @@ pub mod tests {
 
         let entries = create_ticks(100, 0, Hash::default());
         let mut shreds = entries_to_test_shreds(&entries, slot, 0, true, 0);
-        assert!(shreds.len() > 2);
-        shreds.drain(2..);
-
         const ONE: u64 = 1;
         const OTHER: u64 = 4;
-
-        shreds[0].set_index(ONE as u32);
-        shreds[1].set_index(OTHER as u32);
+        let shreds = vec![shreds.remove(OTHER as usize), shreds.remove(ONE as usize)];
 
         // Insert one shred at index = first_index
         blockstore.insert_shreds(shreds, None, false).unwrap();

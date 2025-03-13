@@ -563,9 +563,8 @@ pub mod test {
             true, // is_last_in_slot
             // chained_merkle_root
             Some(Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index,
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index,
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
