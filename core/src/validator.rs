@@ -90,7 +90,7 @@ use {
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
-        rpc_service::{ClientOption, JsonRpcService, JsonRpcServiceBuilder},
+        rpc_service::{ClientOption, JsonRpcService, JsonRpcServiceConfig},
         rpc_subscriptions::RpcSubscriptions,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
@@ -1164,9 +1164,9 @@ impl Validator {
                 None
             };
 
-            let rpc_builder = JsonRpcServiceBuilder {
+            let rpc_svc_config = JsonRpcServiceConfig {
                 rpc_addr,
-                config: config.rpc_config.clone(),
+                rpc_config: config.rpc_config.clone(),
                 snapshot_config: Some(config.snapshot_config.clone()),
                 bank_forks: bank_forks.clone(),
                 block_commitment_cache: block_commitment_cache.clone(),
@@ -1192,7 +1192,8 @@ impl Validator {
                     ClientOption::ConnectionCache(connection_cache.clone())
                 },
             };
-            let json_rpc_service = rpc_builder.build().map_err(ValidatorError::Other)?;
+            let json_rpc_service =
+                JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
 
             let pubsub_service = if !config.rpc_config.full_api {
                 None

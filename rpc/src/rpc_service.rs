@@ -337,13 +337,12 @@ fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<Strin
     }
 }
 
-/// [`JsonRpcServiceBuilder`] is a helper structure that simplifies the creation
-/// of a [`JsonRpcService`] with a target TPU client. It supports two types of clients:
-/// * [`ConnectionCacheClient`], which is based on [`ConnectionCache`].
-/// * [`TpuClientNextClient`], which is based on the `tpu-client-next` crate.
-pub struct JsonRpcServiceBuilder<'a> {
+/// [`JsonRpcServiceConfig`] is a helper structure that simplifies the creation
+/// of a [`JsonRpcService`] with a target TPU client specified by
+/// `client_option`.
+pub struct JsonRpcServiceConfig<'a> {
     pub rpc_addr: SocketAddr,
-    pub config: JsonRpcConfig,
+    pub rpc_config: JsonRpcConfig,
     pub snapshot_config: Option<SnapshotConfig>,
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
@@ -366,29 +365,31 @@ pub struct JsonRpcServiceBuilder<'a> {
     pub client_option: ClientOption<'a>,
 }
 
+/// [`ClientOption`] enum represents the available client types for TPU
+/// communication:
+/// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
+///       connections efficiently.
+/// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate and
+///       requires a reference to a [`Keypair`].
 pub enum ClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
     TpuClientNext(&'a Keypair),
 }
 
-impl JsonRpcServiceBuilder<'_> {
-    /// The `build` method creates an instance of [`JsonRpcService`]. If
-    /// `connection_cache` is provided, the service will use a TPU client based
-    /// on the connection_cache crate. Otherwise, it will internally use
-    /// [`TpuClientNextClient`] which uses the `identity_keypair`.
-    pub fn build(self) -> Result<JsonRpcService, String> {
+impl JsonRpcService {
+    pub fn new_with_config(config: JsonRpcServiceConfig) -> Result<Self, String> {
         let runtime = service_runtime(
-            self.config.rpc_threads,
-            self.config.rpc_blocking_threads,
-            self.config.rpc_niceness_adj,
+            config.rpc_config.rpc_threads,
+            config.rpc_config.rpc_blocking_threads,
+            config.rpc_config.rpc_niceness_adj,
         );
-        let leader_info = self
+        let leader_info = config
             .poh_recorder
-            .map(|recorder| ClusterTpuInfo::new(self.cluster_info.clone(), recorder));
+            .map(|recorder| ClusterTpuInfo::new(config.cluster_info.clone(), recorder));
 
-        match self.client_option {
+        match config.client_option {
             ClientOption::ConnectionCache(connection_cache) => {
-                let my_tpu_address = self
+                let my_tpu_address = config
                     .cluster_info
                     .my_contact_info()
                     .tpu(connection_cache.protocol())
@@ -399,38 +400,38 @@ impl JsonRpcServiceBuilder<'_> {
                 let client = ConnectionCacheClient::new(
                     connection_cache,
                     my_tpu_address,
-                    self.send_transaction_service_config.tpu_peers.clone(),
+                    config.send_transaction_service_config.tpu_peers.clone(),
                     leader_info,
-                    self.send_transaction_service_config.leader_forward_count,
+                    config.send_transaction_service_config.leader_forward_count,
                 );
-                let json_rpc_service = JsonRpcService::new_with_client(
-                    self.rpc_addr,
-                    self.config,
-                    self.snapshot_config,
-                    self.bank_forks,
-                    self.block_commitment_cache,
-                    self.blockstore,
-                    self.cluster_info,
-                    self.genesis_hash,
-                    self.ledger_path.as_path(),
-                    self.validator_exit,
-                    self.exit,
-                    self.override_health_check,
-                    self.startup_verification_complete,
-                    self.optimistically_confirmed_bank,
-                    self.send_transaction_service_config,
-                    self.max_slots,
-                    self.leader_schedule_cache,
+                let json_rpc_service = Self::new_with_client(
+                    config.rpc_addr,
+                    config.rpc_config,
+                    config.snapshot_config,
+                    config.bank_forks,
+                    config.block_commitment_cache,
+                    config.blockstore,
+                    config.cluster_info,
+                    config.genesis_hash,
+                    config.ledger_path.as_path(),
+                    config.validator_exit,
+                    config.exit,
+                    config.override_health_check,
+                    config.startup_verification_complete,
+                    config.optimistically_confirmed_bank,
+                    config.send_transaction_service_config,
+                    config.max_slots,
+                    config.leader_schedule_cache,
                     client.clone(),
-                    self.max_complete_transaction_status_slot,
-                    self.max_complete_rewards_slot,
-                    self.prioritization_fee_cache,
+                    config.max_complete_transaction_status_slot,
+                    config.max_complete_rewards_slot,
+                    config.prioritization_fee_cache,
                     runtime,
                 )?;
                 Ok(json_rpc_service)
             }
             ClientOption::TpuClientNext(identity_keypair) => {
-                let my_tpu_address = self
+                let my_tpu_address = config
                     .cluster_info
                     .my_contact_info()
                     .tpu(Protocol::QUIC)
@@ -441,43 +442,41 @@ impl JsonRpcServiceBuilder<'_> {
                 let client = TpuClientNextClient::new(
                     runtime.handle().clone(),
                     my_tpu_address,
-                    self.send_transaction_service_config.tpu_peers.clone(),
+                    config.send_transaction_service_config.tpu_peers.clone(),
                     leader_info,
-                    self.send_transaction_service_config.leader_forward_count,
+                    config.send_transaction_service_config.leader_forward_count,
                     Some(identity_keypair),
                 );
 
-                let json_rpc_service = JsonRpcService::new_with_client(
-                    self.rpc_addr,
-                    self.config.clone(),
-                    self.snapshot_config,
-                    self.bank_forks.clone(),
-                    self.block_commitment_cache.clone(),
-                    self.blockstore.clone(),
-                    self.cluster_info.clone(),
-                    self.genesis_hash,
-                    self.ledger_path.as_path(),
-                    self.validator_exit,
-                    self.exit,
-                    self.override_health_check,
-                    self.startup_verification_complete,
-                    self.optimistically_confirmed_bank,
-                    self.send_transaction_service_config,
-                    self.max_slots,
-                    self.leader_schedule_cache,
+                let json_rpc_service = Self::new_with_client(
+                    config.rpc_addr,
+                    config.rpc_config.clone(),
+                    config.snapshot_config,
+                    config.bank_forks.clone(),
+                    config.block_commitment_cache.clone(),
+                    config.blockstore.clone(),
+                    config.cluster_info.clone(),
+                    config.genesis_hash,
+                    config.ledger_path.as_path(),
+                    config.validator_exit,
+                    config.exit,
+                    config.override_health_check,
+                    config.startup_verification_complete,
+                    config.optimistically_confirmed_bank,
+                    config.send_transaction_service_config,
+                    config.max_slots,
+                    config.leader_schedule_cache,
                     client.clone(),
-                    self.max_complete_transaction_status_slot,
-                    self.max_complete_rewards_slot,
-                    self.prioritization_fee_cache,
+                    config.max_complete_transaction_status_slot,
+                    config.max_complete_rewards_slot,
+                    config.prioritization_fee_cache,
                     runtime,
                 )?;
                 Ok(json_rpc_service)
             }
         }
     }
-}
 
-impl JsonRpcService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         rpc_addr: SocketAddr,
