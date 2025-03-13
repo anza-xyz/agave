@@ -82,22 +82,22 @@ test-stable-sbf)
   # SBPFv0 program tests
   _ make -C programs/sbf test-v0
   _ make -C programs/sbf clean-all
-  cargo_build_sbf_sanity "v0"
+  _ cargo_build_sbf_sanity "v0"
 
   # SBPFv1 program tests
   _ make -C programs/sbf clean-all test-v1
   _ make -C programs/sbf clean-all
-  cargo_build_sbf_sanity "v1"
+  _ cargo_build_sbf_sanity "v1"
 
   # SBPFv2 program tests
   _ make -C programs/sbf clean-all test-v2
   _ make -C programs/sbf clean-all
-  cargo_build_sbf_sanity "v2"
+  _ cargo_build_sbf_sanity "v2"
 
   # SBPFv3 program tests
   _ make -C programs/sbf clean-all test-v3
   _ make -C programs/sbf clean-all
-  cargo_build_sbf_sanity "v3"
+  _ cargo_build_sbf_sanity "v3"
 
   exit 0
   ;;
