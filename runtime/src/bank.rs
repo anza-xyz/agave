@@ -2913,13 +2913,14 @@ impl Bank {
             )
             .unwrap_or_default(),
         );
-        solana_fee::calculate_fee(
+        solana_fee::calculate_fee_details(
             message,
             lamports_per_signature == 0,
             self.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),
         )
+        .total_fee()
     }
 
     pub fn get_blockhash_last_valid_block_height(&self, blockhash: &Hash) -> Option<Slot> {
