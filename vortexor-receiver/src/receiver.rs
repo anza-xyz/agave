@@ -38,7 +38,7 @@ impl VerifiedPacketReceiver {
                     sender.clone(),
                     recycler.clone(),
                     tpu_stats.clone(),
-                    coalesce,
+                    Some(coalesce),
                     true,
                     in_vote_only_mode.clone(),
                     false, // unstaked connections

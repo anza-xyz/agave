@@ -94,22 +94,16 @@ pub fn main() {
     let config = SocketConfig::default().reuseport(false);
 
     let sender_socket =
-        bind_in_range_with_config(*bind_address, *dynamic_port_range, config).unwrap();
+        bind_in_range_with_config(*bind_address, dynamic_port_range, config).unwrap();
 
     // The non_vote_receiver will forward the verified transactions to its configured validator
     let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
 
     let destinations = args.destination;
 
-    let rpc_servers = matches
-        .get_many::<String>("rpc_server")
-        .unwrap_or_default()
-        .collect::<Vec<_>>();
+    let rpc_servers = args.rpc_server;
 
-    let websocket_servers = matches
-        .get_many::<String>("websocket_server")
-        .unwrap_or_default()
-        .collect::<Vec<_>>();
+    let websocket_servers = args.websocket_server;
 
     let servers = rpc_servers
         .iter()
@@ -158,13 +152,13 @@ pub fn main() {
         staked_nodes,
         tpu_sender,
         tpu_fwd_sender,
-        *max_connections_per_peer,
-        *max_tpu_staked_connections,
-        *max_tpu_unstaked_connections,
-        *max_fwd_staked_connections,
-        *max_fwd_unstaked_connections,
-        *max_streams_per_ms,
-        *max_connections_per_ipaddr_per_min,
+        max_connections_per_peer,
+        max_tpu_staked_connections,
+        max_tpu_unstaked_connections,
+        max_fwd_staked_connections,
+        max_fwd_unstaked_connections,
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min,
         tpu_coalesce,
         &identity_keypair,
         exit,

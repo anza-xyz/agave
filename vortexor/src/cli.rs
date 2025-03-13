@@ -52,24 +52,24 @@ fn get_default_tpu_coalesce_ms() -> &'static str {
     coalesce
 }
 
-fn validate_http_url(input: &str) -> Result<(), String> {
+fn parse_http_url(input: &str) -> Result<Url, String> {
     // Attempt to parse the input as a URL
     let parsed_url = Url::parse(input).map_err(|e| format!("Invalid URL: {}", e))?;
 
     // Check the scheme of the URL
     match parsed_url.scheme() {
-        "http" | "https" => Ok(()),
+        "http" | "https" => Ok(parsed_url),
         scheme => Err(format!("Invalid scheme: {}. Must be http, https.", scheme)),
     }
 }
 
-fn validate_websocket_url(input: &str) -> Result<(), String> {
+fn parse_websocket_url(input: &str) -> Result<Url, String> {
     // Attempt to parse the input as a URL
     let parsed_url = Url::parse(input).map_err(|e| format!("Invalid URL: {}", e))?;
 
     // Check the scheme of the URL
     match parsed_url.scheme() {
-        "ws" | "wss" => Ok(()),
+        "ws" | "wss" => Ok(parsed_url),
         scheme => Err(format!("Invalid scheme: {}. Must be ws, or wss.", scheme)),
     }
 }
@@ -136,198 +136,14 @@ pub struct Cli {
     /// SIGUSR1 signal to the vortexor process will cause it to re-open the log file.
     #[arg(long="log", value_name = "FILE", value_parser = clap::value_parser!(String))]
     pub logfile: Option<String>,
-fn validate_http_url(input: &str) -> Result<(), String> {
-    // Attempt to parse the input as a URL
-    let parsed_url = Url::parse(input).map_err(|e| format!("Invalid URL: {}", e))?;
 
-    // Check the scheme of the URL
-    match parsed_url.scheme() {
-        "http" | "https" => Ok(()),
-        scheme => Err(format!("Invalid scheme: {}. Must be http, https.", scheme)),
-    }
-}
+    /// The address of RPC server to which the vortexor will forward transaction
+    #[arg(long, value_parser = parse_http_url, value_name = "URL", action = ArgAction::Append)]
+    pub rpc_server: Vec<Url>,
 
-fn validate_websocket_url(input: &str) -> Result<(), String> {
-    // Attempt to parse the input as a URL
-    let parsed_url = Url::parse(input).map_err(|e| format!("Invalid URL: {}", e))?;
-
-    // Check the scheme of the URL
-    match parsed_url.scheme() {
-        "ws" | "wss" => Ok(()),
-        scheme => Err(format!("Invalid scheme: {}. Must be ws, or wss.", scheme)),
-    }
-}
-
-pub fn command(version: &str, default_args: DefaultArgs) -> Command {
-    // The default values need to be static:
-    let version_static: &'static str = Box::leak(version.to_string().into_boxed_str());
-    let bind_address_static: &'static str = Box::leak(default_args.bind_address.into_boxed_str());
-    let port_range_static: &'static str =
-        Box::leak(default_args.dynamic_port_range.into_boxed_str());
-    let max_connections_per_peer_static: &'static str =
-        Box::leak(default_args.max_connections_per_peer.into_boxed_str());
-    let max_tpu_staked_connections_static: &'static str =
-        Box::leak(default_args.max_tpu_staked_connections.into_boxed_str());
-    let max_tpu_unstaked_connections_static: &'static str =
-        Box::leak(default_args.max_tpu_unstaked_connections.into_boxed_str());
-    let max_fwd_staked_connections_static: &'static str =
-        Box::leak(default_args.max_fwd_staked_connections.into_boxed_str());
-    let max_fwd_unstaked_connections_static: &'static str =
-        Box::leak(default_args.max_fwd_unstaked_connections.into_boxed_str());
-    let max_connections_per_ipaddr_per_min_static: &'static str = Box::leak(
-        default_args
-            .max_connections_per_ipaddr_per_min
-            .into_boxed_str(),
-    );
-    let num_quic_endpoints_static: &'static str =
-        Box::leak(default_args.num_quic_endpoints.into_boxed_str());
-    let max_streams_per_ms_static: &'static str =
-        Box::leak(default_args.max_streams_per_ms.into_boxed_str());
-
-    Command::new(crate_name!())
-        .about(crate_description!())
-        .version(version_static)
-        .infer_subcommands(true)
-        .color(ColorChoice::Auto)
-        .arg(
-            Arg::new("identity")
-                .long("identity")
-                .value_name("KEYPAIR")
-                .num_args(1)
-                .required(true)
-                .value_parser(clap::value_parser!(PathBuf))
-                .help("Vortexor identity keypair"),
-        )
-        .arg(
-            Arg::new("bind_address")
-                .long("bind-address")
-                .value_name("HOST")
-                .num_args(1)
-                .value_parser(solana_net_utils::parse_host)
-                .default_value(bind_address_static)
-                .help("IP address to bind the validator ports"),
-        )
-        .arg(
-            Arg::new("dynamic_port_range")
-                .long("dynamic-port-range")
-                .value_name("MIN_PORT-MAX_PORT")
-                .num_args(1)
-                .default_value(port_range_static)
-                .value_parser(port_range_validator)
-                .help("Range to use for dynamically assigned ports"),
-        )
-        .arg(
-            Arg::new("max_connections_per_peer")
-                .long("max-connections-per-peer")
-                .num_args(1)
-                .default_value(max_connections_per_peer_static)
-                .value_parser(clap::value_parser!(u64))
-                .help("Controls the max concurrent connections per IpAddr."),
-        )
-        .arg(
-            Arg::new("max_tpu_staked_connections")
-                .long("max-tpu-staked-connections")
-                .num_args(1)
-                .default_value(max_tpu_staked_connections_static)
-                .value_parser(clap::value_parser!(u64))
-                .help("Controls the max concurrent connections for TPU from staked nodes."),
-        )
-        .arg(
-            Arg::new("max_tpu_unstaked_connections")
-                .long("max-tpu-unstaked-connections")
-                .num_args(1)
-                .default_value(max_tpu_unstaked_connections_static)
-                .value_parser(clap::value_parser!(u64))
-                .help("Controls the max concurrent connections fort TPU from unstaked nodes."),
-        )
-        .arg(
-            Arg::new("max_fwd_staked_connections")
-                .long("max-fwd-staked-connections")
-                .num_args(1)
-                .default_value(max_fwd_staked_connections_static)
-                .value_parser(clap::value_parser!(u64))
-                .help("Controls the max concurrent connections for TPU-forward from staked nodes."),
-        )
-        .arg(
-            Arg::new("max_fwd_unstaked_connections")
-                .long("max-fwd-unstaked-connections")
-                .num_args(1)
-                .default_value(max_fwd_unstaked_connections_static)
-                .value_parser(clap::value_parser!(u64))
-                .help("Controls the max concurrent connections for TPU-forward from unstaked nodes."),
-        )
-        .arg(
-            Arg::new("max_connections_per_ipaddr_per_minute")
-                .long("max-connections-per-ipaddr-per-minute")
-                .num_args(1)
-                .default_value(max_connections_per_ipaddr_per_min_static)
-                .value_parser(clap::value_parser!(u64))
-                .help("Controls the rate of the clients connections per IpAddr per minute."),
-        )
-        .arg(
-            Arg::new("num_quic_endpoints")
-                .long("num-quic-endpoints")
-                .num_args(1)
-                .default_value(num_quic_endpoints_static)
-                .value_parser(clap::value_parser!(u64))
-                .help("The number of QUIC endpoints used for TPU and TPU-Forward. It can be increased to \
-                       increase network ingest throughput, at the expense of higher CPU and general \
-                       validator load."),
-        )
-        .arg(
-            Arg::new("max_streams_per_ms")
-                .long("max-streams-per-ms")
-                .num_args(1)
-                .default_value(max_streams_per_ms_static)
-                .value_parser(clap::value_parser!(u64))
-                .help("Max streams per second for a streamer."),
-        )
-        .arg(
-            Arg::new("tpu_coalesce_ms")
-                .long("tpu-coalesce-ms")
-                .value_name("MILLISECS")
-                .num_args(1)
-                .value_parser(clap::value_parser!(u64))
-                .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-        )
-        .arg(
-            Arg::new("logfile")
-                .long("log")
-                .value_name("FILE")
-                .num_args(1)
-                .help(
-                    "Redirect logging to the specified file, '-' for standard error. Sending the \
-                     SIGUSR1 signal to the vortexor process will cause it to re-open the log file.",
-                ),
-        )
-        .arg(
-            Arg::new("destination")
-                .long("destination")
-                .value_name("HOST:PORT")
-                .action(ArgAction::Append)
-                .num_args(1)
-                .value_parser(solana_net_utils::parse_host_port)
-                .help("The destination validator address to which the vortexor will forward transactions."),
-        )
-        .arg(
-            Arg::new("rpc_server")
-                .short('r')
-                .long("rpc-server")
-                .value_name("HOST:PORT")
-                .num_args(1)
-                .action(ArgAction::Append)
-                .value_parser(validate_http_url)
-                .help("The address of RPC server to which the vortexor will forward transaction"),
-        )
-        .arg(
-            Arg::new("websocket_server")
-                .short('w')
-                .long("websocket-server")
-                .value_name("HOST:PORT")
-                .num_args(1)
-                .action(ArgAction::Append)
-                .value_parser(validate_websocket_url)
-                .help("The address of websocket server to which the vortexor will forward transaction.  \
-                 If multiple rpc servers are set, the count of websocket servers must match that of the rpc servers."),
-        )
+    /// The address of websocket server to which the vortexor will forward transaction.
+    /// If multiple rpc servers are set, the count of websocket servers must
+    /// match that of the rpc servers.
+    #[arg(long, value_parser = parse_websocket_url, value_name = "URL", action = ArgAction::Append)]
+    pub websocket_server: Vec<Url>,
 }
