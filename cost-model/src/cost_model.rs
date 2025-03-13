@@ -10,12 +10,12 @@ use {
     solana_bincode::limited_deserialize,
     solana_borsh::v1::try_from_slice_unchecked,
     solana_builtins_default_costs::get_builtin_instruction_cost,
+    solana_compute_budget::compute_budget_limits::{
+        DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT,
+    },
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_fee_structure::FeeStructure,
-    solana_program_runtime::execution_budget::{
-        DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT,
-    },
     solana_pubkey::Pubkey,
     solana_runtime_transaction::{
         transaction_meta::StaticMeta, transaction_with_meta::TransactionWithMeta,
@@ -403,21 +403,23 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_compute_budget::{self},
+        solana_compute_budget::{
+            self,
+            compute_budget_limits::{
+                DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
+            },
+        },
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE,
         solana_hash::Hash,
         solana_instruction::Instruction,
         solana_keypair::Keypair,
         solana_message::{compiled_instruction::CompiledInstruction, Message},
-        solana_program_runtime::execution_budget::{
-            DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
-        },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMMessage,
-        solana_system_interface::instruction as system_instruction,
+        solana_system_interface::instruction::{self as system_instruction},
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
     };

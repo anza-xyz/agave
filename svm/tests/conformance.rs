@@ -9,7 +9,7 @@ use {
     solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_log_collector::LogCollector,
     solana_program_runtime::{
-        execution_budget::SVMTransactionExecutionBudget,
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     },
@@ -365,6 +365,7 @@ fn execute_fixture_as_instr(
         env_config,
         Some(log_collector.clone()),
         compute_budget,
+        SVMTransactionExecutionCost::default(),
     );
 
     let mut instruction_accounts: Vec<InstructionAccount> =

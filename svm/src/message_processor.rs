@@ -129,7 +129,7 @@ mod tests {
         solana_message::{AccountKeys, Message, SanitizedMessage},
         solana_program_runtime::{
             declare_process_instruction,
-            execution_budget::SVMTransactionExecutionBudget,
+            execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
             invoke_context::EnvironmentConfig,
             loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
             sysvar_cache::SysvarCache,
@@ -253,6 +253,7 @@ mod tests {
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -307,6 +308,7 @@ mod tests {
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -351,6 +353,7 @@ mod tests {
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -486,6 +489,7 @@ mod tests {
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -525,6 +529,7 @@ mod tests {
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -561,6 +566,7 @@ mod tests {
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -664,6 +670,7 @@ mod tests {
             environment_config,
             None,
             SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,

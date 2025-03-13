@@ -15,7 +15,6 @@ solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-program-runtime = { workspace = true }
 solana-program-test = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }

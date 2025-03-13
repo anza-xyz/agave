@@ -1149,11 +1149,6 @@ impl Bank {
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
 
-        if let Some(compute_budget) = bank.compute_budget {
-            bank.transaction_processor
-                .set_execution_budget(compute_budget);
-        }
-
         let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
         bank.accounts_data_size_initial = accounts_data_size_initial;
 
@@ -1407,11 +1402,6 @@ impl Bank {
             bank_hash_stats: AtomicBankHashStats::default(),
         };
 
-        if let Some(compute_budget) = new.compute_budget {
-            new.transaction_processor
-                .set_execution_budget(compute_budget);
-        }
-
         let (_, ancestors_time_us) = measure_us!({
             let mut ancestors = Vec::with_capacity(1 + new.parents().len());
             ancestors.push(new.slot());
@@ -1446,7 +1436,7 @@ impl Bank {
             .prepare_program_cache_for_upcoming_feature_set(
                 &new,
                 &new.compute_active_feature_set(true).0,
-                &new.compute_budget.unwrap_or_default(),
+                &new.compute_budget.unwrap_or_default().to_budget(),
                 slot_index,
                 slots_in_epoch,
             ));
@@ -1813,11 +1803,6 @@ impl Bank {
 
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
-
-        if let Some(compute_budget) = bank.compute_budget {
-            bank.transaction_processor
-                .set_execution_budget(compute_budget);
-        }
 
         let thread_pool = ThreadPoolBuilder::new()
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
@@ -4840,6 +4825,11 @@ impl Bank {
         additional_builtins: Option<&[BuiltinPrototype]>,
         debug_do_not_add_builtins: bool,
     ) {
+        if let Some(compute_budget) = self.compute_budget {
+            self.transaction_processor
+                .set_execution_cost(compute_budget.to_cost());
+        }
+
         self.rewards_pool_pubkeys =
             Arc::new(genesis_config.rewards_pools.keys().cloned().collect());
 
@@ -4908,14 +4898,14 @@ impl Bank {
                 Some(Arc::new(
                     create_program_runtime_environment_v1(
                         &self.feature_set,
-                        &self.compute_budget().unwrap_or_default(),
+                        &self.compute_budget().unwrap_or_default().to_budget(),
                         false, /* deployment */
                         false, /* debugging_features */
                     )
                     .unwrap(),
                 )),
                 Some(Arc::new(create_program_runtime_environment_v2(
-                    &self.compute_budget().unwrap_or_default(),
+                    &self.compute_budget().unwrap_or_default().to_budget(),
                     false, /* debugging_features */
                 ))),
             );

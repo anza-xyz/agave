@@ -3,7 +3,7 @@ use {
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_perf::perf_libs,
-    solana_program_runtime::execution_budget::SVMTransactionComputeBudgetAndLimits,
+    solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         account::AccountSharedData,
@@ -102,8 +102,11 @@ impl Bank {
                         &self.feature_set,
                     )
                     .map(|limit| {
-                        if self.compute_budget.is_some() {
-                            limit.get_limits_with_no_overrides()
+                        if let Some(compute_budget) = self.compute_budget {
+                            // This block of code is only necessary to retain legacy behavior of the code.
+                            // It should be removed along with the change to favor transaction's compute budget limits
+                            // over configured compute budget in Bank.
+                            compute_budget.get_compute_budget_and_limits(&limit)
                         } else {
                             limit.get_compute_budget_and_limits()
                         }
@@ -131,7 +134,7 @@ impl Bank {
         hash_queue: &BlockhashQueue,
         next_lamports_per_signature: u64,
         error_counters: &mut TransactionErrorMetrics,
-        compute_budget: Result<SVMTransactionComputeBudgetAndLimits, TransactionError>,
+        compute_budget: Result<SVMTransactionExecutionAndFeeBudgetLimits, TransactionError>,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {

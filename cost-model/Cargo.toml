@@ -32,7 +32,6 @@ solana-hash = { workspace = true, optional = true }
 solana-message = { workspace = true, optional = true }
 solana-metrics = { workspace = true }
 solana-packet = { workspace = true }
-solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }

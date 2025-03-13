@@ -41,7 +41,6 @@ use {
         tpu_client::{TpuClient, TpuClientConfig},
     },
     solana_commitment_config::CommitmentConfig,
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_instruction::{error::InstructionError, Instruction},
     solana_keypair::{keypair_from_seed, read_keypair_file, Keypair},
@@ -51,7 +50,9 @@ use {
     },
     solana_message::Message,
     solana_packet::PACKET_DATA_SIZE,
-    solana_program_runtime::invoke_context::InvokeContext,
+    solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
+    },
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -3026,9 +3027,13 @@ fn verify_elf(
     feature_set: FeatureSet,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Verify the program
-    let program_runtime_environment =
-        create_program_runtime_environment_v1(&feature_set, &ComputeBudget::default(), true, false)
-            .unwrap();
+    let program_runtime_environment = create_program_runtime_environment_v1(
+        &feature_set,
+        &SVMTransactionExecutionBudget::default(),
+        true,
+        false,
+    )
+    .unwrap();
     let executable =
         Executable::<InvokeContext>::from_elf(program_data, Arc::new(program_runtime_environment))
             .map_err(|err| format!("ELF error: {err}"))?;

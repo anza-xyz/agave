@@ -26,7 +26,6 @@ use {
         },
         tpu_client::{TpuClient, TpuClientConfig},
     },
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_instruction::Instruction,
     solana_loader_v4_interface::{
@@ -37,7 +36,9 @@ use {
         },
     },
     solana_message::Message,
-    solana_program_runtime::invoke_context::InvokeContext,
+    solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
+    },
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -632,7 +633,7 @@ pub fn process_deploy_program(
     let program_runtime_environment =
         solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1(
             &feature_set,
-            &ComputeBudget::default(),
+            &SVMTransactionExecutionBudget::default(),
             true,
             false,
         )

@@ -1,6 +1,6 @@
 use {
     crate::{
-        execution_budget::SVMTransactionExecutionBudget,
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::{
             ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch,
             ProgramRuntimeEnvironments,
@@ -197,6 +197,8 @@ pub struct InvokeContext<'a> {
     pub environment_config: EnvironmentConfig<'a>,
     /// The compute budget for the current invocation.
     compute_budget: SVMTransactionExecutionBudget,
+    /// The compute cost for the current invocation.
+    compute_cost: SVMTransactionExecutionCost,
     /// Instruction compute meter, for tracking compute units consumed against
     /// the designated compute budget during program execution.
     compute_meter: RefCell<u64>,
@@ -216,6 +218,7 @@ impl<'a> InvokeContext<'a> {
         environment_config: EnvironmentConfig<'a>,
         log_collector: Option<Rc<RefCell<LogCollector>>>,
         compute_budget: SVMTransactionExecutionBudget,
+        compute_cost: SVMTransactionExecutionCost,
     ) -> Self {
         Self {
             transaction_context,
@@ -223,6 +226,7 @@ impl<'a> InvokeContext<'a> {
             environment_config,
             log_collector,
             compute_budget,
+            compute_cost,
             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
             execute_time: None,
             timings: ExecuteDetailsTimings::default(),
@@ -646,6 +650,11 @@ impl<'a> InvokeContext<'a> {
         &self.compute_budget
     }
 
+    /// Get this invocation's compute budget
+    pub fn get_compute_cost(&self) -> &SVMTransactionExecutionCost {
+        &self.compute_cost
+    }
+
     /// Get the current feature set.
     pub fn get_feature_set(&self) -> &FeatureSet {
         &self.environment_config.feature_set
@@ -736,7 +745,7 @@ macro_rules! with_mock_invoke_context {
             solana_type_overrides::sync::Arc,
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
-                execution_budget::SVMTransactionExecutionBudget,
+                execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::ProgramCacheForTxBatch,
                 sysvar_cache::SysvarCache,
@@ -782,6 +791,7 @@ macro_rules! with_mock_invoke_context {
             environment_config,
             Some(LogCollector::new_ref()),
             compute_budget,
+            SVMTransactionExecutionCost::default(),
         );
     };
 }

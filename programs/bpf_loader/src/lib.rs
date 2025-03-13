@@ -299,7 +299,7 @@ macro_rules! create_vm {
         let heap_size = invoke_context.get_compute_budget().heap_size;
         let heap_cost_result = invoke_context.consume_checked($crate::calculate_heap_cost(
             heap_size,
-            invoke_context.get_compute_budget().heap_cost,
+            invoke_context.get_compute_cost().heap_cost,
         ));
         let $vm = heap_cost_result.and_then(|_| {
             let (mut stack, mut heap) = $crate::MEMORY_POOL

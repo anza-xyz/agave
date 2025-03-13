@@ -195,7 +195,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             consume_compute_meter(
                 invoke_context,
                 (data.len() as u64)
-                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                    .checked_div(invoke_context.get_compute_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
 
@@ -319,7 +319,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             invoke_context,
             account_info
                 .data_len
-                .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                .checked_div(invoke_context.get_compute_cost().cpi_bytes_per_unit)
                 .unwrap_or(u64::MAX),
         )?;
 
@@ -468,7 +468,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
             consume_compute_meter(
                 invoke_context,
                 (data.len() as u64)
-                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                    .checked_div(invoke_context.get_compute_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
         }
@@ -686,7 +686,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
             consume_compute_meter(
                 invoke_context,
                 (data.len() as u64)
-                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                    .checked_div(invoke_context.get_compute_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
         }
@@ -910,7 +910,7 @@ where
             consume_compute_meter(
                 invoke_context,
                 (callee_account.get_data().len() as u64)
-                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                    .checked_div(invoke_context.get_compute_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
 
@@ -1094,7 +1094,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     // changes so the callee can see them.
     consume_compute_meter(
         invoke_context,
-        invoke_context.get_compute_budget().invoke_units,
+        invoke_context.get_compute_cost().invoke_units,
     )?;
     if let Some(execute_time) = invoke_context.execute_time.as_mut() {
         execute_time.stop();

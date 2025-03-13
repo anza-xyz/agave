@@ -9,7 +9,7 @@ use {
     },
     solana_account::PROGRAM_OWNERS,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_program_runtime::execution_budget::SVMTransactionComputeBudgetAndLimits,
+    solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable,
@@ -478,7 +478,7 @@ impl TransactionBatchItem {
             check_result: Ok(CheckedTransactionDetails::new(
                 Some(nonce_info),
                 LAMPORTS_PER_SIGNATURE,
-                Ok(SVMTransactionComputeBudgetAndLimits::default()),
+                Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
             )),
             ..Self::default()
         }
@@ -492,7 +492,7 @@ impl Default for TransactionBatchItem {
             check_result: Ok(CheckedTransactionDetails::new(
                 None,
                 LAMPORTS_PER_SIGNATURE,
-                Ok(SVMTransactionComputeBudgetAndLimits::default()),
+                Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
             )),
             asserts: TransactionBatchItemAsserts::default(),
         }

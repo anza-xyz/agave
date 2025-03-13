@@ -10003,9 +10003,12 @@ fn test_compute_budget_program_noop() {
         Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::vm);
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
-        let compute_budget = invoke_context.get_compute_budget();
+        let compute_budget = ComputeBudget::from_budget_and_cost(
+            invoke_context.get_compute_budget(),
+            invoke_context.get_compute_cost(),
+        );
         assert_eq!(
-            *compute_budget,
+            compute_budget,
             ComputeBudget {
                 compute_unit_limit: u64::from(
                     execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
@@ -10048,9 +10051,12 @@ fn test_compute_request_instruction() {
         Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::vm);
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
-        let compute_budget = invoke_context.get_compute_budget();
+        let compute_budget = ComputeBudget::from_budget_and_cost(
+            invoke_context.get_compute_budget(),
+            invoke_context.get_compute_cost(),
+        );
         assert_eq!(
-            *compute_budget,
+            compute_budget,
             ComputeBudget {
                 compute_unit_limit: u64::from(
                     execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
@@ -10101,9 +10107,12 @@ fn test_failed_compute_request_instruction() {
         .unwrap();
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
-        let compute_budget = invoke_context.get_compute_budget();
+        let compute_budget = ComputeBudget::from_budget_and_cost(
+            invoke_context.get_compute_budget(),
+            invoke_context.get_compute_cost(),
+        );
         assert_eq!(
-            *compute_budget,
+            compute_budget,
             ComputeBudget {
                 compute_unit_limit: u64::from(
                     execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT

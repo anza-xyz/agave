@@ -12,7 +12,7 @@ use {
         thread, Runner,
     },
     solana_program_runtime::{
-        execution_budget::SVMTransactionComputeBudgetAndLimits,
+        execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
         loaded_programs::ProgramCacheEntryType,
     },
     solana_sdk::{
@@ -245,7 +245,7 @@ fn svm_concurrent() {
                 Ok(CheckedTransactionDetails::new(
                     None,
                     20,
-                    Ok(SVMTransactionComputeBudgetAndLimits::default())
+                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::default())
                 )) as TransactionCheckResult;
                 TRANSACTIONS_PER_THREAD
             ];

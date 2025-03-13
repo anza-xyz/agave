@@ -170,7 +170,8 @@ impl Bank {
                     &sysvar_cache,
                 ),
                 None,
-                compute_budget,
+                compute_budget.to_budget(),
+                compute_budget.to_cost(),
             );
 
             let environments = dummy_invoke_context

@@ -3,12 +3,18 @@ use qualifier_attr::qualifiers;
 use {solana_program_entrypoint::HEAP_LENGTH, std::num::NonZeroU32};
 
 #[cfg(feature = "frozen-abi")]
-impl ::solana_frozen_abi::abi_example::AbiExample
-    for crate::execution_budget::SVMTransactionExecutionBudget
-{
+impl ::solana_frozen_abi::abi_example::AbiExample for SVMTransactionExecutionCost {
     fn example() -> Self {
-        // ComputeBudget is not Serialize so just rely on Default.
-        crate::execution_budget::SVMTransactionExecutionBudget::default()
+        // SVMTransactionExecutionCost is not Serialize so just rely on Default.
+        SVMTransactionExecutionCost::default()
+    }
+}
+
+#[cfg(feature = "frozen-abi")]
+impl ::solana_frozen_abi::abi_example::AbiExample for SVMTransactionExecutionBudget {
+    fn example() -> Self {
+        // SVMTransactionExecutionBudget is not Serialize so just rely on Default.
+        SVMTransactionExecutionBudget::default()
     }
 }
 
@@ -34,19 +40,17 @@ pub const MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT: u32 = 3_000;
 pub const MAX_HEAP_FRAME_BYTES: u32 = 256 * 1024;
 pub const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
 
+/// The total accounts data a transaction can load is limited to 64MiB to not break
+/// anyone in Mainnet-beta today. It can be set by set_loaded_accounts_data_size_limit instruction
+pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: NonZeroU32 =
+    unsafe { NonZeroU32::new_unchecked(64 * 1024 * 1024) };
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SVMTransactionExecutionBudget {
     /// Number of compute units that a transaction or individual instruction is
     /// allowed to consume. Compute units are consumed by program execution,
     /// resources they use, etc...
     pub compute_unit_limit: u64,
-    /// Number of compute units consumed by a log_u64 call
-    pub log_64_units: u64,
-    /// Number of compute units consumed by a create_program_address call
-    pub create_program_address_units: u64,
-    /// Number of compute units consumed by an invoke call (not including the cost incurred by
-    /// the called program)
-    pub invoke_units: u64,
     /// Maximum program instruction invocation stack depth. Invocation stack
     /// depth starts at 1 for transaction instructions and the stack depth is
     /// incremented each time a program invokes an instruction and decremented
@@ -54,20 +58,55 @@ pub struct SVMTransactionExecutionBudget {
     pub max_instruction_stack_depth: usize,
     /// Maximum cross-program invocation and instructions per transaction
     pub max_instruction_trace_length: usize,
-    /// Base number of compute units consumed to call SHA256
-    pub sha256_base_cost: u64,
-    /// Incremental number of units consumed by SHA256 (based on bytes)
-    pub sha256_byte_cost: u64,
     /// Maximum number of slices hashed per syscall
     pub sha256_max_slices: u64,
     /// Maximum SBF to BPF call depth
     pub max_call_depth: usize,
     /// Size of a stack frame in bytes, must match the size specified in the LLVM SBF backend
     pub stack_frame_size: usize,
-    /// Number of compute units consumed by logging a `Pubkey`
-    pub log_pubkey_units: u64,
     /// Maximum cross-program invocation instruction size
     pub max_cpi_instruction_size: usize,
+    /// program heap region size, default: solana_sdk::entrypoint::HEAP_LENGTH
+    pub heap_size: u32,
+}
+
+impl Default for SVMTransactionExecutionBudget {
+    fn default() -> Self {
+        Self::new(MAX_COMPUTE_UNIT_LIMIT as u64)
+    }
+}
+
+impl SVMTransactionExecutionBudget {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn new(compute_unit_limit: u64) -> Self {
+        SVMTransactionExecutionBudget {
+            compute_unit_limit,
+            max_instruction_stack_depth: MAX_INSTRUCTION_STACK_DEPTH,
+            max_instruction_trace_length: 64,
+            sha256_max_slices: 20_000,
+            max_call_depth: MAX_CALL_DEPTH,
+            stack_frame_size: STACK_FRAME_SIZE,
+            max_cpi_instruction_size: 1280, // IPv6 Min MTU size
+            heap_size: u32::try_from(solana_program_entrypoint::HEAP_LENGTH).unwrap(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SVMTransactionExecutionCost {
+    /// Number of compute units consumed by a log_u64 call
+    pub log_64_units: u64,
+    /// Number of compute units consumed by a create_program_address call
+    pub create_program_address_units: u64,
+    /// Number of compute units consumed by an invoke call (not including the cost incurred by
+    /// the called program)
+    pub invoke_units: u64,
+    /// Base number of compute units consumed to call SHA256
+    pub sha256_base_cost: u64,
+    /// Incremental number of units consumed by SHA256 (based on bytes)
+    pub sha256_byte_cost: u64,
+    /// Number of compute units consumed by logging a `Pubkey`
+    pub log_pubkey_units: u64,
     /// Number of account data bytes per compute unit charged during a cross-program invocation
     pub cpi_bytes_per_unit: u64,
     /// Base number of compute units consumed to get a sysvar
@@ -104,8 +143,6 @@ pub struct SVMTransactionExecutionBudget {
     /// Number of compute units consumed for a multiscalar multiplication (msm) of ristretto points.
     /// The total cost is calculated as `msm_base_cost + (length - 1) * msm_incremental_cost`.
     pub curve25519_ristretto_msm_incremental_cost: u64,
-    /// program heap region size, default: solana_sdk::entrypoint::HEAP_LENGTH
-    pub heap_size: u32,
     /// Number of compute units per additional 32k heap above the default (~.5
     /// us per 32k at 15 units/us rounded up)
     pub heap_cost: u64,
@@ -145,30 +182,23 @@ pub struct SVMTransactionExecutionBudget {
     pub alt_bn128_g2_decompress: u64,
 }
 
-impl Default for SVMTransactionExecutionBudget {
+impl Default for SVMTransactionExecutionCost {
     fn default() -> Self {
-        Self::new(MAX_COMPUTE_UNIT_LIMIT as u64)
+        Self::new()
     }
 }
 
-impl SVMTransactionExecutionBudget {
+impl SVMTransactionExecutionCost {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn new(compute_unit_limit: u64) -> Self {
-        SVMTransactionExecutionBudget {
-            compute_unit_limit,
+    fn new() -> Self {
+        SVMTransactionExecutionCost {
             log_64_units: 100,
             create_program_address_units: 1500,
             invoke_units: 1000,
-            max_instruction_stack_depth: MAX_INSTRUCTION_STACK_DEPTH,
-            max_instruction_trace_length: 64,
             sha256_base_cost: 85,
             sha256_byte_cost: 1,
-            sha256_max_slices: 20_000,
-            max_call_depth: MAX_CALL_DEPTH,
-            stack_frame_size: STACK_FRAME_SIZE,
             log_pubkey_units: 100,
-            max_cpi_instruction_size: 1280, // IPv6 Min MTU size
-            cpi_bytes_per_unit: 250,        // ~50MB at 200,000 units
+            cpi_bytes_per_unit: 250, // ~50MB at 200,000 units
             sysvar_base_cost: 100,
             secp256k1_recover_cost: 25_000,
             syscall_base_cost: 100,
@@ -184,7 +214,6 @@ impl SVMTransactionExecutionBudget {
             curve25519_ristretto_multiply_cost: 2_208,
             curve25519_ristretto_msm_base_cost: 2303,
             curve25519_ristretto_msm_incremental_cost: 788,
-            heap_size: u32::try_from(solana_program_entrypoint::HEAP_LENGTH).unwrap(),
             heap_cost: DEFAULT_HEAP_COST,
             mem_op_base_cost: 10,
             alt_bn128_addition_cost: 334,
@@ -231,47 +260,21 @@ impl SVMTransactionExecutionBudget {
 
         Some(final_result)
     }
-
-    pub fn apply_overrides(&self, overrides: &SVMTransactionBudgetOverrides) -> Self {
-        let mut budget = *self;
-        if let Some(compute_unit_limit) = overrides.compute_unit_limit {
-            budget.compute_unit_limit = compute_unit_limit;
-        }
-        if let Some(heap_size) = overrides.heap_size {
-            budget.heap_size = heap_size;
-        }
-        budget
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SVMTransactionBudgetOverrides {
-    pub compute_unit_limit: Option<u64>,
-    pub heap_size: Option<u32>,
-}
-
-impl SVMTransactionBudgetOverrides {
-    pub fn no_overrides() -> Self {
-        Self {
-            compute_unit_limit: None,
-            heap_size: None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SVMTransactionComputeBudgetAndLimits {
-    pub budget_overrides: SVMTransactionBudgetOverrides,
-    pub loaded_accounts_bytes: NonZeroU32,
+pub struct SVMTransactionExecutionAndFeeBudgetLimits {
+    pub budget: SVMTransactionExecutionBudget,
+    pub loaded_accounts_data_size_limit: NonZeroU32,
     pub priority_fee: u64,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl Default for SVMTransactionComputeBudgetAndLimits {
+impl Default for SVMTransactionExecutionAndFeeBudgetLimits {
     fn default() -> Self {
         Self {
-            budget_overrides: SVMTransactionBudgetOverrides::default(),
-            loaded_accounts_bytes: NonZeroU32::new(64 * 1024 * 1024).unwrap(),
+            budget: SVMTransactionExecutionBudget::default(),
+            loaded_accounts_data_size_limit: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             priority_fee: 0,
         }
     }

@@ -1,10 +1,14 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+pub use solana_program_runtime::execution_budget::{
+    DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+    MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES,
+    MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, MIN_HEAP_FRAME_BYTES,
+};
 use {
     solana_fee_structure::FeeBudgetLimits,
     solana_program_runtime::execution_budget::{
-        SVMTransactionBudgetOverrides, SVMTransactionComputeBudgetAndLimits, DEFAULT_HEAP_COST,
-        MAX_COMPUTE_UNIT_LIMIT, MIN_HEAP_FRAME_BYTES,
+        SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
     },
     std::num::NonZeroU32,
 };
@@ -13,11 +17,6 @@ type MicroLamports = u128;
 
 /// There are 10^6 micro-lamports in one lamport
 const MICRO_LAMPORTS_PER_LAMPORT: u64 = 1_000_000;
-
-/// The total accounts data a transaction can load is limited to 64MiB to not break
-/// anyone in Mainnet-beta today. It can be set by set_loaded_accounts_data_size_limit instruction
-pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: NonZeroU32 =
-    unsafe { NonZeroU32::new_unchecked(64 * 1024 * 1024) };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeBudgetLimits {
@@ -39,28 +38,19 @@ impl Default for ComputeBudgetLimits {
 }
 
 impl ComputeBudgetLimits {
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub fn default_compute_budget_and_limits() -> SVMTransactionComputeBudgetAndLimits {
+    pub fn default_compute_budget_and_limits() -> SVMTransactionExecutionAndFeeBudgetLimits {
         Self::get_compute_budget_and_limits(&ComputeBudgetLimits::default())
     }
 
-    pub fn get_compute_budget_and_limits(&self) -> SVMTransactionComputeBudgetAndLimits {
+    pub fn get_compute_budget_and_limits(&self) -> SVMTransactionExecutionAndFeeBudgetLimits {
         let fee_budget = FeeBudgetLimits::from(self);
-        SVMTransactionComputeBudgetAndLimits {
-            budget_overrides: SVMTransactionBudgetOverrides {
-                compute_unit_limit: Some(u64::from(self.compute_unit_limit)),
-                heap_size: Some(self.updated_heap_bytes),
+        SVMTransactionExecutionAndFeeBudgetLimits {
+            budget: SVMTransactionExecutionBudget {
+                compute_unit_limit: u64::from(self.compute_unit_limit),
+                heap_size: self.updated_heap_bytes,
+                ..SVMTransactionExecutionBudget::default()
             },
-            loaded_accounts_bytes: fee_budget.loaded_accounts_data_size_limit,
-            priority_fee: fee_budget.prioritization_fee,
-        }
-    }
-
-    pub fn get_limits_with_no_overrides(&self) -> SVMTransactionComputeBudgetAndLimits {
-        let fee_budget = FeeBudgetLimits::from(self);
-        SVMTransactionComputeBudgetAndLimits {
-            budget_overrides: SVMTransactionBudgetOverrides::no_overrides(),
-            loaded_accounts_bytes: fee_budget.loaded_accounts_data_size_limit,
+            loaded_accounts_data_size_limit: fee_budget.loaded_accounts_data_size_limit,
             priority_fee: fee_budget.prioritization_fee,
         }
     }

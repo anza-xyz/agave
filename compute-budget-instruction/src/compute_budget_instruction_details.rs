@@ -9,10 +9,6 @@ use {
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_instruction::error::InstructionError,
-    solana_program_runtime::execution_budget::{
-        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
-        MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES,
-    },
     solana_pubkey::Pubkey,
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},

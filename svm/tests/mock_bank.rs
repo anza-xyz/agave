@@ -9,7 +9,7 @@ use {
     solana_feature_set::FeatureSet,
     solana_fee_structure::FeeDetails,
     solana_program_runtime::{
-        execution_budget::SVMTransactionExecutionBudget,
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
         solana_sbpf::{

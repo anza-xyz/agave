@@ -17,7 +17,8 @@ use {
     },
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_program_runtime::{
-        execution_budget::SVMTransactionComputeBudgetAndLimits, loaded_programs::ProgramCacheEntry,
+        execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
+        loaded_programs::ProgramCacheEntry,
     },
     solana_rpc_client_api::{
         config::*,
@@ -426,7 +427,7 @@ impl JsonRpcRequestProcessor {
         Ok(CheckedTransactionDetails::new(
             None,
             u64::default(),
-            Ok(SVMTransactionComputeBudgetAndLimits::default()),
+            Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
         ))
     }
 
