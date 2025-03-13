@@ -4095,6 +4095,7 @@ fn test_cpi_change_account_data_memory_allocation() {
 }
 
 #[test]
+#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn test_cpi_invalid_account_info_pointers() {
     solana_logger::setup();
 
