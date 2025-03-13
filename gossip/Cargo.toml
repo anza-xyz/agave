@@ -113,6 +113,8 @@ solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
+dev-context-only-utils=[]
+
 [[bench]]
 name = "crds"
 
@@ -125,6 +127,14 @@ name = "crds_shards"
 [[bench]]
 name = "weighted_shuffle"
 harness = false
+
+[[bin]]
+name = "solana-gossip"
+path = "src/main.rs"
+
+[[bin]]
+name = "crds-node"
+path = "src/crds_node.rs"
 
 [lints]
 workspace = true
