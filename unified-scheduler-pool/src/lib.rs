@@ -71,7 +71,9 @@ use crate::sleepless_testing::BuilderTracked;
 enum CheckPoint {
     NewTask(usize),
     NewBufferedTask(usize),
+    BufferedTask(usize),
     TaskHandled(usize),
+    SessionEnding,
     SchedulerThreadAborted,
     IdleSchedulerCleaned(usize),
     TrashedSchedulerCleaned(usize),
@@ -1540,12 +1542,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                                 match message {
                                     Ok(NewTaskPayload::Payload(task)) => {
-                                        sleepless_testing::at(CheckPoint::NewTask(task.task_index()));
+                                        let task_index = task.task_index();
+                                        sleepless_testing::at(CheckPoint::NewTask(task_index));
+
                                         if let Some(task) = state_machine.schedule_or_buffer_task(task, session_ending) {
                                             runnable_task_sender.send_aux_payload(task).unwrap();
+                                        } else {
+                                            sleepless_testing::at(CheckPoint::BufferedTask(task_index));
                                         }
                                     }
                                     Ok(NewTaskPayload::CloseSubchannel) => {
+                                        sleepless_testing::at(CheckPoint::SessionEnding);
                                         session_ending = true;
                                     }
                                     Ok(NewTaskPayload::OpenSubchannel(_context_and_result_with_timings)) =>
@@ -2009,7 +2016,7 @@ mod tests {
             create_new_tmp_ledger_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_poh::poh_recorder::{create_test_recorder_with_index_tracking, PohRecorder},
+        solana_poh::poh_recorder::create_test_recorder_with_index_tracking,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -2034,7 +2041,9 @@ mod tests {
     enum TestCheckPoint {
         BeforeNewTask,
         AfterNewBufferedTask,
+        AfterBufferedTask,
         AfterTaskHandled,
+        AfterSessionEnding,
         AfterSchedulerThreadAborted,
         BeforeIdleSchedulerCleaned,
         AfterIdleSchedulerCleaned,
@@ -3071,23 +3080,6 @@ mod tests {
         solana_ledger::genesis_utils::create_genesis_config(lamports)
     }
 
-    fn wait_poh_recorder_for_max_tick_height(poh_recorder: &RwLock<PohRecorder>) {
-        // Wait until the working bank reaches its tick height..., otherwise the following panics
-        // will be encountered:
-        //    thread 'solPohTickProd' panicked at runtime/src/bank.rs:LL:CC:
-        //    register_tick() working on a bank that is already frozen or is undergoing freezing!
-        //
-        //    thread 'tests::...' panicked at poh/src/poh_recorder.rs:LL:CC:
-        //    assertion failed: self.working_bank.is_none()
-        let started = Instant::now();
-        while poh_recorder.read().unwrap().bank().is_some() {
-            sleep(Duration::from_millis(100));
-            if Instant::now().duration_since(started) > Duration::from_secs(10) {
-                panic!("timed out...");
-            }
-        }
-    }
-
     #[test_matrix(
         [BlockVerification, BlockProduction]
     )]
@@ -3098,7 +3090,13 @@ mod tests {
 
         const STALLED_TRANSACTION_INDEX: usize = 0;
         const BLOCKED_TRANSACTION_INDEX: usize = 1;
-        static LOCK_TO_STALL: Mutex<()> = Mutex::new(());
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::BufferedTask(BLOCKED_TRANSACTION_INDEX),
+            &TestCheckPoint::AfterBufferedTask,
+            &CheckPoint::SessionEnding,
+            &TestCheckPoint::AfterSessionEnding,
+        ]);
 
         #[derive(Debug)]
         struct StallingHandler;
@@ -3106,17 +3104,27 @@ mod tests {
             fn handle(
                 result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
-                bank: &SchedulingContext,
+                scheduling_context: &SchedulingContext,
                 task: &Task,
                 handler_context: &HandlerContext,
             ) {
                 let index = task.task_index();
                 match index {
-                    STALLED_TRANSACTION_INDEX => *LOCK_TO_STALL.lock().unwrap(),
+                    STALLED_TRANSACTION_INDEX => {
+                        sleepless_testing::at(TestCheckPoint::AfterSessionEnding);
+                    }
                     BLOCKED_TRANSACTION_INDEX => {}
                     _ => unreachable!(),
                 };
-                DefaultTaskHandler::handle(result, timings, bank, task, handler_context);
+                // Always execute transactions with a faked context with the fixed block
+                // verification mode; Otherwise, the block production test variant will be
+                // encountered with CommitCancelled error from the poh recorder, which is fed with
+                // a dummy bank.
+                let faked_context = &SchedulingContext::new_with_mode(
+                    BlockVerification,
+                    scheduling_context.bank().unwrap().clone(),
+                );
+                DefaultTaskHandler::handle(result, timings, faked_context, task, handler_context);
             }
         }
 
@@ -3154,13 +3162,20 @@ mod tests {
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (exit, poh_recorder, poh_service, _signal_receiver) =
+        let (exit, poh_recorder, poh_service, _signal_receiver) = {
+            // Create a dummy bank to prevent it from being frozen; otherwise, the following panic
+            // will happen:
+            //    thread 'solPohTickProd' panicked at runtime/src/bank.rs:LL:CC:
+            //    register_tick() working on a bank that is already frozen or is undergoing freezing!
+            let dummy_bank = Bank::new_for_tests(&genesis_config);
+            let (dummy_bank, _bank_forks) = setup_dummy_fork_graph(dummy_bank);
             create_test_recorder_with_index_tracking(
-                bank.clone(),
+                dummy_bank,
                 blockstore.clone(),
                 None,
                 Some(leader_schedule_cache),
-            );
+            )
+        };
 
         if matches!(scheduling_mode, BlockProduction) {
             pool.register_banking_stage(
@@ -3170,26 +3185,15 @@ mod tests {
             );
         }
 
-        wait_poh_recorder_for_max_tick_height(&poh_recorder);
-
-        let bank = Arc::new(Bank::new_from_parent(
-            bank.clone(),
-            &Pubkey::default(),
-            bank.slot().checked_add(1).unwrap(),
-        ));
-
         // This variable tracks the cumulative count of transactions since genesis, which is
         // incremented as test is progressed.
-        let mut current_transaction_count = Saturating(0);
-
-        assert_eq!(bank.transaction_count(), current_transaction_count.0);
+        let mut expected_transaction_count = Saturating(0);
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context);
         let old_scheduler_id = scheduler.id();
 
-        // Stall handling tx0 and tx1
-        let lock_to_stall = LOCK_TO_STALL.lock().unwrap();
         scheduler
             .schedule_execution(tx0, STALLED_TRANSACTION_INDEX)
             .unwrap();
@@ -3198,27 +3202,18 @@ mod tests {
             .unwrap();
 
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank(bank.clone_with_scheduler(), true);
 
-        // Wait a bit for the scheduler thread to decide to block tx1
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        sleepless_testing::at(TestCheckPoint::AfterBufferedTask);
 
-        // Resume handling by unlocking LOCK_TO_STALL
-        drop(lock_to_stall);
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
 
-        current_transaction_count += 1;
+        expected_transaction_count += 1;
         if matches!(scheduling_mode, BlockVerification) {
             // Block verification scheduler should fully clear its blocked transactions before
             // finishing.
-            current_transaction_count += 1;
+            expected_transaction_count += 1;
         }
-        assert_eq!(bank.transaction_count(), current_transaction_count.0);
-
-        wait_poh_recorder_for_max_tick_height(&poh_recorder);
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         // Create new bank to observe behavior difference around session ending
         let bank = Arc::new(Bank::new_from_parent(
@@ -3226,7 +3221,7 @@ mod tests {
             &Pubkey::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
-        assert_eq!(bank.transaction_count(), current_transaction_count.0);
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context);
@@ -3235,17 +3230,13 @@ mod tests {
         assert_eq!(scheduler.id(), old_scheduler_id);
 
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank(bank.clone_with_scheduler(), true);
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
 
         if matches!(scheduling_mode, BlockProduction) {
             // Block production scheduler should carry over transactions from previous bank
-            current_transaction_count += 1;
+            expected_transaction_count += 1;
         }
-        assert_eq!(bank.transaction_count(), current_transaction_count.0);
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
@@ -3683,7 +3674,9 @@ mod tests {
         // wait until the poh's working bank is cleared.
         // also flush signal_receiver after that.
         if !should_succeed_to_record_to_poh {
-            wait_poh_recorder_for_max_tick_height(&poh_recorder);
+            while poh_recorder.read().unwrap().bank().is_some() {
+                sleep(Duration::from_millis(100));
+            }
             while signal_receiver.try_recv().is_ok() {}
         }
 
