@@ -14,12 +14,9 @@ struct Bin {
     avg: usize,
 }
 
+/// Creates a string of spaces (` `) of length `width`
 fn pad(width: usize) -> String {
-    let mut s = String::new();
-    for _i in 0..width {
-        s = format!("{s} ");
-    }
-    s
+    " ".repeat(width)
 }
 
 fn get_stars(x: usize, max: usize, width: usize) -> String {
