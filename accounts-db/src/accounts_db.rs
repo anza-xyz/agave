@@ -8034,6 +8034,7 @@ impl AccountsDb {
 
     /// Store the account update.
     /// only called by tests
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn store_uncached(&self, slot: Slot, accounts: &[(&Pubkey, &AccountSharedData)]) {
         let storage = self.find_storage_candidate(slot);
         self.store(
