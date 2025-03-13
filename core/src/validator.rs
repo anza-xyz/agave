@@ -90,7 +90,7 @@ use {
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
-        rpc_service::{JsonRpcService, JsonRpcServiceBuilder},
+        rpc_service::{ClientOption, JsonRpcService, JsonRpcServiceBuilder},
         rpc_subscriptions::RpcSubscriptions,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
@@ -1186,16 +1186,13 @@ impl Validator {
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
+                client_option: if config.use_tpu_client_next {
+                    ClientOption::TpuClientNext(Arc::as_ref(&identity_keypair))
+                } else {
+                    ClientOption::ConnectionCache(connection_cache.clone())
+                },
             };
-            let json_rpc_service = if config.use_tpu_client_next {
-                rpc_builder
-                    .build(None, Some(Arc::as_ref(&identity_keypair)))
-                    .map_err(ValidatorError::Other)?
-            } else {
-                rpc_builder
-                    .build(Some(connection_cache.clone()), None)
-                    .map_err(ValidatorError::Other)?
-            };
+            let json_rpc_service = rpc_builder.build().map_err(ValidatorError::Other)?;
 
             let pubsub_service = if !config.rpc_config.full_api {
                 None

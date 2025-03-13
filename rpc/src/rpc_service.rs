@@ -341,7 +341,7 @@ fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<Strin
 /// of a [`JsonRpcService`] with a target TPU client. It supports two types of clients:
 /// * [`ConnectionCacheClient`], which is based on [`ConnectionCache`].
 /// * [`TpuClientNextClient`], which is based on the `tpu-client-next` crate.
-pub struct JsonRpcServiceBuilder {
+pub struct JsonRpcServiceBuilder<'a> {
     pub rpc_addr: SocketAddr,
     pub config: JsonRpcConfig,
     pub snapshot_config: Option<SnapshotConfig>,
@@ -363,18 +363,20 @@ pub struct JsonRpcServiceBuilder {
     pub max_complete_transaction_status_slot: Arc<AtomicU64>,
     pub max_complete_rewards_slot: Arc<AtomicU64>,
     pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    pub client_option: ClientOption<'a>,
 }
 
-impl JsonRpcServiceBuilder {
+pub enum ClientOption<'a> {
+    ConnectionCache(Arc<ConnectionCache>),
+    TpuClientNext(&'a Keypair),
+}
+
+impl JsonRpcServiceBuilder<'_> {
     /// The `build` method creates an instance of [`JsonRpcService`]. If
     /// `connection_cache` is provided, the service will use a TPU client based
     /// on the connection_cache crate. Otherwise, it will internally use
     /// [`TpuClientNextClient`] which uses the `identity_keypair`.
-    pub fn build(
-        self,
-        connection_cache: Option<Arc<ConnectionCache>>,
-        identity_keypair: Option<&Keypair>,
-    ) -> Result<JsonRpcService, String> {
+    pub fn build(self) -> Result<JsonRpcService, String> {
         let runtime = service_runtime(
             self.config.rpc_threads,
             self.config.rpc_blocking_threads,
@@ -383,19 +385,17 @@ impl JsonRpcServiceBuilder {
         let leader_info = self
             .poh_recorder
             .map(|recorder| ClusterTpuInfo::new(self.cluster_info.clone(), recorder));
-        // if ConnectionCache is used, use it's protocol. Otherwise, use QUIC as
-        // tpu-client-next doesn't support UDP.
-        let protocol = connection_cache
-            .as_ref()
-            .map_or(Protocol::QUIC, |cache| cache.protocol());
-        let my_tpu_address = self
-            .cluster_info
-            .my_contact_info()
-            .tpu(protocol)
-            .ok_or(format!("Invalid {:?} socket address for TPU", protocol))?;
 
-        match connection_cache {
-            Some(connection_cache) => {
+        match self.client_option {
+            ClientOption::ConnectionCache(connection_cache) => {
+                let my_tpu_address = self
+                    .cluster_info
+                    .my_contact_info()
+                    .tpu(connection_cache.protocol())
+                    .ok_or(format!(
+                        "Invalid {:?} socket address for TPU",
+                        connection_cache.protocol()
+                    ))?;
                 let client = ConnectionCacheClient::new(
                     connection_cache,
                     my_tpu_address,
@@ -429,14 +429,22 @@ impl JsonRpcServiceBuilder {
                 )?;
                 Ok(json_rpc_service)
             }
-            None => {
+            ClientOption::TpuClientNext(identity_keypair) => {
+                let my_tpu_address = self
+                    .cluster_info
+                    .my_contact_info()
+                    .tpu(Protocol::QUIC)
+                    .ok_or(format!(
+                        "Invalid {:?} socket address for TPU",
+                        Protocol::QUIC
+                    ))?;
                 let client = TpuClientNextClient::new(
                     runtime.handle().clone(),
                     my_tpu_address,
                     self.send_transaction_service_config.tpu_peers.clone(),
                     leader_info,
                     self.send_transaction_service_config.leader_forward_count,
-                    identity_keypair,
+                    Some(identity_keypair),
                 );
 
                 let json_rpc_service = JsonRpcService::new_with_client(
