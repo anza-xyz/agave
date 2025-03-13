@@ -90,8 +90,7 @@ use {
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
-        rpc_service::JsonRpcService,
-        rpc_service::JsonRpcServiceBuilder,
+        rpc_service::{JsonRpcService, JsonRpcServiceBuilder},
         rpc_subscriptions::RpcSubscriptions,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
@@ -1165,29 +1164,29 @@ impl Validator {
                 None
             };
 
-            let rpc_builder = JsonRpcServiceBuilder::new(
+            let rpc_builder = JsonRpcServiceBuilder {
                 rpc_addr,
-                config.rpc_config.clone(),
-                Some(config.snapshot_config.clone()),
-                bank_forks.clone(),
-                block_commitment_cache.clone(),
-                blockstore.clone(),
-                cluster_info.clone(),
-                Some(poh_recorder.clone()),
-                genesis_config.hash(),
-                ledger_path,
-                config.validator_exit.clone(),
-                exit.clone(),
-                rpc_override_health_check.clone(),
+                config: config.rpc_config.clone(),
+                snapshot_config: Some(config.snapshot_config.clone()),
+                bank_forks: bank_forks.clone(),
+                block_commitment_cache: block_commitment_cache.clone(),
+                blockstore: blockstore.clone(),
+                cluster_info: cluster_info.clone(),
+                poh_recorder: Some(poh_recorder.clone()),
+                genesis_hash: genesis_config.hash(),
+                ledger_path: ledger_path.to_path_buf(),
+                validator_exit: config.validator_exit.clone(),
+                exit: exit.clone(),
+                override_health_check: rpc_override_health_check.clone(),
                 startup_verification_complete,
-                optimistically_confirmed_bank.clone(),
-                config.send_transaction_service_config.clone(),
-                max_slots.clone(),
-                leader_schedule_cache.clone(),
+                optimistically_confirmed_bank: optimistically_confirmed_bank.clone(),
+                send_transaction_service_config: config.send_transaction_service_config.clone(),
+                max_slots: max_slots.clone(),
+                leader_schedule_cache: leader_schedule_cache.clone(),
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
-                prioritization_fee_cache.clone(),
-            );
+                prioritization_fee_cache: prioritization_fee_cache.clone(),
+            };
             let json_rpc_service = if config.use_tpu_client_next {
                 rpc_builder
                     .build(None, Some(Arc::as_ref(&identity_keypair)))

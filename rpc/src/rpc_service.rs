@@ -342,83 +342,34 @@ fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<Strin
 /// * [`ConnectionCacheClient`], which is based on [`ConnectionCache`].
 /// * [`TpuClientNextClient`], which is based on the `tpu-client-next` crate.
 pub struct JsonRpcServiceBuilder {
-    rpc_addr: SocketAddr,
-    config: JsonRpcConfig,
-    snapshot_config: Option<SnapshotConfig>,
-    bank_forks: Arc<RwLock<BankForks>>,
-    block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-    blockstore: Arc<Blockstore>,
-    cluster_info: Arc<ClusterInfo>,
-    poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
-    genesis_hash: Hash,
-    ledger_path: PathBuf,
-    validator_exit: Arc<RwLock<Exit>>,
-    exit: Arc<AtomicBool>,
-    override_health_check: Arc<AtomicBool>,
-    startup_verification_complete: Arc<AtomicBool>,
-    optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
-    send_transaction_service_config: send_transaction_service::Config,
-    max_slots: Arc<MaxSlots>,
-    leader_schedule_cache: Arc<LeaderScheduleCache>,
-    max_complete_transaction_status_slot: Arc<AtomicU64>,
-    max_complete_rewards_slot: Arc<AtomicU64>,
-    prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    pub rpc_addr: SocketAddr,
+    pub config: JsonRpcConfig,
+    pub snapshot_config: Option<SnapshotConfig>,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+    pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+    pub blockstore: Arc<Blockstore>,
+    pub cluster_info: Arc<ClusterInfo>,
+    pub poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
+    pub genesis_hash: Hash,
+    pub ledger_path: PathBuf,
+    pub validator_exit: Arc<RwLock<Exit>>,
+    pub exit: Arc<AtomicBool>,
+    pub override_health_check: Arc<AtomicBool>,
+    pub startup_verification_complete: Arc<AtomicBool>,
+    pub optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+    pub send_transaction_service_config: send_transaction_service::Config,
+    pub max_slots: Arc<MaxSlots>,
+    pub leader_schedule_cache: Arc<LeaderScheduleCache>,
+    pub max_complete_transaction_status_slot: Arc<AtomicU64>,
+    pub max_complete_rewards_slot: Arc<AtomicU64>,
+    pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
 }
 
 impl JsonRpcServiceBuilder {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        rpc_addr: SocketAddr,
-        config: JsonRpcConfig,
-        snapshot_config: Option<SnapshotConfig>,
-        bank_forks: Arc<RwLock<BankForks>>,
-        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-        blockstore: Arc<Blockstore>,
-        cluster_info: Arc<ClusterInfo>,
-        poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
-        genesis_hash: Hash,
-        ledger_path: &Path,
-        validator_exit: Arc<RwLock<Exit>>,
-        exit: Arc<AtomicBool>,
-        override_health_check: Arc<AtomicBool>,
-        startup_verification_complete: Arc<AtomicBool>,
-        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
-        send_transaction_service_config: send_transaction_service::Config,
-        max_slots: Arc<MaxSlots>,
-        leader_schedule_cache: Arc<LeaderScheduleCache>,
-        max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-    ) -> Self {
-        Self {
-            rpc_addr,
-            config,
-            snapshot_config,
-            bank_forks,
-            block_commitment_cache,
-            blockstore,
-            cluster_info,
-            poh_recorder,
-            genesis_hash,
-            ledger_path: ledger_path.to_path_buf(),
-            validator_exit,
-            exit,
-            override_health_check,
-            startup_verification_complete,
-            optimistically_confirmed_bank,
-            send_transaction_service_config,
-            max_slots,
-            leader_schedule_cache,
-            max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
-            prioritization_fee_cache,
-        }
-    }
-
     /// The `build` method creates an instance of [`JsonRpcService`]. If
     /// `connection_cache` is provided, the service will use a TPU client based
     /// on the connection_cache crate. Otherwise, it will internally use
-    /// [`TpuClientNextClient`].
+    /// [`TpuClientNextClient`] which uses the `identity_keypair`.
     pub fn build(
         self,
         connection_cache: Option<Arc<ConnectionCache>>,
@@ -432,13 +383,15 @@ impl JsonRpcServiceBuilder {
         let leader_info = self
             .poh_recorder
             .map(|recorder| ClusterTpuInfo::new(self.cluster_info.clone(), recorder));
+        // if ConnectionCache is used, use it's protocol. Otherwise, use QUIC as
+        // tpu-client-next doesn't support UDP.
         let protocol = connection_cache
             .as_ref()
             .map_or(Protocol::QUIC, |cache| cache.protocol());
         let my_tpu_address = self
             .cluster_info
             .my_contact_info()
-            .tpu(Protocol::QUIC)
+            .tpu(protocol)
             .ok_or(format!("Invalid {:?} socket address for TPU", protocol))?;
 
         match connection_cache {
