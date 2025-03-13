@@ -1264,9 +1264,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     ) -> bool {
         match mode {
             BlockVerification => {
-                // It's needed to wait to execute all active tasks without any shortcircuting, even
-                // if the session has been signalled for ending; otherwise verification outcome
-                // could differ.
+                // It's needed to wait to execute all active tasks without any short-circuiting,
+                // even if the session has been signalled for ending; otherwise verification
+                // outcome could differ.
                 session_ending && state_machine.has_no_active_task()
             }
             BlockProduction => {
