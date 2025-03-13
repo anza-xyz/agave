@@ -7307,15 +7307,13 @@ pub mod tests {
 
         let entries = create_ticks(100, 0, Hash::default());
         let mut shreds =
-            entries_to_test_shreds(&entries, slot, 0, true, 0, /*merkle_variant:*/ false);
-        assert!(shreds.len() > 2);
-        shreds.drain(2..);
+            entries_to_test_shreds(&entries, slot, 0, true, 0, /*merkle_variant:*/ true);
 
         const ONE: u64 = 1;
         const OTHER: u64 = 4;
+        assert!(shreds.len() > OTHER as usize);
 
-        shreds[0].set_index(ONE as u32);
-        shreds[1].set_index(OTHER as u32);
+        let shreds = vec![shreds.remove(OTHER as usize), shreds.remove(ONE as usize)];
 
         // Insert one shred at index = first_index
         blockstore.insert_shreds(shreds, None, false).unwrap();
