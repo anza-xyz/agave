@@ -3,6 +3,7 @@ use {
         admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
         bootstrap,
         cli::{self},
+        commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
@@ -100,6 +101,8 @@ pub fn execute(
     ledger_path: &Path,
     operation: Operation,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let run_args = RunArgs::from_clap_arg_match(matches)?;
+
     let cli::thread_args::NumThreadConfig {
         accounts_db_clean_threads,
         accounts_db_foreground_threads,
@@ -116,13 +119,7 @@ pub fn execute(
         tvu_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(matches);
 
-    let identity_keypair = keypair_of(matches, "identity").unwrap_or_else(|| {
-        clap::Error::with_description(
-            "The --identity <KEYPAIR> argument is required",
-            clap::ErrorKind::ArgumentNotFound,
-        )
-        .exit();
-    });
+    let identity_keypair = Arc::new(run_args.identity);
 
     let logfile = {
         let logfile = matches
@@ -1245,8 +1242,6 @@ pub fn execute(
     solana_entry::entry::init_poh();
     snapshot_utils::remove_tmp_snapshot_archives(&full_snapshot_archives_dir);
     snapshot_utils::remove_tmp_snapshot_archives(&incremental_snapshot_archives_dir);
-
-    let identity_keypair = Arc::new(identity_keypair);
 
     let should_check_duplicate_instance = true;
     if !cluster_entrypoints.is_empty() {
