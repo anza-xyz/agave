@@ -7058,17 +7058,12 @@ pub mod tests {
         let gap: u64 = 10;
         assert!(gap > 3);
         // Create enough entries to ensure there are at least two shreds created
-        let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
-        let num_entries = max_ticks_per_n_shreds(1, Some(data_buffer_size)) + 1;
-        let entries = create_ticks(num_entries, 0, Hash::default());
+        let entries = create_ticks(1, 0, Hash::default());
         let mut shreds =
-            entries_to_test_shreds(&entries, slot, 0, true, 0, /*merkle_variant:*/ false);
-        let num_shreds = shreds.len();
-        assert!(num_shreds > 1);
-        for (i, s) in shreds.iter_mut().enumerate() {
-            s.set_index(i as u32 * gap as u32);
-            s.set_slot(slot);
-        }
+            entries_to_test_shreds(&entries, slot, 0, true, 0, /*merkle_variant:*/ true);
+        shreds.retain(|s| (s.index() % gap as u32) == 0);
+        let num_shreds = 2;
+        shreds.truncate(num_shreds);
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
         // Index of the first shred is 0
