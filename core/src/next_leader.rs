@@ -6,7 +6,10 @@ use {
         contact_info::{ContactInfoQuery, Protocol},
     },
     solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::{clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, pubkey::Pubkey},
+    solana_sdk::{
+        clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, NUM_CONSECUTIVE_LEADER_SLOTS},
+        pubkey::Pubkey,
+    },
     std::{net::SocketAddr, sync::RwLock},
 };
 
@@ -57,4 +60,26 @@ pub(crate) fn next_leader(
     cluster_info
         .lookup_contact_info(&leader_pubkey, port_selector)?
         .map(|addr| (leader_pubkey, addr))
+}
+
+pub(crate) fn next_leaders(
+    cluster_info: &impl LikeClusterInfo,
+    poh_recorder: &RwLock<PohRecorder>,
+    max_count: u64,
+    port_selector: impl ContactInfoQuery<Option<SocketAddr>>,
+) -> Vec<Option<SocketAddr>> {
+    let recorder = poh_recorder.read().unwrap();
+    let leader_pubkeys: Vec<_> = (0..max_count)
+        .filter_map(|i| {
+            recorder.leader_after_n_slots(
+                FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET + i * NUM_CONSECUTIVE_LEADER_SLOTS,
+            )
+        })
+        .collect();
+    drop(recorder);
+
+    leader_pubkeys
+        .iter()
+        .map(|leader_pubkey| cluster_info.lookup_contact_info(&leader_pubkey, &port_selector)?)
+        .collect()
 }
