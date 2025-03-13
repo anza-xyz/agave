@@ -16,7 +16,6 @@ enum-iterator = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
-qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
 serde = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
@@ -71,7 +70,7 @@ name = "solana_program_runtime"
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-dev-context-only-utils = ["dep:qualifier_attr"]
+dev-context-only-utils = []
 dummy-for-ci-check = ["metrics"]
 frozen-abi = [
     "dep:solana-frozen-abi",

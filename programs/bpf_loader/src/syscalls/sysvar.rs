@@ -10,7 +10,7 @@ fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
     consume_compute_meter(
         invoke_context,
         invoke_context
-            .get_compute_cost()
+            .get_execution_cost()
             .sysvar_base_cost
             .saturating_add(size_of::<T>() as u64),
     )?;
@@ -184,7 +184,7 @@ declare_builtin_function!(
             cpi_bytes_per_unit,
             mem_op_base_cost,
             ..
-        } = *invoke_context.get_compute_cost();
+        } = *invoke_context.get_execution_cost();
 
         // Abort: "Compute budget is exceeded."
         let sysvar_id_cost = 32_u64.checked_div(cpi_bytes_per_unit).unwrap_or(0);

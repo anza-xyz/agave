@@ -1,22 +1,4 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {solana_program_entrypoint::HEAP_LENGTH, std::num::NonZeroU32};
-
-#[cfg(feature = "frozen-abi")]
-impl ::solana_frozen_abi::abi_example::AbiExample for SVMTransactionExecutionCost {
-    fn example() -> Self {
-        // SVMTransactionExecutionCost is not Serialize so just rely on Default.
-        SVMTransactionExecutionCost::default()
-    }
-}
-
-#[cfg(feature = "frozen-abi")]
-impl ::solana_frozen_abi::abi_example::AbiExample for SVMTransactionExecutionBudget {
-    fn example() -> Self {
-        // SVMTransactionExecutionBudget is not Serialize so just rely on Default.
-        SVMTransactionExecutionBudget::default()
-    }
-}
 
 /// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
 /// a transaction.
@@ -72,15 +54,8 @@ pub struct SVMTransactionExecutionBudget {
 
 impl Default for SVMTransactionExecutionBudget {
     fn default() -> Self {
-        Self::new(MAX_COMPUTE_UNIT_LIMIT as u64)
-    }
-}
-
-impl SVMTransactionExecutionBudget {
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn new(compute_unit_limit: u64) -> Self {
         SVMTransactionExecutionBudget {
-            compute_unit_limit,
+            compute_unit_limit: u64::from(MAX_COMPUTE_UNIT_LIMIT),
             max_instruction_stack_depth: MAX_INSTRUCTION_STACK_DEPTH,
             max_instruction_trace_length: 64,
             sha256_max_slices: 20_000,
@@ -184,14 +159,7 @@ pub struct SVMTransactionExecutionCost {
 
 impl Default for SVMTransactionExecutionCost {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SVMTransactionExecutionCost {
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn new() -> Self {
-        SVMTransactionExecutionCost {
+        Self {
             log_64_units: 100,
             create_program_address_units: 1500,
             invoke_units: 1000,
@@ -231,7 +199,9 @@ impl SVMTransactionExecutionCost {
             alt_bn128_g2_decompress: 13610,
         }
     }
+}
 
+impl SVMTransactionExecutionCost {
     /// Returns cost of the Poseidon hash function for the given number of
     /// inputs is determined by the following quadratic function:
     ///

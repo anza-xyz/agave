@@ -198,7 +198,7 @@ pub struct InvokeContext<'a> {
     /// The compute budget for the current invocation.
     compute_budget: SVMTransactionExecutionBudget,
     /// The compute cost for the current invocation.
-    compute_cost: SVMTransactionExecutionCost,
+    execution_cost: SVMTransactionExecutionCost,
     /// Instruction compute meter, for tracking compute units consumed against
     /// the designated compute budget during program execution.
     compute_meter: RefCell<u64>,
@@ -218,7 +218,7 @@ impl<'a> InvokeContext<'a> {
         environment_config: EnvironmentConfig<'a>,
         log_collector: Option<Rc<RefCell<LogCollector>>>,
         compute_budget: SVMTransactionExecutionBudget,
-        compute_cost: SVMTransactionExecutionCost,
+        execution_cost: SVMTransactionExecutionCost,
     ) -> Self {
         Self {
             transaction_context,
@@ -226,7 +226,7 @@ impl<'a> InvokeContext<'a> {
             environment_config,
             log_collector,
             compute_budget,
-            compute_cost,
+            execution_cost,
             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
             execute_time: None,
             timings: ExecuteDetailsTimings::default(),
@@ -651,8 +651,8 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get this invocation's compute budget
-    pub fn get_compute_cost(&self) -> &SVMTransactionExecutionCost {
-        &self.compute_cost
+    pub fn get_execution_cost(&self) -> &SVMTransactionExecutionCost {
+        &self.execution_cost
     }
 
     /// Get the current feature set.
@@ -1204,10 +1204,13 @@ mod tests {
     #[test]
     fn test_invoke_context_compute_budget() {
         let transaction_accounts = vec![(solana_pubkey::new_rand(), AccountSharedData::default())];
+        let execution_budget = SVMTransactionExecutionBudget {
+            compute_unit_limit: u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
+            ..SVMTransactionExecutionBudget::default()
+        };
 
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-        invoke_context.compute_budget =
-            SVMTransactionExecutionBudget::new(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64);
+        invoke_context.compute_budget = execution_budget;
 
         invoke_context
             .transaction_context
@@ -1215,10 +1218,7 @@ mod tests {
             .unwrap()
             .configure(&[0], &[], &[]);
         invoke_context.push().unwrap();
-        assert_eq!(
-            *invoke_context.get_compute_budget(),
-            SVMTransactionExecutionBudget::new(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64)
-        );
+        assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
         invoke_context.pop().unwrap();
     }
 

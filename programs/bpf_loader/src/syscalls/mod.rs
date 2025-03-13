@@ -10,7 +10,6 @@ pub use self::{
         SyscallGetSysvar,
     },
 };
-use solana_program_runtime::execution_budget::SVMTransactionExecutionBudget;
 #[allow(deprecated)]
 use {
     crate::syscalls::mem_ops::is_nonoverlapping,
@@ -43,7 +42,9 @@ use {
     solana_precompiles::is_precompile,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
-        execution_budget::SVMTransactionExecutionCost, invoke_context::InvokeContext, stable_log,
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
+        invoke_context::InvokeContext,
+        stable_log,
     },
     solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
     solana_sbpf::{
@@ -888,7 +889,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let cost = invoke_context
-            .get_compute_cost()
+            .get_execution_cost()
             .create_program_address_units;
         consume_compute_meter(invoke_context, cost)?;
 
@@ -927,7 +928,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let cost = invoke_context
-            .get_compute_cost()
+            .get_execution_cost()
             .create_program_address_units;
         consume_compute_meter(invoke_context, cost)?;
 
@@ -991,7 +992,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let cost = invoke_context.get_compute_cost().secp256k1_recover_cost;
+        let cost = invoke_context.get_execution_cost().secp256k1_recover_cost;
         consume_compute_meter(invoke_context, cost)?;
 
         let hash = translate_slice::<u8>(
@@ -1056,7 +1057,7 @@ declare_builtin_function!(
         match curve_id {
             CURVE25519_EDWARDS => {
                 let cost = invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_edwards_validate_point_cost;
                 consume_compute_meter(invoke_context, cost)?;
 
@@ -1074,7 +1075,7 @@ declare_builtin_function!(
             }
             CURVE25519_RISTRETTO => {
                 let cost = invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_ristretto_validate_point_cost;
                 consume_compute_meter(invoke_context, cost)?;
 
@@ -1123,7 +1124,7 @@ declare_builtin_function!(
             CURVE25519_EDWARDS => match group_op {
                 ADD => {
                     let cost = invoke_context
-                        .get_compute_cost()
+                        .get_execution_cost()
                         .curve25519_edwards_add_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1151,7 +1152,7 @@ declare_builtin_function!(
                 }
                 SUB => {
                     let cost = invoke_context
-                        .get_compute_cost()
+                        .get_execution_cost()
                         .curve25519_edwards_subtract_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1179,7 +1180,7 @@ declare_builtin_function!(
                 }
                 MUL => {
                     let cost = invoke_context
-                        .get_compute_cost()
+                        .get_execution_cost()
                         .curve25519_edwards_multiply_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1220,7 +1221,7 @@ declare_builtin_function!(
             CURVE25519_RISTRETTO => match group_op {
                 ADD => {
                     let cost = invoke_context
-                        .get_compute_cost()
+                        .get_execution_cost()
                         .curve25519_ristretto_add_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1248,7 +1249,7 @@ declare_builtin_function!(
                 }
                 SUB => {
                     let cost = invoke_context
-                        .get_compute_cost()
+                        .get_execution_cost()
                         .curve25519_ristretto_subtract_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1278,7 +1279,7 @@ declare_builtin_function!(
                 }
                 MUL => {
                     let cost = invoke_context
-                        .get_compute_cost()
+                        .get_execution_cost()
                         .curve25519_ristretto_multiply_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1353,11 +1354,11 @@ declare_builtin_function!(
         match curve_id {
             CURVE25519_EDWARDS => {
                 let cost = invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_edwards_msm_base_cost
                     .saturating_add(
                         invoke_context
-                            .get_compute_cost()
+                            .get_execution_cost()
                             .curve25519_edwards_msm_incremental_cost
                             .saturating_mul(points_len.saturating_sub(1)),
                     );
@@ -1391,11 +1392,11 @@ declare_builtin_function!(
 
             CURVE25519_RISTRETTO => {
                 let cost = invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_ristretto_msm_base_cost
                     .saturating_add(
                         invoke_context
-                            .get_compute_cost()
+                            .get_execution_cost()
                             .curve25519_ristretto_msm_incremental_cost
                             .saturating_mul(points_len.saturating_sub(1)),
                     );
@@ -1455,7 +1456,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let execution_cost = invoke_context.get_compute_cost();
+        let execution_cost = invoke_context.get_execution_cost();
 
         let cost = len
             .checked_div(execution_cost.cpi_bytes_per_unit)
@@ -1503,7 +1504,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let execution_cost = invoke_context.get_compute_cost();
+        let execution_cost = invoke_context.get_execution_cost();
 
         consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
@@ -1567,7 +1568,7 @@ declare_builtin_function!(
         accounts_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let execution_cost = invoke_context.get_compute_cost();
+        let execution_cost = invoke_context.get_execution_cost();
 
         consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
@@ -1705,7 +1706,7 @@ declare_builtin_function!(
         _arg5: u64,
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let execution_cost = invoke_context.get_compute_cost();
+        let execution_cost = invoke_context.get_execution_cost();
 
         consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
@@ -1726,7 +1727,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         use solana_bn254::prelude::{ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING};
-        let execution_cost = invoke_context.get_compute_cost();
+        let execution_cost = invoke_context.get_execution_cost();
         let (cost, output): (u64, usize) = match group_op {
             ALT_BN128_ADD => (
                 execution_cost.alt_bn128_addition_cost,
@@ -1845,7 +1846,7 @@ declare_builtin_function!(
         let input_len: u64 = std::cmp::max(params.base_len, params.exponent_len);
         let input_len: u64 = std::cmp::max(input_len, params.modulus_len);
 
-        let execution_cost = invoke_context.get_compute_cost();
+        let execution_cost = invoke_context.get_execution_cost();
         // the compute units are calculated by the quadratic equation `0.5 input_len^2 + 190`
         consume_compute_meter(
             invoke_context,
@@ -1917,7 +1918,7 @@ declare_builtin_function!(
             return Err(SyscallError::InvalidLength.into());
         }
 
-        let execution_cost = invoke_context.get_compute_cost();
+        let execution_cost = invoke_context.get_execution_cost();
         let Some(cost) = execution_cost.poseidon_cost(vals_len) else {
             ic_msg!(
                 invoke_context,
@@ -1976,7 +1977,7 @@ declare_builtin_function!(
         _arg5: u64,
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let execution_cost = invoke_context.get_compute_cost();
+        let execution_cost = invoke_context.get_execution_cost();
         consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
         use solana_sbpf::vm::ContextObject;
@@ -2001,7 +2002,7 @@ declare_builtin_function!(
             alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
             ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS, G1, G1_COMPRESSED, G2, G2_COMPRESSED,
         };
-        let execution_cost = invoke_context.get_compute_cost();
+        let execution_cost = invoke_context.get_execution_cost();
         let base_cost = execution_cost.syscall_base_cost;
         let (cost, output): (u64, usize) = match op {
             ALT_BN128_G1_COMPRESS => (
@@ -2118,7 +2119,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let compute_budget = invoke_context.get_compute_budget();
-        let compute_cost = invoke_context.get_compute_cost();
+        let compute_cost = invoke_context.get_execution_cost();
         let hash_base_cost = H::get_base_cost(compute_cost);
         let hash_byte_cost = H::get_byte_cost(compute_cost);
         let hash_max_slices = H::get_max_slices(compute_budget);
@@ -2180,7 +2181,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let compute_cost = invoke_context.get_compute_cost();
+        let compute_cost = invoke_context.get_execution_cost();
 
         if var_addr == 0 {
             // As specified by SIMD-0133: If `var_addr` is a null pointer:
@@ -2616,7 +2617,7 @@ mod tests {
     #[test]
     fn test_syscall_sol_log_u64() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-        let cost = invoke_context.get_compute_cost().log_64_units;
+        let cost = invoke_context.get_execution_cost().log_64_units;
 
         invoke_context.mock_set_remaining(cost);
         let config = Config::default();
@@ -2637,7 +2638,7 @@ mod tests {
     #[test]
     fn test_syscall_sol_pubkey() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-        let cost = invoke_context.get_compute_cost().log_pubkey_units;
+        let cost = invoke_context.get_execution_cost().log_pubkey_units;
 
         let pubkey = Pubkey::from_str("MoqiU1vryuCGQSxFKA1SZ316JdLEFFhoAu6cKUNk7dN").unwrap();
         let config = Config::default();
@@ -2832,10 +2833,10 @@ mod tests {
         .unwrap();
 
         invoke_context.mock_set_remaining(
-            (invoke_context.get_compute_cost().sha256_base_cost
-                + invoke_context.get_compute_cost().mem_op_base_cost.max(
+            (invoke_context.get_execution_cost().sha256_base_cost
+                + invoke_context.get_execution_cost().mem_op_base_cost.max(
                     invoke_context
-                        .get_compute_cost()
+                        .get_execution_cost()
                         .sha256_byte_cost
                         .saturating_mul((bytes1.len() + bytes2.len()) as u64 / 2),
                 ))
@@ -2931,7 +2932,7 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_cost()
+                .get_execution_cost()
                 .curve25519_edwards_validate_point_cost)
                 * 2,
         );
@@ -3004,7 +3005,7 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_cost()
+                .get_execution_cost()
                 .curve25519_ristretto_validate_point_cost)
                 * 2,
         );
@@ -3091,13 +3092,13 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_cost()
+                .get_execution_cost()
                 .curve25519_edwards_add_cost
                 + invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_edwards_subtract_cost
                 + invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_edwards_multiply_cost)
                 * 2,
         );
@@ -3246,13 +3247,13 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_cost()
+                .get_execution_cost()
                 .curve25519_ristretto_add_cost
                 + invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_ristretto_subtract_cost
                 + invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_ristretto_multiply_cost)
                 * 2,
         );
@@ -3416,16 +3417,16 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             invoke_context
-                .get_compute_cost()
+                .get_execution_cost()
                 .curve25519_edwards_msm_base_cost
                 + invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_edwards_msm_incremental_cost
                 + invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_ristretto_msm_base_cost
                 + invoke_context
-                    .get_compute_cost()
+                    .get_execution_cost()
                     .curve25519_ristretto_msm_incremental_cost,
         );
 
@@ -4514,7 +4515,7 @@ mod tests {
             }
         }
 
-        let syscall_base_cost = invoke_context.get_compute_cost().syscall_base_cost;
+        let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
 
         const VM_BASE_ADDRESS: u64 = 0x100000000;
         const META_OFFSET: usize = 0;
@@ -4725,7 +4726,7 @@ mod tests {
     fn test_find_program_address() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let cost = invoke_context
-            .get_compute_cost()
+            .get_execution_cost()
             .create_program_address_units;
         let address = bpf_loader_upgradeable::id();
         let max_tries = 256; // one per seed
@@ -4838,7 +4839,7 @@ mod tests {
             )
             .unwrap();
 
-            let budget = invoke_context.get_compute_cost();
+            let budget = invoke_context.get_execution_cost();
             invoke_context.mock_set_remaining(
                 budget.syscall_base_cost
                     + (MAX_LEN * MAX_LEN) / budget.big_modular_exponentiation_cost_divisor
@@ -4880,7 +4881,7 @@ mod tests {
             )
             .unwrap();
 
-            let budget = invoke_context.get_compute_cost();
+            let budget = invoke_context.get_execution_cost();
             invoke_context.mock_set_remaining(
                 budget.syscall_base_cost
                     + (INV_LEN * INV_LEN) / budget.big_modular_exponentiation_cost_divisor

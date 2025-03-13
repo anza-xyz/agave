@@ -218,7 +218,7 @@ fn get_sysvar<T: Default + Sysvar + Sized + serde::de::DeserializeOwned + Clone>
 ) -> u64 {
     let invoke_context = get_invoke_context();
     if invoke_context
-        .consume_checked(invoke_context.get_compute_cost().sysvar_base_cost + T::size_of() as u64)
+        .consume_checked(invoke_context.get_execution_cost().sysvar_base_cost + T::size_of() as u64)
         .is_err()
     {
         panic!("Exceeded compute budget");

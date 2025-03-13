@@ -8889,7 +8889,6 @@ dependencies = [
  "itertools 0.12.1",
  "log",
  "percentage",
- "qualifier_attr",
  "rand 0.8.5",
  "serde",
  "solana-account",

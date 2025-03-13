@@ -10005,7 +10005,7 @@ fn test_compute_budget_program_noop() {
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let compute_budget = ComputeBudget::from_budget_and_cost(
             invoke_context.get_compute_budget(),
-            invoke_context.get_compute_cost(),
+            invoke_context.get_execution_cost(),
         );
         assert_eq!(
             compute_budget,
@@ -10053,7 +10053,7 @@ fn test_compute_request_instruction() {
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let compute_budget = ComputeBudget::from_budget_and_cost(
             invoke_context.get_compute_budget(),
-            invoke_context.get_compute_cost(),
+            invoke_context.get_execution_cost(),
         );
         assert_eq!(
             compute_budget,
@@ -10109,7 +10109,7 @@ fn test_failed_compute_request_instruction() {
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let compute_budget = ComputeBudget::from_budget_and_cost(
             invoke_context.get_compute_budget(),
-            invoke_context.get_compute_cost(),
+            invoke_context.get_execution_cost(),
         );
         assert_eq!(
             compute_budget,

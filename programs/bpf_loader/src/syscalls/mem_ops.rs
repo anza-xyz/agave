@@ -6,7 +6,7 @@ use {
 };
 
 fn mem_op_consume(invoke_context: &mut InvokeContext, n: u64) -> Result<(), Error> {
-    let compute_cost = invoke_context.get_compute_cost();
+    let compute_cost = invoke_context.get_execution_cost();
     let cost = compute_cost.mem_op_base_cost.max(
         n.checked_div(compute_cost.cpi_bytes_per_unit)
             .unwrap_or(u64::MAX),

@@ -696,7 +696,9 @@ mod tests {
         solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
         solana_nonce::{self as nonce, versions::Versions as NonceVersions},
         solana_program::bpf_loader_upgradeable::UpgradeableLoaderState,
-        solana_program_runtime::execution_budget::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        solana_program_runtime::execution_budget::{
+            DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_rent_debits::RentDebits,
@@ -1915,9 +1917,10 @@ mod tests {
             panic!("transaction loading failed");
         };
 
-        let compute_budget = SVMTransactionExecutionBudget::new(u64::from(
-            solana_program_runtime::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
-        ));
+        let compute_budget = SVMTransactionExecutionBudget {
+            compute_unit_limit: u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
+            ..SVMTransactionExecutionBudget::default()
+        };
         let rent_collector = RentCollector::default();
         let transaction_context = TransactionContext::new(
             loaded_transaction.accounts,
