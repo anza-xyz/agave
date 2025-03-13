@@ -83,11 +83,14 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     /// could not be processed. Note processed transactions can still have a
     /// failure result meaning that the transaction will be rolled back.
     pub processing_results: Vec<TransactionProcessingResult>,
-    // HANA we could (should?) put this on TransactionProcessingResult
-    // but we would need to change it to a real struct
-    // presently its a type alias for Result<_> and we still need balances for failures
+    // HANA we actually do want this here rather than split across tx proc result:
+    // * splitting it would force it to change it from a Result alias to a struct
+    // * the _entire batch_ may abort, this Option lets us signal that via None
+    // TODO token, rename this transaction_balances, one Option wraps both
+    // i havent decided on a strat for the token stuff yet
+    // i think i want to provide a trait in svm with an empty impl and impl it in core
+    // its annoying bc we need an intermediate struct bc the final needs UiAmount
     pub native_balances: Option<TransactionBalancesSet>,
-    // HANA TODO token
 }
 
 /// Configuration of the recording capabilities for transaction execution
@@ -99,9 +102,6 @@ pub struct ExecutionRecordingConfig {
     pub enable_balance_recording: bool,
 }
 
-// HANA i need to look at ALL callers of this... if the rpc thing Does Not Belong
-// as in, are there things that legit want to enable the three existing ones but NOT the fourth
-// ooh promising tho, consumer uses this in a way that is *already correct* for our new intent
 impl ExecutionRecordingConfig {
     pub fn new_single_setting(option: bool) -> Self {
         ExecutionRecordingConfig {
@@ -329,30 +329,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.sysvar_cache.read().unwrap()
     }
 
-    // HANA ok wtf am i doing this
-    // i think what i want is a new TransactionProcessingConfig option for whether to record bals
-    // if yes, we get pre and post bals for every account in svm using two callbacks
-    // im not sure exactly how to provide them... ideally in CB but its a bit tricky
-    // because consumer calls into bank, not into this, so CB is non-generic at that stage
-    // ok andrew suggested putting optional function pointers in config
-    // instead of making the config generic so we could attach a trait
-    // the next qestion is where to put the result... well, on the output, again optional
-    //
-    // ok so this isnt so bad...
-    // after load, map over loaded accounts. pre-lamps are lamps. pre-token use callback
-    // (i also dont actually need two callbacks for this, just need a token validator/parser)
-    // so map to two vecs. then execute, update cache. now map account keys
-    // load each and do the same as we did above. we now have four vecs of this shit
-    // maybe we have our own TokenInfo thing so we dont pull in fucking UiToken etc shit
-    // and we can impl a From<T> in consumer or whatever that map converts
-    //
-    // note TransactionBalancesSet is in runtime but TransactionTokenBalancesSet is in uhh tx status
-    // maybe move tx balance set down to svm then and use it as-is
-    // ok and use a tuple of two custom structs for token bullshit for now
-    //
-    // ok i mixed the balance struct and added my config option
-    // lets do the full flow with just lamports then add the token callback
-
     /// Main entrypoint to the SVM.
     pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
         &self,
@@ -407,13 +383,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     processing_results: (0..sanitized_txs.len())
                         .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
                         .collect(),
-                    // HANA this is somewhat problematic
-                    // in theory for the rpc case we need to load every account for every transaction here
-                    // it gets worse if my program cache pr ever lands bc in that we early abort
-                    // however... maybe it doesnt matter and we dont need to report balances?
-                    // if we throw out all the transactions... it means they never get committed
-                    // but i think the tx sender reports balances even for discarded transactions?
-                    // ig worst case we keep the bank loading logic in consumer and only run it in this case
                     native_balances: None,
                 };
             }

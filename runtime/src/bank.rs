@@ -329,6 +329,8 @@ pub struct LoadAndExecuteTransactionsOutput {
     // Processed transaction counts used to update bank transaction counts and
     // for metrics reporting.
     pub processed_counts: ProcessedTransactionCounts,
+    // HANA as with LoadAndExecuteSanitizedTransactionsOutput TODO token
+    pub native_balances: Option<TransactionBalancesSet>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -3435,6 +3437,7 @@ impl Bank {
         LoadAndExecuteTransactionsOutput {
             processing_results: sanitized_output.processing_results,
             processed_counts,
+            native_balances: sanitized_output.native_balances,
         }
     }
 
@@ -4552,6 +4555,7 @@ impl Bank {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
+            native_balances: _,
         } = self.load_and_execute_transactions(
             batch,
             max_age,

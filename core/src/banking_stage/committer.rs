@@ -76,6 +76,7 @@ impl Committer {
         pre_balance_info: &mut PreBalanceInfo,
         execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
         processed_counts: &ProcessedTransactionCounts,
+        transaction_balances: Option<TransactionBalancesSet>,
     ) -> (u64, Vec<CommitTransactionDetails>) {
         let processed_transactions = processing_results
             .iter()
@@ -119,6 +120,7 @@ impl Committer {
                 batch,
                 pre_balance_info,
                 starting_transaction_index,
+                transaction_balances,
             );
             self.prioritization_fee_cache
                 .update(bank, processed_transactions.into_iter());
@@ -134,6 +136,8 @@ impl Committer {
         batch: &TransactionBatch<impl TransactionWithMeta>,
         pre_balance_info: &mut PreBalanceInfo,
         starting_transaction_index: Option<usize>,
+        // HANA this is just native balances rn but will include tokens later
+        transaction_balances: Option<TransactionBalancesSet>,
     ) {
         if let Some(transaction_status_sender) = &self.transaction_status_sender {
             // Clone `SanitizedTransaction` out of `RuntimeTransaction`, this is
@@ -143,9 +147,19 @@ impl Committer {
                 .iter()
                 .map(|tx| tx.as_sanitized_transaction().into_owned())
                 .collect_vec();
+
+            // HANA this sort of goes away and we dont need PreBalanceInfo once we have tokens
+            // if the batch is aborted, we load inside the None arm of the below match
+            // no balances changed so we no longer need PreBalanceInfo and use "post" balances twice
             let post_balances = bank.collect_balances(batch);
             let post_token_balances =
                 collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals);
+
+            let native_balances = match transaction_balances {
+                Some(balances_set) => balances_set,
+                None => TransactionBalancesSet::new(post_balances.clone(), post_balances),
+            };
+
             let mut transaction_index = starting_transaction_index.unwrap_or_default();
             let batch_transaction_indexes: Vec<_> = commit_results
                 .iter()
@@ -163,10 +177,7 @@ impl Committer {
                 bank.slot(),
                 txs,
                 commit_results,
-                TransactionBalancesSet::new(
-                    std::mem::take(&mut pre_balance_info.native),
-                    post_balances,
-                ),
+                native_balances,
                 TransactionTokenBalancesSet::new(
                     std::mem::take(&mut pre_balance_info.token),
                     post_token_balances,
