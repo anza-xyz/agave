@@ -32,7 +32,7 @@ impl EpochSpecs {
     }
 
     #[inline]
-    pub fn epoch_duration(&mut self) -> Duration {
+    pub(crate) fn epoch_duration(&mut self) -> Duration {
         self.maybe_refresh();
         self.epoch_duration
     }
