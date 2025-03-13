@@ -105,6 +105,7 @@ frozen-abi = [
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
+dev-context-only-utils=[]
 
 [[bench]]
 name = "crds"
@@ -122,6 +123,10 @@ harness = false
 [[bin]]
 name = "solana-gossip"
 path = "src/main.rs"
+
+[[bin]]
+name = "crds-node"
+path = "src/crds_node.rs"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
