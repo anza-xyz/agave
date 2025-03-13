@@ -563,6 +563,7 @@ impl Accounts {
     /// Slow because lock is held for 1 operation instead of many.
     /// WARNING: This noncached version is only to be used for tests/benchmarking
     /// as bypassing the cache in general is not supported
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn store_slow_uncached(&self, slot: Slot, pubkey: &Pubkey, account: &AccountSharedData) {
         self.accounts_db.store_uncached(slot, &[(pubkey, account)]);
     }
