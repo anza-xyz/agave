@@ -37,6 +37,7 @@ struct Config {
     unhealthy_threshold: usize,
     validator_identity_pubkeys: Vec<Pubkey>,
     name_suffix: String,
+    acceptable_slot_range: u64,
 }
 
 fn get_config() -> Config {
@@ -177,6 +178,15 @@ fn get_config() -> Config {
                 .default_value("")
                 .help("Add this string into all notification messages after \"agave-watchtower\"")
         )
+        .arg(
+            Arg::with_name("acceptable_slot_range")
+                .long("acceptable-slot-range")
+                .value_name("RANGE")
+                .takes_value(true)
+                .default_value("50")
+                .validator(is_parsable::<u64>)
+                .help("Acceptable range of slots for endpoints, checked at watchtower startup")
+        )
         .get_matches();
 
     let config = if let Some(config_file) = matches.value_of("config_file") {
@@ -209,6 +219,8 @@ fn get_config() -> Config {
 
     let name_suffix = value_t_or_exit!(matches, "name_suffix", String);
 
+    let acceptable_slot_range = value_t_or_exit!(matches, "acceptable_slot_range", u64);
+
     let config = Config {
         address_labels: config.address_labels,
         ignore_http_bad_gateway,
@@ -221,6 +233,7 @@ fn get_config() -> Config {
         unhealthy_threshold,
         validator_identity_pubkeys,
         name_suffix,
+        acceptable_slot_range,
     };
 
     info!("RPC URLs: {:?}", config.json_rpc_urls);
@@ -383,6 +396,52 @@ fn query_endpoint(
     }
 }
 
+fn validate_endpoints(
+    config: &Config,
+    endpoints: &Vec<EndpointData>,
+) -> Result<(), Box<dyn error::Error>> {
+    info!("Validating endpoints...");
+
+    let mut max_slot = 0;
+    let mut min_slot = u64::max_value();
+
+    let mut opt_common_genesis_hash: Option<Hash> = None;
+
+    for endpoint in endpoints {
+        info!("Querying {}", endpoint.rpc_client.url());
+
+        let slot = endpoint.rpc_client.get_slot()?;
+        let genesis_hash = endpoint.rpc_client.get_genesis_hash()?;
+
+        info!("Genesis hash: {}", genesis_hash);
+        info!("Current slot: {}", slot);
+
+        max_slot = max_slot.max(slot);
+        min_slot = min_slot.min(slot);
+
+        if let Some(common_genesis_hash) = opt_common_genesis_hash {
+            if common_genesis_hash != genesis_hash {
+                return Err(format!(
+                    "Endpoints don't aggree on genesis hash, have you mixed up clusters?"
+                )
+                .into());
+            }
+        } else {
+            opt_common_genesis_hash = Some(genesis_hash);
+        }
+    }
+
+    if max_slot - min_slot > config.acceptable_slot_range {
+        return Err(format!(
+            "Endpoints slots are too far apart: Acceptable slot range: {}",
+            config.acceptable_slot_range,
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn error::Error>> {
     solana_logger::setup_with_default_filter();
     solana_metrics::set_panic_hook("watchtower", /*version:*/ None);
@@ -398,6 +457,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             last_recent_blockhash: Hash::default(),
         })
         .collect();
+
+    if let Err(err) = validate_endpoints(&config, &endpoints) {
+        error!("Endpoint validation failed: {}", err);
+        std::process::exit(1);
+    }
 
     let min_agreeing_endpoints = endpoints.len() / 2 + 1;
 
