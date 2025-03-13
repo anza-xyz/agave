@@ -964,7 +964,7 @@ impl SchedulingStateMachine {
     ) -> Self {
         // As documented at `CounterInner`, don't expose rather opinionated choice of unsigned
         // integer type (`u32`) to outer world. So, take more conventional `usize` and convert it
-        // to `ShortCounter` here while uncontroversially treating `None` as no limit effectively.
+        // to `CounterInner` here while uncontroversially treating `None` as no limit effectively.
         let max_running_task_count = max_running_task_count
             .unwrap_or(CounterInner::MAX as usize)
             .try_into()
