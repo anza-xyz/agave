@@ -18,7 +18,7 @@ use {
         vortexor::Vortexor,
     },
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashMap,
         env,
         net::IpAddr,
         sync::{atomic::AtomicBool, Arc, RwLock},
