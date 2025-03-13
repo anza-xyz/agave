@@ -60,15 +60,8 @@ pub fn process_instruction(
             sol_memset(&mut data[data_len.saturating_sub(2)..], 0, 3);
         }
         5 => {
-            // memcmp overlaps begining
-            #[allow(clippy::manual_memcpy)]
-            for i in 0..3 {
-                buf[i] = too_early(2)[i];
-            }
-
             // memset overlaps begin of account area
             sol_memset(too_early(2), 3, 3);
-            sol_memcpy(too_early(2), &buf, 3);
         }
         6 => {
             // memcpy src overlaps end of account
