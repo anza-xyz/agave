@@ -2,7 +2,7 @@ pub mod cluster_slots;
 use {
     cluster_slots::ClusterSlots,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
     solana_runtime::bank_forks::BankForks,
@@ -81,10 +81,8 @@ impl ClusterSlotsService {
     ) {
         let mut cluster_slots_service_timing = ClusterSlotsServiceTiming::default();
         let mut last_stats = Instant::now();
-        loop {
-            if exit.load(Ordering::Relaxed) {
-                break;
-            }
+        let mut epoch_specs = EpochSpecs::from(bank_forks.clone());
+        while !exit.load(Ordering::Relaxed) {
             let slots = match cluster_slots_update_receiver.recv_timeout(Duration::from_millis(200))
             {
                 Ok(slots) => Some(slots),
@@ -102,12 +100,10 @@ impl ClusterSlotsService {
                 Measure::start("process_cluster_slots_updates_elapsed");
 
             let node_id = cluster_info.id();
-            let my_stake = bank_forks
-                .read()
-                .unwrap()
-                .root_bank()
-                .current_epoch_stakes()
-                .node_id_to_stake(&node_id)
+            let my_stake = epoch_specs
+                .current_epoch_staked_nodes()
+                .get(&node_id)
+                .cloned()
                 .unwrap_or_default();
             // only staked nodes should push EpochSlots into CRDS to save gossip bandwidth
             if my_stake > 0 {
