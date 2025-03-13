@@ -1,8 +1,12 @@
 use {
-    crate::cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
-    clap::{App, Arg},
+    crate::{
+        cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
+        commands::{FromClapArgMatches, Result},
+    },
+    clap::{App, Arg, ArgMatches},
     solana_clap_utils::{
         hidden_unless_forced,
+        input_parsers::keypair_of,
         input_validators::{
             is_keypair_or_ask_keyword, is_parsable, is_pow2, is_pubkey, is_pubkey_or_keypair,
             is_slot, is_within_range, validate_maximum_full_snapshot_archives_to_retain,
@@ -16,6 +20,7 @@ use {
     },
     solana_ledger::use_snapshot_archives_at_startup,
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
+    solana_sdk::signature::Keypair,
     solana_send_transaction_service::send_transaction_service::{
         MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
@@ -25,6 +30,22 @@ use {
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
+
+#[derive(Debug, PartialEq)]
+pub struct RunArgs {
+    pub identity: Keypair,
+}
+
+impl FromClapArgMatches for RunArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        let identity = keypair_of(matches, "identity").ok_or(clap::Error::with_description(
+            "The --identity <KEYPAIR> argument is required",
+            clap::ErrorKind::ArgumentNotFound,
+        ))?;
+
+        Ok(RunArgs { identity: identity })
+    }
+}
 
 pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 'a> {
     app
@@ -1640,4 +1661,72 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 May get stuck if the leader used is different from others.",
             ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl Default for RunArgs {
+        fn default() -> Self {
+            let identity = Keypair::new();
+            RunArgs { identity: identity }
+        }
+    }
+
+    fn get_run_command_matches<'a>(
+        default_args: &'a DefaultArgs,
+        args: Vec<&str>,
+    ) -> ArgMatches<'a> {
+        let app_name = "run_command";
+        let app = App::new(app_name);
+        let app = add_args(app, default_args);
+        let args = [&[app_name], &args[..]].concat();
+        app.get_matches_from(args)
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_identity_file_short_arg() {
+        let default_args = DefaultArgs::default();
+        let default_run_args = RunArgs::default();
+
+        // generate a keypair
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file = tmp_dir.path().join("id.json");
+        let keypair = default_run_args.identity.insecure_clone();
+        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+
+        let matches = get_run_command_matches(&default_args, vec!["-i", file.to_str().unwrap()]);
+        let args = RunArgs::from_clap_arg_match(&matches).unwrap();
+        assert_eq!(
+            args,
+            RunArgs {
+                identity: keypair,
+                ..default_run_args
+            }
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_identity_file_long_arg() {
+        let default_args = DefaultArgs::default();
+        let default_run_args = RunArgs::default();
+
+        // generate a keypair
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file = tmp_dir.path().join("id.json");
+        let keypair = default_run_args.identity.insecure_clone();
+        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+
+        let matches =
+            get_run_command_matches(&default_args, vec!["--identity", file.to_str().unwrap()]);
+        let args = RunArgs::from_clap_arg_match(&matches).unwrap();
+        assert_eq!(
+            args,
+            RunArgs {
+                identity: keypair,
+                ..default_run_args
+            }
+        );
+    }
 }
