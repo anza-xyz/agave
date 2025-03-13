@@ -45,6 +45,7 @@ members = [
     "geyser-plugin-interface",
     "geyser-plugin-manager",
     "gossip",
+    "gossip/crds_node",
     "install",
     "io-uring",
     "keygen",
