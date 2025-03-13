@@ -12,9 +12,7 @@ use {
         consumer::Consumer, decision_maker::BufferedPacketsDecision,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         packet_deserializer::PacketDeserializer, packet_filter::MAX_ALLOWED_PRECOMPILE_SIGNATURES,
-        scheduler_messages::MaxAge,
-        transaction_scheduler::transaction_state::SanitizedTransactionTTL,
-        TransactionStateContainer,
+        scheduler_messages::MaxAge, TransactionStateContainer,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
@@ -47,6 +45,9 @@ use {
     },
 };
 
+#[derive(Debug)]
+pub(crate) struct DisconnectedError;
+
 pub(crate) trait ReceiveAndBuffer {
     type Transaction: TransactionWithMeta + Send + Sync;
     type Container: StateContainer<Self::Transaction> + Send + Sync;
@@ -59,7 +60,7 @@ pub(crate) trait ReceiveAndBuffer {
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, ()>;
+    ) -> Result<usize, DisconnectedError>;
 }
 
 pub(crate) struct SanitizedTransactionReceiveAndBuffer {
@@ -79,7 +80,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, ()> {
+    ) -> Result<usize, DisconnectedError> {
         const MAX_RECEIVE_PACKETS: usize = 5_000;
         const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(10);
         let (recv_timeout, should_buffer) = match decision {
@@ -135,7 +136,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                 num_received_packets
             }
             Err(RecvTimeoutError::Timeout) => 0,
-            Err(RecvTimeoutError::Disconnected) => return Err(()),
+            Err(RecvTimeoutError::Disconnected) => return Err(DisconnectedError),
         };
 
         Ok(num_received)
@@ -239,12 +240,8 @@ impl SanitizedTransactionReceiveAndBuffer {
 
                 let (priority, cost) =
                     calculate_priority_and_cost(&transaction, &fee_budget_limits, &working_bank);
-                let transaction_ttl = SanitizedTransactionTTL {
-                    transaction,
-                    max_age,
-                };
 
-                if container.insert_new_transaction(transaction_ttl, priority, cost) {
+                if container.insert_new_transaction(transaction, max_age, priority, cost) {
                     saturating_add_assign!(num_dropped_on_capacity, 1);
                 }
                 saturating_add_assign!(num_buffered, 1);
@@ -295,7 +292,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, ()> {
+    ) -> Result<usize, DisconnectedError> {
         let (root_bank, working_bank) = {
             let bank_forks = self.bank_forks.read().unwrap();
             let root_bank = bank_forks.root_bank();
@@ -337,7 +334,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                 }
                 Err(RecvTimeoutError::Timeout) => return Ok(num_received),
                 Err(RecvTimeoutError::Disconnected) => {
-                    return received_message.then_some(num_received).ok_or(());
+                    return received_message
+                        .then_some(num_received)
+                        .ok_or(DisconnectedError);
                 }
             }
         }
@@ -358,7 +357,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                 }
                 Err(TryRecvError::Empty) => return Ok(num_received),
                 Err(TryRecvError::Disconnected) => {
-                    return received_message.then_some(num_received).ok_or(());
+                    return received_message
+                        .then_some(num_received)
+                        .ok_or(DisconnectedError);
                 }
             }
         }
@@ -409,10 +410,9 @@ impl TransactionViewReceiveAndBuffer {
                 let mut check_results = {
                     let mut transactions = ArrayVec::<_, EXTRA_CAPACITY>::new();
                     transactions.extend(transaction_priority_ids.iter().map(|priority_id| {
-                        &container
-                            .get_transaction_ttl(priority_id.id)
+                        container
+                            .get_transaction(priority_id.id)
                             .expect("transaction must exist")
-                            .transaction
                     }));
                     working_bank.check_transactions::<RuntimeTransaction<_>>(
                         &transactions,
@@ -432,10 +432,9 @@ impl TransactionViewReceiveAndBuffer {
                         container.remove_by_id(priority_id.id);
                         continue;
                     }
-                    let transaction = &container
-                        .get_transaction_ttl(priority_id.id)
-                        .expect("transaction must exist")
-                        .transaction;
+                    let transaction = container
+                        .get_transaction(priority_id.id)
+                        .expect("transaction must exist");
                     if let Err(err) = Consumer::check_fee_payer_unlocked(
                         working_bank,
                         transaction,
@@ -597,14 +596,7 @@ impl TransactionViewReceiveAndBuffer {
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
         let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, working_bank);
 
-        Ok(TransactionState::new(
-            SanitizedTransactionTTL {
-                transaction: view,
-                max_age,
-            },
-            priority,
-            cost,
-        ))
+        Ok(TransactionState::new(view, max_age, priority, cost))
     }
 }
 
@@ -749,7 +741,7 @@ mod tests {
     ) {
         let mut actual_length: usize = 0;
         while let Some(id) = container.pop() {
-            let Some(_) = container.get_transaction_ttl(id.id) else {
+            let Some(_) = container.get_transaction(id.id) else {
                 panic!(
                     "transaction in queue position {} with id {} must exist.",
                     actual_length, id.id

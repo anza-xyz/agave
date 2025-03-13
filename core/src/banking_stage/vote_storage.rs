@@ -9,7 +9,6 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         multi_iterator_scanner::{MultiIteratorScanner, ProcessingDecision},
         read_write_account_set::ReadWriteAccountSet,
-        unprocessed_packet_batches::DeserializedPacket,
         BankingStageStats,
     },
     itertools::Itertools,
@@ -17,12 +16,9 @@ use {
     solana_measure::measure_us,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{hash::Hash, transaction::SanitizedTransaction},
+    solana_sdk::transaction::SanitizedTransaction,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    std::{
-        collections::HashMap,
-        sync::{atomic::Ordering, Arc},
-    },
+    std::sync::{atomic::Ordering, Arc},
 };
 
 // Step-size set to be 64, equal to the maximum batch/entry size. With the
@@ -45,7 +41,6 @@ pub struct ConsumeScannerPayload<'a> {
     pub account_locks: ReadWriteAccountSet,
     pub sanitized_transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
     pub slot_metrics_tracker: &'a mut LeaderSlotMetricsTracker,
-    pub message_hash_to_transaction: &'a mut HashMap<Hash, DeserializedPacket>,
     pub error_counters: TransactionErrorMetrics,
 }
 
@@ -87,9 +82,6 @@ fn consume_scan_should_process_packet(
         )
         .is_err()
         {
-            payload
-                .message_hash_to_transaction
-                .remove(packet.message_hash());
             return ProcessingDecision::Never;
         }
 
@@ -105,9 +97,6 @@ fn consume_scan_should_process_packet(
             )
             .is_err()
         {
-            payload
-                .message_hash_to_transaction
-                .remove(packet.message_hash());
             return ProcessingDecision::Never;
         }
 
@@ -128,9 +117,6 @@ fn consume_scan_should_process_packet(
         payload.sanitized_transactions.push(sanitized_transaction);
         ProcessingDecision::Now
     } else {
-        payload
-            .message_hash_to_transaction
-            .remove(packet.message_hash());
         ProcessingDecision::Never
     }
 }
@@ -138,7 +124,6 @@ fn consume_scan_should_process_packet(
 fn create_consume_multi_iterator<'a, 'b, F>(
     packets: &'a [Arc<ImmutableDeserializedPacket>],
     slot_metrics_tracker: &'b mut LeaderSlotMetricsTracker,
-    message_hash_to_transaction: &'b mut HashMap<Hash, DeserializedPacket>,
     should_process_packet: F,
 ) -> MultiIteratorScanner<'a, Arc<ImmutableDeserializedPacket>, ConsumeScannerPayload<'b>, F>
 where
@@ -153,7 +138,6 @@ where
         account_locks: ReadWriteAccountSet::default(),
         sanitized_transactions: Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE),
         slot_metrics_tracker,
-        message_hash_to_transaction,
         error_counters: TransactionErrorMetrics::default(),
     };
     MultiIteratorScanner::new(
@@ -237,12 +221,9 @@ impl VoteStorage {
             .latest_unprocessed_votes
             .drain_unprocessed(bank.clone());
 
-        // vote storage does not have a message hash map, so pass in an empty one
-        let mut dummy_message_hash_to_transaction = HashMap::new();
         let mut scanner = create_consume_multi_iterator(
             &all_vote_packets,
             slot_metrics_tracker,
-            &mut dummy_message_hash_to_transaction,
             should_process_packet,
         );
 

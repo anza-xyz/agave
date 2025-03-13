@@ -66,13 +66,13 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .global_setting(AppSettings::VersionlessSubcommands)
         .subcommand(commands::exit::command(default_args))
         .subcommand(commands::authorized_voter::command())
-        .subcommand(commands::contact_info::command(default_args))
+        .subcommand(commands::contact_info::command())
         .subcommand(commands::repair_shred_from_peer::command())
         .subcommand(commands::repair_whitelist::command())
         .subcommand(
             SubCommand::with_name("init").about("Initialize the ledger directory then exit"),
         )
-        .subcommand(commands::monitor::command(default_args))
+        .subcommand(commands::monitor::command())
         .subcommand(SubCommand::with_name("run").about("Run the validator"))
         .subcommand(commands::plugin::command(default_args))
         .subcommand(commands::set_identity::command())

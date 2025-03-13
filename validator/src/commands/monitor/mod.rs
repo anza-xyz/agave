@@ -1,10 +1,10 @@
 use {
-    crate::{cli::DefaultArgs, dashboard::Dashboard},
+    crate::dashboard::Dashboard,
     clap::{App, ArgMatches, SubCommand},
     std::{path::Path, time::Duration},
 };
 
-pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
+pub fn command<'a>() -> App<'a, 'a> {
     SubCommand::with_name("monitor").about("Monitor the validator")
 }
 

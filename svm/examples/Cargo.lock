@@ -2748,6 +2748,7 @@ dependencies = [
  "solana-sdk",
  "solana-svm",
  "solana-system-program",
+ "solana-transaction-context 2.3.0",
  "solana-transaction-status",
  "solana-version",
  "spl-token-2022 7.0.0",
@@ -2910,9 +2911,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.170"
+version = "0.2.171"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "875b3680cb2f8f71bdcf9a30f38d48282f5d3c95cbf9b3fa57269bb5d5c06828"
+checksum = "c19937216e9d3aa9956d9bb8dfc0b0c8beb6058fc4f7a4dc4d850edf86a237d6"
 
 [[package]]
 name = "libloading"
@@ -5093,7 +5094,7 @@ dependencies = [
  "solana-sysvar",
  "solana-time-utils",
  "solana-transaction",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "solana-transaction-error",
  "static_assertions",
  "tar",
@@ -5137,7 +5138,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey",
  "solana-system-interface",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "thiserror 2.0.12",
 ]
 
@@ -5159,6 +5160,7 @@ dependencies = [
  "solana-banks-interface",
  "solana-program",
  "solana-sdk",
+ "solana-transaction-context 2.3.0",
  "tarpc",
  "thiserror 2.0.12",
  "tokio",
@@ -5172,6 +5174,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-sdk",
+ "solana-transaction-context 2.3.0",
  "tarpc",
 ]
 
@@ -5309,7 +5312,7 @@ dependencies = [
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-timings",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "solana-type-overrides",
  "thiserror 2.0.12",
 ]
@@ -5621,7 +5624,7 @@ dependencies = [
  "solana-short-vec",
  "solana-stake-interface",
  "solana-system-interface",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
 ]
 
 [[package]]
@@ -6339,6 +6342,7 @@ dependencies = [
  "solana-svm",
  "solana-svm-transaction",
  "solana-timings",
+ "solana-transaction-context 2.3.0",
  "solana-transaction-status",
  "solana-vote",
  "solana-vote-program",
@@ -6419,7 +6423,7 @@ dependencies = [
  "solana-pubkey",
  "solana-sbpf",
  "solana-sdk-ids",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "solana-type-overrides",
 ]
 
@@ -6869,7 +6873,7 @@ dependencies = [
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-timings",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "solana-type-overrides",
  "thiserror 2.0.12",
 ]
@@ -6903,6 +6907,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-svm",
  "solana-timings",
+ "solana-transaction-context 2.3.0",
  "solana-vote-program",
  "thiserror 2.0.12",
  "tokio",
@@ -7298,6 +7303,7 @@ dependencies = [
  "solana-svm-rent-collector",
  "solana-svm-transaction",
  "solana-timings",
+ "solana-transaction-context 2.3.0",
  "solana-transaction-status-client-types",
  "solana-unified-scheduler-logic",
  "solana-version",
@@ -7419,7 +7425,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-time-utils",
  "solana-transaction",
- "solana-transaction-context",
+ "solana-transaction-context 2.2.1",
  "solana-transaction-error",
  "solana-validator-exit",
  "thiserror 2.0.12",
@@ -7702,7 +7708,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-stake-interface",
  "solana-sysvar",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "solana-type-overrides",
  "solana-vote-interface",
 ]
@@ -7764,7 +7770,7 @@ dependencies = [
  "solana-serde",
  "solana-signature",
  "solana-transaction",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "solana-transaction-error",
  "solana-transaction-status",
  "tonic-build",
@@ -7851,7 +7857,7 @@ dependencies = [
  "solana-svm-rent-collector",
  "solana-svm-transaction",
  "solana-timings",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "solana-transaction-error",
  "solana-type-overrides",
  "thiserror 2.0.12",
@@ -7880,6 +7886,7 @@ name = "solana-svm-rent-collector"
 version = "2.3.0"
 dependencies = [
  "solana-sdk",
+ "solana-transaction-context 2.3.0",
 ]
 
 [[package]]
@@ -7930,7 +7937,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-system-interface",
  "solana-sysvar",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "solana-type-overrides",
 ]
 
@@ -8181,6 +8188,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-transaction-context"
+version = "2.3.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "serde_derive",
+ "solana-account",
+ "solana-instruction",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-signature",
+]
+
+[[package]]
 name = "solana-transaction-error"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8262,7 +8283,7 @@ dependencies = [
  "solana-reward-info",
  "solana-signature",
  "solana-transaction",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "solana-transaction-error",
  "thiserror 2.0.12",
 ]
@@ -8463,7 +8484,7 @@ dependencies = [
  "solana-signer",
  "solana-slot-hashes",
  "solana-transaction",
- "solana-transaction-context",
+ "solana-transaction-context 2.3.0",
  "solana-vote-interface",
  "thiserror 2.0.12",
 ]

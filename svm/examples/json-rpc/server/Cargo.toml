@@ -28,6 +28,7 @@ solana-rpc-client-api = { workspace = true }
 solana-sdk = { workspace = true }
 solana-svm = { workspace = true }
 solana-system-program = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }

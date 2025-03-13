@@ -28,7 +28,6 @@ use {
         system_instruction, system_program, system_transaction,
         sysvar::rent::Rent,
         transaction::{SanitizedTransaction, Transaction, TransactionError},
-        transaction_context::TransactionReturnData,
     },
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
@@ -42,6 +41,7 @@ use {
         },
     },
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_transaction_context::TransactionReturnData,
     solana_type_overrides::sync::{Arc, RwLock},
     std::collections::HashMap,
     test_case::{test_case, test_matrix},
