@@ -106,13 +106,16 @@ impl ClusterSlotsService {
                     .get(&node_id)
                     .cloned()
                     .unwrap_or_default();
-                // only staked nodes should push EpochSlots into CRDS to save gossip bandwidth
+                // staked node should push EpochSlots into CRDS to save gossip bandwidth
                 if my_stake > 0 {
                     Self::process_cluster_slots_updates(
                         slots,
                         &cluster_slots_update_receiver,
                         &cluster_info,
                     );
+                } else {
+                    // drain the channel dropping the updates
+                    while cluster_slots_update_receiver.try_recv().is_ok() {}
                 }
             }
             let root_bank = bank_forks.read().unwrap().root_bank();
