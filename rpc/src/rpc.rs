@@ -2412,7 +2412,7 @@ impl JsonRpcRequestProcessor {
     }
 }
 
-fn optimize_filters(filters: &mut [RpcFilterType]) {
+pub(crate) fn optimize_filters(filters: &mut [RpcFilterType]) {
     filters.iter_mut().for_each(|filter_type| {
         if let RpcFilterType::Memcmp(compare) = filter_type {
             if let Err(err) = compare.convert_to_raw_bytes() {
@@ -2440,6 +2440,18 @@ fn verify_transaction(
         }
     }
 
+    Ok(())
+}
+
+pub(crate) fn verify_filters(filters: &[RpcFilterType]) -> Result<()> {
+    if filters.len() > MAX_GET_PROGRAM_ACCOUNT_FILTERS {
+        return Err(Error::invalid_params(format!(
+            "Too many filters provided; max {MAX_GET_PROGRAM_ACCOUNT_FILTERS}"
+        )));
+    }
+    for filter in filters {
+        verify_filter(filter)?;
+    }
     Ok(())
 }
 
@@ -3391,14 +3403,7 @@ pub mod rpc_accounts_scan {
                 } else {
                     (None, vec![], false, true)
                 };
-                if filters.len() > MAX_GET_PROGRAM_ACCOUNT_FILTERS {
-                    return Err(Error::invalid_params(format!(
-                        "Too many filters provided; max {MAX_GET_PROGRAM_ACCOUNT_FILTERS}"
-                    )));
-                }
-                for filter in &filters {
-                    verify_filter(filter)?;
-                }
+                verify_filters(&filters)?;
                 meta.get_program_accounts(program_id, config, filters, with_context, sort_results)
                     .await
             }
