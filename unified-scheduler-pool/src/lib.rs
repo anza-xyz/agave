@@ -1802,6 +1802,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 state_machine.deschedule_task(&executed_task.task);
                                 if trigger_ending {
                                     assert_matches!(scheduling_mode, BlockProduction);
+                                    sleepless_testing::at(CheckPoint::SessionEnding);
                                     session_ending = true;
                                     let task = handler_context.banking_stage_helper().recreate_task(executed_task);
                                     state_machine.buffer_task(task);
@@ -1843,6 +1844,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     }
                                     Ok(NewTaskPayload::Reset) => {
                                         assert_matches!(scheduling_mode, BlockProduction);
+                                        sleepless_testing::at(CheckPoint::SessionEnding);
                                         session_ending = true;
                                         session_resetting = true;
                                     }
@@ -1861,6 +1863,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 state_machine.deschedule_task(&executed_task.task);
                                 if trigger_ending {
                                     assert_matches!(scheduling_mode, BlockProduction);
+                                    sleepless_testing::at(CheckPoint::SessionEnding);
                                     session_ending = true;
                                     let task = handler_context.banking_stage_helper().recreate_task(executed_task);
                                     state_machine.buffer_task(task);
@@ -1889,6 +1892,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     let mut new_result_with_timings = initialized_result_with_timings();
                     loop {
                         if session_resetting {
+                            assert_matches!(scheduling_mode, BlockProduction);
                             while let Some(task) = state_machine.schedule_next_unblocked_task() {
                                 state_machine.deschedule_task(&task);
                                 drop(task);
@@ -1914,7 +1918,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // Before that, propagate new SchedulingContext to handler threads
                                 assert_eq!(scheduling_mode, new_context.mode());
                                 assert!(!new_context.is_preallocated());
-
                                 runnable_task_sender
                                     .send_chained_channel(&new_context, handler_context.parallelism)
                                     .unwrap();
