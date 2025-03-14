@@ -644,21 +644,6 @@ pub trait ZeroLamport {
     fn is_zero_lamport(&self) -> bool;
 }
 
-#[derive(Debug, Default)]
-pub struct ScanSlotTracker {
-    is_removed: bool,
-}
-
-impl ScanSlotTracker {
-    pub fn is_removed(&self) -> bool {
-        self.is_removed
-    }
-
-    pub fn mark_removed(&mut self) {
-        self.is_removed = true;
-    }
-}
-
 #[derive(Copy, Clone)]
 pub enum AccountsIndexScanResult {
     /// if the entry is not in the in-memory index, do not add it unless the entry becomes dirty
