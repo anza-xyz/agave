@@ -255,7 +255,8 @@ impl SchedulingContext {
         }
     }
 
-    pub fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
         Self {
             mode,
             bank: Some(bank),
