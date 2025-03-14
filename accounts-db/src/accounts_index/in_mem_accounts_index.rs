@@ -24,7 +24,6 @@ use {
         },
     },
 };
-type K = Pubkey;
 type CacheRangesHeld = RwLock<Vec<RangeInclusive<Pubkey>>>;
 
 type InMemMap<T> = HashMap<Pubkey, AccountMapEntry<T>, ahash::RandomState>;
@@ -235,7 +234,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    pub fn items<R>(&self, range: &R) -> Vec<(K, AccountMapEntry<T>)>
+    pub fn items<R>(&self, range: &R) -> Vec<(Pubkey, AccountMapEntry<T>)>
     where
         R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
@@ -323,7 +322,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// callback is called whether pubkey is found or not
     pub(super) fn get_only_in_mem<RT>(
         &self,
-        pubkey: &K,
+        pubkey: &Pubkey,
         update_age: bool,
         callback: impl for<'a> FnOnce(Option<&'a AccountMapEntry<T>>) -> RT,
     ) -> RT {
@@ -368,7 +367,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// call 'callback' whether found or not
     pub(super) fn get_internal_inner<RT>(
         &self,
-        pubkey: &K,
+        pubkey: &Pubkey,
         // return true if item should be added to in_mem cache
         callback: impl for<'a> FnOnce(Option<&AccountMapEntryInner<T>>) -> (bool, RT),
     ) -> RT {
@@ -381,7 +380,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// call 'callback' whether found or not
     pub(super) fn get_internal_cloned<RT>(
         &self,
-        pubkey: &K,
+        pubkey: &Pubkey,
         callback: impl for<'a> FnOnce(Option<AccountMapEntry<T>>) -> RT,
     ) -> RT {
         // SAFETY: Since we're passing the entry Arc clone to `callback`, we must
@@ -401,7 +400,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Prefer `get_internal_inner()` or `get_internal_cloned()` for safe alternatives.
     pub(super) fn get_internal<RT>(
         &self,
-        pubkey: &K,
+        pubkey: &Pubkey,
         // return true if item should be added to in_mem cache
         callback: impl for<'a> FnOnce(Option<&AccountMapEntry<T>>) -> (bool, RT),
     ) -> RT {
@@ -454,7 +453,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// return false if the entry is in the index (disk or memory) and has a slot list len > 0
     /// return true in all other cases, including if the entry is NOT in the index at all
-    fn remove_if_slot_list_empty_entry(&self, entry: Entry<K, AccountMapEntry<T>>) -> bool {
+    fn remove_if_slot_list_empty_entry(&self, entry: Entry<Pubkey, AccountMapEntry<T>>) -> bool {
         match entry {
             Entry::Occupied(occupied) => {
                 let result = self.remove_if_slot_list_empty_value(
