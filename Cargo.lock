@@ -7488,8 +7488,6 @@ dependencies = [
  "solana-transaction-error",
  "solana-vote",
  "solana-vote-program",
- "static_assertions",
- "test-case",
 ]
 
 [[package]]
