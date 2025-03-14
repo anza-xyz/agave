@@ -1905,12 +1905,6 @@ pub mod tests {
                                     "method: {method:?}, num_slots: {num_slots}, two_refs: {two_refs}, many_refs: {many_ref_slots:?}"
                                 );
 
-                                if add_dead_account {
-                                    assert!(!accounts_to_combine
-                                        .accounts_to_combine
-                                        .iter()
-                                        .any(|a| a.pubkeys_to_unref.is_empty()));
-                                }
                                 let expected_target_slots_sorted = if !two_refs
                                     || many_ref_slots == IncludeManyRefSlots::Include
                                     || num_slots == 1

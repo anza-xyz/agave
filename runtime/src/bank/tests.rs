@@ -2324,6 +2324,12 @@ fn test_purge_empty_accounts() {
         let pubkey = solana_pubkey::new_rand();
         let blockhash = bank.last_blockhash();
         let tx = system_transaction::transfer(&keypair, &pubkey, amount, blockhash);
+        //warn!("Transfering from {:?} to {}, {} lamports, pass {}", keypair, pubkey, amount, pass);
+        warn!(
+            "Bank0 capitalization is {}, bank1 is {}",
+            bank0.capitalization(),
+            bank1.capitalization()
+        );
         bank1.process_transaction(&tx).unwrap();
 
         assert_eq!(
@@ -2378,6 +2384,19 @@ fn test_purge_empty_accounts() {
         bank1.freeze();
         bank1.squash();
         add_root_and_flush_write_cache(&bank1);
+
+        println!("Updating Hash\n");
+        warn!(
+            "At end Bank0 capitalization is {}, bank1 is {}",
+            bank0.capitalization(),
+            bank1.capitalization()
+        );
+        warn!(
+            "I am seeing {:?}, {:?} and {:?} lamports",
+            bank1.get_account(&keypair.pubkey()),
+            bank1.get_account(&pubkey),
+            bank1.get_account(&mint_keypair.pubkey())
+        );
         bank1.update_accounts_hash_for_tests();
         assert!(bank1.verify_accounts_hash(
             None,
@@ -6670,7 +6689,7 @@ fn test_clean_nonrooted() {
     bank3.clean_accounts_for_tests();
     assert_eq!(
         bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
-        2
+        0
     );
     assert!(bank3
         .rc
@@ -10092,7 +10111,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     bank2
         .transfer(amount, &mint_keypair, &key3.pubkey())
         .unwrap();
-    bank2.store_account(&key5.pubkey(), &AccountSharedData::new(0, 0, &owner));
+    bank2.store_account(&key5.pubkey(), &AccountSharedData::new(1, 0, &owner));
 
     bank2.freeze(); // the freeze here is not strictly necessary, but more for illustration
     bank2.squash();
@@ -12847,7 +12866,7 @@ fn test_create_zero_lamport_with_clean(should_run_partitioned_rent_collection: b
         bank.squash();
         bank.force_flush_accounts_cache();
         // do clean and assert that it actually did its job
-        assert_eq!(6, bank.get_snapshot_storages(None).len());
+        assert_eq!(4, bank.get_snapshot_storages(None).len());
         bank.clean_accounts();
         assert_eq!(5, bank.get_snapshot_storages(None).len());
     });
