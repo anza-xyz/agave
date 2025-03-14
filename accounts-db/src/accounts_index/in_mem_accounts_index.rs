@@ -27,8 +27,6 @@ use {
 type K = Pubkey;
 type CacheRangesHeld = RwLock<Vec<RangeInclusive<Pubkey>>>;
 
-type InMemMap<T> = HashMap<Pubkey, AccountMapEntry<T>, ahash::RandomState>;
-
 #[derive(Debug, Default)]
 pub struct StartupStats {
     pub copy_data_us: AtomicU64,
@@ -94,7 +92,7 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     last_age_flushed: AtomicAge,
 
     // backing store
-    map_internal: RwLock<InMemMap<T>>,
+    map_internal: RwLock<HashMap<Pubkey, AccountMapEntry<T>, ahash::RandomState>>,
     storage: Arc<BucketMapHolder<T, U>>,
     bin: usize,
     lowest_pubkey: Pubkey,
