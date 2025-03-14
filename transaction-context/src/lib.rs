@@ -271,10 +271,12 @@ impl TransactionContext {
     pub fn get_account_at_index(
         &self,
         index_in_transaction: IndexOfAccount,
-    ) -> Result<&RefCell<AccountSharedData>, InstructionError> {
+    ) -> Result<Ref<AccountSharedData>, InstructionError> {
         self.accounts
             .get(index_in_transaction)
-            .ok_or(InstructionError::NotEnoughAccountKeys)
+            .ok_or(InstructionError::NotEnoughAccountKeys)?
+            .try_borrow()
+            .map_err(|_| InstructionError::AccountBorrowOutstanding)
     }
 
     /// Searches for an account by its key
@@ -413,7 +415,9 @@ impl TransactionContext {
                 .and_then(|instruction_context| {
                     // Verify all executable accounts have no outstanding refs
                     for account_index in instruction_context.program_accounts.iter() {
-                        self.get_account_at_index(*account_index)?
+                        self.accounts
+                            .get(*account_index)
+                            .ok_or(InstructionError::NotEnoughAccountKeys)?
                             .try_borrow_mut()
                             .map_err(|_| InstructionError::AccountBorrowOutstanding)?;
                     }
@@ -464,13 +468,10 @@ impl TransactionContext {
             }
             let index_in_transaction = instruction_context
                 .get_index_of_instruction_account_in_transaction(instruction_account_index)?;
-            instruction_accounts_lamport_sum = (self
-                .get_account_at_index(index_in_transaction)?
-                .try_borrow()
-                .map_err(|_| InstructionError::AccountBorrowOutstanding)?
-                .lamports() as u128)
-                .checked_add(instruction_accounts_lamport_sum)
-                .ok_or(InstructionError::ArithmeticOverflow)?;
+            instruction_accounts_lamport_sum =
+                (self.get_account_at_index(index_in_transaction)?.lamports() as u128)
+                    .checked_add(instruction_accounts_lamport_sum)
+                    .ok_or(InstructionError::ArithmeticOverflow)?;
         }
         Ok(instruction_accounts_lamport_sum)
     }
