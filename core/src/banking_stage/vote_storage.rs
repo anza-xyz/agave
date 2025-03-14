@@ -38,8 +38,6 @@ pub struct VoteStorage {
 pub enum ProcessingDecision {
     /// Should be processed by the scanner.
     Now,
-    /// Should be skipped by the scanner on this pass - process later.
-    Later,
     /// Should be skipped and marked as handled so we don't try processing it again.
     Never,
 }
@@ -121,7 +119,7 @@ fn consume_scan_should_process_packet(
         // This prevents lower-priority transactions from taking locks
         // needed by higher-priority txs that were skipped by this check.
         if !payload.account_locks.take_locks(message) {
-            return ProcessingDecision::Later;
+            return ProcessingDecision::Never;
         }
 
         payload.sanitized_transactions.push(sanitized_transaction);
@@ -325,9 +323,6 @@ impl VoteStorage {
                             current_items.push(packet[index].clone());
                             break;
                         }
-                        ProcessingDecision::Later => {
-                            // Do nothing - iterator will try this element in a future batch
-                        }
                         ProcessingDecision::Never => {
                             self.already_handled[index] = true;
                         }
@@ -437,9 +432,10 @@ mod tests {
         assert_eq!(1, transaction_storage.len());
 
         let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(0);
-        let mut payload = get_payload(&mut slot_metrics_tracker);
-
         let immutable_packet = Arc::new(ImmutableDeserializedPacket::new(vote.clone())?);
+        let mut payload = get_payload(&mut slot_metrics_tracker);
+        transaction_storage.already_handled = vec![false];
+
         let (found, _payload, packets) = transaction_storage.march_iterator(
             0,
             &vec![immutable_packet.clone()],
