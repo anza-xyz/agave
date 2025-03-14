@@ -301,9 +301,7 @@ fn check_block_cost_limits(
     {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         for tx_cost in &tx_costs_with_actual_execution_units {
-            cost_tracker
-                .try_add(tx_cost)
-                .map_err(TransactionError::from)?;
+            cost_tracker.try_add(tx_cost)?;
         }
     }
     Ok(())
