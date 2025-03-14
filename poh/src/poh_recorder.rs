@@ -140,6 +140,13 @@ impl TransactionRecorder {
         }
     }
 
+    pub fn new_dummy() -> Self {
+        Self {
+            record_sender: crossbeam_channel::unbounded().0,
+            is_exited: Arc::new(AtomicBool::default()),
+        }
+    }
+
     /// Hashes `transactions` and sends to PoH service for recording. Waits for response up to 1s.
     /// Panics on unexpected (non-`MaxHeightReached`) errors.
     pub fn record_transactions(
@@ -419,7 +426,12 @@ impl PohRecorder {
     }
 
     // synchronize PoH with a bank
-    pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
+    pub fn reset(
+        &mut self,
+        reset_bank: Arc<Bank>,
+        next_leader_slot: Option<(Slot, Slot)>,
+    ) -> Option<BankWithScheduler> {
+        let cleared_bank = self.clear_bank();
         self.clear_bank();
         self.reset_poh(reset_bank, true);
 
@@ -440,6 +452,7 @@ impl PohRecorder {
         self.grace_ticks = grace_ticks;
         self.leader_first_tick_height = leader_first_tick_height;
         self.leader_last_tick_height = leader_last_tick_height;
+        cleared_bank
     }
 
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
@@ -600,7 +613,8 @@ impl PohRecorder {
         let _ = self.flush_cache(false);
     }
 
-    fn clear_bank(&mut self) {
+    fn clear_bank(&mut self) -> Option<BankWithScheduler> {
+        let mut cleared_bank = None;
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
             self.leader_bank_notifier.set_completed(bank.slot());
             let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
@@ -622,6 +636,7 @@ impl PohRecorder {
                 ("slot", bank.slot(), i64),
                 ("elapsed", start.elapsed().as_millis(), i64),
             );
+            cleared_bank = Some(bank);
         }
 
         if let Some(ref signal) = self.clear_bank_signal {
@@ -635,6 +650,7 @@ impl PohRecorder {
                 }
             }
         }
+        cleared_bank
     }
 
     fn reset_poh(&mut self, reset_bank: Arc<Bank>, reset_start_bank: bool) {

@@ -22,6 +22,7 @@
 
 use {
     crate::bank::Bank,
+    assert_matches::assert_matches,
     log::*,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
@@ -49,7 +50,7 @@ pub fn initialized_result_with_timings() -> ResultWithTimings {
 pub trait InstalledSchedulerPool: Send + Sync + Debug {
     /// A very thin wrapper of [`Self::take_resumed_scheduler`] to take a scheduler from this pool
     /// for a brand-new bank.
-    fn take_scheduler(&self, context: SchedulingContext) -> InstalledSchedulerBox {
+    fn take_scheduler(&self, context: SchedulingContext) -> Option<InstalledSchedulerBox> {
         self.take_resumed_scheduler(context, initialized_result_with_timings())
     }
 
@@ -57,7 +58,7 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-    ) -> InstalledSchedulerBox;
+    ) -> Option<InstalledSchedulerBox>;
 
     /// Registers an opaque timeout listener.
     ///
@@ -178,6 +179,8 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
         index: usize,
     ) -> ScheduleResult;
 
+    fn unblock_scheduling(&self);
+
     /// Return the error which caused the scheduler to abort.
     ///
     /// Note that this must not be called until it's observed that `schedule_execution()` has
@@ -252,7 +255,8 @@ impl SchedulingContext {
         }
     }
 
-    pub fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
         Self {
             mode,
             bank: Some(bank),
@@ -348,7 +352,7 @@ pub enum SchedulerStatus {
     /// transaction to be executed (= [`BankWithScheduler::schedule_transaction_executions`] is
     /// called, which internally calls [`BankWithSchedulerInner::with_active_scheduler`] to make
     /// the transition happen).
-    Stale(InstalledSchedulerPoolArc, ResultWithTimings),
+    Stale(InstalledSchedulerPoolArc, SchedulingMode, ResultWithTimings),
 }
 
 impl SchedulerStatus {
@@ -359,13 +363,23 @@ impl SchedulerStatus {
         }
     }
 
+    fn scheduling_mode(&self) -> Option<SchedulingMode> {
+        match self {
+            SchedulerStatus::Unavailable => None,
+            SchedulerStatus::Active(scheduler) => Some(scheduler.context().mode()),
+            SchedulerStatus::Stale(_, mode, _) => Some(*mode),
+        }
+    }
+
     fn transition_from_stale_to_active(
         &mut self,
         f: impl FnOnce(InstalledSchedulerPoolArc, ResultWithTimings) -> InstalledSchedulerBox,
     ) {
-        let Self::Stale(pool, result_with_timings) = mem::replace(self, Self::Unavailable) else {
+        let Self::Stale(pool, mode, result_with_timings) = mem::replace(self, Self::Unavailable)
+        else {
             panic!("transition to Active failed: {self:?}");
         };
+        assert_matches!(mode, SchedulingMode::BlockVerification);
         *self = Self::Active(f(pool, result_with_timings));
     }
 
@@ -379,8 +393,9 @@ impl SchedulerStatus {
         let Self::Active(scheduler) = mem::replace(self, Self::Unavailable) else {
             unreachable!("not active: {self:?}");
         };
+        let mode = scheduler.context().mode;
         let (pool, result_with_timings) = f(scheduler);
-        *self = Self::Stale(pool, result_with_timings);
+        *self = Self::Stale(pool, mode, result_with_timings);
     }
 
     fn transition_from_active_to_unavailable(&mut self) -> InstalledSchedulerBox {
@@ -391,7 +406,8 @@ impl SchedulerStatus {
     }
 
     fn transition_from_stale_to_unavailable(&mut self) -> ResultWithTimings {
-        let Self::Stale(_pool, result_with_timings) = mem::replace(self, Self::Unavailable) else {
+        let Self::Stale(_pool, _mode, result_with_timings) = mem::replace(self, Self::Unavailable)
+        else {
             panic!("transition to Unavailable failed: {self:?}");
         };
         result_with_timings
@@ -509,6 +525,10 @@ impl BankWithScheduler {
         );
 
         let schedule_result: ScheduleResult = self.inner.with_active_scheduler(|scheduler| {
+            assert_matches!(
+                scheduler.context().mode(),
+                SchedulingMode::BlockVerification
+            );
             for (sanitized_transaction, index) in transactions_with_indexes {
                 scheduler.schedule_execution(sanitized_transaction, index)?;
             }
@@ -527,6 +547,13 @@ impl BankWithScheduler {
         }
 
         Ok(())
+    }
+
+    pub fn unblock_block_production(&self) {
+        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
+            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
+            scheduler.unblock_scheduling();
+        }
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -562,6 +589,10 @@ impl BankWithScheduler {
         )
     }
 
+    pub fn scheduling_mode(&self) -> Option<SchedulingMode> {
+        self.inner.scheduler.read().unwrap().scheduling_mode()
+    }
+
     pub const fn no_scheduler_available() -> InstalledSchedulerRwLock {
         RwLock::new(SchedulerStatus::Unavailable)
     }
@@ -578,14 +609,16 @@ impl BankWithSchedulerInner {
                 // This is the fast path, needing single read-lock most of time.
                 f(scheduler)
             }
-            SchedulerStatus::Stale(_pool, (result, _timings)) if result.is_err() => {
+            SchedulerStatus::Stale(_pool, mode, (result, _timings)) if result.is_err() => {
+                assert_matches!(mode, SchedulingMode::BlockVerification);
                 trace!(
                     "with_active_scheduler: bank (slot: {}) has a stale aborted scheduler...",
                     self.bank.slot(),
                 );
                 Err(SchedulerAborted)
             }
-            SchedulerStatus::Stale(pool, _result_with_timings) => {
+            SchedulerStatus::Stale(pool, mode, _result_with_timings) => {
+                assert_matches!(mode, SchedulingMode::BlockVerification);
                 let pool = pool.clone();
                 drop(scheduler);
 
@@ -595,7 +628,9 @@ impl BankWithSchedulerInner {
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {:?}", scheduler);
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
-                    let scheduler = pool.take_resumed_scheduler(context, result_with_timings);
+                    let scheduler = pool
+                        .take_resumed_scheduler(context, result_with_timings)
+                        .expect("successful retaking");
                     info!(
                         "with_active_scheduler: bank (slot: {}) got active, taking scheduler (id: {})",
                         self.bank.slot(),
@@ -636,24 +671,25 @@ impl BankWithSchedulerInner {
             // the pool and yet it has yet to be `wait_for_termination()`-ed. To avoid unbounded
             // thread creation under forky condition, return the scheduler for now, even if the
             // bank could process more transactions later.
+            let mut id = None;
             scheduler.maybe_transition_from_active_to_stale(|scheduler| {
                 // Return the installed scheduler back to the scheduler pool as soon as the
                 // scheduler indicates the completion of all currently-scheduled transaction
                 // executions by `solana_unified_scheduler_pool::ThreadManager::end_session()`
                 // internally.
 
-                let id = scheduler.id();
+                id = Some(scheduler.id());
                 let (result_with_timings, uninstalled_scheduler) =
                     scheduler.wait_for_termination(false);
                 uninstalled_scheduler.return_to_pool();
                 info!(
-                    "timeout_listener: bank (slot: {}) got stale, returning scheduler (id: {})",
+                    "timeout_listener: bank (slot: {}) got stale, returned scheduler (id: {:?})",
                     bank.bank.slot(),
                     id,
                 );
                 (pool, result_with_timings)
             });
-            trace!("timeout_listener: {:?}", scheduler);
+            trace!("timeout_listener: {:?}", id);
         })
     }
 
@@ -663,7 +699,8 @@ impl BankWithSchedulerInner {
         let mut scheduler = self.scheduler.write().unwrap();
         match &mut *scheduler {
             SchedulerStatus::Active(scheduler) => scheduler.recover_error_after_abort(),
-            SchedulerStatus::Stale(_pool, (result, _timings)) if result.is_err() => {
+            SchedulerStatus::Stale(_pool, mode, (result, _timings)) if result.is_err() => {
+                assert_matches!(mode, SchedulingMode::BlockVerification);
                 result.clone().unwrap_err()
             }
             _ => unreachable!("no error in {:?}", self.scheduler),
@@ -705,12 +742,12 @@ impl BankWithSchedulerInner {
                 uninstalled_scheduler.return_to_pool();
                 (false, Some(result_with_timings))
             }
-            SchedulerStatus::Stale(_pool, _result_with_timings) if reason.is_paused() => {
+            SchedulerStatus::Stale(_pool, _mode, _result_with_timings) if reason.is_paused() => {
                 // Do nothing for pauses because the scheduler termination is guaranteed to be
                 // called later.
                 (true, None)
             }
-            SchedulerStatus::Stale(_pool, _result_with_timings) => {
+            SchedulerStatus::Stale(_pool, _mode, _result_with_timings) => {
                 let result_with_timings = scheduler.transition_from_stale_to_unavailable();
                 (true, Some(result_with_timings))
             }
@@ -777,7 +814,6 @@ mod tests {
             bank::test_utils::goto_end_of_slot_with_scheduler,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
-        assert_matches::assert_matches,
         mockall::Sequence,
         solana_sdk::system_transaction,
         std::sync::Mutex,
@@ -787,12 +823,14 @@ mod tests {
         bank: Arc<Bank>,
         is_dropped_flags: impl Iterator<Item = bool>,
         f: Option<impl Fn(&mut MockInstalledScheduler)>,
+        extra_context_use: usize,
     ) -> InstalledSchedulerBox {
         let mut mock = MockInstalledScheduler::new();
         let seq = Arc::new(Mutex::new(Sequence::new()));
 
+        // Could be used for assertions in BankWithScheduler::{new, schedule_transaction_executions}
         mock.expect_context()
-            .times(1)
+            .times(1 + extra_context_use)
             .in_sequence(&mut seq.lock().unwrap())
             .return_const(SchedulingContext::for_verification(bank));
 
@@ -831,6 +869,7 @@ mod tests {
             bank,
             is_dropped_flags,
             None::<fn(&mut MockInstalledScheduler) -> ()>,
+            0,
         )
     }
 
@@ -892,6 +931,7 @@ mod tests {
                         .times(1)
                         .returning(|| ());
                 }),
+                0,
             )),
         );
         goto_end_of_slot_with_scheduler(&bank);
@@ -933,6 +973,7 @@ mod tests {
                         .returning(|| TransactionError::InsufficientFundsForFee);
                 }
             }),
+            1,
         );
 
         let bank = BankWithScheduler::new(bank, Some(mocked_scheduler));

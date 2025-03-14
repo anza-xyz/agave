@@ -199,7 +199,6 @@ impl PacketDeserializer {
         })
     }
 
-    #[allow(dead_code)]
     pub(crate) fn deserialize_packets_with_indexes(
         packet_batch: &PacketBatch,
     ) -> impl Iterator<Item = (ImmutableDeserializedPacket, usize)> + '_ {
