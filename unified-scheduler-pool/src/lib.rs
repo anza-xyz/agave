@@ -3756,7 +3756,10 @@ mod tests {
                 _handler_context: &HandlerContext,
             ) {
                 // The task index must always be matched to the slot.
-                assert_eq!(task.task_index() as Slot, scheduling_context.slot().unwrap());
+                assert_eq!(
+                    task.task_index() as Slot,
+                    scheduling_context.slot().unwrap()
+                );
             }
         }
 
