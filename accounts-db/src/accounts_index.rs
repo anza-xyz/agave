@@ -1,4 +1,5 @@
 pub(crate) mod in_mem_accounts_index;
+mod roots_tracker;
 use {
     crate::{
         accounts_index_storage::{AccountsIndexStorage, Startup},
@@ -17,6 +18,7 @@ use {
         iter::{IntoParallelIterator, ParallelIterator},
         ThreadPool,
     },
+    roots_tracker::RootsTracker,
     solana_account::ReadableAccount,
     solana_clock::{BankId, Slot},
     solana_measure::measure::Measure,
@@ -439,36 +441,6 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
             Self::Entry(entry) => entry,
             Self::Raw((slot, account_info)) => Self::allocate(slot, account_info, storage),
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct RootsTracker {
-    /// Current roots where appendvecs or write cache has account data.
-    /// Constructed during load from snapshots.
-    /// Updated every time we add a new root or clean/shrink an append vec into irrelevancy.
-    /// Range is approximately the last N slots where N is # slots per epoch.
-    pub alive_roots: RollingBitField,
-}
-
-impl Default for RootsTracker {
-    fn default() -> Self {
-        // we expect to keep a rolling set of 400k slots around at a time
-        // 4M gives us plenty of extra(?!) room to handle a width 10x what we should need.
-        // cost is 4M bits of memory, which is .5MB
-        RootsTracker::new(4194304)
-    }
-}
-
-impl RootsTracker {
-    pub fn new(max_width: u64) -> Self {
-        Self {
-            alive_roots: RollingBitField::new(max_width),
-        }
-    }
-
-    pub fn min_alive_root(&self) -> Option<Slot> {
-        self.alive_roots.min()
     }
 }
 
