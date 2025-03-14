@@ -230,18 +230,19 @@ impl VoteStorage {
         let mut payload = get_payload(slot_metrics_tracker);
         self.already_handled.clear();
         self.already_handled.resize(all_vote_packets.len(), false);
-        let starting_index = 0;
+        let mut starting_index = 0;
         loop {
-            let (_found, payload, vote_packets) = self.march_iterator(
+            let (last_found, payload, vote_packets) = self.march_iterator(
                 starting_index,
                 &all_vote_packets,
                 &mut payload,
                 bank.clone(),
                 banking_stage_stats,
             );
-            if vote_packets.is_empty() {
+            if vote_packets.is_empty() || last_found.is_none() {
                 break;
             }
+            starting_index = last_found.unwrap() + 1;
 
             if let Some(retryable_vote_indices) = processing_function(&vote_packets, payload) {
                 self.latest_unprocessed_votes.insert_batch(
@@ -270,8 +271,7 @@ impl VoteStorage {
             }
         }
 
-        //scanner.finalize().payload.reached_end_of_slot
-        false
+        payload.reached_end_of_slot
     }
 
     pub fn clear(&mut self) {
@@ -292,7 +292,9 @@ impl VoteStorage {
         matches!(self.vote_source, VoteSource::Gossip)
     }
 
-    /// Moves the iterator to its' next position. If we've reached the end of the slice, we return None
+    /// Processes UNPROCESSED_BUFFER_STEP_SIZE packets at a time, returning the index of the first
+    /// packet that should be processed, the updated payload, and the packets that should be
+    /// processed.
     pub fn march_iterator<'a, 'b>(
         &mut self,
         starting_index: usize,
@@ -305,8 +307,7 @@ impl VoteStorage {
         &'b mut ConsumeScannerPayload<'a>,
         Vec<Arc<ImmutableDeserializedPacket>>,
     ) {
-        // TODO: Skip processed votes.
-        let mut found = None;
+        let mut last_found = None;
         let mut current_items: Vec<Arc<ImmutableDeserializedPacket>> =
             Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
         for _ in 0..UNPROCESSED_BUFFER_STEP_SIZE {
@@ -319,7 +320,7 @@ impl VoteStorage {
                         &banking_stage_stats,
                     ) {
                         ProcessingDecision::Now => {
-                            found = Some(index);
+                            last_found = Some(index);
                             self.already_handled[index] = true;
                             current_items.push(packet[index].clone());
                             break;
@@ -334,7 +335,7 @@ impl VoteStorage {
                 }
             }
         }
-        (found, payload, current_items)
+        (last_found, payload, current_items)
     }
 }
 
