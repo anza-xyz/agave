@@ -393,6 +393,7 @@ impl Shred {
     dispatch!(pub fn set_index(&mut self, index: u32));
     dispatch!(pub fn set_slot(&mut self, slot: Slot));
 
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn copy_to_packet(&self, packet: &mut Packet) {
         let payload = self.payload();
         let size = payload.len();
