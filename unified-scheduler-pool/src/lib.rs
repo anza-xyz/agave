@@ -320,10 +320,11 @@ impl BankingStageHelper {
     }
 
     pub fn generate_task_ids(&self, count: usize) -> usize {
+        assert!(count > 0);
         self.next_task_id.fetch_add(count, Relaxed)
     }
 
-    fn do_create_task(
+    pub fn create_new_task(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
         index: usize,
@@ -333,18 +334,10 @@ impl BankingStageHelper {
         })
     }
 
-    pub fn create_new_task(
-        &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
-    ) -> Task {
-        self.do_create_task(transaction, index)
-    }
-
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
         let new_index = self.generate_task_ids(1);
-        let transaction = executed_task.into_task().into_transaction();
-        self.do_create_task(transaction, new_index)
+        let transaction = executed_task.into_transaction();
+        self.create_new_task(transaction, new_index)
     }
 
     pub fn send_new_task(&self, task: Task) -> ScheduleResult {
@@ -1015,8 +1008,8 @@ impl ExecutedTask {
         })
     }
 
-    fn into_task(self) -> Task {
-        self.task
+    fn into_transaction(self) -> Task {
+        self.task.into_transaction()
     }
 }
 
@@ -3725,10 +3718,6 @@ mod tests {
         }
 
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank(bank.clone_with_scheduler(), true);
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
 
         if matches!(scheduling_mode, BlockProduction) {
