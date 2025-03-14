@@ -1008,7 +1008,7 @@ impl ExecutedTask {
         })
     }
 
-    fn into_transaction(self) -> Task {
+    fn into_transaction(self) -> RuntimeTransaction<SanitizedTransaction> {
         self.task.into_transaction()
     }
 }
