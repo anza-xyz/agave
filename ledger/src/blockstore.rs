@@ -217,6 +217,7 @@ impl LastFECSetCheckResults {
     }
 }
 
+#[derive(Debug)]
 pub struct InsertResults {
     completed_data_set_infos: Vec<CompletedDataSetInfo>,
     duplicate_shreds: Vec<PossibleDuplicateShred>,
@@ -529,7 +530,6 @@ impl Blockstore {
                     parent.unwrap_or(slot),
                     is_slot_complete,
                     0,
-                    true, // merkle_variant
                 );
                 self.insert_shreds(shreds, None, false).unwrap();
             }
@@ -1416,6 +1416,7 @@ impl Blockstore {
             None, // (reed_solomon_cache, retransmit_sender)
             &mut BlockstoreInsertionMetrics::default(),
         )?;
+        dbg!(&insert_results);
         Ok(insert_results.completed_data_set_infos)
     }
 
@@ -2430,7 +2431,6 @@ impl Blockstore {
                     chained_merkle_root,
                     start_index, // next_shred_index
                     start_index, // next_code_index
-                    true,        // merkle_variant
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 );
@@ -2458,9 +2458,8 @@ impl Blockstore {
                 &slot_entries,
                 is_full_slot,
                 chained_merkle_root,
-                0,    // next_shred_index
-                0,    // next_code_index
-                true, // merkle_variant
+                0, // next_shred_index
+                0, // next_code_index
                 &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             );
@@ -4934,9 +4933,8 @@ pub fn create_new_ledger(
         true, // is_last_in_slot
         // chained_merkle_root
         Some(Hash::new_from_array(rand::thread_rng().gen())),
-        0,    // next_shred_index
-        0,    // next_code_index
-        true, // merkle_variant
+        0, // next_shred_index
+        0, // next_code_index
         &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
@@ -5153,13 +5151,13 @@ pub fn create_new_ledger_from_name_auto_delete(
     (ledger_path, blockhash)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn entries_to_test_shreds(
     entries: &[Entry],
     slot: Slot,
     parent_slot: Slot,
     is_full_slot: bool,
     version: u16,
-    merkle_variant: bool,
 ) -> Vec<Shred> {
     Shredder::new(slot, parent_slot, 0, version)
         .unwrap()
@@ -5171,22 +5169,20 @@ pub fn entries_to_test_shreds(
             Some(Hash::new_from_array(rand::thread_rng().gen())),
             0, // next_shred_index,
             0, // next_code_index
-            merkle_variant,
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
         .0
 }
 
-// used for tests only
+#[cfg(feature = "dev-context-only-utils")]
 pub fn make_slot_entries(
     slot: Slot,
     parent_slot: Slot,
     num_entries: u64,
-    merkle_variant: bool,
 ) -> (Vec<Shred>, Vec<Entry>) {
     let entries = create_ticks(num_entries, 1, Hash::new_unique());
-    let shreds = entries_to_test_shreds(&entries, slot, parent_slot, true, 0, merkle_variant);
+    let shreds = entries_to_test_shreds(&entries, slot, parent_slot, true, 0);
     (shreds, entries)
 }
 
@@ -5201,12 +5197,7 @@ pub fn make_many_slot_entries(
     for slot in start_slot..start_slot + num_slots {
         let parent_slot = if slot == 0 { 0 } else { slot - 1 };
 
-        let (slot_shreds, slot_entries) = make_slot_entries(
-            slot,
-            parent_slot,
-            entries_per_slot,
-            true, // merkle_variant
-        );
+        let (slot_shreds, slot_entries) = make_slot_entries(slot, parent_slot, entries_per_slot);
         shreds.extend(slot_shreds);
         entries.extend(slot_entries);
     }
@@ -5332,12 +5323,7 @@ pub fn make_chaining_slot_entries(
             }
         };
 
-        let result = make_slot_entries(
-            *slot,
-            parent_slot,
-            entries_per_slot,
-            true, // merkle_variant
-        );
+        let result = make_slot_entries(*slot, parent_slot, entries_per_slot);
         slots_shreds_and_entries.push(result);
     }
 
@@ -5457,8 +5443,7 @@ pub mod tests {
         let (shreds, _) = make_slot_entries(
             slot,
             parent_slot,
-            100,  // num_entries
-            true, // merkle_variant
+            100, // num_entries
         );
         blockstore.insert_shreds(shreds, None, true).unwrap();
 
@@ -5506,7 +5491,6 @@ pub mod tests {
             0, // slot
             0, // parent_slot
             num_entries,
-            true, // merkle_variant
         );
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -5706,7 +5690,7 @@ pub mod tests {
     #[test]
     fn test_read_shred_bytes() {
         let slot = 0;
-        let (shreds, _) = make_slot_entries(slot, 0, 100, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(slot, 0, 100);
         let num_shreds = shreds.len() as u64;
         let shred_bufs: Vec<_> = shreds.iter().map(Shred::payload).cloned().collect();
 
@@ -5762,7 +5746,7 @@ pub mod tests {
     #[test]
     fn test_shred_cleanup_check() {
         let slot = 1;
-        let (shreds, _) = make_slot_entries(slot, 0, 100, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(slot, 0, 100);
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -5791,7 +5775,6 @@ pub mod tests {
             0, // slot
             0, // parent_slot
             num_entries,
-            true, // merkle_variant
         );
         let num_shreds = shreds.len() as u64;
 
@@ -5839,7 +5822,6 @@ pub mod tests {
             0, // slot
             0, // parent_slot
             num_entries,
-            true, // merkle_variant
         );
         let num_shreds = shreds.len() as u64;
 
@@ -5948,14 +5930,7 @@ pub mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let entries = create_ticks(8, 0, Hash::default());
-        let shreds = entries_to_test_shreds(
-            &entries[0..4],
-            1,
-            0,
-            false,
-            0,
-            true, // merkle_variant
-        );
+        let shreds = entries_to_test_shreds(&entries[0..4], 1, 0, false, 0);
         blockstore
             .insert_shreds(shreds, None, false)
             .expect("Expected successful write of shreds");
@@ -5964,45 +5939,6 @@ pub mod tests {
             blockstore.get_slot_entries(1, 0).unwrap()[2..4],
             entries[2..4],
         );
-    }
-
-    // This test seems to be unnecessary with introduction of data shreds. There are no
-    // guarantees that a particular shred index contains a complete entry
-    #[test]
-    #[ignore]
-    pub fn test_get_slot_entries2() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        // Write entries
-        let num_slots = 5_u64;
-        let mut index = 0;
-        for slot in 0..num_slots {
-            let entries = create_ticks(slot + 1, 0, Hash::default());
-            let last_entry = entries.last().unwrap().clone();
-            let mut shreds = entries_to_test_shreds(
-                &entries,
-                slot,
-                slot.saturating_sub(1),
-                false,
-                0,
-                true, // merkle_variant
-            );
-            for b in shreds.iter_mut() {
-                b.set_index(index);
-                b.set_slot(slot);
-                index += 1;
-            }
-            blockstore
-                .insert_shreds(shreds, None, false)
-                .expect("Expected successful write of shreds");
-            assert_eq!(
-                blockstore
-                    .get_slot_entries(slot, u64::from(index - 1))
-                    .unwrap(),
-                vec![last_entry],
-            );
-        }
     }
 
     #[test]
@@ -6020,14 +5956,7 @@ pub mod tests {
         // Write entries
         for slot in 0..num_slots {
             let entries = create_ticks(entries_per_slot, 0, Hash::default());
-            let shreds = entries_to_test_shreds(
-                &entries,
-                slot,
-                slot.saturating_sub(1),
-                false,
-                0,
-                true, // merkle_variant
-            );
+            let shreds = entries_to_test_shreds(&entries, slot, slot.saturating_sub(1), false, 0);
             assert!(shreds.len() as u64 >= shreds_per_slot);
             blockstore
                 .insert_shreds(shreds, None, false)
@@ -6047,12 +5976,7 @@ pub mod tests {
             let parent_slot = if i == 0 { 0 } else { i - 1 };
             // Write entries
             let num_entries = min_entries * (i + 1);
-            let (shreds, original_entries) = make_slot_entries(
-                slot,
-                parent_slot,
-                num_entries,
-                true, // merkle_variant
-            );
+            let (shreds, original_entries) = make_slot_entries(slot, parent_slot, num_entries);
 
             let num_shreds = shreds.len() as u64;
             assert!(num_shreds > 1);
@@ -6110,8 +6034,7 @@ pub mod tests {
         let slot = 0;
         let num_entries = max_ticks_per_n_shreds(1, None) + 1;
         let entries = create_ticks(num_entries, slot, Hash::default());
-        let shreds =
-            entries_to_test_shreds(&entries, slot, 0, true, 0, /*merkle_variant:*/ true);
+        let shreds = entries_to_test_shreds(&entries, slot, 0, true, 0);
         let num_shreds = shreds.len();
         assert!(num_shreds > 1);
         assert!(blockstore
@@ -6150,7 +6073,6 @@ pub mod tests {
             0, // slot
             0, // parent_slot
             entries_per_slot,
-            false, // merkle_variant
         );
         let shreds_per_slot = shreds.len() as u64;
 
@@ -6185,7 +6107,6 @@ pub mod tests {
                 slot,
                 slot - 1, // parent_slot
                 entries_per_slot,
-                false, // merkle_variant
             );
             let missing_shred = slot_shreds.remove(slot as usize - 1);
             shreds.extend(slot_shreds);
@@ -6204,7 +6125,6 @@ pub mod tests {
                     slot,
                     slot - 1, // parent_slot
                     1,        // num_entries
-                    false,    // merkle_variant
                 );
                 shred[0].set_index(2 * num_slots as u32);
                 shred
@@ -6245,8 +6165,7 @@ pub mod tests {
         let entries_per_slot = 10;
 
         // Create shreds for slot 0
-        let (mut shreds, _) =
-            make_slot_entries(0, 0, entries_per_slot, /*merkle_variant:*/ true);
+        let (mut shreds, _) = make_slot_entries(0, 0, entries_per_slot);
 
         let shred0 = shreds.remove(0);
         // Insert all but the first shred in the slot, should not be considered complete
@@ -6325,7 +6244,6 @@ pub mod tests {
             disconnected_slot,
             1, // parent_slot
             entries_per_slot,
-            true, // merkle_variant
         );
 
         let mut all_shreds: Vec<_> = vec![shreds0, shreds1, shreds2, shreds3]
@@ -6578,12 +6496,7 @@ pub mod tests {
                 } else {
                     slot.saturating_sub(1)
                 };
-                let (shreds, _) = make_slot_entries(
-                    slot,
-                    parent_slot,
-                    entries_per_slot,
-                    true, // merkle_variant
-                );
+                let (shreds, _) = make_slot_entries(slot, parent_slot, entries_per_slot);
                 shreds.into_iter()
             })
             .collect();
@@ -6970,8 +6883,8 @@ pub mod tests {
 
         // Write some slot that also chains to existing slots and orphan,
         // nothing should change
-        let (shred4, _) = make_slot_entries(4, 0, 1, /*merkle_variant:*/ true);
-        let (shred5, _) = make_slot_entries(5, 1, 1, /*merkle_variant:*/ true);
+        let (shred4, _) = make_slot_entries(4, 0, 1);
+        let (shred5, _) = make_slot_entries(5, 1, 1);
         blockstore.insert_shreds(shred4, None, false).unwrap();
         blockstore.insert_shreds(shred5, None, false).unwrap();
         assert_eq!(
@@ -7010,10 +6923,8 @@ pub mod tests {
                 }
             };
 
-            let (mut shred, entry) =
-                make_slot_entries(slot, parent_slot, 1, /*merkle_variant:*/ false);
+            let (shred, entry) = make_slot_entries(slot, parent_slot, 1);
             num_shreds_per_slot = shred.len() as u64;
-            shred.iter_mut().for_each(|shred| shred.set_index(0));
             shreds.extend(shred);
             entries.extend(entry);
         }
@@ -7021,7 +6932,7 @@ pub mod tests {
         let num_shreds = shreds.len();
         // Write shreds to the database
         if should_bulk_write {
-            blockstore.insert_shreds(shreds, None, false).unwrap();
+            blockstore.insert_shreds(shreds, None, true).unwrap();
         } else {
             for _ in 0..num_shreds {
                 let shred = shreds.remove(0);
@@ -7036,14 +6947,13 @@ pub mod tests {
             );
 
             let meta = blockstore.meta(i).unwrap().unwrap();
-            assert_eq!(meta.received, 1);
-            assert_eq!(meta.last_index, Some(0));
+            assert_eq!(meta.received, num_shreds_per_slot);
+            assert_eq!(meta.last_index, Some(num_shreds_per_slot - 1));
+            assert_eq!(meta.consumed, num_shreds_per_slot);
             if i != 0 {
                 assert_eq!(meta.parent_slot, Some(i - 1));
-                assert_eq!(meta.consumed, 1);
             } else {
                 assert_eq!(meta.parent_slot, Some(0));
-                assert_eq!(meta.consumed, num_shreds_per_slot);
             }
         }
     }
@@ -7061,8 +6971,7 @@ pub mod tests {
         let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
         let num_entries = max_ticks_per_n_shreds(1, Some(data_buffer_size)) + 1;
         let entries = create_ticks(num_entries, 0, Hash::default());
-        let mut shreds =
-            entries_to_test_shreds(&entries, slot, 0, true, 0, /*merkle_variant:*/ false);
+        let mut shreds = entries_to_test_shreds(&entries, slot, 0, true, 0);
         let num_shreds = shreds.len();
         assert!(num_shreds > 1);
         for (i, s) in shreds.iter_mut().enumerate() {
@@ -7306,16 +7215,10 @@ pub mod tests {
         );
 
         let entries = create_ticks(100, 0, Hash::default());
-        let mut shreds =
-            entries_to_test_shreds(&entries, slot, 0, true, 0, /*merkle_variant:*/ false);
-        assert!(shreds.len() > 2);
-        shreds.drain(2..);
-
+        let mut shreds = entries_to_test_shreds(&entries, slot, 0, true, 0);
         const ONE: u64 = 1;
         const OTHER: u64 = 4;
-
-        shreds[0].set_index(ONE as u32);
-        shreds[1].set_index(OTHER as u32);
+        let shreds = vec![shreds.remove(OTHER as usize), shreds.remove(ONE as usize)];
 
         // Insert one shred at index = first_index
         blockstore.insert_shreds(shreds, None, false).unwrap();
@@ -7349,8 +7252,7 @@ pub mod tests {
         // Write entries
         let num_entries = 10;
         let entries = create_ticks(num_entries, 0, Hash::default());
-        let shreds =
-            entries_to_test_shreds(&entries, slot, 0, true, 0, /*merkle_variant:*/ true);
+        let shreds = entries_to_test_shreds(&entries, slot, 0, true, 0);
         let num_shreds = shreds.len();
 
         blockstore.insert_shreds(shreds, None, false).unwrap();
@@ -7391,7 +7293,7 @@ pub mod tests {
     #[test]
     fn test_should_insert_data_shred() {
         solana_logger::setup();
-        let (mut shreds, _) = make_slot_entries(0, 0, 200, /*merkle_variant:*/ false);
+        let (mut shreds, _) = make_slot_entries(0, 0, 200);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
@@ -7498,7 +7400,7 @@ pub mod tests {
 
     #[test]
     fn test_is_data_shred_present() {
-        let (shreds, _) = make_slot_entries(0, 0, 200, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(0, 0, 200);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let index_cf = &blockstore.index_cf;
@@ -8014,7 +7916,7 @@ pub mod tests {
     #[test]
     fn test_insert_multiple_is_last() {
         solana_logger::setup();
-        let (shreds, _) = make_slot_entries(0, 0, 18, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(0, 0, 18);
         let num_shreds = shreds.len() as u64;
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -8027,7 +7929,7 @@ pub mod tests {
         assert_eq!(slot_meta.last_index, Some(num_shreds - 1));
         assert!(slot_meta.is_full());
 
-        let (shreds, _) = make_slot_entries(0, 0, 600, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(0, 0, 600);
         assert!(shreds.len() > num_shreds as usize);
         blockstore.insert_shreds(shreds, None, false).unwrap();
         let slot_meta = blockstore.meta(0).unwrap().unwrap();
@@ -8182,8 +8084,7 @@ pub mod tests {
         let num_ticks = 8;
         let entries = create_ticks(num_ticks, 0, Hash::default());
         let slot = 1;
-        let shreds =
-            entries_to_test_shreds(&entries, slot, 0, false, 0, /*merkle_variant:*/ true);
+        let shreds = entries_to_test_shreds(&entries, slot, 0, false, 0);
         let next_shred_index = shreds.len();
         blockstore
             .insert_shreds(shreds, None, false)
@@ -8217,7 +8118,7 @@ pub mod tests {
     fn test_no_insert_but_modify_slot_meta() {
         // This tests correctness of the SlotMeta in various cases in which a shred
         // that gets filtered out by checks
-        let (shreds0, _) = make_slot_entries(0, 0, 200, /*merkle_variant:*/ true);
+        let (shreds0, _) = make_slot_entries(0, 0, 200);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
@@ -8229,8 +8130,8 @@ pub mod tests {
         // Insert a repetitive shred for slot 's', should get ignored, but also
         // insert shreds that chains to 's', should see the update in the SlotMeta
         // for 's'.
-        let (mut shreds2, _) = make_slot_entries(2, 0, 200, /*merkle_variant:*/ true);
-        let (mut shreds3, _) = make_slot_entries(3, 0, 200, /*merkle_variant:*/ true);
+        let (mut shreds2, _) = make_slot_entries(2, 0, 200);
+        let (mut shreds3, _) = make_slot_entries(3, 0, 200);
         shreds2.push(shreds0[1].clone());
         shreds3.insert(0, shreds0[1].clone());
         blockstore.insert_shreds(shreds2, None, false).unwrap();
@@ -8247,7 +8148,7 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         // Make shred for slot 1
-        let (shreds1, _) = make_slot_entries(1, 0, 1, /*merkle_variant:*/ true);
+        let (shreds1, _) = make_slot_entries(1, 0, 1);
         let max_root = 100;
 
         blockstore.set_roots(std::iter::once(&max_root)).unwrap();
@@ -8282,7 +8183,6 @@ pub mod tests {
                 slot - 1, // parent_slot
                 true,     // is_full_slot
                 0,        // version
-                true,     // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
             blockstore.set_roots([slot].iter()).unwrap();
@@ -8308,7 +8208,6 @@ pub mod tests {
             slot - 1, // parent_slot
             true,     // is_full_slot
             0,        // version
-            true,     // merkle_variant
         );
         let more_shreds = entries_to_test_shreds(
             &entries,
@@ -8316,7 +8215,6 @@ pub mod tests {
             slot, // parent_slot
             true, // is_full_slot
             0,    // version
-            true, // merkle_variant
         );
         let unrooted_shreds = entries_to_test_shreds(
             &entries,
@@ -8324,7 +8222,6 @@ pub mod tests {
             slot + 1, // parent_slot
             true,     // is_full_slot
             0,        // version
-            true,     // merkle_variant
         );
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -9186,7 +9083,6 @@ pub mod tests {
             slot - 1, // parent_slot
             true,     // is_full_slot
             0,        // version
-            true,     // merkle_variant
         );
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -9311,7 +9207,6 @@ pub mod tests {
             slot - 1, // parent_slot
             true,     // is_full_slot
             0,        // version
-            true,     // merkle_variant
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
@@ -9553,7 +9448,7 @@ pub mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-        let (shreds, _) = make_slot_entries(1, 0, 4, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(1, 0, 4);
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
         fn make_slot_entries_with_transaction_addresses(addresses: &[Pubkey]) -> Vec<Entry> {
@@ -9586,7 +9481,6 @@ pub mod tests {
                 slot - 1, // parent_slot
                 true,     // is_full_slot
                 0,        // version
-                true,     // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
 
@@ -9617,8 +9511,7 @@ pub mod tests {
             let entries = make_slot_entries_with_transaction_addresses(&[
                 address0, address1, address0, address1,
             ]);
-            let shreds =
-                entries_to_test_shreds(&entries, slot, 8, true, 0, /*merkle_variant:*/ true);
+            let shreds = entries_to_test_shreds(&entries, slot, 8, true, 0);
             blockstore.insert_shreds(shreds, None, false).unwrap();
 
             let mut counter = 0;
@@ -10239,7 +10132,7 @@ pub mod tests {
         assert_eq!(blockstore.lowest_slot(), 0);
 
         for slot in 0..10 {
-            let (shreds, _) = make_slot_entries(slot, 0, 1, /*merkle_variant:*/ true);
+            let (shreds, _) = make_slot_entries(slot, 0, 1);
             blockstore.insert_shreds(shreds, None, false).unwrap();
         }
         assert_eq!(blockstore.lowest_slot(), 1);
@@ -10255,7 +10148,7 @@ pub mod tests {
         assert_eq!(blockstore.highest_slot().unwrap(), None);
 
         for slot in 0..10 {
-            let (shreds, _) = make_slot_entries(slot, 0, 1, /*merkle_variant:*/ true);
+            let (shreds, _) = make_slot_entries(slot, 0, 1);
             blockstore.insert_shreds(shreds, None, false).unwrap();
             assert_eq!(blockstore.highest_slot().unwrap(), Some(slot));
         }
@@ -10499,7 +10392,6 @@ pub mod tests {
             chained_merkle_root,
             fec_set_index, // next_shred_index
             fec_set_index, // next_code_index
-            true,          // merkle_variant
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -10564,9 +10456,8 @@ pub mod tests {
             &entries1,
             true, // is_last_in_slot
             chained_merkle_root,
-            0,    // next_shred_index
-            0,    // next_code_index,
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index,
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -10575,9 +10466,8 @@ pub mod tests {
             &entries2,
             true, // is_last_in_slot
             chained_merkle_root,
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -10914,9 +10804,8 @@ pub mod tests {
             &[entry],
             slot,
             parent,
-            true,  // is_full_slot
-            0,     // version
-            false, // merkle_variant
+            true, // is_full_slot
+            0,    // version
         );
         assert!(shreds.len() > 1);
 
@@ -10959,8 +10848,7 @@ pub mod tests {
 
         // Create enough entries to ensure there are at least two shreds created
         let num_unique_entries = max_ticks_per_n_shreds(1, None) + 1;
-        let (mut original_shreds, original_entries) =
-            make_slot_entries(0, 0, num_unique_entries, /*merkle_variant:*/ true);
+        let (mut original_shreds, original_entries) = make_slot_entries(0, 0, num_unique_entries);
         let mut duplicate_shreds = original_shreds.clone();
         // Mutate signature so that payloads are not the same as the originals.
         for shred in &mut duplicate_shreds {
@@ -11008,8 +10896,7 @@ pub mod tests {
         let num_shreds = 2;
         let num_entries = max_ticks_per_n_shreds(num_shreds, None);
         let slot = 1;
-        let (mut shreds, _) =
-            make_slot_entries(slot, 0, num_entries, /*merkle_variant:*/ false);
+        let (mut shreds, _) = make_slot_entries(slot, 0, num_entries);
 
         // Mark both as last shred
         shreds[0].set_last_in_slot();
@@ -11030,8 +10917,7 @@ pub mod tests {
 
         let setup_test_shreds = |slot: Slot| -> Vec<Shred> {
             let num_entries = max_ticks_per_n_shreds(num_shreds, Some(LEGACY_SHRED_DATA_CAPACITY));
-            let (mut shreds, _) =
-                make_slot_entries(slot, 0, num_entries, /*merkle_variant:*/ false);
+            let (mut shreds, _) = make_slot_entries(slot, 0, num_entries);
             shreds[smaller_last_shred_index].set_last_in_slot();
             shreds[larger_last_shred_index].set_last_in_slot();
             shreds
@@ -11198,8 +11084,7 @@ pub mod tests {
             let num_shreds = 10;
             let middle_shred_index = 5;
             let num_entries = max_ticks_per_n_shreds(num_shreds, None);
-            let (shreds, _) =
-                make_slot_entries(slot, 0, num_entries, /*merkle_variant:*/ false);
+            let (shreds, _) = make_slot_entries(slot, 0, num_entries);
 
             // Reverse shreds so that last shred gets inserted first and sets meta.received
             let mut shreds: Vec<Shred> = shreds.into_iter().rev().collect();

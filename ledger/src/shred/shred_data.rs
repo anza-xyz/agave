@@ -29,10 +29,6 @@ impl ShredData {
     dispatch!(pub(super) fn sanitize(&self) -> Result<(), Error>);
     dispatch!(pub(super) fn set_signature(&mut self, signature: Signature));
 
-    // Only for tests.
-    dispatch!(pub(super) fn set_index(&mut self, index: u32));
-    dispatch!(pub(super) fn set_slot(&mut self, slot: Slot));
-
     pub(super) fn signed_data(&self) -> Result<SignedData, Error> {
         match self {
             Self::Legacy(shred) => Ok(SignedData::Chunk(shred.signed_data()?)),
@@ -64,7 +60,7 @@ impl ShredData {
         version: u16,
         fec_set_index: u32,
     ) -> Self {
-        Self::from(legacy::ShredData::new_from_data(
+        Self::from(merkle::ShredData::new_from_data(
             slot,
             index,
             parent_offset,

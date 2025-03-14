@@ -222,6 +222,57 @@ impl ShredData {
         let node = get_merkle_node(shred, SIZE_OF_SIGNATURE..proof_offset).ok()?;
         get_merkle_root(index, node, proof).ok()
     }
+
+    pub(super) fn new_from_data(
+        slot: Slot,
+        index: u32,
+        parent_offset: u16,
+        data: &[u8],
+        flags: ShredFlags,
+        reference_tick: u8,
+        version: u16,
+        fec_set_index: u32,
+    ) -> Self {
+        let mut payload = vec![0; Self::SIZE_OF_PAYLOAD];
+        let common_header = ShredCommonHeader {
+            signature: Signature::default(),
+            shred_variant: ShredVariant::MerkleData {
+                proof_size: 0,
+                chained: false,
+                resigned: false,
+            },
+            slot,
+            index,
+            version,
+            fec_set_index,
+        };
+        let size = (data.len() + Self::SIZE_OF_HEADERS) as u16;
+        let flags = flags | ShredFlags::from_reference_tick(reference_tick);
+        let data_header = DataShredHeader {
+            parent_offset,
+            flags,
+            size,
+        };
+        let mut cursor = Cursor::new(&mut payload[..]);
+        bincode::serialize_into(&mut cursor, &common_header).unwrap();
+        bincode::serialize_into(&mut cursor, &data_header).unwrap();
+        // TODO: Need to check if data is too large!
+        let offset = cursor.position() as usize;
+        debug_assert_eq!(offset, Self::SIZE_OF_HEADERS);
+        payload[offset..offset + data.len()].copy_from_slice(data);
+        let mut shred = Self {
+            common_header,
+            data_header,
+            payload: Payload::from(payload),
+        };
+        let proof_offset = shred.proof_offset().unwrap();
+        let nodes =
+            (0..32).map(|_| get_merkle_node(&shred.payload, SIZE_OF_SIGNATURE..proof_offset));
+        let tree = make_merkle_tree(nodes).unwrap();
+        let proof = make_merkle_proof(index as usize, 32, &tree);
+        shred.set_merkle_proof(proof).unwrap();
+        shred
+    }
 }
 
 impl ShredCode {
@@ -1436,6 +1487,7 @@ mod test {
     use {
         super::*,
         crate::shred::{ShredFlags, ShredId, SignedData},
+        crate::shred::{ShredType, MAX_DATA_SHREDS_PER_SLOT},
         assert_matches::assert_matches,
         itertools::Itertools,
         rand::{seq::SliceRandom, CryptoRng, Rng},
@@ -2121,6 +2173,78 @@ mod test {
             .values()
         {
             verify_erasure_recovery(rng, shreds, reed_solomon_cache);
+        }
+    }
+
+    #[test]
+    fn test_sanitize_data_shred() {
+        let data = [0xa5u8; 1024];
+        let mut shred = ShredData::new_from_data(
+            420, // slot
+            19,  // index
+            5,   // parent_offset
+            &data,
+            ShredFlags::DATA_COMPLETE_SHRED,
+            3,  // reference_tick
+            1,  // version
+            16, // fec_set_index
+        );
+        assert_matches!(shred.sanitize(), Ok(()));
+        // Corrupt shred by making it too large
+        {
+            let mut shred = shred.clone();
+            shred.payload.push(10u8);
+            assert_matches!(shred.sanitize(), Err(Error::InvalidPayloadSize(1229)));
+        }
+        {
+            let mut shred = shred.clone();
+            shred.data_header.size += 1;
+            assert_matches!(
+                shred.sanitize(),
+                Err(Error::InvalidDataSize {
+                    size: 1140,
+                    payload: 1228,
+                })
+            );
+        }
+        {
+            let mut shred = shred.clone();
+            shred.data_header.size = 0;
+            assert_matches!(
+                shred.sanitize(),
+                Err(Error::InvalidDataSize {
+                    size: 0,
+                    payload: 1228,
+                })
+            );
+        }
+        {
+            let mut shred = shred.clone();
+            shred.common_header.index = MAX_DATA_SHREDS_PER_SLOT as u32;
+            assert_matches!(
+                shred.sanitize(),
+                Err(Error::InvalidShredIndex(ShredType::Data, 32768))
+            );
+        }
+        {
+            let mut shred = shred.clone();
+            shred.data_header.flags |= ShredFlags::LAST_SHRED_IN_SLOT;
+            assert_matches!(shred.sanitize(), Ok(()));
+            shred.data_header.flags &=
+                ShredFlags::from_bits_retain(!ShredFlags::DATA_COMPLETE_SHRED.bits());
+            assert_matches!(shred.sanitize(), Err(Error::InvalidShredFlags(131u8)));
+            shred.data_header.flags |= ShredFlags::SHRED_TICK_REFERENCE_MASK;
+            assert_matches!(shred.sanitize(), Err(Error::InvalidShredFlags(191u8)));
+        }
+        {
+            shred.data_header.size = shred.payload().len() as u16 + 1;
+            assert_matches!(
+                shred.sanitize(),
+                Err(Error::InvalidDataSize {
+                    size: 1229,
+                    payload: 1228,
+                })
+            );
         }
     }
 }

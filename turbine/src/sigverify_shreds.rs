@@ -515,6 +515,7 @@ mod tests {
             0xc0de,
         );
         shred.sign(&leader_keypair);
+        dbg!(&shred);
         batches[0][0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         batches[0][0].meta_mut().size = shred.payload().len();
 
@@ -530,6 +531,7 @@ mod tests {
         );
         let wrong_keypair = Keypair::new();
         shred.sign(&wrong_keypair);
+        dbg!(&shred);
         batches[0][1].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         batches[0][1].meta_mut().size = shred.payload().len();
 

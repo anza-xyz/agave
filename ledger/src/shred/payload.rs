@@ -1,12 +1,35 @@
 use std::{
+    fmt::{Debug, Write},
     ops::{Deref, DerefMut},
     sync::Arc,
 };
 
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Eq)]
 pub enum Payload {
     Shared(Arc<Vec<u8>>),
     Unique(Vec<u8>),
+}
+
+impl Debug for Payload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let buf: &[u8] = match self {
+            Payload::Shared(items) => {
+                f.write_str("Shared {\n")?;
+                items.as_ref()
+            }
+            Payload::Unique(items) => {
+                f.write_str("Unique {\n")?;
+                items.as_ref()
+            }
+        };
+        for chunk in buf.chunks(32) {
+            for b in chunk {
+                write!(f, "{:02x}", b)?;
+            }
+            f.write_char('\n')?;
+        }
+        f.write_str("}\n")
+    }
 }
 
 macro_rules! make_mut {

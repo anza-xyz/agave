@@ -79,7 +79,6 @@ impl BroadcastRun for BroadcastFakeShredsRun {
             Some(chained_merkle_root),
             next_shred_index,
             self.next_code_index,
-            true, // merkle_variant
             &self.reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -101,7 +100,6 @@ impl BroadcastRun for BroadcastFakeShredsRun {
             Some(chained_merkle_root),
             next_shred_index,
             self.next_code_index,
-            true, // merkle_variant
             &self.reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );

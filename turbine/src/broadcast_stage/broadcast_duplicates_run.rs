@@ -184,7 +184,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             Some(self.chained_merkle_root),
             self.next_shred_index,
             self.next_code_index,
-            true, // merkle_variant
             &self.reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -204,7 +203,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
-                    true, // merkle_variant
                     &self.reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 );
@@ -218,7 +216,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
-                    true, // merkle_variant
                     &self.reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 );
