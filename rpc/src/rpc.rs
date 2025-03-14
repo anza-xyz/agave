@@ -630,7 +630,7 @@ impl JsonRpcRequestProcessor {
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
         optimize_filters(&mut filters);
         let keyed_accounts = {
-            if let Some(owner) = get_spl_token_owner_filter(&program_id, &filters) {
+            if let Some(owner) = get_spl_token_owner_filter(&program_id, &filters)? {
                 self.get_filtered_spl_token_accounts_by_owner(
                     Arc::clone(&bank),
                     program_id,
@@ -639,7 +639,7 @@ impl JsonRpcRequestProcessor {
                     sort_results,
                 )
                 .await?
-            } else if let Some(mint) = get_spl_token_mint_filter(&program_id, &filters) {
+            } else if let Some(mint) = get_spl_token_mint_filter(&program_id, &filters)? {
                 self.get_filtered_spl_token_accounts_by_mint(
                     Arc::clone(&bank),
                     program_id,
@@ -2571,14 +2571,16 @@ fn encode_account<T: ReadableAccount>(
 /// owner.
 /// NOTE: `optimize_filters()` should almost always be called before using this method because of
 /// the requirement that `Memcmp::raw_bytes_as_ref().is_some()`.
-fn get_spl_token_owner_filter(program_id: &Pubkey, filters: &[RpcFilterType]) -> Option<Pubkey> {
+fn get_spl_token_owner_filter(
+    program_id: &Pubkey,
+    filters: &[RpcFilterType],
+) -> Result<Option<Pubkey>> {
     if !is_known_spl_token_id(program_id) {
-        return None;
+        return Ok(None);
     }
     let mut data_size_filter: Option<u64> = None;
     let mut memcmp_filter: Option<&[u8]> = None;
     let mut owner_key: Option<Pubkey> = None;
-    let mut incorrect_owner_len: Option<usize> = None;
     let mut token_account_state_filter = false;
     let account_packed_len = TokenAccount::get_packed_len();
     for filter in filters {
@@ -2593,7 +2595,11 @@ fn get_spl_token_owner_filter(program_id: &Pubkey, filters: &[RpcFilterType]) ->
                         if bytes.len() == PUBKEY_BYTES {
                             owner_key = Pubkey::try_from(bytes).ok();
                         } else {
-                            incorrect_owner_len = Some(bytes.len());
+                            return Err(Error::invalid_params(format!(
+                                "Incorrect byte length {} for SPL token owner filter, expected {}",
+                                bytes.len(),
+                                PUBKEY_BYTES
+                            )));
                         }
                     }
                 }
@@ -2605,16 +2611,10 @@ fn get_spl_token_owner_filter(program_id: &Pubkey, filters: &[RpcFilterType]) ->
         || memcmp_filter == Some(&[ACCOUNTTYPE_ACCOUNT])
         || token_account_state_filter
     {
-        if let Some(incorrect_owner_len) = incorrect_owner_len {
-            info!(
-                "Incorrect num bytes ({:?}) provided for spl_token_owner_filter",
-                incorrect_owner_len
-            );
-        }
-        owner_key
+        Ok(owner_key)
     } else {
         debug!("spl_token program filters do not match by-owner index requisites");
-        None
+        Ok(None)
     }
 }
 
@@ -2622,14 +2622,16 @@ fn get_spl_token_owner_filter(program_id: &Pubkey, filters: &[RpcFilterType]) ->
 /// mint.
 /// NOTE: `optimize_filters()` should almost always be called before using this method because of
 /// the requirement that `Memcmp::raw_bytes_as_ref().is_some()`.
-fn get_spl_token_mint_filter(program_id: &Pubkey, filters: &[RpcFilterType]) -> Option<Pubkey> {
+fn get_spl_token_mint_filter(
+    program_id: &Pubkey,
+    filters: &[RpcFilterType],
+) -> Result<Option<Pubkey>> {
     if !is_known_spl_token_id(program_id) {
-        return None;
+        return Ok(None);
     }
     let mut data_size_filter: Option<u64> = None;
     let mut memcmp_filter: Option<&[u8]> = None;
     let mut mint: Option<Pubkey> = None;
-    let mut incorrect_mint_len: Option<usize> = None;
     let mut token_account_state_filter = false;
     let account_packed_len = TokenAccount::get_packed_len();
     for filter in filters {
@@ -2644,7 +2646,11 @@ fn get_spl_token_mint_filter(program_id: &Pubkey, filters: &[RpcFilterType]) -> 
                         if bytes.len() == PUBKEY_BYTES {
                             mint = Pubkey::try_from(bytes).ok();
                         } else {
-                            incorrect_mint_len = Some(bytes.len());
+                            return Err(Error::invalid_params(format!(
+                                "Incorrect byte length {} for SPL token mint filter, expected {}",
+                                bytes.len(),
+                                PUBKEY_BYTES
+                            )));
                         }
                     }
                 }
@@ -2656,16 +2662,10 @@ fn get_spl_token_mint_filter(program_id: &Pubkey, filters: &[RpcFilterType]) -> 
         || memcmp_filter == Some(&[ACCOUNTTYPE_ACCOUNT])
         || token_account_state_filter
     {
-        if let Some(incorrect_mint_len) = incorrect_mint_len {
-            info!(
-                "Incorrect num bytes ({:?}) provided for spl_token_mint_filter",
-                incorrect_mint_len
-            );
-        }
-        mint
+        Ok(mint)
     } else {
         debug!("spl_token program filters do not match by-mint index requisites");
-        None
+        Ok(None)
     }
 }
 
@@ -8471,6 +8471,7 @@ pub mod tests {
                     RpcFilterType::DataSize(165)
                 ],
             )
+            .unwrap()
             .unwrap(),
             owner
         );
@@ -8484,6 +8485,7 @@ pub mod tests {
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
                 ],
             )
+            .unwrap()
             .unwrap(),
             owner
         );
@@ -8497,6 +8499,7 @@ pub mod tests {
                     RpcFilterType::TokenAccountState,
                 ],
             )
+            .unwrap()
             .unwrap(),
             owner
         );
@@ -8509,6 +8512,7 @@ pub mod tests {
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
             ],
         )
+        .unwrap()
         .is_none());
 
         // Filtering on mint instead of owner
@@ -8519,6 +8523,7 @@ pub mod tests {
                 RpcFilterType::DataSize(165)
             ],
         )
+        .unwrap()
         .is_none());
 
         // Wrong program id
@@ -8529,6 +8534,7 @@ pub mod tests {
                 RpcFilterType::DataSize(165)
             ],
         )
+        .unwrap()
         .is_none());
         assert!(get_spl_token_owner_filter(
             &Pubkey::new_unique(),
@@ -8537,6 +8543,7 @@ pub mod tests {
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
             ],
         )
+        .unwrap()
         .is_none());
     }
 
@@ -8552,6 +8559,7 @@ pub mod tests {
                     RpcFilterType::DataSize(165)
                 ],
             )
+            .unwrap()
             .unwrap(),
             mint
         );
@@ -8565,6 +8573,7 @@ pub mod tests {
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
                 ],
             )
+            .unwrap()
             .unwrap(),
             mint
         );
@@ -8578,6 +8587,7 @@ pub mod tests {
                     RpcFilterType::TokenAccountState,
                 ],
             )
+            .unwrap()
             .unwrap(),
             mint
         );
@@ -8590,6 +8600,7 @@ pub mod tests {
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
             ],
         )
+        .unwrap()
         .is_none());
 
         // Filtering on owner instead of mint
@@ -8600,6 +8611,7 @@ pub mod tests {
                 RpcFilterType::DataSize(165)
             ],
         )
+        .unwrap()
         .is_none());
 
         // Wrong program id
@@ -8610,6 +8622,7 @@ pub mod tests {
                 RpcFilterType::DataSize(165)
             ],
         )
+        .unwrap()
         .is_none());
         assert!(get_spl_token_mint_filter(
             &Pubkey::new_unique(),
@@ -8618,6 +8631,7 @@ pub mod tests {
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
             ],
         )
+        .unwrap()
         .is_none());
     }
 
