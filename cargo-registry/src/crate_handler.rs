@@ -129,11 +129,12 @@ impl Program {
             client.rpc_client.clone(),
             &cli_config,
             &AdditionalCliConfig::default(),
-            &client.authority_signer_index,
             &signer.pubkey(),
+            None,
+            Some(&2),
+            &client.authority_signer_index,
             &program_data,
             None..None,
-            Some(&2),
         )
         .map_err(|e| {
             error!("Failed to deploy the program: {}", e);
