@@ -24,7 +24,6 @@ use {
         },
     },
 };
-type CacheRangesHeld = RwLock<Vec<RangeInclusive<Pubkey>>>;
 
 #[derive(Debug, Default)]
 pub struct StartupStats {
@@ -100,7 +99,7 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     bucket: Option<Arc<BucketApi<(Slot, U)>>>,
 
     // pubkey ranges that this bin must hold in the cache while the range is present in this vec
-    pub cache_ranges_held: CacheRangesHeld,
+    pub cache_ranges_held: RwLock<Vec<RangeInclusive<Pubkey>>>,
     // incremented each time stop_evictions is changed
     stop_evictions_changes: AtomicU64,
     // true while ranges are being manipulated. Used to keep an async flush from removing things while a range is being held.
@@ -187,7 +186,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 .as_ref()
                 .map(|disk| disk.get_bucket_from_index(bin))
                 .cloned(),
-            cache_ranges_held: CacheRangesHeld::default(),
+            cache_ranges_held: RwLock::new(Vec::default()),
             stop_evictions_changes: AtomicU64::default(),
             stop_evictions: AtomicU64::default(),
             flushing_active: AtomicBool::default(),
