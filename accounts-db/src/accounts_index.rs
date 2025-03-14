@@ -1,6 +1,10 @@
 mod account_map_entry;
 pub(crate) mod in_mem_accounts_index;
 mod roots_tracker;
+mod secondary;
+pub use secondary::{
+    AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude, IndexKey,
+};
 use {
     crate::{
         accounts_index_storage::{AccountsIndexStorage, Startup},
@@ -196,26 +200,6 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
     Indexed(IndexKey),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum IndexKey {
-    ProgramId(Pubkey),
-    SplTokenMint(Pubkey),
-    SplTokenOwner(Pubkey),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum AccountIndex {
-    ProgramId,
-    SplTokenMint,
-    SplTokenOwner,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct AccountSecondaryIndexesIncludeExclude {
-    pub exclude: bool,
-    pub keys: HashSet<Pubkey>,
-}
-
 /// specification of how much memory in-mem portion of account index can use
 #[derive(Debug, Copy, Clone, Default)]
 pub enum IndexLimitMb {
@@ -241,27 +225,6 @@ pub struct AccountsIndexConfig {
 
 pub fn default_num_flush_threads() -> NonZeroUsize {
     NonZeroUsize::new(std::cmp::max(2, num_cpus::get() / 4)).expect("non-zero system threads")
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct AccountSecondaryIndexes {
-    pub keys: Option<AccountSecondaryIndexesIncludeExclude>,
-    pub indexes: HashSet<AccountIndex>,
-}
-
-impl AccountSecondaryIndexes {
-    pub fn is_empty(&self) -> bool {
-        self.indexes.is_empty()
-    }
-    pub fn contains(&self, index: &AccountIndex) -> bool {
-        self.indexes.contains(index)
-    }
-    pub fn include_key(&self, key: &Pubkey) -> bool {
-        match &self.keys {
-            Some(options) => options.exclude ^ options.keys.contains(key),
-            None => true, // include all keys
-        }
-    }
 }
 
 #[derive(Debug, Default)]
