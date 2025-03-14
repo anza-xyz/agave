@@ -2,7 +2,7 @@
 pull_request_rules:
   - name: label changes from community
     conditions:
-      - author≠@core-contributors
+      - author≠@anza
       - author≠@monorepo-maintainers
       - author≠@monorepo-write
       - author≠@monorepo-triage
@@ -16,7 +16,7 @@ pull_request_rules:
           - need:merge-assist
   - name: request review for community changes
     conditions:
-      - author≠@core-contributors
+      - author≠@anza
       - author≠@monorepo-maintainers
       - author≠@monorepo-write
       - author≠@monorepo-triage
@@ -36,7 +36,7 @@ pull_request_rules:
           - "@anza-xyz/community-pr-subscribers"
   - name: label changes from monorepo-triage
     conditions:
-      - author≠@core-contributors
+      - author≠@anza
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
@@ -223,4 +223,4 @@ commands_restrictions:
   # Restrict `copy` access to Core Contributors
   copy:
     conditions:
-    - author=@core-contributors
+    - author=@anza
