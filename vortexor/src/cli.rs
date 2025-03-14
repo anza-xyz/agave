@@ -10,6 +10,7 @@ use {
         net::{IpAddr, SocketAddr},
         path::PathBuf,
     },
+    url::Url,
 };
 
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
@@ -49,6 +50,28 @@ fn get_default_tpu_coalesce_ms() -> &'static str {
     let coalesce = DEFAULT_TPU_COALESCE.as_millis().to_string();
     let coalesce: &'static str = Box::leak(coalesce.into_boxed_str());
     coalesce
+}
+
+fn parse_http_url(input: &str) -> Result<Url, String> {
+    // Attempt to parse the input as a URL
+    let parsed_url = Url::parse(input).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Check the scheme of the URL
+    match parsed_url.scheme() {
+        "http" | "https" => Ok(parsed_url),
+        scheme => Err(format!("Invalid scheme: {}. Must be http, https.", scheme)),
+    }
+}
+
+fn parse_websocket_url(input: &str) -> Result<Url, String> {
+    // Attempt to parse the input as a URL
+    let parsed_url = Url::parse(input).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Check the scheme of the URL
+    match parsed_url.scheme() {
+        "ws" | "wss" => Ok(parsed_url),
+        scheme => Err(format!("Invalid scheme: {}. Must be ws, or wss.", scheme)),
+    }
 }
 
 #[derive(Parser)]
@@ -113,4 +136,14 @@ pub struct Cli {
     /// SIGUSR1 signal to the vortexor process will cause it to re-open the log file.
     #[arg(long="log", value_name = "FILE", value_parser = clap::value_parser!(String))]
     pub logfile: Option<String>,
+
+    /// The address of RPC server to which the vortexor will forward transaction
+    #[arg(long, value_parser = parse_http_url, value_name = "URL", action = ArgAction::Append)]
+    pub rpc_server: Vec<Url>,
+
+    /// The address of websocket server to which the vortexor will forward transaction.
+    /// If multiple rpc servers are set, the count of websocket servers must
+    /// match that of the rpc servers.
+    #[arg(long, value_parser = parse_websocket_url, value_name = "URL", action = ArgAction::Append)]
+    pub websocket_server: Vec<Url>,
 }
