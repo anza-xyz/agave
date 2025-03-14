@@ -42,8 +42,8 @@ use {
 const CRDS_GOSSIP_PUSH_FANOUT: usize = 9;
 // With a fanout of 9, a 2000 node cluster should only take ~3.5 hops to converge.
 // However since pushes are stake weighed, some trailing nodes
-// might need more time to receive values. 30 seconds should be plenty.
-pub const CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS: u64 = 30000;
+// might need more time to receive values. 15 seconds should be plenty.
+pub const CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS: u64 = 15000;
 const CRDS_GOSSIP_PRUNE_MSG_TIMEOUT_MS: u64 = 500;
 const CRDS_GOSSIP_PRUNE_STAKE_THRESHOLD_PCT: f64 = 0.15;
 const CRDS_GOSSIP_PRUNE_MIN_INGRESS_NODES: usize = 2;
