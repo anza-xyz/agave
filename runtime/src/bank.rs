@@ -2847,6 +2847,12 @@ impl Bank {
         (last_hash, last_lamports_per_signature)
     }
 
+    pub fn is_zero_fees_for_test(&self) -> bool {
+        let (_last_hash, last_lamports_per_signature) =
+            self.last_blockhash_and_lamports_per_signature();
+        last_lamports_per_signature == 0
+    }
+
     pub fn is_blockhash_valid(&self, hash: &Hash) -> bool {
         let blockhash_queue = self.blockhash_queue.read().unwrap();
         blockhash_queue.is_hash_valid_for_age(hash, MAX_PROCESSING_AGE)
@@ -2854,10 +2860,6 @@ impl Bank {
 
     pub fn get_minimum_balance_for_rent_exemption(&self, data_len: usize) -> u64 {
         self.rent_collector.rent.minimum_balance(data_len).max(1)
-    }
-
-    pub fn get_lamports_per_signature(&self) -> u64 {
-        self.fee_rate_governor.lamports_per_signature
     }
 
     pub fn get_lamports_per_signature_for_blockhash(&self, hash: &Hash) -> Option<u64> {
