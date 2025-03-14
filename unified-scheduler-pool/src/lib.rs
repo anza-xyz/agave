@@ -2764,7 +2764,7 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
-                _bank: &SchedulingContext,
+                _scheduling_context: &SchedulingContext,
                 _task: &Task,
                 _handler_context: &HandlerContext,
             ) {
@@ -2946,7 +2946,7 @@ mod tests {
         fn handle(
             result: &mut Result<()>,
             _timings: &mut ExecuteTimings,
-            _bank: &SchedulingContext,
+            _scheduling_context: &SchedulingContext,
             _task: &Task,
             _handler_context: &HandlerContext,
         ) {
@@ -3056,7 +3056,7 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &SchedulingContext,
+                _scheduling_context: &SchedulingContext,
                 _task: &Task,
                 _handler_context: &HandlerContext,
             ) {
@@ -3422,7 +3422,7 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &SchedulingContext,
+                _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
@@ -3502,7 +3502,7 @@ mod tests {
             fn handle(
                 result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &SchedulingContext,
+                _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
@@ -3751,12 +3751,12 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                context: &SchedulingContext,
+                scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 // The task index must always be matched to the slot.
-                assert_eq!(task.task_index() as Slot, context.slot().unwrap());
+                assert_eq!(task.task_index() as Slot, scheduling_context.slot().unwrap());
             }
         }
 
