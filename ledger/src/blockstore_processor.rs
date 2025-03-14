@@ -253,6 +253,28 @@ pub fn execute_batch<'a>(
             vec![]
         };
 
+        // Option 1: Collect costs while we still have the batch that implements
+        //   impl TransactionWithMeta
+        // If we like this approach, can probably combine this iteration with
+        // above one to avoid an extra iteration over batch.sanitized_transactions()
+        let tx_costs: Vec<_> = batch
+            .sanitized_transactions()
+            .iter()
+            .zip(commit_results.iter())
+            .map(|(tx, commit_result)| match commit_result {
+                Ok(committed_tx) => {
+                    let tx_cost = CostModel::calculate_cost_for_executed_transaction(
+                        tx,
+                        committed_tx.executed_units,
+                        committed_tx.loaded_account_stats.loaded_accounts_data_size,
+                        &bank.feature_set,
+                    );
+                    Some(tx_cost.sum())
+                }
+                Err(_) => None,
+            })
+            .collect();
+
         let token_balances =
             TransactionTokenBalancesSet::new(pre_token_balances, post_token_balances);
 
@@ -262,6 +284,7 @@ pub fn execute_batch<'a>(
             commit_results,
             balances,
             token_balances,
+            tx_costs,
             transaction_indexes.into_owned(),
         );
     }
@@ -2282,6 +2305,7 @@ pub struct TransactionStatusBatch {
     pub commit_results: Vec<TransactionCommitResult>,
     pub balances: TransactionBalancesSet,
     pub token_balances: TransactionTokenBalancesSet,
+    pub costs: Vec<Option<u64>>,
     pub transaction_indexes: Vec<usize>,
 }
 
@@ -2298,6 +2322,7 @@ impl TransactionStatusSender {
         commit_results: Vec<TransactionCommitResult>,
         balances: TransactionBalancesSet,
         token_balances: TransactionTokenBalancesSet,
+        costs: Vec<Option<u64>>,
         transaction_indexes: Vec<usize>,
     ) {
         if let Err(e) = self
@@ -2308,6 +2333,7 @@ impl TransactionStatusSender {
                 commit_results,
                 balances,
                 token_balances,
+                costs,
                 transaction_indexes,
             }))
         {
