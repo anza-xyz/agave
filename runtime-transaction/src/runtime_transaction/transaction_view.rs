@@ -53,7 +53,7 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
 
         let InstructionMeta {
             precompile_signature_details,
-            instruction_data_len: _,
+            instruction_data_len,
         } = InstructionMeta::try_new(transaction.program_instructions_iter())?;
 
         let signature_details = TransactionSignatureDetails::new(
@@ -72,6 +72,7 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
                 is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
                 compute_budget_instruction_details,
+                instruction_data_len,
             },
         })
     }

@@ -276,6 +276,10 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
     fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
         unimplemented!("WritableKeysTransaction::compute_budget_instruction_details")
     }
+
+    fn instruction_data_len(&self) -> u64 {
+        unimplemented!("WritableKeysTransaction::instruction_data_len")
+    }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
