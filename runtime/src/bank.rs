@@ -6902,6 +6902,9 @@ impl TransactionProcessingCallback for Bank {
             .unwrap_or(0)
     }
 
+    // Overrides default TransactionProcessingCallback::calculate_fee() to calculate actual transaction fee;
+    // Checking for `zero_fees_for_test` is done at callsite (eg. transaction_processor) where blockhash_queue's
+    // lamports_per_signature is checked ` == 0`.
     fn calculate_fee(
         &self,
         message: &impl SVMMessage,

@@ -1362,6 +1362,9 @@ impl AccountStorageEntry {
         self.alive_bytes.fetch_add(num_bytes, Ordering::Release);
     }
 
+    // This function is only called by `store_uncached()`, which is DCOU and only called by tests.
+    // So also mark this function as DCOU to squelch an "unused function" clippy warning.
+    #[cfg(feature = "dev-context-only-utils")]
     fn try_available(&self) -> bool {
         let mut count_and_status = self.count_and_status.lock_write();
         let (count, status) = *count_and_status;
@@ -5566,6 +5569,9 @@ impl AccountsDb {
         }
     }
 
+    // This function is only called by `store_uncached()`, which is DCOU and only called by tests.
+    // So also mark this function as DCOU to squelch an "unused function" clippy warning.
+    #[cfg(feature = "dev-context-only-utils")]
     fn find_storage_candidate(&self, slot: Slot) -> Arc<AccountStorageEntry> {
         let mut get_slot_stores = Measure::start("get_slot_stores");
         let store = self.storage.get_slot_storage_entry(slot);
@@ -8034,6 +8040,7 @@ impl AccountsDb {
 
     /// Store the account update.
     /// only called by tests
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn store_uncached(&self, slot: Slot, accounts: &[(&Pubkey, &AccountSharedData)]) {
         let storage = self.find_storage_candidate(slot);
         self.store(

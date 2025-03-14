@@ -6,6 +6,7 @@ use {
         },
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         bucket_map_holder_stats::BucketMapHolderStats,
+        pubkey_bins::PubkeyBinCalculator24,
         waitable_condvar::WaitableCondvar,
     },
     rand::{thread_rng, Rng},
@@ -96,6 +97,8 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     map_internal: RwLock<InMemMap<T>>,
     storage: Arc<BucketMapHolder<T, U>>,
     bin: usize,
+    lowest_pubkey: Pubkey,
+    highest_pubkey: Pubkey,
 
     bucket: Option<Arc<BucketApi<(Slot, U)>>>,
 
@@ -173,10 +176,15 @@ struct FlushScanResult<T> {
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T, U> {
     pub fn new(storage: &Arc<BucketMapHolder<T, U>>, bin: usize) -> Self {
         let num_ages_to_distribute_flushes = Age::MAX - storage.ages_to_stay_in_cache;
+        let bin_calc = PubkeyBinCalculator24::new(storage.bins);
+        let lowest_pubkey = bin_calc.lowest_pubkey_from_bin(bin);
+        let highest_pubkey = bin_calc.highest_pubkey_from_bin(bin);
         Self {
             map_internal: RwLock::default(),
             storage: Arc::clone(storage),
             bin,
+            lowest_pubkey,
+            highest_pubkey,
             bucket: storage
                 .disk
                 .as_ref()
@@ -231,16 +239,42 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     where
         R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
+        let start = match range.start_bound() {
+            Bound::Included(bound) | Bound::Excluded(bound) => bound,
+            Bound::Unbounded => &Pubkey::from([0; 32]),
+        };
+
+        let end = match range.end_bound() {
+            Bound::Included(bound) | Bound::Excluded(bound) => bound,
+            Bound::Unbounded => &Pubkey::from([0xff; 32]),
+        };
+
+        if start > &self.highest_pubkey || end < &self.lowest_pubkey {
+            // range does not contain any of the keys in this bin. No need to
+            // load and scan the map.
+            // Example:
+            //    |-------------------|  |-------------------|  |-------------------|
+            //       start          end  low               high  start              end
+            return vec![];
+        }
+
         let m = Measure::start("items");
+
+        // For simplicity, we check the range for every pubkey in the map. This
+        // can be further optimized for case, such as the range contains lowest
+        // and highest pubkey for this bin. In such case, we can return all
+        // items in the map without range check on item's pubkey. Since the
+        // check is cheap when compared with the cost of reading from disk, we
+        // are not optimizing it for now.
         self.hold_range_in_memory(range, true);
-        let map = self.map_internal.read().unwrap();
-        let mut result = Vec::with_capacity(map.len());
-        map.iter().for_each(|(k, v)| {
-            if range.contains(k) {
-                result.push((*k, Arc::clone(v)));
-            }
-        });
-        drop(map);
+        let result = self
+            .map_internal
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|&(k, _v)| range.contains(k))
+            .map(|(k, v)| (*k, Arc::clone(v)))
+            .collect();
         self.hold_range_in_memory(range, false);
         Self::update_stat(&self.stats().items, 1);
         Self::update_time_stat(&self.stats().items_us, m);

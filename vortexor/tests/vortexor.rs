@@ -36,7 +36,7 @@ async fn test_vortexor() {
     let tpu_sockets = Vortexor::create_tpu_sockets(
         bind_address,
         VALIDATOR_PORT_RANGE,
-        DEFAULT_NUM_QUIC_ENDPOINTS.try_into().unwrap(),
+        DEFAULT_NUM_QUIC_ENDPOINTS,
     );
 
     let tpu_address = tpu_sockets.tpu_quic[0].local_addr().unwrap();
@@ -53,13 +53,10 @@ async fn test_vortexor() {
         staked_nodes,
         tpu_sender,
         tpu_fwd_sender,
-        DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER.try_into().unwrap(),
-        DEFAULT_MAX_STAKED_CONNECTIONS.try_into().unwrap(),
-        DEFAULT_MAX_UNSTAKED_CONNECTIONS.try_into().unwrap(),
-        DEFAULT_MAX_STAKED_CONNECTIONS
-            .saturating_add(DEFAULT_MAX_UNSTAKED_CONNECTIONS)
-            .try_into()
-            .unwrap(), // max_fwd_staked_connections
+        DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
+        DEFAULT_MAX_STAKED_CONNECTIONS,
+        DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+        DEFAULT_MAX_STAKED_CONNECTIONS.saturating_add(DEFAULT_MAX_UNSTAKED_CONNECTIONS), // max_fwd_staked_connections
         0, // max_fwd_unstaked_connections
         DEFAULT_MAX_STREAMS_PER_MS,
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
