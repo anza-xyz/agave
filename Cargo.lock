@@ -1789,12 +1789,17 @@ dependencies = [
 name = "crds_node"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap 4.5.32",
+ "log",
+ "signal-hook",
  "solana-gossip",
  "solana-keypair",
+ "solana-logger",
  "solana-pubkey",
  "solana-signer",
  "solana-streamer",
+ "solana-time-utils",
 ]
 
 [[package]]
