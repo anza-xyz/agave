@@ -29,7 +29,7 @@ impl Default for PrecompileSignatureDetailsBuilder {
 }
 
 impl PrecompileSignatureDetailsBuilder {
-    pub fn process_instruction(&mut self, program_id: &Pubkey, instruction: SVMInstruction) {
+    pub fn process_instruction(&mut self, program_id: &Pubkey, instruction: &SVMInstruction) {
         let program_id_index = instruction.program_id_index;
         match self.filter.is_signature(program_id_index, program_id) {
             ProgramIdStatus::NotSignature => {}
@@ -37,19 +37,19 @@ impl PrecompileSignatureDetailsBuilder {
                 self.value.num_secp256k1_instruction_signatures = self
                     .value
                     .num_secp256k1_instruction_signatures
-                    .wrapping_add(get_num_signatures_in_instruction(&instruction));
+                    .wrapping_add(get_num_signatures_in_instruction(instruction));
             }
             ProgramIdStatus::Ed25519 => {
                 self.value.num_ed25519_instruction_signatures = self
                     .value
                     .num_ed25519_instruction_signatures
-                    .wrapping_add(get_num_signatures_in_instruction(&instruction));
+                    .wrapping_add(get_num_signatures_in_instruction(instruction));
             }
             ProgramIdStatus::Secp256r1 => {
                 self.value.num_secp256r1_instruction_signatures = self
                     .value
                     .num_secp256r1_instruction_signatures
-                    .wrapping_add(get_num_signatures_in_instruction(&instruction));
+                    .wrapping_add(get_num_signatures_in_instruction(instruction));
             }
         }
     }
@@ -65,7 +65,7 @@ pub fn get_precompile_signature_details<'a>(
 ) -> PrecompileSignatureDetails {
     let mut builder = PrecompileSignatureDetailsBuilder::default();
     for (program_id, instruction) in instructions {
-        builder.process_instruction(program_id, instruction);
+        builder.process_instruction(program_id, &instruction);
     }
     builder.build()
 }

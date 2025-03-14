@@ -32,6 +32,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
 
         let InstructionMeta {
             precompile_signature_details,
+            instruction_data_len: _,
         } = InstructionMeta::try_new(
             sanitized_versioned_tx
                 .get_message()
