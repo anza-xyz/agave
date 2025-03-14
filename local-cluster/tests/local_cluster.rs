@@ -20,7 +20,7 @@ use {
     },
     solana_download_utils::download_snapshot_archive,
     solana_entry::entry::create_ticks,
-    solana_gossip::gossip_service::discover_cluster,
+    solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_cluster},
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
@@ -4072,8 +4072,8 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
                         None,
                     );
                     gossip_vote_index += 1;
-                    gossip_vote_index %= MAX_LOCKOUT_HISTORY;
-                    cluster_info.push_vote_at_index(vote_tx, gossip_vote_index as u8)
+                    gossip_vote_index %= MAX_VOTES;
+                    cluster_info.push_vote_at_index(vote_tx, gossip_vote_index);
                 }
             }
         },

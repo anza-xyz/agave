@@ -32,13 +32,10 @@ mod tests {
         super::*,
         crate::rent_state::RentState,
         solana_sdk::{
-            account::ReadableAccount,
-            clock::Epoch,
-            epoch_schedule::EpochSchedule,
-            pubkey::Pubkey,
+            account::ReadableAccount, clock::Epoch, epoch_schedule::EpochSchedule, pubkey::Pubkey,
             transaction::TransactionError,
-            transaction_context::{IndexOfAccount, TransactionContext},
         },
+        solana_transaction_context::{IndexOfAccount, TransactionContext},
     };
 
     #[test]

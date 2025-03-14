@@ -150,7 +150,6 @@ use {
             MessageHash, Result, SanitizedTransaction, Transaction, TransactionError,
             TransactionVerificationMode, VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
         },
-        transaction_context::{TransactionAccount, TransactionReturnData},
     },
     solana_svm::{
         account_loader::{collect_rent_from_account, LoadedTransaction},
@@ -172,6 +171,7 @@ use {
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
+    solana_transaction_context::{TransactionAccount, TransactionReturnData},
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{
         collections::{HashMap, HashSet},
@@ -2748,10 +2748,10 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")]
         let genesis_hash = genesis_hash.unwrap_or(genesis_config.hash());
 
-        self.blockhash_queue
-            .write()
-            .unwrap()
-            .genesis_hash(&genesis_hash, self.fee_rate_governor.lamports_per_signature);
+        self.blockhash_queue.write().unwrap().genesis_hash(
+            &genesis_hash,
+            genesis_config.fee_rate_governor.lamports_per_signature,
+        );
 
         self.hashes_per_tick = genesis_config.hashes_per_tick();
         self.ticks_per_slot = genesis_config.ticks_per_slot();
@@ -3970,6 +3970,13 @@ impl Bank {
 
     fn collect_rent_eagerly(&self) {
         if self.lazy_rent_collection.load(Relaxed) {
+            return;
+        }
+
+        if self
+            .feature_set
+            .is_active(&feature_set::disable_partitioned_rent_collection::id())
+        {
             return;
         }
 
@@ -6895,6 +6902,9 @@ impl TransactionProcessingCallback for Bank {
             .unwrap_or(0)
     }
 
+    // Overrides default TransactionProcessingCallback::calculate_fee() to calculate actual transaction fee;
+    // Checking for `zero_fees_for_test` is done at callsite (eg. transaction_processor) where blockhash_queue's
+    // lamports_per_signature is checked ` == 0`.
     fn calculate_fee(
         &self,
         message: &impl SVMMessage,

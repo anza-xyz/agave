@@ -31,7 +31,6 @@ use {
     },
 };
 
-const PACKET_COALESCE_DURATION: Duration = Duration::from_millis(1);
 // When running with very short epochs (e.g. for testing), we want to avoid
 // filtering out shreds that we actually need. This value was chosen empirically
 // because it's large enough to protect against observed short epoch problems
@@ -195,10 +194,10 @@ impl ShredFetchStage {
                     packet_sender.clone(),
                     recycler.clone(),
                     Arc::new(StreamerReceiveStats::new("packet_modifier")),
-                    PACKET_COALESCE_DURATION,
-                    true, // use_pinned_memory
-                    None, // in_vote_only_mode
-                    false,
+                    None,  // coalesce
+                    true,  // use_pinned_memory
+                    None,  // in_vote_only_mode
+                    false, // is_staked_service
                 )
             })
             .collect();
@@ -387,6 +386,7 @@ pub(crate) fn receive_quic_datagrams(
     exit: Arc<AtomicBool>,
 ) {
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
+    const PACKET_COALESCE_DURATION: Duration = Duration::from_millis(1);
     while !exit.load(Ordering::Relaxed) {
         let entry = match quic_datagrams_receiver.recv_timeout(RECV_TIMEOUT) {
             Ok(entry) => entry,

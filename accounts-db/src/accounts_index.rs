@@ -484,7 +484,7 @@ pub struct AccountsIndexRootsStats {
 }
 
 pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
-    account_maps: &'a LockMapTypeSlice<T, U>,
+    account_maps: &'a [AccountMap<T, U>],
     bin_calculator: &'a PubkeyBinCalculator24,
     start_bound: Bound<Pubkey>,
     end_bound: Bound<Pubkey>,
@@ -494,7 +494,7 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
 
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIterator<'a, T, U> {
     fn range<R>(
-        map: &AccountMaps<T, U>,
+        map: &AccountMap<T, U>,
         range: R,
         returns_items: AccountsIndexIteratorReturnsItems,
     ) -> Vec<(Pubkey, AccountMapEntry<T>)>
@@ -604,7 +604,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
         let mut chunk = Vec::with_capacity(ITER_BATCH_SIZE);
         'outer: for i in self.account_maps.iter().skip(start_bin).take(bin_range) {
             for (pubkey, account_map_entry) in
-                Self::range(&i, (self.start_bound, self.end_bound), self.returns_items)
+                Self::range(i, (self.start_bound, self.end_bound), self.returns_items)
             {
                 if chunk.len() >= ITER_BATCH_SIZE
                     && self.returns_items == AccountsIndexIteratorReturnsItems::Sorted
@@ -644,11 +644,6 @@ pub trait ZeroLamport {
     fn is_zero_lamport(&self) -> bool;
 }
 
-type MapType<T, U> = AccountMap<T, U>;
-type LockMapType<T, U> = Vec<MapType<T, U>>;
-type LockMapTypeSlice<T, U> = [MapType<T, U>];
-type AccountMaps<'a, T, U> = &'a MapType<T, U>;
-
 #[derive(Debug, Default)]
 pub struct ScanSlotTracker {
     is_removed: bool,
@@ -682,7 +677,7 @@ pub enum AccountsIndexScanResult {
 /// T: account info type to interact in in-memory items
 /// U: account info type to be persisted to disk
 pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
-    pub account_maps: LockMapType<T, U>,
+    pub account_maps: Vec<AccountMap<T, U>>,
     pub bin_calculator: PubkeyBinCalculator24,
     program_id_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_mint_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
@@ -764,7 +759,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         config: Option<AccountsIndexConfig>,
         exit: Arc<AtomicBool>,
     ) -> (
-        LockMapType<T, U>,
+        Vec<AccountMap<T, U>>,
         PubkeyBinCalculator24,
         AccountsIndexStorage<T, U>,
     ) {
@@ -1688,7 +1683,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         );
     }
 
-    pub(crate) fn get_bin(&self, pubkey: &Pubkey) -> AccountMaps<T, U> {
+    pub(crate) fn get_bin(&self, pubkey: &Pubkey) -> &AccountMap<T, U> {
         &self.account_maps[self.bin_calculator.bin_from_pubkey(pubkey)]
     }
 

@@ -9,8 +9,8 @@ use {
         rent::{Rent, RentDue},
         rent_collector::CollectedInfo,
         transaction::{Result, TransactionError},
-        transaction_context::{IndexOfAccount, TransactionContext},
     },
+    solana_transaction_context::{IndexOfAccount, TransactionContext},
 };
 
 mod rent_collector;
@@ -44,9 +44,9 @@ pub trait SVMRentCollector {
                     .get_key_of_account_at_index(index)
                     .expect(expect_msg),
                 &transaction_context
-                    .get_account_at_index(index)
-                    .expect(expect_msg)
-                    .borrow(),
+                    .accounts()
+                    .try_borrow(index)
+                    .expect(expect_msg),
                 index,
             )?;
         }

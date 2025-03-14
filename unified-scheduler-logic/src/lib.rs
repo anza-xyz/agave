@@ -112,21 +112,32 @@ pub enum SchedulingMode {
     BlockProduction,
 }
 
+/// This type alias is intentionally not exposed to public API with `pub`. The choice of explicit
+/// `u32`, rather than more neutral `usize`, is an implementation detail to squeeze out CPU-cache
+/// footprint as much as possible.
+/// Note that usage of `u32` is safe because it's expected `SchedulingStateMachine` to be
+/// `reinitialize()`-d rather quickly after short period: 1 slot for block verification, 4 (or up to
+/// 8) consecutive slots for block production.
+type CounterInner = u32;
+
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
 mod utils {
-    use std::{
-        any::{self, TypeId},
-        cell::{RefCell, UnsafeCell},
-        collections::BTreeSet,
-        marker::PhantomData,
-        thread,
+    use {
+        crate::CounterInner,
+        std::{
+            any::{self, TypeId},
+            cell::{RefCell, UnsafeCell},
+            collections::BTreeSet,
+            marker::PhantomData,
+            thread,
+        },
     };
 
     /// A really tiny counter to hide `.checked_{add,sub}` all over the place.
     ///
-    /// It's caller's reponsibility to ensure this (backed by [`u32`]) never overflow.
+    /// It's caller's reponsibility to ensure this (backed by [`CounterInner`]) never overflow.
     #[derive(Debug, Clone, Copy)]
-    pub(super) struct ShortCounter(u32);
+    pub(super) struct ShortCounter(CounterInner);
 
     impl ShortCounter {
         pub(super) fn zero() -> Self {
@@ -145,7 +156,7 @@ mod utils {
             self.0 == 0
         }
 
-        pub(super) fn current(&self) -> u32 {
+        pub(super) fn current(&self) -> CounterInner {
             self.0
         }
 
@@ -629,9 +640,18 @@ const_assert_eq!(mem::size_of::<UsageQueue>(), 8);
 /// `solana-unified-scheduler-pool`.
 pub struct SchedulingStateMachine {
     unblocked_task_queue: VecDeque<Task>,
+    /// The number of all tasks which aren't `deschedule_task()`-ed yet while their ownership has
+    /// already been transferred to SchedulingStateMachine by `schedule_or_buffer_task()`. In other
+    /// words, they are running right now or buffered by explicit request or by implicit blocking
+    /// due to one of other _active_ (= running or buffered) conflicting tasks.
     active_task_count: ShortCounter,
-    executing_task_count: ShortCounter,
-    max_executing_task_count: u32,
+    /// The number of tasks which are running right now.
+    running_task_count: ShortCounter,
+    /// The maximum number of running tasks at any given moment. While this could be tightly
+    /// related to the number of threads, terminology here is intentionally abstracted away to make
+    /// this struct purely logic only. As a hypothetical counter-example, tasks could be IO-bound,
+    /// in that case max_running_task_count will be coupled with the IO queue depth instead.
+    max_running_task_count: CounterInner,
     handled_task_count: ShortCounter,
     unblocked_task_count: ShortCounter,
     total_task_count: ShortCounter,
@@ -641,15 +661,15 @@ pub struct SchedulingStateMachine {
 const_assert_eq!(mem::size_of::<SchedulingStateMachine>(), 56);
 
 impl SchedulingStateMachine {
+    pub fn has_no_running_task(&self) -> bool {
+        self.running_task_count.is_zero()
+    }
+
     pub fn has_no_active_task(&self) -> bool {
         self.active_task_count.is_zero()
     }
 
-    pub fn has_no_executing_task(&self) -> bool {
-        self.executing_task_count.current() == 0
-    }
-
-    fn has_unblocked_task(&self) -> bool {
+    pub fn has_unblocked_task(&self) -> bool {
         !self.unblocked_task_queue.is_empty()
     }
 
@@ -658,26 +678,30 @@ impl SchedulingStateMachine {
     }
 
     fn is_task_runnable(&self) -> bool {
-        self.executing_task_count.current() < self.max_executing_task_count
+        self.running_task_count.current() < self.max_running_task_count
     }
 
     pub fn unblocked_task_queue_count(&self) -> usize {
         self.unblocked_task_queue.len()
     }
 
-    pub fn active_task_count(&self) -> u32 {
+    #[cfg(test)]
+    fn active_task_count(&self) -> CounterInner {
         self.active_task_count.current()
     }
 
-    pub fn handled_task_count(&self) -> u32 {
+    #[cfg(test)]
+    fn handled_task_count(&self) -> CounterInner {
         self.handled_task_count.current()
     }
 
-    pub fn unblocked_task_count(&self) -> u32 {
+    #[cfg(test)]
+    fn unblocked_task_count(&self) -> CounterInner {
         self.unblocked_task_count.current()
     }
 
-    pub fn total_task_count(&self) -> u32 {
+    #[cfg(test)]
+    fn total_task_count(&self) -> CounterInner {
         self.total_task_count.current()
     }
 
@@ -727,7 +751,7 @@ impl SchedulingStateMachine {
                 None
             } else {
                 // ... return the task back as schedulable to the caller as-is otherwise.
-                self.executing_task_count.increment_self();
+                self.running_task_count.increment_self();
                 Some(task)
             }
         })
@@ -735,8 +759,12 @@ impl SchedulingStateMachine {
 
     #[must_use]
     pub fn schedule_next_unblocked_task(&mut self) -> Option<Task> {
+        if !self.is_task_runnable() {
+            return None;
+        }
+
         self.unblocked_task_queue.pop_front().inspect(|_| {
-            self.executing_task_count.increment_self();
+            self.running_task_count.increment_self();
             self.unblocked_task_count.increment_self();
         })
     }
@@ -752,7 +780,7 @@ impl SchedulingStateMachine {
     /// tasks inside `SchedulingStateMachine` to provide an offloading-based optimization
     /// opportunity for callers.
     pub fn deschedule_task(&mut self, task: &Task) {
-        self.executing_task_count.decrement_self();
+        self.running_task_count.decrement_self();
         self.active_task_count.decrement_self();
         self.handled_task_count.increment_self();
         self.unlock_usage_queues(task);
@@ -908,14 +936,14 @@ impl SchedulingStateMachine {
     /// other slots.
     pub fn reinitialize(&mut self) {
         assert!(self.has_no_active_task());
-        assert_eq!(self.executing_task_count.current(), 0);
+        assert_eq!(self.running_task_count.current(), 0);
         assert_eq!(self.unblocked_task_queue.len(), 0);
         // nice trick to ensure all fields are handled here if new one is added.
         let Self {
             unblocked_task_queue: _,
             active_task_count,
-            executing_task_count: _,
-            max_executing_task_count: _,
+            running_task_count: _,
+            max_running_task_count: _,
             handled_task_count,
             unblocked_task_count,
             total_task_count,
@@ -936,18 +964,23 @@ impl SchedulingStateMachine {
     /// Call this exactly once for each thread. See [`TokenCell`] for details.
     #[must_use]
     pub unsafe fn exclusively_initialize_current_thread_for_scheduling(
-        max_executing_task_count: Option<usize>,
+        max_running_task_count: Option<usize>,
     ) -> Self {
+        // As documented at `CounterInner`, don't expose rather opinionated choice of unsigned
+        // integer type (`u32`) to outer world. So, take more conventional `usize` and convert it
+        // to `CounterInner` here while uncontroversially treating `None` as no limit effectively.
+        let max_running_task_count = max_running_task_count
+            .unwrap_or(CounterInner::MAX as usize)
+            .try_into()
+            .unwrap();
+
         Self {
             // It's very unlikely this is desired to be configurable, like
             // `UsageQueueInner::blocked_usages_from_tasks`'s cap.
             unblocked_task_queue: VecDeque::with_capacity(1024),
             active_task_count: ShortCounter::zero(),
-            executing_task_count: ShortCounter::zero(),
-            max_executing_task_count: max_executing_task_count
-                .unwrap_or(u32::MAX as usize)
-                .try_into()
-                .unwrap(),
+            running_task_count: ShortCounter::zero(),
+            max_running_task_count,
             handled_task_count: ShortCounter::zero(),
             unblocked_task_count: ShortCounter::zero(),
             total_task_count: ShortCounter::zero(),

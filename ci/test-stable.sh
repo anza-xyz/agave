@@ -55,8 +55,17 @@ test-stable-sbf)
   # Install the platform tools
   _ platform-tools-sdk/sbf/scripts/install.sh
 
-  # SBF program tests
+  # SBPFv0 program tests
   _ make -C programs/sbf test-v0
+
+  # SBPFv1 program tests
+  _ make -C programs/sbf clean-all test-v1
+
+  # SBPFv2 program tests
+  _ make -C programs/sbf clean-all test-v2
+
+  # SBPFv3 program tests
+  _ make -C programs/sbf clean-all test-v3
 
   exit 0
   ;;

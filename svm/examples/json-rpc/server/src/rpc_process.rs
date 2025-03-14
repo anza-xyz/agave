@@ -44,7 +44,6 @@ use {
             AddressLoader, MessageHash, SanitizedTransaction, TransactionError,
             VersionedTransaction,
         },
-        transaction_context::{TransactionAccount, TransactionReturnData},
     },
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
@@ -59,6 +58,7 @@ use {
         },
     },
     solana_system_program::system_processor,
+    solana_transaction_context::{TransactionAccount, TransactionReturnData},
     solana_transaction_status::{
         map_inner_instructions, parse_ui_inner_instructions, TransactionBinaryEncoding,
         UiTransactionEncoding,

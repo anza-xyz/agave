@@ -27,9 +27,10 @@ pub(crate) const MAX_SLOT: u64 = 1_000_000_000_000_000;
 const MAX_ACCOUNTS_HASHES: usize = 16;
 
 pub(crate) type VoteIndex = u8;
-// TODO: Remove this in favor of vote_state::MAX_LOCKOUT_HISTORY once
-// the fleet is updated to the new ClusterInfo::push_vote code.
-const MAX_VOTES: VoteIndex = 32;
+// Until the cluster upgrades we allow votes from higher indices
+const OLD_MAX_VOTES: VoteIndex = 32;
+/// Number of votes per validator to store.
+pub const MAX_VOTES: VoteIndex = 12;
 
 pub(crate) type EpochSlotsIndex = u8;
 pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
@@ -68,7 +69,7 @@ impl Sanitize for CrdsData {
         match self {
             CrdsData::LegacyContactInfo(val) => val.sanitize(),
             CrdsData::Vote(ix, val) => {
-                if *ix >= MAX_VOTES {
+                if *ix >= OLD_MAX_VOTES {
                     return Err(SanitizeError::ValueOutOfBounds);
                 }
                 val.sanitize()
@@ -539,7 +540,7 @@ mod test {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
         let vote = Vote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
-        let vote = CrdsValue::new(CrdsData::Vote(MAX_VOTES, vote), &keypair);
+        let vote = CrdsValue::new(CrdsData::Vote(OLD_MAX_VOTES, vote), &keypair);
         assert!(vote.sanitize().is_err());
     }
 

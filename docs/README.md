@@ -45,7 +45,6 @@ This build script will also:
 
 - generate the `cli/usage.md` document from the output of each of the Solana CLI commands and sub-commands
 - convert each of the `art/*.bob` files into SVG images used throughout the docs
-- generate the language [Translations](#translations)
 
 > Note: Running this build script is **required** before being able to run the site locally via the `npm run start` command since it will generate the `cli/usage.md` document.
 
@@ -60,60 +59,6 @@ npm run start
 ```
 
 > Note: Most changes are reflected live without having to restart the server or refresh the page. However, some changes may require a manual refresh of the page or a restart of the development server (via the command above).
-
-## Translations
-
-Translations are sourced from [Crowdin](https://docusaurus.io/docs/i18n/crowdin)
-and generated when the branch noted as the `STABLE` channel is built via the
-`build.sh` script.
-
-For local development, and with the `CROWDIN_PERSONAL_TOKEN` env variable set,
-use the following two commands in this `docs` directory.
-
-To download the newest documentation translations run:
-
-```sh
-npm run crowdin:download
-```
-
-To upload changes from `src` & generate
-[explicit IDs](https://docusaurus.io/docs/markdown-features/headings#explicit-ids):
-
-```shell
-npm run crowdin:upload
-```
-
-> Translations are only included when deploying the `STABLE` channel of the docs
-> (via `build.sh`). Resulting in only the `docs.solanalabs.com` documentation
-> site to include translated content. Therefore, the `edge` and `beta` docs
-> sites are not expected to include translated content, even though the language
-> selector will still be present.
-
-### Common issues
-
-#### `CROWDIN_PERSONAL_TOKEN` env variable
-
-The `crowdin.yml` file requires a `CROWDIN_PERSONAL_TOKEN` env variable to be
-set with a valid Crowdin access token.
-
-For local development, you can store this in a `.env` file that the Crowdin CLI
-will auto detect.
-
-For building and publishing via the GitHub actions, the `CROWDIN_PERSONAL_TOKEN`
-secret must be set.
-
-#### Translation locale fails to build with `SyntaxError`
-
-Some translation locales may fail to build with a `SyntaxError` thrown by
-Docusaurus due to how certain language symbols get parsed by Docusaurus while
-generating the static version of the docs.
-
-> Note: When any locale fails to build, the entire docs build will fail
-> resulting in the docs not being able to be deployed at all.
-
-There are several known locales that fail to build the current documentation.
-They are listed in the commented out `localesNotBuilding` attribute in the
-[`docusaurus.config.js`](https://github.com/solana-labs/solana/blob/master/docs/docusaurus.config.js)
 
 ## CI Build Flow
 

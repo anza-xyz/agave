@@ -34,6 +34,7 @@ solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm = { workspace = true }
 solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

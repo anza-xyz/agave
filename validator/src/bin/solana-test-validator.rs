@@ -1,7 +1,7 @@
 use {
     agave_validator::{
         admin_rpc_service, cli, dashboard::Dashboard, ledger_lockfile, lock_ledger,
-        println_name_value, redirect_stderr_to_file,
+        println_name_value,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t_or_exit},
     crossbeam_channel::unbounded,
@@ -14,6 +14,7 @@ use {
     },
     solana_core::consensus::tower_storage::FileTowerStorage,
     solana_faucet::faucet::run_local_faucet_with_port,
+    solana_logger::redirect_stderr_to_file,
     solana_rpc::{
         rpc::{JsonRpcConfig, RpcBigtableConfig},
         rpc_pubsub_service::PubSubConfig,

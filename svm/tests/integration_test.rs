@@ -28,7 +28,6 @@ use {
         system_instruction, system_program, system_transaction,
         sysvar::rent::Rent,
         transaction::{SanitizedTransaction, Transaction, TransactionError},
-        transaction_context::TransactionReturnData,
     },
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
@@ -42,6 +41,7 @@ use {
         },
     },
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_transaction_context::TransactionReturnData,
     solana_type_overrides::sync::{Arc, RwLock},
     std::collections::HashMap,
     test_case::{test_case, test_matrix},
@@ -2666,14 +2666,18 @@ fn svm_metrics_accumulation() {
             &env.processing_config,
         );
 
-        assert_ne!(
-            result
-                .execute_timings
-                .details
-                .create_executor_jit_compile_us
-                .0,
-            0
-        );
+        // jit compilation only happens on non-windows && x86_64
+        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+        {
+            assert_ne!(
+                result
+                    .execute_timings
+                    .details
+                    .create_executor_jit_compile_us
+                    .0,
+                0
+            );
+        }
         assert_ne!(
             result.execute_timings.details.create_executor_load_elf_us.0,
             0

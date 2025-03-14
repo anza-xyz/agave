@@ -56,9 +56,6 @@ pub(crate) struct ScopedTimer<'a> {
 }
 
 impl<'a> From<&'a Counter> for ScopedTimer<'a> {
-    // Output should be assigned to a *named* variable, otherwise it is
-    // immediately dropped.
-    #[must_use]
     fn from(counter: &'a Counter) -> Self {
         Self {
             clock: Instant::now(),

@@ -69,7 +69,9 @@ use crate::sleepless_testing::BuilderTracked;
 enum CheckPoint {
     NewTask(usize),
     NewBufferedTask(usize),
+    BufferedTask(usize),
     TaskHandled(usize),
+    SessionEnding,
     SchedulerThreadAborted,
     IdleSchedulerCleaned(usize),
     TrashedSchedulerCleaned(usize),
@@ -387,10 +389,6 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 // Along the lines, this isn't problematic for the development settings (= solana-test-validator),
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
-
-// Not rigidly tested yet; but capping to 2x of handler thread should be enough because unified
-// scheduler is latency optimized...
-const BLOCK_PRODUCTION_SCHEDULER_MAX_EXECUTING_TASK_COUNT_FACTOR: usize = 2;
 
 impl<S, TH> SchedulerPool<S, TH>
 where
@@ -1443,21 +1441,45 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         );
     }
 
-    fn max_executing_task_count(
-        mode: SchedulingMode,
-        handler_context: &HandlerContext,
-    ) -> Option<usize> {
+    fn max_running_task_count(mode: SchedulingMode, handler_count: usize) -> Option<usize> {
         match mode {
-            BlockVerification => None,
+            BlockVerification => {
+                // Unlike block production, there is no agony for block verification with regards
+                // to max_running_task_count. Its responsibility is to execute all transactions by
+                // _the pre-determined order_ and no reprioritization or interruption whatsoever.
+                // So, just specify no limit and buffer everything as much as possible at the
+                // runnable task channel.
+                None
+            }
             BlockProduction => {
                 // Unlike block verification, it's desired for block production to be safely
                 // interrupted as soon as possible after session is ending. Thus, don't take
                 // unbounded number of non-conflicting tasks out of SchedulingStateMachine, which
                 // all needs to be descheduled before finishing session.
+                //
+                // That said, max_running_task_count shouldn't naively be matched to
+                // handler_count (i.e. the number of handler threads). Actually, it should account
+                // for some extra queue depth to avoid depletions at the runnable task channel.
+                // Otherwise, handler thread could be busy-looping at best or stalled on syscall at
+                // worst for the next runnable task to be scheduled by the scheduler thread even
+                // though there are actually more runnable tasks at hand in fact. That would
+                // significantly hurt concurrency, and eventually throughput. While throughput
+                // isn't the primary design target (= low latency) of unified scheduler, this
+                // warrants some compromise here. Note that increasing the buffering at crossbeam
+                // channels hampers timing sensitivity of task reprioritization on higher-paying
+                // transaction arrival at the middle of slot, which is selling point of unified
+                // scheduler to recite. This is because there is no efficient way to selectively
+                // remove messages from them. Put differently, sent tasks aren't interruptible.
+                //
+                // So, all in all, we need to strike some nuanced balance here. Currently, this has
+                // not rigidly been tested yet; but capping to 2x of handler thread should be
+                // enough, because unified scheduler is latency optimized... This means each thread
+                // has extra pseudo task queue entry.
+                const MAX_RUNNING_TASK_COUNT_FACTOR: usize = 2;
+
                 Some(
-                    handler_context
-                        .parallelism
-                        .checked_mul(BLOCK_PRODUCTION_SCHEDULER_MAX_EXECUTING_TASK_COUNT_FACTOR)
+                    handler_count
+                        .checked_mul(MAX_RUNNING_TASK_COUNT_FACTOR)
                         .unwrap(),
                 )
             }
@@ -1470,9 +1492,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         state_machine: &SchedulingStateMachine,
     ) -> bool {
         match mode {
-            BlockVerification => state_machine.has_runnable_task(),
+            BlockVerification => {
+                // Always take as much as possible out of SchedulingStateMachine to avoid crossbeam
+                // channel internal message buffering depletion with much relaxed condition than
+                // block production.
+                state_machine.has_unblocked_task()
+            }
             BlockProduction => {
-                // Much like max_executing_task_count() reasonings, stop taking runnable and
+                // Much like max_running_task_count() reasonings, stop taking runnable and
                 // unblocked tasks out of SchedulingStateMachine as soon as session is ending.
                 !session_ending && state_machine.has_runnable_task()
             }
@@ -1485,8 +1512,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         state_machine: &SchedulingStateMachine,
     ) -> bool {
         match mode {
-            BlockVerification => session_ending && state_machine.has_no_active_task(),
-            BlockProduction => session_ending && state_machine.has_no_executing_task(),
+            BlockVerification => {
+                // It's needed to wait to execute all active tasks without any short-circuiting,
+                // even if the session has been signalled for ending; otherwise verification
+                // outcome could differ.
+                session_ending && state_machine.has_no_active_task()
+            }
+            BlockProduction => {
+                // No need to wait to execute all active tasks unlike block verification. Just wind
+                // down all tasks which has already been passed down to handler threads.
+                session_ending && state_machine.has_no_running_task()
+            }
         }
     }
 
@@ -1716,7 +1752,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 let mut state_machine = unsafe {
                     SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
-                        Self::max_executing_task_count(scheduling_mode, &handler_context),
+                        Self::max_running_task_count(scheduling_mode, handler_context.parallelism),
                     )
                 };
 
@@ -1784,12 +1820,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                                 match message {
                                     Ok(NewTaskPayload::Payload(task)) => {
-                                        sleepless_testing::at(CheckPoint::NewTask(task.task_index()));
+                                        let task_index = task.task_index();
+                                        sleepless_testing::at(CheckPoint::NewTask(task_index));
+
                                         if let Some(task) = state_machine.schedule_or_buffer_task(task, session_ending) {
                                             runnable_task_sender.send_aux_payload(task).unwrap();
+                                        } else {
+                                            sleepless_testing::at(CheckPoint::BufferedTask(task_index));
                                         }
                                     }
                                     Ok(NewTaskPayload::CloseSubchannel) => {
+                                        sleepless_testing::at(CheckPoint::SessionEnding);
                                         session_ending = true;
                                     }
                                     Ok(NewTaskPayload::OpenSubchannel(_) | NewTaskPayload::Unblock) =>
@@ -1840,6 +1881,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     session_result_sender
                         .send(result_with_timings)
                         .expect("always outlived receiver");
+                    if matches!(scheduling_mode, BlockVerification) {
+                        state_machine.reinitialize();
+                    }
                     assert!(mem::replace(&mut session_ending, false));
 
                     let mut new_result_with_timings = initialized_result_with_timings();
@@ -1870,9 +1914,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // Before that, propagate new SchedulingContext to handler threads
                                 assert_eq!(scheduling_mode, new_context.mode());
                                 assert!(!new_context.is_preallocated());
-                                if matches!(scheduling_mode, BlockVerification) {
-                                    state_machine.reinitialize();
-                                }
 
                                 runnable_task_sender
                                     .send_chained_channel(&new_context, handler_context.parallelism)
@@ -2441,7 +2482,9 @@ mod tests {
     enum TestCheckPoint {
         BeforeNewTask,
         AfterNewBufferedTask,
+        AfterBufferedTask,
         AfterTaskHandled,
+        AfterSessionEnding,
         AfterSchedulerThreadAborted,
         BeforeIdleSchedulerCleaned,
         AfterIdleSchedulerCleaned,
@@ -3511,6 +3554,16 @@ mod tests {
         assert!(*TASK_COUNT.lock().unwrap() < 10);
     }
 
+    fn create_genesis_config_for_block_production(lamports: u64) -> GenesisConfigInfo {
+        // The in-scope create_genesis_config(), which is imported from the `solana-runtime`,
+        // doesn't properly setup leader schedule, causing the following panic if used for poh
+        // recorder, so use the one from the `solana-ledger` crate:
+        //
+        //   thread 'tests::...' panicked at ledger/src/leader_schedule.rs:LL:CC:
+        //   called `Result::unwrap()` on an `Err` value: NoItem
+        solana_ledger::genesis_utils::create_genesis_config(lamports)
+    }
+
     #[test_matrix(
         [BlockVerification, BlockProduction]
     )]
@@ -3521,7 +3574,13 @@ mod tests {
 
         const STALLED_TRANSACTION_INDEX: usize = 0;
         const BLOCKED_TRANSACTION_INDEX: usize = 1;
-        static LOCK_TO_STALL: Mutex<()> = Mutex::new(());
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::BufferedTask(BLOCKED_TRANSACTION_INDEX),
+            &TestCheckPoint::AfterBufferedTask,
+            &CheckPoint::SessionEnding,
+            &TestCheckPoint::AfterSessionEnding,
+        ]);
 
         #[derive(Debug)]
         struct StallingHandler;
@@ -3529,17 +3588,27 @@ mod tests {
             fn handle(
                 result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
-                bank: &SchedulingContext,
+                scheduling_context: &SchedulingContext,
                 task: &Task,
                 handler_context: &HandlerContext,
             ) {
                 let index = task.task_index();
                 match index {
-                    STALLED_TRANSACTION_INDEX => *LOCK_TO_STALL.lock().unwrap(),
+                    STALLED_TRANSACTION_INDEX => {
+                        sleepless_testing::at(TestCheckPoint::AfterSessionEnding);
+                    }
                     BLOCKED_TRANSACTION_INDEX => {}
                     _ => unreachable!(),
                 };
-                DefaultTaskHandler::handle(result, timings, bank, task, handler_context);
+                // Always execute transactions with a faked context with the fixed block
+                // verification mode; Otherwise, the block production test variant will be
+                // encountered with CommitCancelled error from the poh recorder, which is fed with
+                // a dummy bank.
+                let faked_context = &SchedulingContext::new_with_mode(
+                    BlockVerification,
+                    scheduling_context.bank().unwrap().clone(),
+                );
+                DefaultTaskHandler::handle(result, timings, faked_context, task, handler_context);
             }
         }
 
@@ -3547,7 +3616,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        } = create_genesis_config_for_block_production(10_000);
 
         // tx0 and tx1 is definitely conflicting to write-lock the mint address
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -3577,13 +3646,20 @@ mod tests {
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (exit, poh_recorder, poh_service, _signal_receiver) =
+        let (exit, poh_recorder, poh_service, _signal_receiver) = {
+            // Create a dummy bank to prevent it from being frozen; otherwise, the following panic
+            // will happen:
+            //    thread 'solPohTickProd' panicked at runtime/src/bank.rs:LL:CC:
+            //    register_tick() working on a bank that is already frozen or is undergoing freezing!
+            let dummy_bank = Bank::new_for_tests(&genesis_config);
+            let (dummy_bank, _bank_forks) = setup_dummy_fork_graph(dummy_bank);
             create_test_recorder_with_index_tracking(
-                bank.clone(),
+                dummy_bank,
                 blockstore.clone(),
                 None,
                 Some(leader_schedule_cache),
-            );
+            )
+        };
 
         if matches!(scheduling_mode, BlockProduction) {
             pool.register_banking_stage(
@@ -3595,22 +3671,10 @@ mod tests {
             );
         }
 
-        // Wait until genesis_bank reaches its tick height...
-        while poh_recorder.read().unwrap().bank().is_some() {
-            sleep(Duration::from_millis(100));
-        }
-
-        let bank = Arc::new(Bank::new_from_parent(
-            bank.clone(),
-            &Pubkey::default(),
-            bank.slot().checked_add(1).unwrap(),
-        ));
-
         // This variable tracks the cumulative count of transactions since genesis, which is
         // incremented as test is progressed.
-        let mut current_transaction_count = Saturating(0);
-
-        assert_eq!(bank.transaction_count(), current_transaction_count.0);
+        let mut expected_transaction_count = Saturating(0);
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
@@ -3619,8 +3683,6 @@ mod tests {
             scheduler.unblock_scheduling();
         }
 
-        // Stall handling tx0 and tx1
-        let lock_to_stall = LOCK_TO_STALL.lock().unwrap();
         scheduler
             .schedule_execution(tx0, STALLED_TRANSACTION_INDEX)
             .unwrap();
@@ -3629,30 +3691,18 @@ mod tests {
             .unwrap();
 
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank(bank.clone_with_scheduler(), true);
 
-        // Wait a bit for the scheduler thread to decide to block tx1
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        sleepless_testing::at(TestCheckPoint::AfterBufferedTask);
 
-        // Resume handling by unlocking LOCK_TO_STALL
-        drop(lock_to_stall);
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
 
-        current_transaction_count += 1;
+        expected_transaction_count += 1;
         if matches!(scheduling_mode, BlockVerification) {
             // Block verification scheduler should fully clear its blocked transactions before
             // finishing.
-            current_transaction_count += 1;
+            expected_transaction_count += 1;
         }
-        assert_eq!(bank.transaction_count(), current_transaction_count.0);
-
-        // Wait until genesis_bank reaches its tick height...
-        while poh_recorder.read().unwrap().bank().is_some() {
-            sleep(Duration::from_millis(100));
-        }
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         // Create new bank to observe behavior difference around session ending
         let bank = Arc::new(Bank::new_from_parent(
@@ -3660,7 +3710,7 @@ mod tests {
             &Pubkey::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
-        assert_eq!(bank.transaction_count(), current_transaction_count.0);
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
@@ -3680,9 +3730,9 @@ mod tests {
 
         if matches!(scheduling_mode, BlockProduction) {
             // Block production scheduler should carry over transactions from previous bank
-            current_transaction_count += 1;
+            expected_transaction_count += 1;
         }
-        assert_eq!(bank.transaction_count(), current_transaction_count.0);
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
@@ -4069,7 +4119,7 @@ mod tests {
             genesis_config,
             ref mint_keypair,
             ..
-        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        } = create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank = bank_forks.read().unwrap().working_bank_with_scheduler();
@@ -4208,7 +4258,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        } = create_genesis_config_for_block_production(10_000);
 
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
@@ -4274,7 +4324,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        } = create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
@@ -4353,7 +4403,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        } = create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
@@ -4452,7 +4502,7 @@ mod tests {
         solana_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
-            solana_ledger::genesis_utils::create_genesis_config(10_000);
+            create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
@@ -4500,7 +4550,7 @@ mod tests {
         solana_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
-            solana_ledger::genesis_utils::create_genesis_config(10_000);
+            create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
@@ -4570,7 +4620,7 @@ mod tests {
         solana_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
-            solana_ledger::genesis_utils::create_genesis_config(10_000);
+            create_genesis_config_for_block_production(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 

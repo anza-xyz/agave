@@ -41,8 +41,8 @@ use {
         native_loader,
         pubkey::Pubkey,
         signature::Signer,
-        transaction_context::InstructionAccount,
     },
+    solana_transaction_context::InstructionAccount,
     std::{mem, sync::Arc},
     test::Bencher,
 };
