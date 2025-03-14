@@ -72,7 +72,6 @@ mod decision_maker;
 mod immutable_deserialized_packet;
 mod latest_unprocessed_votes;
 mod leader_slot_timing_metrics;
-mod multi_iterator_scanner;
 mod packet_deserializer;
 mod packet_filter;
 mod packet_receiver;

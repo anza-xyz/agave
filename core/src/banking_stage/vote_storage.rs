@@ -232,7 +232,7 @@ impl VoteStorage {
         self.already_handled.resize(all_vote_packets.len(), false);
         let starting_index = 0;
         loop {
-            let (found, payload, vote_packets) = self.march_iterator(
+            let (_found, payload, vote_packets) = self.march_iterator(
                 starting_index,
                 &all_vote_packets,
                 &mut payload,
@@ -342,6 +342,7 @@ impl VoteStorage {
 mod tests {
     use {
         super::*,
+        itertools::Itertools,
         solana_perf::packet::{Packet, PacketFlags},
         solana_runtime::genesis_utils,
         solana_sdk::{
