@@ -7,7 +7,7 @@ use {
             VoteSource,
         },
         leader_slot_metrics::LeaderSlotMetricsTracker,
-        multi_iterator_scanner::{MultiIteratorScanner, ProcessingDecision},
+        //multi_iterator_scanner::{MultiIteratorScanner, ProcessingDecision},
         read_write_account_set::ReadWriteAccountSet,
         BankingStageStats,
     },
@@ -32,6 +32,17 @@ const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
 pub struct VoteStorage {
     latest_unprocessed_votes: Arc<LatestUnprocessedVotes>,
     vote_source: VoteSource,
+}
+
+/// Output from the element checker used in `MultiIteratorScanner::iterate`.
+#[derive(Debug)]
+pub enum ProcessingDecision {
+    /// Should be processed by the scanner.
+    Now,
+    /// Should be skipped by the scanner on this pass - process later.
+    Later,
+    /// Should be skipped and marked as handled so we don't try processing it again.
+    Never,
 }
 
 /// Convenient wrapper for shared-state between banking stage processing and the
@@ -121,18 +132,9 @@ fn consume_scan_should_process_packet(
     }
 }
 
-fn create_consume_multi_iterator<'a, 'b, F>(
-    packets: &'a [Arc<ImmutableDeserializedPacket>],
+pub fn get_payload<'b>(
     slot_metrics_tracker: &'b mut LeaderSlotMetricsTracker,
-    should_process_packet: F,
-) -> MultiIteratorScanner<'a, Arc<ImmutableDeserializedPacket>, ConsumeScannerPayload<'b>, F>
-where
-    F: FnMut(
-        &Arc<ImmutableDeserializedPacket>,
-        &mut ConsumeScannerPayload<'b>,
-    ) -> ProcessingDecision,
-    'b: 'a,
-{
+) -> ConsumeScannerPayload<'b> {
     let payload = ConsumeScannerPayload {
         reached_end_of_slot: false,
         account_locks: ReadWriteAccountSet::default(),
@@ -140,12 +142,7 @@ where
         slot_metrics_tracker,
         error_counters: TransactionErrorMetrics::default(),
     };
-    MultiIteratorScanner::new(
-        packets,
-        UNPROCESSED_BUFFER_STEP_SIZE,
-        payload,
-        should_process_packet,
-    )
+    payload
 }
 
 impl VoteStorage {
@@ -191,6 +188,16 @@ impl VoteStorage {
         )
     }
 
+    pub fn should_process_packet(
+        &self,
+        packet: &Arc<ImmutableDeserializedPacket>,
+        payload: &mut ConsumeScannerPayload,
+        bank: Arc<Bank>,
+        banking_stage_stats: &BankingStageStats,
+    ) -> ProcessingDecision {
+        consume_scan_should_process_packet(&bank, banking_stage_stats, packet, payload)
+    }
+
     // returns `true` if the end of slot is reached
     pub fn process_packets<F>(
         &mut self,
@@ -209,11 +216,6 @@ impl VoteStorage {
             panic!("Gossip vote thread should not be processing transactions");
         }
 
-        let should_process_packet =
-            |packet: &Arc<ImmutableDeserializedPacket>, payload: &mut ConsumeScannerPayload| {
-                consume_scan_should_process_packet(&bank, banking_stage_stats, packet, payload)
-            };
-
         // Based on the stake distribution present in the supplied bank, drain the unprocessed votes
         // from each validator using a weighted random ordering. Votes from validators with
         // 0 stake are ignored.
@@ -221,18 +223,23 @@ impl VoteStorage {
             .latest_unprocessed_votes
             .drain_unprocessed(bank.clone());
 
-        let mut scanner = create_consume_multi_iterator(
-            &all_vote_packets,
-            slot_metrics_tracker,
-            should_process_packet,
-        );
-
         let deprecate_legacy_vote_ixs = self
             .latest_unprocessed_votes
             .should_deprecate_legacy_vote_ixs();
 
-        while let Some((packets, payload)) = scanner.iterate() {
-            let vote_packets = packets.iter().map(|p| (*p).clone()).collect_vec();
+        let mut payload = get_payload(slot_metrics_tracker);
+        let starting_index = 0;
+        loop {
+            let (found, payload, vote_packets) = self.march_iterator(
+                starting_index,
+                &all_vote_packets,
+                &mut payload,
+                bank.clone(),
+                banking_stage_stats,
+            );
+            if vote_packets.is_empty() {
+                break;
+            }
 
             if let Some(retryable_vote_indices) = processing_function(&vote_packets, payload) {
                 self.latest_unprocessed_votes.insert_batch(
@@ -261,7 +268,8 @@ impl VoteStorage {
             }
         }
 
-        scanner.finalize().payload.reached_end_of_slot
+        //scanner.finalize().payload.reached_end_of_slot
+        false
     }
 
     pub fn clear(&mut self) {
@@ -280,6 +288,46 @@ impl VoteStorage {
         // The gossip vote thread does not need to process or forward any votes, that is
         // handled by the tpu vote thread
         matches!(self.vote_source, VoteSource::Gossip)
+    }
+
+    /// Moves the iterator to its' next position. If we've reached the end of the slice, we return None
+    pub fn march_iterator<'a, 'b>(
+        &mut self,
+        starting_index: usize,
+        packet: &Vec<Arc<ImmutableDeserializedPacket>>,
+        payload: &'b mut ConsumeScannerPayload<'a>,
+        bank: Arc<Bank>,
+        banking_stage_stats: &BankingStageStats,
+    ) -> (
+        Option<usize>,
+        &'b mut ConsumeScannerPayload<'a>,
+        Vec<Arc<ImmutableDeserializedPacket>>,
+    ) {
+        // TODO: Skip processed votes.
+        let mut found = None;
+        let mut current_items: Vec<Arc<ImmutableDeserializedPacket>> =
+            Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
+        for _ in 0..UNPROCESSED_BUFFER_STEP_SIZE {
+            for index in starting_index..packet.len() {
+                match self.should_process_packet(
+                    &packet[index],
+                    payload,
+                    bank.clone(),
+                    &banking_stage_stats,
+                ) {
+                    ProcessingDecision::Now => {
+                        found = Some(index);
+                        current_items.push(packet[index].clone());
+                        break;
+                    }
+                    ProcessingDecision::Later => {
+                        // Do nothing - iterator will try this element in a future batch
+                    }
+                    ProcessingDecision::Never => {}
+                }
+            }
+        }
+        (found, payload, current_items)
     }
 }
 
@@ -347,6 +395,52 @@ mod tests {
 
         // All packets should remain in the transaction storage
         assert_eq!(1, transaction_storage.len());
+        Ok(())
+    }
+
+    #[test]
+    fn test_march_iterator() -> Result<(), Box<dyn Error>> {
+        let node_keypair = Keypair::new();
+        let genesis_config =
+            genesis_utils::create_genesis_config_with_leader(100, &node_keypair.pubkey(), 200)
+                .genesis_config;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let vote_keypair = Keypair::new();
+        let mut vote = Packet::from_data(
+            None,
+            new_tower_sync_transaction(
+                TowerSync::default(),
+                Hash::new_unique(),
+                &node_keypair,
+                &vote_keypair,
+                &vote_keypair,
+                None,
+            ),
+        )?;
+        vote.meta_mut().flags.set(PacketFlags::SIMPLE_VOTE_TX, true);
+
+        let latest_unprocessed_votes =
+            LatestUnprocessedVotes::new_for_tests(&[vote_keypair.pubkey()]);
+        let mut transaction_storage =
+            VoteStorage::new(Arc::new(latest_unprocessed_votes), VoteSource::Tpu);
+
+        let immutable_packet = Arc::new(ImmutableDeserializedPacket::new(vote.clone())?);
+        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(vote.clone())?]);
+        assert_eq!(1, transaction_storage.len());
+
+        let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(0);
+        let mut payload = get_payload(&mut slot_metrics_tracker);
+
+        let (found, _payload, packets) = transaction_storage.march_iterator(
+            0,
+            &vec![immutable_packet.clone()],
+            &mut payload,
+            bank.clone(),
+            &BankingStageStats::default(),
+        );
+
+        assert!(found.is_some());
+        assert_eq!(packets.len(), 1);
         Ok(())
     }
 }
