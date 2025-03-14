@@ -17,8 +17,11 @@ use {
         input_parsers::{pubkey_of, pubkey_of_signer, signer_of},
         input_validators::{is_valid_pubkey, is_valid_signer},
         keypair::{DefaultSigner, SignerIndex},
+        offline::{OfflineArgs, DUMP_TRANSACTION_MESSAGE, SIGN_ONLY_ARG},
     },
-    solana_cli_output::{CliProgramId, CliProgramV4, CliProgramsV4},
+    solana_cli_output::{
+        return_signers_with_config, CliProgramId, CliProgramV4, CliProgramsV4, ReturnSignersConfig,
+    },
     solana_client::{
         connection_cache::ConnectionCache,
         send_and_confirm_transactions_in_parallel::{
@@ -47,6 +50,7 @@ use {
         filter::{Memcmp, RpcFilterType},
         request::MAX_MULTIPLE_ACCOUNTS,
     },
+    solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_sdk_ids::{loader_v4, system_program},
     solana_signer::Signer,
@@ -67,6 +71,9 @@ use {
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct AdditionalCliConfig {
     pub use_rpc: bool,
+    pub sign_only: bool,
+    pub dump_transaction_message: bool,
+    pub blockhash_query: BlockhashQuery,
     pub compute_unit_price: Option<u64>,
 }
 
@@ -74,6 +81,9 @@ impl AdditionalCliConfig {
     fn from_matches(matches: &ArgMatches<'_>) -> Self {
         Self {
             use_rpc: matches.is_present("use-rpc"),
+            sign_only: matches.is_present(SIGN_ONLY_ARG.name),
+            dump_transaction_message: matches.is_present(DUMP_TRANSACTION_MESSAGE.name),
+            blockhash_query: BlockhashQuery::new_from_matches(matches),
             compute_unit_price: value_t!(matches, "compute_unit_price", u64).ok(),
         }
     }
@@ -192,6 +202,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                         .arg(Arg::with_name("use-rpc").long("use-rpc").help(
                             "Send transactions to the configured RPC instead of validator TPUs",
                         ))
+                        .offline_args()
                         .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
@@ -214,6 +225,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                     "Program authority [default: the default configured keypair]",
                                 ),
                         )
+                        .offline_args()
                         .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
@@ -247,6 +259,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                     "New program authority",
                                 ),
                         )
+                        .offline_args()
                         .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
@@ -279,6 +292,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                     "Reserves the address and links it as the programs next-version, which is a hint that frontends can show to users",
                                 ),
                         )
+                        .offline_args()
                         .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
@@ -1002,7 +1016,9 @@ fn send_messages(
 ) -> ProcessResult {
     let payer_pubkey = config.signers[0].pubkey();
     let program_signer = program_signer_index.map(|index| config.signers[*index]);
-    let blockhash = rpc_client.get_latest_blockhash()?;
+    let blockhash = additional_cli_config
+        .blockhash_query
+        .get_blockhash(&rpc_client, config.commitment)?;
     let compute_unit_config = ComputeUnitConfig {
         compute_unit_price: additional_cli_config.compute_unit_price,
         compute_unit_limit: ComputeUnitLimit::Simulated,
@@ -1049,17 +1065,27 @@ fn send_messages(
         config.commitment,
     )?;
 
-    let send_message = |message: Message, signers: &[&dyn Signer]| {
+    let send_or_return_message = |message: Message, signers: &[&dyn Signer]| {
         let mut tx = Transaction::new_unsigned(message);
         tx.try_sign(signers, blockhash)?;
-        let result: Result<solana_signature::Signature, Box<dyn std::error::Error>> = rpc_client
-            .send_and_confirm_transaction_with_spinner_and_config(
+        if additional_cli_config.sign_only {
+            return_signers_with_config(
                 &tx,
-                config.commitment,
-                config.send_transaction_config,
+                &config.output_format,
+                &ReturnSignersConfig {
+                    dump_transaction_message: additional_cli_config.dump_transaction_message,
+                },
             )
-            .map_err(|err| format!("Failed to send message: {err}").into());
-        result
+        } else {
+            rpc_client
+                .send_and_confirm_transaction_with_spinner_and_config(
+                    &tx,
+                    config.commitment,
+                    config.send_transaction_config,
+                )
+                .map_err(|err| format!("Failed to send message: {err}").into())
+                .map(|_| String::new())
+        }
     };
 
     for message in initial_messages.into_iter() {
@@ -1079,7 +1105,10 @@ fn send_messages(
             // All other messages have up to 2 signatures (payer, and authority).
             &[config.signers[0], config.signers[*auth_signer_index]]
         };
-        send_message(message, signers)?;
+        let result = send_or_return_message(message, signers)?;
+        if additional_cli_config.sign_only {
+            return Ok(result);
+        }
     }
 
     if !write_messages.is_empty() {
@@ -1141,10 +1170,13 @@ fn send_messages(
     }
 
     for message in final_messages.into_iter() {
-        send_message(
+        let result = send_or_return_message(
             message,
             &[config.signers[0], config.signers[*auth_signer_index]],
         )?;
+        if additional_cli_config.sign_only {
+            return Ok(result);
+        }
     }
 
     Ok(ok_result)
@@ -1902,6 +1934,9 @@ mod tests {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
                     additional_cli_config: AdditionalCliConfig {
                         use_rpc: true,
+                        sign_only: false,
+                        dump_transaction_message: false,
+                        blockhash_query: BlockhashQuery::default(),
                         compute_unit_price: Some(1),
                     },
                     program_address: Some(program_keypair.pubkey()),
