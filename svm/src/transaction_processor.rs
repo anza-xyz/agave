@@ -13,6 +13,7 @@ use {
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::TransactionAccountStateInfo,
+        transaction_balances::TransactionBalancesSet,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         transaction_processing_callback::TransactionProcessingCallback,
@@ -82,6 +83,14 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     /// could not be processed. Note processed transactions can still have a
     /// failure result meaning that the transaction will be rolled back.
     pub processing_results: Vec<TransactionProcessingResult>,
+    // HANA we actually do want this here rather than split across tx proc result:
+    // * splitting it would force it to change it from a Result alias to a struct
+    // * the _entire batch_ may abort, this Option lets us signal that via None
+    // TODO token, rename this transaction_balances, one Option wraps both
+    // i havent decided on a strat for the token stuff yet
+    // i think i want to provide a trait in svm with an empty impl and impl it in core
+    // its annoying bc we need an intermediate struct bc the final needs UiAmount
+    pub native_balances: Option<TransactionBalancesSet>,
 }
 
 /// Configuration of the recording capabilities for transaction execution
@@ -90,6 +99,7 @@ pub struct ExecutionRecordingConfig {
     pub enable_cpi_recording: bool,
     pub enable_log_recording: bool,
     pub enable_return_data_recording: bool,
+    pub enable_balance_recording: bool,
 }
 
 impl ExecutionRecordingConfig {
@@ -98,6 +108,7 @@ impl ExecutionRecordingConfig {
             enable_return_data_recording: option,
             enable_log_recording: option,
             enable_cpi_recording: option,
+            enable_balance_recording: option,
         }
     }
 }
@@ -372,6 +383,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     processing_results: (0..sanitized_txs.len())
                         .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
                         .collect(),
+                    native_balances: None,
                 };
             }
 
@@ -394,6 +406,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let enable_transaction_loading_failure_fees = environment
             .feature_set
             .is_active(&enable_transaction_loading_failure_fees::id());
+
+        // build the struct at the end because it asserts lengths match
+        let mut native_balance_vecs = if config.recording_config.enable_balance_recording {
+            Some((
+                Vec::with_capacity(sanitized_txs.len()),
+                Vec::with_capacity(sanitized_txs.len()),
+            ))
+        } else {
+            None
+        };
 
         let (mut validate_fees_us, mut load_us, mut execution_us): (u64, u64, u64) = (0, 0, 0);
 
@@ -430,46 +452,95 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
-            let (processing_result, single_execution_us) = measure_us!(match load_result {
-                TransactionLoadResult::NotLoaded(err) => Err(err),
-                TransactionLoadResult::FeesOnly(fees_only_tx) => {
-                    if enable_transaction_loading_failure_fees {
-                        // Update loaded accounts cache with nonce and fee-payer
-                        account_loader
-                            .update_accounts_for_failed_tx(tx, &fees_only_tx.rollback_accounts);
+            // HANA consider optimizing this later lol
+            // we can get the accounts off load result but we have to match on it
+            let native_pre_balances_for_tx = if config.recording_config.enable_balance_recording {
+                tx.account_keys()
+                    .iter()
+                    .map(|key| account_loader.lamports(key))
+                    .collect::<Vec<_>>()
+            } else {
+                vec![]
+            };
 
-                        Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
-                    } else {
-                        Err(fees_only_tx.load_error)
+            let ((processing_result, native_post_balances_for_tx), single_execution_us) =
+                measure_us!(match load_result {
+                    TransactionLoadResult::NotLoaded(err) =>
+                        (Err(err), native_pre_balances_for_tx.clone()),
+                    TransactionLoadResult::FeesOnly(fees_only_tx) => {
+                        let processing_result = if enable_transaction_loading_failure_fees {
+                            // Update loaded accounts cache with nonce and fee-payer
+                            account_loader
+                                .update_accounts_for_failed_tx(tx, &fees_only_tx.rollback_accounts);
+
+                            Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
+                        } else {
+                            Err(fees_only_tx.load_error)
+                        };
+
+                        let native_post_balances_for_tx =
+                            if config.recording_config.enable_balance_recording {
+                                let mut native_post_balances_for_tx =
+                                    native_pre_balances_for_tx.clone();
+                                native_post_balances_for_tx[0] =
+                                    account_loader.lamports(tx.fee_payer());
+                                native_post_balances_for_tx
+                            } else {
+                                vec![]
+                            };
+
+                        (processing_result, native_post_balances_for_tx)
                     }
-                }
-                TransactionLoadResult::Loaded(loaded_transaction) => {
-                    let executed_tx = self.execute_loaded_transaction(
-                        callbacks,
-                        tx,
-                        loaded_transaction,
-                        &mut execute_timings,
-                        &mut error_metrics,
-                        &mut program_cache_for_tx_batch,
-                        environment,
-                        config,
-                    );
+                    TransactionLoadResult::Loaded(loaded_transaction) => {
+                        let executed_tx = self.execute_loaded_transaction(
+                            callbacks,
+                            tx,
+                            loaded_transaction,
+                            &mut execute_timings,
+                            &mut error_metrics,
+                            &mut program_cache_for_tx_batch,
+                            environment,
+                            config,
+                        );
 
-                    // Update loaded accounts cache with account states which might have changed.
-                    // Also update local program cache with modifications made by the transaction,
-                    // if it executed successfully.
-                    account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
-                    if executed_tx.was_successful() {
-                        program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+                        // Update loaded accounts cache with account states which might have changed.
+                        // Also update local program cache with modifications made by the transaction,
+                        // if it executed successfully.
+                        account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
+
+                        if executed_tx.was_successful() {
+                            program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+                        }
+
+                        // HANA optimize later, we can just get the fee payer if the tx failed
+                        let native_post_balances_for_tx =
+                            if config.recording_config.enable_balance_recording {
+                                tx.account_keys()
+                                    .iter()
+                                    .map(|key| account_loader.lamports(key))
+                                    .collect::<Vec<_>>()
+                            } else {
+                                vec![]
+                            };
+
+                        (
+                            Ok(ProcessedTransaction::Executed(Box::new(executed_tx))),
+                            native_post_balances_for_tx,
+                        )
                     }
-
-                    Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
-                }
-            });
+                });
             execution_us = execution_us.saturating_add(single_execution_us);
 
             processing_results.push(processing_result);
+            if let Some((ref mut pre_balances, ref mut post_balances)) = native_balance_vecs {
+                pre_balances.push(native_pre_balances_for_tx);
+                post_balances.push(native_post_balances_for_tx);
+            };
         }
+
+        let native_balances = native_balance_vecs.map(|(pre_balances, post_balances)| {
+            TransactionBalancesSet::new(pre_balances, post_balances)
+        });
 
         // Skip eviction when there's no chance this particular tx batch has increased the size of
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
@@ -506,6 +577,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             error_metrics,
             execute_timings,
             processing_results,
+            native_balances,
         }
     }
 

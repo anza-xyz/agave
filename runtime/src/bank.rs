@@ -154,6 +154,7 @@ use {
     solana_svm::{
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
+        transaction_balances::{TransactionBalances, TransactionBalancesSet},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -328,6 +329,8 @@ pub struct LoadAndExecuteTransactionsOutput {
     // Processed transaction counts used to update bank transaction counts and
     // for metrics reporting.
     pub processed_counts: ProcessedTransactionCounts,
+    // HANA as with LoadAndExecuteSanitizedTransactionsOutput TODO token
+    pub native_balances: Option<TransactionBalancesSet>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -339,23 +342,6 @@ pub struct TransactionSimulationResult {
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
 }
-
-#[derive(Clone, Debug)]
-pub struct TransactionBalancesSet {
-    pub pre_balances: TransactionBalances,
-    pub post_balances: TransactionBalances,
-}
-
-impl TransactionBalancesSet {
-    pub fn new(pre_balances: TransactionBalances, post_balances: TransactionBalances) -> Self {
-        assert_eq!(pre_balances.len(), post_balances.len());
-        Self {
-            pre_balances,
-            post_balances,
-        }
-    }
-}
-pub type TransactionBalances = Vec<Vec<u64>>;
 
 pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
 
@@ -3235,6 +3221,7 @@ impl Bank {
                     enable_cpi_recording,
                     enable_log_recording: true,
                     enable_return_data_recording: true,
+                    enable_balance_recording: false,
                 },
                 transaction_account_lock_limit: Some(self.get_transaction_account_lock_limit()),
             },
@@ -3450,6 +3437,7 @@ impl Bank {
         LoadAndExecuteTransactionsOutput {
             processing_results: sanitized_output.processing_results,
             processed_counts,
+            native_balances: sanitized_output.native_balances,
         }
     }
 
@@ -4567,6 +4555,7 @@ impl Bank {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
+            native_balances: _,
         } = self.load_and_execute_transactions(
             batch,
             max_age,
@@ -4636,6 +4625,7 @@ impl Bank {
                 enable_cpi_recording: false,
                 enable_log_recording: true,
                 enable_return_data_recording: true,
+                enable_balance_recording: false,
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),

@@ -559,6 +559,7 @@ impl Consumer {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
 
+        // HANA this goes away entirely once we collect token bals in svm too
         let mut pre_balance_info = PreBalanceInfo::default();
         let (_, collect_balances_us) = measure_us!({
             // If the extra meta-data services are enabled for RPC, collect the
@@ -645,6 +646,7 @@ impl Consumer {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
+            native_balances,
         } = load_and_execute_transactions_output;
 
         let transaction_counts = LeaderProcessedTransactionCounts {
@@ -713,6 +715,7 @@ impl Consumer {
                     &mut pre_balance_info,
                     &mut execute_and_commit_timings,
                     &processed_counts,
+                    native_balances,
                 )
             } else {
                 (

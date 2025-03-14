@@ -333,6 +333,7 @@ impl JsonRpcRequestProcessor {
                     enable_cpi_recording,
                     enable_log_recording: true,
                     enable_return_data_recording: true,
+                    enable_balance_recording: true,
                 },
                 transaction_account_lock_limit: Some(64),
             },
