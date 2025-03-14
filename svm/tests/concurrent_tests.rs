@@ -241,14 +241,23 @@ fn svm_concurrent() {
             let local_batch = batch_processor.clone();
             let local_bank = mock_bank.clone();
             let th_txs = std::mem::take(&mut transactions[idx]);
-            let check_results = vec![
-                Ok(CheckedTransactionDetails::new(
-                    None,
-                    20,
-                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::default())
-                )) as TransactionCheckResult;
-                TRANSACTIONS_PER_THREAD
-            ];
+            let check_results = th_txs
+                .iter()
+                .map(|tx| {
+                    Ok(CheckedTransactionDetails::new(
+                        None,
+                        20,
+                        Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                            MockBankCallback::calculate_fee_details(
+                                tx,
+                                TransactionProcessingEnvironment::default()
+                                    .fee_lamports_per_signature,
+                                0,
+                            ),
+                        )),
+                    )) as TransactionCheckResult
+                })
+                .collect();
             let processing_config = TransactionProcessingConfig {
                 recording_config: ExecutionRecordingConfig {
                     enable_log_recording: true,

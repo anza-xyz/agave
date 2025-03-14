@@ -6943,25 +6943,6 @@ impl TransactionProcessingCallback for Bank {
             .map(|(stake, _)| (*stake))
             .unwrap_or(0)
     }
-
-    // Overrides default TransactionProcessingCallback::calculate_fee() to calculate actual transaction fee;
-    // Checking for `zero_fees_for_test` is done at callsite (eg. transaction_processor) where blockhash_queue's
-    // lamports_per_signature is checked ` == 0`.
-    fn calculate_fee(
-        &self,
-        message: &impl SVMMessage,
-        lamports_per_signature: u64,
-        prioritization_fee: u64,
-        feature_set: &FeatureSet,
-    ) -> FeeDetails {
-        solana_fee::calculate_fee_details(
-            message,
-            false, /* zero_fees_for_test */
-            lamports_per_signature,
-            prioritization_fee,
-            FeeFeatures::from(feature_set),
-        )
-    }
 }
 
 #[cfg(feature = "dev-context-only-utils")]

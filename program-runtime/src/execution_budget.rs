@@ -1,4 +1,6 @@
-use {solana_program_entrypoint::HEAP_LENGTH, std::num::NonZeroU32};
+use {
+    solana_fee_structure::FeeDetails, solana_program_entrypoint::HEAP_LENGTH, std::num::NonZeroU32,
+};
 
 /// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
 /// a transaction.
@@ -236,7 +238,7 @@ impl SVMTransactionExecutionCost {
 pub struct SVMTransactionExecutionAndFeeBudgetLimits {
     pub budget: SVMTransactionExecutionBudget,
     pub loaded_accounts_data_size_limit: NonZeroU32,
-    pub priority_fee: u64,
+    pub fee_details: FeeDetails,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -245,7 +247,17 @@ impl Default for SVMTransactionExecutionAndFeeBudgetLimits {
         Self {
             budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size_limit: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
-            priority_fee: 0,
+            fee_details: FeeDetails::default(),
+        }
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl SVMTransactionExecutionAndFeeBudgetLimits {
+    pub fn with_fee(fee_details: FeeDetails) -> Self {
+        Self {
+            fee_details,
+            ..SVMTransactionExecutionAndFeeBudgetLimits::default()
         }
     }
 }
