@@ -145,6 +145,7 @@ where
 
     /// March iterators forward to find the next batch of items.
     fn advance_current_positions(&mut self) {
+        // Advance by 64 and create a payload.
         if let Some(mut prev_index) = self.current_positions.first().copied() {
             for iterator_index in 0..self.current_positions.len() {
                 // If the previous iterator has passed this iterator, we should start
