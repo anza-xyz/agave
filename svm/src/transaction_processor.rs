@@ -941,9 +941,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let lamports_before_tx =
             transaction_accounts_lamports_sum(&transaction_accounts).unwrap_or(0);
 
-        let compute_budget = config
-            .compute_budget
-            .unwrap_or_else(|| ComputeBudget::from(loaded_transaction.compute_budget_limits));
+        let compute_budget = ComputeBudget::from(loaded_transaction.compute_budget_limits);
 
         let mut transaction_context = TransactionContext::new(
             transaction_accounts,
