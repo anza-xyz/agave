@@ -90,7 +90,7 @@ use {
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
-        rpc_service::JsonRpcService,
+        rpc_service::{ClientOption, JsonRpcService, JsonRpcServiceConfig},
         rpc_subscriptions::RpcSubscriptions,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
@@ -123,7 +123,7 @@ use {
         signature::{Keypair, Signer},
         timing::timestamp,
     },
-    solana_send_transaction_service::send_transaction_service,
+    solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
@@ -279,7 +279,7 @@ pub struct ValidatorConfig {
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
     pub contact_debug_interval: u64,
     pub contact_save_interval: u64,
-    pub send_transaction_service_config: send_transaction_service::Config,
+    pub send_transaction_service_config: SendTransactionServiceConfig,
     pub no_poh_speed_test: bool,
     pub no_os_memory_stats_reporting: bool,
     pub no_os_network_stats_reporting: bool,
@@ -315,6 +315,7 @@ pub struct ValidatorConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
+    pub use_tpu_client_next: bool,
 }
 
 impl Default for ValidatorConfig {
@@ -352,7 +353,7 @@ impl Default for ValidatorConfig {
             debug_keys: None,
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             contact_save_interval: DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
-            send_transaction_service_config: send_transaction_service::Config::default(),
+            send_transaction_service_config: SendTransactionServiceConfig::default(),
             no_poh_speed_test: true,
             no_os_memory_stats_reporting: true,
             no_os_network_stats_reporting: true,
@@ -388,6 +389,7 @@ impl Default for ValidatorConfig {
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
+            use_tpu_client_next: false,
         }
     }
 }
@@ -1087,6 +1089,9 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
+        // ConnectionCache might be used for JsonRpc and for Forwarding. Since
+        // the latter is not migrated yet to the tpu-client-next, create
+        // ConnectionCache regardless of config.use_tpu_client_next for now.
         let connection_cache = if use_quic {
             let connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
@@ -1159,31 +1164,36 @@ impl Validator {
                 None
             };
 
-            let json_rpc_service = JsonRpcService::new(
+            let rpc_svc_config = JsonRpcServiceConfig {
                 rpc_addr,
-                config.rpc_config.clone(),
-                Some(config.snapshot_config.clone()),
-                bank_forks.clone(),
-                block_commitment_cache.clone(),
-                blockstore.clone(),
-                cluster_info.clone(),
-                Some(poh_recorder.clone()),
-                genesis_config.hash(),
-                ledger_path,
-                config.validator_exit.clone(),
-                exit.clone(),
-                rpc_override_health_check.clone(),
+                rpc_config: config.rpc_config.clone(),
+                snapshot_config: Some(config.snapshot_config.clone()),
+                bank_forks: bank_forks.clone(),
+                block_commitment_cache: block_commitment_cache.clone(),
+                blockstore: blockstore.clone(),
+                cluster_info: cluster_info.clone(),
+                poh_recorder: Some(poh_recorder.clone()),
+                genesis_hash: genesis_config.hash(),
+                ledger_path: ledger_path.to_path_buf(),
+                validator_exit: config.validator_exit.clone(),
+                exit: exit.clone(),
+                override_health_check: rpc_override_health_check.clone(),
                 startup_verification_complete,
-                optimistically_confirmed_bank.clone(),
-                config.send_transaction_service_config.clone(),
-                max_slots.clone(),
-                leader_schedule_cache.clone(),
-                connection_cache.clone(),
+                optimistically_confirmed_bank: optimistically_confirmed_bank.clone(),
+                send_transaction_service_config: config.send_transaction_service_config.clone(),
+                max_slots: max_slots.clone(),
+                leader_schedule_cache: leader_schedule_cache.clone(),
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
-                prioritization_fee_cache.clone(),
-            )
-            .map_err(ValidatorError::Other)?;
+                prioritization_fee_cache: prioritization_fee_cache.clone(),
+                client_option: if config.use_tpu_client_next {
+                    ClientOption::TpuClientNext(Arc::as_ref(&identity_keypair))
+                } else {
+                    ClientOption::ConnectionCache(connection_cache.clone())
+                },
+            };
+            let json_rpc_service =
+                JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
 
             let pubsub_service = if !config.rpc_config.full_api {
                 None
@@ -1468,6 +1478,11 @@ impl Validator {
         let cluster_slots =
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
 
+        // If RPC is supported and ConnectionCache is used, pass ConnectionCache for being warmup inside Tvu.
+        let connection_cache_for_warmup = (json_rpc_service.is_some()
+            && !config.use_tpu_client_next)
+            .then_some(&connection_cache);
+
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1515,7 +1530,7 @@ impl Validator {
             config.wait_to_vote_slot,
             accounts_background_request_sender.clone(),
             config.runtime_config.log_messages_bytes_limit,
-            json_rpc_service.is_some().then_some(&connection_cache), // for the cache warmer only used for STS for RPC service
+            connection_cache_for_warmup,
             &prioritization_fee_cache,
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
@@ -1613,6 +1628,12 @@ impl Validator {
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::Running;
+        if config.use_tpu_client_next {
+            if let Some(json_rpc_service) = &json_rpc_service {
+                key_notifies.push(json_rpc_service.get_client_key_updater())
+            }
+        }
+        // add connection_cache because it is still used in Forwarder.
         key_notifies.push(connection_cache);
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
