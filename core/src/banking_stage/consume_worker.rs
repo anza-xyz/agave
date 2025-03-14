@@ -4,7 +4,7 @@ use {
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
-    crossbeam_channel::{Receiver, RecvError, SendError, Sender},
+    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_measure::measure_us,
     solana_poh::leader_bank_notifier::LeaderBankNotifier,
     solana_runtime::bank::Bank,
@@ -24,7 +24,7 @@ use {
 #[derive(Debug, Error)]
 pub enum ConsumeWorkerError<Tx> {
     #[error("Failed to receive work from scheduler: {0}")]
-    Recv(#[from] RecvError),
+    Recv(#[from] TryRecvError),
     #[error("Failed to send finalized consume work to scheduler: {0}")]
     Send(#[from] SendError<FinishedConsumeWork<Tx>>),
 }
@@ -61,8 +61,18 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
     pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
         loop {
-            let work = self.consume_receiver.recv()?;
-            self.consume_loop(work)?;
+            match self.consume_receiver.try_recv() {
+                Ok(work) => {
+                    self.consume_loop(work)?;
+                }
+                Err(TryRecvError::Empty) => {
+                    const SLEEP_DURATION: Duration = Duration::from_millis(1);
+                    std::thread::sleep(SLEEP_DURATION);
+                }
+                Err(err) => {
+                    return Err(ConsumeWorkerError::from(err));
+                }
+            }
         }
     }
 
