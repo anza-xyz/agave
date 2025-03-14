@@ -22,6 +22,6 @@ while read -r bob_file; do
 done < <(find art/*.bob)
 
 while read -r msc_file; do
-  out_file=$(basename "${msc_file%.*}".png)
-  mscgen -T png -o "$output_dir/$out_file" -i "$msc_file"
+  out_file=$(basename "${msc_file%.*}".svg)
+  mscgen -T svg -o "$output_dir/$out_file" -i "$msc_file"
 done < <(find art/*.msc)
