@@ -6,7 +6,7 @@ use {
         clock::Epoch, instruction::InstructionError, sysvar::stake_history::StakeHistory,
     },
     solana_stake_program::stake_state::{Delegation, Stake, StakeStateV2},
-    solana_vote_program::vote_state::VoteState,
+    solana_vote::vote_state_view::VoteStateView,
     std::cmp::Ordering,
 };
 
@@ -64,7 +64,7 @@ impl From<SkippedReason> for InflationPointCalculationEvent {
 
 pub fn calculate_points(
     stake_state: &StakeStateV2,
-    vote_state: &VoteState,
+    vote_state: &VoteStateView,
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> Result<u128, InstructionError> {
@@ -83,7 +83,7 @@ pub fn calculate_points(
 
 fn calculate_stake_points(
     stake: &Stake,
-    vote_state: &VoteState,
+    vote_state: &VoteStateView,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
@@ -103,7 +103,7 @@ fn calculate_stake_points(
 ///   for credits_observed were the points paid
 pub(crate) fn calculate_stake_points_and_credits(
     stake: &Stake,
-    new_vote_state: &VoteState,
+    new_vote_state: &VoteStateView,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
@@ -157,9 +157,8 @@ pub(crate) fn calculate_stake_points_and_credits(
     let mut points = 0;
     let mut new_credits_observed = credits_in_stake;
 
-    for (epoch, final_epoch_credits, initial_epoch_credits) in
-        new_vote_state.epoch_credits().iter().copied()
-    {
+    for epoch_credits_item in new_vote_state.epoch_credits_iter() {
+        let (epoch, final_epoch_credits, initial_epoch_credits) = epoch_credits_item.into();
         let stake_amount = u128::from(stake.delegation.stake(
             epoch,
             stake_history,
@@ -207,7 +206,10 @@ pub(crate) fn calculate_stake_points_and_credits(
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_sdk::native_token::sol_to_lamports};
+    use {
+        super::*, solana_sdk::native_token::sol_to_lamports,
+        solana_vote_program::vote_state::VoteState,
+    };
 
     fn new_stake(
         stake: u64,
@@ -226,7 +228,7 @@ mod tests {
         let mut vote_state = VoteState::default();
 
         // bootstrap means fully-vested stake at epoch 0 with
-        //  10_000_000 SOL is a big but not unreasaonable stake
+        //  10_000_000 SOL is a big but not unreasonable stake
         let stake = new_stake(
             sol_to_lamports(10_000_000f64),
             &Pubkey::default(),
@@ -246,7 +248,7 @@ mod tests {
             u128::from(stake.delegation.stake) * epoch_slots,
             calculate_stake_points(
                 &stake,
-                &vote_state,
+                &VoteStateView::from(vote_state),
                 &StakeHistory::default(),
                 null_tracer(),
                 None
