@@ -52,6 +52,8 @@
 #[cfg(test)]
 pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
 pub(crate) use self::{merkle::SIZE_OF_MERKLE_ROOT, payload::serde_bytes_payload};
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 pub use {
     self::{
         payload::Payload,
@@ -393,6 +395,7 @@ impl Shred {
     dispatch!(pub fn set_index(&mut self, index: u32));
     dispatch!(pub fn set_slot(&mut self, slot: Slot));
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub fn copy_to_packet(&self, packet: &mut Packet) {
         let payload = self.payload();
         let size = payload.len();
