@@ -25,6 +25,7 @@ use {
             get_max_bloom_filter_bytes, CrdsFilter, CrdsTimeouts, ProcessPullStats, PullRequest,
             CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         },
+        crds_gossip_push::CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
         crds_value::{CrdsValue, CrdsValueLabel},
         duplicate_shred::DuplicateShred,
         epoch_slots::EpochSlots,
@@ -1421,9 +1422,12 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
     ) {
         let self_pubkey = self.id();
-        let timeouts = self
-            .gossip
-            .make_timeouts(self_pubkey, stakes, epoch_duration);
+        let timeouts = self.gossip.make_timeouts(
+            self_pubkey,
+            stakes,
+            epoch_duration,
+            Some(CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS),
+        );
         let num_purged = {
             let _st = ScopedTimer::from(&self.stats.purge);
             self.gossip
@@ -1782,7 +1786,7 @@ impl ClusterInfo {
             let self_pubkey = self.id();
             let timeouts = self
                 .gossip
-                .make_timeouts(self_pubkey, stakes, epoch_duration);
+                .make_timeouts(self_pubkey, stakes, epoch_duration, None);
             self.handle_pull_response(responses, &timeouts);
         }
     }
@@ -3794,6 +3798,7 @@ mod tests {
             cluster_info.id(),
             &stakes,
             Duration::from_millis(cluster_info.gossip.pull.crds_timeout),
+            None,
         );
         cluster_info.handle_pull_response(vec![entrypoint_crdsvalue], &timeouts);
         let (pings, pulls) = cluster_info.old_pull_requests(&thread_pool, None, &HashMap::new());

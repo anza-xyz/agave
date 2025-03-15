@@ -517,8 +517,10 @@ impl CrdsGossipPull {
         self_pubkey: Pubkey,
         stakes: &'a HashMap<Pubkey, u64>,
         epoch_duration: Duration,
+        default_timeout: Option<u64>,
     ) -> CrdsTimeouts<'a> {
-        CrdsTimeouts::new(self_pubkey, self.crds_timeout, epoch_duration, stakes)
+        let default_timeout = default_timeout.unwrap_or(self.crds_timeout);
+        CrdsTimeouts::new(self_pubkey, default_timeout, epoch_duration, stakes)
     }
 
     /// Purge values from the crds that are older then `active_timeout`
@@ -1276,7 +1278,7 @@ pub(crate) mod tests {
             let failed = node
                 .process_pull_response(
                     &node_crds,
-                    &node.make_timeouts(node_pubkey, &HashMap::new(), Duration::default()),
+                    &node.make_timeouts(node_pubkey, &HashMap::new(), Duration::default(), None),
                     rsp.into_iter().flatten().collect(),
                     1,
                 )
@@ -1328,7 +1330,7 @@ pub(crate) mod tests {
         // purge
         let node_crds = RwLock::new(node_crds);
         let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
-        let timeouts = node.make_timeouts(node_pubkey, &stakes, Duration::default());
+        let timeouts = node.make_timeouts(node_pubkey, &stakes, Duration::default(), None);
         CrdsGossipPull::purge_active(&thread_pool, &node_crds, node.crds_timeout, &timeouts);
 
         //verify self is still valid after purge
