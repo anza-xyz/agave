@@ -106,6 +106,7 @@ members = [
     "rpc-client",
     "rpc-client-api",
     "rpc-client-nonce-utils",
+    "rpc-client-types",
     "rpc-test",
     "runtime",
     "runtime-transaction",
@@ -504,6 +505,7 @@ solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2
 solana-rpc = { path = "rpc", version = "=2.3.0" }
 solana-rpc-client = { path = "rpc-client", version = "=2.3.0", default-features = false }
 solana-rpc-client-api = { path = "rpc-client-api", version = "=2.3.0" }
+solana-rpc-client-types = { path = "rpc-client-types", version = "=2.3.0" }
 solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2.3.0" }
 solana-runtime = { path = "runtime", version = "=2.3.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=2.3.0" }
