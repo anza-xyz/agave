@@ -155,7 +155,7 @@ exclude = ["programs/sbf", "svm/examples", "svm/tests/example-programs"]
 resolver = "2"
 
 [workspace.package]
-version = "2.2.3"
+version = "2.2.4"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/agave"
 homepage = "https://anza.xyz/"
@@ -172,8 +172,8 @@ check-cfg = [
 [workspace.dependencies]
 Inflector = "0.11.4"
 axum = "0.7.9"
-agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.2.3" }
-agave-transaction-view = { path = "transaction-view", version = "=2.2.3" }
+agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.2.4" }
+agave-transaction-view = { path = "transaction-view", version = "=2.2.4" }
 aquamarine = "0.6.0"
 aes-gcm-siv = "0.11.1"
 ahash = "0.8.11"
@@ -356,115 +356,115 @@ smpl_jwt = "0.7.1"
 socket2 = "0.5.8"
 soketto = "0.7"
 solana-account = "=2.2.1"
-solana-account-decoder = { path = "account-decoder", version = "=2.2.3" }
-solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=2.2.3" }
+solana-account-decoder = { path = "account-decoder", version = "=2.2.4" }
+solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=2.2.4" }
 solana-account-info = "=2.2.1"
-solana-accounts-db = { path = "accounts-db", version = "=2.2.3" }
+solana-accounts-db = { path = "accounts-db", version = "=2.2.4" }
 solana-address-lookup-table-interface = "=2.2.2"
-solana-address-lookup-table-program = { path = "programs/address-lookup-table", version = "=2.2.3" }
+solana-address-lookup-table-program = { path = "programs/address-lookup-table", version = "=2.2.4" }
 solana-atomic-u64 = "=2.2.1"
-solana-banks-client = { path = "banks-client", version = "=2.2.3" }
-solana-banks-interface = { path = "banks-interface", version = "=2.2.3" }
-solana-banks-server = { path = "banks-server", version = "=2.2.3" }
-solana-bench-tps = { path = "bench-tps", version = "=2.2.3" }
+solana-banks-client = { path = "banks-client", version = "=2.2.4" }
+solana-banks-interface = { path = "banks-interface", version = "=2.2.4" }
+solana-banks-server = { path = "banks-server", version = "=2.2.4" }
+solana-bench-tps = { path = "bench-tps", version = "=2.2.4" }
 solana-big-mod-exp = "=2.2.1"
 solana-bincode = "=2.2.1"
 solana-blake3-hasher = "=2.2.1"
-solana-bloom = { path = "bloom", version = "=2.2.3" }
+solana-bloom = { path = "bloom", version = "=2.2.4" }
 solana-bn254 = "=2.2.1"
 solana-borsh = "=2.2.1"
-solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=2.2.3" }
-solana-bucket-map = { path = "bucket_map", version = "=2.2.3" }
-solana-builtins = { path = "builtins", version = "=2.2.3" }
-solana-builtins-default-costs = { path = "builtins-default-costs", version = "=2.2.3" }
-agave-cargo-registry = { path = "cargo-registry", version = "=2.2.3" }
-agave-thread-manager = { path = "thread-manager", version = "=2.2.3" }
-solana-clap-utils = { path = "clap-utils", version = "=2.2.3" }
-solana-clap-v3-utils = { path = "clap-v3-utils", version = "=2.2.3" }
-solana-cli = { path = "cli", version = "=2.2.3" }
-solana-cli-config = { path = "cli-config", version = "=2.2.3" }
-solana-cli-output = { path = "cli-output", version = "=2.2.3" }
-solana-client = { path = "client", version = "=2.2.3" }
+solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=2.2.4" }
+solana-bucket-map = { path = "bucket_map", version = "=2.2.4" }
+solana-builtins = { path = "builtins", version = "=2.2.4" }
+solana-builtins-default-costs = { path = "builtins-default-costs", version = "=2.2.4" }
+agave-cargo-registry = { path = "cargo-registry", version = "=2.2.4" }
+agave-thread-manager = { path = "thread-manager", version = "=2.2.4" }
+solana-clap-utils = { path = "clap-utils", version = "=2.2.4" }
+solana-clap-v3-utils = { path = "clap-v3-utils", version = "=2.2.4" }
+solana-cli = { path = "cli", version = "=2.2.4" }
+solana-cli-config = { path = "cli-config", version = "=2.2.4" }
+solana-cli-output = { path = "cli-output", version = "=2.2.4" }
+solana-client = { path = "client", version = "=2.2.4" }
 solana-client-traits = "=2.2.1"
 solana-clock = "=2.2.1"
 solana-cluster-type = "=2.2.1"
 solana-commitment-config = "=2.2.1"
-solana-compute-budget = { path = "compute-budget", version = "=2.2.3" }
-solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=2.2.3" }
+solana-compute-budget = { path = "compute-budget", version = "=2.2.4" }
+solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=2.2.4" }
 solana-compute-budget-interface = "=2.2.1"
-solana-compute-budget-program = { path = "programs/compute-budget", version = "=2.2.3" }
-solana-config-program = { path = "programs/config", version = "=2.2.3" }
-solana-connection-cache = { path = "connection-cache", version = "=2.2.3", default-features = false }
-solana-core = { path = "core", version = "=2.2.3" }
-solana-cost-model = { path = "cost-model", version = "=2.2.3" }
+solana-compute-budget-program = { path = "programs/compute-budget", version = "=2.2.4" }
+solana-config-program = { path = "programs/config", version = "=2.2.4" }
+solana-connection-cache = { path = "connection-cache", version = "=2.2.4", default-features = false }
+solana-core = { path = "core", version = "=2.2.4" }
+solana-cost-model = { path = "cost-model", version = "=2.2.4" }
 solana-cpi = "=2.2.1"
-solana-curve25519 = { path = "curves/curve25519", version = "=2.2.3" }
+solana-curve25519 = { path = "curves/curve25519", version = "=2.2.4" }
 solana-decode-error = "=2.2.1"
 solana-define-syscall = "=2.2.1"
 solana-derivation-path = "=2.2.1"
-solana-download-utils = { path = "download-utils", version = "=2.2.3" }
+solana-download-utils = { path = "download-utils", version = "=2.2.4" }
 solana-ed25519-program = "=2.2.1"
-solana-entry = { path = "entry", version = "=2.2.3" }
+solana-entry = { path = "entry", version = "=2.2.4" }
 solana-program-entrypoint = "=2.2.1"
 solana-epoch-info = "=2.2.1"
 solana-epoch-rewards = "=2.2.1"
 solana-epoch-rewards-hasher = "=2.2.1"
 solana-epoch-schedule = "=2.2.1"
 solana-example-mocks = "=2.2.1"
-solana-faucet = { path = "faucet", version = "=2.2.3" }
+solana-faucet = { path = "faucet", version = "=2.2.4" }
 solana-feature-gate-client = "0.0.2"
 solana-feature-gate-interface = "=2.2.1"
 solana-feature-set = "=2.2.1"
 solana-fee-calculator = "=2.2.1"
-solana-fee = { path = "fee", version = "=2.2.3" }
+solana-fee = { path = "fee", version = "=2.2.4" }
 solana-fee-structure = "=2.2.1"
 solana-frozen-abi = "=2.2.1"
 solana-frozen-abi-macro = "=2.2.1"
-solana-tps-client = { path = "tps-client", version = "=2.2.3" }
+solana-tps-client = { path = "tps-client", version = "=2.2.4" }
 solana-file-download = "=2.2.1"
-solana-genesis = { path = "genesis", version = "=2.2.3" }
+solana-genesis = { path = "genesis", version = "=2.2.4" }
 solana-genesis-config = "=2.2.1"
-solana-genesis-utils = { path = "genesis-utils", version = "=2.2.3" }
-agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.2.3" }
-solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.2.3" }
-solana-gossip = { path = "gossip", version = "=2.2.3" }
+solana-genesis-utils = { path = "genesis-utils", version = "=2.2.4" }
+agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.2.4" }
+solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.2.4" }
+solana-gossip = { path = "gossip", version = "=2.2.4" }
 solana-hard-forks = "=2.2.1"
 solana-hash = "=2.2.1"
 solana-inflation = "=2.2.1"
-solana-inline-spl = { path = "inline-spl", version = "=2.2.3" }
+solana-inline-spl = { path = "inline-spl", version = "=2.2.4" }
 solana-instruction = "=2.2.1"
 solana-instructions-sysvar = "=2.2.1"
 solana-keccak-hasher = "=2.2.1"
 solana-keypair = "=2.2.1"
 solana-last-restart-slot = "=2.2.1"
-solana-lattice-hash = { path = "lattice-hash", version = "=2.2.3" }
-solana-ledger = { path = "ledger", version = "=2.2.3" }
+solana-lattice-hash = { path = "lattice-hash", version = "=2.2.4" }
+solana-ledger = { path = "ledger", version = "=2.2.4" }
 solana-loader-v2-interface = "=2.2.1"
 solana-loader-v3-interface = "=3.0.0"
 solana-loader-v4-interface = "=2.2.1"
-solana-loader-v4-program = { path = "programs/loader-v4", version = "=2.2.3" }
-solana-local-cluster = { path = "local-cluster", version = "=2.2.3" }
-solana-log-collector = { path = "log-collector", version = "=2.2.3" }
+solana-loader-v4-program = { path = "programs/loader-v4", version = "=2.2.4" }
+solana-local-cluster = { path = "local-cluster", version = "=2.2.4" }
+solana-log-collector = { path = "log-collector", version = "=2.2.4" }
 solana-logger = "=2.2.1"
-solana-measure = { path = "measure", version = "=2.2.3" }
-solana-merkle-tree = { path = "merkle-tree", version = "=2.2.3" }
+solana-measure = { path = "measure", version = "=2.2.4" }
+solana-merkle-tree = { path = "merkle-tree", version = "=2.2.4" }
 solana-message = "=2.2.1"
-solana-metrics = { path = "metrics", version = "=2.2.3" }
+solana-metrics = { path = "metrics", version = "=2.2.4" }
 solana-msg = "=2.2.1"
 solana-native-token = "=2.2.1"
-solana-net-utils = { path = "net-utils", version = "=2.2.3" }
+solana-net-utils = { path = "net-utils", version = "=2.2.4" }
 solana-nohash-hasher = "0.2.1"
 solana-nonce = "=2.2.1"
 solana-nonce-account = "=2.2.1"
-solana-notifier = { path = "notifier", version = "=2.2.3" }
+solana-notifier = { path = "notifier", version = "=2.2.4" }
 solana-offchain-message = "=2.2.1"
 solana-package-metadata = "=2.2.1"
 solana-package-metadata-macro = "=2.2.1"
 solana-packet = "=2.2.1"
-solana-perf = { path = "perf", version = "=2.2.3" }
-solana-poh = { path = "poh", version = "=2.2.3" }
+solana-perf = { path = "perf", version = "=2.2.4" }
+solana-poh = { path = "poh", version = "=2.2.4" }
 solana-poh-config = "=2.2.1"
-solana-poseidon = { path = "poseidon", version = "=2.2.3" }
+solana-poseidon = { path = "poseidon", version = "=2.2.4" }
 solana-precompile-error = "=2.2.1"
 solana-precompiles = "=2.2.1"
 solana-presigner = "=2.2.1"
@@ -473,14 +473,14 @@ solana-program-error = "=2.2.1"
 solana-program-memory = "=2.2.1"
 solana-program-option = "=2.2.1"
 solana-program-pack = "=2.2.1"
-solana-program-runtime = { path = "program-runtime", version = "=2.2.3" }
-solana-program-test = { path = "program-test", version = "=2.2.3" }
+solana-program-runtime = { path = "program-runtime", version = "=2.2.4" }
+solana-program-test = { path = "program-test", version = "=2.2.4" }
 solana-pubkey = { version = "=2.2.1", default-features = false }
-solana-pubsub-client = { path = "pubsub-client", version = "=2.2.3" }
-solana-quic-client = { path = "quic-client", version = "=2.2.3" }
+solana-pubsub-client = { path = "pubsub-client", version = "=2.2.4" }
+solana-quic-client = { path = "quic-client", version = "=2.2.4" }
 solana-quic-definitions = "=2.2.1"
-solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=2.2.3" }
-solana-remote-wallet = { path = "remote-wallet", version = "=2.2.3", default-features = false }
+solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=2.2.4" }
+solana-remote-wallet = { path = "remote-wallet", version = "=2.2.4", default-features = false }
 solana-rent = "=2.2.1"
 solana-rent-collector = "=2.2.1"
 solana-rent-debits = "=2.2.1"
@@ -499,64 +499,64 @@ solana-signer = "=2.2.1"
 solana-slot-hashes = "=2.2.1"
 solana-slot-history = "=2.2.1"
 solana-time-utils = "=2.2.1"
-solana-timings = { path = "timings", version = "=2.2.3" }
-solana-tls-utils = { path = "tls-utils", version = "=2.2.3" }
-solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.2.3" }
-solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2.2.3" }
-solana-rpc = { path = "rpc", version = "=2.2.3" }
-solana-rpc-client = { path = "rpc-client", version = "=2.2.3", default-features = false }
-solana-rpc-client-api = { path = "rpc-client-api", version = "=2.2.3" }
-solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2.2.3" }
-solana-runtime = { path = "runtime", version = "=2.2.3" }
-solana-runtime-transaction = { path = "runtime-transaction", version = "=2.2.3" }
+solana-timings = { path = "timings", version = "=2.2.4" }
+solana-tls-utils = { path = "tls-utils", version = "=2.2.4" }
+solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.2.4" }
+solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2.2.4" }
+solana-rpc = { path = "rpc", version = "=2.2.4" }
+solana-rpc-client = { path = "rpc-client", version = "=2.2.4", default-features = false }
+solana-rpc-client-api = { path = "rpc-client-api", version = "=2.2.4" }
+solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2.2.4" }
+solana-runtime = { path = "runtime", version = "=2.2.4" }
+solana-runtime-transaction = { path = "runtime-transaction", version = "=2.2.4" }
 solana-sbpf = "=0.10.0"
 solana-sdk = "=2.2.1"
 solana-sdk-ids = "=2.2.1"
 solana-sdk-macro = "=2.2.1"
 solana-secp256k1-program = "=2.2.1"
 solana-secp256k1-recover = "=2.2.1"
-solana-send-transaction-service = { path = "send-transaction-service", version = "=2.2.3" }
+solana-send-transaction-service = { path = "send-transaction-service", version = "=2.2.4" }
 solana-short-vec = "=2.2.1"
 solana-shred-version = "=2.2.1"
 solana-stable-layout = "=2.2.1"
 solana-stake-interface = { version = "1.2.1" }
-solana-stake-program = { path = "programs/stake", version = "=2.2.3" }
-solana-storage-bigtable = { path = "storage-bigtable", version = "=2.2.3" }
-solana-storage-proto = { path = "storage-proto", version = "=2.2.3" }
-solana-streamer = { path = "streamer", version = "=2.2.3" }
-solana-svm = { path = "svm", version = "=2.2.3" }
-solana-svm-conformance = { path = "svm-conformance", version = "=2.2.3" }
-solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.2.3" }
-solana-svm-transaction = { path = "svm-transaction", version = "=2.2.3" }
+solana-stake-program = { path = "programs/stake", version = "=2.2.4" }
+solana-storage-bigtable = { path = "storage-bigtable", version = "=2.2.4" }
+solana-storage-proto = { path = "storage-proto", version = "=2.2.4" }
+solana-streamer = { path = "streamer", version = "=2.2.4" }
+solana-svm = { path = "svm", version = "=2.2.4" }
+solana-svm-conformance = { path = "svm-conformance", version = "=2.2.4" }
+solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.2.4" }
+solana-svm-transaction = { path = "svm-transaction", version = "=2.2.4" }
 solana-system-interface = "1.0"
-solana-system-program = { path = "programs/system", version = "=2.2.3" }
+solana-system-program = { path = "programs/system", version = "=2.2.4" }
 solana-system-transaction = "=2.2.1"
 solana-sysvar = "=2.2.1"
 solana-sysvar-id = "=2.2.1"
-solana-test-validator = { path = "test-validator", version = "=2.2.3" }
-solana-thin-client = { path = "thin-client", version = "=2.2.3" }
+solana-test-validator = { path = "test-validator", version = "=2.2.4" }
+solana-thin-client = { path = "thin-client", version = "=2.2.4" }
 solana-transaction = "=2.2.1"
 solana-transaction-error = "=2.2.1"
-solana-tpu-client = { path = "tpu-client", version = "=2.2.3", default-features = false }
-solana-tpu-client-next = { path = "tpu-client-next", version = "=2.2.3" }
+solana-tpu-client = { path = "tpu-client", version = "=2.2.4", default-features = false }
+solana-tpu-client-next = { path = "tpu-client-next", version = "=2.2.4" }
 solana-transaction-context = "=2.2.1"
-solana-transaction-status = { path = "transaction-status", version = "=2.2.3" }
-solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=2.2.3" }
-solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.2.3" }
-solana-turbine = { path = "turbine", version = "=2.2.3" }
-solana-type-overrides = { path = "type-overrides", version = "=2.2.3" }
-solana-udp-client = { path = "udp-client", version = "=2.2.3" }
+solana-transaction-status = { path = "transaction-status", version = "=2.2.4" }
+solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=2.2.4" }
+solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.2.4" }
+solana-turbine = { path = "turbine", version = "=2.2.4" }
+solana-type-overrides = { path = "type-overrides", version = "=2.2.4" }
+solana-udp-client = { path = "udp-client", version = "=2.2.4" }
 solana-validator-exit = "=2.2.1"
-solana-version = { path = "version", version = "=2.2.3" }
-solana-vote = { path = "vote", version = "=2.2.3" }
+solana-version = { path = "version", version = "=2.2.4" }
+solana-vote = { path = "vote", version = "=2.2.4" }
 solana-vote-interface = "=2.2.1"
-solana-vote-program = { path = "programs/vote", version = "=2.2.3", default-features = false }
-solana-wen-restart = { path = "wen-restart", version = "=2.2.3" }
-solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=2.2.3" }
-solana-zk-keygen = { path = "zk-keygen", version = "=2.2.3" }
-solana-zk-sdk = { path = "zk-sdk", version = "=2.2.3" }
-solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.2.3" }
-solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.2.3" }
+solana-vote-program = { path = "programs/vote", version = "=2.2.4", default-features = false }
+solana-wen-restart = { path = "wen-restart", version = "=2.2.4" }
+solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=2.2.4" }
+solana-zk-keygen = { path = "zk-keygen", version = "=2.2.4" }
+solana-zk-sdk = { path = "zk-sdk", version = "=2.2.4" }
+solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.2.4" }
+solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.2.4" }
 spl-associated-token-account = "=6.0.0"
 spl-instruction-padding = "0.3"
 spl-memo = "=6.0.0"
