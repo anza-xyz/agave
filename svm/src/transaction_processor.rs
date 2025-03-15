@@ -417,12 +417,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         tx,
                         tx_details,
                         &environment.blockhash,
-                        environment.fee_lamports_per_signature,
                         environment
                             .rent_collector
                             .unwrap_or(&RentCollector::default()),
                         &mut error_metrics,
-                        callbacks,
                     )
                 }));
             validate_fees_us = validate_fees_us.saturating_add(single_validate_fees_us);
@@ -522,10 +520,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         environment_blockhash: &Hash,
-        fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
-        callbacks: &CB,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         // If this is a nonce transaction, validate the nonce info.
         // This must be done for every transaction to support SIMD83 because
@@ -552,10 +548,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             account_loader,
             message,
             checked_details,
-            fee_lamports_per_signature,
             rent_collector,
             error_counters,
-            callbacks,
         )
     }
 
@@ -566,10 +560,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         account_loader: &mut AccountLoader<CB>,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
-        fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
-        callbacks: &CB,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let CheckedTransactionDetails {
             nonce,
@@ -601,12 +593,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let fee_details = if lamports_per_signature == 0 {
             FeeDetails::default()
         } else {
-            callbacks.calculate_fee(
-                message,
-                fee_lamports_per_signature,
-                compute_budget_and_limits.priority_fee,
-                account_loader.feature_set.as_ref(),
-            )
+            compute_budget_and_limits.fee_details
         };
 
         let fee_payer_index = 0;
@@ -1215,7 +1202,7 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_feature_set::FeatureSet,
         solana_fee_calculator::FeeCalculator,
-        solana_fee_structure::{FeeDetails, FeeStructure},
+        solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
@@ -1306,13 +1293,13 @@ mod tests {
                 .or_default()
                 .push((account, is_writable));
         }
+    }
 
-        fn calculate_fee(
-            &self,
+    impl MockBankCallback {
+        pub fn calculate_fee_details(
             message: &impl SVMMessage,
             lamports_per_signature: u64,
             prioritization_fee: u64,
-            _feature_set: &FeatureSet,
         ) -> FeeDetails {
             let signature_count = message
                 .num_transaction_signatures()
@@ -2188,7 +2175,7 @@ mod tests {
                 compute_unit_limit: 2000,
                 ..SVMTransactionExecutionBudget::default()
             },
-            priority_fee,
+            fee_details: FeeDetails::new(transaction_fee, priority_fee),
             ..SVMTransactionExecutionAndFeeBudgetLimits::default()
         };
         let result =
@@ -2201,10 +2188,8 @@ mod tests {
                     Ok(compute_budget_and_limits),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
-                &mock_bank,
             );
 
         let post_validation_fee_payer_account = {
@@ -2270,7 +2255,9 @@ mod tests {
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let compute_budget_and_limits = SVMTransactionExecutionAndFeeBudgetLimits::default();
+        let compute_budget_and_limits = SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+            MockBankCallback::calculate_fee_details(&message, lamports_per_signature, 0),
+        );
         let result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
@@ -2281,10 +2268,8 @@ mod tests {
                     Ok(compute_budget_and_limits),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
-                &mock_bank,
             );
 
         let post_validation_fee_payer_account = {
@@ -2336,10 +2321,8 @@ mod tests {
                     Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
-                &mock_bank,
             );
 
         assert_eq!(error_counters.account_not_found.0, 1);
@@ -2369,13 +2352,17 @@ mod tests {
                 CheckedTransactionDetails::new(
                     None,
                     lamports_per_signature,
-                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                        MockBankCallback::calculate_fee_details(
+                            &message,
+                            lamports_per_signature,
+                            0,
+                        ),
+                    )),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
-                &mock_bank,
             );
 
         assert_eq!(error_counters.insufficient_funds.0, 1);
@@ -2409,13 +2396,17 @@ mod tests {
                 CheckedTransactionDetails::new(
                     None,
                     lamports_per_signature,
-                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                        MockBankCallback::calculate_fee_details(
+                            &message,
+                            lamports_per_signature,
+                            0,
+                        ),
+                    )),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
-                &mock_bank,
             );
 
         assert_eq!(
@@ -2447,13 +2438,17 @@ mod tests {
                 CheckedTransactionDetails::new(
                     None,
                     lamports_per_signature,
-                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                        MockBankCallback::calculate_fee_details(
+                            &message,
+                            lamports_per_signature,
+                            0,
+                        ),
+                    )),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
-                &mock_bank,
             );
 
         assert_eq!(error_counters.invalid_account_for_fee.0, 1);
@@ -2484,10 +2479,8 @@ mod tests {
                     Err(DuplicateInstruction(1)),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
-                &mock_bank,
             );
 
         assert_eq!(error_counters.invalid_compute_budget.0, 1);
@@ -2508,13 +2501,13 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &last_blockhash,
         ));
+        let transaction_fee = lamports_per_signature;
         let compute_budget_and_limits = SVMTransactionExecutionAndFeeBudgetLimits {
-            priority_fee: compute_unit_limit,
+            fee_details: FeeDetails::new(transaction_fee, compute_unit_limit),
             ..SVMTransactionExecutionAndFeeBudgetLimits::default()
         };
         let fee_payer_address = message.fee_payer();
         let min_balance = Rent::default().minimum_balance(nonce::state::State::size());
-        let transaction_fee = lamports_per_signature;
         let priority_fee = compute_unit_limit;
 
         // Sufficient Fees
@@ -2560,10 +2553,8 @@ mod tests {
                    &message,
                    tx_details,
                    &environment_blockhash,
-                   FeeStructure::default().lamports_per_signature,
                    &rent_collector,
                    &mut error_counters,
-                   &mock_bank,
                );
 
             let post_validation_fee_payer_account = {
@@ -2621,10 +2612,8 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(None, lamports_per_signature, Ok(compute_budget_and_limits)),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
-                &mock_bank,
                );
 
             assert_eq!(error_counters.insufficient_funds.0, 1);
@@ -2665,13 +2654,13 @@ mod tests {
             CheckedTransactionDetails::new(
                 None,
                 5000,
-                Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
+                Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                    MockBankCallback::calculate_fee_details(&message, 5000, 0),
+                )),
             ),
             &Hash::default(),
-            FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut TransactionErrorMetrics::default(),
-            &mock_bank,
         )
         .unwrap();
 

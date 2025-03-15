@@ -110,13 +110,13 @@ impl TransactionProcessingCallback for MockBankCallback {
             .or_default()
             .push((account, is_writable));
     }
+}
 
-    fn calculate_fee(
-        &self,
+impl MockBankCallback {
+    pub fn calculate_fee_details(
         message: &impl SVMMessage,
         lamports_per_signature: u64,
         prioritization_fee: u64,
-        _feature_set: &FeatureSet,
     ) -> FeeDetails {
         let signature_count = message
             .num_transaction_signatures()
@@ -129,9 +129,7 @@ impl TransactionProcessingCallback for MockBankCallback {
             prioritization_fee,
         )
     }
-}
 
-impl MockBankCallback {
     #[allow(unused)]
     pub fn override_feature_set(&mut self, new_set: FeatureSet) {
         self.feature_set = Arc::new(new_set)

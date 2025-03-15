@@ -80,7 +80,7 @@ impl Default for CheckedTransactionDetails {
                 budget: SVMTransactionExecutionBudget::default(),
                 loaded_accounts_data_size_limit: NonZeroU32::new(32)
                     .expect("Failed to set loaded_accounts_bytes"),
-                priority_fee: 0,
+                fee_details: FeeDetails::default(),
             }),
         }
     }

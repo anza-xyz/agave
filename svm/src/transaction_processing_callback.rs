@@ -1,8 +1,4 @@
-use {
-    solana_account::AccountSharedData, solana_feature_set::FeatureSet,
-    solana_fee_structure::FeeDetails, solana_pubkey::Pubkey,
-    solana_svm_transaction::svm_message::SVMMessage,
-};
+use {solana_account::AccountSharedData, solana_pubkey::Pubkey};
 
 /// Runtime callbacks for transaction processing.
 pub trait TransactionProcessingCallback {
@@ -17,15 +13,6 @@ pub trait TransactionProcessingCallback {
 
     fn get_current_epoch_vote_account_stake(&self, _vote_address: &Pubkey) -> u64 {
         0
-    }
-    fn calculate_fee(
-        &self,
-        _message: &impl SVMMessage,
-        _lamports_per_signature: u64,
-        _prioritization_fee: u64,
-        _feature_set: &FeatureSet,
-    ) -> FeeDetails {
-        FeeDetails::default()
     }
 }
 
