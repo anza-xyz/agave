@@ -7,7 +7,11 @@ use {
 };
 
 mod identity_keyed;
-pub use identity_keyed::LeaderSchedule as IdentityKeyedLeaderSchedule;
+mod vote_keyed;
+pub use {
+    identity_keyed::LeaderSchedule as IdentityKeyedLeaderSchedule,
+    vote_keyed::LeaderSchedule as VoteKeyedLeaderSchedule,
+};
 
 // Used for testing
 #[derive(Clone, Debug)]
@@ -23,6 +27,12 @@ pub trait LeaderScheduleVariant:
 {
     fn get_slot_leaders(&self) -> &[Pubkey];
     fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>>;
+
+    /// Get the vote account address for the given epoch slot index. This is
+    /// guaranteed to be Some if the leader schedule is keyed by vote account
+    fn get_vote_key_at_slot_index(&self, _epoch_slot_index: usize) -> Option<&Pubkey> {
+        None
+    }
 
     fn get_leader_upcoming_slots(
         &self,
@@ -58,7 +68,7 @@ pub trait LeaderScheduleVariant:
     }
 }
 
-// Note: passing in zero stakers will cause a panic.
+// Note: passing in zero keyed stakes will cause a panic.
 fn stake_weighted_slot_leaders(
     mut keyed_stakes: Vec<(&Pubkey, u64)>,
     epoch: Epoch,

@@ -1,5 +1,7 @@
 use {
-    crate::leader_schedule::{IdentityKeyedLeaderSchedule, LeaderSchedule},
+    crate::leader_schedule::{
+        IdentityKeyedLeaderSchedule, LeaderSchedule, VoteKeyedLeaderSchedule,
+    },
     solana_runtime::bank::Bank,
     solana_sdk::{
         clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
@@ -10,15 +12,26 @@ use {
 
 /// Return the leader schedule for the given epoch.
 pub fn leader_schedule(epoch: Epoch, bank: &Bank) -> Option<LeaderSchedule> {
-    bank.epoch_staked_nodes(epoch)
-        .map(|stakes| -> LeaderSchedule {
+    let use_new_leader_schedule = bank.should_use_vote_keyed_leader_schedule(epoch)?;
+    if use_new_leader_schedule {
+        bank.epoch_vote_accounts(epoch).map(|vote_accounts_map| {
+            Box::new(VoteKeyedLeaderSchedule::new(
+                vote_accounts_map,
+                epoch,
+                bank.get_slots_in_epoch(epoch),
+                NUM_CONSECUTIVE_LEADER_SLOTS,
+            )) as LeaderSchedule
+        })
+    } else {
+        bank.epoch_staked_nodes(epoch).map(|stakes| {
             Box::new(IdentityKeyedLeaderSchedule::new(
                 &stakes,
                 epoch,
                 bank.get_slots_in_epoch(epoch),
                 NUM_CONSECUTIVE_LEADER_SLOTS,
-            ))
+            )) as LeaderSchedule
         })
+    }
 }
 
 /// Map of leader base58 identity pubkeys to the slot indices relative to the first epoch slot
@@ -65,27 +78,32 @@ mod tests {
         super::*,
         solana_runtime::genesis_utils::{
             bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
+            deactivate_features,
         },
+        test_case::test_case,
     };
 
-    #[test]
-    fn test_leader_schedule_via_bank() {
+    #[test_case(true; "vote keyed leader schedule")]
+    #[test_case(false; "identity keyed leader schedule")]
+    fn test_leader_schedule_via_bank(use_vote_keyed_leader_schedule: bool) {
         let pubkey = solana_pubkey::new_rand();
-        let genesis_config =
+        let mut genesis_config =
             create_genesis_config_with_leader(0, &pubkey, bootstrap_validator_stake_lamports())
                 .genesis_config;
-        let bank = Bank::new_for_tests(&genesis_config);
 
-        let pubkeys_and_stakes: HashMap<_, _> = bank
-            .current_epoch_staked_nodes()
-            .iter()
-            .map(|(pubkey, stake)| (*pubkey, *stake))
-            .collect();
-        let leader_schedule = IdentityKeyedLeaderSchedule::new(
-            &pubkeys_and_stakes,
-            0,
-            genesis_config.epoch_schedule.slots_per_epoch,
-            NUM_CONSECUTIVE_LEADER_SLOTS,
+        if !use_vote_keyed_leader_schedule {
+            deactivate_features(
+                &mut genesis_config,
+                &vec![solana_feature_set::enable_vote_address_leader_schedule::id()],
+            );
+        }
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let leader_schedule = leader_schedule(0, &bank).unwrap();
+
+        assert_eq!(
+            leader_schedule.get_vote_key_at_slot_index(0).is_some(),
+            use_vote_keyed_leader_schedule
         );
 
         assert_eq!(leader_schedule[0], pubkey);

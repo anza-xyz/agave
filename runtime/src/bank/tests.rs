@@ -14022,3 +14022,67 @@ fn test_rehash_accounts_modified() {
     // let the show begin
     bank.rehash();
 }
+
+#[test]
+fn test_should_use_vote_keyed_leader_schedule() {
+    let genesis_config = genesis_utils::create_genesis_config(10_000).genesis_config;
+    let epoch_schedule = &genesis_config.epoch_schedule;
+    let create_test_bank = |bank_epoch: Epoch, feature_activation_slot: Option<Slot>| -> Bank {
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        bank.epoch = bank_epoch;
+        let mut feature_set = FeatureSet::default();
+        if let Some(feature_activation_slot) = feature_activation_slot {
+            let feature_activation_epoch = bank.epoch_schedule().get_epoch(feature_activation_slot);
+            assert!(feature_activation_epoch <= bank_epoch);
+            feature_set.activate(
+                &solana_feature_set::enable_vote_address_leader_schedule::id(),
+                feature_activation_slot,
+            );
+        }
+        bank.feature_set = Arc::new(feature_set);
+        bank
+    };
+
+    // Test feature activation at genesis
+    let test_bank = create_test_bank(0, Some(0));
+    for epoch in 0..10 {
+        assert_eq!(
+            test_bank.should_use_vote_keyed_leader_schedule(epoch),
+            Some(true),
+        );
+    }
+
+    // Test feature activated in previous epoch
+    let slot_in_prev_epoch = epoch_schedule.get_first_slot_in_epoch(1);
+    let test_bank = create_test_bank(2, Some(slot_in_prev_epoch));
+    for epoch in 0..=(test_bank.epoch + 1) {
+        assert_eq!(
+            test_bank.should_use_vote_keyed_leader_schedule(epoch),
+            Some(epoch >= test_bank.epoch),
+        );
+    }
+
+    // Test feature activated in current epoch
+    let current_epoch_slot = epoch_schedule.get_last_slot_in_epoch(1);
+    let test_bank = create_test_bank(1, Some(current_epoch_slot));
+    for epoch in 0..=(test_bank.epoch + 1) {
+        assert_eq!(
+            test_bank.should_use_vote_keyed_leader_schedule(epoch),
+            Some(epoch > test_bank.epoch),
+        );
+    }
+
+    // Test feature not activated yet
+    let test_bank = create_test_bank(1, None);
+    let max_cached_leader_schedule = epoch_schedule.get_leader_schedule_epoch(test_bank.slot());
+    for epoch in 0..=(max_cached_leader_schedule + 1) {
+        if epoch <= max_cached_leader_schedule {
+            assert_eq!(
+                test_bank.should_use_vote_keyed_leader_schedule(epoch),
+                Some(false),
+            );
+        } else {
+            assert_eq!(test_bank.should_use_vote_keyed_leader_schedule(epoch), None);
+        }
+    }
+}

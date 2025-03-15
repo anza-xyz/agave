@@ -6087,6 +6087,45 @@ impl Bank {
         self.epoch_schedule().get_leader_schedule_epoch(slot)
     }
 
+    /// Returns whether the specified epoch should use the new vote account
+    /// keyed leader schedule
+    pub fn should_use_vote_keyed_leader_schedule(&self, epoch: Epoch) -> Option<bool> {
+        let effective_epoch = self
+            .feature_set
+            .activated_slot(&solana_feature_set::enable_vote_address_leader_schedule::id())
+            .map(|activation_slot| {
+                // If the feature was activated at genesis, then the new leader
+                // schedule should be effective immediately in the first epoch
+                if activation_slot == 0 {
+                    return 0;
+                }
+
+                // Calculate the epoch that the feature became activated in
+                let activation_epoch = self.epoch_schedule.get_epoch(activation_slot);
+
+                // The effective epoch is the epoch immediately after the
+                // activation epoch
+                activation_epoch.wrapping_add(1)
+            });
+
+        // Starting from the effective epoch, always use the new leader schedule
+        if let Some(effective_epoch) = effective_epoch {
+            return Some(epoch >= effective_epoch);
+        }
+
+        // Calculate the max epoch we can cache a leader schedule for
+        let max_cached_leader_schedule = self.get_leader_schedule_epoch(self.slot());
+        if epoch <= max_cached_leader_schedule {
+            // The feature cannot be effective by the specified epoch
+            Some(false)
+        } else {
+            // Cannot determine if an epoch should use the new leader schedule if the
+            // the epoch is too far in the future because we won't know if the feature
+            // will have been activated by then or not.
+            None
+        }
+    }
+
     /// a bank-level cache of vote accounts and stake delegation info
     fn update_stakes_cache(
         &self,
