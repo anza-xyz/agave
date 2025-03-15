@@ -186,16 +186,6 @@ impl VoteStorage {
         )
     }
 
-    pub fn should_process_packet(
-        &self,
-        packet: &Arc<ImmutableDeserializedPacket>,
-        payload: &mut ConsumeScannerPayload,
-        bank: Arc<Bank>,
-        banking_stage_stats: &BankingStageStats,
-    ) -> ProcessingDecision {
-        consume_scan_should_process_packet(&bank, banking_stage_stats, packet, payload)
-    }
-
     // returns `true` if the end of slot is reached
     pub fn process_packets<F>(
         &mut self,
@@ -311,11 +301,11 @@ impl VoteStorage {
         for _ in 0..UNPROCESSED_BUFFER_STEP_SIZE {
             for index in starting_index..packet.len() {
                 if !self.already_handled[index] {
-                    match self.should_process_packet(
+                    match consume_scan_should_process_packet(
+                        &bank,
+                        &banking_stage_stats,
                         &packet[index],
                         payload,
-                        bank.clone(),
-                        &banking_stage_stats,
                     ) {
                         ProcessingDecision::Now => {
                             last_found = Some(index);
