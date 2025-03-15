@@ -408,9 +408,9 @@ impl Crds {
         cursor: &'a mut Cursor,
     ) -> impl Iterator<Item = &'a VersionedCrdsValue> {
         let range = (Bound::Included(cursor.ordinal()), Bound::Unbounded);
-        self.entries.range(range).map(move |(ordinal, index)| {
-            cursor.consume(*ordinal);
-            self.table.index(*index)
+        self.entries.range(range).map(move |(&ordinal, &index)| {
+            cursor.consume(ordinal);
+            self.table.index(index)
         })
     }
 
@@ -470,6 +470,7 @@ impl Crds {
 
     /// Returns all crds values which the first 'mask_bits'
     /// of their hash value is equal to 'mask'.
+    /// Excludes deprecated values.
     pub(crate) fn filter_bitmask(
         &self,
         mask: u64,
@@ -478,6 +479,7 @@ impl Crds {
         self.shards
             .find(mask, mask_bits)
             .map(move |i| self.table.index(i))
+            .filter(|VersionedCrdsValue { value, .. }| !value.data.is_deprecated())
     }
 
     /// Update the timestamp's of all the labels that are associated with Pubkey
