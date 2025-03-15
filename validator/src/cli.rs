@@ -74,7 +74,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         )
         .subcommand(commands::monitor::command())
         .subcommand(SubCommand::with_name("run").about("Run the validator"))
-        .subcommand(commands::plugin::command(default_args))
+        .subcommand(commands::plugin::command())
         .subcommand(commands::set_identity::command())
         .subcommand(commands::set_log_filter::command())
         .subcommand(commands::staked_nodes_overrides::command())
