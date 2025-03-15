@@ -14,7 +14,7 @@ use {
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet,
-    solana_feature_set::{disable_new_loader_v3_deployments, enable_alt_bn128_syscall},
+    solana_feature_set::enable_alt_bn128_syscall,
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
     solana_rpc_client_api::config::RpcTransactionConfig,
@@ -54,8 +54,7 @@ fn test_validator_genesis(mint_keypair: Keypair) -> TestValidatorGenesis {
             exemption_threshold: 1.0,
             ..Rent::default()
         })
-        .faucet_addr(Some(run_local_faucet(mint_keypair, None)))
-        .deactivate_features(&[disable_new_loader_v3_deployments::id()]);
+        .faucet_addr(Some(run_local_faucet(mint_keypair, None)));
     genesis
 }
 
@@ -2926,7 +2925,6 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
             exemption_threshold: 1.0,
             ..Rent::default()
         })
-        .deactivate_features(&[disable_new_loader_v3_deployments::id()])
         .rpc_config(JsonRpcConfig {
             enable_rpc_transaction_history: true,
             faucet_addr: Some(faucet_addr),
