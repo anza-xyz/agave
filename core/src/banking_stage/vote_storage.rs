@@ -30,7 +30,6 @@ const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
 pub struct VoteStorage {
     latest_unprocessed_votes: Arc<LatestUnprocessedVotes>,
     vote_source: VoteSource,
-    already_handled: Vec<bool>,
 }
 
 /// Output from the element checker used in `MultiIteratorScanner::iterate`.
@@ -150,7 +149,6 @@ impl VoteStorage {
         Self {
             latest_unprocessed_votes,
             vote_source,
-            already_handled: Vec::new(),
         }
     }
 
@@ -216,8 +214,6 @@ impl VoteStorage {
             .should_deprecate_legacy_vote_ixs();
 
         let mut payload = get_payload(slot_metrics_tracker);
-        self.already_handled.clear();
-        self.already_handled.resize(all_vote_packets.len(), false);
         let mut starting_index = 0;
         loop {
             let (last_found, payload, vote_packets) = self.march_iterator(
@@ -300,22 +296,18 @@ impl VoteStorage {
             Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
         for _ in 0..UNPROCESSED_BUFFER_STEP_SIZE {
             for index in starting_index..packet.len() {
-                if !self.already_handled[index] {
-                    match consume_scan_should_process_packet(
-                        &bank,
-                        &banking_stage_stats,
-                        &packet[index],
-                        payload,
-                    ) {
-                        ProcessingDecision::Now => {
-                            last_found = Some(index);
-                            self.already_handled[index] = true;
-                            current_items.push(packet[index].clone());
-                            break;
-                        }
-                        ProcessingDecision::Never => {
-                            self.already_handled[index] = true;
-                        }
+                match consume_scan_should_process_packet(
+                    &bank,
+                    &banking_stage_stats,
+                    &packet[index],
+                    payload,
+                ) {
+                    ProcessingDecision::Now => {
+                        last_found = Some(index);
+                        current_items.push(packet[index].clone());
+                        break;
+                    }
+                    ProcessingDecision::Never => {
                     }
                 }
             }
@@ -424,7 +416,6 @@ mod tests {
         let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(0);
         let immutable_packet = Arc::new(ImmutableDeserializedPacket::new(vote.clone())?);
         let mut payload = get_payload(&mut slot_metrics_tracker);
-        transaction_storage.already_handled = vec![false];
 
         let (found, _payload, packets) = transaction_storage.march_iterator(
             0,
