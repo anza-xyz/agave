@@ -79,8 +79,7 @@ impl CostModel {
                 actual_loaded_accounts_data_size_bytes,
                 feature_set,
             );
-            let instructions_data_cost =
-                Self::get_instructions_data_cost(transaction.program_instructions_iter());
+            let instructions_data_cost = Self::get_instructions_data_cost(transaction);
 
             Self::calculate_non_vote_transaction_cost(
                 transaction,
@@ -198,7 +197,7 @@ impl CostModel {
         feature_set: &FeatureSet,
     ) -> (u64, u64, u64) {
         if feature_set.is_active(&feature_set::reserve_minimal_cus_for_builtin_instructions::id()) {
-            let data_bytes_cost = Self::get_instructions_data_cost(instructions);
+            let data_bytes_cost = Self::get_instructions_data_cost(meta);
             let (programs_execution_cost, loaded_accounts_data_size_cost) =
                 Self::get_estimated_execution_cost(meta, feature_set);
             (
@@ -218,7 +217,6 @@ impl CostModel {
     ) -> (u64, u64, u64) {
         let mut programs_execution_costs = 0u64;
         let mut loaded_accounts_data_size_cost = 0u64;
-        let mut data_bytes_len_total = 0u64;
         let mut compute_unit_limit_is_set = false;
         let mut has_user_space_instructions = false;
 
@@ -234,9 +232,6 @@ impl CostModel {
             programs_execution_costs = programs_execution_costs
                 .saturating_add(ix_execution_cost)
                 .min(u64::from(MAX_COMPUTE_UNIT_LIMIT));
-
-            data_bytes_len_total =
-                data_bytes_len_total.saturating_add(instruction.data.len() as u64);
 
             if compute_budget::check_id(program_id) {
                 if let Ok(ComputeBudgetInstruction::SetComputeUnitLimit(_)) =
@@ -281,7 +276,7 @@ impl CostModel {
         (
             programs_execution_costs,
             loaded_accounts_data_size_cost,
-            data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST,
+            Self::get_instructions_data_cost(meta),
         )
     }
 
@@ -310,14 +305,8 @@ impl CostModel {
     }
 
     /// Return the instruction data bytes cost.
-    fn get_instructions_data_cost<'a>(
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
-    ) -> u64 {
-        let ix_data_bytes_len_total: u64 = instructions
-            .map(|(_, instruction)| instruction.data.len() as u64)
-            .sum();
-
-        ix_data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST
+    fn get_instructions_data_cost(transaction: &impl StaticMeta) -> u64 {
+        transaction.instruction_data_len() / INSTRUCTION_DATA_BYTES_COST
     }
 
     pub fn calculate_loaded_accounts_data_size_cost(
