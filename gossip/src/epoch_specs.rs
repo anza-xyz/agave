@@ -17,7 +17,7 @@ use {
 
 // Caches epoch specific information which stay fixed throughout the epoch.
 // Refreshes only if the root bank has moved to a new epoch.
-pub(crate) struct EpochSpecs {
+pub struct EpochSpecs {
     epoch: Epoch, // when fields were last updated.
     epoch_schedule: EpochSchedule,
     root: ReadOnlyAtomicSlot, // updated by bank-forks.
@@ -28,7 +28,7 @@ pub(crate) struct EpochSpecs {
 
 impl EpochSpecs {
     #[inline]
-    pub(crate) fn current_epoch_staked_nodes(&mut self) -> &Arc<HashMap<Pubkey, /*stake:*/ u64>> {
+    pub fn current_epoch_staked_nodes(&mut self) -> &Arc<HashMap<Pubkey, /*stake:*/ u64>> {
         self.maybe_refresh();
         &self.current_epoch_staked_nodes
     }
