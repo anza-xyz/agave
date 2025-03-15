@@ -12,6 +12,31 @@ annotate() {
   }
 }
 
+cargo_build_sbf_sanity() {
+  cargo_build_sbf="$(realpath ./cargo-build-sbf)"
+  pushd programs/sbf
+
+  # Deleting only the SBPF related folders avoids rebuilding the non-SBPF part
+  rm -rf target/deploy
+  rm -rf target/sbpf*
+
+  pushd rust
+
+  mapfile -t rust_programs < <(ls)
+
+  # This is done in a loop to mock how developers invoke `cargo-build-sbf`
+  for program in "${rust_programs[@]}"
+  do
+    pushd "$program"
+    $cargo_build_sbf --arch "$1"
+    popd
+  done
+  popd
+
+  cargo test --features=sbf_rust --test programs -- --skip test_stack_heap_zeroed
+  popd
+}
+
 # Run the appropriate test based on entrypoint
 testName=$(basename "$0" .sh)
 
@@ -57,15 +82,19 @@ test-stable-sbf)
 
   # SBPFv0 program tests
   _ make -C programs/sbf test-v0
+  _ cargo_build_sbf_sanity "v0"
 
   # SBPFv1 program tests
   _ make -C programs/sbf clean-all test-v1
+  _ cargo_build_sbf_sanity "v1"
 
   # SBPFv2 program tests
   _ make -C programs/sbf clean-all test-v2
+  _ cargo_build_sbf_sanity "v2"
 
   # SBPFv3 program tests
   _ make -C programs/sbf clean-all test-v3
+  _ cargo_build_sbf_sanity "v3"
 
   exit 0
   ;;
