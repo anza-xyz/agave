@@ -3,7 +3,7 @@
 #![allow(clippy::items_after_test_module)]
 
 use {
-    agave_feature_set::{disable_new_loader_v3_deployments, enable_alt_bn128_syscall},
+    agave_feature_set::enable_alt_bn128_syscall,
     assert_matches::assert_matches,
     serde_json::Value,
     solana_cli::{
@@ -57,8 +57,7 @@ fn test_validator_genesis(mint_keypair: Keypair) -> TestValidatorGenesis {
             exemption_threshold: 1.0,
             ..Rent::default()
         })
-        .faucet_addr(Some(run_local_faucet(mint_keypair, None)))
-        .deactivate_features(&[disable_new_loader_v3_deployments::id()]);
+        .faucet_addr(Some(run_local_faucet(mint_keypair, None)));
     genesis
 }
 
@@ -2929,7 +2928,6 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
             exemption_threshold: 1.0,
             ..Rent::default()
         })
-        .deactivate_features(&[disable_new_loader_v3_deployments::id()])
         .rpc_config(JsonRpcConfig {
             enable_rpc_transaction_history: true,
             faucet_addr: Some(faucet_addr),
