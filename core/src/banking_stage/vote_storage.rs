@@ -119,19 +119,6 @@ fn consume_scan_should_process_packet(
     }
 }
 
-pub fn get_payload<'b>(
-    slot_metrics_tracker: &'b mut LeaderSlotMetricsTracker,
-) -> ConsumeScannerPayload<'b> {
-    let payload = ConsumeScannerPayload {
-        reached_end_of_slot: false,
-        account_locks: ReadWriteAccountSet::default(),
-        sanitized_transactions: Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE),
-        slot_metrics_tracker,
-        error_counters: TransactionErrorMetrics::default(),
-    };
-    payload
-}
-
 impl VoteStorage {
     pub fn new(
         latest_unprocessed_votes: Arc<LatestUnprocessedVotes>,
@@ -204,7 +191,14 @@ impl VoteStorage {
             .latest_unprocessed_votes
             .should_deprecate_legacy_vote_ixs();
 
-        let mut payload = get_payload(slot_metrics_tracker);
+        let mut payload = ConsumeScannerPayload {
+            reached_end_of_slot: false,
+            account_locks: ReadWriteAccountSet::default(),
+            sanitized_transactions: Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE),
+            slot_metrics_tracker,
+            error_counters: TransactionErrorMetrics::default(),
+        };
+
         let mut starting_index = 0;
         loop {
             let (last_found, payload, vote_packets) = self.march_iterator(
@@ -402,7 +396,13 @@ mod tests {
 
         let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(0);
         let immutable_packet = Arc::new(ImmutableDeserializedPacket::new(vote.clone())?);
-        let mut payload = get_payload(&mut slot_metrics_tracker);
+        let mut payload = ConsumeScannerPayload {
+            reached_end_of_slot: false,
+            account_locks: ReadWriteAccountSet::default(),
+            sanitized_transactions: Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE),
+            slot_metrics_tracker: &mut slot_metrics_tracker,
+            error_counters: TransactionErrorMetrics::default(),
+        };
 
         let (found, _payload, packets) = transaction_storage.march_iterator(
             0,
