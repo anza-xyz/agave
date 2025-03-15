@@ -32,15 +32,6 @@ pub struct VoteStorage {
     vote_source: VoteSource,
 }
 
-/// Output from the element checker used in `MultiIteratorScanner::iterate`.
-#[derive(Debug)]
-pub enum ProcessingDecision {
-    /// Should be processed by the scanner.
-    Now,
-    /// Should be skipped and marked as handled so we don't try processing it again.
-    Never,
-}
-
 /// Convenient wrapper for shared-state between banking stage processing and the
 /// multi-iterator checking function.
 pub struct ConsumeScannerPayload<'a> {
@@ -56,10 +47,10 @@ fn consume_scan_should_process_packet(
     banking_stage_stats: &BankingStageStats,
     packet: &ImmutableDeserializedPacket,
     payload: &mut ConsumeScannerPayload,
-) -> ProcessingDecision {
+) -> bool {
     // If end of the slot, return should process (quick loop after reached end of slot)
     if payload.reached_end_of_slot {
-        return ProcessingDecision::Now;
+        return true;
     }
 
     // Try to sanitize the packet. Ignore deactivation slot since we are
@@ -89,7 +80,7 @@ fn consume_scan_should_process_packet(
         )
         .is_err()
         {
-            return ProcessingDecision::Never;
+            return false;
         }
 
         // Only check fee-payer if we can actually take locks
@@ -104,7 +95,7 @@ fn consume_scan_should_process_packet(
             )
             .is_err()
         {
-            return ProcessingDecision::Never;
+            return false;
         }
 
         // NOTE:
@@ -118,13 +109,13 @@ fn consume_scan_should_process_packet(
         // This prevents lower-priority transactions from taking locks
         // needed by higher-priority txs that were skipped by this check.
         if !payload.account_locks.take_locks(message) {
-            return ProcessingDecision::Never;
+            return false;
         }
 
         payload.sanitized_transactions.push(sanitized_transaction);
-        ProcessingDecision::Now
+        true
     } else {
-        ProcessingDecision::Never
+        false
     }
 }
 
@@ -296,19 +287,15 @@ impl VoteStorage {
             Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
         for _ in 0..UNPROCESSED_BUFFER_STEP_SIZE {
             for index in starting_index..packet.len() {
-                match consume_scan_should_process_packet(
+                if consume_scan_should_process_packet(
                     &bank,
                     &banking_stage_stats,
                     &packet[index],
                     payload,
                 ) {
-                    ProcessingDecision::Now => {
-                        last_found = Some(index);
-                        current_items.push(packet[index].clone());
-                        break;
-                    }
-                    ProcessingDecision::Never => {
-                    }
+                    last_found = Some(index);
+                    current_items.push(packet[index].clone());
+                    break;
                 }
             }
         }
