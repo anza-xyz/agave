@@ -94,6 +94,15 @@ edition = { workspace = true }
 # Minimize their file size so that they fit into the account size limit
 strip = true
 
+# Enable basic optimizations for dev builds and unittests to trigger const propagation and inlining
+[profile.ci]
+inherits = "test"
+opt-level = 1
+
+# Enable optimizations for procmacros for faster codegen
+[profile.ci.build-override]
+opt-level = 1
+
 [features]
 sbf_c = []
 sbf_rust = []
