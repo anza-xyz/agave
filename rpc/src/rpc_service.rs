@@ -28,7 +28,8 @@ use {
     solana_poh::poh_recorder::PohRecorder,
     solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
-        bank_forks::BankForks, commitment::BlockCommitmentCache,
+        bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
+        non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
         snapshot_utils,
@@ -294,12 +295,8 @@ impl RequestMiddleware for RpcRequestMiddleware {
             }
         }
 
-        if let Some(result) = process_rest(&self.bank_forks, request.uri().path()) {
-            hyper::Response::builder()
-                .status(hyper::StatusCode::OK)
-                .body(hyper::Body::from(result))
-                .unwrap()
-                .into()
+        if let Some(path) = match_supply_path(request.uri().path()) {
+            process_rest(&self.bank_forks, path)
         } else if self.is_file_get_path(request.uri().path()) {
             self.process_file_get(request.uri().path())
         } else if request.uri().path() == "/health" {
@@ -314,19 +311,39 @@ impl RequestMiddleware for RpcRequestMiddleware {
     }
 }
 
-fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<String> {
+fn match_supply_path(path: &str) -> Option<&str> {
+    match path {
+        "/v0/circulating-supply" | "/v0/total-supply" => Some(path),
+        _ => None,
+    }
+}
+
+#[derive(Debug)]
+pub enum SupplyCalcError {
+    Scan(String),
+}
+
+async fn calculate_circulating_supply_async(bank: &Arc<Bank>) -> Result<u64, SupplyCalcError> {
+    let total_supply = bank.capitalization();
+    let bank = Arc::clone(bank);
+    let non_circulating_supply =
+        tokio::task::spawn_blocking(move || calculate_non_circulating_supply(&bank))
+            .await
+            .expect("Failed to spawn blocking task")
+            .map_err(|e| SupplyCalcError::Scan(e.to_string()))?;
+
+    Ok(total_supply.saturating_sub(non_circulating_supply.lamports))
+}
+
+async fn handle_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<String> {
     match path {
         "/v0/circulating-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
-            let total_supply = bank.capitalization();
-            let non_circulating_supply =
-                solana_runtime::non_circulating_supply::calculate_non_circulating_supply(&bank)
-                    .expect("Scan should not error on root banks")
-                    .lamports;
-            Some(format!(
-                "{}",
-                lamports_to_sol(total_supply - non_circulating_supply)
-            ))
+            let supply_result = calculate_circulating_supply_async(&bank).await;
+            match supply_result {
+                Ok(supply) => Some(format!("{}", lamports_to_sol(supply))),
+                Err(_) => None,
+            }
         }
         "/v0/total-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
@@ -334,6 +351,25 @@ fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<Strin
             Some(format!("{}", lamports_to_sol(total_supply)))
         }
         _ => None,
+    }
+}
+
+fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> RequestMiddlewareAction {
+    let bank_forks = bank_forks.clone();
+    let path = path.to_string();
+
+    RequestMiddlewareAction::Respond {
+        should_validate_hosts: true,
+        response: Box::pin(async move {
+            let result = handle_rest(&bank_forks, path.as_str()).await;
+            match result {
+                Some(s) => Ok(hyper::Response::builder()
+                    .status(hyper::StatusCode::OK)
+                    .body(hyper::Body::from(s))
+                    .unwrap()),
+                None => Ok(RpcRequestMiddleware::not_found()),
+            }
+        }),
     }
 }
 
@@ -925,12 +961,25 @@ mod tests {
     #[test]
     fn test_process_rest_api() {
         let bank_forks = create_bank_forks();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
 
-        assert_eq!(None, process_rest(&bank_forks, "not-a-supported-rest-api"));
-        assert_eq!(
-            process_rest(&bank_forks, "/v0/circulating-supply"),
-            process_rest(&bank_forks, "/v0/total-supply")
-        );
+        runtime.block_on(async {
+            assert_eq!(
+                None,
+                handle_rest(&bank_forks, "not-a-supported-rest-api").await
+            );
+
+            let circulating_supply = handle_rest(&bank_forks, "/v0/circulating-supply").await;
+            assert!(circulating_supply.is_some());
+
+            let total_supply = handle_rest(&bank_forks, "/v0/total-supply").await;
+            assert!(total_supply.is_some());
+
+            assert_eq!(
+                handle_rest(&bank_forks, "/v0/circulating-supply").await,
+                handle_rest(&bank_forks, "/v0/total-supply").await
+            );
+        });
     }
 
     #[test]
