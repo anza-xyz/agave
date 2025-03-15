@@ -2,7 +2,7 @@ use {
     crate::SHRED_VERSION,
     clap::Subcommand,
     log::error,
-    serde::Deserialize,
+    serde::{Deserialize, Serialize},
     serde_json::json,
     solana_gossip::{
         cluster_info::ClusterInfo,
@@ -18,27 +18,30 @@ use {
     solana_signer::Signer,
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
-    std::{io::stdout, net::SocketAddr, ops::ControlFlow},
+    std::{net::SocketAddr, ops::ControlFlow},
 };
-#[derive(Subcommand, Debug, Deserialize)]
+#[derive(Subcommand, Debug, Serialize, Deserialize)]
 pub(crate) enum Command {
     Exit,
     /// Send a random Vote CRDS
     SendVote,
     /// Send a ping and get pong back (does not actually work yet)
     SendPing {
-        #[arg(short, long)]
+        #[arg(long)]
         target: Pubkey,
+        #[arg(long)]
         target_addr: Option<SocketAddr>,
     },
     /// Return list of peers currently in CRDS
     Peers,
     /// Returns epoch slots inserted since given slot
     EpochSlots {
+        #[arg(short, long)]
         slot: u64,
     },
     /// Returns votes inserted since given slot
     Votes {
+        #[arg(short, long)]
         slot: u64,
     },
     /// Insert a ContactInfo for provided peer
@@ -78,31 +81,26 @@ pub(crate) fn execute_command(
         Command::Exit => return Ok(ControlFlow::Break(())),
         Command::Peers => {
             let peers = cluster_info.all_peers();
-            serde_json::to_writer(stdout(), &peers)?;
-            print!("\n");
-            println!("{}", json!({ "command_ok":true }));
+            println!("{}", json!({ "command_ok":true , "peers": &peers}));
         }
         Command::EpochSlots { slot } => {
             let mut cursor = Cursor::new(slot);
             let epoch_slots = cluster_info.get_epoch_slots(&mut cursor);
-            serde_json::to_writer(stdout(), &epoch_slots)?;
-            print!("\n");
-            println!("{}", json!({ "command_ok":true }));
+            println!("{}", json!({ "command_ok":true , "slots":&epoch_slots}));
         }
         Command::Votes { slot } => {
             let mut cursor = Cursor::new(slot);
             let (labels, votes) = cluster_info.get_votes_with_labels(&mut cursor);
             let senders = labels.into_iter().map(|e| e.pubkey());
             let data: Vec<_> = senders.zip(votes.into_iter()).collect();
-            serde_json::to_writer(stdout(), &data)?;
-            print!("\n");
-            println!("{}", json!({ "command_ok":true }));
+            println!("{}", json!({ "command_ok":true, "votes": &data }));
         }
         Command::SendVote => {
             let mut vote = Transaction::default();
             vote.sign(&[&my_keypair], Hash::new_unique());
-            cluster_info.push_vote(&[42], vote);
-            println!("{}", json!({ "command_ok":true }));
+
+            cluster_info.push_vote(&[42], vote.clone());
+            println!("{}", json!({ "command_ok":true , "vote":vote}));
         }
         Command::InsertContactInfo { keypair, address } => {
             let keypair = keypair
@@ -120,17 +118,24 @@ pub(crate) fn execute_command(
                     .lookup_contact_info(&target, |v| v.gossip())
                     .flatten()
             }) else {
-                println!("{}", json!({ "status":"no address found" }));
-                println!("{}", json!({ "command_ok":false }));
+                println!(
+                    "{}",
+                    json!({ "command_ok":false,"status":"no address found"  })
+                );
                 return Ok(ControlFlow::Continue(()));
             };
             let (state, maybe_pkt) = cluster_info.check_ping(target, target_addr);
-            if let Some(pkt) = maybe_pkt {
+            let ping_sent = if let Some(pkt) = maybe_pkt {
                 let sock = std::net::UdpSocket::bind("0.0.0.0:9999")?;
                 sock.send_to(pkt.data(..).unwrap(), target_addr)?;
-            }
-            println!("{}", json!({ "ping status":state}));
-            println!("{}", json!({ "command_ok":false }));
+                true
+            } else {
+                false
+            };
+            println!(
+                "{}",
+                json!({ "command_ok": true , "ping_cache_status":state, "ping_sent":ping_sent})
+            );
         }
     }
     Ok(ControlFlow::Continue(()))

@@ -31,10 +31,6 @@ struct CliArgs {
     /// Keypair for the node identity. If not provided, a random keypair will be made
     #[arg(short, long)]
     keypair: Option<String>,
-
-    /// Consume and produce JSON instead of human-readable data
-    #[arg(short, long)]
-    json: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -48,7 +44,8 @@ fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
     let exit = Arc::new(AtomicBool::new(false));
 
-    solana_logger::setup_with("info,solana_metrics=error");
+    //solana_logger::setup_with("info,solana_metrics=error");
+    solana_logger::setup_with("error");
 
     let keypair = Arc::new(
         args.keypair
@@ -66,7 +63,7 @@ fn main() -> anyhow::Result<()> {
         false,
         SocketAddrSpace::Unspecified,
     );
-    println!("{{start_node: \"{pubkey}\"}}");
+    println!("{}", json!({ "start_node": pubkey }));
 
     let mut rl = rustyline::DefaultEditor::new()?;
     loop {
@@ -75,12 +72,13 @@ fn main() -> anyhow::Result<()> {
             Ok(line) => line,
             Err(_) => break,
         };
+        rl.add_history_entry(&input_line)?;
 
-        let command = if args.json {
+        let command = if input_line.starts_with("{") {
             match serde_json::from_str::<Command>(&input_line) {
                 Ok(cmd) => cmd,
                 Err(e) => {
-                    println!("{}", json!({"command_error":e.to_string()}));
+                    println!("{}", json!({"command_parse_error":e.to_string()}));
                     continue;
                 }
             }
@@ -88,20 +86,22 @@ fn main() -> anyhow::Result<()> {
             match CliCommand::try_parse_from(
                 std::iter::once("tool").chain(input_line.split(" ").map(|e| e.trim())),
             ) {
-                Ok(cmd) => cmd,
+                Ok(cmd) => {
+                    println!("{}", serde_json::to_string(&cmd.command)?);
+                    cmd.command
+                }
                 Err(e) => {
                     println!("Invalid input provided, {e}");
                     continue;
                 }
             }
-            .command
         };
         if execute_command(&cluster_info, &keypair, command)?.is_break() {
             break;
         }
     }
     exit.store(true, Ordering::Relaxed);
-    println!("{}", json!({ "terminate_node":pubkey }));
+    println!("{}", json!({ "terminate_node": pubkey }));
     gossip_svc.join().map_err(|_e| anyhow!("cannot join"))?;
     Ok(())
 }
