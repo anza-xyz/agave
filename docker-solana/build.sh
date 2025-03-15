@@ -25,6 +25,7 @@ rm -rf usr/
 
 cp -f ../scripts/run.sh usr/bin/solana-run.sh
 cp -f ../fetch-spl.sh usr/bin/
+cp -f ../fetch-programs.sh usr/bin/
 (
   cd usr/bin
   ./fetch-spl.sh
