@@ -31,7 +31,11 @@ threads-required = "num-cpus"
 
 [[profile.ci.overrides]]
 filter = 'package(solana-local-cluster)'
-slow-timeout = { period = "60s", terminate-after = 10 }
+slow-timeout = { period = "60s", terminate-after = 6 }
+
+[[profile.ci.overrides]]
+filter = 'package(solana-local-cluster) & test(/^test_run_test_load_program_accounts_partition_root/)'
+slow-timeout = { period = "60s", terminate-after = 8 }
 
 [[profile.ci.overrides]]
 filter = 'package(solana-cargo-build-sbf)'
