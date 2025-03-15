@@ -141,13 +141,14 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::commands::tests::verify_args_struct_by_command_is_error};
 
     #[test]
     fn verify_args_struct_by_command_plugin_unload_default() {
-        let app = command();
-        let matches = app.get_matches_from_safe(vec![COMMAND, "unload"]);
-        assert!(matches.is_err());
+        verify_args_struct_by_command_is_error::<PluginUnloadArgs>(
+            command(),
+            vec![COMMAND, "unload"],
+        );
     }
 
     #[test]
@@ -166,9 +167,7 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_plugin_load_default() {
-        let app = command();
-        let matches = app.get_matches_from_safe(vec![COMMAND, "load"]);
-        assert!(matches.is_err());
+        verify_args_struct_by_command_is_error::<PluginLoadArgs>(command(), vec![COMMAND, "load"]);
     }
 
     #[test]
@@ -187,16 +186,18 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_plugin_reload_default() {
-        let app = command();
-        let matches = app.get_matches_from_safe(vec![COMMAND, "reload"]);
-        assert!(matches.is_err());
+        verify_args_struct_by_command_is_error::<PluginReloadArgs>(
+            command(),
+            vec![COMMAND, "reload"],
+        );
     }
 
     #[test]
     fn verify_args_struct_by_command_plugin_reload_with_name() {
-        let app = command();
-        let matches = app.get_matches_from_safe(vec![COMMAND, "reload", "testname"]);
-        assert!(matches.is_err());
+        verify_args_struct_by_command_is_error::<PluginReloadArgs>(
+            command(),
+            vec![COMMAND, "reload", "testname"],
+        );
     }
 
     #[test]
