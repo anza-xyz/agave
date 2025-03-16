@@ -9,7 +9,14 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         read_write_account_set::ReadWriteAccountSet,
         BankingStageStats,
-    }, itertools::Itertools, solana_accounts_db::account_locks::validate_account_locks, solana_measure::measure_us, solana_runtime::bank::Bank, solana_runtime_transaction::runtime_transaction::RuntimeTransaction, solana_sdk::transaction::SanitizedTransaction, solana_svm::transaction_error_metrics::TransactionErrorMetrics, std::sync::{atomic::Ordering, Arc}
+    },
+    solana_accounts_db::account_locks::validate_account_locks,
+    solana_measure::measure_us,
+    solana_runtime::bank::Bank,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_sdk::transaction::SanitizedTransaction,
+    solana_svm::transaction_error_metrics::TransactionErrorMetrics,
+    std::sync::{atomic::Ordering, Arc},
 };
 
 // Step-size set to be 64, equal to the maximum batch/entry size. With the
@@ -194,12 +201,12 @@ impl VoteStorage {
 
         for chunk in all_vote_packets.chunks(UNPROCESSED_BUFFER_STEP_SIZE) {
             let mut vote_packets: Vec<Arc<ImmutableDeserializedPacket>> =
-            Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
+                Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
 
             chunk.iter().for_each(|packet| {
                 if consume_scan_should_process_packet(
                     &bank,
-                    &banking_stage_stats,
+                    banking_stage_stats,
                     packet,
                     &mut payload,
                 ) {
@@ -232,7 +239,7 @@ impl VoteStorage {
                     true, // should_replenish_taken_votes
                 );
             }
-        };
+        }
 
         payload.reached_end_of_slot
     }
