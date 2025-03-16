@@ -1,7 +1,5 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
-#[cfg(feature = "svm-internal")]
-use qualifier_attr::qualifiers;
 use {
     ahash::AHashMap,
     lazy_static::lazy_static,
@@ -15,8 +13,7 @@ use {
 };
 
 #[derive(Clone)]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-struct MigratingBuiltinCost {
+pub struct MigratingBuiltinCost {
     native_cost: u64,
     core_bpf_migration_feature: Pubkey,
     // encoding positional information explicitly for migration feature item,
@@ -27,8 +24,7 @@ struct MigratingBuiltinCost {
 }
 
 #[derive(Clone)]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-struct NotMigratingBuiltinCost {
+pub struct NotMigratingBuiltinCost {
     native_cost: u64,
 }
 
@@ -39,8 +35,7 @@ struct NotMigratingBuiltinCost {
 /// When migration completed, eg the feature gate is enabled everywhere, please
 /// remove that builtin entry from MIGRATING_BUILTINS_COSTS.
 #[derive(Clone)]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-enum BuiltinCost {
+pub enum BuiltinCost {
     Migrating(MigratingBuiltinCost),
     NotMigrating(NotMigratingBuiltinCost),
 }
@@ -53,7 +48,6 @@ impl BuiltinCost {
         }
     }
 
-    #[cfg(feature = "svm-internal")]
     fn core_bpf_migration_feature(&self) -> Option<&Pubkey> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost {
@@ -64,7 +58,6 @@ impl BuiltinCost {
         }
     }
 
-    #[cfg(feature = "svm-internal")]
     fn position(&self) -> Option<usize> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost { position, .. }) => Some(*position),
@@ -116,8 +109,7 @@ static_assertions::const_assert_eq!(
     TOTAL_COUNT_BUILTINS
 );
 
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
+pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (
         stake::id(),
         BuiltinCost::Migrating(MigratingBuiltinCost {
@@ -223,17 +215,13 @@ pub fn get_builtin_instruction_cost<'a>(
         .map(|builtin_cost| builtin_cost.native_cost())
 }
 
-#[cfg(feature = "svm-internal")]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-enum BuiltinMigrationFeatureIndex {
+pub enum BuiltinMigrationFeatureIndex {
     NotBuiltin,
     BuiltinNoMigrationFeature,
     BuiltinWithMigrationFeature(usize),
 }
 
-#[cfg(feature = "svm-internal")]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-fn get_builtin_migration_feature_index(program_id: &Pubkey) -> BuiltinMigrationFeatureIndex {
+pub fn get_builtin_migration_feature_index(program_id: &Pubkey) -> BuiltinMigrationFeatureIndex {
     BUILTIN_INSTRUCTION_COSTS.get(program_id).map_or(
         BuiltinMigrationFeatureIndex::NotBuiltin,
         |builtin_cost| {
@@ -266,9 +254,7 @@ const _: () = validate_position(MIGRATING_BUILTINS_COSTS);
 
 /// Helper function to return ref of migration feature Pubkey at position `index`
 /// from MIGRATING_BUILTINS_COSTS
-#[cfg(feature = "svm-internal")]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-pub(crate) fn get_migration_feature_id(index: usize) -> &'static Pubkey {
+pub fn get_migration_feature_id(index: usize) -> &'static Pubkey {
     MIGRATING_BUILTINS_COSTS
         .get(index)
         .expect("valid index of MIGRATING_BUILTINS_COSTS")

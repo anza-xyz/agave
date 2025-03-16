@@ -6811,11 +6811,9 @@ dependencies = [
  "ahash 0.8.11",
  "lazy_static",
  "log",
- "qualifier_attr",
  "rand 0.8.5",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
- "solana-builtins-default-costs",
  "solana-compute-budget-program",
  "solana-config-program",
  "solana-feature-set",
@@ -7267,7 +7265,6 @@ dependencies = [
 name = "solana-compute-budget-program"
 version = "2.3.0"
 dependencies = [
- "qualifier_attr",
  "solana-program-runtime",
 ]
 
