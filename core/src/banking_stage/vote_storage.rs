@@ -9,14 +9,7 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         read_write_account_set::ReadWriteAccountSet,
         BankingStageStats,
-    },
-    solana_accounts_db::account_locks::validate_account_locks,
-    solana_measure::measure_us,
-    solana_runtime::bank::Bank,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::transaction::SanitizedTransaction,
-    solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    std::sync::{atomic::Ordering, Arc},
+    }, itertools::Itertools, solana_accounts_db::account_locks::validate_account_locks, solana_measure::measure_us, solana_runtime::bank::Bank, solana_runtime_transaction::runtime_transaction::RuntimeTransaction, solana_sdk::transaction::SanitizedTransaction, solana_svm::transaction_error_metrics::TransactionErrorMetrics, std::sync::{atomic::Ordering, Arc}
 };
 
 // Step-size set to be 64, equal to the maximum batch/entry size. With the
@@ -199,21 +192,22 @@ impl VoteStorage {
             error_counters: TransactionErrorMetrics::default(),
         };
 
-        let mut starting_index = 0;
-        loop {
-            let (last_found, payload, vote_packets) = self.march_iterator(
-                starting_index,
-                &all_vote_packets,
-                &mut payload,
-                bank.clone(),
-                banking_stage_stats,
-            );
-            if vote_packets.is_empty() || last_found.is_none() {
-                break;
-            }
-            starting_index = last_found.unwrap() + 1;
+        for chunk in all_vote_packets.chunks(UNPROCESSED_BUFFER_STEP_SIZE) {
+            let mut vote_packets: Vec<Arc<ImmutableDeserializedPacket>> =
+            Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
 
-            if let Some(retryable_vote_indices) = processing_function(&vote_packets, payload) {
+            chunk.iter().for_each(|packet| {
+                if consume_scan_should_process_packet(
+                    &bank,
+                    &banking_stage_stats,
+                    packet,
+                    &mut payload,
+                ) {
+                    vote_packets.push(packet.clone());
+                }
+            });
+
+            if let Some(retryable_vote_indices) = processing_function(&vote_packets, &mut payload) {
                 self.latest_unprocessed_votes.insert_batch(
                     retryable_vote_indices.iter().filter_map(|i| {
                         LatestValidatorVotePacket::new_from_immutable(
@@ -238,7 +232,7 @@ impl VoteStorage {
                     true, // should_replenish_taken_votes
                 );
             }
-        }
+        };
 
         payload.reached_end_of_slot
     }
@@ -259,41 +253,6 @@ impl VoteStorage {
         // The gossip vote thread does not need to process or forward any votes, that is
         // handled by the tpu vote thread
         matches!(self.vote_source, VoteSource::Gossip)
-    }
-
-    /// Processes UNPROCESSED_BUFFER_STEP_SIZE packets at a time, returning the index of the first
-    /// packet that should be processed, the updated payload, and the packets that should be
-    /// processed.
-    pub fn march_iterator<'a, 'b>(
-        &mut self,
-        starting_index: usize,
-        packet: &Vec<Arc<ImmutableDeserializedPacket>>,
-        payload: &'b mut ConsumeScannerPayload<'a>,
-        bank: Arc<Bank>,
-        banking_stage_stats: &BankingStageStats,
-    ) -> (
-        Option<usize>,
-        &'b mut ConsumeScannerPayload<'a>,
-        Vec<Arc<ImmutableDeserializedPacket>>,
-    ) {
-        let mut last_found = None;
-        let mut current_items: Vec<Arc<ImmutableDeserializedPacket>> =
-            Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
-        for _ in 0..UNPROCESSED_BUFFER_STEP_SIZE {
-            for index in starting_index..packet.len() {
-                if consume_scan_should_process_packet(
-                    &bank,
-                    &banking_stage_stats,
-                    &packet[index],
-                    payload,
-                ) {
-                    last_found = Some(index);
-                    current_items.push(packet[index].clone());
-                    break;
-                }
-            }
-        }
-        (last_found, payload, current_items)
     }
 }
 
@@ -362,58 +321,6 @@ mod tests {
 
         // All packets should remain in the transaction storage
         assert_eq!(1, transaction_storage.len());
-        Ok(())
-    }
-
-    #[test]
-    fn test_march_iterator() -> Result<(), Box<dyn Error>> {
-        let node_keypair = Keypair::new();
-        let genesis_config =
-            genesis_utils::create_genesis_config_with_leader(100, &node_keypair.pubkey(), 200)
-                .genesis_config;
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let vote_keypair = Keypair::new();
-        let mut vote = Packet::from_data(
-            None,
-            new_tower_sync_transaction(
-                TowerSync::default(),
-                Hash::new_unique(),
-                &node_keypair,
-                &vote_keypair,
-                &vote_keypair,
-                None,
-            ),
-        )?;
-        vote.meta_mut().flags.set(PacketFlags::SIMPLE_VOTE_TX, true);
-
-        let latest_unprocessed_votes =
-            LatestUnprocessedVotes::new_for_tests(&[vote_keypair.pubkey()]);
-        let mut transaction_storage =
-            VoteStorage::new(Arc::new(latest_unprocessed_votes), VoteSource::Tpu);
-
-        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(vote.clone())?]);
-        assert_eq!(1, transaction_storage.len());
-
-        let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(0);
-        let immutable_packet = Arc::new(ImmutableDeserializedPacket::new(vote.clone())?);
-        let mut payload = ConsumeScannerPayload {
-            reached_end_of_slot: false,
-            account_locks: ReadWriteAccountSet::default(),
-            sanitized_transactions: Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE),
-            slot_metrics_tracker: &mut slot_metrics_tracker,
-            error_counters: TransactionErrorMetrics::default(),
-        };
-
-        let (found, _payload, packets) = transaction_storage.march_iterator(
-            0,
-            &vec![immutable_packet.clone()],
-            &mut payload,
-            bank.clone(),
-            &BankingStageStats::default(),
-        );
-
-        assert!(found.is_some());
-        assert_eq!(packets.len(), 1);
         Ok(())
     }
 }
