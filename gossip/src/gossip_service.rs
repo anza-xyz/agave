@@ -66,7 +66,7 @@ impl GossipService {
             request_sender,
             Recycler::default(),
             gossip_receiver_stats.clone(),
-            Some(Duration::from_millis(1)), // coalesce
+            None, // coalesce
             false,
             None,
             false,
