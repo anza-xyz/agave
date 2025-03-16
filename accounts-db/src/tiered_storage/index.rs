@@ -1,7 +1,10 @@
 use {
-    crate::tiered_storage::{
+    crate::{
+        test_assert,
+        tiered_storage::{
         file::TieredWritableFile, footer::TieredStorageFooter, mmap_utils::get_pod,
         TieredStorageResult,
+        },
     },
     bytemuck::{Pod, Zeroable},
     memmap2::Mmap,
@@ -85,13 +88,13 @@ impl IndexBlockFormat {
     ) -> TieredStorageResult<&'a Pubkey> {
         let offset = match self {
             Self::AddressesThenOffsets => {
-                debug_assert!(index_offset.0 < footer.account_entry_count);
+                test_assert!(index_offset.0 < footer.account_entry_count);
                 footer.index_block_offset as usize
                     + std::mem::size_of::<Pubkey>() * (index_offset.0 as usize)
             }
         };
 
-        debug_assert!(
+        test_assert!(
             offset.saturating_add(std::mem::size_of::<Pubkey>())
                 <= footer.owners_block_offset as usize,
             "reading IndexOffset ({}) would exceed index block boundary ({}).",
@@ -112,14 +115,14 @@ impl IndexBlockFormat {
     ) -> TieredStorageResult<Offset> {
         let offset = match self {
             Self::AddressesThenOffsets => {
-                debug_assert!(index_offset.0 < footer.account_entry_count);
+                test_assert!(index_offset.0 < footer.account_entry_count);
                 footer.index_block_offset as usize
                     + std::mem::size_of::<Pubkey>() * footer.account_entry_count as usize
                     + std::mem::size_of::<Offset>() * index_offset.0 as usize
             }
         };
 
-        debug_assert!(
+        test_assert!(
             offset.saturating_add(std::mem::size_of::<Offset>())
                 <= footer.owners_block_offset as usize,
             "reading IndexOffset ({}) would exceed index block boundary ({}).",
