@@ -1,5 +1,8 @@
 use {
-    crate::{admin_rpc_service, commands::FromClapArgMatches},
+    crate::{
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{App, Arg, ArgMatches, SubCommand},
     solana_cli_output::OutputFormat,
     std::path::Path,
@@ -13,7 +16,7 @@ pub struct ContactInfoArgs {
 }
 
 impl FromClapArgMatches for ContactInfoArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(ContactInfoArgs {
             output: OutputFormat::from_matches(matches, "output", false),
         })
@@ -33,13 +36,12 @@ pub fn command<'a>() -> App<'a, 'a> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let contact_info_args = ContactInfoArgs::from_clap_arg_match(matches)?;
 
     let admin_client = admin_rpc_service::connect(ledger_path);
     let contact_info = admin_rpc_service::runtime()
-        .block_on(async move { admin_client.await?.contact_info().await })
-        .map_err(|err| format!("contact info request failed: {err}"))?;
+        .block_on(async move { admin_client.await?.contact_info().await })?;
 
     println!(
         "{}",

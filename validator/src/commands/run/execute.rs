@@ -94,7 +94,7 @@ pub fn execute(
     socket_addr_space: SocketAddrSpace,
     ledger_path: &Path,
     operation: Operation,
-) -> Result<(), String> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let cli::thread_args::NumThreadConfig {
         accounts_db_clean_threads,
         accounts_db_foreground_threads,

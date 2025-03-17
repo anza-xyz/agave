@@ -1,7 +1,7 @@
 use {
     crate::{
         admin_rpc_service,
-        commands::{monitor, wait_for_restart_window, FromClapArgMatches},
+        commands::{monitor, wait_for_restart_window, FromClapArgMatches, Result},
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::{is_parsable, is_valid_percentage},
@@ -24,7 +24,7 @@ pub struct ExitArgs {
 }
 
 impl FromClapArgMatches for ExitArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(ExitArgs {
             force: matches.is_present("force"),
             monitor: matches.is_present("monitor"),
@@ -87,7 +87,7 @@ pub fn command<'a>() -> App<'a, 'a> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let exit_args = ExitArgs::from_clap_arg_match(matches)?;
 
     if !exit_args.force {
@@ -98,14 +98,11 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
             exit_args.max_delinquent_stake,
             exit_args.skip_new_snapshot_check,
             exit_args.skip_health_check,
-        )
-        .map_err(|err| format!("error waiting for restart window: {err}"))?;
+        )?;
     }
 
     let admin_client = admin_rpc_service::connect(ledger_path);
-    admin_rpc_service::runtime()
-        .block_on(async move { admin_client.await?.exit().await })
-        .map_err(|err| format!("exit request failed: {err}"))?;
+    admin_rpc_service::runtime().block_on(async move { admin_client.await?.exit().await })?;
     println!("Exit request sent");
 
     if exit_args.monitor {

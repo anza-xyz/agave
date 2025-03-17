@@ -1,5 +1,8 @@
 use {
-    crate::{admin_rpc_service, commands::FromClapArgMatches},
+    crate::{
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     std::path::Path,
 };
@@ -12,9 +15,9 @@ pub struct PluginUnloadArgs {
 }
 
 impl FromClapArgMatches for PluginUnloadArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(PluginUnloadArgs {
-            name: value_t!(matches, "name", String).map_err(|_| "invalid name".to_string())?,
+            name: value_t!(matches, "name", String)?,
         })
     }
 }
@@ -25,10 +28,9 @@ pub struct PluginLoadArgs {
 }
 
 impl FromClapArgMatches for PluginLoadArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(PluginLoadArgs {
-            config: value_t!(matches, "config", String)
-                .map_err(|_| "invalid config".to_string())?,
+            config: value_t!(matches, "config", String)?,
         })
     }
 }
@@ -40,11 +42,10 @@ pub struct PluginReloadArgs {
 }
 
 impl FromClapArgMatches for PluginReloadArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(PluginReloadArgs {
-            name: value_t!(matches, "name", String).map_err(|_| "invalid name".to_string())?,
-            config: value_t!(matches, "config", String)
-                .map_err(|_| "invalid config".to_string())?,
+            name: value_t!(matches, "name", String)?,
+            config: value_t!(matches, "config", String)?,
         })
     }
 }
@@ -82,13 +83,12 @@ pub fn command<'a>() -> App<'a, 'a> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     match matches.subcommand() {
         ("list", _) => {
             let admin_client = admin_rpc_service::connect(ledger_path);
             let plugins = admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.list_plugins().await })
-                .map_err(|err| format!("list plugins request failed: {err}"))?;
+                .block_on(async move { admin_client.await?.list_plugins().await })?;
             if !plugins.is_empty() {
                 println!("Currently the following plugins are loaded:");
                 for (plugin, i) in plugins.into_iter().zip(1..) {
@@ -104,8 +104,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
 
             let admin_client = admin_rpc_service::connect(ledger_path);
             admin_rpc_service::runtime()
-                .block_on(async { admin_client.await?.unload_plugin(name.clone()).await })
-                .map_err(|err| format!("unload plugin request failed: {err:?}"))?;
+                .block_on(async { admin_client.await?.unload_plugin(name.clone()).await })?;
             println!("Successfully unloaded plugin: {name}");
         }
         ("load", Some(subcommand_matches)) => {
@@ -114,8 +113,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
 
             let admin_client = admin_rpc_service::connect(ledger_path);
             let name = admin_rpc_service::runtime()
-                .block_on(async { admin_client.await?.load_plugin(config.clone()).await })
-                .map_err(|err| format!("load plugin request failed {config}: {err:?}"))?;
+                .block_on(async { admin_client.await?.load_plugin(config.clone()).await })?;
             println!("Successfully loaded plugin: {name}");
         }
         ("reload", Some(subcommand_matches)) => {
@@ -123,14 +121,12 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
                 PluginReloadArgs::from_clap_arg_match(subcommand_matches)?;
 
             let admin_client = admin_rpc_service::connect(ledger_path);
-            admin_rpc_service::runtime()
-                .block_on(async {
-                    admin_client
-                        .await?
-                        .reload_plugin(name.clone(), config.clone())
-                        .await
-                })
-                .map_err(|err| format!("reload plugin request failed {name}: {err:?}"))?;
+            admin_rpc_service::runtime().block_on(async {
+                admin_client
+                    .await?
+                    .reload_plugin(name.clone(), config.clone())
+                    .await
+            })?;
             println!("Successfully reloaded plugin: {name}");
         }
         _ => unreachable!(),

@@ -1,5 +1,8 @@
 use {
-    crate::{admin_rpc_service, commands::FromClapArgMatches},
+    crate::{
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::is_keypair,
     solana_sdk::signature::{read_keypair, Signer},
@@ -15,7 +18,7 @@ pub struct AuthorizedVoterAddArgs {
 }
 
 impl FromClapArgMatches for AuthorizedVoterAddArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(AuthorizedVoterAddArgs {
             authorized_voter_keypair: value_t!(matches, "authorized_voter_keypair", String).ok(),
         })
@@ -54,7 +57,7 @@ pub fn command<'a>() -> App<'a, 'a> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     match matches.subcommand() {
         ("add", Some(subcommand_matches)) => {
             let authorized_voter_add_args =
@@ -63,52 +66,43 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
             if let Some(authorized_voter_keypair) =
                 authorized_voter_add_args.authorized_voter_keypair
             {
-                let authorized_voter_keypair = fs::canonicalize(&authorized_voter_keypair)
-                    .map_err(|err| {
-                        format!("unable to access path {authorized_voter_keypair}: {err:?}")
-                    })?;
-
+                let authorized_voter_keypair = fs::canonicalize(&authorized_voter_keypair)?;
                 println!(
                     "Adding authorized voter path: {}",
                     authorized_voter_keypair.display()
                 );
 
                 let admin_client = admin_rpc_service::connect(ledger_path);
-                admin_rpc_service::runtime()
-                    .block_on(async move {
-                        admin_client
-                            .await?
-                            .add_authorized_voter(authorized_voter_keypair.display().to_string())
-                            .await
-                    })
-                    .map_err(|err| format!("add authorized voter request failed: {err}"))?;
+                admin_rpc_service::runtime().block_on(async move {
+                    admin_client
+                        .await?
+                        .add_authorized_voter(authorized_voter_keypair.display().to_string())
+                        .await
+                })?;
             } else {
                 let mut stdin = std::io::stdin();
-                let authorized_voter_keypair = read_keypair(&mut stdin)
-                    .map_err(|err| format!("unable to read json keypair from stdin: {err:?}"))?;
+                let authorized_voter_keypair = read_keypair(&mut stdin)?;
                 println!(
                     "Adding authorized voter: {}",
                     authorized_voter_keypair.pubkey()
                 );
 
                 let admin_client = admin_rpc_service::connect(ledger_path);
-                admin_rpc_service::runtime()
-                    .block_on(async move {
-                        admin_client
-                            .await?
-                            .add_authorized_voter_from_bytes(Vec::from(
-                                authorized_voter_keypair.to_bytes(),
-                            ))
-                            .await
-                    })
-                    .map_err(|err| format!("add authorized voter request failed: {err}"))?;
+                admin_rpc_service::runtime().block_on(async move {
+                    admin_client
+                        .await?
+                        .add_authorized_voter_from_bytes(Vec::from(
+                            authorized_voter_keypair.to_bytes(),
+                        ))
+                        .await
+                })?;
             }
         }
         ("remove-all", _) => {
             let admin_client = admin_rpc_service::connect(ledger_path);
-            admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.remove_all_authorized_voters().await })
-                .map_err(|err| format!("remove all authorized voters request failed: {err}"))?;
+            admin_rpc_service::runtime().block_on(async move {
+                admin_client.await?.remove_all_authorized_voters().await
+            })?;
             println!("All authorized voters removed");
         }
         _ => unreachable!(),

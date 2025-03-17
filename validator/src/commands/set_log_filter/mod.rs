@@ -1,5 +1,8 @@
 use {
-    crate::{admin_rpc_service, commands::FromClapArgMatches},
+    crate::{
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{value_t, App, Arg, ArgMatches, SubCommand},
     std::path::Path,
 };
@@ -12,9 +15,9 @@ pub struct SetLogFilterArgs {
 }
 
 impl FromClapArgMatches for SetLogFilterArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(SetLogFilterArgs {
-            filter: value_t!(matches, "filter", String).map_err(|e| e.to_string())?,
+            filter: value_t!(matches, "filter", String)?,
         })
     }
 }
@@ -31,18 +34,18 @@ pub fn command<'a>() -> App<'a, 'a> {
         .after_help("Note: the new filter only applies to the currently running validator instance")
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let set_log_filter_args = SetLogFilterArgs::from_clap_arg_match(matches)?;
 
     let admin_client = admin_rpc_service::connect(ledger_path);
-    admin_rpc_service::runtime()
-        .block_on(async move {
-            admin_client
-                .await?
-                .set_log_filter(set_log_filter_args.filter)
-                .await
-        })
-        .map_err(|err| format!("set log filter request failed: {err}"))
+    admin_rpc_service::runtime().block_on(async move {
+        admin_client
+            .await?
+            .set_log_filter(set_log_filter_args.filter)
+            .await
+    })?;
+
+    Ok(())
 }
 
 #[cfg(test)]
