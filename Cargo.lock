@@ -10548,6 +10548,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-keypair",
  "solana-measure",
+ "solana-metrics",
  "solana-pubkey",
  "solana-quic-definitions",
  "solana-rpc-client",

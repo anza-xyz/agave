@@ -5,13 +5,8 @@ use {
     super::QuicError,
     quinn::{ConnectError, ConnectionError, WriteError},
     std::{
-        collections::HashMap,
         fmt,
-        net::IpAddr,
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            Arc,
-        },
+        sync::atomic::{AtomicU64, Ordering},
     },
 };
 
@@ -123,8 +118,6 @@ pub fn record_error(err: QuicError, stats: &SendTransactionStats) {
     }
 }
 
-pub type SendTransactionStatsPerAddr = HashMap<IpAddr, Arc<SendTransactionStats>>;
-
 macro_rules! display_send_transaction_stats_body {
     ($self:ident, $f:ident, $($field:ident),* $(,)?) => {
         write!(
@@ -176,6 +169,13 @@ macro_rules! define_non_atomic_struct_for {
         }
 
         impl $atomic_name {
+            /// Fully resets the content to zeros, returning stored values
+            pub fn read_and_reset(&self) -> $name {
+                            $name {
+                                $($field: self.$field.swap(0, Ordering::Relaxed)),*
+                            }
+                        }
+            /// Returns contents as non-atomic types
             pub fn to_non_atomic(&self) -> $name {
                 $name {
                     $($field: self.$field.load(Ordering::Relaxed)),*

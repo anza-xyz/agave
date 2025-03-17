@@ -43,7 +43,7 @@ impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
     }
 }
 
-impl CreateClient for TpuClientNextClient<NullTpuInfo> {
+impl CreateClient for TpuClientNextClient {
     fn create_client(
         maybe_runtime: Option<Handle>,
         my_tpu_address: SocketAddr,
@@ -52,7 +52,7 @@ impl CreateClient for TpuClientNextClient<NullTpuInfo> {
     ) -> Self {
         let runtime_handle =
             maybe_runtime.expect("Runtime should be provided for the TpuClientNextClient.");
-        Self::new(
+        Self::new::<NullTpuInfo>(
             runtime_handle,
             my_tpu_address,
             tpu_peers,
@@ -74,10 +74,7 @@ where
     fn stop(&self) {}
 }
 
-impl<T> Stoppable for TpuClientNextClient<T>
-where
-    T: TpuInfoWithSendStatic + Clone,
-{
+impl Stoppable for TpuClientNextClient {
     fn stop(&self) {
         self.cancel().unwrap();
     }
