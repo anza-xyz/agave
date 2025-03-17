@@ -98,13 +98,10 @@ pub fn main() {
 
     // The non_vote_receiver will forward the verified transactions to its configured validator
     let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-
     let destinations = args.destination;
 
     let rpc_servers = args.rpc_server;
-
     let websocket_servers = args.websocket_server;
-
     let servers = rpc_servers
         .iter()
         .zip(websocket_servers.iter())
