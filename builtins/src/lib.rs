@@ -154,17 +154,7 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
     }),
 ];
 
-pub static STATELESS_BUILTINS: &[StatelessBuiltinPrototype] = &[StatelessBuiltinPrototype {
-    core_bpf_migration_config: Some(CoreBpfMigrationConfig {
-        source_buffer_address: buffer_accounts::feature_gate_program::id(),
-        upgrade_authority_address: None,
-        feature_id: solana_feature_set::migrate_feature_gate_program_to_core_bpf::id(),
-        migration_target: CoreBpfMigrationTargetType::Stateless,
-        datapoint_name: "migrate_stateless_to_core_bpf_feature_gate_program",
-    }),
-    name: "feature_gate_program",
-    program_id: solana_sdk_ids::feature::id(),
-}];
+pub static STATELESS_BUILTINS: &[StatelessBuiltinPrototype] = &[];
 
 /// Live source buffer accounts for builtin migrations.
 mod buffer_accounts {
@@ -173,9 +163,6 @@ mod buffer_accounts {
     }
     pub mod config_program {
         solana_pubkey::declare_id!("BuafH9fBv62u6XjzrzS4ZjAE8963ejqF5rt1f8Uga4Q3");
-    }
-    pub mod feature_gate_program {
-        solana_pubkey::declare_id!("3D3ydPWvmEszrSjrickCtnyRSJm1rzbbSsZog8Ub6vLh");
     }
     pub mod stake_program {
         solana_pubkey::declare_id!("8t3vv6v99tQA6Gp7fVdsBH66hQMaswH5qsJVqJqo8xvG");
@@ -413,7 +400,5 @@ mod tests {
             &super::BUILTINS[11].core_bpf_migration_config,
             &Some(super::test_only::zk_elgamal_proof_program::CONFIG)
         );
-        // Feature Gate has a live migration config, so it has no test-only
-        // configs to test here.
     }
 }

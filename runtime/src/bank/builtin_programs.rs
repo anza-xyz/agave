@@ -74,7 +74,7 @@ mod tests_core_bpf_migration {
         solana_builtins::{
             core_bpf_migration::CoreBpfMigrationConfig,
             prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
-            BUILTINS, STATELESS_BUILTINS,
+            BUILTINS,
         },
         solana_feature_set::FeatureSet,
         solana_program_runtime::loaded_programs::ProgramCacheEntry,
@@ -127,6 +127,8 @@ mod tests_core_bpf_migration {
 
     enum TestPrototype<'a> {
         Builtin(&'a BuiltinPrototype),
+        #[allow(unused)]
+        // We aren't migrating any stateless builtins right now. Uncomment if needed.
         Stateless(&'a StatelessBuiltinPrototype),
     }
     impl<'a> TestPrototype<'a> {
@@ -157,7 +159,6 @@ mod tests_core_bpf_migration {
     #[test_case(TestPrototype::Builtin(&BUILTINS[4]); "bpf_loader_deprecated")]
     #[test_case(TestPrototype::Builtin(&BUILTINS[5]); "bpf_loader")]
     #[test_case(TestPrototype::Builtin(&BUILTINS[8]); "address_lookup_table")]
-    #[test_case(TestPrototype::Stateless(&STATELESS_BUILTINS[0]); "feature_gate")]
     fn test_core_bpf_migration(prototype: TestPrototype) {
         let (mut genesis_config, mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
