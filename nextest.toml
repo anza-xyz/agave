@@ -70,6 +70,10 @@ filter = 'package(solana-core) & test(/^test_slots_to_snapshot::v1_2_0_mainnetbe
 slow-timeout = { period = "60s", terminate-after = 2 }
 
 [[profile.ci.overrides]]
+filter = 'package(solana-core) & test(/^test_snapshots_have_expected_epoch_accounts_hash/)'
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+[[profile.ci.overrides]]
 filter = 'package(solana-client-test) & test(/^test_send_and_confirm_transactions_in_parallel_with_tpu_client/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
