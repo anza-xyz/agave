@@ -277,7 +277,7 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
                 start_bound: Unbounded,
                 end_bound: Unbounded,
                 start_bin: 0,
-                end_bin_inclusive: index.account_maps.len() - 1,
+                end_bin_inclusive: index.account_maps.len().saturating_sub(1),
                 is_finished: false,
                 bin_range: Vec::new(),
                 returns_items,
