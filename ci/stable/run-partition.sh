@@ -27,6 +27,7 @@ fi
 
 ARGS=(
   --profile ci
+  --cargo-profile ci
   --config-file ./nextest.toml
   --workspace
   --tests
