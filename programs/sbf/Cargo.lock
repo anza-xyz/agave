@@ -6483,6 +6483,7 @@ dependencies = [
 name = "solana-ledger"
 version = "2.3.0"
 dependencies = [
+ "anyhow",
  "assert_matches",
  "bincode",
  "bitflags 2.9.0",
@@ -6523,6 +6524,7 @@ dependencies = [
  "solana-feature-set",
  "solana-measure",
  "solana-metrics",
+ "solana-net-utils",
  "solana-perf",
  "solana-program-runtime",
  "solana-pubkey",
