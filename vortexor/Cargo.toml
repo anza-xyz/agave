@@ -37,6 +37,7 @@ signal-hook = { workspace = true }
 smallvec = { workspace = true }
 socket2 = { workspace = true }
 solana-clap-utils = { workspace = true }
+solana-client = { workspace = true }
 solana-core = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
@@ -50,6 +51,7 @@ solana-version = { workspace = true }
 
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+url = { workspace = true }
 x509-parser = { workspace = true }
 
 [dev-dependencies]
