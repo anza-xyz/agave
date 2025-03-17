@@ -1,13 +1,11 @@
 use {
     super::{
-        consumer::Consumer,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         latest_unprocessed_votes::{
             LatestUnprocessedVotes, LatestValidatorVotePacket, VoteBatchInsertionMetrics,
             VoteSource,
         },
         leader_slot_metrics::LeaderSlotMetricsTracker,
-        read_write_account_set::ReadWriteAccountSet,
         BankingStageStats,
     },
     solana_accounts_db::account_locks::validate_account_locks,
@@ -36,7 +34,6 @@ pub struct VoteStorage {
 /// multi-iterator checking function.
 pub struct ConsumeScannerPayload<'a> {
     pub reached_end_of_slot: bool,
-    pub account_locks: ReadWriteAccountSet,
     pub sanitized_transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
     pub slot_metrics_tracker: &'a mut LeaderSlotMetricsTracker,
     pub error_counters: TransactionErrorMetrics,
@@ -80,35 +77,6 @@ fn consume_scan_should_process_packet(
         )
         .is_err()
         {
-            return false;
-        }
-
-        // Only check fee-payer if we can actually take locks
-        // We do not immediately discard on check lock failures here,
-        // because the priority guard requires that we always take locks
-        // except in the cases of discarding transactions (i.e. `Never`).
-        if payload.account_locks.check_locks(message)
-            && Consumer::check_fee_payer_unlocked(
-                bank,
-                &sanitized_transaction,
-                &mut payload.error_counters,
-            )
-            .is_err()
-        {
-            return false;
-        }
-
-        // NOTE:
-        //   This must be the last operation before adding the transaction to the
-        //   sanitized_transactions vector. Otherwise, a transaction could
-        //   be blocked by a transaction that did not take batch locks. This
-        //   will lead to some transactions never being processed, and a
-        //   mismatch in the priority-queue and hash map sizes.
-        //
-        // Always take locks during batch creation.
-        // This prevents lower-priority transactions from taking locks
-        // needed by higher-priority txs that were skipped by this check.
-        if !payload.account_locks.take_locks(message) {
             return false;
         }
 
@@ -193,7 +161,6 @@ impl VoteStorage {
 
         let mut payload = ConsumeScannerPayload {
             reached_end_of_slot: false,
-            account_locks: ReadWriteAccountSet::default(),
             sanitized_transactions: Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE),
             slot_metrics_tracker,
             error_counters: TransactionErrorMetrics::default(),
