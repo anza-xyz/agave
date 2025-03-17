@@ -4007,8 +4007,8 @@ pub mod tests {
 
         let range = (Excluded(key), Excluded(key));
         let (start, end) = index.bin_start_end_inclusive(&range);
-        assert_eq!(start, bins - 1); // start at highest possible pubkey, so bins - 1
-        assert_eq!(end, bins - 1);
+        assert_eq!(start, bins); // Exclude the highest possible pubkey, so start should be "bins"
+        assert_eq!(end, bins - 1); // End should be the last bin index
     }
 
     #[test]
