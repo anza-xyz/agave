@@ -121,18 +121,12 @@ pub fn execute(
 
     let identity_keypair = Arc::new(run_args.identity);
 
-    let logfile = {
-        let logfile = matches
-            .value_of("logfile")
-            .map(|s| s.into())
-            .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
-
-        if logfile == "-" {
-            None
-        } else {
-            println!("log file: {logfile}");
-            Some(logfile)
-        }
+    let logfile = run_args.logfile;
+    let logfile = if logfile == "-" {
+        None
+    } else {
+        println!("log file: {logfile}");
+        Some(logfile)
     };
     let use_progress_bar = logfile.is_none();
     let _logger_thread = redirect_stderr_to_file(logfile);

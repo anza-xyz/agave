@@ -21,7 +21,7 @@ use {
     },
     solana_ledger::use_snapshot_archives_at_startup,
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
-    solana_sdk::signature::Keypair,
+    solana_sdk::signature::{Keypair, Signer},
     solana_send_transaction_service::send_transaction_service::{
         MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
@@ -35,6 +35,7 @@ const INCLUDE_KEY: &str = "account-index-include-key";
 #[derive(Debug, PartialEq)]
 pub struct RunArgs {
     pub identity: Keypair,
+    pub logfile: String,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -44,7 +45,15 @@ impl FromClapArgMatches for RunArgs {
             clap::ErrorKind::ArgumentNotFound,
         ))?;
 
-        Ok(RunArgs { identity: identity })
+        let logfile = matches
+            .value_of("logfile")
+            .map(|s| s.into())
+            .unwrap_or_else(|| format!("agave-validator-{}.log", identity.pubkey()));
+
+        Ok(RunArgs {
+            identity: identity,
+            logfile: logfile,
+        })
     }
 }
 
@@ -1693,7 +1702,21 @@ mod tests {
     impl Default for RunArgs {
         fn default() -> Self {
             let identity = Keypair::new();
-            RunArgs { identity: identity }
+            let logfile = format!("agave-validator-{}.log", identity.pubkey());
+
+            RunArgs {
+                identity: identity,
+                logfile: logfile,
+            }
+        }
+    }
+
+    impl Clone for RunArgs {
+        fn clone(&self) -> Self {
+            RunArgs {
+                identity: self.identity.insecure_clone(),
+                logfile: self.logfile.clone(),
+            }
         }
     }
 
@@ -1750,6 +1773,60 @@ mod tests {
                 identity: keypair,
                 ..default_run_args
             }
+        );
+    }
+
+    fn test_run_command_with_identity_setup(
+        args: Vec<&str>,
+        default_run_args: RunArgs,
+        expected_args: RunArgs,
+    ) {
+        let default_args = DefaultArgs::default();
+
+        // generate a keypair
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file = tmp_dir.path().join("id.json");
+        let keypair = default_run_args.identity.insecure_clone();
+        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+
+        let args = [&["--identity", file.to_str().unwrap()], &args[..]].concat();
+        let matches = get_run_command_matches(&default_args, args);
+        let args = RunArgs::from_clap_arg_match(&matches).unwrap();
+        assert_eq!(args, expected_args);
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_log_default() {
+        let default_run_args = RunArgs::default();
+        let identity = default_run_args.identity.insecure_clone();
+        let expected_args = RunArgs {
+            logfile: "agave-validator-".to_string() + &identity.pubkey().to_string() + ".log",
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(vec![], default_run_args, expected_args);
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_log_short_arg() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            logfile: "-".to_string(),
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(vec!["-o", "-"], default_run_args, expected_args);
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_log_long_arg() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            logfile: "custom_log.log".to_string(),
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--log", "custom_log.log"],
+            default_run_args,
+            expected_args,
         );
     }
 }
