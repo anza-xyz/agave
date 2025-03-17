@@ -7904,6 +7904,7 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-client",
  "solana-compute-budget",
+ "solana-fee-structure",
  "solana-logger",
  "solana-program-runtime",
  "solana-sdk",

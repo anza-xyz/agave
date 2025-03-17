@@ -9,6 +9,7 @@ use {
     },
     solana_account::PROGRAM_OWNERS,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
+    solana_fee_structure::FeeDetails,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -448,7 +449,11 @@ impl SvmTestEntry {
 
                     let compute_budget = compute_budget_limits.map(|v| {
                         v.get_compute_budget_and_limits(
-                            signature_count.saturating_mul(tx_details.lamports_per_signature),
+                            v.loaded_accounts_bytes,
+                            FeeDetails::new(
+                                signature_count.saturating_mul(tx_details.lamports_per_signature),
+                                v.get_prioritization_fee(),
+                            ),
                         )
                     });
                     CheckedTransactionDetails::new(

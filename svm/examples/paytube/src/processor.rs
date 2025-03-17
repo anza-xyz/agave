@@ -3,6 +3,7 @@
 use {
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+    solana_fee_structure::FeeDetails,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget,
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
@@ -95,11 +96,15 @@ pub(crate) fn get_transaction_check_results(
     len: usize,
     lamports_per_signature: u64,
 ) -> Vec<transaction::Result<CheckedTransactionDetails>> {
+    let compute_budget_limit = ComputeBudgetLimits::default();
     vec![
         transaction::Result::Ok(CheckedTransactionDetails::new(
             None,
             lamports_per_signature,
-            Ok(ComputeBudgetLimits::default_compute_budget_and_limits())
+            Ok(compute_budget_limit.get_compute_budget_and_limits(
+                compute_budget_limit.loaded_accounts_bytes,
+                FeeDetails::default()
+            )),
         ));
         len
     ]

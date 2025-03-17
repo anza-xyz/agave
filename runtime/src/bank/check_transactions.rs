@@ -3,7 +3,7 @@ use {
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_feature_set::FeatureSet,
-    solana_fee::{calculate_transaction_fee, FeeFeatures},
+    solana_fee::{calculate_fee_details, FeeFeatures},
     solana_perf::perf_libs,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -14,6 +14,7 @@ use {
             MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
             MAX_TRANSACTION_FORWARDING_DELAY_GPU,
         },
+        fee::FeeBudgetLimits,
         nonce::{
             state::{
                 Data as NonceData, DurableNonce, State as NonceState, Versions as NonceVersions,
@@ -94,29 +95,40 @@ impl Bank {
             .get_lamports_per_signature(&last_blockhash)
             .unwrap();
 
+        let feature_set: &FeatureSet = &self.feature_set;
+        let fee_features = FeeFeatures::from(feature_set);
+
         sanitized_txs
             .iter()
             .zip(lock_results)
             .map(|(tx, lock_res)| match lock_res {
                 Ok(()) => {
-                    let feature_set: &FeatureSet = &self.feature_set;
-                    let transaction_fee = calculate_transaction_fee(
-                        tx.borrow(),
-                        self.fee_structure.lamports_per_signature,
-                        FeeFeatures::from(feature_set),
-                    );
                     let compute_budget_and_limits = process_compute_budget_instructions(
                         tx.borrow().program_instructions_iter(),
                         feature_set,
                     )
                     .map(|limit| {
+                        let fee_budget = FeeBudgetLimits::from(limit);
+                        let fee_details = calculate_fee_details(
+                            tx.borrow(),
+                            false,
+                            self.fee_structure.lamports_per_signature,
+                            fee_budget.prioritization_fee,
+                            fee_features,
+                        );
                         if let Some(compute_budget) = self.compute_budget {
                             // This block of code is only necessary to retain legacy behavior of the code.
                             // It should be removed along with the change to favor transaction's compute budget limits
                             // over configured compute budget in Bank.
-                            compute_budget.get_compute_budget_and_limits(&limit, transaction_fee)
+                            compute_budget.get_compute_budget_and_limits(
+                                fee_budget.loaded_accounts_data_size_limit,
+                                fee_details,
+                            )
                         } else {
-                            limit.get_compute_budget_and_limits(transaction_fee)
+                            limit.get_compute_budget_and_limits(
+                                fee_budget.loaded_accounts_data_size_limit,
+                                fee_details,
+                            )
                         }
                     });
                     self.check_transaction_age(

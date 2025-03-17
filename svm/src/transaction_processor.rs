@@ -26,7 +26,7 @@ use {
     },
     solana_clock::{Epoch, Slot},
     solana_feature_set::{remove_accounts_executable_flag_checks, FeatureSet},
-    solana_fee_structure::{FeeDetails, FeeStructure},
+    solana_fee_structure::FeeStructure,
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_log_collector::LogCollector,
@@ -555,7 +555,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let CheckedTransactionDetails {
             nonce,
-            lamports_per_signature,
+            lamports_per_signature: _,
             compute_budget_and_limits,
         } = checked_details;
 
@@ -580,12 +580,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         )
         .rent_amount;
 
-        let fee_details = if lamports_per_signature == 0 {
-            FeeDetails::default()
-        } else {
-            compute_budget_and_limits.fee_details
-        };
-
         let fee_payer_index = 0;
         validate_fee_payer(
             fee_payer_address,
@@ -593,7 +587,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             fee_payer_index,
             error_counters,
             rent_collector,
-            fee_details.total_fee(),
+            compute_budget_and_limits.fee_details.total_fee(),
         )?;
 
         // Capture fee-subtracted fee payer account and next nonce account state
@@ -607,7 +601,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         Ok(ValidatedTransactionDetails {
-            fee_details,
+            fee_details: compute_budget_and_limits.fee_details,
             rollback_accounts,
             loaded_accounts_bytes_limit: compute_budget_and_limits.loaded_accounts_data_size_limit,
             compute_budget: compute_budget_and_limits.budget,

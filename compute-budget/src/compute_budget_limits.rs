@@ -38,24 +38,24 @@ impl Default for ComputeBudgetLimits {
 }
 
 impl ComputeBudgetLimits {
-    pub fn default_compute_budget_and_limits() -> SVMTransactionExecutionAndFeeBudgetLimits {
-        Self::get_compute_budget_and_limits(&ComputeBudgetLimits::default(), 0u64)
-    }
-
     pub fn get_compute_budget_and_limits(
         &self,
-        transaction_fee: u64,
+        loaded_accounts_data_size_limit: NonZeroU32,
+        fee_details: FeeDetails,
     ) -> SVMTransactionExecutionAndFeeBudgetLimits {
-        let fee_budget = FeeBudgetLimits::from(self);
         SVMTransactionExecutionAndFeeBudgetLimits {
             budget: SVMTransactionExecutionBudget {
                 compute_unit_limit: u64::from(self.compute_unit_limit),
                 heap_size: self.updated_heap_bytes,
                 ..SVMTransactionExecutionBudget::default()
             },
-            loaded_accounts_data_size_limit: fee_budget.loaded_accounts_data_size_limit,
-            fee_details: FeeDetails::new(transaction_fee, fee_budget.prioritization_fee),
+            loaded_accounts_data_size_limit,
+            fee_details,
         }
+    }
+
+    pub fn get_prioritization_fee(&self) -> u64 {
+        get_prioritization_fee(self.compute_unit_price, u64::from(self.compute_unit_limit))
     }
 }
 

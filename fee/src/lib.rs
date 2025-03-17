@@ -53,20 +53,12 @@ pub fn calculate_fee_details(
     }
 
     FeeDetails::new(
-        calculate_transaction_fee(message, lamports_per_signature, fee_features),
+        calculate_signature_fee(
+            SignatureCounts::from(message),
+            lamports_per_signature,
+            fee_features.enable_secp256r1_precompile,
+        ),
         prioritization_fee,
-    )
-}
-
-pub fn calculate_transaction_fee(
-    message: &impl SVMMessage,
-    lamports_per_signature: u64,
-    fee_features: FeeFeatures,
-) -> u64 {
-    calculate_signature_fee(
-        SignatureCounts::from(message),
-        lamports_per_signature,
-        fee_features.enable_secp256r1_precompile,
     )
 }
 

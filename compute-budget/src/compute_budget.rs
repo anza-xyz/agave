@@ -3,9 +3,9 @@ pub use solana_program_runtime::execution_budget::{
     MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE,
 };
 use {
-    crate::compute_budget_limits::ComputeBudgetLimits,
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails},
+    crate::compute_budget_limits::ComputeBudgetLimits, solana_fee_structure::FeeDetails,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
+    std::num::NonZeroU32,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,14 +241,13 @@ impl ComputeBudget {
 
     pub fn get_compute_budget_and_limits(
         &self,
-        compute_budget_limits: &ComputeBudgetLimits,
-        transaction_fee: u64,
+        loaded_accounts_data_size_limit: NonZeroU32,
+        fee_details: FeeDetails,
     ) -> SVMTransactionExecutionAndFeeBudgetLimits {
-        let fee_budget = FeeBudgetLimits::from(compute_budget_limits);
         SVMTransactionExecutionAndFeeBudgetLimits {
             budget: self.to_budget(),
-            loaded_accounts_data_size_limit: fee_budget.loaded_accounts_data_size_limit,
-            fee_details: FeeDetails::new(transaction_fee, fee_budget.prioritization_fee),
+            loaded_accounts_data_size_limit,
+            fee_details,
         }
     }
 }
