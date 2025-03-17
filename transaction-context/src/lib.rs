@@ -267,19 +267,6 @@ impl TransactionContext {
     }
 
     /// Searches for an account by its key
-    #[cfg(not(target_os = "solana"))]
-    pub fn get_account_at_index(
-        &self,
-        index_in_transaction: IndexOfAccount,
-    ) -> Result<Ref<AccountSharedData>, InstructionError> {
-        self.accounts
-            .get(index_in_transaction)
-            .ok_or(InstructionError::NotEnoughAccountKeys)?
-            .try_borrow()
-            .map_err(|_| InstructionError::AccountBorrowOutstanding)
-    }
-
-    /// Searches for an account by its key
     pub fn find_index_of_account(&self, pubkey: &Pubkey) -> Option<IndexOfAccount> {
         self.account_keys
             .iter()
@@ -468,10 +455,16 @@ impl TransactionContext {
             }
             let index_in_transaction = instruction_context
                 .get_index_of_instruction_account_in_transaction(instruction_account_index)?;
-            instruction_accounts_lamport_sum =
-                (self.get_account_at_index(index_in_transaction)?.lamports() as u128)
-                    .checked_add(instruction_accounts_lamport_sum)
-                    .ok_or(InstructionError::ArithmeticOverflow)?;
+            instruction_accounts_lamport_sum = u128::from(
+                self.accounts
+                    .get(index_in_transaction)
+                    .ok_or(InstructionError::NotEnoughAccountKeys)?
+                    .try_borrow()
+                    .map_err(|_| InstructionError::AccountBorrowOutstanding)?
+                    .lamports(),
+            )
+            .checked_add(instruction_accounts_lamport_sum)
+            .ok_or(InstructionError::ArithmeticOverflow)?;
         }
         Ok(instruction_accounts_lamport_sum)
     }
