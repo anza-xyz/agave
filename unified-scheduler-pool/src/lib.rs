@@ -21,6 +21,7 @@ use {
     dyn_clone::{clone_trait_object, DynClone},
     log::*,
     scopeguard::defer,
+    solana_cost_model::cost_model::CostModel,
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
     },
@@ -37,6 +38,7 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_svm::transaction_processing_result::ProcessedTransaction,
     solana_timings::ExecuteTimings,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
@@ -66,11 +68,12 @@ use crate::sleepless_testing::BuilderTracked;
 // dead_code is false positive; these tuple fields are used via Debug.
 #[allow(dead_code)]
 #[derive(Debug)]
-enum CheckPoint {
+enum CheckPoint<'a> {
     NewTask(usize),
     NewBufferedTask(usize),
     BufferedTask(usize),
     TaskHandled(usize),
+    TaskAccumulated(&'a Result<()>),
     SessionEnding,
     SchedulerThreadAborted,
     IdleSchedulerCleaned(usize),
@@ -959,10 +962,18 @@ impl TaskHandler for DefaultTaskHandler {
 
         let pre_commit_callback = match scheduling_context.mode() {
             BlockVerification => None,
-            BlockProduction => Some(|processing_result: &'_ Result<_>| {
-                if let Err(error) = processing_result {
-                    Err(error.clone())?;
+            BlockProduction => Some(|processing_result: &'_ Result<ProcessedTransaction>| {
+                let Ok(processed_transaction) = processing_result else {
+                    return Err(processing_result.as_ref().unwrap_err().clone());
                 };
+
+                let cost = CostModel::calculate_cost_for_executed_transaction(
+                    transaction,
+                    processed_transaction.executed_units(),
+                    processed_transaction.loaded_accounts_data_size(),
+                    &bank.feature_set,
+                );
+                bank.write_cost_tracker().unwrap().try_add(&cost)?;
 
                 let RecordTransactionsSummary {
                     result,
@@ -976,7 +987,10 @@ impl TaskHandler for DefaultTaskHandler {
                 trace!("pre_commit_callback: poh: {result:?}");
                 match result {
                     Ok(()) => Ok(starting_transaction_index),
-                    Err(_) => Err(TransactionError::CommitCancelled),
+                    Err(_) => {
+                        bank.write_cost_tracker().unwrap().remove(&cost);
+                        Err(TransactionError::CommitCancelled)
+                    }
                 }
             }),
         };
@@ -1528,6 +1542,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         let Ok(executed_task) = executed_task else {
             return None;
         };
+        sleepless_testing::at(CheckPoint::TaskAccumulated(
+            &executed_task.result_with_timings.0,
+        ));
         timings.accumulate(&executed_task.result_with_timings.1);
         match mode {
             BlockVerification => match executed_task.result_with_timings.0 {
@@ -2490,6 +2507,7 @@ mod tests {
         AfterTimeoutListenerTriggered,
         BeforeThreadManagerDrop,
         BeforeEndSession,
+        AfterSession,
     }
 
     #[test]
@@ -3724,6 +3742,137 @@ mod tests {
             // Block production scheduler should carry over transactions from previous bank
             expected_transaction_count += 1;
         }
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
+    }
+
+    #[test]
+    fn test_block_production_scheduler_schedule_execution_retry() {
+        solana_logger::setup();
+
+        const TRANSACTION_INDEX: usize = 0;
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::TaskAccumulated(&Err(TransactionError::WouldExceedMaxBlockCostLimit)),
+            &TestCheckPoint::AfterSession,
+        ]);
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_for_block_production(10_000);
+
+        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        let bank = Bank::new_for_tests(&genesis_config);
+        bank.write_cost_tracker().unwrap().set_limits(0, 0, 0);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        let (exit, poh_recorder, poh_service, _signal_receiver) = {
+            create_test_recorder_with_index_tracking(
+                bank.clone(),
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            )
+        };
+
+        pool.register_banking_stage(
+            banking_packet_receiver,
+            DefaultSchedulerPool::default_handler_count(),
+            Box::new(DummyBankingMinitor),
+            Box::new(|_, _| unreachable!()),
+            poh_recorder.read().unwrap().new_recorder(),
+        );
+
+        // Create new bank to observe behavior difference around session ending
+        while poh_recorder.read().unwrap().bank().is_some() {
+            sleep(Duration::from_millis(100));
+        }
+        let bank = Arc::new(Bank::new_from_parent(
+            bank.clone(),
+            &Pubkey::default(),
+            bank.slot().checked_add(1).unwrap(),
+        ));
+
+        // This variable tracks the cumulative count of transactions since genesis, which is
+        // incremented as test is progressed.
+        let mut expected_transaction_count = Saturating(0);
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+
+        let context = SchedulingContext::for_production(bank.clone());
+        let scheduler = pool.take_scheduler(context).unwrap();
+        let old_scheduler_id = scheduler.id();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        while poh_recorder.read().unwrap().bank().is_some() {
+            error!("waiting11111..");
+            sleep(Duration::from_millis(100));
+        }
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank(bank.clone_with_scheduler(), true);
+
+        bank.schedule_transaction_executions([(tx0, TRANSACTION_INDEX)].into_iter())
+            .unwrap();
+        bank.unblock_block_production();
+
+        while poh_recorder.read().unwrap().bank().is_some() {
+            error!("waiting22222..");
+            sleep(Duration::from_millis(100));
+        }
+
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+        sleepless_testing::at(&TestCheckPoint::AfterSession);
+
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+
+        // Create new bank to observe behavior difference around session ending
+        let bank = Arc::new(Bank::new_from_parent(
+            bank.clone_without_scheduler(),
+            &Pubkey::default(),
+            bank.slot().checked_add(1).unwrap(),
+        ));
+        bank.write_cost_tracker()
+            .unwrap()
+            .set_limits(u64::MAX, u64::MAX, u64::MAX);
+        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+
+        let context = SchedulingContext::for_production(bank.clone());
+        let scheduler = pool.take_scheduler(context).unwrap();
+        // make sure the same scheduler is used to test its internal cross-session behavior
+        // regardless scheduling_mode.
+        assert_eq!(scheduler.id(), old_scheduler_id);
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        //poh_recorder.write().unwrap().reset(bank.clone(), None);
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank(bank.clone_with_scheduler(), true);
+        bank.unblock_block_production();
+
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+
+        // Block production scheduler should carry over the temporarily-failed transaction itself.
+        expected_transaction_count += 1;
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         exit.store(true, Ordering::Relaxed);
