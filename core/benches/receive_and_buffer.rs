@@ -1,6 +1,6 @@
 use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    criterion::{black_box, criterion_group, criterion_main, Criterion},
+    criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
     crossbeam_channel::{unbounded, Receiver},
     rand::prelude::*,
     solana_core::banking_stage::{
@@ -128,7 +128,6 @@ fn generate_transactions(
     return packets_batches;
 }
 
-// TODO(klykov): maybe not needed anylonger if add new to the TransactionViewReceiveAndBuffer?
 trait ReceiveAndBufferCreator {
     fn create(
         receiver: Receiver<Arc<Vec<PacketBatch>>>,
@@ -196,7 +195,10 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
         probability_invalid_blockhash,
     );
     let mut container = <T as ReceiveAndBuffer>::Container::with_capacity(TOTAL_BUFFERED_PACKETS);
-    c.bench_function(bench_name, |bencher| {
+
+    let mut group = c.benchmark_group("receive_and_buffer");
+    group.throughput(Throughput::Elements(num_txs as u64));
+    group.bench_function(bench_name, |bencher| {
         bencher.iter_custom(|iters| {
             let mut total = std::time::Duration::ZERO;
             for _ in 0..iters {
@@ -226,25 +228,20 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
             total
         })
     });
+    group.finish();
 }
 
 fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
     bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
         c,
-        "sanitized_transaction_receive_and_buffer_max_instructions",
+        "sanitized_transaction_max_instructions",
         MAX_INSTRUCTIONS_PER_TRANSACTION,
         0.0,
     );
     bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
         c,
-        "sanitized_transaction_receive_and_buffer_max_instructions_10p_invalid_blockhash",
-        MAX_INSTRUCTIONS_PER_TRANSACTION,
-        0.1,
-    );
-    bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
-        c,
-        "sanitized_transaction_receive_and_buffer_min_instructions",
-        0,
+        "sanitized_transaction_min_instructions",
+        1,
         0.0,
     );
 }
@@ -252,20 +249,14 @@ fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
 fn bench_transaction_view_receive_and_buffer(c: &mut Criterion) {
     bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
         c,
-        "transaction_view_receive_and_buffer_max_instructions",
+        "transaction_view_max_instructions",
         MAX_INSTRUCTIONS_PER_TRANSACTION,
         0.0,
     );
     bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
         c,
-        "transaction_view_receive_and_buffer_max_instructions_10p_invalid_blockhash",
-        MAX_INSTRUCTIONS_PER_TRANSACTION,
-        0.1,
-    );
-    bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
-        c,
-        "transaction_view_receive_and_buffer_min_instructions",
-        0,
+        "transaction_view_min_instructions",
+        1,
         0.0,
     );
 }
