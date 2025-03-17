@@ -1,7 +1,7 @@
 //! The `poh_service` module implements a service that records the passing of
 //! "ticks", a measure of time in the PoH stream
 use {
-    crate::poh_recorder::{PohRecorder, Record},
+    crate::{poh_recorder::PohRecorder, record::Record},
     crossbeam_channel::Receiver,
     log::*,
     solana_entry::poh::Poh,

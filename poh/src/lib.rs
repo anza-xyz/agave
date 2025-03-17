@@ -3,6 +3,7 @@ pub mod leader_bank_notifier;
 pub mod poh_record_error;
 pub mod poh_recorder;
 pub mod poh_service;
+pub mod record;
 pub mod working_bank_entry;
 
 #[macro_use]

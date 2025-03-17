@@ -355,8 +355,7 @@ mod tests {
         },
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
         solana_poh::{
-            poh_recorder::{PohRecorder, Record},
-            working_bank_entry::WorkingBankEntry,
+            poh_recorder::PohRecorder, record::Record, working_bank_entry::WorkingBankEntry,
         },
         solana_runtime::bank::Bank,
         solana_runtime_transaction::transaction_meta::StaticMeta,
