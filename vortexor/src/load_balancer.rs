@@ -1,3 +1,6 @@
+//! Module responsible for interacting with RPC services.
+//! Adapted from jito-replayer code.
+
 use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     dashmap::DashMap,
