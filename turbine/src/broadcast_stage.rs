@@ -22,7 +22,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{inc_new_counter_error, inc_new_counter_info},
-    solana_poh::poh_recorder::WorkingBankEntry,
+    solana_poh::working_bank_entry::WorkingBankEntry,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
     solana_sdk::{
         clock::Slot,

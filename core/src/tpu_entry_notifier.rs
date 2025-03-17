@@ -2,7 +2,7 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_entry::entry::EntrySummary,
     solana_ledger::entry_notifier_service::{EntryNotification, EntryNotifierSender},
-    solana_poh::poh_recorder::WorkingBankEntry,
+    solana_poh::working_bank_entry::WorkingBankEntry,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},

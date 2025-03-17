@@ -11,7 +11,12 @@
 //! * recorded entry must be >= WorkingBank::min_tick_height && entry must be < WorkingBank::max_tick_height
 //!
 use {
-    crate::{leader_bank_notifier::LeaderBankNotifier, poh_service::PohService},
+    crate::{
+        leader_bank_notifier::LeaderBankNotifier,
+        poh_record_error::{PohRecordError, Result},
+        poh_service::PohService,
+        working_bank_entry::WorkingBankEntry,
+    },
     crossbeam_channel::{
         bounded, unbounded, Receiver, RecvTimeoutError, SendError, Sender, TrySendError,
     },
@@ -38,27 +43,10 @@ use {
         },
         time::{Duration, Instant},
     },
-    thiserror::Error,
 };
 
 pub const GRACE_TICKS_FACTOR: u64 = 2;
 pub const MAX_GRACE_SLOTS: u64 = 2;
-
-#[derive(Error, Debug, Clone)]
-pub enum PohRecordError {
-    #[error("max height reached")]
-    MaxHeightReached,
-
-    #[error("min height not reached")]
-    MinHeightNotReached,
-
-    #[error("send WorkingBankEntry error")]
-    SendError(#[from] SendError<WorkingBankEntry>),
-}
-
-type Result<T> = std::result::Result<T, PohRecordError>;
-
-pub type WorkingBankEntry = (Arc<Bank>, (Entry, u64));
 
 #[derive(Debug, Clone)]
 pub struct BankStart {

@@ -7,7 +7,7 @@ use {
         blockstore::Blockstore,
         shred::{self, ShredData},
     },
-    solana_poh::poh_recorder::WorkingBankEntry,
+    solana_poh::working_bank_entry::WorkingBankEntry,
     solana_runtime::bank::Bank,
     solana_sdk::{clock::Slot, hash::Hash},
     std::{

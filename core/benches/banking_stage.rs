@@ -7,6 +7,7 @@ use {
         banking_trace::Channels,
         validator::{BlockProductionMethod, TransactionStructure},
     },
+    solana_poh::working_bank_entry::WorkingBankEntry,
     solana_vote::vote_transaction::new_tower_sync_transaction,
     solana_vote_program::vote_state::TowerSync,
 };
@@ -28,7 +29,7 @@ use {
         get_tmp_ledger_path_auto_delete,
     },
     solana_perf::packet::to_packet_batches,
-    solana_poh::poh_recorder::{create_test_recorder, WorkingBankEntry},
+    solana_poh::poh_recorder::create_test_recorder,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
     },

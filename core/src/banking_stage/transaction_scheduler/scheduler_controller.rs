@@ -354,7 +354,10 @@ mod tests {
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
-        solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        solana_poh::{
+            poh_recorder::{PohRecorder, Record},
+            working_bank_entry::WorkingBankEntry,
+        },
         solana_runtime::bank::Bank,
         solana_runtime_transaction::transaction_meta::StaticMeta,
         solana_sdk::{

@@ -756,9 +756,8 @@ mod tests {
         },
         solana_perf::packet::to_packet_batches,
         solana_poh::{
-            poh_recorder::{
-                create_test_recorder, PohRecordError, Record, RecordTransactionsSummary,
-            },
+            poh_record_error::PohRecordError,
+            poh_recorder::{create_test_recorder, Record, RecordTransactionsSummary},
             poh_service::PohService,
         },
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
