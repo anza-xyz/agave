@@ -4,6 +4,7 @@ pub mod poh_record_error;
 pub mod poh_recorder;
 pub mod poh_service;
 pub mod record;
+pub mod transaction_recorder;
 pub mod working_bank_entry;
 
 #[macro_use]

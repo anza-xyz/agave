@@ -33,7 +33,7 @@ use {
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
     solana_perf::packet::PACKETS_PER_BATCH,
-    solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
+    solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
@@ -756,10 +756,9 @@ mod tests {
         },
         solana_perf::packet::to_packet_batches,
         solana_poh::{
-            poh_record_error::PohRecordError,
-            poh_recorder::{create_test_recorder, RecordTransactionsSummary},
-            poh_service::PohService,
-            record::Record,
+            poh_record_error::PohRecordError, poh_recorder::create_test_recorder,
+            poh_service::PohService, record::Record,
+            transaction_recorder::RecordTransactionsSummary,
         },
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,

@@ -18,8 +18,9 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_poh::{
         poh_record_error::PohRecordError,
-        poh_recorder::{
-            BankStart, RecordTransactionsSummary, RecordTransactionsTimings, TransactionRecorder,
+        poh_recorder::BankStart,
+        transaction_recorder::{
+            RecordTransactionsSummary, RecordTransactionsTimings, TransactionRecorder,
         },
     },
     solana_runtime::{
