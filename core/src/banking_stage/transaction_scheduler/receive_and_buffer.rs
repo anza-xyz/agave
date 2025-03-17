@@ -48,6 +48,7 @@ use {
 };
 
 #[derive(Debug)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DisconnectedError;
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
