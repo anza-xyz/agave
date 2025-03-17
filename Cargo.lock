@@ -7428,6 +7428,7 @@ dependencies = [
  "solana-unified-scheduler-logic",
  "solana-unified-scheduler-pool",
  "solana-version",
+ "solana-vortexor-receiver",
  "solana-vote",
  "solana-vote-program",
  "solana-wen-restart",
@@ -10923,6 +10924,15 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "x509-parser",
+]
+
+[[package]]
+name = "solana-vortexor-receiver"
+version = "2.3.0"
+dependencies = [
+ "assert_matches",
+ "solana-perf",
+ "solana-streamer",
 ]
 
 [[package]]
