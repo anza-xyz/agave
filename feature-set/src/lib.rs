@@ -981,7 +981,7 @@ pub mod enable_secp256r1_precompile {
 }
 
 pub mod accounts_lt_hash {
-    solana_pubkey::declare_id!("LtHaSHHsUge7EWTPVrmpuexKz6uVHZXZL6cgJa7W7Zn");
+    solana_pubkey::declare_id!("LTHasHQX6661DaDD4S6A2TFi6QBuiwXKv66fB1obfHq");
 }
 
 pub mod snapshots_lt_hash {
