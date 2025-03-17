@@ -14,7 +14,7 @@ use {
             MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
             MAX_TRANSACTION_FORWARDING_DELAY_GPU,
         },
-        fee::FeeBudgetLimits,
+        fee::{FeeBudgetLimits, FeeDetails},
         nonce::{
             state::{
                 Data as NonceData, DurableNonce, State as NonceState, Versions as NonceVersions,
@@ -146,6 +146,28 @@ impl Bank {
             .collect()
     }
 
+    fn checked_transactions_details_with_test_override(
+        nonce: Option<NonceInfo>,
+        lamports_per_signature: u64,
+        compute_budget_and_limits: Result<
+            SVMTransactionExecutionAndFeeBudgetLimits,
+            TransactionError,
+        >,
+    ) -> CheckedTransactionDetails {
+        let compute_budget_and_limits = if lamports_per_signature == 0 {
+            // This is done to support legacy tests. The tests should be updated, and check
+            // for 0 lamports_per_signature should be removed from the code.
+            compute_budget_and_limits.map(|v| SVMTransactionExecutionAndFeeBudgetLimits {
+                budget: v.budget,
+                loaded_accounts_data_size_limit: v.loaded_accounts_data_size_limit,
+                fee_details: FeeDetails::default(),
+            })
+        } else {
+            compute_budget_and_limits
+        };
+        CheckedTransactionDetails::new(nonce, lamports_per_signature, compute_budget_and_limits)
+    }
+
     fn check_transaction_age(
         &self,
         tx: &impl SVMMessage,
@@ -158,7 +180,7 @@ impl Bank {
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
-            Ok(CheckedTransactionDetails::new(
+            Ok(Self::checked_transactions_details_with_test_override(
                 None,
                 hash_info.lamports_per_signature(),
                 compute_budget,
@@ -170,7 +192,7 @@ impl Bank {
                 next_lamports_per_signature,
             )
         {
-            Ok(CheckedTransactionDetails::new(
+            Ok(Self::checked_transactions_details_with_test_override(
                 Some(nonce),
                 previous_lamports_per_signature,
                 compute_budget,
