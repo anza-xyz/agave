@@ -24,10 +24,12 @@ rm -rf usr/
 ../ci/docker-run-default-image.sh scripts/cargo-install-all.sh docker-solana/usr
 
 cp -f ../scripts/run.sh usr/bin/solana-run.sh
+cp -f ../fetch-core-bpf.sh usr/bin/
 cp -f ../fetch-spl.sh usr/bin/
 cp -f ../fetch-programs.sh usr/bin/
 (
   cd usr/bin
+  ./fetch-core-bpf.sh
   ./fetch-spl.sh
 )
 
