@@ -32,7 +32,7 @@ trait AppendVecScan: Send + Sync + Clone {
     /// set current slot of the scan
     fn set_slot(&mut self, slot: Slot, is_ancient: bool);
     /// found `account` in the append vec
-    fn found_account(&mut self, account: &LoadedAccount);
+    fn found_account(&mut self, storage: &AccountStorageEntry, account: &LoadedAccount);
     /// scanning is done
     fn scanning_complete(self) -> BinnedHashData;
     /// initialize accumulator
@@ -56,6 +56,7 @@ struct ScanState<'a> {
     pubkey_to_bin_index: usize,
     is_ancient: bool,
     stats_num_zero_lamport_accounts_ancient: Arc<AtomicU64>,
+    max_slot: Slot,
 }
 
 impl AppendVecScan for ScanState<'_> {
@@ -63,6 +64,7 @@ impl AppendVecScan for ScanState<'_> {
         self.current_slot = slot;
         self.is_ancient = is_ancient;
     }
+
     fn filter(&mut self, pubkey: &Pubkey) -> bool {
         self.pubkey_to_bin_index = self.bin_calculator.bin_from_pubkey(pubkey);
         self.bin_range.contains(&self.pubkey_to_bin_index)
@@ -72,9 +74,18 @@ impl AppendVecScan for ScanState<'_> {
             self.accum.append(&mut vec![Vec::new(); count]);
         }
     }
-    fn found_account(&mut self, loaded_account: &LoadedAccount) {
+    fn found_account(&mut self, storage: &AccountStorageEntry, loaded_account: &LoadedAccount) {
         let pubkey = loaded_account.pubkey();
         assert!(self.bin_range.contains(&self.pubkey_to_bin_index)); // get rid of this once we have confidence
+
+        if storage.is_account_dead(loaded_account.offset(), self.max_slot) {
+            /*println!(
+                "dead account found in scan {}, offset {}",
+                pubkey,
+                loaded_account.offset()
+            );*/
+            return;
+        }
 
         // when we are scanning with bin ranges, we don't need to use exact bin numbers.
         // Subtract to make first bin we care about at index 0.
@@ -110,8 +121,6 @@ impl AppendVecScan for ScanState<'_> {
 }
 
 enum ScanAccountStorageResult {
-    /// this data has already been scanned and cached
-    CacheFileAlreadyExists(CacheHashDataFileReference),
     /// this data needs to be scanned and cached
     CacheFileNeedsToBeCreated((String, Range<Slot>)),
 }
@@ -151,6 +160,7 @@ impl AccountsDb {
             stats_num_zero_lamport_accounts_ancient: Arc::clone(
                 &stats.num_zero_lamport_accounts_ancient,
             ),
+            max_slot: storages.max_slot_inclusive(),
         };
 
         let result = self.scan_account_storage_no_bank(
@@ -214,25 +224,16 @@ impl AccountsDb {
             .filter_map(|chunk| {
                 let range_this_chunk = splitter.get_slot_range(chunk)?;
 
-                let mut load_from_cache = true;
                 let mut hasher = DefaultHasher::new();
                 bin_range.start.hash(&mut hasher);
                 bin_range.end.hash(&mut hasher);
                 let is_first_scan_pass = bin_range.start == 0;
 
-                // calculate hash representing all storages in this chunk
                 let mut empty = true;
                 for (slot, storage) in snapshot_storages.iter_range(&range_this_chunk) {
                     empty = false;
                     if is_first_scan_pass && slot < one_epoch_old {
                         self.update_old_slot_stats(stats, storage);
-                    }
-                    if let Some(storage) = storage {
-                        let ok = Self::hash_storage_info(&mut hasher, storage, slot);
-                        if !ok {
-                            load_from_cache = false;
-                            break;
-                        }
                     }
                 }
                 if empty {
@@ -249,15 +250,6 @@ impl AccountsDb {
                     bin_range.end,
                     hash
                 );
-                if load_from_cache {
-                    if let Ok(mapped_file) =
-                        cache_hash_data.get_file_reference_to_map_later(&file_name)
-                    {
-                        return Some(ScanAccountStorageResult::CacheFileAlreadyExists(
-                            mapped_file,
-                        ));
-                    }
-                }
 
                 // fall through and load normally - we failed to load from a cache file but there are storages present
                 Some(ScanAccountStorageResult::CacheFileNeedsToBeCreated((
@@ -273,11 +265,10 @@ impl AccountsDb {
         // There are approximately 173 items in the cache files list,
         // so should be very fast to iterate and compute.
         // (173 cache files == 432,000 slots / 2,500 slots-per-cache-file)
-        let mut hits = 0;
+        let hits = 0;
         let mut misses = 0;
         for cache_file in &cache_files {
             match cache_file {
-                ScanAccountStorageResult::CacheFileAlreadyExists(_) => hits += 1,
                 ScanAccountStorageResult::CacheFileNeedsToBeCreated(_) => misses += 1,
             };
         }
@@ -297,7 +288,6 @@ impl AccountsDb {
             .into_par_iter()
             .map(|chunk| {
                 match chunk {
-                    ScanAccountStorageResult::CacheFileAlreadyExists(file) => Some(file),
                     ScanAccountStorageResult::CacheFileNeedsToBeCreated((
                         file_name,
                         range_this_chunk,
@@ -355,7 +345,7 @@ impl AccountsDb {
     {
         storage.accounts.scan_accounts(|account| {
             if scanner.filter(account.pubkey()) {
-                scanner.found_account(&LoadedAccount::Stored(account))
+                scanner.found_account(storage, &LoadedAccount::Stored(account))
             }
         });
     }
@@ -427,7 +417,11 @@ mod tests {
             self.current_slot = slot;
         }
         fn init_accum(&mut self, _count: usize) {}
-        fn found_account(&mut self, loaded_account: &LoadedAccount) {
+        fn found_account(
+            &mut self,
+            _storage: &AccountStorageEntry,
+            loaded_account: &LoadedAccount,
+        ) {
             self.calls.fetch_add(1, Ordering::Relaxed);
             assert_eq!(loaded_account.pubkey(), &self.pubkey);
             assert_eq!(self.slot_expected, self.current_slot);
@@ -460,7 +454,11 @@ mod tests {
             true
         }
         fn init_accum(&mut self, _count: usize) {}
-        fn found_account(&mut self, loaded_account: &LoadedAccount) {
+        fn found_account(
+            &mut self,
+            _storage: &AccountStorageEntry,
+            loaded_account: &LoadedAccount,
+        ) {
             self.calls.fetch_add(1, Ordering::Relaxed);
             let first = loaded_account.pubkey() == &self.pubkey1;
             assert!(first || loaded_account.pubkey() == &self.pubkey2);
