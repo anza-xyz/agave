@@ -96,9 +96,28 @@ pub struct UiConfig<T> {
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::validator_info::ValidatorInfo, serde_json::json,
-        solana_account::ReadableAccount, solana_config_program::create_config_account,
+        super::*,
+        crate::validator_info::ValidatorInfo,
+        bincode::serialize,
+        serde_json::json,
+        solana_account::{Account, AccountSharedData, ReadableAccount},
+        solana_config_program::ConfigKeys,
     };
+
+    fn create_config_account<T: serde::Serialize>(
+        keys: Vec<(Pubkey, bool)>,
+        config_data: &T,
+        lamports: u64,
+    ) -> AccountSharedData {
+        let mut data = serialize(&ConfigKeys { keys }).unwrap();
+        data.extend_from_slice(&serialize(config_data).unwrap());
+        AccountSharedData::from(Account {
+            lamports,
+            data,
+            owner: solana_sdk_ids::config::id(),
+            ..Account::default()
+        })
+    }
 
     #[test]
     fn test_parse_config() {
