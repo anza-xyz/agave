@@ -75,7 +75,6 @@ pub type ScanResult<T> = Result<T, ScanError>;
 pub type SlotList<T> = Vec<(Slot, T)>;
 pub type SlotSlice<'s, T> = &'s [(Slot, T)];
 pub type RefCount = u64;
-pub type AccountMap<T, U> = Arc<InMemAccountsIndex<T, U>>;
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct GenerateIndexResult<T: IndexValue> {
@@ -239,7 +238,7 @@ pub struct AccountsIndexRootsStats {
 }
 
 pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
-    account_maps: &'a [AccountMap<T, U>],
+    account_maps: &'a [Arc<InMemAccountsIndex<T, U>>],
     bin_calculator: &'a PubkeyBinCalculator24,
     start_bound: Bound<Pubkey>,
     end_bound: Bound<Pubkey>,
@@ -249,7 +248,7 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
 
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIterator<'a, T, U> {
     fn range<R>(
-        map: &AccountMap<T, U>,
+        map: &Arc<InMemAccountsIndex<T, U>>,
         range: R,
         returns_items: AccountsIndexIteratorReturnsItems,
     ) -> Vec<(Pubkey, AccountMapEntry<T>)>
@@ -417,7 +416,7 @@ pub enum AccountsIndexScanResult {
 /// T: account info type to interact in in-memory items
 /// U: account info type to be persisted to disk
 pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
-    pub account_maps: Vec<AccountMap<T, U>>,
+    pub account_maps: Vec<Arc<InMemAccountsIndex<T, U>>>,
     pub bin_calculator: PubkeyBinCalculator24,
     program_id_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_mint_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
@@ -495,11 +494,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn allocate_accounts_index(
         config: Option<AccountsIndexConfig>,
         exit: Arc<AtomicBool>,
     ) -> (
-        Vec<AccountMap<T, U>>,
+        Vec<Arc<InMemAccountsIndex<T, U>>>,
         PubkeyBinCalculator24,
         AccountsIndexStorage<T, U>,
     ) {
@@ -1423,7 +1423,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         );
     }
 
-    pub(crate) fn get_bin(&self, pubkey: &Pubkey) -> &AccountMap<T, U> {
+    pub(crate) fn get_bin(&self, pubkey: &Pubkey) -> &Arc<InMemAccountsIndex<T, U>> {
         &self.account_maps[self.bin_calculator.bin_from_pubkey(pubkey)]
     }
 
