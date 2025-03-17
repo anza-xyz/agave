@@ -726,20 +726,21 @@ impl BankingSimulator {
 
         info!("Poh is starting!");
 
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new_with_clear_signal(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            None,
-            bank.ticks_per_slot(),
-            false,
-            blockstore.clone(),
-            blockstore.get_new_shred_signal(0),
-            &leader_schedule_cache,
-            &genesis_config.poh_config,
-            None,
-            exit.clone(),
-        );
+        let (poh_recorder, transaction_recorder, entry_receiver, record_receiver) =
+            PohRecorder::new_with_clear_signal(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                None,
+                bank.ticks_per_slot(),
+                false,
+                blockstore.clone(),
+                blockstore.get_new_shred_signal(0),
+                &leader_schedule_cache,
+                &genesis_config.poh_config,
+                None,
+                exit.clone(),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let poh_service = PohService::new(
             poh_recorder.clone(),
@@ -823,6 +824,7 @@ impl BankingSimulator {
             block_production_method.clone(),
             transaction_struct.clone(),
             &cluster_info_for_banking,
+            transaction_recorder,
             &poh_recorder,
             non_vote_receiver,
             tpu_vote_receiver,

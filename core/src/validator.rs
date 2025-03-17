@@ -950,7 +950,7 @@ impl Validator {
 
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
         let startup_verification_complete;
-        let (poh_recorder, entry_receiver, record_receiver) = {
+        let (poh_recorder, transaction_recorder, entry_receiver, record_receiver) = {
             let bank = &bank_forks.read().unwrap().working_bank();
             startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
             PohRecorder::new_with_clear_signal(
@@ -1555,6 +1555,7 @@ impl Validator {
 
         let (tpu, mut key_notifies) = Tpu::new(
             &cluster_info,
+            transaction_recorder,
             &poh_recorder,
             entry_receiver,
             retransmit_slots_receiver,

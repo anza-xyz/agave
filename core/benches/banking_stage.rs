@@ -234,7 +234,7 @@ fn bench_banking(
     let blockstore = Arc::new(
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
-    let (exit, poh_recorder, poh_service, signal_receiver) =
+    let (exit, transaction_recorder, poh_recorder, poh_service, signal_receiver) =
         create_test_recorder(bank.clone(), blockstore, None, None);
     let cluster_info = {
         let keypair = Arc::new(Keypair::new());
@@ -247,6 +247,7 @@ fn bench_banking(
         block_production_method,
         transaction_struct,
         &cluster_info,
+        transaction_recorder,
         &poh_recorder,
         non_vote_receiver,
         tpu_vote_receiver,

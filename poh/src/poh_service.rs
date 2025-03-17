@@ -416,17 +416,18 @@ mod tests {
         let ticks_per_slot = bank.ticks_per_slot();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let blockstore = Arc::new(blockstore);
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            prev_hash,
-            bank.clone(),
-            Some((4, 4)),
-            ticks_per_slot,
-            blockstore,
-            &leader_schedule_cache,
-            &poh_config,
-            exit.clone(),
-        );
+        let (poh_recorder, _transaction_recorder, entry_receiver, record_receiver) =
+            PohRecorder::new(
+                bank.tick_height(),
+                prev_hash,
+                bank.clone(),
+                Some((4, 4)),
+                ticks_per_slot,
+                blockstore,
+                &leader_schedule_cache,
+                &poh_config,
+                exit.clone(),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let ticks_per_slot = bank.ticks_per_slot();
         let bank_slot = bank.slot();

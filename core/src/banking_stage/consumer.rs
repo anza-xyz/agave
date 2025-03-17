@@ -916,18 +916,18 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let recorder = poh_recorder.new_recorder();
+        let (poh_recorder, transaction_recorder, _entry_receiver, record_receiver) =
+            PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         poh_recorder
@@ -943,7 +943,7 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, transaction_recorder, QosService::new(1), None);
         let process_transactions_summary =
             consumer.process_transactions(&bank, &Instant::now(), &transactions);
 
@@ -1021,18 +1021,18 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let recorder = poh_recorder.new_recorder();
+        let (poh_recorder, transaction_recorder, entry_receiver, record_receiver) =
+            PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
@@ -1047,7 +1047,7 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, transaction_recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions, 0);
@@ -1168,18 +1168,18 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::new(false)),
-        );
-        let recorder = poh_recorder.new_recorder();
+        let (poh_recorder, transaction_recorder, entry_receiver, record_receiver) =
+            PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::new(false)),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         fn poh_tick_before_returning_record_response(
@@ -1234,7 +1234,7 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, transaction_recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions, 0);
@@ -1309,18 +1309,18 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let recorder = poh_recorder.new_recorder();
+        let (poh_recorder, transaction_recorder, _entry_receiver, record_receiver) =
+            PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
@@ -1335,7 +1335,7 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, transaction_recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions, 0);
@@ -1385,18 +1385,18 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let recorder = poh_recorder.new_recorder();
+        let (poh_recorder, transaction_recorder, _entry_receiver, record_receiver) =
+            PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
@@ -1411,7 +1411,7 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, transaction_recorder, QosService::new(1), None);
 
         let get_block_cost = || bank.read_cost_tracker().unwrap().block_cost();
         let get_tx_count = || bank.read_cost_tracker().unwrap().transaction_count();
@@ -1543,18 +1543,18 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let recorder = poh_recorder.new_recorder();
+        let (poh_recorder, transaction_recorder, _entry_receiver, record_receiver) =
+            PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         poh_recorder
@@ -1570,7 +1570,7 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, transaction_recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions, 0);
@@ -1748,22 +1748,21 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
+        let (poh_recorder, transaction_recorder, _entry_receiver, record_receiver) =
+            PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
 
         // Poh Recorder has no working bank, so should throw MaxHeightReached error on
         // record
-        let recorder = poh_recorder.new_recorder();
-
         let poh_simulator = simulate_poh(record_receiver, &Arc::new(RwLock::new(poh_recorder)));
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -1772,7 +1771,12 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder.clone(), QosService::new(1), None);
+        let consumer = Consumer::new(
+            committer,
+            transaction_recorder.clone(),
+            QosService::new(1),
+            None,
+        );
 
         let process_transactions_summary =
             consumer.process_transactions(&bank, &Instant::now(), &transactions);
@@ -1799,7 +1803,9 @@ mod tests {
         let expected: Vec<usize> = (0..transactions.len()).collect();
         assert_eq!(retryable_transaction_indexes, expected);
 
-        recorder.is_exited.store(true, Ordering::Relaxed);
+        transaction_recorder
+            .is_exited
+            .store(true, Ordering::Relaxed);
         let _ = poh_simulator.join();
     }
 
@@ -1846,18 +1852,18 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let blockstore = Arc::new(blockstore);
-        let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            blockstore.clone(),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let recorder = poh_recorder.new_recorder();
+        let (poh_recorder, transaction_recorder, _entry_receiver, record_receiver) =
+            PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                blockstore.clone(),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
@@ -1898,7 +1904,7 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, transaction_recorder, QosService::new(1), None);
 
         let _ = consumer.process_and_record_transactions(&bank, &transactions, 0);
 
@@ -1990,18 +1996,18 @@ mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let blockstore = Arc::new(blockstore);
-        let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            blockstore.clone(),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let recorder = poh_recorder.new_recorder();
+        let (poh_recorder, transaction_recorder, _entry_receiver, record_receiver) =
+            PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                blockstore.clone(),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
@@ -2042,7 +2048,7 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, transaction_recorder, QosService::new(1), None);
 
         let _ = consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()], 0);
 

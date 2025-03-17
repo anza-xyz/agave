@@ -325,6 +325,7 @@ impl BankingStage {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         cluster_info: &impl LikeClusterInfo,
+        transaction_recorder: TransactionRecorder,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
@@ -339,6 +340,7 @@ impl BankingStage {
             block_production_method,
             transaction_struct,
             cluster_info,
+            transaction_recorder,
             poh_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
@@ -357,6 +359,7 @@ impl BankingStage {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         cluster_info: &impl LikeClusterInfo,
+        transaction_recorder: TransactionRecorder,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
@@ -379,6 +382,7 @@ impl BankingStage {
                     transaction_struct,
                     use_greedy_scheduler,
                     cluster_info,
+                    transaction_recorder,
                     poh_recorder,
                     non_vote_receiver,
                     tpu_vote_receiver,
@@ -399,6 +403,7 @@ impl BankingStage {
         transaction_struct: TransactionStructure,
         use_greedy_scheduler: bool,
         cluster_info: &impl LikeClusterInfo,
+        transaction_recorder: TransactionRecorder,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
@@ -423,7 +428,6 @@ impl BankingStage {
             replay_vote_sender.clone(),
             prioritization_fee_cache.clone(),
         );
-        let transaction_recorder = poh_recorder.read().unwrap().new_recorder();
 
         // + 1 for the central scheduler thread
         let mut bank_thread_hdls = Vec::with_capacity(num_threads as usize + 1);
@@ -457,6 +461,7 @@ impl BankingStage {
                     use_greedy_scheduler,
                     decision_maker,
                     committer,
+                    transaction_recorder,
                     poh_recorder,
                     num_threads,
                     log_messages_bytes_limit,
@@ -474,6 +479,7 @@ impl BankingStage {
                     use_greedy_scheduler,
                     decision_maker,
                     committer,
+                    transaction_recorder,
                     poh_recorder,
                     num_threads,
                     log_messages_bytes_limit,
@@ -492,6 +498,7 @@ impl BankingStage {
         use_greedy_scheduler: bool,
         decision_maker: DecisionMaker,
         committer: Committer,
+        transaction_recorder: TransactionRecorder,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         num_threads: u32,
         log_messages_bytes_limit: Option<usize>,
@@ -512,7 +519,7 @@ impl BankingStage {
                 work_receiver,
                 Consumer::new(
                     committer.clone(),
-                    poh_recorder.read().unwrap().new_recorder(),
+                    transaction_recorder.clone(),
                     QosService::new(id),
                     log_messages_bytes_limit,
                 ),
@@ -815,7 +822,7 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (exit, poh_recorder, poh_service, _entry_receiever) =
+        let (exit, transaction_recorder, poh_recorder, poh_service, _entry_receiever) =
             create_test_recorder(bank, blockstore, None, None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
@@ -825,6 +832,7 @@ mod tests {
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
             &cluster_info,
+            transaction_recorder,
             &poh_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
@@ -872,7 +880,7 @@ mod tests {
             target_tick_count: Some(bank.max_tick_height() + num_extra_ticks),
             ..PohConfig::default()
         };
-        let (exit, poh_recorder, poh_service, entry_receiver) =
+        let (exit, transaction_recorder, poh_recorder, poh_service, entry_receiver) =
             create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
@@ -882,6 +890,7 @@ mod tests {
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
             &cluster_info,
+            transaction_recorder,
             &poh_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
@@ -938,7 +947,7 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (exit, poh_recorder, poh_service, entry_receiver) =
+        let (exit, transaction_recorder, poh_recorder, poh_service, entry_receiver) =
             create_test_recorder(bank.clone(), blockstore, None, None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
@@ -948,6 +957,7 @@ mod tests {
             block_production_method,
             transaction_struct,
             &cluster_info,
+            transaction_recorder,
             &poh_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
@@ -1090,7 +1100,7 @@ mod tests {
         let entry_receiver = {
             // start a banking_stage to eat verified receiver
             let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-            let (exit, poh_recorder, poh_service, entry_receiver) =
+            let (exit, transaction_recorder, poh_recorder, poh_service, entry_receiver) =
                 create_test_recorder(bank.clone(), blockstore, None, None);
             let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
             let cluster_info = Arc::new(cluster_info);
@@ -1098,6 +1108,7 @@ mod tests {
                 BlockProductionMethod::CentralScheduler,
                 transaction_struct,
                 &cluster_info,
+                transaction_recorder,
                 &poh_recorder,
                 non_vote_receiver,
                 tpu_vote_receiver,
@@ -1159,19 +1170,19 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
-            // TODO use record_receiver
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            None,
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-        let recorder = poh_recorder.new_recorder();
+        let (poh_recorder, transaction_recorder, entry_receiver, record_receiver) =
+            PohRecorder::new(
+                // TODO use record_receiver
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                None,
+                bank.ticks_per_slot(),
+                Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
@@ -1189,14 +1200,15 @@ mod tests {
             system_transaction::transfer(&keypair2, &pubkey2, 1, genesis_config.hash()).into(),
         ];
 
-        let _ = recorder.record_transactions(bank.slot(), txs.clone());
+        let _ = transaction_recorder.record_transactions(bank.slot(), txs.clone());
         let (_bank, (entry, _tick_height)) = entry_receiver.recv().unwrap();
         assert_eq!(entry.transactions, txs);
 
         // Once bank is set to a new bank (setting bank.slot() + 1 in record_transactions),
         // record_transactions should throw MaxHeightReached
         let next_slot = bank.slot() + 1;
-        let RecordTransactionsSummary { result, .. } = recorder.record_transactions(next_slot, txs);
+        let RecordTransactionsSummary { result, .. } =
+            transaction_recorder.record_transactions(next_slot, txs);
         assert_matches!(result, Err(PohRecordError::MaxHeightReached));
         // Should receive nothing from PohRecorder b/c record failed
         assert!(entry_receiver.try_recv().is_err());
@@ -1275,7 +1287,7 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (exit, poh_recorder, poh_service, _entry_receiver) =
+        let (exit, transaction_recorder, poh_recorder, poh_service, _entry_receiver) =
             create_test_recorder(bank.clone(), blockstore, None, None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
@@ -1285,6 +1297,7 @@ mod tests {
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
             &cluster_info,
+            transaction_recorder,
             &poh_recorder,
             non_vote_receiver,
             tpu_vote_receiver,

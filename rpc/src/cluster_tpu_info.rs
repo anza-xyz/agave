@@ -171,17 +171,18 @@ mod test {
         );
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let (poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
-            0,
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((2, 2)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
+        let (poh_recorder, _transaction_recorder, _entry_receiver, _record_receiver) =
+            PohRecorder::new(
+                0,
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((2, 2)),
+                bank.ticks_per_slot(),
+                Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
 
         let validator0_contact_info = ContactInfo::new_localhost(
             &validator_vote_keypairs0.node_keypair.pubkey(),
@@ -233,17 +234,18 @@ mod test {
         );
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let (poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
-            0,
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((2, 2)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
+        let (poh_recorder, _transaction_recorder, _entry_receiver, _record_receiver) =
+            PohRecorder::new(
+                0,
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((2, 2)),
+                bank.ticks_per_slot(),
+                Arc::new(blockstore),
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &PohConfig::default(),
+                Arc::new(AtomicBool::default()),
+            );
 
         let node_keypair = Arc::new(Keypair::new());
         let cluster_info = Arc::new(ClusterInfo::new(

@@ -33,7 +33,10 @@ use {
         entry_notifier_service::EntryNotifierSender,
     },
     solana_perf::data_budget::DataBudget,
-    solana_poh::{poh_recorder::PohRecorder, working_bank_entry::WorkingBankEntry},
+    solana_poh::{
+        poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder,
+        working_bank_entry::WorkingBankEntry,
+    },
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotificationSender,
         rpc_subscriptions::RpcSubscriptions,
@@ -90,6 +93,7 @@ impl Tpu {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
+        transaction_recorder: TransactionRecorder,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         entry_receiver: Receiver<WorkingBankEntry>,
         retransmit_slots_receiver: Receiver<Slot>,
@@ -264,6 +268,7 @@ impl Tpu {
             block_production_method,
             transaction_struct,
             cluster_info,
+            transaction_recorder,
             poh_recorder,
             non_vote_receiver,
             tpu_vote_receiver,

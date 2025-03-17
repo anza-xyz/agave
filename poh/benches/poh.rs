@@ -86,17 +86,18 @@ fn bench_poh_recorder_record_transaction_index(bencher: &mut Bencher) {
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let prev_hash = bank.last_blockhash();
 
-    let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
-        0,
-        prev_hash,
-        bank.clone(),
-        Some((4, 4)),
-        bank.ticks_per_slot(),
-        Arc::new(blockstore),
-        &std::sync::Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-        &PohConfig::default(),
-        Arc::new(AtomicBool::default()),
-    );
+    let (mut poh_recorder, _transaction_recorder, _entry_receiver, _record_receiver) =
+        PohRecorder::new(
+            0,
+            prev_hash,
+            bank.clone(),
+            Some((4, 4)),
+            bank.ticks_per_slot(),
+            Arc::new(blockstore),
+            &std::sync::Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
     let h1 = hash(b"hello Agave, hello Anza!");
 
     poh_recorder.set_bank_with_transaction_index_for_test(bank.clone());
@@ -136,17 +137,18 @@ fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let prev_hash = bank.last_blockhash();
 
-    let (mut poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
-        0,
-        prev_hash,
-        bank.clone(),
-        Some((4, 4)),
-        bank.ticks_per_slot(),
-        Arc::new(blockstore),
-        &std::sync::Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-        &PohConfig::default(),
-        Arc::new(AtomicBool::default()),
-    );
+    let (mut poh_recorder, _transaction_recorder, _entry_receiver, _record_receiver) =
+        PohRecorder::new(
+            0,
+            prev_hash,
+            bank.clone(),
+            Some((4, 4)),
+            bank.ticks_per_slot(),
+            Arc::new(blockstore),
+            &std::sync::Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
     bencher.iter(|| {
         poh_recorder.set_bank_with_transaction_index_for_test(bank.clone());
         poh_recorder.tick();
