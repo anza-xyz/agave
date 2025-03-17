@@ -44,6 +44,7 @@ pub fn command<'a>() -> App<'a, 'a> {
             Arg::with_name("slot")
                 .long("slot")
                 .value_name("SLOT")
+                .required(true)
                 .takes_value(true)
                 .validator(is_parsable::<u64>)
                 .help("Slot to repair"),
@@ -52,6 +53,7 @@ pub fn command<'a>() -> App<'a, 'a> {
             Arg::with_name("shred")
                 .long("shred")
                 .value_name("SHRED")
+                .required(true)
                 .takes_value(true)
                 .validator(is_parsable::<u64>)
                 .help("Shred to repair"),
@@ -78,22 +80,25 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::commands::tests::verify_args_struct_by_command, std::str::FromStr};
+    use {
+        super::*,
+        crate::commands::tests::{
+            verify_args_struct_by_command, verify_args_struct_by_command_is_error,
+        },
+        std::str::FromStr,
+    };
 
     #[test]
-    fn verify_args_struct_by_command_repair_shred_from_peer_missing_slot() {
-        let app = command();
-        let matches = app.get_matches_from(vec![COMMAND]);
-        let args = RepairShredFromPeerArgs::from_clap_arg_match(&matches);
-        assert_eq!(args, Err("slot is not a valid number".to_string()));
-    }
-
-    #[test]
-    fn verify_args_struct_by_command_repair_shred_from_peer_missing_shred() {
-        let app = command();
-        let matches = app.get_matches_from(vec![COMMAND, "--slot", "1"]);
-        let args = RepairShredFromPeerArgs::from_clap_arg_match(&matches);
-        assert_eq!(args, Err("shred is not a valid number".to_string()));
+    fn verify_args_struct_by_command_repair_shred_from_peer_missing_slot_and_shred() {
+        verify_args_struct_by_command_is_error::<RepairShredFromPeerArgs>(command(), vec![COMMAND]);
+        verify_args_struct_by_command_is_error::<RepairShredFromPeerArgs>(
+            command(),
+            vec![COMMAND, "--slot", "1"],
+        );
+        verify_args_struct_by_command_is_error::<RepairShredFromPeerArgs>(
+            command(),
+            vec![COMMAND, "--shred", "2"],
+        );
     }
 
     #[test]
