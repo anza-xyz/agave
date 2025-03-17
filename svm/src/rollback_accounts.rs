@@ -105,7 +105,9 @@ impl RollbackAccounts {
         match self {
             RollbackAccounts::FeePayerOnly { fee_payer_account } => fee_payer_account.lamports(),
             RollbackAccounts::SameNonceAndFeePayer { nonce } => nonce.account().lamports(),
-            RollbackAccounts::SeparateNonceAndFeePayer { fee_payer_account, .. } => fee_payer_account.lamports(), 
+            RollbackAccounts::SeparateNonceAndFeePayer {
+                fee_payer_account, ..
+            } => fee_payer_account.lamports(),
         }
     }
 }

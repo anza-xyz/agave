@@ -43,50 +43,14 @@ pub(super) struct PreBalanceInfo {
     pub mint_decimals: HashMap<Pubkey, u8>,
 }
 
-// HANA ok i am doing something similar to the prebal attempt
-// using code from the intrabatch attempt because it is generally of higher quality
-// the idea is this time i want a mutable object that collects initial prebals
-// * init from batch: create four empty internal vecs and two hashmaps using bank
-// * accumulate bals: fill the vecs using the post-commit state
-// * finalize: drop the struct and return the needed balance structs with ownerhip of the vecs
-// for tokens i need to think what happens if the account doesnt exist, is dropped and recreated, etc
-// basically if it doesnt exist or doesnt parse i need to drop it from the balance store
-// programid need to be part of the value rather than the key
-// i dont think i need an intermediate struct. im never comparing values or anythig
-// we also have to be careful with mints... we might need another hashmap for decimals
-// otherwise dropping and recreating mints can fuck us up
-// its all relatively straightforward tho just loop through each tx twice
-// we need all mint decimals to be correct before we calculate ui token bals
-// it does this sort of already, it always gets the mint from bank
-// the logic isnt usable, it sort of has a bug but probably no real impact
-// if you closed a mint and reopened it with different decimals the post-bal would be wrong
-// but this cant really affect anyone since it would need to have or be brought to 0 supply
-//
-// HANA ok my entire perspective on this is changed
-// we can do all balance fuckery BEFORE commit
-// that means we dont actually need to gather prebals systematically
-// because bank will always contain the pre-state for an account first seen mid-batch
-// that means our true desired flow is... one function that takes results (possibly also batch?) and bank
-// honestly just loop on accts threetimes and optimize down to two if it makes sense after
-// * first loop: get and push prelamps from hashmap, fall back to bank if not found
-//   get postlamps from acct, push and insert
-// * second loop: go through keys. get any that exist in token hashmap, fall back to bank and try parse
-//   if we have a token account, use mint key on acct, decs in hashmap, fall back to bank (and insert?)
-//   convert to ui and push to pretoken
-// * third loop: go through keys. try to parse the result accounts themselves as token accounts
-//   if we succeed look for the mint *in the results*, parse for decimals, insert. fall back to hashmap for decs
-//   fall back to bank *and insert* if mint not in result accts. use the decs we have *not* for ui convert
-//   push to posttokens
-// we can combine the first and second loops but get it right b4 i fuck with it
-// this all means we DO NOT NEED a stateful object. we just need an ugly fucking function
-
+// HANA idk struct maybe
 type BalanceInfo = (TransactionBalancesSet, TransactionTokenBalancesSet);
 
 #[allow(unused_variables)] // HANA
 #[allow(unused_mut)] // HANA
 fn calculate_balances(
     batch: &TransactionBatch<impl TransactionWithMeta>,
-    processing_results: &Vec<TransactionProcessingResult>,
+    processing_results: &[TransactionProcessingResult],
     bank: &Arc<Bank>,
 ) -> BalanceInfo {
     // running pre-balances and current mint decimals as we step through results
