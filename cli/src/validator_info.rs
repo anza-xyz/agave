@@ -334,7 +334,7 @@ pub fn process_set_validator_info(
         (config.signers[0].pubkey(), true),
     ];
     let data_len = ValidatorInfo::max_space()
-        .checked_add(ConfigKeys::serialized_size(keys.clone()))
+        .checked_add(serialized_size(&ConfigKeys { keys: keys.clone() }).unwrap())
         .expect("ValidatorInfo and two keys fit into a u64");
     let lamports = rpc_client.get_minimum_balance_for_rent_exemption(data_len as usize)?;
 

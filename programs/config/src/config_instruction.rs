@@ -1,5 +1,6 @@
 use {
     crate::{id, ConfigKeys, ConfigState},
+    bincode::serialized_size,
     solana_instruction::{AccountMeta, Instruction},
     solana_pubkey::Pubkey,
     solana_system_interface::instruction as system_instruction,
@@ -18,7 +19,7 @@ pub fn create_account<T: ConfigState>(
     lamports: u64,
     keys: Vec<(Pubkey, bool)>,
 ) -> Vec<Instruction> {
-    let space = T::max_space() + ConfigKeys::serialized_size(keys);
+    let space = T::max_space() + serialized_size(&ConfigKeys { keys }).unwrap();
     vec![
         system_instruction::create_account(
             from_account_pubkey,
