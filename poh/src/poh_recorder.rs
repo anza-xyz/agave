@@ -45,7 +45,7 @@ pub const GRACE_TICKS_FACTOR: u64 = 2;
 pub const MAX_GRACE_SLOTS: u64 = 2;
 
 #[derive(Error, Debug, Clone)]
-pub enum PohRecorderError {
+pub enum PohRecordError {
     #[error("max height reached")]
     MaxHeightReached,
 
@@ -56,7 +56,7 @@ pub enum PohRecorderError {
     SendError(#[from] SendError<WorkingBankEntry>),
 }
 
-type Result<T> = std::result::Result<T, PohRecorderError>;
+type Result<T> = std::result::Result<T, PohRecordError>;
 
 pub type WorkingBankEntry = (Arc<Bank>, (Entry, u64));
 
@@ -161,17 +161,17 @@ impl TransactionRecorder {
                 Ok(starting_index) => {
                     starting_transaction_index = starting_index;
                 }
-                Err(PohRecorderError::MaxHeightReached) => {
+                Err(PohRecordError::MaxHeightReached) => {
                     return RecordTransactionsSummary {
                         record_transactions_timings,
-                        result: Err(PohRecorderError::MaxHeightReached),
+                        result: Err(PohRecordError::MaxHeightReached),
                         starting_transaction_index: None,
                     };
                 }
-                Err(PohRecorderError::SendError(e)) => {
+                Err(PohRecordError::SendError(e)) => {
                     return RecordTransactionsSummary {
                         record_transactions_timings,
-                        result: Err(PohRecorderError::SendError(e)),
+                        result: Err(PohRecordError::SendError(e)),
                         starting_transaction_index: None,
                     };
                 }
@@ -201,7 +201,7 @@ impl TransactionRecorder {
         if res.is_err() {
             // If the channel is dropped, then the validator is shutting down so return that we are hitting
             //  the max tick height to stop transaction processing and flush any transactions in the pipeline.
-            return Err(PohRecorderError::MaxHeightReached);
+            return Err(PohRecordError::MaxHeightReached);
         }
         // Besides validator exit, this timeout should primarily be seen to affect test execution environments where the various pieces can be shutdown abruptly
         let mut is_exited = false;
@@ -210,7 +210,7 @@ impl TransactionRecorder {
             match res {
                 Err(RecvTimeoutError::Timeout) => {
                     if is_exited {
-                        return Err(PohRecorderError::MaxHeightReached);
+                        return Err(PohRecordError::MaxHeightReached);
                     } else {
                         // A result may have come in between when we timed out checking this
                         // bool, so check the channel again, even if is_exited == true
@@ -218,7 +218,7 @@ impl TransactionRecorder {
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err(PohRecorderError::MaxHeightReached);
+                    return Err(PohRecordError::MaxHeightReached);
                 }
                 Ok(result) => {
                     return result;
@@ -464,9 +464,9 @@ impl PohRecorder {
             let working_bank = self
                 .working_bank
                 .as_mut()
-                .ok_or(PohRecorderError::MaxHeightReached)?;
+                .ok_or(PohRecordError::MaxHeightReached)?;
             if bank_slot != working_bank.bank.slot() {
-                return Err(PohRecorderError::MaxHeightReached);
+                return Err(PohRecordError::MaxHeightReached);
             }
 
             let (mut poh_lock, poh_lock_us) = measure_us!(self.poh.lock().unwrap());
@@ -672,12 +672,12 @@ impl PohRecorder {
         let working_bank = self
             .working_bank
             .as_ref()
-            .ok_or(PohRecorderError::MaxHeightReached)?;
+            .ok_or(PohRecordError::MaxHeightReached)?;
         if self.tick_height < working_bank.min_tick_height {
-            return Err(PohRecorderError::MinHeightNotReached);
+            return Err(PohRecordError::MinHeightNotReached);
         }
         if tick && self.tick_height == working_bank.min_tick_height {
-            return Err(PohRecorderError::MinHeightNotReached);
+            return Err(PohRecordError::MinHeightNotReached);
         }
 
         let entry_count = self
@@ -1433,7 +1433,7 @@ mod tests {
         // so record should fail
         assert_matches!(
             poh_recorder.record(bank1.slot(), h1, vec![tx.into()]),
-            Err(PohRecorderError::MinHeightNotReached)
+            Err(PohRecordError::MinHeightNotReached)
         );
         assert!(entry_receiver.try_recv().is_err());
     }
@@ -1472,7 +1472,7 @@ mod tests {
         let bad_slot = bank.slot() + 1;
         assert_matches!(
             poh_recorder.record(bad_slot, h1, vec![tx.into()]),
-            Err(PohRecorderError::MaxHeightReached)
+            Err(PohRecordError::MaxHeightReached)
         );
     }
 

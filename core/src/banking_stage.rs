@@ -757,7 +757,7 @@ mod tests {
         solana_perf::packet::to_packet_batches,
         solana_poh::{
             poh_recorder::{
-                create_test_recorder, PohRecorderError, Record, RecordTransactionsSummary,
+                create_test_recorder, PohRecordError, Record, RecordTransactionsSummary,
             },
             poh_service::PohService,
         },
@@ -1198,7 +1198,7 @@ mod tests {
         // record_transactions should throw MaxHeightReached
         let next_slot = bank.slot() + 1;
         let RecordTransactionsSummary { result, .. } = recorder.record_transactions(next_slot, txs);
-        assert_matches!(result, Err(PohRecorderError::MaxHeightReached));
+        assert_matches!(result, Err(PohRecordError::MaxHeightReached));
         // Should receive nothing from PohRecorder b/c record failed
         assert!(entry_receiver.try_recv().is_err());
 

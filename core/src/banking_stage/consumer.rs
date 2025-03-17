@@ -17,7 +17,7 @@ use {
     solana_ledger::token_balances::collect_token_balances,
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::{
-        BankStart, PohRecorderError, RecordTransactionsSummary, RecordTransactionsTimings,
+        BankStart, PohRecordError, RecordTransactionsSummary, RecordTransactionsTimings,
         TransactionRecorder,
     },
     solana_runtime::{
@@ -67,7 +67,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
     pub(crate) retryable_transaction_indexes: Vec<usize>,
     // A result that indicates whether transactions were successfully
     // committed into the Poh stream.
-    pub commit_transactions_result: Result<Vec<CommitTransactionDetails>, PohRecorderError>,
+    pub commit_transactions_result: Result<Vec<CommitTransactionDetails>, PohRecordError>,
     pub(crate) execute_and_commit_timings: LeaderExecuteAndCommitTimings,
     pub(crate) error_counters: TransactionErrorMetrics,
     pub(crate) min_prioritization_fees: u64,
@@ -352,7 +352,7 @@ impl Consumer {
                 new_commit_transactions_result,
                 should_bank_still_be_processing_txs,
             ) {
-                (Err(PohRecorderError::MaxHeightReached), _) | (_, false) => {
+                (Err(PohRecordError::MaxHeightReached), _) | (_, false) => {
                     info!(
                         "process transactions: max height reached slot: {} height: {}",
                         bank.slot(),
@@ -1115,7 +1115,7 @@ mod tests {
         assert_eq!(retryable_transaction_indexes, vec![0]);
         assert_matches!(
             commit_transactions_result,
-            Err(PohRecorderError::MaxHeightReached)
+            Err(PohRecordError::MaxHeightReached)
         );
 
         poh_recorder
