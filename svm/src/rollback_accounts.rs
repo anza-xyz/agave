@@ -99,6 +99,15 @@ impl RollbackAccounts {
                 .saturating_add(nonce.account().data().len()),
         }
     }
+
+    // HANA desc
+    pub fn fee_payer_balance(&self) -> u64 {
+        match self {
+            RollbackAccounts::FeePayerOnly { fee_payer_account } => fee_payer_account.lamports(),
+            RollbackAccounts::SameNonceAndFeePayer { nonce } => nonce.account().lamports(),
+            RollbackAccounts::SeparateNonceAndFeePayer { fee_payer_account, .. } => fee_payer_account.lamports(), 
+        }
+    }
 }
 
 #[cfg(test)]
