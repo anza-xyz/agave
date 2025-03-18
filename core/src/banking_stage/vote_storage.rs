@@ -31,10 +31,9 @@ pub struct VoteStorage {
 }
 
 /// Convenient wrapper for shared-state between vote_storage and the consumer.
-pub struct ConsumeScannerPayload<'a> {
+pub struct ConsumeScannerPayload {
     pub reached_end_of_slot: bool,
     pub sanitized_transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
-    pub slot_metrics_tracker: &'a mut LeaderSlotMetricsTracker,
 }
 
 fn consume_scan_should_process_packet(
@@ -43,6 +42,7 @@ fn consume_scan_should_process_packet(
     packet: &ImmutableDeserializedPacket,
     payload: &mut ConsumeScannerPayload,
     error_counters: &mut TransactionErrorMetrics,
+    slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
 ) -> bool {
     // If end of the slot, return should process (quick loop after reached end of slot)
     if payload.reached_end_of_slot {
@@ -59,9 +59,7 @@ fn consume_scan_should_process_packet(
         )
         .map(|(tx, _deactivation_slot)| tx));
 
-    payload
-        .slot_metrics_tracker
-        .increment_transactions_from_packets_us(sanitization_time_us);
+    slot_metrics_tracker.increment_transactions_from_packets_us(sanitization_time_us);
     banking_stage_stats
         .packet_conversion_elapsed
         .fetch_add(sanitization_time_us, Ordering::Relaxed);
@@ -142,7 +140,11 @@ impl VoteStorage {
         mut processing_function: F,
     ) -> bool
     where
-        F: FnMut(usize, &mut ConsumeScannerPayload) -> Option<Vec<usize>>,
+        F: FnMut(
+            usize,
+            &mut ConsumeScannerPayload,
+            &mut LeaderSlotMetricsTracker,
+        ) -> Option<Vec<usize>>,
     {
         if matches!(self.vote_source, VoteSource::Gossip) {
             panic!("Gossip vote thread should not be processing transactions");
@@ -162,7 +164,6 @@ impl VoteStorage {
         let mut payload = ConsumeScannerPayload {
             reached_end_of_slot: false,
             sanitized_transactions: Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE),
-            slot_metrics_tracker,
         };
 
         let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
@@ -178,13 +179,14 @@ impl VoteStorage {
                     packet,
                     &mut payload,
                     &mut error_counters,
+                    slot_metrics_tracker,
                 ) {
                     vote_packets.push(packet.clone());
                 }
             });
 
             if let Some(retryable_vote_indices) =
-                processing_function(vote_packets.len(), &mut payload)
+                processing_function(vote_packets.len(), &mut payload, slot_metrics_tracker)
             {
                 self.latest_unprocessed_votes.insert_batch(
                     retryable_vote_indices.iter().filter_map(|i| {
@@ -284,7 +286,7 @@ mod tests {
             bank.clone(),
             &BankingStageStats::default(),
             &mut LeaderSlotMetricsTracker::new(0),
-            |packets_to_process_len, _payload| {
+            |packets_to_process_len, _payload, _slot_metrics_tracker| {
                 // Return all packets indexes as retryable
                 Some((0..packets_to_process_len).collect())
             },

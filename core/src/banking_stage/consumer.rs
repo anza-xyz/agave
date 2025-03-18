@@ -128,7 +128,7 @@ impl Consumer {
             bank_start.working_bank.clone(),
             banking_stage_stats,
             slot_metrics_tracker,
-            |packets_to_process_len, payload| {
+            |packets_to_process_len, payload, slot_metrics_tracker| {
                 self.do_process_packets(
                     bank_start,
                     payload,
@@ -136,6 +136,7 @@ impl Consumer {
                     &mut consumed_buffered_packets_count,
                     &mut rebuffered_packet_count,
                     packets_to_process_len,
+                    slot_metrics_tracker,
                 )
             },
         );
@@ -173,6 +174,7 @@ impl Consumer {
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
         packets_to_process_len: usize,
+        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> Option<Vec<usize>> {
         if payload.reached_end_of_slot {
             return None;
@@ -184,10 +186,10 @@ impl Consumer {
                 &bank_start.bank_creation_time,
                 &payload.sanitized_transactions,
                 banking_stage_stats,
-                payload.slot_metrics_tracker,
+                slot_metrics_tracker,
             ));
-        payload
-            .slot_metrics_tracker
+
+        slot_metrics_tracker
             .increment_process_packets_transactions_us(process_packets_transactions_us);
 
         // Clear payload for next iteration
@@ -217,8 +219,7 @@ impl Consumer {
         // transactions in this batch
         *rebuffered_packet_count += retryable_transaction_indexes.len();
 
-        payload
-            .slot_metrics_tracker
+        slot_metrics_tracker
             .increment_retryable_packets_count(retryable_transaction_indexes.len() as u64);
 
         Some(retryable_transaction_indexes)
