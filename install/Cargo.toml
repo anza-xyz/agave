@@ -30,7 +30,7 @@ serde_derive = { workspace = true }
 serde_yaml = { workspace = true }
 serde_yaml_08 = { package = "serde_yaml", version = "0.8.26" }
 solana-clap-utils = { workspace = true }
-solana-config-program = { workspace = true }
+solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-hash = "=2.2.1"
 solana-keypair = "=2.2.1"
 solana-logger = "=2.3.1"
