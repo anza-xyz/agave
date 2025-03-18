@@ -184,6 +184,7 @@ pub fn execute_batch<'a>(
     let pre_commit_callback = |timings: &mut _, processing_results: &_| -> PreCommitResult {
         match extra_pre_commit_callback {
             None => {
+                // We're entering into the block verifying mode.
                 get_first_error(batch, processing_results)?;
                 check_block_cost_limits_if_enabled(batch, bank, timings, processing_results)?;
                 Ok(None)
@@ -200,6 +201,8 @@ pub fn execute_batch<'a>(
                 // invariant violation.
                 let freeze_lock = bank.freeze_lock();
 
+                // Note that extra_pre_commit_callback is also responsible for checking the very
+                // basic precondition of successful execution of transactions!
                 if let Some(index) = extra_pre_commit_callback(&processing_results[0])? {
                     let transaction_indexes = transaction_indexes.to_mut();
                     // Adjust the empty new vec with the exact needed capacity. Otherwise, excess
@@ -301,9 +304,7 @@ fn check_block_cost_limits(
     {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         for tx_cost in &tx_costs_with_actual_execution_units {
-            cost_tracker
-                .try_add(tx_cost)
-                .map_err(TransactionError::from)?;
+            cost_tracker.try_add(tx_cost)?;
         }
     }
     Ok(())
@@ -4957,9 +4958,10 @@ pub mod tests {
         let mut mocked_scheduler = MockInstalledScheduler::new();
         let seq = Arc::new(Mutex::new(mockall::Sequence::new()));
         let seq_cloned = seq.clone();
+        // Used for assertions in BankWithScheduler::{new, schedule_transaction_executions}
         mocked_scheduler
             .expect_context()
-            .times(1)
+            .times(2)
             .in_sequence(&mut seq.lock().unwrap())
             .return_const(context);
         if should_succeed {
