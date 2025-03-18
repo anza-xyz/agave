@@ -6516,26 +6516,26 @@ fn test_bank_hash_consistency() {
         if bank.slot == 0 {
             assert_eq!(
                 bank.hash().to_string(),
-                "Hn2FoJuoFWXVFVnwcQ6peuT24mUPmhDtXHXVjKD7M4yP",
+                "5nHFM2YArJdULMoAEtn2cXSaqk4v1UXs9upTvoc2FMn7",
             );
         }
 
         if bank.slot == 32 {
             assert_eq!(
                 bank.hash().to_string(),
-                "Hdrk5wqzRZbofSgZMC3ztfNimrFu6DeYp751JWvtabo"
+                "FPr64zXMcEE45qWRYy7hpvNRpzZD2ckqHes13uyiU1to"
             );
         }
         if bank.slot == 64 {
             assert_eq!(
                 bank.hash().to_string(),
-                "4EcAFkTxymwwPGeCgadhkrkg2hqfAPzuQZoN2NFqPzyg"
+                "HENrhATjg2gghYyV34CLPnMUq2VuTKwUjGXWwAz96Vzs"
             );
         }
         if bank.slot == 128 {
             assert_eq!(
                 bank.hash().to_string(),
-                "4BK3VANr5mhyRyrwbUHYb2kmM5m76PBGkhmKMrQ2aq7L"
+                "GjpfTe9dmB1HbrnC4BMaETPAqPUtXvXNG5ccnHSeMPnH"
             );
             break;
         }
@@ -6754,7 +6754,7 @@ fn test_shrink_candidate_slots_cached() {
     // No more slots should be shrunk
     assert_eq!(bank2.shrink_candidate_slots(), 0);
     // alive_counts represents the count of alive accounts in the three slots 0,1,2
-    assert_eq!(alive_counts, vec![15, 1, 6]);
+    assert_eq!(alive_counts, vec![14, 1, 6]);
 }
 
 #[test]

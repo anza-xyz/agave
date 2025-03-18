@@ -7,8 +7,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
         address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        compute_budget, config, ed25519_program, loader_v4, secp256k1_program, stake,
-        system_program, vote,
+        compute_budget, ed25519_program, loader_v4, secp256k1_program, stake, system_program, vote,
     },
 };
 
@@ -102,7 +101,7 @@ lazy_static! {
 /// correctly furnishing `core_bpf_migration_feature`.
 ///
 #[allow(dead_code)]
-const TOTAL_COUNT_BUILTINS: usize = 12;
+const TOTAL_COUNT_BUILTINS: usize = 11;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
     MIGRATING_BUILTINS_COSTS.len() + NON_MIGRATING_BUILTINS_COSTS.len(),
@@ -119,20 +118,12 @@ pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
         }),
     ),
     (
-        config::id(),
-        BuiltinCost::Migrating(MigratingBuiltinCost {
-            native_cost: solana_config_program::config_processor::DEFAULT_COMPUTE_UNITS,
-            core_bpf_migration_feature: feature_set::migrate_config_program_to_core_bpf::id(),
-            position: 1,
-        }),
-    ),
-    (
         address_lookup_table::id(),
         BuiltinCost::Migrating(MigratingBuiltinCost {
             native_cost: solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS,
             core_bpf_migration_feature:
                 feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
-            position: 2,
+            position: 1,
         }),
     ),
 ];
@@ -339,20 +330,6 @@ mod test {
         assert_eq!(
             get_migration_feature_id(feature_index),
             &feature_set::migrate_stake_program_to_core_bpf::id()
-        );
-        let feature_index = get_builtin_migration_feature_index(&config::id());
-        assert!(matches!(
-            feature_index,
-            BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(_)
-        ));
-        let BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(feature_index) =
-            feature_index
-        else {
-            panic!("expect migrating builtin")
-        };
-        assert_eq!(
-            get_migration_feature_id(feature_index),
-            &feature_set::migrate_config_program_to_core_bpf::id()
         );
         let feature_index = get_builtin_migration_feature_index(&address_lookup_table::id());
         assert!(matches!(
