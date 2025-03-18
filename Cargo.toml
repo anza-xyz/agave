@@ -94,7 +94,6 @@ members = [
     "programs/bpf_loader/gen-syscall-list",
     "programs/compute-budget",
     "programs/compute-budget-bench",
-    "programs/config",
     "programs/ed25519-tests",
     "programs/loader-v4",
     "programs/stake",
@@ -406,7 +405,6 @@ solana-compute-budget = { path = "compute-budget", version = "=2.3.0" }
 solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=2.3.0" }
 solana-compute-budget-interface = "2.2.1"
 solana-compute-budget-program = { path = "programs/compute-budget", version = "=2.3.0" }
-solana-config-program = { path = "programs/config", version = "=2.3.0" }
 solana-config-program-client = "0.0.2"
 solana-connection-cache = { path = "connection-cache", version = "=2.3.0", default-features = false }
 solana-core = { path = "core", version = "=2.3.0" }

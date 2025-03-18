@@ -7475,31 +7475,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-config-program"
-version = "2.3.0"
-dependencies = [
- "bincode",
- "chrono",
- "serde",
- "serde_derive",
- "solana-account",
- "solana-bincode",
- "solana-instruction",
- "solana-keypair",
- "solana-log-collector",
- "solana-logger",
- "solana-packet",
- "solana-program-runtime",
- "solana-pubkey",
- "solana-sdk-ids",
- "solana-short-vec",
- "solana-signer",
- "solana-stake-interface",
- "solana-system-interface",
- "solana-transaction-context 2.3.0",
-]
-
-[[package]]
 name = "solana-config-program-client"
 version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
