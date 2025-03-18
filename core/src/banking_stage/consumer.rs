@@ -1,7 +1,6 @@
 use {
     super::{
         committer::{CommitTransactionDetails, Committer, PreBalanceInfo},
-        immutable_deserialized_packet::ImmutableDeserializedPacket,
         leader_slot_metrics::{
             CommittedTransactionsCounts, LeaderSlotMetricsTracker, ProcessTransactionsSummary,
         },
@@ -127,14 +126,14 @@ impl Consumer {
             bank_start.working_bank.clone(),
             banking_stage_stats,
             slot_metrics_tracker,
-            |packets_to_process, payload| {
+            |packets_to_process_len, payload| {
                 self.do_process_packets(
                     bank_start,
                     payload,
                     banking_stage_stats,
                     &mut consumed_buffered_packets_count,
                     &mut rebuffered_packet_count,
-                    packets_to_process,
+                    packets_to_process_len,
                 )
             },
         );
@@ -171,13 +170,12 @@ impl Consumer {
         banking_stage_stats: &BankingStageStats,
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
-        packets_to_process: &[Arc<ImmutableDeserializedPacket>],
+        packets_to_process_len: usize,
     ) -> Option<Vec<usize>> {
         if payload.reached_end_of_slot {
             return None;
         }
 
-        let packets_to_process_len = packets_to_process.len();
         let (process_transactions_summary, process_packets_transactions_us) = measure_us!(self
             .process_packets_transactions(
                 &bank_start.working_bank,

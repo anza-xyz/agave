@@ -9,6 +9,7 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         BankingStageStats,
     },
+    arrayvec::ArrayVec,
     solana_accounts_db::account_locks::validate_account_locks,
     solana_measure::measure_us,
     solana_runtime::bank::Bank,
@@ -81,11 +82,13 @@ fn consume_scan_should_process_packet(
             return false;
         }
 
-        if Consumer::check_fee_payer_unlocked(bank,
+        if Consumer::check_fee_payer_unlocked(
+            bank,
             &sanitized_transaction,
             &mut payload.error_counters,
         )
-        .is_err() {
+        .is_err()
+        {
             return false;
         }
         payload.sanitized_transactions.push(sanitized_transaction);
@@ -147,10 +150,7 @@ impl VoteStorage {
         mut processing_function: F,
     ) -> bool
     where
-        F: FnMut(
-            &Vec<Arc<ImmutableDeserializedPacket>>,
-            &mut ConsumeScannerPayload,
-        ) -> Option<Vec<usize>>,
+        F: FnMut(usize, &mut ConsumeScannerPayload) -> Option<Vec<usize>>,
     {
         if matches!(self.vote_source, VoteSource::Gossip) {
             panic!("Gossip vote thread should not be processing transactions");
@@ -174,10 +174,10 @@ impl VoteStorage {
             error_counters: TransactionErrorMetrics::default(),
         };
 
+        let mut vote_packets =
+            ArrayVec::<Arc<ImmutableDeserializedPacket>, UNPROCESSED_BUFFER_STEP_SIZE>::new();
         for chunk in all_vote_packets.chunks(UNPROCESSED_BUFFER_STEP_SIZE) {
-            let mut vote_packets: Vec<Arc<ImmutableDeserializedPacket>> =
-                Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
-
+            vote_packets.clear();
             chunk.iter().for_each(|packet| {
                 if consume_scan_should_process_packet(
                     &bank,
@@ -189,7 +189,9 @@ impl VoteStorage {
                 }
             });
 
-            if let Some(retryable_vote_indices) = processing_function(&vote_packets, &mut payload) {
+            if let Some(retryable_vote_indices) =
+                processing_function(vote_packets.len(), &mut payload)
+            {
                 self.latest_unprocessed_votes.insert_batch(
                     retryable_vote_indices.iter().filter_map(|i| {
                         LatestValidatorVotePacket::new_from_immutable(
@@ -203,7 +205,7 @@ impl VoteStorage {
                 );
             } else {
                 self.latest_unprocessed_votes.insert_batch(
-                    vote_packets.into_iter().filter_map(|packet| {
+                    vote_packets.drain(..).filter_map(|packet| {
                         LatestValidatorVotePacket::new_from_immutable(
                             packet,
                             self.vote_source,
@@ -242,7 +244,6 @@ impl VoteStorage {
 mod tests {
     use {
         super::*,
-        itertools::Itertools,
         solana_perf::packet::{Packet, PacketFlags},
         solana_runtime::genesis_utils,
         solana_sdk::{
@@ -289,15 +290,9 @@ mod tests {
             bank.clone(),
             &BankingStageStats::default(),
             &mut LeaderSlotMetricsTracker::new(0),
-            |packets, _payload| {
+            |packets_to_process_len, _payload| {
                 // Return all packets indexes as retryable
-                Some(
-                    packets
-                        .iter()
-                        .enumerate()
-                        .map(|(index, _packet)| index)
-                        .collect_vec(),
-                )
+                Some((0..packets_to_process_len).collect())
             },
         );
 
