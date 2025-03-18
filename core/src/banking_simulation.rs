@@ -737,7 +737,6 @@ impl BankingSimulator {
             blockstore.get_new_shred_signal(0),
             &leader_schedule_cache,
             &genesis_config.poh_config,
-            None,
             exit.clone(),
         );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));

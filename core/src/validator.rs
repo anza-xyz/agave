@@ -13,7 +13,6 @@ use {
             tower_storage::{NullTowerStorage, TowerStorage},
             ExternalRootSource, Tower,
         },
-        poh_timing_report_service::PohTimingReportService,
         repair::{
             self,
             quic_endpoint::{RepairQuicAsyncSenders, RepairQuicSenders, RepairQuicSockets},
@@ -72,9 +71,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_measure::measure::Measure,
-    solana_metrics::{
-        datapoint_info, metrics::metrics_config_sanity_check, poh_timing_point::PohTimingSender,
-    },
+    solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
     solana_poh::{
         poh_recorder::{PohRecorder, TransactionRecorder},
         poh_service::{self, PohService},
@@ -567,7 +564,6 @@ pub struct Validator {
     entry_notifier_service: Option<EntryNotifierService>,
     system_monitor_service: Option<SystemMonitorService>,
     sample_performance_service: Option<SamplePerformanceService>,
-    poh_timing_report_service: PohTimingReportService,
     stats_reporter_service: StatsReporterService,
     gossip_service: GossipService,
     serve_repair_service: ServeRepairService,
@@ -797,10 +793,6 @@ impl Validator {
             },
         ));
 
-        let (poh_timing_point_sender, poh_timing_point_receiver) = unbounded();
-        let poh_timing_report_service =
-            PohTimingReportService::new(poh_timing_point_receiver, exit.clone());
-
         let (
             bank_forks,
             blockstore,
@@ -829,7 +821,6 @@ impl Validator {
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
-            Some(poh_timing_point_sender.clone()),
         )
         .map_err(ValidatorError::Other)?;
 
@@ -966,7 +957,6 @@ impl Validator {
                 blockstore.get_new_shred_signal(0),
                 &leader_schedule_cache,
                 &genesis_config.poh_config,
-                Some(poh_timing_point_sender),
                 exit.clone(),
             )
         };
@@ -1664,7 +1654,6 @@ impl Validator {
             entry_notifier_service,
             system_monitor_service,
             sample_performance_service,
-            poh_timing_report_service,
             snapshot_packager_service,
             completed_data_sets_service,
             tpu,
@@ -1837,10 +1826,6 @@ impl Validator {
         if let Some(geyser_plugin_service) = self.geyser_plugin_service {
             geyser_plugin_service.join().expect("geyser_plugin_service");
         }
-
-        self.poh_timing_report_service
-            .join()
-            .expect("poh_timing_report_service");
     }
 }
 
@@ -2017,7 +2002,6 @@ fn load_blockstore(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
-    poh_timing_point_sender: Option<PohTimingSender>,
 ) -> Result<
     (
         Arc<RwLock<BankForks>>,
@@ -2037,14 +2021,12 @@ fn load_blockstore(
     info!("loading ledger from {:?}...", ledger_path);
     *start_progress.write().unwrap() = ValidatorStartProgress::LoadingLedger;
 
-    let mut blockstore =
-        Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
-            .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
+    let blockstore = Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
+        .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
 
     let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
     blockstore.add_new_shred_signal(ledger_signal_sender);
 
-    blockstore.shred_timing_point_sender = poh_timing_point_sender;
     // following boot sequence (esp BankForks) could set root. so stash the original value
     // of blockstore root away here as soon as possible.
     let original_blockstore_root = blockstore.max_root();
