@@ -34,7 +34,7 @@ use {
     solana_sdk_ids::system_program,
     std::{
         sync::{Arc, RwLock},
-        time::Instant,
+        time::{Duration, Instant},
     },
 };
 
@@ -46,7 +46,7 @@ fn create_accounts(num_accounts: usize, genesis_config: &mut GenesisConfig) -> V
 
     let account_keypairs: Vec<Keypair> = (0..num_accounts).map(|_| Keypair::new()).collect();
     for keypair in account_keypairs.iter() {
-        genesis_config.add_account(keypair.pubkey(), AccountSharedData::new(10000, 0, &owner));
+        genesis_config.add_account(keypair.pubkey(), AccountSharedData::new(10000, 0, owner));
     }
     account_keypairs
 }
@@ -83,7 +83,9 @@ fn generate_transactions(
     num_instructions_per_tx: usize,
     probability_invalid_blockhash: f64,
 ) -> BankingPacketBatch {
-    assert!(num_instructions_per_tx <= MAX_INSTRUCTIONS_PER_TRANSACTION);
+    assert!(
+        num_instructions_per_tx <= MAX_INSTRUCTIONS_PER_TRANSACTION && num_instructions_per_tx > 0
+    );
     let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
 
     let mut rng = rand::thread_rng();
@@ -101,7 +103,7 @@ fn generate_transactions(
             instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
                 compute_unit_price,
             ));
-            for _ in 0..num_instructions_per_tx - 1 {
+            for _ in 0..num_instructions_per_tx.saturating_sub(1) {
                 instructions.push(Instruction::new_with_bytes(
                     program_id,
                     &[0],
@@ -124,8 +126,7 @@ fn generate_transactions(
         })
         .collect();
 
-    let packets_batches = BankingPacketBatch::new(to_packet_batches(&txs, NUM_PACKETS));
-    return packets_batches;
+    BankingPacketBatch::new(to_packet_batches(&txs, NUM_PACKETS))
 }
 
 trait ReceiveAndBufferCreator {
@@ -200,7 +201,7 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
     group.throughput(Throughput::Elements(num_txs as u64));
     group.bench_function(bench_name, |bencher| {
         bencher.iter_custom(|iters| {
-            let mut total = std::time::Duration::ZERO;
+            let mut total: Duration = std::time::Duration::ZERO;
             for _ in 0..iters {
                 // Setup
                 {
@@ -223,7 +224,7 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
                     assert!(res.unwrap() == num_txs && !container.is_empty());
                     black_box(&container);
                 }
-                total += start.elapsed();
+                total = total.saturating_add(start.elapsed());
             }
             total
         })
