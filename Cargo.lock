@@ -8797,6 +8797,7 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "log",
+ "qualifier_attr",
  "rand 0.8.5",
  "solana-clock",
  "solana-entry",

@@ -10,6 +10,8 @@
 //! For Entries:
 //! * recorded entry must be >= WorkingBank::min_tick_height && entry must be < WorkingBank::max_tick_height
 //!
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         leader_bank_notifier::LeaderBankNotifier, poh_service::PohService,
@@ -165,7 +167,7 @@ impl PohRecorderMetrics {
 }
 
 pub struct PohRecorder {
-    pub poh: Arc<Mutex<Poh>>,
+    pub(crate) poh: Arc<Mutex<Poh>>,
     tick_height: u64,
     clear_bank_signal: Option<Sender<bool>>,
     start_bank: Arc<Bank>, // parent slot
@@ -288,7 +290,8 @@ impl PohRecorder {
     }
 
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
-    pub fn record(
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn record(
         &mut self,
         bank_slot: Slot,
         mixin: Hash,
@@ -352,7 +355,8 @@ impl PohRecorder {
         }
     }
 
-    pub fn tick(&mut self) {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn tick(&mut self) {
         let ((poh_entry, target_time), tick_lock_contention_us) = measure_us!({
             let mut poh_l = self.poh.lock().unwrap();
             let poh_entry = poh_l.tick();
@@ -398,7 +402,8 @@ impl PohRecorder {
         }
     }
 
-    pub fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
         assert!(self.working_bank.is_none());
         self.leader_bank_notifier.set_in_progress(&bank);
         let working_bank = WorkingBank {
