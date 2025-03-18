@@ -2498,7 +2498,7 @@ mod tests {
     fn test_validate_transaction_fee_payer_is_nonce() {
         let lamports_per_signature = 5000;
         let rent_collector = RentCollector::default();
-        let compute_unit_limit = 2 * solana_loader_v4_program::DEFAULT_COMPUTE_UNITS;
+        let compute_unit_limit = 1000u64;
         let last_blockhash = Hash::new_unique();
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
             &[
