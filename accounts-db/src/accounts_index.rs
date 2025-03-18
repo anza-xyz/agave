@@ -302,13 +302,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
             self.start_bin += 1;
         }
 
-        if self.bin_range.is_empty() {
-            None
-        } else {
-            let num_items = std::cmp::min(self.bin_range.len(), ITER_BATCH_SIZE);
-            let chunk = self.bin_range.drain(0..num_items).collect();
-            Some(chunk)
-        }
+        (!self.bin_range.is_empty()).then(|| std::mem::take(&mut self.bin_range))
     }
 }
 
