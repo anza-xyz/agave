@@ -1095,6 +1095,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "conditional-mod"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67935045d95e19071aae6ee98d649f2a5593e510802040c622200c8d6666a9ca"
+
+[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5822,6 +5828,7 @@ dependencies = [
  "bs58",
  "bytes",
  "chrono",
+ "conditional-mod",
  "crossbeam-channel",
  "dashmap",
  "etcd-client",

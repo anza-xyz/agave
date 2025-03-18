@@ -27,6 +27,7 @@ use {
         validator::{BlockProductionMethod, TransactionStructure},
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
+    conditional_mod::conditional_vis_mod,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
@@ -68,36 +69,21 @@ pub mod unprocessed_packet_batches;
 pub mod vote_storage;
 
 mod consume_worker;
-#[cfg(feature = "dev-context-only-utils")]
-pub mod decision_maker;
-#[cfg(not(feature = "dev-context-only-utils"))]
-mod decision_maker;
+conditional_vis_mod!(decision_maker, feature = "dev-context-only-utils", pub);
 mod immutable_deserialized_packet;
 mod latest_unprocessed_votes;
 mod leader_slot_timing_metrics;
-#[cfg(feature = "dev-context-only-utils")]
-pub mod packet_deserializer;
-#[cfg(not(feature = "dev-context-only-utils"))]
-mod packet_deserializer;
+conditional_vis_mod!(packet_deserializer, feature = "dev-context-only-utils", pub);
 mod packet_filter;
 mod packet_receiver;
 mod read_write_account_set;
-#[cfg(feature = "dev-context-only-utils")]
-pub mod scheduler_messages;
-#[cfg(not(feature = "dev-context-only-utils"))]
-mod scheduler_messages;
-
-#[cfg(feature = "dev-context-only-utils")]
-pub mod transaction_scheduler;
-#[cfg(not(feature = "dev-context-only-utils"))]
-mod transaction_scheduler;
-
-// proc_macro_hygiene needs to be stabilzied to use qualifier_attr...
-// error[E0658]: non-inline modules in proc macro input are unstable
-#[cfg(not(feature = "dev-context-only-utils"))]
-pub(crate) mod unified_scheduler;
-#[cfg(feature = "dev-context-only-utils")]
-pub mod unified_scheduler;
+conditional_vis_mod!(scheduler_messages, feature = "dev-context-only-utils", pub);
+conditional_vis_mod!(
+    transaction_scheduler,
+    feature = "dev-context-only-utils",
+    pub
+);
+conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
 
 // Fixed thread size seems to be fastest on GCP setup
 pub const NUM_THREADS: u32 = 6;
