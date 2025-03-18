@@ -26,6 +26,7 @@ solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
+solana-sdk = { workspace = true }
 solana-svm = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction = { workspace = true }

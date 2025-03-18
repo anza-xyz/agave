@@ -38,6 +38,7 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_sdk::clock::Slot,
     solana_svm::transaction_processing_result::ProcessedTransaction,
     solana_timings::ExecuteTimings,
     solana_transaction::sanitized::SanitizedTransaction,
@@ -51,6 +52,7 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
+        ops::ControlFlow,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
             Arc, Mutex, MutexGuard, OnceLock, Weak,
@@ -73,8 +75,9 @@ enum CheckPoint<'a> {
     NewBufferedTask(usize),
     BufferedTask(usize),
     TaskHandled(usize),
-    TaskAccumulated(&'a Result<()>),
+    TaskAccumulated(usize, &'a Result<()>),
     SessionEnding,
+    SessionFinished(Option<Slot>),
     SchedulerThreadAborted,
     IdleSchedulerCleaned(usize),
     TrashedSchedulerCleaned(usize),
@@ -1537,39 +1540,72 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     fn accumulate_result_with_timings(
         mode: SchedulingMode,
         (result, timings): &mut ResultWithTimings,
-        executed_task: HandlerResult,
-    ) -> Option<(Box<ExecutedTask>, bool)> {
-        let Ok(executed_task) = executed_task else {
-            return None;
-        };
+        executed_task: Box<ExecutedTask>,
+        state_machine: &mut SchedulingStateMachine,
+        session_ending: &mut bool,
+        handler_context: &HandlerContext,
+    ) -> ControlFlow<(), ()> {
         sleepless_testing::at(CheckPoint::TaskAccumulated(
+            executed_task.task.task_index(),
             &executed_task.result_with_timings.0,
         ));
         timings.accumulate(&executed_task.result_with_timings.1);
+
         match mode {
             BlockVerification => match executed_task.result_with_timings.0 {
-                Ok(()) => Some((executed_task, false)),
+                Ok(()) => {
+                    // The most normal case;
+                    ControlFlow::Continue(())
+                }
                 Err(error) => {
                     error!("error is detected while accumulating....: {error:?}");
                     *result = Err(error);
-                    None
+                    ControlFlow::Break(())
                 }
             },
-            BlockProduction => match executed_task.result_with_timings.0 {
-                Ok(()) => Some((executed_task, false)),
-                Err(TransactionError::CommitCancelled)
-                | Err(TransactionError::WouldExceedMaxBlockCostLimit)
-                | Err(TransactionError::WouldExceedMaxVoteCostLimit)
-                | Err(TransactionError::WouldExceedMaxAccountCostLimit)
-                | Err(TransactionError::WouldExceedAccountDataBlockLimit) => {
-                    Some((executed_task, true))
-                }
-                Err(ref error) => {
-                    debug!("error is detected while accumulating....: {error:?}");
-                    Some((executed_task, false))
-                }
-            },
+            BlockProduction => {
+                match executed_task.result_with_timings.0 {
+                    Ok(()) => {
+                        // The most normal case;
+                    }
+                    Err(TransactionError::CommitCancelled)
+                    | Err(TransactionError::WouldExceedMaxBlockCostLimit)
+                    | Err(TransactionError::WouldExceedMaxVoteCostLimit)
+                    | Err(TransactionError::WouldExceedMaxAccountCostLimit)
+                    | Err(TransactionError::WouldExceedAccountDataBlockLimit) => {
+                        // Treat these errors as indication of block full signal and start recreate
+                        Self::rebuffer_task_for_next_session(
+                            executed_task,
+                            state_machine,
+                            session_ending,
+                            handler_context,
+                        );
+                    }
+                    Err(ref error) => {
+                        // the other errors; just discard them.
+                        debug!("error is detected while accumulating....: {error:?}");
+                    }
+                };
+                // don't abort at all, in block production case unlike block verification
+                ControlFlow::Continue(())
+            }
         }
+    }
+
+    fn rebuffer_task_for_next_session(
+        executed_task: Box<ExecutedTask>,
+        state_machine: &mut SchedulingStateMachine,
+        session_ending: &mut bool,
+        handler_context: &HandlerContext,
+    ) {
+        let task = handler_context
+            .banking_stage_helper()
+            .recreate_task(executed_task);
+        state_machine.buffer_task(task);
+
+        // Now, new session is desired, start session_ending.
+        sleepless_testing::at(CheckPoint::SessionEnding);
+        *session_ending = true;
     }
 
     fn take_session_result_with_timings(&mut self) -> ResultWithTimings {
@@ -1595,6 +1631,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_context: HandlerContext,
     ) {
         let scheduling_mode = context.mode();
+        let mut current_slot = context.slot();
         let (mut is_finished, mut session_ending) = match scheduling_mode {
             BlockVerification => (false, false),
             BlockProduction => {
@@ -1802,20 +1839,20 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 };
 
-                                let Some((executed_task, trigger_ending)) = Self::accumulate_result_with_timings(
-                                    scheduling_mode,
-                                    &mut result_with_timings,
-                                    executed_task,
-                                ) else {
+                                let Ok(executed_task) = executed_task else {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
-                                if trigger_ending {
-                                    assert_matches!(scheduling_mode, BlockProduction);
-                                    sleepless_testing::at(CheckPoint::SessionEnding);
-                                    session_ending = true;
-                                    let task = handler_context.banking_stage_helper().recreate_task(executed_task);
-                                    state_machine.buffer_task(task);
+
+                                if let ControlFlow::Break(()) = Self::accumulate_result_with_timings(
+                                    scheduling_mode,
+                                    &mut result_with_timings,
+                                    executed_task,
+                                    &mut state_machine,
+                                    &mut session_ending,
+                                    &handler_context,
+                                ) {
+                                    break 'nonaborted_main_loop;
                                 }
                             },
                             recv(dummy_unblocked_task_receiver) -> dummy => {
@@ -1861,22 +1898,24 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                             },
                             recv(finished_idle_task_receiver) -> executed_task => {
-                                let Some((executed_task, trigger_ending)) = Self::accumulate_result_with_timings(
-                                    scheduling_mode,
-                                    &mut result_with_timings,
-                                    // finished_idle_task_sender won't be disconnected
-                                    // unlike finished_blocked_task_sender???
-                                    executed_task.expect("alive handler"),
-                                ) else {
+                                // finished_idle_task_sender won't be disconnected
+                                // unlike finished_blocked_task_sender???
+                                let executed_task = executed_task.expect("alive handler");
+
+                                let Ok(executed_task) = executed_task else {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
-                                if trigger_ending {
-                                    assert_matches!(scheduling_mode, BlockProduction);
-                                    sleepless_testing::at(CheckPoint::SessionEnding);
-                                    session_ending = true;
-                                    let task = handler_context.banking_stage_helper().recreate_task(executed_task);
-                                    state_machine.buffer_task(task);
+
+                                if let ControlFlow::Break(()) = Self::accumulate_result_with_timings(
+                                    scheduling_mode,
+                                    &mut result_with_timings,
+                                    executed_task,
+                                    &mut state_machine,
+                                    &mut session_ending,
+                                    &handler_context,
+                                ) {
+                                    break 'nonaborted_main_loop;
                                 }
                             },
                         };
@@ -1889,6 +1928,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
+                    sleepless_testing::at(CheckPoint::SessionFinished(current_slot));
                     // Finalize the current session after asserting it's explicitly requested so.
                     // Send result first because this is blocking the replay code-path.
                     session_result_sender
@@ -1928,6 +1968,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // Before that, propagate new SchedulingContext to handler threads
                                 assert_eq!(scheduling_mode, new_context.mode());
                                 assert!(!new_context.is_preallocated());
+                                current_slot = new_context.slot();
                                 runnable_task_sender
                                     .send_chained_channel(&new_context, handler_context.parallelism)
                                     .unwrap();
@@ -2498,6 +2539,7 @@ mod tests {
         AfterBufferedTask,
         AfterTaskHandled,
         AfterSessionEnding,
+        AfterSessionFinished,
         AfterSchedulerThreadAborted,
         BeforeIdleSchedulerCleaned,
         AfterIdleSchedulerCleaned,
@@ -3753,9 +3795,15 @@ mod tests {
         solana_logger::setup();
 
         const TRANSACTION_INDEX: usize = 0;
+        const FULL_BLOCK_SLOT: Slot = 1;
 
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::TaskAccumulated(&Err(TransactionError::WouldExceedMaxBlockCostLimit)),
+            &CheckPoint::TaskAccumulated(
+                TRANSACTION_INDEX,
+                &Err(TransactionError::WouldExceedMaxBlockCostLimit),
+            ),
+            &CheckPoint::SessionFinished(Some(FULL_BLOCK_SLOT)),
+            &TestCheckPoint::AfterSessionFinished,
             &TestCheckPoint::AfterSession,
         ]);
 
@@ -3803,7 +3851,6 @@ mod tests {
             poh_recorder.read().unwrap().new_recorder(),
         );
 
-        // Create new bank to observe behavior difference around session ending
         while poh_recorder.read().unwrap().bank().is_some() {
             sleep(Duration::from_millis(100));
         }
@@ -3840,6 +3887,7 @@ mod tests {
             sleep(Duration::from_millis(100));
         }
 
+        sleepless_testing::at(&TestCheckPoint::AfterSessionFinished);
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         sleepless_testing::at(&TestCheckPoint::AfterSession);
 
