@@ -65,7 +65,6 @@ members = [
     "log-collector",
     "measure",
     "memory-management",
-    "merkle-root-bench",
     "merkle-tree",
     "metrics",
     "net-shaper",

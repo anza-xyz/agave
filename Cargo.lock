@@ -8523,19 +8523,6 @@ name = "solana-memory-management"
 version = "2.3.0"
 
 [[package]]
-name = "solana-merkle-root-bench"
-version = "2.3.0"
-dependencies = [
- "clap 2.33.3",
- "log",
- "solana-accounts-db",
- "solana-logger",
- "solana-measure",
- "solana-sdk",
- "solana-version",
-]
-
-[[package]]
 name = "solana-merkle-tree"
 version = "2.3.0"
 dependencies = [
