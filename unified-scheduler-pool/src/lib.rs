@@ -26,7 +26,7 @@ use {
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
     },
-    solana_poh::poh_recorder::{RecordTransactionsSummary, TransactionRecorder},
+    solana_poh::transaction_recorder::{RecordTransactionsSummary, TransactionRecorder},
     solana_pubkey::Pubkey,
     solana_runtime::{
         installed_scheduler_pool::{

@@ -745,7 +745,10 @@ mod tests {
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_poh::poh_recorder::{PohRecorder, TransactionRecorder, WorkingBankEntry},
+        solana_poh::{
+            poh_recorder::{PohRecorder, WorkingBankEntry},
+            transaction_recorder::TransactionRecorder,
+        },
         solana_runtime::{
             bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
             vote_sender_types::ReplayVoteReceiver,

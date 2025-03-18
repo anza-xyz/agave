@@ -34,7 +34,7 @@ use {
     },
     crate::banking_trace::Channels,
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
+    solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::sync::{Arc, RwLock},

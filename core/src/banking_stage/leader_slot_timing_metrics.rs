@@ -1,5 +1,5 @@
 use {
-    solana_poh::poh_recorder::RecordTransactionsTimings, solana_sdk::clock::Slot,
+    solana_poh::transaction_recorder::RecordTransactionsTimings, solana_sdk::clock::Slot,
     solana_timings::ExecuteTimings, std::time::Instant,
 };
 

@@ -33,7 +33,10 @@ use {
         entry_notifier_service::EntryNotifierSender,
     },
     solana_perf::data_budget::DataBudget,
-    solana_poh::poh_recorder::{PohRecorder, TransactionRecorder, WorkingBankEntry},
+    solana_poh::{
+        poh_recorder::{PohRecorder, WorkingBankEntry},
+        transaction_recorder::TransactionRecorder,
+    },
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotificationSender,
         rpc_subscriptions::RpcSubscriptions,

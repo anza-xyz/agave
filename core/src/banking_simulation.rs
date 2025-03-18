@@ -26,8 +26,9 @@ use {
     },
     solana_net_utils::bind_to_localhost,
     solana_poh::{
-        poh_recorder::{PohRecorder, TransactionRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
+        poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
+        transaction_recorder::TransactionRecorder,
     },
     solana_runtime::{
         bank::{Bank, HashOverrides},

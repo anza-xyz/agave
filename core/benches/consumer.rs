@@ -16,8 +16,8 @@ use {
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
     },
     solana_poh::{
-        poh_recorder::{create_test_recorder, TransactionRecorder},
-        poh_service::PohService,
+        poh_recorder::create_test_recorder, poh_service::PohService,
+        transaction_recorder::TransactionRecorder,
     },
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
