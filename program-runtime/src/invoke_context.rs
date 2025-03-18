@@ -28,7 +28,9 @@ use {
         program::{BuiltinFunction, SBPFVersion},
         vm::{Config, ContextObject, EbpfVm},
     },
-    solana_sdk_ids::{bpf_loader_deprecated, native_loader, sysvar},
+    solana_sdk_ids::{
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader, sysvar,
+    },
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
@@ -523,6 +525,19 @@ impl<'a> InvokeContext<'a> {
             let owner_id = borrowed_root_account.get_owner();
             if native_loader::check_id(owner_id) {
                 *borrowed_root_account.get_key()
+            } else if self
+                .get_feature_set()
+                .is_active(&remove_accounts_executable_flag_checks::id())
+            {
+                if bpf_loader_deprecated::check_id(owner_id)
+                    || bpf_loader::check_id(owner_id)
+                    || bpf_loader_upgradeable::check_id(owner_id)
+                    || loader_v4::check_id(owner_id)
+                {
+                    *owner_id
+                } else {
+                    return Err(InstructionError::UnsupportedProgramId);
+                }
             } else {
                 *owner_id
             }
