@@ -3668,29 +3668,16 @@ pub mod tests {
         ] {
             // Create a sorted iterator for the whole pubkey range.
             let mut iter = index.iter(None::<&Range<Pubkey>>, returns_items);
-            // First iter.next() should return the first batch of pubkeys (1000
-            // pubkeys) out of the 2000 pubkeys in the first bin. And the remaining
-            // 1000 pubkeys from the first bin should be cached in
-            // self.bin_range, so that the second iter.next() don't need to
-            // load/filter/sort the first bin again.
+            // First iter.next() should return the first batch of 2000 pubkeys in the first bin.
             let x = iter.next().unwrap();
-            assert_eq!(x.len(), ITER_BATCH_SIZE);
+            assert_eq!(x.len(), 2 * ITER_BATCH_SIZE);
             assert_eq!(
                 x.is_sorted_by(|a, b| a.0 < b.0),
                 returns_items == AccountsIndexIteratorReturnsItems::Sorted
             );
-            assert_eq!(iter.bin_range.len(), ITER_BATCH_SIZE); // Contains the remaining 1000 items.
+            assert_eq!(iter.bin_range.len(), 0); // should be empty.
 
-            // Second iter.next() should return the second batch of pubkeys - the remaining 1000 pubkeys.
-            let x = iter.next().unwrap();
-            assert_eq!(
-                x.is_sorted_by(|a, b| a.0 < b.0),
-                returns_items == AccountsIndexIteratorReturnsItems::Sorted
-            );
-            assert_eq!(x.len(), ITER_BATCH_SIZE); // contains the remaining 1000 pubkeys.
-            assert!(iter.bin_range.is_empty()); // last_bin_range should be empty.
-
-            // Third iter.next() should return None.
+            // Then iter.next() should return None.
             assert!(iter.next().is_none());
         }
     }
