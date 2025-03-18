@@ -242,7 +242,6 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
     end_bound: Bound<&'a Pubkey>,
     start_bin: usize,
     end_bin_inclusive: usize,
-    is_finished: bool,
     bin_range: Vec<(Pubkey, AccountMapEntry<T>)>,
     returns_items: AccountsIndexIteratorReturnsItems,
 }
@@ -265,7 +264,6 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
                     end_bound: range.end_bound(),
                     start_bin,
                     end_bin_inclusive,
-                    is_finished: false,
                     bin_range: Vec::new(),
                     returns_items,
                 }
@@ -276,7 +274,6 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
                 end_bound: Unbounded,
                 start_bin: 0,
                 end_bin_inclusive: index.account_maps.len().saturating_sub(1),
-                is_finished: false,
                 bin_range: Vec::new(),
                 returns_items,
             },
@@ -290,10 +287,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
 {
     type Item = Vec<(Pubkey, AccountMapEntry<T>)>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.is_finished {
-            return None;
-        }
-
         while self.bin_range.len() < ITER_BATCH_SIZE {
             if self.start_bin > self.end_bin_inclusive {
                 break;
@@ -310,7 +303,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
         }
 
         if self.bin_range.is_empty() {
-            self.is_finished = true;
             None
         } else {
             let num_items = std::cmp::min(self.bin_range.len(), ITER_BATCH_SIZE);
