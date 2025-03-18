@@ -128,9 +128,10 @@ impl Consumer {
             bank_start.working_bank.clone(),
             banking_stage_stats,
             slot_metrics_tracker,
-            |packets_to_process_len, payload, slot_metrics_tracker| {
+            |packets_to_process_len, reached_end_of_slot_par, payload, slot_metrics_tracker| {
                 self.do_process_packets(
                     bank_start,
+                    reached_end_of_slot_par,
                     payload,
                     banking_stage_stats,
                     &mut consumed_buffered_packets_count,
@@ -169,6 +170,7 @@ impl Consumer {
     fn do_process_packets(
         &self,
         bank_start: &BankStart,
+        reached_end_of_slot: &mut bool,
         payload: &mut ConsumeScannerPayload,
         banking_stage_stats: &BankingStageStats,
         consumed_buffered_packets_count: &mut usize,
@@ -176,7 +178,7 @@ impl Consumer {
         packets_to_process_len: usize,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> Option<Vec<usize>> {
-        if payload.reached_end_of_slot {
+        if *reached_end_of_slot {
             return None;
         }
 
@@ -202,7 +204,7 @@ impl Consumer {
         } = process_transactions_summary;
 
         if reached_max_poh_height || !bank_start.should_working_bank_still_be_processing_txs() {
-            payload.reached_end_of_slot = true;
+            *reached_end_of_slot = true;
         }
 
         // The difference between all transactions passed to execution and the ones that
