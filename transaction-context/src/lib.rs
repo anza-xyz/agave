@@ -655,6 +655,7 @@ impl InstructionContext {
             index_in_transaction,
             index_in_instruction,
             account,
+            reallocation_count: 0,
         })
     }
 
@@ -752,6 +753,8 @@ pub struct BorrowedAccount<'a> {
     index_in_transaction: IndexOfAccount,
     index_in_instruction: IndexOfAccount,
     account: RefMut<'a, AccountSharedData>,
+    /// Increased each time the data in account is reallocated to a different address
+    reallocation_count: usize,
 }
 
 impl BorrowedAccount<'_> {
@@ -778,6 +781,12 @@ impl BorrowedAccount<'_> {
     #[inline]
     pub fn get_owner(&self) -> &Pubkey {
         self.account.owner()
+    }
+
+    /// Returns the counter which is increased every time the data is reallocated to a different address
+    #[inline]
+    pub fn get_realloc_counter(&self) -> usize {
+        self.reallocation_count
     }
 
     /// Assignes the owner of this account (transaction wide)
@@ -898,7 +907,11 @@ impl BorrowedAccount<'_> {
         self.touch()?;
 
         self.update_accounts_resize_delta(data.len())?;
+        let p = self.account.data().as_ptr();
         self.account.set_data(data);
+        if self.account.data().as_ptr() != p {
+            self.reallocation_count = self.reallocation_count.saturating_add(1);
+        }
         Ok(())
     }
 
@@ -916,7 +929,11 @@ impl BorrowedAccount<'_> {
         // allocate + memcpy the current data if self.account is shared. We don't need the memcpy
         // here tho because account.set_data_from_slice(data) is going to replace the content
         // anyway.
+        let p = self.account.data().as_ptr();
         self.account.set_data_from_slice(data);
+        if self.account.data().as_ptr() != p {
+            self.reallocation_count = self.reallocation_count.saturating_add(1);
+        }
 
         Ok(())
     }
@@ -934,7 +951,11 @@ impl BorrowedAccount<'_> {
         }
         self.touch()?;
         self.update_accounts_resize_delta(new_length)?;
+        let p = self.account.data().as_ptr();
         self.account.resize(new_length, 0);
+        if self.account.data().as_ptr() != p {
+            self.reallocation_count = self.reallocation_count.saturating_add(1);
+        }
         Ok(())
     }
 
@@ -1002,7 +1023,11 @@ impl BorrowedAccount<'_> {
         // NOTE: The account memory region CoW code in bpf_loader::create_vm() implements the same
         // logic and must be kept in sync.
         if self.account.is_shared() {
+            let p = self.account.data().as_ptr();
             self.account.reserve(MAX_PERMITTED_DATA_INCREASE);
+            if self.account.data().as_ptr() != p {
+                self.reallocation_count = self.reallocation_count.saturating_add(1);
+            }
         }
     }
 
