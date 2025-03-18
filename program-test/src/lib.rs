@@ -129,10 +129,14 @@ pub fn invoke_builtin_function(
     let deduplicated_indices: HashSet<IndexOfAccount> = instruction_account_indices.collect();
 
     // Serialize entrypoint parameters with SBF ABI
+    let rent_epoch_is_a_constant = invoke_context
+        .get_feature_set()
+        .is_active(&agave_feature_set::rent_epoch_is_a_constant_in_vm::id());
     let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
         transaction_context,
         instruction_context,
         true, // copy_account_data // There is no VM so direct mapping can not be implemented here
+        rent_epoch_is_a_constant,
     )?;
 
     // Deserialize data back into instruction params

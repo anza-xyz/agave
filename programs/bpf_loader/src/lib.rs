@@ -8,7 +8,7 @@ use qualifier_attr::qualifiers;
 use {
     agave_feature_set::{
         bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
-        enable_loader_v4, remove_accounts_executable_flag_checks,
+        enable_loader_v4, remove_accounts_executable_flag_checks, rent_epoch_is_a_constant_in_vm,
     },
     solana_account::WritableAccount,
     solana_bincode::limited_deserialize,
@@ -1573,12 +1573,16 @@ fn execute<'a, 'b: 'a>(
     let direct_mapping = invoke_context
         .get_feature_set()
         .is_active(&bpf_account_data_direct_mapping::id());
+    let rent_epoch_is_a_constant = invoke_context
+        .get_feature_set()
+        .is_active(&rent_epoch_is_a_constant_in_vm::id());
 
     let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
         invoke_context.transaction_context,
         instruction_context,
         !direct_mapping,
+        rent_epoch_is_a_constant,
     )?;
     serialize_time.stop();
 
