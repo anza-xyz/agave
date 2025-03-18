@@ -223,12 +223,13 @@ fn test_scheduler_producing_blocks() {
     let genesis_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
     genesis_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&genesis_bank));
-    let (exit, poh_recorder, poh_service, signal_receiver) = create_test_recorder(
-        genesis_bank.clone(),
-        blockstore.clone(),
-        None,
-        Some(leader_schedule_cache),
-    );
+    let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
+        create_test_recorder(
+            genesis_bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
     let pool = DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
     let channels = {
         let banking_tracer = BankingTracer::new_disabled();
@@ -243,7 +244,14 @@ fn test_scheduler_producing_blocks() {
             SocketAddrSpace::Unspecified,
         ))
     };
-    ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info, &poh_recorder);
+    ensure_banking_stage_setup(
+        &pool,
+        &bank_forks,
+        &channels,
+        &cluster_info,
+        &poh_recorder,
+        transaction_recorder,
+    );
     bank_forks.write().unwrap().install_scheduler_pool(pool);
 
     // Wait until genesis_bank reaches its tick height...

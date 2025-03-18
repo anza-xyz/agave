@@ -33,7 +33,7 @@ use {
         entry_notifier_service::EntryNotifierSender,
     },
     solana_perf::data_budget::DataBudget,
-    solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
+    solana_poh::poh_recorder::{PohRecorder, TransactionRecorder, WorkingBankEntry},
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotificationSender,
         rpc_subscriptions::RpcSubscriptions,
@@ -91,6 +91,7 @@ impl Tpu {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        transaction_recorder: TransactionRecorder,
         entry_receiver: Receiver<WorkingBankEntry>,
         retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
@@ -265,6 +266,7 @@ impl Tpu {
             transaction_struct,
             cluster_info,
             poh_recorder,
+            transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,

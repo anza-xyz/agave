@@ -326,6 +326,7 @@ impl BankingStage {
         transaction_struct: TransactionStructure,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
@@ -340,6 +341,7 @@ impl BankingStage {
             transaction_struct,
             cluster_info,
             poh_recorder,
+            transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
@@ -358,6 +360,7 @@ impl BankingStage {
         transaction_struct: TransactionStructure,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
@@ -380,6 +383,7 @@ impl BankingStage {
                     use_greedy_scheduler,
                     cluster_info,
                     poh_recorder,
+                    transaction_recorder,
                     non_vote_receiver,
                     tpu_vote_receiver,
                     gossip_vote_receiver,
@@ -400,6 +404,7 @@ impl BankingStage {
         use_greedy_scheduler: bool,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
@@ -423,7 +428,6 @@ impl BankingStage {
             replay_vote_sender.clone(),
             prioritization_fee_cache.clone(),
         );
-        let transaction_recorder = poh_recorder.read().unwrap().new_recorder();
 
         // + 1 for the central scheduler thread
         let mut bank_thread_hdls = Vec::with_capacity(num_threads as usize + 1);
@@ -458,6 +462,7 @@ impl BankingStage {
                     decision_maker,
                     committer,
                     poh_recorder,
+                    transaction_recorder,
                     num_threads,
                     log_messages_bytes_limit,
                     bank_forks,
@@ -475,6 +480,7 @@ impl BankingStage {
                     decision_maker,
                     committer,
                     poh_recorder,
+                    transaction_recorder,
                     num_threads,
                     log_messages_bytes_limit,
                     bank_forks,
@@ -493,6 +499,7 @@ impl BankingStage {
         decision_maker: DecisionMaker,
         committer: Committer,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        transaction_recorder: TransactionRecorder,
         num_threads: u32,
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -512,7 +519,7 @@ impl BankingStage {
                 work_receiver,
                 Consumer::new(
                     committer.clone(),
-                    poh_recorder.read().unwrap().new_recorder(),
+                    transaction_recorder.clone(),
                     QosService::new(id),
                     log_messages_bytes_limit,
                 ),
@@ -816,7 +823,7 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (exit, poh_recorder, poh_service, _entry_receiever) =
+        let (exit, poh_recorder, transaction_recorder, poh_service, _entry_receiever) =
             create_test_recorder(bank, blockstore, None, None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
@@ -827,6 +834,7 @@ mod tests {
             transaction_struct,
             &cluster_info,
             &poh_recorder,
+            transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
@@ -873,7 +881,7 @@ mod tests {
             target_tick_count: Some(bank.max_tick_height() + num_extra_ticks),
             ..PohConfig::default()
         };
-        let (exit, poh_recorder, poh_service, entry_receiver) =
+        let (exit, poh_recorder, transaction_recorder, poh_service, entry_receiver) =
             create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
@@ -884,6 +892,7 @@ mod tests {
             transaction_struct,
             &cluster_info,
             &poh_recorder,
+            transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
@@ -939,7 +948,7 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (exit, poh_recorder, poh_service, entry_receiver) =
+        let (exit, poh_recorder, transaction_recorder, poh_service, entry_receiver) =
             create_test_recorder(bank.clone(), blockstore, None, None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
@@ -950,6 +959,7 @@ mod tests {
             transaction_struct,
             &cluster_info,
             &poh_recorder,
+            transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
@@ -1091,7 +1101,7 @@ mod tests {
         let entry_receiver = {
             // start a banking_stage to eat verified receiver
             let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-            let (exit, poh_recorder, poh_service, entry_receiver) =
+            let (exit, poh_recorder, transaction_recorder, poh_service, entry_receiver) =
                 create_test_recorder(bank.clone(), blockstore, None, None);
             let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
             let cluster_info = Arc::new(cluster_info);
@@ -1100,6 +1110,7 @@ mod tests {
                 transaction_struct,
                 &cluster_info,
                 &poh_recorder,
+                transaction_recorder,
                 non_vote_receiver,
                 tpu_vote_receiver,
                 gossip_vote_receiver,
@@ -1160,7 +1171,7 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
             // TODO use record_receiver
             bank.tick_height(),
             bank.last_blockhash(),
@@ -1172,7 +1183,8 @@ mod tests {
             &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
-        let recorder = poh_recorder.new_recorder();
+        let (record_sender, record_receiver) = unbounded();
+        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
@@ -1276,7 +1288,7 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (exit, poh_recorder, poh_service, _entry_receiver) =
+        let (exit, poh_recorder, transaction_recorder, poh_service, _entry_receiver) =
             create_test_recorder(bank.clone(), blockstore, None, None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
@@ -1287,6 +1299,7 @@ mod tests {
             transaction_struct,
             &cluster_info,
             &poh_recorder,
+            transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,

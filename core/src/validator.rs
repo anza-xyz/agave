@@ -76,7 +76,7 @@ use {
         datapoint_info, metrics::metrics_config_sanity_check, poh_timing_point::PohTimingSender,
     },
     solana_poh::{
-        poh_recorder::PohRecorder,
+        poh_recorder::{PohRecorder, TransactionRecorder},
         poh_service::{self, PohService},
     },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
@@ -950,7 +950,7 @@ impl Validator {
 
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
         let startup_verification_complete;
-        let (poh_recorder, entry_receiver, record_receiver) = {
+        let (poh_recorder, entry_receiver) = {
             let bank = &bank_forks.read().unwrap().working_bank();
             startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
             PohRecorder::new_with_clear_signal(
@@ -968,6 +968,9 @@ impl Validator {
                 exit.clone(),
             )
         };
+        let (record_sender, record_receiver) = unbounded();
+        let transaction_recorder =
+            TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (banking_tracer, tracer_thread) =
@@ -1556,6 +1559,7 @@ impl Validator {
         let (tpu, mut key_notifies) = Tpu::new(
             &cluster_info,
             &poh_recorder,
+            transaction_recorder,
             entry_receiver,
             retransmit_slots_receiver,
             TpuSockets {
