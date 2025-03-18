@@ -970,12 +970,26 @@ impl TaskHandler for DefaultTaskHandler {
                     return Err(processing_result.as_ref().unwrap_err().clone());
                 };
 
+                // Now it's the procrastinated time of _optimistic_ provisioning of block cost at the
+                // basis of actual executed units!
+                // Block cost limits aren't provisioned upfront in block-producing unified
+                // scheduler at all to avoid locking cost_tracker twice (for post-execution
+                // adjustment) per transaction in almost all task handling. The only exception is
+                // the unfortunate ones at the end of slot due to poh or cost limits. For the poh
+                // case only, we have to suffer from twice locking, but it's very transitory,
+                // considering unified scheduler immediately transitions to buffering, waiting for
+                // next fresh bank.
+                // In other words, unified scheduler doesn't try to populate the almost-filled bank
+                // with next-higher-paying transactions. This behavior isn't perfect for profit
+                // maximization; priority adherence is preferred here.
                 let cost = CostModel::calculate_cost_for_executed_transaction(
                     transaction,
                     processed_transaction.executed_units(),
                     processed_transaction.loaded_accounts_data_size(),
                     &bank.feature_set,
                 );
+                // Note that we're about to partially commit side effects to bank in _pre commit_
+                // callback. Extra care must be taken in the case of poh failure just below;
                 bank.write_cost_tracker().unwrap().try_add(&cost)?;
 
                 let RecordTransactionsSummary {
@@ -991,6 +1005,7 @@ impl TaskHandler for DefaultTaskHandler {
                 match result {
                     Ok(()) => Ok(starting_transaction_index),
                     Err(_) => {
+                        // Poh failed; need to revert the committed cost state change.
                         bank.write_cost_tracker().unwrap().remove(&cost);
                         Err(TransactionError::CommitCancelled)
                     }
@@ -1554,7 +1569,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         match mode {
             BlockVerification => match executed_task.result_with_timings.0 {
                 Ok(()) => {
-                    // The most normal case;
+                    // The most normal case
                     ControlFlow::Continue(())
                 }
                 Err(error) => {
@@ -1566,14 +1581,15 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             BlockProduction => {
                 match executed_task.result_with_timings.0 {
                     Ok(()) => {
-                        // The most normal case;
+                        // The most normal case
                     }
                     Err(TransactionError::CommitCancelled)
                     | Err(TransactionError::WouldExceedMaxBlockCostLimit)
                     | Err(TransactionError::WouldExceedMaxVoteCostLimit)
                     | Err(TransactionError::WouldExceedMaxAccountCostLimit)
                     | Err(TransactionError::WouldExceedAccountDataBlockLimit) => {
-                        // Treat these errors as indication of block full signal and start recreate
+                        // Treat these errors as indication of block full signal while retrying the
+                        // task at the same time.
                         Self::rebuffer_task_for_next_session(
                             executed_task,
                             state_machine,
@@ -1582,11 +1598,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         );
                     }
                     Err(ref error) => {
-                        // the other errors; just discard them.
+                        // The other errors; just discard tasks. These are permanently
+                        // not-committable worthless tasks.
                         debug!("error is detected while accumulating....: {error:?}");
                     }
                 };
-                // don't abort at all, in block production case unlike block verification
+                // Don't abort at all in block production unlike block verification
                 ControlFlow::Continue(())
             }
         }
@@ -3813,14 +3830,14 @@ mod tests {
             ..
         } = create_genesis_config_for_block_production(10_000);
 
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
             2,
             genesis_config.hash(),
         ));
         let bank = Bank::new_for_tests(&genesis_config);
-        bank.write_cost_tracker().unwrap().set_limits(0, 0, 0);
+
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool = DefaultSchedulerPool::new_for_production(
@@ -3842,6 +3859,10 @@ mod tests {
                 Some(leader_schedule_cache),
             )
         };
+        poh_recorder
+            .write()
+            .unwrap()
+            .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
 
         pool.register_banking_stage(
             banking_packet_receiver,
@@ -3851,66 +3872,52 @@ mod tests {
             poh_recorder.read().unwrap().new_recorder(),
         );
 
-        while poh_recorder.read().unwrap().bank().is_some() {
-            sleep(Duration::from_millis(100));
-        }
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone(),
             &Pubkey::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
-
-        // This variable tracks the cumulative count of transactions since genesis, which is
-        // incremented as test is progressed.
-        let mut expected_transaction_count = Saturating(0);
-        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+        // Immediately trigger WouldExceedMaxBlockCostLimit by setting all cost limits to 0
+        bank.write_cost_tracker().unwrap().set_limits(0, 0, 0);
 
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
         let old_scheduler_id = scheduler.id();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        while poh_recorder.read().unwrap().bank().is_some() {
-            error!("waiting11111..");
-            sleep(Duration::from_millis(100));
-        }
         poh_recorder
             .write()
             .unwrap()
             .set_bank(bank.clone_with_scheduler(), true);
-
-        bank.schedule_transaction_executions([(tx0, TRANSACTION_INDEX)].into_iter())
+        bank.schedule_transaction_executions([(tx, TRANSACTION_INDEX)].into_iter())
             .unwrap();
         bank.unblock_block_production();
-
-        while poh_recorder.read().unwrap().bank().is_some() {
-            error!("waiting22222..");
-            sleep(Duration::from_millis(100));
-        }
 
         sleepless_testing::at(&TestCheckPoint::AfterSessionFinished);
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         sleepless_testing::at(&TestCheckPoint::AfterSession);
-
-        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+        // There should be no executed transaction yet.
+        assert_eq!(bank.transaction_count(), 0);
 
         // Create new bank to observe behavior difference around session ending
+        poh_recorder
+            .write()
+            .unwrap()
+            .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone_without_scheduler(),
             &Pubkey::default(),
             bank.slot().checked_add(1).unwrap(),
         ));
+        // Revert the block cost limit
         bank.write_cost_tracker()
             .unwrap()
             .set_limits(u64::MAX, u64::MAX, u64::MAX);
-        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context).unwrap();
-        // make sure the same scheduler is used to test its internal cross-session behavior
-        // regardless scheduling_mode.
+        // Make sure the same scheduler is used to test its internal cross-session behavior
         assert_eq!(scheduler.id(), old_scheduler_id);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        //poh_recorder.write().unwrap().reset(bank.clone(), None);
         poh_recorder
             .write()
             .unwrap()
@@ -3918,10 +3925,9 @@ mod tests {
         bank.unblock_block_production();
 
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-
-        // Block production scheduler should carry over the temporarily-failed transaction itself.
-        expected_transaction_count += 1;
-        assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+        // Block production scheduler should carry over the temporarily-failed transaction itself
+        // and the transaction should now have been executed.
+        assert_eq!(bank.transaction_count(), 1);
 
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
