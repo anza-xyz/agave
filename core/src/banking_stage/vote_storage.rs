@@ -1,5 +1,6 @@
 use {
     super::{
+        consumer::Consumer,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         latest_unprocessed_votes::{
             LatestUnprocessedVotes, LatestValidatorVotePacket, VoteBatchInsertionMetrics,
@@ -80,6 +81,13 @@ fn consume_scan_should_process_packet(
             return false;
         }
 
+        if Consumer::check_fee_payer_unlocked(bank,
+            &sanitized_transaction,
+            &mut payload.error_counters,
+        )
+        .is_err() {
+            return false;
+        }
         payload.sanitized_transactions.push(sanitized_transaction);
         true
     } else {
