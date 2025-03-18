@@ -35,7 +35,6 @@ pub struct ConsumeScannerPayload<'a> {
     pub reached_end_of_slot: bool,
     pub sanitized_transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
     pub slot_metrics_tracker: &'a mut LeaderSlotMetricsTracker,
-    pub error_counters: TransactionErrorMetrics,
 }
 
 fn consume_scan_should_process_packet(
@@ -43,6 +42,7 @@ fn consume_scan_should_process_packet(
     banking_stage_stats: &BankingStageStats,
     packet: &ImmutableDeserializedPacket,
     payload: &mut ConsumeScannerPayload,
+    error_counters: &mut TransactionErrorMetrics,
 ) -> bool {
     // If end of the slot, return should process (quick loop after reached end of slot)
     if payload.reached_end_of_slot {
@@ -79,12 +79,7 @@ fn consume_scan_should_process_packet(
             return false;
         }
 
-        if Consumer::check_fee_payer_unlocked(
-            bank,
-            &sanitized_transaction,
-            &mut payload.error_counters,
-        )
-        .is_err()
+        if Consumer::check_fee_payer_unlocked(bank, &sanitized_transaction, error_counters).is_err()
         {
             return false;
         }
@@ -168,8 +163,9 @@ impl VoteStorage {
             reached_end_of_slot: false,
             sanitized_transactions: Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE),
             slot_metrics_tracker,
-            error_counters: TransactionErrorMetrics::default(),
         };
+
+        let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
 
         let mut vote_packets =
             ArrayVec::<Arc<ImmutableDeserializedPacket>, UNPROCESSED_BUFFER_STEP_SIZE>::new();
@@ -181,6 +177,7 @@ impl VoteStorage {
                     banking_stage_stats,
                     packet,
                     &mut payload,
+                    &mut error_counters,
                 ) {
                     vote_packets.push(packet.clone());
                 }
