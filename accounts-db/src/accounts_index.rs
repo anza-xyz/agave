@@ -236,8 +236,6 @@ pub struct AccountsIndexRootsStats {
     pub clean_dead_slot_us: u64,
 }
 
-type RangeItemVec<T> = Vec<(Pubkey, AccountMapEntry<T>)>;
-
 pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     account_maps: &'a [Arc<InMemAccountsIndex<T, U>>],
     start_bound: Bound<&'a Pubkey>,
@@ -245,14 +243,14 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
     start_bin: usize,
     end_bin_inclusive: usize,
     is_finished: bool,
-    bin_range: RangeItemVec<T>,
+    bin_range: Vec<(Pubkey, AccountMapEntry<T>)>,
     returns_items: AccountsIndexIteratorReturnsItems,
 }
 
 impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIterator<'a, T, U> {
     pub fn new<R>(
         index: &'a AccountsIndex<T, U>,
-        range: &'a Option<R>,
+        range: Option<&'a R>,
         returns_items: AccountsIndexIteratorReturnsItems,
     ) -> Self
     where
@@ -315,11 +313,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
             self.is_finished = true;
             None
         } else {
-            let chunk = if self.bin_range.len() < ITER_BATCH_SIZE {
-                self.bin_range.drain(..).collect()
-            } else {
-                self.bin_range.drain(0..ITER_BATCH_SIZE).collect()
-            };
+            let num_items = std::cmp::min(self.bin_range.len(), ITER_BATCH_SIZE);
+            let chunk = self.bin_range.drain(0..num_items).collect();
             Some(chunk)
         }
     }
@@ -442,7 +437,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.bin_calculator.bin_from_pubkey(pubkey)
     }
 
-    /// returns the start bin and the end bin (inclusive) to scan
+    /// returns the start bin and the end bin (inclusive) to scan.
+    ///
+    /// Note that start_bin maybe larger than highest bin index. Therefore, the
+    /// caller should not assume that start_bin is a valid bin index. So don't
+    /// index into `account_maps` with start_bin. Use `start_bin..=end_bin` to
+    /// iterate over the bins.
     fn bin_start_end_inclusive<R>(&self, range: &R) -> (usize, usize)
     where
         R: RangeBounds<Pubkey>,
@@ -518,7 +518,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     fn iter<'a, R>(
         &'a self,
-        range: &'a Option<R>,
+        range: Option<&'a R>,
         returns_items: AccountsIndexIteratorReturnsItems,
     ) -> AccountsIndexIterator<'a, T, U>
     where
@@ -812,7 +812,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let mut iterator_elapsed = 0;
         let mut iterator_timer = Measure::start("iterator_elapsed");
 
-        for pubkey_list in self.iter(&range, returns_items) {
+        for pubkey_list in self.iter(range.as_ref(), returns_items) {
             iterator_timer.stop();
             iterator_elapsed += iterator_timer.as_us();
             for (pubkey, list) in pubkey_list {
@@ -2810,7 +2810,7 @@ pub mod tests {
     fn test_accounts_iter_finished() {
         let (index, _) = setup_accounts_index_keys(0);
         let mut iter = index.iter(
-            &None::<Range<Pubkey>>,
+            None::<&Range<Pubkey>>,
             AccountsIndexIteratorReturnsItems::Sorted,
         );
         assert!(iter.next().is_none());
@@ -3681,11 +3681,7 @@ pub mod tests {
             AccountsIndexIteratorReturnsItems::Unsorted,
         ] {
             // Create a sorted iterator for the whole pubkey range.
-            let mut iter = index.iter(
-                &None::<Range<Pubkey>>,
-                //AccountsIndexIteratorReturnsItems::Sorted,
-                returns_items,
-            );
+            let mut iter = index.iter(None::<&Range<Pubkey>>, returns_items);
             // First iter.next() should return the first batch of pubkeys (1000
             // pubkeys) out of the 2000 pubkeys in the first bin. And the remaining
             // 1000 pubkeys from the first bin should be cached in
