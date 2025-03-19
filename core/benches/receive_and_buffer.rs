@@ -82,10 +82,14 @@ fn generate_transactions(
     fee_payers: &[Keypair],
     num_instructions_per_tx: usize,
     probability_invalid_blockhash: f64,
+    set_rand_cu_price: bool,
 ) -> BankingPacketBatch {
-    assert!(
-        num_instructions_per_tx <= MAX_INSTRUCTIONS_PER_TRANSACTION && num_instructions_per_tx > 0
-    );
+    assert!(num_instructions_per_tx <= MAX_INSTRUCTIONS_PER_TRANSACTION);
+    if set_rand_cu_price {
+        assert!(num_instructions_per_tx > 0,
+            "`num_instructions_per_tx` must be at least 1 when `set_rand_cu_price` flag is set to count\
+             the set_compute_unit_price instruction.");
+    }
     let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
 
     let mut rng = rand::thread_rng();
@@ -98,11 +102,13 @@ fn generate_transactions(
             let program_id = Pubkey::new_unique();
 
             let mut instructions = Vec::with_capacity(num_instructions_per_tx);
-            // Experiments with different distributions didn't show much of the effect on the performance.
-            let compute_unit_price = rng.gen_range(0..1000);
-            instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
-                compute_unit_price,
-            ));
+            if set_rand_cu_price {
+                // Experiments with different distributions didn't show much of the effect on the performance.
+                let compute_unit_price = rng.gen_range(0..1000);
+                instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
+                    compute_unit_price,
+                ));
+            }
             for _ in 0..num_instructions_per_tx.saturating_sub(1) {
                 instructions.push(Instruction::new_with_bytes(
                     program_id,
@@ -162,6 +168,7 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
     bench_name: &str,
     num_instructions_per_tx: usize,
     probability_invalid_blockhash: f64,
+    set_rand_cu_price: bool,
 ) {
     let GenesisConfigInfo {
         mut genesis_config, ..
@@ -194,6 +201,7 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
         &fee_payers,
         num_instructions_per_tx,
         probability_invalid_blockhash,
+        set_rand_cu_price,
     );
     let mut container = <T as ReceiveAndBuffer>::Container::with_capacity(TOTAL_BUFFERED_PACKETS);
 
@@ -238,12 +246,14 @@ fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
         "sanitized_transaction_max_instructions",
         MAX_INSTRUCTIONS_PER_TRANSACTION,
         0.0,
+        true,
     );
     bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
         c,
         "sanitized_transaction_min_instructions",
         1,
         0.0,
+        true,
     );
 }
 
@@ -253,12 +263,14 @@ fn bench_transaction_view_receive_and_buffer(c: &mut Criterion) {
         "transaction_view_max_instructions",
         MAX_INSTRUCTIONS_PER_TRANSACTION,
         0.0,
+        true,
     );
     bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
         c,
         "transaction_view_min_instructions",
         1,
         0.0,
+        true,
     );
 }
 
