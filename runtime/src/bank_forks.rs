@@ -80,7 +80,8 @@ pub struct BankForks {
     pub snapshot_config: Option<SnapshotConfig>,
 
     pub accounts_hash_interval_slots: Slot,
-    last_accounts_hash_slot: Slot,
+    /// Highest slot request that has been sent to AccountsBackgroundService
+    latest_abs_request_slot: Slot,
     in_vote_only_mode: Arc<AtomicBool>,
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
@@ -132,7 +133,7 @@ impl BankForks {
             descendants,
             snapshot_config: None,
             accounts_hash_interval_slots: u64::MAX,
-            last_accounts_hash_slot: root_slot,
+            latest_abs_request_slot: root_slot,
             in_vote_only_mode: Arc::new(AtomicBool::new(false)),
             highest_slot_at_startup: 0,
             scheduler_pool: None,
@@ -374,7 +375,7 @@ impl BankForks {
                 eah_bank.slot(),
             );
 
-            self.last_accounts_hash_slot = eah_bank.slot();
+            self.latest_abs_request_slot = eah_bank.slot();
             squash_timing += eah_bank.squash();
             is_root_bank_squashed = eah_bank.slot() == root;
 
@@ -449,11 +450,11 @@ impl BankForks {
         // unlikely for a validator with default snapshot intervals (and accounts hash verifier
         // intervals), it *is* possible, and there are tests to exercise this possibility.
         if let Some(bank) = banks.iter().find(|bank| {
-            bank.slot() > self.last_accounts_hash_slot
+            bank.slot() > self.latest_abs_request_slot
                 && bank.block_height() % self.accounts_hash_interval_slots == 0
         }) {
             let bank_slot = bank.slot();
-            self.last_accounts_hash_slot = bank_slot;
+            self.latest_abs_request_slot = bank_slot;
             squash_timing += bank.squash();
 
             is_root_bank_squashed = bank_slot == root;
@@ -744,7 +745,7 @@ impl BankForks {
         }
 
         let start_slot = epoch_accounts_hash_utils::calculation_start(bank);
-        bank.slot() > self.last_accounts_hash_slot
+        bank.slot() > self.latest_abs_request_slot
             && bank.parent_slot() < start_slot
             && bank.slot() >= start_slot
     }
