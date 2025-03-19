@@ -26,7 +26,6 @@ use {
     },
     solana_clock::{Epoch, Slot},
     solana_feature_set::{remove_accounts_executable_flag_checks, FeatureSet},
-    solana_fee_structure::FeeStructure,
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_log_collector::LogCollector,
@@ -121,6 +120,7 @@ pub struct TransactionProcessingConfig<'a> {
 }
 
 /// Runtime environment for transaction batch processing.
+#[derive(Default)]
 pub struct TransactionProcessingEnvironment<'a> {
     /// The blockhash to use for the transaction batch.
     pub blockhash: Hash,
@@ -135,23 +135,8 @@ pub struct TransactionProcessingEnvironment<'a> {
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: Arc<FeatureSet>,
-    /// Transaction fee to charge per signature, in lamports.
-    pub fee_lamports_per_signature: u64,
     /// Rent collector to use for the transaction batch.
     pub rent_collector: Option<&'a dyn SVMRentCollector>,
-}
-
-impl Default for TransactionProcessingEnvironment<'_> {
-    fn default() -> Self {
-        Self {
-            blockhash: Hash::default(),
-            blockhash_lamports_per_signature: 0,
-            epoch_total_stake: 0,
-            feature_set: Arc::<FeatureSet>::default(),
-            fee_lamports_per_signature: FeeStructure::default().lamports_per_signature, // <-- Default fee.
-            rent_collector: None,
-        }
-    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -519,7 +504,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // This function is a successful no-op if given a blockhash transaction.
         if let CheckedTransactionDetails {
             nonce: Some(ref nonce_info),
-            lamports_per_signature: _,
             compute_budget_and_limits: _,
         } = checked_details
         {
@@ -555,7 +539,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let CheckedTransactionDetails {
             nonce,
-            lamports_per_signature: _,
             compute_budget_and_limits,
         } = checked_details;
 
@@ -2166,11 +2149,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(
-                    None,
-                    lamports_per_signature,
-                    Ok(compute_budget_and_limits),
-                ),
+                CheckedTransactionDetails::new(None, Ok(compute_budget_and_limits)),
                 &Hash::default(),
                 &rent_collector,
                 &mut error_counters,
@@ -2246,11 +2225,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(
-                    None,
-                    lamports_per_signature,
-                    Ok(compute_budget_and_limits),
-                ),
+                CheckedTransactionDetails::new(None, Ok(compute_budget_and_limits)),
                 &Hash::default(),
                 &rent_collector,
                 &mut error_counters,
@@ -2288,7 +2263,6 @@ mod tests {
 
     #[test]
     fn test_validate_transaction_fee_payer_not_found() {
-        let lamports_per_signature = 5000;
         let message =
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
 
@@ -2301,7 +2275,6 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    lamports_per_signature,
                     Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
                 ),
                 &Hash::default(),
@@ -2335,7 +2308,6 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    lamports_per_signature,
                     Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
                         MockBankCallback::calculate_fee_details(
                             &message,
@@ -2379,7 +2351,6 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    lamports_per_signature,
                     Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
                         MockBankCallback::calculate_fee_details(
                             &message,
@@ -2421,7 +2392,6 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    lamports_per_signature,
                     Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
                         MockBankCallback::calculate_fee_details(
                             &message,
@@ -2441,7 +2411,6 @@ mod tests {
 
     #[test]
     fn test_validate_transaction_fee_payer_invalid_compute_budget() {
-        let lamports_per_signature = 5000;
         let message = new_unchecked_sanitized_message(Message::new(
             &[
                 ComputeBudgetInstruction::set_compute_unit_limit(2000u32),
@@ -2457,11 +2426,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(
-                    None,
-                    lamports_per_signature,
-                    Err(DuplicateInstruction(1)),
-                ),
+                CheckedTransactionDetails::new(None, Err(DuplicateInstruction(1))),
                 &Hash::default(),
                 &RentCollector::default(),
                 &mut error_counters,
@@ -2528,7 +2493,6 @@ mod tests {
 
             let tx_details = CheckedTransactionDetails::new(
                 Some(future_nonce.clone()),
-                lamports_per_signature,
                 Ok(compute_budget_and_limits),
             );
 
@@ -2594,7 +2558,7 @@ mod tests {
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature, Ok(compute_budget_and_limits)),
+                CheckedTransactionDetails::new(None, Ok(compute_budget_and_limits)),
                 &Hash::default(),
                 &rent_collector,
                 &mut error_counters,
@@ -2637,7 +2601,6 @@ mod tests {
             &message,
             CheckedTransactionDetails::new(
                 None,
-                5000,
                 Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
                     MockBankCallback::calculate_fee_details(&message, 5000, 0),
                 )),

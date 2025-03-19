@@ -426,7 +426,6 @@ impl JsonRpcRequestProcessor {
         /* for now just return defaults */
         Ok(CheckedTransactionDetails::new(
             None,
-            u64::default(),
             Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
         ))
     }
@@ -547,7 +546,6 @@ impl JsonRpcRequestProcessor {
             blockhash_lamports_per_signature: lamports_per_signature,
             epoch_total_stake: 0,
             feature_set: Arc::clone(&bank.feature_set),
-            fee_lamports_per_signature: lamports_per_signature,
             rent_collector: None,
         };
 

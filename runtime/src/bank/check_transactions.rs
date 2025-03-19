@@ -165,7 +165,7 @@ impl Bank {
         } else {
             compute_budget_and_limits
         };
-        CheckedTransactionDetails::new(nonce, lamports_per_signature, compute_budget_and_limits)
+        CheckedTransactionDetails::new(nonce, compute_budget_and_limits)
     }
 
     fn check_transaction_age(

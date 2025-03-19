@@ -1,4 +1,5 @@
 #![allow(unused)]
+
 #[allow(deprecated)]
 use solana_sdk::sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
@@ -7,7 +8,7 @@ use {
         SyscallLog, SyscallMemcpy, SyscallMemset, SyscallSetReturnData,
     },
     solana_feature_set::FeatureSet,
-    solana_fee_structure::FeeDetails,
+    solana_fee_structure::{FeeDetails, FeeStructure},
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
@@ -113,11 +114,7 @@ impl TransactionProcessingCallback for MockBankCallback {
 }
 
 impl MockBankCallback {
-    pub fn calculate_fee_details(
-        message: &impl SVMMessage,
-        lamports_per_signature: u64,
-        prioritization_fee: u64,
-    ) -> FeeDetails {
+    pub fn calculate_fee_details(message: &impl SVMMessage, prioritization_fee: u64) -> FeeDetails {
         let signature_count = message
             .num_transaction_signatures()
             .saturating_add(message.num_ed25519_signatures())
@@ -125,7 +122,7 @@ impl MockBankCallback {
             .saturating_add(message.num_secp256r1_signatures());
 
         FeeDetails::new(
-            signature_count.saturating_mul(lamports_per_signature),
+            signature_count.saturating_mul(FeeStructure::default().lamports_per_signature),
             prioritization_fee,
         )
     }

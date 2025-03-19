@@ -60,13 +60,9 @@ pub(crate) enum TransactionLoadResult {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-#[cfg_attr(
-    feature = "svm-internal",
-    field_qualifiers(nonce(pub), lamports_per_signature(pub),)
-)]
+#[cfg_attr(feature = "svm-internal", field_qualifiers(nonce(pub)))]
 pub struct CheckedTransactionDetails {
     pub(crate) nonce: Option<NonceInfo>,
-    pub(crate) lamports_per_signature: u64,
     pub(crate) compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
 }
 
@@ -75,7 +71,6 @@ impl Default for CheckedTransactionDetails {
     fn default() -> Self {
         Self {
             nonce: None,
-            lamports_per_signature: 0,
             compute_budget_and_limits: Ok(SVMTransactionExecutionAndFeeBudgetLimits {
                 budget: SVMTransactionExecutionBudget::default(),
                 loaded_accounts_data_size_limit: NonZeroU32::new(32)
@@ -89,12 +84,10 @@ impl Default for CheckedTransactionDetails {
 impl CheckedTransactionDetails {
     pub fn new(
         nonce: Option<NonceInfo>,
-        lamports_per_signature: u64,
         compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
     ) -> Self {
         Self {
             nonce,
-            lamports_per_signature,
             compute_budget_and_limits,
         }
     }

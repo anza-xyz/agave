@@ -94,13 +94,11 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
 /// PayTube, since we don't need to perform such pre-checks.
 pub(crate) fn get_transaction_check_results(
     len: usize,
-    lamports_per_signature: u64,
 ) -> Vec<transaction::Result<CheckedTransactionDetails>> {
     let compute_budget_limit = ComputeBudgetLimits::default();
     vec![
         transaction::Result::Ok(CheckedTransactionDetails::new(
             None,
-            lamports_per_signature,
             Ok(compute_budget_limit.get_compute_budget_and_limits(
                 compute_budget_limit.loaded_accounts_bytes,
                 FeeDetails::default()

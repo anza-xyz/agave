@@ -117,7 +117,6 @@ impl SvmTestEnvironment<'_> {
             blockhash: LAST_BLOCKHASH,
             feature_set: feature_set.into(),
             blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
-            fee_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
             ..TransactionProcessingEnvironment::default()
         };
 
@@ -451,16 +450,12 @@ impl SvmTestEntry {
                         v.get_compute_budget_and_limits(
                             v.loaded_accounts_bytes,
                             FeeDetails::new(
-                                signature_count.saturating_mul(tx_details.lamports_per_signature),
+                                signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
                                 v.get_prioritization_fee(),
                             ),
                         )
                     });
-                    CheckedTransactionDetails::new(
-                        tx_details.nonce,
-                        tx_details.lamports_per_signature,
-                        compute_budget,
-                    )
+                    CheckedTransactionDetails::new(tx_details.nonce, compute_budget)
                 });
 
                 (message, check_result)
@@ -491,7 +486,6 @@ impl TransactionBatchItem {
         Self {
             check_result: Ok(CheckedTransactionDetails::new(
                 Some(nonce_info),
-                LAMPORTS_PER_SIGNATURE,
                 Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
             )),
             ..Self::default()
@@ -505,7 +499,6 @@ impl Default for TransactionBatchItem {
             transaction: Transaction::default(),
             check_result: Ok(CheckedTransactionDetails::new(
                 None,
-                LAMPORTS_PER_SIGNATURE,
                 Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
             )),
             asserts: TransactionBatchItemAsserts::default(),
