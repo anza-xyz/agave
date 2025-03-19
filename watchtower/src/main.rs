@@ -280,7 +280,7 @@ fn query_endpoint(
 ) -> client_error::Result<Option<(&'static str, String)>> {
     info!("Querying {}", endpoint.rpc_client.url());
 
-    match get_cluster_info(&config, &endpoint.rpc_client) {
+    match get_cluster_info(config, &endpoint.rpc_client) {
         Ok((transaction_count, recent_blockhash, vote_accounts, validator_balances)) => {
             info!("Current transaction count: {}", transaction_count);
             info!("Recent blockhash: {}", recent_blockhash);
@@ -403,7 +403,7 @@ fn validate_endpoints(
     info!("Validating endpoints...");
 
     let mut max_slot = 0;
-    let mut min_slot = u64::max_value();
+    let mut min_slot = u64::MAX;
 
     let mut opt_common_genesis_hash: Option<Hash> = None;
 
@@ -421,10 +421,9 @@ fn validate_endpoints(
 
         if let Some(common_genesis_hash) = opt_common_genesis_hash {
             if common_genesis_hash != genesis_hash {
-                return Err(format!(
-                    "Endpoints don't aggree on genesis hash, have you mixed up clusters?"
-                )
-                .into());
+                return Err(
+                    "Endpoints don't aggree on genesis hash, have you mixed up clusters?".into(),
+                );
             }
         } else {
             opt_common_genesis_hash = Some(genesis_hash);
@@ -504,7 +503,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 num_reachable,
                 endpoints.len()
             );
-            failures.insert("watchtower-reliability".into(), watchtower_unreliable_msg);
+            failures.insert("watchtower-reliability", watchtower_unreliable_msg);
         }
 
         if num_healthy < min_agreeing_endpoints {
@@ -514,7 +513,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 let watchtower_unreliable_msg =
                     "Watchtower is unreliable, RPC endpoints provide inconsistent information"
                         .into();
-                failures.insert("watchtower-reliability".into(), watchtower_unreliable_msg);
+                failures.insert("watchtower-reliability", watchtower_unreliable_msg);
             }
 
             let (failure_test_name, failure_error_message) = failures.iter().next().unwrap();
