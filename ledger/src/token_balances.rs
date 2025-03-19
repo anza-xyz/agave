@@ -55,12 +55,14 @@ pub fn collect_token_balances(
                     continue;
                 }
 
+                /* HANA fix decimals hashmap
                 if let Some(TokenBalanceData {
                     mint,
                     ui_token_amount,
                     owner,
                     program_id,
-                }) = collect_token_balance_from_account(bank, account_id, mint_decimals)
+                }) = collect_token_balance_from_account(&mut HashMap::default(), // HANA placeholder 
+                bank, account_id, mint_decimals)
                 {
                     transaction_balances.push(TransactionTokenBalance {
                         account_index: index as u8,
@@ -70,6 +72,7 @@ pub fn collect_token_balances(
                         program_id,
                     });
                 }
+                */
             }
         }
         balances.push(transaction_balances);
@@ -82,19 +85,40 @@ pub fn collect_token_balances(
     balances
 }
 
-#[derive(Debug, PartialEq)]
-struct TokenBalanceData {
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TokenBalanceData {
     mint: String,
     owner: String,
     ui_token_amount: UiTokenAmount,
     program_id: String,
 }
 
-fn collect_token_balance_from_account(
+impl TokenBalanceData {
+    pub fn to_transaction_balance(self, account_index: u8) -> TransactionTokenBalance {
+        TransactionTokenBalance {
+            account_index,
+            mint: self.mint,
+            ui_token_amount: self.ui_token_amount,
+            owner: self.owner,
+            program_id: self.program_id,
+        }
+    }
+}
+
+pub(crate) fn collect_token_balance_from_account(
+    token_data: &mut HashMap<Pubkey, Option<TokenBalanceData>>,
     bank: &Bank,
     account_id: &Pubkey,
-    mint_decimals: &mut HashMap<Pubkey, u8>,
+    mint_decimals: &mut HashMap<Pubkey, Option<u8>>,
 ) -> Option<TokenBalanceData> {
+    match token_data.get(account_id).cloned() {
+        // exists and seen in this batch
+        Some(Some(balance)) => Some(balance),
+        // once existed, but closed in this batch
+        Some(None) => None,
+        // never modified this batch
+        // safe (and necessary) to load from bank
+        None => {
     let account = bank.get_account(account_id)?;
 
     if !is_known_spl_token_id(account.owner()) {
@@ -104,13 +128,20 @@ fn collect_token_balance_from_account(
     let token_account = StateWithExtensions::<TokenAccount>::unpack(account.data()).ok()?;
     let mint = token_account.base.mint;
 
-    let decimals = mint_decimals.get(&mint).cloned().or_else(|| {
-        let decimals = get_mint_decimals(bank, &mint)?;
-        mint_decimals.insert(mint, decimals);
-        Some(decimals)
-    })?;
+    let decimals = match mint_decimals.get(&mint).cloned() {
+        // exists and seen already
+        Some(Some(decimals)) => decimals,
+        // mint was closed or is otherwise invalid
+        Some(None) => return None,
+        // not yet seen
+        None => {
+            let decimals = get_mint_decimals(bank, &mint)?;
+            mint_decimals.insert(mint, Some(decimals));
+            decimals
+        }
+    };
 
-    Some(TokenBalanceData {
+    let balance = Some(TokenBalanceData {
         mint: token_account.base.mint.to_string(),
         owner: token_account.base.owner.to_string(),
         ui_token_amount: token_amount_to_ui_amount_v3(
@@ -121,8 +152,11 @@ fn collect_token_balance_from_account(
             &SplTokenAdditionalDataV2::with_decimals(decimals),
         ),
         program_id: account.owner().to_string(),
-    })
+    });
+    token_data.insert(*account_id, balance.clone());
+    balance
 }
+}}
 
 #[cfg(test)]
 mod test {
