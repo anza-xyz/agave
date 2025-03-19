@@ -56,7 +56,7 @@ static CORE_BPF_PROGRAMS: &[(Pubkey, Option<Pubkey>, &[u8])] = &[
     ),
     (
         solana_sdk_ids::config::ID,
-        Some(feature_set::migrate_config_program_to_core_bpf::ID),
+        None,
         include_bytes!("programs/core_bpf_config-3.0.0.so"),
     ),
     (
