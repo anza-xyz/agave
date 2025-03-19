@@ -10,7 +10,7 @@
 //! be returned.
 use {
     crate::{append_vec::ValidSlice, file_io::read_more_buffer},
-    std::{fs::File, ops::Range},
+    std::{fs::File, mem::MaybeUninit, ops::Range, slice},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -24,7 +24,7 @@ pub struct BufferedReader<'a> {
     /// when we are next asked to read from file, start at this offset
     file_offset_of_next_read: usize,
     /// the most recently read data. `buf_valid_bytes` specifies the range of `buf` that is valid.
-    buf: Box<[u8]>,
+    buf: Box<[MaybeUninit<u8>]>,
     /// specifies the range of `buf` that contains valid data that has not been used by the caller
     buf_valid_bytes: Range<usize>,
     /// offset in the file of the `buf_valid_bytes`.`start`
@@ -52,7 +52,7 @@ impl<'a> BufferedReader<'a> {
         let buffer_size = buffer_size.min(file_len_valid);
         Self {
             file_offset_of_next_read: 0,
-            buf: vec![0; buffer_size].into_boxed_slice(),
+            buf: Box::new_uninit_slice(buffer_size),
             buf_valid_bytes: 0..0,
             file_last_offset: 0,
             read_requirements: None,
@@ -74,7 +74,10 @@ impl<'a> BufferedReader<'a> {
                 self.file,
                 self.file_len_valid,
                 &mut self.file_offset_of_next_read,
-                &mut self.buf,
+                // SAFETY: `read_more_buffer` will only _write_ to uninitialized memory and lifetime is tied to self.
+                unsafe {
+                    slice::from_raw_parts_mut(self.buf.as_mut_ptr() as *mut u8, self.buf.len())
+                },
                 &mut self.buf_valid_bytes,
             )?;
             if self.buf_valid_bytes.len() < must_read {
@@ -87,7 +90,13 @@ impl<'a> BufferedReader<'a> {
     }
     /// return the biggest slice of valid data starting at the current offset
     fn get_data(&'a self) -> ValidSlice<'a> {
-        ValidSlice::new(&self.buf[self.buf_valid_bytes.clone()])
+        // SAFETY: We only read from memory that has been initialized by `read_more_buffer` and lifetime is tied to self.
+        ValidSlice::new(unsafe {
+            slice::from_raw_parts(
+                self.buf.as_ptr().add(self.buf_valid_bytes.start) as *const u8,
+                self.buf_valid_bytes.len(),
+            )
+        })
     }
     /// return offset within `file` of start of read at current offset
     pub fn get_offset_and_data(&'a self) -> (usize, ValidSlice<'a>) {
@@ -116,12 +125,19 @@ impl<'a> BufferedReader<'a> {
 mod tests {
     use {super::*, std::io::Write, tempfile::tempfile};
 
+    #[inline(always)]
+    fn rand_bytes<const N: usize>() -> [u8; N] {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        std::array::from_fn(|_| rng.gen::<u8>())
+    }
+
     #[test]
     fn test_buffered_reader() {
         // Setup a sample file with 32 bytes of data
-        let file_size = 32;
+        const FILE_SIZE: usize = 32;
         let mut sample_file = tempfile().unwrap();
-        let bytes: Vec<u8> = (0..file_size as u8).collect();
+        let bytes = rand_bytes::<FILE_SIZE>();
         sample_file.write_all(&bytes).unwrap();
 
         // First read 16 bytes to fill buffer
@@ -150,7 +166,7 @@ mod tests {
         let expected_slice_len = 16;
         assert_eq!(offset, expected_offset);
         assert_eq!(slice.len(), expected_slice_len);
-        assert_eq!(slice.slice(), &bytes[offset..file_size]);
+        assert_eq!(slice.slice(), &bytes[offset..FILE_SIZE]);
 
         // Continue reading should yield EOF and empty slice.
         reader.advance_offset(advance);
@@ -179,8 +195,8 @@ mod tests {
     fn test_buffered_reader_with_extra_data_in_file() {
         // Setup a sample file with 32 bytes of data
         let mut sample_file = tempfile().unwrap();
-        let file_size = 32;
-        let bytes: Vec<u8> = (0..file_size as u8).collect();
+        const FILE_SIZE: usize = 32;
+        let bytes = rand_bytes::<FILE_SIZE>();
         sample_file.write_all(&bytes).unwrap();
 
         // Set file valid_len to 30 (i.e. 2 garbage bytes at the end of the file)
@@ -258,8 +274,8 @@ mod tests {
     fn test_buffered_reader_partial_consume() {
         // Setup a sample file with 32 bytes of data
         let mut sample_file = tempfile().unwrap();
-        let file_size = 32;
-        let bytes: Vec<u8> = (0..file_size as u8).collect();
+        const FILE_SIZE: usize = 32;
+        let bytes = rand_bytes::<FILE_SIZE>();
         sample_file.write_all(&bytes).unwrap();
 
         // First read 16 bytes to fill buffer
@@ -329,8 +345,8 @@ mod tests {
     fn test_buffered_reader_partial_consume_with_move() {
         // Setup a sample file with 32 bytes of data
         let mut sample_file = tempfile().unwrap();
-        let file_size = 32;
-        let bytes: Vec<u8> = (0..file_size as u8).collect();
+        const FILE_SIZE: usize = 32;
+        let bytes = rand_bytes::<FILE_SIZE>();
         sample_file.write_all(&bytes).unwrap();
 
         // First read 16 bytes to fill buffer

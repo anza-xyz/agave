@@ -26,12 +26,13 @@ use {
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
+        self,
         convert::TryFrom,
         fs::{remove_file, File, OpenOptions},
         io::{Seek, SeekFrom, Write},
-        mem,
+        mem::{self, MaybeUninit},
         path::{Path, PathBuf},
-        ptr,
+        ptr, slice,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Mutex,
@@ -728,9 +729,16 @@ impl AppendVec {
             }
             AppendVecFileBacking::File(file) => {
                 // 4096 was just picked to be a single page size
-                let mut buf = [0u8; PAGE_SIZE as usize];
-                let bytes_read = read_into_buffer(file, self.len(), offset, &mut buf).ok()?;
-                let valid_bytes = ValidSlice(&buf[..bytes_read]);
+                let mut buf = [MaybeUninit::<u8>::uninit(); PAGE_SIZE as usize];
+                // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+                let bytes_read = read_into_buffer(file, self.len(), offset, unsafe {
+                    slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len())
+                })
+                .ok()?;
+                // SAFETY: we only read the initialized portion.
+                let valid_bytes = ValidSlice(unsafe {
+                    slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read)
+                });
                 let (meta, next): (&StoredMeta, _) = Self::get_type(valid_bytes, 0)?;
                 let (account_meta, next): (&AccountMeta, _) = Self::get_type(valid_bytes, next)?;
                 let (hash, next): (&AccountHash, _) = Self::get_type(valid_bytes, next)?;
@@ -752,15 +760,20 @@ impl AppendVec {
                 } else {
                     // not enough was read from file to get `data`
                     assert!(data_len <= MAX_PERMITTED_DATA_LENGTH, "{data_len}");
-                    let mut data = vec![0u8; data_len as usize];
+                    let mut data: Box<[MaybeUninit<u8>]> = Box::new_uninit_slice(data_len as usize);
                     // instead, we could piece together what we already read here. Maybe we just needed 1 more byte.
                     // Note here `next` is a 0-based offset from the beginning of this account.
-                    let bytes_read =
-                        read_into_buffer(file, self.len(), offset + next, &mut data).ok()?;
+                    // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+                    let bytes_read = read_into_buffer(file, self.len(), offset + next, unsafe {
+                        slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, data_len as usize)
+                    })
+                    .ok()?;
                     if bytes_read < data_len as usize {
                         // eof or otherwise couldn't read all the data
                         return None;
                     }
+                    // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
+                    let data = unsafe { data.assume_init() };
                     let stored_size = aligned_stored_size(data_len as usize);
                     let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
                         meta,
@@ -786,9 +799,14 @@ impl AppendVec {
                     account.to_account_shared_data()
                 }),
             AppendVecFileBacking::File(file) => {
-                let mut buf = [0u8; PAGE_SIZE as usize];
-                let bytes_read = read_into_buffer(file, self.len(), offset, &mut buf).ok()?;
-                let valid_bytes = ValidSlice(&buf[..bytes_read]);
+                let mut buf = MaybeUninit::<[u8; PAGE_SIZE as usize]>::uninit();
+                let bytes_read =
+                    read_into_buffer(file, self.len(), offset, unsafe { &mut *buf.as_mut_ptr() })
+                        .ok()?;
+                // SAFETY: we only read the initialized portion.
+                let valid_bytes = ValidSlice(unsafe {
+                    slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read)
+                });
                 let (meta, next): (&StoredMeta, _) = Self::get_type(valid_bytes, 0)?;
                 let (account_meta, next): (&AccountMeta, _) = Self::get_type(valid_bytes, next)?;
                 let (hash, next): (&AccountHash, _) = Self::get_type(valid_bytes, next)?;
@@ -811,14 +829,20 @@ impl AppendVec {
                 } else {
                     // not enough was read from file to get `data`
                     assert!(data_len <= MAX_PERMITTED_DATA_LENGTH, "{data_len}");
-                    let mut data = vec![0u8; data_len as usize];
+                    let mut data = Vec::with_capacity(data_len as usize);
+                    let slice = data.spare_capacity_mut();
                     // Note here `next` is a 0-based offset from the beginning of this account.
-                    let bytes_read =
-                        read_into_buffer(file, self.len(), offset + next, &mut data).ok()?;
+                    // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+                    let bytes_read = read_into_buffer(file, self.len(), offset + next, unsafe {
+                        slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, data_len as usize)
+                    })
+                    .ok()?;
                     if bytes_read < data_len as usize {
                         // eof or otherwise couldn't read all the data
                         return None;
                     }
+                    // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
+                    unsafe { data.set_len(data_len as usize) };
                     AccountSharedData::create(
                         account_meta.lamports,
                         data,
@@ -1060,14 +1084,22 @@ impl AppendVec {
                 }
             }
             AppendVecFileBacking::File(file) => {
-                let mut buffer = [0u8; mem::size_of::<StoredMeta>()];
+                let mut buffer = [MaybeUninit::<u8>::uninit(); mem::size_of::<StoredMeta>()];
                 for &offset in sorted_offsets {
-                    let Some(bytes_read) =
-                        read_into_buffer(file, self_len, offset, &mut buffer).ok()
-                    else {
+                    // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+                    let Some(bytes_read) = read_into_buffer(file, self_len, offset, unsafe {
+                        slice::from_raw_parts_mut(
+                            buffer.as_mut_ptr() as *mut u8,
+                            mem::size_of::<StoredMeta>(),
+                        )
+                    })
+                    .ok() else {
                         break;
                     };
-                    let bytes = ValidSlice(&buffer[..bytes_read]);
+                    // SAFETY: we only read the initialized portion.
+                    let bytes = ValidSlice(unsafe {
+                        slice::from_raw_parts(buffer.as_ptr() as *const u8, bytes_read)
+                    });
                     let Some((stored_meta, _)) = Self::get_type::<StoredMeta>(bytes, 0) else {
                         break;
                     };
