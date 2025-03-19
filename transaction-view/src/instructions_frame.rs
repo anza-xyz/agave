@@ -17,6 +17,15 @@ pub(crate) struct InstructionsFrame {
     pub(crate) num_instructions: u16,
     /// The offset to the first instruction in the transaction.
     pub(crate) offset: u16,
+    pub(crate) cached_offsets_and_lens: Vec<InstructionOffsetAndLens>,
+}
+
+#[derive(Debug)]
+pub(crate) struct InstructionOffsetAndLens {
+    num_accounts: u16,
+    accounts_offset: u16,
+    data_len: u16,
+    data_offset: u16,
 }
 
 impl InstructionsFrame {
@@ -42,6 +51,9 @@ impl InstructionsFrame {
         // length is less than u16::MAX, so we can safely cast to u16.
         let instructions_offset = *offset as u16;
 
+        // Pre-allocate buffer for cached offsets and lengths.
+        let mut cached_offsets_and_lens = Vec::with_capacity(usize::from(num_instructions));
+
         // The instructions do not have a fixed size. So we must iterate over
         // each instruction to find the total size of the instructions,
         // and check for any malformed instructions or buffer overflows.
@@ -57,17 +69,27 @@ impl InstructionsFrame {
             // Read the number of account indexes, and then update the offset
             // to skip over the account indexes.
             let num_accounts = optimized_read_compressed_u16(bytes, offset)?;
+            let accounts_offset = *offset as u16;
             advance_offset_for_array::<u8>(bytes, offset, num_accounts)?;
 
             // Read the length of the data, and then update the offset to skip
             // over the data.
             let data_len = optimized_read_compressed_u16(bytes, offset)?;
-            advance_offset_for_array::<u8>(bytes, offset, data_len)?
+            let data_offset = *offset as u16;
+            advance_offset_for_array::<u8>(bytes, offset, data_len)?;
+
+            cached_offsets_and_lens.push(InstructionOffsetAndLens {
+                num_accounts,
+                accounts_offset,
+                data_len,
+                data_offset,
+            });
         }
 
         Ok(Self {
             num_instructions,
             offset: instructions_offset,
+            cached_offsets_and_lens,
         })
     }
 }
@@ -78,6 +100,7 @@ pub struct InstructionsIterator<'a> {
     pub(crate) offset: usize,
     pub(crate) num_instructions: u16,
     pub(crate) index: u16,
+    pub(crate) cached_offsets_and_lens: &'a [InstructionOffsetAndLens],
 }
 
 impl<'a> Iterator for InstructionsIterator<'a> {
@@ -86,6 +109,13 @@ impl<'a> Iterator for InstructionsIterator<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.num_instructions {
+            let InstructionOffsetAndLens {
+                num_accounts,
+                accounts_offset,
+                data_len,
+                data_offset,
+            } = self.cached_offsets_and_lens[usize::from(self.index)];
+
             self.index = self.index.wrapping_add(1);
 
             // Each instruction has 3 pieces:
@@ -96,10 +126,8 @@ impl<'a> Iterator for InstructionsIterator<'a> {
             // Read the program ID index.
             let program_id_index = read_byte(self.bytes, &mut self.offset).ok()?;
 
-            // Read the number of account indexes, and then update the offset
-            // to skip over the account indexes.
-            let num_accounts = optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
-
+            // Move offset to accounts offset - do not re-parse u16.
+            self.offset = usize::from(accounts_offset);
             const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
             // SAFETY:
             // - The offset is checked to be valid in the byte slice.
@@ -110,10 +138,8 @@ impl<'a> Iterator for InstructionsIterator<'a> {
                 unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, num_accounts) }
                     .ok()?;
 
-            // Read the length of the data, and then update the offset to skip
-            // over the data.
-            let data_len = optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
-
+            // Move offset to accounts offset - do not re-parse u16.
+            self.offset = usize::from(data_offset);
             const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
             // SAFETY:
             // - The offset is checked to be valid in the byte slice.
