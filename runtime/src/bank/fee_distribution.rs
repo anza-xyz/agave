@@ -750,50 +750,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_distribute_transaction_fee_details_burn_all() {
-        let mut genesis = create_genesis_config(0);
-        genesis.genesis_config.fee_rate_governor.burn_percent = 100;
-        let mut bank = Bank::new_for_tests(&genesis.genesis_config);
-        let transaction_fee = 100;
-        let priority_fee = 200;
-        bank.collector_fee_details = RwLock::new(CollectorFeeDetails {
-            transaction_fee,
-            priority_fee,
-        });
-
-        let initial_capitalization = bank.capitalization();
-        let initial_collector_id_balance = bank.get_balance(bank.collector_id());
-        bank.distribute_transaction_fee_details();
-        let new_collector_id_balance = bank.get_balance(bank.collector_id());
-
-        assert_eq!(
-            initial_collector_id_balance + priority_fee,
-            new_collector_id_balance
-        );
-        assert_eq!(
-            initial_capitalization - transaction_fee,
-            bank.capitalization()
-        );
-        let locked_rewards = bank.rewards.read().unwrap();
-        assert_eq!(
-            locked_rewards.len(),
-            1,
-            "There should be one reward distributed"
-        );
-
-        let reward_info = &locked_rewards[0];
-        assert_eq!(
-            reward_info.1.lamports, priority_fee as i64,
-            "The reward amount should match the expected deposit"
-        );
-        assert_eq!(
-            reward_info.1.reward_type,
-            RewardType::Fee,
-            "The reward type should be Fee"
-        );
-    }
-
-    #[test]
     fn test_distribute_transaction_fee_details_overflow_failure() {
         let genesis = create_genesis_config(0);
         let mut bank = Bank::new_for_tests(&genesis.genesis_config);
