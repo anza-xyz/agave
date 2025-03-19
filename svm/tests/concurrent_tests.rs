@@ -246,7 +246,6 @@ fn svm_concurrent() {
                 .map(|tx| {
                     Ok(CheckedTransactionDetails::new(
                         None,
-                        20,
                         Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
                             MockBankCallback::calculate_fee_details(tx, 0),
                         )),
