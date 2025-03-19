@@ -8698,7 +8698,10 @@ impl AccountsDb {
 
                         let insert_us = if pass == 0 {
                             // generate index
-                            self.maybe_throttle_index_generation();
+                            if self.accounts_index.is_disk_index_enabled() {
+                                // Only throttle if we are generating on-disk index. Throttling is not needed for in-mem index.
+                                self.maybe_throttle_index_generation();
+                            }
                             let SlotIndexGenerationInfo {
                                 insert_time_us: insert_us,
                                 num_accounts: total_this_slot,
