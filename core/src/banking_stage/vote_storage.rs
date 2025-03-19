@@ -19,9 +19,7 @@ use {
     std::sync::{atomic::Ordering, Arc},
 };
 
-// Step-size set to be 64, equal to the maximum batch/entry size. With the
-// multi-iterator change, there's no point in getting larger batches of
-// non-conflicting transactions.
+// Step-size set to be 64, equal to the maximum batch/entry size.
 pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 64;
 /// Maximum number of votes a single receive call will accept
 const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
@@ -32,8 +30,7 @@ pub struct VoteStorage {
     vote_source: VoteSource,
 }
 
-/// Convenient wrapper for shared-state between banking stage processing and the
-/// multi-iterator checking function.
+/// Convenient wrapper for shared-state between vote_storage and the consumer.
 pub struct ConsumeScannerPayload<'a> {
     pub reached_end_of_slot: bool,
     pub sanitized_transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
