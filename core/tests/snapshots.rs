@@ -115,7 +115,6 @@ impl SnapshotTestConfig {
             snapshot_version,
             ..SnapshotConfig::default()
         };
-        bank_forks.set_snapshot_config(Some(snapshot_config.clone()));
         SnapshotTestConfig {
             bank_forks: bank_forks_arc.clone(),
             genesis_config_info,
@@ -133,10 +132,10 @@ fn restore_from_snapshot(
     old_bank_forks: Arc<RwLock<BankForks>>,
     old_last_slot: Slot,
     old_genesis_config: &GenesisConfig,
+    snapshot_config: &SnapshotConfig,
     account_paths: &[PathBuf],
 ) {
     let old_bank_forks = old_bank_forks.read().unwrap();
-    let snapshot_config = old_bank_forks.snapshot_config.as_ref().unwrap();
     let old_last_bank = old_bank_forks.get(old_last_slot).unwrap();
 
     let check_hash_calculation = false;
@@ -256,6 +255,7 @@ fn run_bank_forks_snapshot_n<F>(
         snapshot_test_config.bank_forks.clone(),
         last_slot,
         genesis_config,
+        snapshot_config,
         account_paths,
     );
 }

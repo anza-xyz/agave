@@ -8,7 +8,6 @@ use {
         installed_scheduler_pool::{
             BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
         },
-        snapshot_config::SnapshotConfig,
     },
     crossbeam_channel::SendError,
     log::*,
@@ -77,8 +76,6 @@ pub struct BankForks {
     descendants: HashMap<Slot, HashSet<Slot>>,
     root: Arc<AtomicSlot>,
 
-    pub snapshot_config: Option<SnapshotConfig>,
-
     pub accounts_hash_interval_slots: Slot,
     last_accounts_hash_slot: Slot,
     in_vote_only_mode: Arc<AtomicBool>,
@@ -130,7 +127,6 @@ impl BankForks {
             root: Arc::new(AtomicSlot::new(root_slot)),
             banks,
             descendants,
-            snapshot_config: None,
             accounts_hash_interval_slots: u64::MAX,
             last_accounts_hash_slot: root_slot,
             in_vote_only_mode: Arc::new(AtomicBool::new(false)),
@@ -459,9 +455,7 @@ impl BankForks {
             is_root_bank_squashed = bank_slot == root;
 
             let mut snapshot_time = Measure::start("squash::snapshot_time");
-            if self.snapshot_config.is_some()
-                && accounts_background_request_sender.is_snapshot_creation_enabled()
-            {
+            if accounts_background_request_sender.is_snapshot_creation_enabled() {
                 if bank.is_startup_verification_complete() {
                     // Save off the status cache because these may get pruned if another
                     // `set_root()` is called before the snapshots package can be generated
@@ -726,10 +720,6 @@ impl BankForks {
             prune_slots_time.as_ms(),
             prune_remove_time.as_ms(),
         )
-    }
-
-    pub fn set_snapshot_config(&mut self, snapshot_config: Option<SnapshotConfig>) {
-        self.snapshot_config = snapshot_config;
     }
 
     pub fn set_accounts_hash_interval_slots(&mut self, accounts_interval_slots: u64) {

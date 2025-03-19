@@ -2115,7 +2115,6 @@ fn load_blockstore(
     leader_schedule_cache.set_fixed_leader_schedule(config.fixed_leader_schedule.clone());
     {
         let mut bank_forks = bank_forks.write().unwrap();
-        bank_forks.set_snapshot_config(Some(config.snapshot_config.clone()));
         bank_forks.set_accounts_hash_interval_slots(config.accounts_hash_interval_slots);
     }
 

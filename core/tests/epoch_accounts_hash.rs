@@ -124,10 +124,6 @@ impl TestEnvironment {
         bank_forks
             .write()
             .unwrap()
-            .set_snapshot_config(Some(snapshot_config.clone()));
-        bank_forks
-            .write()
-            .unwrap()
             .set_accounts_hash_interval_slots(Self::ACCOUNTS_HASH_INTERVAL);
 
         let exit = Arc::new(AtomicBool::new(false));

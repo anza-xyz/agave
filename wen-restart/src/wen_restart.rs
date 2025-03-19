@@ -1755,11 +1755,6 @@ mod tests {
                 .to_path_buf(),
             ..Default::default()
         };
-        test_state
-            .bank_forks
-            .write()
-            .unwrap()
-            .set_snapshot_config(Some(snapshot_config.clone()));
         let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
         // Trigger full snapshot generation on the old root bank.
         assert!(bank_to_full_snapshot_archive(
@@ -3256,11 +3251,6 @@ mod tests {
             &exit,
         )
         .unwrap();
-        test_state
-            .bank_forks
-            .write()
-            .unwrap()
-            .set_snapshot_config(Some(snapshot_config.clone()));
         // We don't have any full snapshot, so if we call generate_snapshot() on the old
         // root bank now, it should generate a full snapshot.
         let generated_record = generate_snapshot(
