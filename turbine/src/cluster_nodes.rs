@@ -245,7 +245,8 @@ impl ClusterNodes<RetransmitStage> {
                 fanout,
                 |k| self.nodes[k].pubkey() == &self.pubkey,
                 weighted_shuffle.shuffle(&mut rng),
-            );
+            )
+            .expect("Could not find own pubkey in cluster nodes");
             let protocol = get_broadcast_protocol(shred);
             let peers = peers
                 .filter_map(|k| self.nodes[k].contact_info()?.tvu(protocol))
@@ -318,6 +319,11 @@ pub fn new_cluster_nodes<T: 'static>(
     if broadcast {
         weighted_shuffle.remove_index(index[&self_pubkey]);
     }
+    // Paranoid check to ensure the correct operation of the weighted shuffle.
+    assert!(
+        index.contains_key(&self_pubkey),
+        "Own public key should be present in ClusterNodes.index"
+    );
     ClusterNodes {
         pubkey: self_pubkey,
         nodes,
@@ -370,7 +376,7 @@ fn get_nodes(
     .collect();
     sort_and_dedup_nodes(&mut nodes);
     if should_dedup_tvu_addrs {
-        dedup_tvu_addrs(&mut nodes);
+        dedup_tvu_addrs(&mut nodes, self_pubkey);
     };
     nodes
 }
@@ -403,7 +409,7 @@ fn cmp_nodes_stake(a: &Node, b: &Node) -> Ordering {
 // same TVU socket-addr, we only send shreds to one of them.
 // Additionally limits number of nodes at the same IP address to
 // MAX_NUM_NODES_PER_IP_ADDRESS.
-fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
+fn dedup_tvu_addrs(nodes: &mut Vec<Node>, keep_identity: Pubkey) {
     const TVU_PROTOCOLS: [Protocol; 2] = [Protocol::UDP, Protocol::QUIC];
     let capacity = nodes.len().saturating_mul(2);
     // Tracks (Protocol, SocketAddr) tuples already observed.
@@ -417,6 +423,11 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
             // deterministic shuffle.
             return node_stake > 0u64;
         };
+        // Do not delete our own identity under any circumstances
+        // https://github.com/anza-xyz/agave/issues/5356
+        if node.pubkey == keep_identity {
+            return true;
+        }
         // Dedup socket addresses and limit nodes at same IP address.
         for protocol in TVU_PROTOCOLS {
             let Some(addr) = node.tvu(protocol) else {
