@@ -34,10 +34,7 @@ use {
     solana_accounts_db::hardened_unpack::unpack_genesis_archive,
     solana_entry::entry::{create_ticks, Entry},
     solana_measure::measure::Measure,
-    solana_metrics::{
-        datapoint_error,
-        poh_timing_point::{send_poh_timing_point, PohTimingSender, SlotPohTimingInfo},
-    },
+    solana_metrics::datapoint_error,
     solana_runtime::bank::Bank,
     solana_sdk::{
         account::ReadableAccount,
@@ -277,7 +274,6 @@ pub struct Blockstore {
     insert_shreds_lock: Mutex<()>,
     new_shreds_signals: Mutex<Vec<Sender<bool>>>,
     completed_slots_senders: Mutex<Vec<CompletedSlotsSender>>,
-    pub shred_timing_point_sender: Option<PohTimingSender>,
     pub lowest_cleanup_slot: RwLock<Slot>,
     pub slots_stats: SlotsStats,
     rpc_api_metrics: BlockstoreRpcApiMetrics,
@@ -458,7 +454,6 @@ impl Blockstore {
             highest_primary_index_slot: RwLock::<Option<Slot>>::default(),
             new_shreds_signals: Mutex::default(),
             completed_slots_senders: Mutex::default(),
-            shred_timing_point_sender: None,
             insert_shreds_lock: Mutex::<()>::default(),
             max_root,
             lowest_cleanup_slot: RwLock::<Slot>::default(),
@@ -2217,20 +2212,6 @@ impl Blockstore {
             .unwrap_or_default()
     }
 
-    /// send slot full timing point to poh_timing_report service
-    fn send_slot_full_timing(&self, slot: Slot) {
-        if let Some(ref sender) = self.shred_timing_point_sender {
-            send_poh_timing_point(
-                sender,
-                SlotPohTimingInfo::new_slot_full_poh_time_point(
-                    slot,
-                    Some(self.max_root()),
-                    solana_sdk::timing::timestamp(),
-                ),
-            );
-        }
-    }
-
     fn insert_data_shred<'a>(
         &self,
         slot_meta: &mut SlotMeta,
@@ -2295,11 +2276,6 @@ impl Blockstore {
             shred_source,
             Some(slot_meta),
         );
-
-        // slot is full, send slot full timing to poh_timing_report service.
-        if slot_meta.is_full() {
-            self.send_slot_full_timing(slot);
-        }
 
         trace!("inserted shred into slot {:?} and index {:?}", slot, index);
 
