@@ -52,8 +52,8 @@ lazy_static::lazy_static! {
 
 #[derive(Debug)]
 pub struct ImmutableDeserializedPacket {
-    original_packet: Packet,
     transaction: SanitizedVersionedTransaction,
+    forwarded: bool,
     message_hash: Hash,
     is_simple_vote: bool,
     compute_unit_price: u64,
@@ -61,12 +61,13 @@ pub struct ImmutableDeserializedPacket {
 }
 
 impl ImmutableDeserializedPacket {
-    pub fn new(packet: Packet) -> Result<Self, DeserializedPacketError> {
+    pub fn new(packet: &Packet) -> Result<Self, DeserializedPacketError> {
         let versioned_transaction: VersionedTransaction = packet.deserialize_slice(..)?;
         let sanitized_transaction = SanitizedVersionedTransaction::try_from(versioned_transaction)?;
         let message_bytes = packet_message(&packet)?;
         let message_hash = Message::hash_raw_message(message_bytes);
         let is_simple_vote = packet.meta().is_simple_vote_tx();
+        let forwarded = packet.meta().forwarded();
 
         // drop transaction if prioritization fails.
         let ComputeBudgetLimits {
@@ -88,8 +89,8 @@ impl ImmutableDeserializedPacket {
         };
 
         Ok(Self {
-            original_packet: packet,
             transaction: sanitized_transaction,
+            forwarded,
             message_hash,
             is_simple_vote,
             compute_unit_price,
@@ -97,8 +98,8 @@ impl ImmutableDeserializedPacket {
         })
     }
 
-    pub fn original_packet(&self) -> &Packet {
-        &self.original_packet
+    pub fn forwarded(&self) -> bool {
+        self.forwarded
     }
 
     pub fn transaction(&self) -> &SanitizedVersionedTransaction {
