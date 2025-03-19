@@ -5738,7 +5738,7 @@ impl AccountsDb {
                 // the slot and from the Accounts Index
                 num_cached_slots_removed += 1;
                 total_removed_cached_bytes += slot_cache.total_bytes();
-                self.purge_slot_cache(*remove_slot, slot_cache);
+                self.purge_slot_cache(*remove_slot, &slot_cache);
                 remove_cache_elapsed.stop();
                 remove_cache_elapsed_across_slots += remove_cache_elapsed.as_us();
                 // Nobody else should have removed the slot cache entry yet
@@ -5825,7 +5825,7 @@ impl AccountsDb {
             .fetch_add(num_stored_slots_removed as u64, Ordering::Relaxed);
     }
 
-    fn purge_slot_cache(&self, purged_slot: Slot, slot_cache: Arc<SlotCache>) {
+    fn purge_slot_cache(&self, purged_slot: Slot, slot_cache: &SlotCache) {
         let mut purged_slot_pubkeys: HashSet<(Slot, Pubkey)> = HashSet::new();
         let pubkey_to_slot_set: Vec<(Pubkey, Slot)> = slot_cache
             .iter()
@@ -6340,7 +6340,7 @@ impl AccountsDb {
     fn do_flush_slot_cache(
         &self,
         slot: Slot,
-        slot_cache: &Arc<SlotCache>,
+        slot_cache: &SlotCache,
         mut should_flush_f: Option<&mut impl FnMut(&Pubkey) -> bool>,
         max_clean_root: Option<Slot>,
     ) -> FlushStats {
