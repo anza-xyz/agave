@@ -17,10 +17,8 @@ use {
     },
 };
 
-pub type SlotCache = Arc<SlotCacheInner>;
-
 #[derive(Debug)]
-pub struct SlotCacheInner {
+pub struct SlotCache {
     cache: DashMap<Pubkey, CachedAccount, AHashRandomState>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
@@ -30,7 +28,7 @@ pub struct SlotCacheInner {
     is_frozen: AtomicBool,
 }
 
-impl Drop for SlotCacheInner {
+impl Drop for SlotCache {
     fn drop(&mut self) {
         // broader cache no longer holds our size in memory
         self.total_size
@@ -38,7 +36,7 @@ impl Drop for SlotCacheInner {
     }
 }
 
-impl SlotCacheInner {
+impl SlotCache {
     pub fn report_slot_store_metrics(&self) {
         datapoint_info!(
             "slot_repeated_writes",
@@ -117,7 +115,7 @@ impl SlotCacheInner {
     }
 }
 
-impl Deref for SlotCacheInner {
+impl Deref for SlotCache {
     type Target = DashMap<Pubkey, CachedAccount, AHashRandomState>;
     fn deref(&self) -> &Self::Target {
         &self.cache
@@ -152,7 +150,7 @@ impl CachedAccountInner {
 
 #[derive(Debug, Default)]
 pub struct AccountsCache {
-    cache: DashMap<Slot, SlotCache, BuildNoHashHasher<Slot>>,
+    cache: DashMap<Slot, Arc<SlotCache>, BuildNoHashHasher<Slot>>,
     // Queue of potentially unflushed roots. Random eviction + cache too large
     // could have triggered a flush of this slot already
     maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,
@@ -161,8 +159,8 @@ pub struct AccountsCache {
 }
 
 impl AccountsCache {
-    pub fn new_inner(&self) -> SlotCache {
-        Arc::new(SlotCacheInner {
+    pub fn new_inner(&self) -> Arc<SlotCache> {
+        Arc::new(SlotCache {
             cache: DashMap::default(),
             same_account_writes: AtomicU64::default(),
             same_account_writes_size: AtomicU64::default(),
@@ -224,11 +222,11 @@ impl AccountsCache {
             .and_then(|slot_cache| slot_cache.get_cloned(pubkey))
     }
 
-    pub fn remove_slot(&self, slot: Slot) -> Option<SlotCache> {
+    pub fn remove_slot(&self, slot: Slot) -> Option<Arc<SlotCache>> {
         self.cache.remove(&slot).map(|(_, slot_cache)| slot_cache)
     }
 
-    pub fn slot_cache(&self, slot: Slot) -> Option<SlotCache> {
+    pub fn slot_cache(&self, slot: Slot) -> Option<Arc<SlotCache>> {
         self.cache.get(&slot).map(|result| result.value().clone())
     }
 
@@ -289,7 +287,7 @@ pub mod tests {
     impl AccountsCache {
         // Removes slots less than or equal to `max_root`. Only safe to pass in a rooted slot,
         // otherwise the slot removed could still be undergoing replay!
-        pub fn remove_slots_le(&self, max_root: Slot) -> Vec<(Slot, SlotCache)> {
+        pub fn remove_slots_le(&self, max_root: Slot) -> Vec<(Slot, Arc<SlotCache>)> {
             let mut removed_slots = vec![];
             self.cache.retain(|slot, slot_cache| {
                 let should_remove = *slot <= max_root;

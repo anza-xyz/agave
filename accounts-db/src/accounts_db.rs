@@ -5825,7 +5825,7 @@ impl AccountsDb {
             .fetch_add(num_stored_slots_removed as u64, Ordering::Relaxed);
     }
 
-    fn purge_slot_cache(&self, purged_slot: Slot, slot_cache: SlotCache) {
+    fn purge_slot_cache(&self, purged_slot: Slot, slot_cache: Arc<SlotCache>) {
         let mut purged_slot_pubkeys: HashSet<(Slot, Pubkey)> = HashSet::new();
         let pubkey_to_slot_set: Vec<(Pubkey, Slot)> = slot_cache
             .iter()
@@ -6340,7 +6340,7 @@ impl AccountsDb {
     fn do_flush_slot_cache(
         &self,
         slot: Slot,
-        slot_cache: &SlotCache,
+        slot_cache: &Arc<SlotCache>,
         mut should_flush_f: Option<&mut impl FnMut(&Pubkey) -> bool>,
         max_clean_root: Option<Slot>,
     ) -> FlushStats {
