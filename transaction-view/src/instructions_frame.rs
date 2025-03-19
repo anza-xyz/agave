@@ -2,7 +2,8 @@ use {
     crate::{
         bytes::{
             advance_offset_for_array, check_remaining, optimized_read_compressed_u16, read_byte,
-            read_slice_data,
+            unchecked_optimized_read_compressed_u16, unchecked_read_byte,
+            unchecked_read_slice_data,
         },
         result::Result,
     },
@@ -94,11 +95,14 @@ impl<'a> Iterator for InstructionsIterator<'a> {
             // 3. Data ([u8])
 
             // Read the program ID index.
-            let program_id_index = read_byte(self.bytes, &mut self.offset).ok()?;
+            // SAFETY: Offset and length checks have been done in the initial parsing.
+            let program_id_index = unsafe { unchecked_read_byte(self.bytes, &mut self.offset) };
 
             // Read the number of account indexes, and then update the offset
             // to skip over the account indexes.
-            let num_accounts = optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
+            // SAFETY: Offset and length checks have been done in the initial parsing.
+            let num_accounts =
+                unsafe { unchecked_optimized_read_compressed_u16(self.bytes, &mut self.offset) };
 
             const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
             // SAFETY:
@@ -106,13 +110,15 @@ impl<'a> Iterator for InstructionsIterator<'a> {
             // - The alignment of u8 is 1.
             // - The slice length is checked to be valid.
             // - `u8` cannot be improperly initialized.
-            let accounts =
-                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, num_accounts) }
-                    .ok()?;
+            // - Offset and length checks have been done in the initial parsing.
+            let accounts = unsafe {
+                unchecked_read_slice_data::<u8>(self.bytes, &mut self.offset, num_accounts)
+            };
 
             // Read the length of the data, and then update the offset to skip
-            // over the data.
-            let data_len = optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
+            // SAFETY: Offset and length checks have been done in the initial parsing.
+            let data_len =
+                unsafe { unchecked_optimized_read_compressed_u16(self.bytes, &mut self.offset) };
 
             const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
             // SAFETY:
@@ -120,8 +126,9 @@ impl<'a> Iterator for InstructionsIterator<'a> {
             // - The alignment of u8 is 1.
             // - The slice length is checked to be valid.
             // - `u8` cannot be improperly initialized.
+            // - Offset and length checks have been done in the initial parsing.
             let data =
-                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, data_len) }.ok()?;
+                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut self.offset, data_len) };
 
             Some(SVMInstruction {
                 program_id_index,
