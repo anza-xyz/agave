@@ -12,8 +12,6 @@
 //! Refer to [`PooledScheduler`] doc comment for general overview of scheduler state transitions
 //! regarding to pooling and the actual use.
 
-use std::ops::DerefMut;
-
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -53,6 +51,7 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
+        ops::DerefMut,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
             Arc, Mutex, MutexGuard, OnceLock, Weak,
