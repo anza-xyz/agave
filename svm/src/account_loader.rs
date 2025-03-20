@@ -35,7 +35,7 @@ use {
     solana_transaction_context::{IndexOfAccount, TransactionAccount},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::{
-        cell::RefCell,
+        cell::UnsafeCell,
         num::{NonZeroU32, Saturating},
         sync::Arc,
     },
@@ -154,7 +154,7 @@ pub struct FeesOnlyTransaction {
 }
 
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
-    account_cache: RefCell<AHashMap<Pubkey, AccountSharedData>>,
+    account_cache: UnsafeCell<AHashMap<Pubkey, AccountSharedData>>,
     callbacks: &'a CB,
     pub(crate) feature_set: Arc<FeatureSet>,
 }
@@ -176,7 +176,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
 
         Self {
-            account_cache: RefCell::new(account_cache),
+            account_cache: UnsafeCell::new(account_cache),
             callbacks,
             feature_set,
         }
@@ -187,8 +187,8 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         account_key: &Pubkey,
         is_writable: bool,
     ) -> Option<LoadedTransactionAccount> {
-        let account = if let Some(account) = {
-            let account_cache = self.account_cache.borrow();
+        let account = if let Some(account) = unsafe {
+            let account_cache = &*self.account_cache.get();
             account_cache.get(account_key).cloned()
         } {
             // If lamports is 0, a previous transaction deallocated this account.
@@ -200,9 +200,10 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
                 Some(account)
             }
         } else if let Some(account) = self.callbacks.get_account_shared_data(account_key) {
-            self.account_cache
-                .borrow_mut()
-                .insert(*account_key, account.clone());
+            unsafe {
+                let account_cache = &mut *self.account_cache.get();
+                account_cache.insert(*account_key, account.clone());
+            }
 
             Some(account)
         } else {
@@ -251,21 +252,23 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         rollback_accounts: &RollbackAccounts,
     ) {
         let fee_payer_address = message.fee_payer();
-        let mut account_cache = self.account_cache.borrow_mut();
         match rollback_accounts {
-            RollbackAccounts::FeePayerOnly { fee_payer_account } => {
+            RollbackAccounts::FeePayerOnly { fee_payer_account } => unsafe {
+                let account_cache = &mut *self.account_cache.get();
                 account_cache.insert(*fee_payer_address, fee_payer_account.clone());
-            }
-            RollbackAccounts::SameNonceAndFeePayer { nonce } => {
+            },
+            RollbackAccounts::SameNonceAndFeePayer { nonce } => unsafe {
+                let account_cache = &mut *self.account_cache.get();
                 account_cache.insert(*nonce.address(), nonce.account().clone());
-            }
+            },
             RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce,
                 fee_payer_account,
-            } => {
+            } => unsafe {
+                let account_cache = &mut *self.account_cache.get();
                 account_cache.insert(*nonce.address(), nonce.account().clone());
                 account_cache.insert(*fee_payer_address, fee_payer_account.clone());
-            }
+            },
         }
     }
 
@@ -287,9 +290,10 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
                 continue;
             }
 
-            self.account_cache
-                .borrow_mut()
-                .insert(*address, account.clone());
+            unsafe {
+                let account_cache = &mut *self.account_cache.get();
+                account_cache.insert(*address, account.clone());
+            }
         }
     }
 }
