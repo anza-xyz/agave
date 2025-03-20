@@ -74,7 +74,7 @@ impl SnapshotTestConfig {
     fn new(
         snapshot_version: SnapshotVersion,
         cluster_type: ClusterType,
-        accounts_hash_interval_slots: Slot,
+        _accounts_hash_interval_slots: Slot,
         full_snapshot_archive_interval_slots: Slot,
         incremental_snapshot_archive_interval_slots: Slot,
     ) -> SnapshotTestConfig {
@@ -102,7 +102,6 @@ impl SnapshotTestConfig {
         bank0.set_startup_verification_complete();
         let bank_forks_arc = BankForks::new_rw_arc(bank0);
         let mut bank_forks = bank_forks_arc.write().unwrap();
-        bank_forks.accounts_hash_interval_slots = accounts_hash_interval_slots;
 
         let snapshot_config = SnapshotConfig {
             full_snapshot_archive_interval_slots,

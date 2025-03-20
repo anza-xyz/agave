@@ -68,9 +68,6 @@ impl TestEnvironment {
     /// A small, round number to make the tests run quickly, and easy to debug
     const SLOTS_PER_EPOCH: u64 = 400;
 
-    /// A small, round number to ensure accounts packages are sent to the background services
-    const ACCOUNTS_HASH_INTERVAL: u64 = 40;
-
     #[must_use]
     fn new() -> TestEnvironment {
         Self::_new(SnapshotConfig::new_load_only())
@@ -125,10 +122,6 @@ impl TestEnvironment {
             .write()
             .unwrap()
             .set_snapshot_config(Some(snapshot_config.clone()));
-        bank_forks
-            .write()
-            .unwrap()
-            .set_accounts_hash_interval_slots(Self::ACCOUNTS_HASH_INTERVAL);
 
         let exit = Arc::new(AtomicBool::new(false));
         let node_id = Arc::new(Keypair::new());
