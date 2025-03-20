@@ -26,7 +26,7 @@ use {
     solana_metrics::datapoint_error,
     solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime::{
-        accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
+        accounts_background_service::SnapshotRequestKind,
         bank::{Bank, PreCommitResult, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
@@ -867,9 +867,8 @@ pub fn test_process_blockstore(
     // EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze() waiting for
     // an in-flight EAH calculation to complete.
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-    let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
     let snapshot_controller = SnapshotController::new(
-        abs_request_sender,
+        snapshot_request_sender,
         snapshot_config,
         bank_forks.read().unwrap().root(),
     );

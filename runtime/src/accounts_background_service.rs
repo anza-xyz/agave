@@ -444,34 +444,6 @@ impl SnapshotRequestHandler {
     }
 }
 
-#[derive(Default, Clone)]
-pub struct AbsRequestSender {
-    snapshot_request_sender: Option<SnapshotRequestSender>,
-}
-
-impl AbsRequestSender {
-    pub fn new(snapshot_request_sender: SnapshotRequestSender) -> Self {
-        Self {
-            snapshot_request_sender: Some(snapshot_request_sender),
-        }
-    }
-
-    pub fn is_snapshot_creation_enabled(&self) -> bool {
-        self.snapshot_request_sender.is_some()
-    }
-
-    pub fn send_snapshot_request(
-        &self,
-        snapshot_request: SnapshotRequest,
-    ) -> Result<(), SendError<SnapshotRequest>> {
-        if let Some(ref snapshot_request_sender) = self.snapshot_request_sender {
-            snapshot_request_sender.send(snapshot_request)
-        } else {
-            Ok(())
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct PrunedBanksRequestHandler {
     pub pruned_banks_receiver: DroppedSlotsReceiver,

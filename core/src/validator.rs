@@ -95,7 +95,7 @@ use {
     },
     solana_runtime::{
         accounts_background_service::{
-            AbsRequestHandlers, AbsRequestSender, AccountsBackgroundService, DroppedSlotsReceiver,
+            AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
         bank::Bank,
@@ -912,10 +912,8 @@ impl Validator {
         );
 
         let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
-        let accounts_background_request_sender =
-            AbsRequestSender::new(snapshot_request_sender.clone());
         let snapshot_controller = Arc::new(SnapshotController::new(
-            accounts_background_request_sender,
+            snapshot_request_sender.clone(),
             config.snapshot_config.clone(),
             bank_forks.read().unwrap().root(),
         ));

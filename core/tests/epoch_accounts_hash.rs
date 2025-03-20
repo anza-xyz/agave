@@ -15,7 +15,7 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_runtime::{
         accounts_background_service::{
-            AbsRequestHandlers, AbsRequestSender, AccountsBackgroundService, DroppedSlotsReceiver,
+            AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
         bank::{epoch_accounts_hash_utils, Bank},
@@ -196,10 +196,8 @@ impl BackgroundServices {
         );
 
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-        let accounts_background_request_sender =
-            AbsRequestSender::new(snapshot_request_sender.clone());
         let snapshot_controller = SnapshotController::new(
-            accounts_background_request_sender,
+            snapshot_request_sender.clone(),
             snapshot_config.clone(),
             bank_forks.read().unwrap().root(),
         );

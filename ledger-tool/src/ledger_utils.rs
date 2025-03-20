@@ -29,8 +29,8 @@ use {
     },
     solana_runtime::{
         accounts_background_service::{
-            AbsRequestHandlers, AbsRequestSender, AccountsBackgroundService,
-            PrunedBanksRequestHandler, SnapshotRequestHandler,
+            AbsRequestHandlers, AccountsBackgroundService, PrunedBanksRequestHandler,
+            SnapshotRequestHandler,
         },
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -407,9 +407,8 @@ pub fn load_and_process_ledger(
         SnapshotConfig::new_load_only(),
     );
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-    let accounts_background_request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
     let snapshot_controller = SnapshotController::new(
-        accounts_background_request_sender,
+        snapshot_request_sender.clone(),
         snapshot_config.clone(),
         bank_forks.read().unwrap().root(),
     );

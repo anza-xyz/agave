@@ -642,7 +642,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
+            accounts_background_service::SnapshotRequestKind,
             bank::test_utils::update_vote_account_timestamp,
             genesis_utils::{
                 create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
@@ -761,9 +761,8 @@ mod tests {
         // all EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze()
         // waiting for an in-flight EAH calculation to complete.
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-        let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
         let snapshot_controller = SnapshotController::new(
-            abs_request_sender,
+            snapshot_request_sender,
             SnapshotConfig::new_disabled(),
             0, /* root_slot */
         );
