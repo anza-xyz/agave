@@ -12,13 +12,13 @@ use {
     log::*,
     solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifier,
     solana_runtime::{
-        accounts_background_service::AbsRequestSender,
         bank_forks::BankForks,
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
         },
         snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController,
         snapshot_hash::{FullSnapshotHash, IncrementalSnapshotHash, StartingSnapshotHashes},
         snapshot_utils,
     },
@@ -110,7 +110,7 @@ pub fn load(
         transaction_status_sender,
         block_meta_sender,
         entry_notification_sender,
-        &AbsRequestSender::default(),
+        &SnapshotController::default(),
     )
     .map_err(BankForksUtilsError::ProcessBlockstoreFromRoot)?;
 

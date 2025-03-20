@@ -106,6 +106,7 @@ use {
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
         snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController,
         snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
@@ -913,6 +914,11 @@ impl Validator {
         let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
         let accounts_background_request_sender =
             AbsRequestSender::new(snapshot_request_sender.clone());
+        let snapshot_controller = Arc::new(SnapshotController::new(
+            accounts_background_request_sender,
+            Some(config.snapshot_config.clone()),
+            bank_forks.read().unwrap().root(),
+        ));
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_config: config.snapshot_config.clone(),
             snapshot_request_sender,
@@ -1023,7 +1029,7 @@ impl Validator {
             block_meta_sender.clone(),
             entry_notification_sender,
             blockstore_root_scan,
-            accounts_background_request_sender.clone(),
+            &snapshot_controller,
             config,
         );
 
@@ -1033,7 +1039,7 @@ impl Validator {
             ledger_path,
             &bank_forks,
             &leader_schedule_cache,
-            &accounts_background_request_sender,
+            &snapshot_controller,
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1522,7 +1528,7 @@ impl Validator {
             &max_slots,
             block_metadata_notifier,
             config.wait_to_vote_slot,
-            accounts_background_request_sender.clone(),
+            snapshot_controller.clone(),
             config.runtime_config.log_messages_bytes_limit,
             connection_cache_for_warmup,
             &prioritization_fee_cache,
@@ -1554,7 +1560,7 @@ impl Validator {
                 wait_for_supermajority_threshold_percent:
                     WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT,
                 snapshot_config: config.snapshot_config.clone(),
-                accounts_background_request_sender: accounts_background_request_sender.clone(),
+                snapshot_controller: snapshot_controller.clone(),
                 abs_status: accounts_background_service.status().clone(),
                 genesis_config_hash: genesis_config.hash(),
                 exit: exit.clone(),
@@ -2096,10 +2102,6 @@ fn load_blockstore(
         AccountsBackgroundService::setup_bank_drop_callback(bank_forks.clone());
 
     leader_schedule_cache.set_fixed_leader_schedule(config.fixed_leader_schedule.clone());
-    {
-        let mut bank_forks = bank_forks.write().unwrap();
-        bank_forks.set_snapshot_config(Some(config.snapshot_config.clone()));
-    }
 
     Ok((
         bank_forks,
@@ -2129,7 +2131,7 @@ pub struct ProcessBlockStore<'a> {
     block_meta_sender: Option<BlockMetaSender>,
     entry_notification_sender: Option<&'a EntryNotifierSender>,
     blockstore_root_scan: Option<BlockstoreRootScan>,
-    accounts_background_request_sender: AbsRequestSender,
+    snapshot_controller: &'a SnapshotController,
     config: &'a ValidatorConfig,
     tower: Option<Tower>,
 }
@@ -2149,7 +2151,7 @@ impl<'a> ProcessBlockStore<'a> {
         block_meta_sender: Option<BlockMetaSender>,
         entry_notification_sender: Option<&'a EntryNotifierSender>,
         blockstore_root_scan: BlockstoreRootScan,
-        accounts_background_request_sender: AbsRequestSender,
+        snapshot_controller: &'a SnapshotController,
         config: &'a ValidatorConfig,
     ) -> Self {
         Self {
@@ -2165,7 +2167,7 @@ impl<'a> ProcessBlockStore<'a> {
             block_meta_sender,
             entry_notification_sender,
             blockstore_root_scan: Some(blockstore_root_scan),
-            accounts_background_request_sender,
+            snapshot_controller,
             config,
             tower: None,
         }
@@ -2202,7 +2204,7 @@ impl<'a> ProcessBlockStore<'a> {
                 self.transaction_status_sender,
                 self.block_meta_sender.as_ref(),
                 self.entry_notification_sender,
-                &self.accounts_background_request_sender,
+                self.snapshot_controller,
             )
             .map_err(|err| {
                 exit.store(true, Ordering::Relaxed);
@@ -2266,7 +2268,7 @@ fn maybe_warp_slot(
     ledger_path: &Path,
     bank_forks: &RwLock<BankForks>,
     leader_schedule_cache: &LeaderScheduleCache,
-    accounts_background_request_sender: &AbsRequestSender,
+    snapshot_controller: &SnapshotController,
 ) -> Result<(), String> {
     if let Some(warp_slot) = config.warp_slot {
         let mut bank_forks = bank_forks.write().unwrap();
@@ -2297,11 +2299,7 @@ fn maybe_warp_slot(
             solana_accounts_db::accounts_db::CalcAccountsHashDataSource::Storages,
         ));
         bank_forks
-            .set_root(
-                warp_slot,
-                accounts_background_request_sender,
-                Some(warp_slot),
-            )
+            .set_root(warp_slot, snapshot_controller, Some(warp_slot))
             .map_err(|err| err.to_string())?;
         leader_schedule_cache.set_root(&bank_forks.root_bank());
 

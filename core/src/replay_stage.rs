@@ -59,12 +59,12 @@ use {
     },
     solana_rpc_client_api::response::SlotUpdate,
     solana_runtime::{
-        accounts_background_service::AbsRequestSender,
         bank::{bank_hash_details, Bank, NewBankOptions},
         bank_forks::{BankForks, SetRootError, MAX_ROOT_DISTANCE_FOR_VOTE_ONLY},
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
+        snapshot_controller::SnapshotController,
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
@@ -275,12 +275,12 @@ pub struct ReplayStageConfig {
     pub log_messages_bytes_limit: Option<usize>,
     pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     pub banking_tracer: Arc<BankingTracer>,
+    pub snapshot_controller: Arc<SnapshotController>,
 }
 
 pub struct ReplaySenders {
     pub rpc_subscriptions: Arc<RpcSubscriptions>,
     pub slot_status_notifier: Option<SlotStatusNotifier>,
-    pub accounts_background_request_sender: AbsRequestSender,
     pub transaction_status_sender: Option<TransactionStatusSender>,
     pub block_meta_sender: Option<BlockMetaSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
@@ -566,12 +566,12 @@ impl ReplayStage {
             log_messages_bytes_limit,
             prioritization_fee_cache,
             banking_tracer,
+            snapshot_controller,
         } = config;
 
         let ReplaySenders {
             rpc_subscriptions,
             slot_status_notifier,
-            accounts_background_request_sender,
             transaction_status_sender,
             block_meta_sender,
             entry_notification_sender,
@@ -998,7 +998,7 @@ impl ReplayStage {
                         &blockstore,
                         &leader_schedule_cache,
                         &lockouts_sender,
-                        &accounts_background_request_sender,
+                        &snapshot_controller,
                         &rpc_subscriptions,
                         &block_commitment_cache,
                         &mut heaviest_subtree_fork_choice,
@@ -2389,7 +2389,7 @@ impl ReplayStage {
         blockstore: &Blockstore,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         lockouts_sender: &Sender<CommitmentAggregationData>,
-        accounts_background_request_sender: &AbsRequestSender,
+        snapshot_controller: &SnapshotController,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
@@ -2419,7 +2419,7 @@ impl ReplayStage {
                 progress,
                 blockstore,
                 leader_schedule_cache,
-                accounts_background_request_sender,
+                snapshot_controller,
                 rpc_subscriptions,
                 block_commitment_cache,
                 heaviest_subtree_fork_choice,
@@ -3997,7 +3997,7 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         blockstore: &Blockstore,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
-        accounts_background_request_sender: &AbsRequestSender,
+        snapshot_controller: &SnapshotController,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
@@ -4048,7 +4048,7 @@ impl ReplayStage {
             new_root,
             bank_forks,
             progress,
-            accounts_background_request_sender,
+            snapshot_controller,
             highest_super_majority_root,
             heaviest_subtree_fork_choice,
             duplicate_slots_tracker,
@@ -4083,7 +4083,7 @@ impl ReplayStage {
         new_root: Slot,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
-        accounts_background_request_sender: &AbsRequestSender,
+        snapshot_controller: &SnapshotController,
         highest_super_majority_root: Option<Slot>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
@@ -4097,7 +4097,7 @@ impl ReplayStage {
         bank_forks.read().unwrap().prune_program_cache(new_root);
         let removed_banks = bank_forks.write().unwrap().set_root(
             new_root,
-            accounts_background_request_sender,
+            snapshot_controller,
             highest_super_majority_root,
         )?;
 
