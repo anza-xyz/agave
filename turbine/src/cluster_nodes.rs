@@ -244,8 +244,7 @@ impl ClusterNodes<RetransmitStage> {
                 fanout,
                 |k| self.nodes[k].pubkey() == &self.pubkey,
                 weighted_shuffle.shuffle(&mut rng),
-            )
-            .expect("Could not find own pubkey in cluster nodes");
+            );
             let protocol = get_broadcast_protocol(shred);
             let peers = peers
                 .filter_map(|k| self.nodes[k].contact_info()?.tvu(protocol))
@@ -415,8 +414,7 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>, keep_identity: Pubkey) {
             // deterministic shuffle.
             return node_stake > 0u64;
         };
-        // Do not delete our own identity under any circumstances
-        // https://github.com/anza-xyz/agave/issues/5356
+        // Do not delete the provided keep_identity
         if node.pubkey == keep_identity {
             return true;
         }
@@ -463,17 +461,20 @@ fn get_seeded_rng(leader: &Pubkey, shred: &ShredId) -> ChaChaRng {
 // For example the node k in the 1st layer will retransmit to nodes:
 // fanout + k, 2*fanout + k, ..., fanout*fanout + k
 //
-// This function will only return Some(result) if `pred` returns true for at least
+// Panics if `pred` does not return true for at least
 // one of the items in `nodes`
 fn get_retransmit_peers<T>(
     fanout: usize,
     // Predicate fn which identifies this node in the shuffle.
     pred: impl Fn(T) -> bool,
     nodes: impl IntoIterator<Item = T>,
-) -> Option<(/*this node's index:*/ usize, impl Iterator<Item = T>)> {
+) -> (/*this node's index:*/ usize, impl Iterator<Item = T>) {
     let mut nodes = nodes.into_iter();
-    // This node's index should be somewhere within shuffled indices.
-    let index = nodes.by_ref().position(pred)?;
+    // This node's index within shuffled nodes.
+    let index = nodes
+        .by_ref()
+        .position(pred)
+        .expect("Provided predicate should return true at least once");
     // Node's index within its neighborhood.
     let offset = index.saturating_sub(1) % fanout;
     // First node in the neighborhood.
@@ -487,7 +488,7 @@ fn get_retransmit_peers<T>(
             *state = k;
             Some(peer)
         });
-    Some((index, peers))
+    (index, peers)
 }
 
 // Returns the parent node in the turbine broadcast tree.
@@ -832,7 +833,7 @@ mod tests {
         for (k, peers) in peers.into_iter().enumerate() {
             {
                 let (index, retransmit_peers) =
-                    get_retransmit_peers(fanout, |node| node == &nodes[k], nodes).unwrap();
+                    get_retransmit_peers(fanout, |node| node == &nodes[k], nodes);
                 assert_eq!(peers, retransmit_peers.copied().collect::<Vec<_>>());
                 assert_eq!(index, k);
             }
@@ -843,8 +844,7 @@ mod tests {
         }
         // Remaining nodes have no children.
         for k in offset..nodes.len() {
-            let (index, mut peers) =
-                get_retransmit_peers(fanout, |node| node == &nodes[k], nodes).unwrap();
+            let (index, mut peers) = get_retransmit_peers(fanout, |node| node == &nodes[k], nodes);
             assert_eq!(peers.next(), None);
             assert_eq!(index, k);
         }
@@ -985,15 +985,13 @@ mod tests {
         assert_eq!(get_retransmit_parent(fanout, /*index:*/ 0, &nodes), None);
         for k in 1..size {
             let parent = get_retransmit_parent(fanout, k, &nodes).unwrap();
-            let (index, mut peers) =
-                get_retransmit_peers(fanout, |node| node == &parent, &nodes).unwrap();
+            let (index, mut peers) = get_retransmit_peers(fanout, |node| node == &parent, &nodes);
             assert_eq!(index, cache[&parent]);
             assert_eq!(peers.find(|&&peer| peer == nodes[k]), Some(&nodes[k]));
         }
         for k in 0..size {
             let parent = Some(nodes[k]);
-            let (index, peers) =
-                get_retransmit_peers(fanout, |node| node == &nodes[k], &nodes).unwrap();
+            let (index, peers) = get_retransmit_peers(fanout, |node| node == &nodes[k], &nodes);
             assert_eq!(index, k);
             for peer in peers {
                 assert_eq!(get_retransmit_parent(fanout, cache[peer], &nodes), parent);
