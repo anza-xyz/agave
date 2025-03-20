@@ -12,6 +12,8 @@
 //! Refer to [`PooledScheduler`] doc comment for general overview of scheduler state transitions
 //! regarding to pooling and the actual use.
 
+use std::ops::DerefMut;
+
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -387,9 +389,8 @@ where
                     //
                     // Note that this critical section could block the latency-sensitive replay
                     // code-path via ::take_scheduler().
-                    #[allow(unstable_name_collisions)]
                     idle_inners.extend(MakeExtractIf::extract_if(
-                        &mut *scheduler_inners,
+                        scheduler_inners.deref_mut(),
                         |(_inner, pooled_at)| now.duration_since(*pooled_at) > max_pooling_duration,
                     ));
                     drop(scheduler_inners);
@@ -419,9 +420,8 @@ where
                     let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock() else {
                         break;
                     };
-                    #[allow(unstable_name_collisions)]
                     expired_listeners.extend(MakeExtractIf::extract_if(
-                        &mut *timeout_listeners,
+                        timeout_listeners.deref_mut(),
                         |(_callback, registered_at)| {
                             now.duration_since(*registered_at) > timeout_duration
                         },
