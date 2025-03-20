@@ -45,7 +45,7 @@ pub struct LatestValidatorVotePacket {
 
 impl LatestValidatorVotePacket {
     pub fn new(
-        packet: Packet, // add a ref.
+        packet: &Packet,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
@@ -507,7 +507,7 @@ mod tests {
             .meta_mut()
             .flags
             .set(PacketFlags::SIMPLE_VOTE_TX, true);
-        LatestValidatorVotePacket::new(packet, vote_source, true).unwrap()
+        LatestValidatorVotePacket::new(&packet, vote_source, true).unwrap()
     }
 
     fn deserialize_packets<'a>(
@@ -516,8 +516,7 @@ mod tests {
         vote_source: VoteSource,
     ) -> impl Iterator<Item = LatestValidatorVotePacket> + 'a {
         packet_indexes.iter().filter_map(move |packet_index| {
-            LatestValidatorVotePacket::new(packet_batch[*packet_index].clone(), vote_source, true)
-                .ok()
+            LatestValidatorVotePacket::new(&packet_batch[*packet_index], vote_source, true).ok()
         })
     }
 
