@@ -16,7 +16,7 @@ use {
         rolling_bit_field::RollingBitField,
         secondary_index::*,
     },
-    account_map_entry::{AccountMapEntry, AccountMapEntryInner, PreAllocatedAccountMapEntry},
+    account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
     in_mem_accounts_index::{InMemAccountsIndex, InsertNewEntryResults, StartupStats},
     log::*,
     rand::{thread_rng, Rng},
@@ -242,7 +242,7 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
     end_bound: Bound<&'a Pubkey>,
     start_bin: usize,
     end_bin_inclusive: usize,
-    bin_range: Vec<(Pubkey, AccountMapEntry<T>)>,
+    bin_range: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
     returns_items: AccountsIndexIteratorReturnsItems,
 }
 
@@ -285,7 +285,7 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
     for AccountsIndexIterator<'_, T, U>
 {
-    type Item = Vec<(Pubkey, AccountMapEntry<T>)>;
+    type Item = Vec<(Pubkey, Arc<AccountMapEntry<T>>)>;
     fn next(&mut self) -> Option<Self::Item> {
         while self.bin_range.len() < ITER_BATCH_SIZE {
             if self.start_bin > self.end_bin_inclusive {
@@ -872,7 +872,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub fn get_and_then<R>(
         &self,
         pubkey: &Pubkey,
-        callback: impl FnOnce(Option<&AccountMapEntryInner<T>>) -> (bool, R),
+        callback: impl FnOnce(Option<&AccountMapEntry<T>>) -> (bool, R),
     ) -> R {
         self.get_bin(pubkey).get_internal_inner(pubkey, callback)
     }
@@ -899,7 +899,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     /// and applies `callback` to it
     pub(crate) fn get_account_info_with_and_then<R>(
         &self,
-        entry: &AccountMapEntryInner<T>,
+        entry: &AccountMapEntry<T>,
         ancestors: Option<&Ancestors>,
         max_root: Option<Slot>,
         callback: impl FnOnce((Slot, T)) -> R,
@@ -912,7 +912,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     /// Gets the index's entry for `pubkey` and clones it
     ///
     /// Prefer `get_and_then()` whenever possible.
-    pub fn get_cloned(&self, pubkey: &Pubkey) -> Option<AccountMapEntry<T>> {
+    pub fn get_cloned(&self, pubkey: &Pubkey) -> Option<Arc<AccountMapEntry<T>>> {
         self.get_bin(pubkey)
             .get_internal_cloned(pubkey, |entry| entry)
     }
@@ -1190,7 +1190,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         F: FnMut(
             &'a Pubkey,
             Option<(&SlotList<T>, RefCount)>,
-            Option<&AccountMapEntry<T>>,
+            Option<&Arc<AccountMapEntry<T>>>,
         ) -> AccountsIndexScanResult,
         I: Iterator<Item = &'a Pubkey>,
     {
@@ -1204,7 +1204,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 last_bin = bin;
             }
 
-            let mut internal_callback = |entry: Option<&AccountMapEntry<T>>| {
+            let mut internal_callback = |entry: Option<&Arc<AccountMapEntry<T>>>| {
                 let mut cache = false;
                 match entry {
                     Some(locked_entry) => {
@@ -1913,7 +1913,7 @@ pub mod tests {
                         dirty: AtomicBool::new(entry.dirty()),
                         age: AtomicAge::new(entry.age()),
                     };
-                    PreAllocatedAccountMapEntry::Entry(Arc::new(AccountMapEntryInner::new(
+                    PreAllocatedAccountMapEntry::Entry(Arc::new(AccountMapEntry::new(
                         vec![(slot, account_info)],
                         entry.ref_count(),
                         meta,
@@ -2336,7 +2336,7 @@ pub mod tests {
             let slot_list = entry.slot_list.read().unwrap();
             assert_eq!(entry.ref_count(), u64::from(!is_cached));
             assert_eq!(slot_list.as_slice(), &[(slot0, account_infos[0])]);
-            let new_entry: AccountMapEntry<_> = PreAllocatedAccountMapEntry::new(
+            let new_entry = PreAllocatedAccountMapEntry::new(
                 slot0,
                 account_infos[0],
                 &index.storage.storage,
