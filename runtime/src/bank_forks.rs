@@ -400,18 +400,17 @@ impl BankForks {
     }
 
     /// Returns the interval, in slots, for sending an ABS request
-    fn abs_request_interval(&self) -> Slot {
-        let Some(snapshot_config) = self.snapshot_config.as_ref() else {
-            // If there's no snapshot config, then we shouldn't take snapshots.
-            // Return the max value to prevent sending an ABS request.
-            return Slot::MAX;
-        };
-
-        // N.B. This assumes if a snapshot kind is disabled that its interval will be Slot::MAX
-        cmp::min(
-            snapshot_config.full_snapshot_archive_interval_slots,
-            snapshot_config.incremental_snapshot_archive_interval_slots,
-        )
+    ///
+    /// Returns None if ABS requests should not be sent
+    fn abs_request_interval(&self) -> Option<Slot> {
+        self.snapshot_config.as_ref().and_then(|snapshot_config| {
+            snapshot_config.should_generate_snapshots().then(||
+                // N.B. This assumes if a snapshot is disabled that its interval will be Slot::MAX
+                cmp::min(
+                    snapshot_config.full_snapshot_archive_interval_slots,
+                    snapshot_config.incremental_snapshot_archive_interval_slots,
+                ))
+        })
     }
 
     fn do_set_root_return_metrics(
@@ -463,27 +462,25 @@ impl BankForks {
         // part of the same set of `banks` in a single `set_root()` invocation.
         // While (very) unlikely for a validator with default snapshot intervals,
         // it *is* possible, and there are tests to exercise this possibility.
-        let abs_request_interval = self.abs_request_interval();
-        if let Some(bank) = banks.iter().find(|bank| {
-            bank.slot() > self.latest_abs_request_slot
-                && bank.block_height() % abs_request_interval == 0
-        }) {
-            let bank_slot = bank.slot();
-            self.latest_abs_request_slot = bank_slot;
-            squash_timing += bank.squash();
+        if let Some(abs_request_interval) = self.abs_request_interval() {
+            assert!(accounts_background_request_sender.is_snapshot_creation_enabled());
+            if let Some(bank) = banks.iter().find(|bank| {
+                bank.slot() > self.latest_abs_request_slot
+                    && bank.block_height() % abs_request_interval == 0
+            }) {
+                let bank_slot = bank.slot();
+                self.latest_abs_request_slot = bank_slot;
+                squash_timing += bank.squash();
 
-            is_root_bank_squashed = bank_slot == root;
+                is_root_bank_squashed = bank_slot == root;
 
-            let mut snapshot_time = Measure::start("squash::snapshot_time");
-            if self.snapshot_config.is_some()
-                && accounts_background_request_sender.is_snapshot_creation_enabled()
-            {
+                let mut snapshot_time = Measure::start("squash::snapshot_time");
                 if bank.is_startup_verification_complete() {
                     // Save off the status cache because these may get pruned if another
                     // `set_root()` is called before the snapshots package can be generated
                     let status_cache_slot_deltas =
                         bank.status_cache.read().unwrap().root_slot_deltas();
-                    if let Err(e) =
+                    if let Err(err) =
                         accounts_background_request_sender.send_snapshot_request(SnapshotRequest {
                             snapshot_root_bank: Arc::clone(bank),
                             status_cache_slot_deltas,
@@ -491,17 +488,14 @@ impl BankForks {
                             enqueued: Instant::now(),
                         })
                     {
-                        warn!(
-                            "Error sending snapshot request for bank: {}, err: {:?}",
-                            bank_slot, e
-                        );
+                        warn!("Error sending snapshot request for bank {bank_slot}: {err}");
                     }
                 } else {
-                    info!("Not sending snapshot request for bank: {}, startup verification is incomplete", bank_slot);
+                    info!("Not sending snapshot request for bank {bank_slot}: startup verification is incomplete");
                 }
+                snapshot_time.stop();
+                total_snapshot_ms += snapshot_time.as_ms() as i64;
             }
-            snapshot_time.stop();
-            total_snapshot_ms += snapshot_time.as_ms() as i64;
         }
 
         if !is_root_bank_squashed {
