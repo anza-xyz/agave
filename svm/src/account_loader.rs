@@ -153,6 +153,18 @@ pub struct FeesOnlyTransaction {
     pub fee_details: FeeDetails,
 }
 
+// This is an internal SVM type that tracks account changes throughout a
+// transaction batch and obviates the need to load accounts from accounts-db
+// more than once. It effectively wraps an `impl TransactionProcessingCallback`
+// type, and itself implements `TransactionProcessingCallback`, behaving
+// exactly like the `Bank` impl of this trait but also returns up-to-date
+// account states mid-batch.
+//
+// This type is created in `load_and_execute_sanitized_transactions()` to load
+// and process a single batch and is never passed between threads or reused
+// across batches. To ensure safety of the `UnsafeCell`, this struct should
+// never be made `Clone` and `account_cache` should never be marked `pub`.
+// The presence of `UnsafeCell` ensures this struct is `!Sync`.
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     account_cache: UnsafeCell<AHashMap<Pubkey, AccountSharedData>>,
     callbacks: &'a CB,
