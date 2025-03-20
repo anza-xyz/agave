@@ -642,6 +642,7 @@ mod tests {
     use {
         super::*,
         crate::{
+            accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
             bank::test_utils::update_vote_account_timestamp,
             genesis_utils::{
                 create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
@@ -760,6 +761,11 @@ mod tests {
         // waiting for an in-flight EAH calculation to complete.
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
         let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
+        let snapshot_controller = SnapshotController::new(
+            abs_request_sender,
+            None, /* snapshot_config */
+            0,    /* root_slot */
+        );
         let bg_exit = Arc::new(AtomicBool::new(false));
         let bg_thread = {
             let exit = Arc::clone(&bg_exit);
@@ -790,7 +796,7 @@ mod tests {
         let bank0 = Bank::new_for_tests(&genesis_config);
         let bank_forks0 = BankForks::new_rw_arc(bank0);
         let mut bank_forks0 = bank_forks0.write().unwrap();
-        bank_forks0.set_root(0, &abs_request_sender, None).unwrap();
+        bank_forks0.set_root(0, &snapshot_controller, None).unwrap();
 
         let bank1 = Bank::new_for_tests(&genesis_config);
         let bank_forks1 = BankForks::new_rw_arc(bank1);
@@ -826,7 +832,7 @@ mod tests {
             // Set root in bank_forks0 to truncate the ancestor history
             bank_forks0.insert(child1);
             bank_forks0
-                .set_root(slot, &abs_request_sender, None)
+                .set_root(slot, &snapshot_controller, None)
                 .unwrap();
 
             // Don't set root in bank_forks1 to keep the ancestor history
@@ -897,7 +903,7 @@ mod tests {
             .unwrap()
             .set_root(
                 2,
-                &AbsRequestSender::default(),
+                &SnapshotController::default(),
                 None, // highest confirmed root
             )
             .unwrap();
@@ -964,7 +970,7 @@ mod tests {
             .unwrap()
             .set_root(
                 2,
-                &AbsRequestSender::default(),
+                &SnapshotController::default(),
                 Some(1), // highest confirmed root
             )
             .unwrap();
@@ -1056,7 +1062,7 @@ mod tests {
         bank_forks
             .set_root(
                 2,
-                &AbsRequestSender::default(),
+                &SnapshotController::default(),
                 Some(1), // highest confirmed root
             )
             .unwrap();

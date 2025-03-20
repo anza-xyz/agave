@@ -27,9 +27,9 @@ use {
     solana_perf::packet::to_packet_batches,
     solana_poh::poh_recorder::create_test_recorder,
     solana_runtime::{
-        accounts_background_service::AbsRequestSender, bank::Bank, bank_forks::BankForks,
-        genesis_utils::GenesisConfigInfo, installed_scheduler_pool::SchedulingContext,
-        prioritization_fee_cache::PrioritizationFeeCache,
+        bank::Bank, bank_forks::BankForks, genesis_utils::GenesisConfigInfo,
+        installed_scheduler_pool::SchedulingContext,
+        prioritization_fee_cache::PrioritizationFeeCache, snapshot_controller::SnapshotController,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
@@ -165,7 +165,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             root,
             &bank_forks,
             &mut progress,
-            &AbsRequestSender::default(),
+            &SnapshotController::default(),
             None,
             &mut heaviest_subtree_fork_choice,
             &mut duplicate_slots_tracker,

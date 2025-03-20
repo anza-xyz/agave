@@ -573,7 +573,7 @@ pub mod tests {
             &Arc::new(MaxSlots::default()),
             None,
             None,
-            AbsRequestSender::default(),
+            Arc::new(SnapshotController::default()),
             None,
             Some(&Arc::new(ConnectionCache::new("connection_cache_test"))),
             &ignored_prioritization_fee_cache,

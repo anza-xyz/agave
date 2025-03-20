@@ -4357,7 +4357,6 @@ pub(crate) mod tests {
             slot_status_notifier::SlotStatusNotifierInterface,
         },
         solana_runtime::{
-            accounts_background_service::AbsRequestSender,
             commitment::{BlockCommitment, VOTE_THRESHOLD_SIZE},
             genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
         },
@@ -4694,7 +4693,7 @@ pub(crate) mod tests {
             root,
             &bank_forks,
             &mut progress,
-            &AbsRequestSender::default(),
+            &SnapshotController::default(),
             None,
             &mut heaviest_subtree_fork_choice,
             &mut duplicate_slots_tracker,
@@ -4773,7 +4772,7 @@ pub(crate) mod tests {
             root,
             &bank_forks,
             &mut progress,
-            &AbsRequestSender::default(),
+            &SnapshotController::default(),
             Some(confirmed_root),
             &mut heaviest_subtree_fork_choice,
             &mut DuplicateSlotsTracker::default(),
@@ -5844,7 +5843,7 @@ pub(crate) mod tests {
         let bank9 = bank_forks.get(9).unwrap();
         bank_forks.insert(Bank::new_from_parent(bank9, &Pubkey::default(), 10));
         bank_forks
-            .set_root(9, &AbsRequestSender::default(), None)
+            .set_root(9, &SnapshotController::default(), None)
             .unwrap();
         let total_epoch_stake = bank0.total_epoch_stake();
 
@@ -5940,7 +5939,7 @@ pub(crate) mod tests {
             .unwrap()
             .is_leader_slot = true;
         bank_forks
-            .set_root(0, &AbsRequestSender::default(), None)
+            .set_root(0, &SnapshotController::default(), None)
             .unwrap();
         let total_epoch_stake = bank_forks.root_bank().total_epoch_stake();
 
@@ -6025,7 +6024,7 @@ pub(crate) mod tests {
             .unwrap()
             .is_leader_slot = true;
         bank_forks
-            .set_root(0, &AbsRequestSender::default(), None)
+            .set_root(0, &SnapshotController::default(), None)
             .unwrap();
 
         let total_epoch_stake = num_validators as u64 * stake_per_validator;
@@ -6652,7 +6651,7 @@ pub(crate) mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(3, &AbsRequestSender::default(), None)
+            .set_root(3, &SnapshotController::default(), None)
             .unwrap();
         let mut descendants = bank_forks.read().unwrap().descendants();
         let mut ancestors = bank_forks.read().unwrap().ancestors();
@@ -9233,11 +9232,7 @@ pub(crate) mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(
-                1,
-                &solana_runtime::accounts_background_service::AbsRequestSender::default(),
-                None,
-            )
+            .set_root(1, &SnapshotController::default(), None)
             .unwrap();
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
@@ -9251,7 +9246,7 @@ pub(crate) mod tests {
             None,
             None,
             None,
-            &AbsRequestSender::default(),
+            &SnapshotController::default(),
         )
         .unwrap();
 
@@ -9426,7 +9421,7 @@ pub(crate) mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(1, &AbsRequestSender::default(), None)
+            .set_root(1, &SnapshotController::default(), None)
             .unwrap();
 
         // Mark 0 as duplicate confirmed, should fail as it is 0 < root
@@ -9541,7 +9536,7 @@ pub(crate) mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(1, &AbsRequestSender::default(), None)
+            .set_root(1, &SnapshotController::default(), None)
             .unwrap();
 
         // Mark 0 as duplicate confirmed, should fail as it is 0 < root

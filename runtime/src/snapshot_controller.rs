@@ -38,20 +38,6 @@ impl SnapshotController {
         }
     }
 
-    /// Returns the interval, in slots, for sending an ABS request
-    ///
-    /// Returns None if ABS requests should not be sent
-    fn abs_request_interval(&self) -> Option<Slot> {
-        self.snapshot_config.as_ref().and_then(|snapshot_config| {
-            snapshot_config.should_generate_snapshots().then(||
-                // N.B. This assumes if a snapshot is disabled that its interval will be Slot::MAX
-                cmp::min(
-                    snapshot_config.full_snapshot_archive_interval_slots,
-                    snapshot_config.incremental_snapshot_archive_interval_slots,
-                ))
-        })
-    }
-
     fn latest_abs_request_slot(&self) -> Slot {
         self.latest_abs_request_slot.load(Ordering::Relaxed)
     }
@@ -117,6 +103,20 @@ impl SnapshotController {
         }
 
         Ok((is_root_bank_squashed, squash_timing, total_snapshot_ms))
+    }
+
+    /// Returns the interval, in slots, for sending an ABS request
+    ///
+    /// Returns None if ABS requests should not be sent
+    fn abs_request_interval(&self) -> Option<Slot> {
+        self.snapshot_config.as_ref().and_then(|snapshot_config| {
+            snapshot_config.should_generate_snapshots().then(||
+                // N.B. This assumes if a snapshot is disabled that its interval will be Slot::MAX
+                cmp::min(
+                    snapshot_config.full_snapshot_archive_interval_slots,
+                    snapshot_config.incremental_snapshot_archive_interval_slots,
+                ))
+        })
     }
 
     /// Sends an EpochAccountsHash request if one of the `banks` crosses the EAH boundary.

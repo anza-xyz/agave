@@ -26,6 +26,7 @@ use {
         snapshot_archive_info::FullSnapshotArchiveInfo,
         snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
         snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController,
         snapshot_utils::{
             self,
             SnapshotVersion::{self, V1_2_0},
@@ -100,7 +101,6 @@ impl SnapshotTestConfig {
         bank0.freeze();
         bank0.set_startup_verification_complete();
         let bank_forks_arc = BankForks::new_rw_arc(bank0);
-        let mut bank_forks = bank_forks_arc.write().unwrap();
 
         let snapshot_config = SnapshotConfig {
             full_snapshot_archive_interval_slots,
@@ -113,7 +113,6 @@ impl SnapshotTestConfig {
             snapshot_version,
             ..SnapshotConfig::default()
         };
-        bank_forks.set_snapshot_config(Some(snapshot_config.clone()));
         SnapshotTestConfig {
             bank_forks: bank_forks_arc.clone(),
             genesis_config_info,
@@ -131,10 +130,10 @@ fn restore_from_snapshot(
     old_bank_forks: Arc<RwLock<BankForks>>,
     old_last_slot: Slot,
     old_genesis_config: &GenesisConfig,
+    snapshot_config: &SnapshotConfig,
     account_paths: &[PathBuf],
 ) {
     let old_bank_forks = old_bank_forks.read().unwrap();
-    let snapshot_config = old_bank_forks.snapshot_config.as_ref().unwrap();
     let old_last_bank = old_bank_forks.get(old_last_slot).unwrap();
 
     let check_hash_calculation = false;
@@ -199,7 +198,12 @@ fn run_bank_forks_snapshot_n<F>(
 
     let (accounts_package_sender, _accounts_package_receiver) = crossbeam_channel::unbounded();
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
-    let request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
+    let abs_request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
+    let snapshot_controller = SnapshotController::new(
+        abs_request_sender,
+        Some(snapshot_test_config.snapshot_config.clone()),
+        bank_forks.read().unwrap().root(),
+    );
     let snapshot_request_handler = SnapshotRequestHandler {
         snapshot_config: snapshot_test_config.snapshot_config.clone(),
         snapshot_request_sender,
@@ -226,7 +230,7 @@ fn run_bank_forks_snapshot_n<F>(
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(bank.slot(), &request_sender, None)
+                .set_root(bank.slot(), &snapshot_controller, None)
                 .unwrap();
             snapshot_request_handler.handle_snapshot_requests(false, 0, &AtomicBool::new(false));
         }
@@ -253,6 +257,7 @@ fn run_bank_forks_snapshot_n<F>(
         snapshot_test_config.bank_forks.clone(),
         last_slot,
         genesis_config,
+        snapshot_config,
         account_paths,
     );
 }
@@ -314,7 +319,12 @@ fn test_slots_to_snapshot(snapshot_version: SnapshotVersion, cluster_type: Clust
         let bank_forks_r = bank_forks.read().unwrap();
         let mut current_bank = bank_forks_r[0].clone();
         drop(bank_forks_r);
-        let request_sender = AbsRequestSender::new(snapshot_sender);
+        let abs_request_sender = AbsRequestSender::new(snapshot_sender);
+        let snapshot_controller = SnapshotController::new(
+            abs_request_sender,
+            Some(snapshot_test_config.snapshot_config.clone()),
+            bank_forks.read().unwrap().root(),
+        );
         for _ in 0..num_set_roots {
             for _ in 0..*add_root_interval {
                 let new_slot = current_bank.slot() + 1;
@@ -328,7 +338,7 @@ fn test_slots_to_snapshot(snapshot_version: SnapshotVersion, cluster_type: Clust
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(current_bank.slot(), &request_sender, None)
+                .set_root(current_bank.slot(), &snapshot_controller, None)
                 .unwrap();
 
             // Since the accounts background services are not running, EpochAccountsHash
@@ -461,7 +471,12 @@ fn test_bank_forks_incremental_snapshot(
 
     let (accounts_package_sender, _accounts_package_receiver) = crossbeam_channel::unbounded();
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
-    let request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
+    let abs_request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
+    let snapshot_controller = SnapshotController::new(
+        abs_request_sender,
+        Some(snapshot_test_config.snapshot_config.clone()),
+        bank_forks.read().unwrap().root(),
+    );
     let snapshot_request_handler = SnapshotRequestHandler {
         snapshot_config: snapshot_test_config.snapshot_config.clone(),
         snapshot_request_sender,
@@ -502,7 +517,7 @@ fn test_bank_forks_incremental_snapshot(
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(bank.slot(), &request_sender, None)
+                .set_root(bank.slot(), &snapshot_controller, None)
                 .unwrap();
             snapshot_request_handler.handle_snapshot_requests(false, 0, &AtomicBool::new(false));
         }
@@ -705,6 +720,11 @@ fn test_snapshots_with_background_services(
     }
 
     let abs_request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
+    let snapshot_controller = SnapshotController::new(
+        abs_request_sender,
+        Some(snapshot_test_config.snapshot_config.clone()),
+        bank_forks.read().unwrap().root(),
+    );
     let snapshot_request_handler = SnapshotRequestHandler {
         snapshot_config: snapshot_test_config.snapshot_config.clone(),
         snapshot_request_sender,
@@ -779,7 +799,7 @@ fn test_snapshots_with_background_services(
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(slot, &abs_request_sender, None)
+                .set_root(slot, &snapshot_controller, None)
                 .unwrap();
         }
 

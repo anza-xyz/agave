@@ -4172,11 +4172,7 @@ pub mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(
-                1,
-                &solana_runtime::accounts_background_service::AbsRequestSender::default(),
-                None,
-            )
+            .set_root(1, &SnapshotController::default(), None)
             .unwrap();
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
@@ -4190,7 +4186,7 @@ pub mod tests {
             None,
             None,
             None,
-            &AbsRequestSender::default(),
+            &SnapshotController::default(),
         )
         .unwrap();
 
