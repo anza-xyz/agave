@@ -187,7 +187,7 @@ impl PacketDeserializer {
         packet_indexes.iter().filter_map(move |packet_index| {
             let packet_clone = packet_batch[*packet_index].clone();
 
-            match ImmutableDeserializedPacket::new(packet_clone)
+            match ImmutableDeserializedPacket::new(&packet_clone)
                 .and_then(|packet| packet_filter(packet).map_err(Into::into))
             {
                 Ok(packet) => Some(packet),
@@ -206,7 +206,7 @@ impl PacketDeserializer {
         let packet_indexes = PacketDeserializer::generate_packet_indexes(packet_batch);
         packet_indexes.into_iter().filter_map(move |packet_index| {
             let packet = packet_batch[packet_index].clone();
-            ImmutableDeserializedPacket::new(packet)
+            ImmutableDeserializedPacket::new(&packet)
                 .ok()
                 .map(|packet| (packet, packet_index))
         })

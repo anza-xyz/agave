@@ -64,7 +64,7 @@ impl ImmutableDeserializedPacket {
     pub fn new(packet: &Packet) -> Result<Self, DeserializedPacketError> {
         let versioned_transaction: VersionedTransaction = packet.deserialize_slice(..)?;
         let sanitized_transaction = SanitizedVersionedTransaction::try_from(versioned_transaction)?;
-        let message_bytes = packet_message(&packet)?;
+        let message_bytes = packet_message(packet)?;
         let message_hash = Message::hash_raw_message(message_bytes);
         let is_simple_vote = packet.meta().is_simple_vote_tx();
         let forwarded = packet.meta().forwarded();
@@ -224,7 +224,7 @@ mod tests {
             Hash::new_unique(),
         );
         let packet = Packet::from_data(None, tx).unwrap();
-        let deserialized_packet = ImmutableDeserializedPacket::new(packet);
+        let deserialized_packet = ImmutableDeserializedPacket::new(&packet);
 
         assert!(deserialized_packet.is_ok());
     }
@@ -254,7 +254,7 @@ mod tests {
                 Hash::new_unique(),
             );
             let packet = Packet::from_data(None, tx).unwrap();
-            let deserialized_packet = ImmutableDeserializedPacket::new(packet).unwrap();
+            let deserialized_packet = ImmutableDeserializedPacket::new(&packet).unwrap();
             assert_eq!(
                 deserialized_packet.check_insufficent_compute_unit_limit(),
                 expectation

@@ -278,7 +278,7 @@ mod tests {
         let mut transaction_storage =
             VoteStorage::new(Arc::new(latest_unprocessed_votes), VoteSource::Tpu);
 
-        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(vote.clone())?]);
+        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(&vote)?]);
         assert_eq!(1, transaction_storage.len());
 
         // When processing packets, return all packets as retryable so that they

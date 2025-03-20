@@ -18,8 +18,9 @@ impl DeserializedPacket {
         }
     }
 
+    // add a ref
     pub fn new(packet: Packet) -> Result<Self, DeserializedPacketError> {
-        let immutable_section = ImmutableDeserializedPacket::new(packet)?;
+        let immutable_section = ImmutableDeserializedPacket::new(&packet)?;
 
         Ok(Self {
             immutable_section: Arc::new(immutable_section),

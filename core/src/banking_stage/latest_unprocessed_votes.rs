@@ -45,7 +45,7 @@ pub struct LatestValidatorVotePacket {
 
 impl LatestValidatorVotePacket {
     pub fn new(
-        packet: Packet,
+        packet: Packet, // add a ref.
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
