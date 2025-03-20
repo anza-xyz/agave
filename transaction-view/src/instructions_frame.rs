@@ -23,9 +23,9 @@ pub(crate) struct InstructionsFrame {
 #[derive(Debug)]
 pub(crate) struct InstructionOffsetAndLens {
     num_accounts: u16,
-    accounts_offset: u16,
     data_len: u16,
-    data_offset: u16,
+    num_accounts_len: u8, // either 1 or 2
+    data_len_len: u8,     // either 1 or 2
 }
 
 impl InstructionsFrame {
@@ -68,21 +68,23 @@ impl InstructionsFrame {
 
             // Read the number of account indexes, and then update the offset
             // to skip over the account indexes.
+            let num_accounts_offset = *offset;
             let num_accounts = optimized_read_compressed_u16(bytes, offset)?;
-            let accounts_offset = *offset as u16;
+            let num_accounts_len = offset.wrapping_sub(num_accounts_offset) as u8;
             advance_offset_for_array::<u8>(bytes, offset, num_accounts)?;
 
             // Read the length of the data, and then update the offset to skip
             // over the data.
+            let data_len_offset = *offset;
             let data_len = optimized_read_compressed_u16(bytes, offset)?;
-            let data_offset = *offset as u16;
+            let data_len_len = offset.wrapping_sub(data_len_offset) as u8;
             advance_offset_for_array::<u8>(bytes, offset, data_len)?;
 
             cached_offsets_and_lens.push(InstructionOffsetAndLens {
                 num_accounts,
-                accounts_offset,
+                num_accounts_len,
                 data_len,
-                data_offset,
+                data_len_len,
             });
         }
 
@@ -111,9 +113,9 @@ impl<'a> Iterator for InstructionsIterator<'a> {
         if self.index < self.num_instructions {
             let InstructionOffsetAndLens {
                 num_accounts,
-                accounts_offset,
+                num_accounts_len,
                 data_len,
-                data_offset,
+                data_len_len,
             } = self.cached_offsets_and_lens[usize::from(self.index)];
 
             self.index = self.index.wrapping_add(1);
@@ -127,7 +129,7 @@ impl<'a> Iterator for InstructionsIterator<'a> {
             let program_id_index = read_byte(self.bytes, &mut self.offset).ok()?;
 
             // Move offset to accounts offset - do not re-parse u16.
-            self.offset = usize::from(accounts_offset);
+            self.offset = self.offset.wrapping_add(usize::from(num_accounts_len));
             const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
             // SAFETY:
             // - The offset is checked to be valid in the byte slice.
@@ -139,7 +141,7 @@ impl<'a> Iterator for InstructionsIterator<'a> {
                     .ok()?;
 
             // Move offset to accounts offset - do not re-parse u16.
-            self.offset = usize::from(data_offset);
+            self.offset = self.offset.wrapping_add(usize::from(data_len_len));
             const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
             // SAFETY:
             // - The offset is checked to be valid in the byte slice.
