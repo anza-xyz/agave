@@ -21,7 +21,12 @@ use {
     },
 };
 
-pub struct LoadBalancer {
+/// The RpcLoadBalancer can support providing a RpcClient which has the most
+/// up-to-date slot information among a set of configured RPC servers.
+/// This service starts threads which will subscribe to the slot events
+/// using the corresponding web socket for a RPC server. This mechansim can
+/// load balance the RPC calls to multiple RPC servers.
+pub struct RpcLoadBalancer {
     /// (ws_url, slot)
     server_to_slot: Arc<DashMap<String, Slot>>,
     /// (rpc_url, client)
@@ -29,14 +34,19 @@ pub struct LoadBalancer {
     subscription_threads: Vec<JoinHandle<()>>,
 }
 
-impl LoadBalancer {
+impl RpcLoadBalancer {
     const DISCONNECT_WEBSOCKET_TIMEOUT: Duration = Duration::from_secs(30);
     const RPC_TIMEOUT: Duration = Duration::from_secs(15);
     pub const SLOT_QUEUE_CAPACITY: usize = 100;
+
+    /// Start a Load Balancer service given a list of RPC servers. Each RPC server
+    /// must have the (RPC URL and corresponding Websocket URL) set.
+    /// This create the RpcClients and create web socket connections to the corresponding
+    /// RPC server and watch for the slot events.
     pub fn new(
         servers: &[(String, String)], /* http rpc url, ws url */
         exit: &Arc<AtomicBool>,
-    ) -> (LoadBalancer, Receiver<Slot>) {
+    ) -> (RpcLoadBalancer, Receiver<Slot>) {
         let server_to_slot = Arc::new(DashMap::from_iter(
             servers.iter().map(|(_, ws)| (ws.clone(), 0)),
         ));
@@ -62,7 +72,7 @@ impl LoadBalancer {
         let subscription_threads =
             Self::start_subscription_threads(servers, server_to_slot.clone(), slot_sender, exit);
         (
-            LoadBalancer {
+            RpcLoadBalancer {
                 server_to_slot,
                 server_to_rpc_client,
                 subscription_threads,
@@ -71,6 +81,8 @@ impl LoadBalancer {
         )
     }
 
+    /// Start threads to watch for slot events on the RPC servers and update
+    /// the server_to_slot map.
     fn start_subscription_threads(
         servers: &[(String, String)],
         server_to_slot: Arc<DashMap<String, Slot>>,
@@ -174,6 +186,7 @@ impl LoadBalancer {
             .to_owned()
     }
 
+    /// Return the server's WebSocket URL which as the most update slot
     pub fn get_highest_slot(&self) -> (String, Slot) {
         let multi = self
             .server_to_slot

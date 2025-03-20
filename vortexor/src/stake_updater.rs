@@ -2,7 +2,7 @@
 //! Adapted from jito-replayer code.
 
 use {
-    crate::load_balancer::LoadBalancer,
+    crate::load_balancer::RpcLoadBalancer,
     log::warn,
     solana_client::client_error,
     solana_sdk::pubkey::Pubkey,
@@ -28,7 +28,7 @@ pub struct StakeUpdater {
 impl StakeUpdater {
     pub fn new(
         exit: Arc<AtomicBool>,
-        rpc_load_balancer: Arc<LoadBalancer>,
+        rpc_load_balancer: Arc<RpcLoadBalancer>,
         shared_staked_nodes: Arc<RwLock<StakedNodes>>,
         staked_nodes_overrides: HashMap<Pubkey, u64>,
     ) -> Self {
@@ -64,7 +64,7 @@ impl StakeUpdater {
     fn try_refresh_pk_to_stake(
         last_stakes: &mut Instant,
         pubkey_stake_map: &mut Arc<HashMap<Pubkey, u64>>,
-        rpc_load_balancer: &Arc<LoadBalancer>,
+        rpc_load_balancer: &Arc<RpcLoadBalancer>,
     ) -> client_error::Result<bool> {
         if last_stakes.elapsed() > PK_TO_STAKE_REFRESH_DURATION {
             let client = rpc_load_balancer.rpc_client();

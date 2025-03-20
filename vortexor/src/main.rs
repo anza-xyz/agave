@@ -9,7 +9,7 @@ use {
     solana_streamer::streamer::StakedNodes,
     solana_vortexor::{
         cli::Cli,
-        load_balancer::LoadBalancer,
+        load_balancer::RpcLoadBalancer,
         sender::{
             PacketBatchSender, DEFAULT_BATCH_SIZE, DEFAULT_RECV_TIMEOUT,
             DEFAULT_SENDER_THREADS_COUNT,
@@ -128,7 +128,7 @@ pub fn main() {
     let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
     let staked_nodes_overrides: HashMap<Pubkey, u64> = HashMap::new();
 
-    let (rpc_load_balancer, _slot_receiver) = LoadBalancer::new(&servers, &exit);
+    let (rpc_load_balancer, _slot_receiver) = RpcLoadBalancer::new(&servers, &exit);
     let rpc_load_balancer = Arc::new(rpc_load_balancer);
 
     let staked_nodes_updater_service = StakeUpdater::new(
