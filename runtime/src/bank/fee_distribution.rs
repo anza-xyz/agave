@@ -88,15 +88,15 @@ impl Bank {
     }
 
     fn burn_transaction_fee(&self, fees: u64) -> (u64, u64) {
-        let burned = fees * u64::from(self.burn_percent()) / 100;
+        let burned = fees * self.burn_percent() / 100;
         (fees - burned, burned)
     }
 
-    fn burn_percent(&self) -> u8 {
+    const fn burn_percent(&self) -> u64 {
         // NOTE: burn percent is statically 50%, in case it needs to change in the future,
         // burn_percent can be bank property that being passed down from bank to bank, without
         // needing fee-rate-governor
-        solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT
+        solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT as u64
     }
 
     fn deposit_or_burn_fee(&self, deposit: u64, burn: &mut u64) {
