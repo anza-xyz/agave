@@ -20,9 +20,8 @@ use {
     },
 };
 
-#[derive(Default)]
 pub struct SnapshotController {
-    abs_request_sender: Option<SnapshotRequestSender>,
+    abs_request_sender: SnapshotRequestSender,
     snapshot_config: SnapshotConfig,
     latest_abs_request_slot: AtomicU64,
 }
@@ -34,7 +33,7 @@ impl SnapshotController {
         root_slot: Slot,
     ) -> Self {
         Self {
-            abs_request_sender: Some(abs_request_sender),
+            abs_request_sender,
             snapshot_config,
             latest_abs_request_slot: AtomicU64::new(root_slot),
         }
@@ -56,10 +55,6 @@ impl SnapshotController {
         let (mut is_root_bank_squashed, mut squash_timing) =
             self.send_eah_request_if_needed(root, banks)?;
         let mut total_snapshot_ms = 0;
-
-        let Some(abs_request_sender) = &self.abs_request_sender else {
-            return Ok((is_root_bank_squashed, squash_timing, total_snapshot_ms));
-        };
 
         // After checking for EAH requests, also check for regular snapshot requests.
         //
@@ -84,7 +79,7 @@ impl SnapshotController {
                     // `set_root()` is called before the snapshots package can be generated
                     let status_cache_slot_deltas =
                         bank.status_cache.read().unwrap().root_slot_deltas();
-                    if let Err(e) = abs_request_sender.send(SnapshotRequest {
+                    if let Err(e) = self.abs_request_sender.send(SnapshotRequest {
                         snapshot_root_bank: Arc::clone(bank),
                         status_cache_slot_deltas,
                         request_kind: SnapshotRequestKind::Snapshot,
@@ -131,9 +126,6 @@ impl SnapshotController {
     ) -> Result<(bool, SquashTiming), SetRootError> {
         let mut is_root_bank_squashed = false;
         let mut squash_timing = SquashTiming::default();
-        let Some(abs_request_sender) = &self.abs_request_sender else {
-            return Ok((is_root_bank_squashed, squash_timing));
-        };
 
         // Go through all the banks and see if we should send an EAH request.
         // Only one EAH bank is allowed to send an EAH request.
@@ -167,7 +159,7 @@ impl SnapshotController {
                 .epoch_accounts_hash_manager
                 .set_in_flight(eah_bank.slot());
 
-            if let Err(err) = abs_request_sender.send(SnapshotRequest {
+            if let Err(err) = self.abs_request_sender.send(SnapshotRequest {
                 snapshot_root_bank: Arc::clone(eah_bank),
                 status_cache_slot_deltas: Vec::default(),
                 request_kind: SnapshotRequestKind::EpochAccountsHash,

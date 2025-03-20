@@ -229,7 +229,7 @@ fn run_bank_forks_snapshot_n<F>(
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(bank.slot(), &snapshot_controller, None)
+                .set_root(bank.slot(), Some(&snapshot_controller), None)
                 .unwrap();
             snapshot_request_handler.handle_snapshot_requests(false, 0, &AtomicBool::new(false));
         }
@@ -336,7 +336,7 @@ fn test_slots_to_snapshot(snapshot_version: SnapshotVersion, cluster_type: Clust
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(current_bank.slot(), &snapshot_controller, None)
+                .set_root(current_bank.slot(), Some(&snapshot_controller), None)
                 .unwrap();
 
             // Since the accounts background services are not running, EpochAccountsHash
@@ -514,7 +514,7 @@ fn test_bank_forks_incremental_snapshot(
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(bank.slot(), &snapshot_controller, None)
+                .set_root(bank.slot(), Some(&snapshot_controller), None)
                 .unwrap();
             snapshot_request_handler.handle_snapshot_requests(false, 0, &AtomicBool::new(false));
         }
@@ -795,7 +795,7 @@ fn test_snapshots_with_background_services(
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(slot, &snapshot_controller, None)
+                .set_root(slot, Some(&snapshot_controller), None)
                 .unwrap();
         }
 

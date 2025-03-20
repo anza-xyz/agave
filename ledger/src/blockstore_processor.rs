@@ -907,7 +907,7 @@ pub fn test_process_blockstore(
         None,
         None,
         None,
-        &snapshot_controller,
+        Some(&snapshot_controller),
     )
     .unwrap();
 
@@ -974,7 +974,7 @@ pub fn process_blockstore_from_root(
     transaction_status_sender: Option<&TransactionStatusSender>,
     block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
-    snapshot_controller: &SnapshotController,
+    snapshot_controller: Option<&SnapshotController>,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let (start_slot, start_slot_hash) = {
         // Starting slot must be a root, and thus has no parents
@@ -1854,7 +1854,7 @@ fn load_frozen_forks(
     block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     timing: &mut ExecuteTimings,
-    snapshot_controller: &SnapshotController,
+    snapshot_controller: Option<&SnapshotController>,
 ) -> result::Result<(u64, usize), BlockstoreProcessorError> {
     let blockstore_max_root = blockstore.max_root();
     let mut root = bank_forks.read().unwrap().root();
@@ -4169,11 +4169,7 @@ pub mod tests {
             &mut ExecuteTimings::default(),
         )
         .unwrap();
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(1, &SnapshotController::default(), None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(1, None, None).unwrap();
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
 
@@ -4186,7 +4182,7 @@ pub mod tests {
             None,
             None,
             None,
-            &SnapshotController::default(),
+            None, // snapshot_controller
         )
         .unwrap();
 

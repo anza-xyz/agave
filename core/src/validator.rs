@@ -1526,7 +1526,7 @@ impl Validator {
             &max_slots,
             block_metadata_notifier,
             config.wait_to_vote_slot,
-            snapshot_controller.clone(),
+            Some(snapshot_controller.clone()),
             config.runtime_config.log_messages_bytes_limit,
             connection_cache_for_warmup,
             &prioritization_fee_cache,
@@ -1558,7 +1558,7 @@ impl Validator {
                 wait_for_supermajority_threshold_percent:
                     WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT,
                 snapshot_config: config.snapshot_config.clone(),
-                snapshot_controller: snapshot_controller.clone(),
+                snapshot_controller: Some(snapshot_controller.clone()),
                 abs_status: accounts_background_service.status().clone(),
                 genesis_config_hash: genesis_config.hash(),
                 exit: exit.clone(),
@@ -2202,7 +2202,7 @@ impl<'a> ProcessBlockStore<'a> {
                 self.transaction_status_sender,
                 self.block_meta_sender.as_ref(),
                 self.entry_notification_sender,
-                self.snapshot_controller,
+                Some(self.snapshot_controller),
             )
             .map_err(|err| {
                 exit.store(true, Ordering::Relaxed);
@@ -2297,7 +2297,7 @@ fn maybe_warp_slot(
             solana_accounts_db::accounts_db::CalcAccountsHashDataSource::Storages,
         ));
         bank_forks
-            .set_root(warp_slot, snapshot_controller, Some(warp_slot))
+            .set_root(warp_slot, Some(snapshot_controller), Some(warp_slot))
             .map_err(|err| err.to_string())?;
         leader_schedule_cache.set_root(&bank_forks.root_bank());
 

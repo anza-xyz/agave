@@ -1180,7 +1180,11 @@ impl ProgramTestContext {
         );
 
         bank_forks
-            .set_root(pre_warp_slot, &snapshot_controller, Some(pre_warp_slot))
+            .set_root(
+                pre_warp_slot,
+                Some(&snapshot_controller),
+                Some(pre_warp_slot),
+            )
             .unwrap();
 
         // The call to `set_root()` above will send an EAH request.  Need to intercept and handle
@@ -1246,7 +1250,7 @@ impl ProgramTestContext {
         bank_forks
             .set_root(
                 pre_warp_slot,
-                &SnapshotController::default(),
+                None, // snapshot_controller
                 Some(pre_warp_slot),
             )
             .unwrap();

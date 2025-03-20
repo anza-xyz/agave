@@ -334,7 +334,7 @@ impl BankForks {
     fn do_set_root_return_metrics(
         &mut self,
         root: Slot,
-        snapshot_controller: &SnapshotController,
+        snapshot_controller: Option<&SnapshotController>,
         highest_super_majority_root: Option<Slot>,
     ) -> Result<(Vec<BankWithScheduler>, SetRootMetrics), SetRootError> {
         let old_epoch = self.root_bank().epoch();
@@ -370,7 +370,12 @@ impl BankForks {
         banks.extend(parents.iter());
         let total_parent_banks = banks.len();
         let (is_root_bank_squashed, mut squash_timing, total_snapshot_ms) =
-            snapshot_controller.handle_new_roots(root, &banks)?;
+            if let Some(snapshot_controller) = snapshot_controller {
+                snapshot_controller.handle_new_roots(root, &banks)?
+            } else {
+                (false, SquashTiming::default(), 0)
+            };
+
         if !is_root_bank_squashed {
             squash_timing += root_bank.squash();
         }
@@ -414,7 +419,7 @@ impl BankForks {
     pub fn set_root(
         &mut self,
         root: Slot,
-        snapshot_controller: &SnapshotController,
+        snapshot_controller: Option<&SnapshotController>,
         highest_super_majority_root: Option<Slot>,
     ) -> Result<Vec<BankWithScheduler>, SetRootError> {
         let program_cache_prune_start = Instant::now();
@@ -796,7 +801,9 @@ mod tests {
         let bank0 = Bank::new_for_tests(&genesis_config);
         let bank_forks0 = BankForks::new_rw_arc(bank0);
         let mut bank_forks0 = bank_forks0.write().unwrap();
-        bank_forks0.set_root(0, &snapshot_controller, None).unwrap();
+        bank_forks0
+            .set_root(0, Some(&snapshot_controller), None)
+            .unwrap();
 
         let bank1 = Bank::new_for_tests(&genesis_config);
         let bank_forks1 = BankForks::new_rw_arc(bank1);
@@ -832,7 +839,7 @@ mod tests {
             // Set root in bank_forks0 to truncate the ancestor history
             bank_forks0.insert(child1);
             bank_forks0
-                .set_root(slot, &snapshot_controller, None)
+                .set_root(slot, Some(&snapshot_controller), None)
                 .unwrap();
 
             // Don't set root in bank_forks1 to keep the ancestor history
@@ -902,8 +909,8 @@ mod tests {
             .write()
             .unwrap()
             .set_root(
-                2,
-                &SnapshotController::default(),
+                2,    // root
+                None, // snapshot_controller
                 None, // highest confirmed root
             )
             .unwrap();
@@ -970,7 +977,7 @@ mod tests {
             .unwrap()
             .set_root(
                 2,
-                &SnapshotController::default(),
+                None,    // snapshot_controller
                 Some(1), // highest confirmed root
             )
             .unwrap();
@@ -1062,7 +1069,7 @@ mod tests {
         bank_forks
             .set_root(
                 2,
-                &SnapshotController::default(),
+                None,    // snapshot_controller
                 Some(1), // highest confirmed root
             )
             .unwrap();

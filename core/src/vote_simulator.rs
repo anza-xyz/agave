@@ -24,7 +24,6 @@ use {
         genesis_utils::{
             create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
-        snapshot_controller::SnapshotController,
     },
     solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signer},
     solana_vote::vote_transaction,
@@ -233,7 +232,7 @@ impl VoteSimulator {
             new_root,
             &self.bank_forks,
             &mut self.progress,
-            &SnapshotController::default(),
+            None, // snapshot_controller
             None,
             &mut self.heaviest_subtree_fork_choice,
             &mut DuplicateSlotsTracker::default(),

@@ -275,7 +275,7 @@ pub struct ReplayStageConfig {
     pub log_messages_bytes_limit: Option<usize>,
     pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     pub banking_tracer: Arc<BankingTracer>,
-    pub snapshot_controller: Arc<SnapshotController>,
+    pub snapshot_controller: Option<Arc<SnapshotController>>,
 }
 
 pub struct ReplaySenders {
@@ -998,7 +998,7 @@ impl ReplayStage {
                         &blockstore,
                         &leader_schedule_cache,
                         &lockouts_sender,
-                        &snapshot_controller,
+                        snapshot_controller.as_deref(),
                         &rpc_subscriptions,
                         &block_commitment_cache,
                         &mut heaviest_subtree_fork_choice,
@@ -2389,7 +2389,7 @@ impl ReplayStage {
         blockstore: &Blockstore,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         lockouts_sender: &Sender<CommitmentAggregationData>,
-        snapshot_controller: &SnapshotController,
+        snapshot_controller: Option<&SnapshotController>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
@@ -3997,7 +3997,7 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         blockstore: &Blockstore,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
-        snapshot_controller: &SnapshotController,
+        snapshot_controller: Option<&SnapshotController>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
@@ -4083,7 +4083,7 @@ impl ReplayStage {
         new_root: Slot,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
-        snapshot_controller: &SnapshotController,
+        snapshot_controller: Option<&SnapshotController>,
         highest_super_majority_root: Option<Slot>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
@@ -4693,7 +4693,7 @@ pub(crate) mod tests {
             root,
             &bank_forks,
             &mut progress,
-            &SnapshotController::default(),
+            None, // snapshot_controller
             None,
             &mut heaviest_subtree_fork_choice,
             &mut duplicate_slots_tracker,
@@ -4772,7 +4772,7 @@ pub(crate) mod tests {
             root,
             &bank_forks,
             &mut progress,
-            &SnapshotController::default(),
+            None, // snapshot_controller
             Some(confirmed_root),
             &mut heaviest_subtree_fork_choice,
             &mut DuplicateSlotsTracker::default(),
@@ -5842,9 +5842,7 @@ pub(crate) mod tests {
         bank_forks.insert(Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 9));
         let bank9 = bank_forks.get(9).unwrap();
         bank_forks.insert(Bank::new_from_parent(bank9, &Pubkey::default(), 10));
-        bank_forks
-            .set_root(9, &SnapshotController::default(), None)
-            .unwrap();
+        bank_forks.set_root(9, None, None).unwrap();
         let total_epoch_stake = bank0.total_epoch_stake();
 
         // Insert new ForkProgress for slot 10 and its
@@ -5938,9 +5936,7 @@ pub(crate) mod tests {
             .get_propagated_stats_mut(0)
             .unwrap()
             .is_leader_slot = true;
-        bank_forks
-            .set_root(0, &SnapshotController::default(), None)
-            .unwrap();
+        bank_forks.set_root(0, None, None).unwrap();
         let total_epoch_stake = bank_forks.root_bank().total_epoch_stake();
 
         // Insert new ForkProgress representing a slot for all slots 1..=num_banks. Only
@@ -6023,9 +6019,7 @@ pub(crate) mod tests {
             .get_propagated_stats_mut(0)
             .unwrap()
             .is_leader_slot = true;
-        bank_forks
-            .set_root(0, &SnapshotController::default(), None)
-            .unwrap();
+        bank_forks.set_root(0, None, None).unwrap();
 
         let total_epoch_stake = num_validators as u64 * stake_per_validator;
 
@@ -6648,11 +6642,7 @@ pub(crate) mod tests {
         ));
 
         // Try to purge the root
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(3, &SnapshotController::default(), None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(3, None, None).unwrap();
         let mut descendants = bank_forks.read().unwrap().descendants();
         let mut ancestors = bank_forks.read().unwrap().ancestors();
         let slot_3_descendants = descendants.get(&3).unwrap().clone();
@@ -9229,11 +9219,7 @@ pub(crate) mod tests {
         )
         .unwrap();
 
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(1, &SnapshotController::default(), None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(1, None, None).unwrap();
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
 
@@ -9246,7 +9232,7 @@ pub(crate) mod tests {
             None,
             None,
             None,
-            &SnapshotController::default(),
+            None, // snapshot_controller
         )
         .unwrap();
 
@@ -9418,11 +9404,7 @@ pub(crate) mod tests {
         let (ancestor_hashes_replay_update_sender, _) = unbounded();
         let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
         let bank_hash_0 = bank_forks.read().unwrap().bank_hash(0).unwrap();
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(1, &SnapshotController::default(), None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(1, None, None).unwrap();
 
         // Mark 0 as duplicate confirmed, should fail as it is 0 < root
         let confirmed_slots = [(0, bank_hash_0)];
@@ -9533,11 +9515,7 @@ pub(crate) mod tests {
         let (sender, receiver) = unbounded();
         let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
         let bank_hash_0 = bank_forks.read().unwrap().bank_hash(0).unwrap();
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(1, &SnapshotController::default(), None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(1, None, None).unwrap();
 
         // Mark 0 as duplicate confirmed, should fail as it is 0 < root
         sender.send(vec![(0, bank_hash_0)]).unwrap();

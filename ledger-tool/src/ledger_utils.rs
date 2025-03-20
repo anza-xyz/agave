@@ -442,7 +442,7 @@ pub fn load_and_process_ledger(
         transaction_status_sender.as_ref(),
         block_meta_sender.as_ref(),
         None, // entry_notification_sender
-        &snapshot_controller,
+        Some(&snapshot_controller),
     )
     .map(|_| LoadAndProcessLedgerOutput {
         bank_forks,

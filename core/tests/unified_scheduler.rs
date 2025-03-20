@@ -29,7 +29,7 @@ use {
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, genesis_utils::GenesisConfigInfo,
         installed_scheduler_pool::SchedulingContext,
-        prioritization_fee_cache::PrioritizationFeeCache, snapshot_controller::SnapshotController,
+        prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
@@ -165,7 +165,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             root,
             &bank_forks,
             &mut progress,
-            &SnapshotController::default(),
+            None, // snapshot_controller
             None,
             &mut heaviest_subtree_fork_choice,
             &mut duplicate_slots_tracker,

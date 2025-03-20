@@ -403,9 +403,7 @@ mod tests {
         crossbeam_channel::unbounded,
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_pubkey::Pubkey,
-        solana_runtime::{
-            commitment::BlockCommitmentCache, snapshot_controller::SnapshotController,
-        },
+        solana_runtime::commitment::BlockCommitmentCache,
         std::sync::atomic::AtomicU64,
     };
 
@@ -604,11 +602,7 @@ mod tests {
         let bank5 = bank_forks.read().unwrap().get(5).unwrap();
         let bank7 = Bank::new_from_parent(bank5, &Pubkey::default(), 7);
         bank_forks.write().unwrap().insert(bank7);
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(7, &SnapshotController::default(), None)
-            .unwrap();
+        bank_forks.write().unwrap().set_root(7, None, None).unwrap();
         OptimisticallyConfirmedBankTracker::process_notification(
             BankNotification::OptimisticallyConfirmed(6),
             &bank_forks,

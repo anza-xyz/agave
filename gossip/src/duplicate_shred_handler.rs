@@ -236,7 +236,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             shred::Shredder,
         },
-        solana_runtime::{bank::Bank, snapshot_controller::SnapshotController},
+        solana_runtime::bank::Bank,
         solana_signer::Signer,
         solana_time_utils::timestamp,
     };
@@ -298,9 +298,7 @@ mod tests {
             let mut bank_forks = bank_forks_arc.write().unwrap();
             let bank0 = bank_forks.get(0).unwrap();
             bank_forks.insert(Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 9));
-            bank_forks
-                .set_root(9, &SnapshotController::default(), None)
-                .unwrap();
+            bank_forks.set_root(9, None, None).unwrap();
         }
         blockstore.set_roots([0, 9].iter()).unwrap();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
@@ -391,9 +389,7 @@ mod tests {
             let mut bank_forks = bank_forks_arc.write().unwrap();
             let bank0 = bank_forks.get(0).unwrap();
             bank_forks.insert(Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 9));
-            bank_forks
-                .set_root(9, &SnapshotController::default(), None)
-                .unwrap();
+            bank_forks.set_root(9, None, None).unwrap();
         }
         blockstore.set_roots([0, 9].iter()).unwrap();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(

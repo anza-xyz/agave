@@ -18,7 +18,6 @@ use {
         },
         snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
-        snapshot_controller::SnapshotController,
         snapshot_hash::{FullSnapshotHash, IncrementalSnapshotHash, StartingSnapshotHashes},
         snapshot_utils,
     },
@@ -110,7 +109,7 @@ pub fn load(
         transaction_status_sender,
         block_meta_sender,
         entry_notification_sender,
-        &SnapshotController::default(),
+        None, // snapshot_controller
     )
     .map_err(BankForksUtilsError::ProcessBlockstoreFromRoot)?;
 

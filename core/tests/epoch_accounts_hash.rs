@@ -297,7 +297,7 @@ fn test_epoch_accounts_hash_basic(test_environment: TestEnvironment) {
                 .unwrap()
                 .set_root(
                     bank.slot(),
-                    &test_environment.background_services.snapshot_controller,
+                    Some(&test_environment.background_services.snapshot_controller),
                     None,
                 )
                 .unwrap();
@@ -409,7 +409,7 @@ fn test_snapshots_have_expected_epoch_accounts_hash() {
             .unwrap()
             .set_root(
                 bank.slot(),
-                &test_environment.background_services.snapshot_controller,
+                Some(&test_environment.background_services.snapshot_controller),
                 None,
             )
             .unwrap();
@@ -533,7 +533,7 @@ fn test_background_services_request_handling_for_epoch_accounts_hash() {
                 .unwrap()
                 .set_root(
                     bank.slot(),
-                    &test_environment.background_services.snapshot_controller,
+                    Some(&test_environment.background_services.snapshot_controller),
                     None,
                 )
                 .unwrap();
@@ -592,7 +592,7 @@ fn test_epoch_accounts_hash_and_warping() {
         .unwrap()
         .set_root(
             bank.slot(),
-            &test_environment.background_services.snapshot_controller,
+            Some(&test_environment.background_services.snapshot_controller),
             None,
         )
         .unwrap();
@@ -620,7 +620,7 @@ fn test_epoch_accounts_hash_and_warping() {
         .unwrap()
         .set_root(
             bank.slot(),
-            &test_environment.background_services.snapshot_controller,
+            Some(&test_environment.background_services.snapshot_controller),
             None,
         )
         .unwrap();
@@ -662,7 +662,7 @@ fn test_epoch_accounts_hash_and_warping() {
         .unwrap()
         .set_root(
             bank.slot(),
-            &test_environment.background_services.snapshot_controller,
+            Some(&test_environment.background_services.snapshot_controller),
             None,
         )
         .unwrap();
