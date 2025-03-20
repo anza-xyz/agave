@@ -748,10 +748,6 @@ impl BankForks {
         self.snapshot_config = snapshot_config;
     }
 
-    pub fn set_accounts_hash_interval_slots(&mut self, accounts_interval_slots: u64) {
-        // brooks TODO: remove me
-    }
-
     /// Determine if this bank should request an epoch accounts hash
     #[must_use]
     fn should_request_epoch_accounts_hash(&self, bank: &Bank) -> bool {
