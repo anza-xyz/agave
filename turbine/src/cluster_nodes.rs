@@ -245,8 +245,7 @@ impl ClusterNodes<RetransmitStage> {
                 fanout,
                 |k| self.nodes[k].pubkey() == &self.pubkey,
                 weighted_shuffle.shuffle(&mut rng),
-            )
-            .expect("Could not find own pubkey in cluster nodes");
+            );
             let protocol = get_broadcast_protocol(shred);
             let peers = peers
                 .filter_map(|k| self.nodes[k].contact_info()?.tvu(protocol))
@@ -423,8 +422,7 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>, keep_identity: Pubkey) {
             // deterministic shuffle.
             return node_stake > 0u64;
         };
-        // Do not delete our own identity under any circumstances
-        // https://github.com/anza-xyz/agave/issues/5356
+        // Do not delete the provided keep_identity
         if node.pubkey == keep_identity {
             return true;
         }
