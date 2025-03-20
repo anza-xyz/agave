@@ -451,6 +451,7 @@ impl BankForks {
         let parents = root_bank.parents();
         banks.extend(parents.iter());
         let total_parent_banks = banks.len();
+        let mut total_snapshot_ms = 0;
 
         let (mut is_root_bank_squashed, mut squash_timing) =
             self.send_eah_request_if_needed(root, &banks, accounts_background_request_sender)?;
@@ -461,7 +462,6 @@ impl BankForks {
         // part of the same set of `banks` in a single `set_root()` invocation.
         // While (very) unlikely for a validator with default snapshot intervals,
         // it *is* possible, and there are tests to exercise this possibility.
-        let mut snapshot_time = Measure::start("squash::snapshot_time");
         if let Some(abs_request_interval) = self.abs_request_interval() {
             if accounts_background_request_sender.is_snapshot_creation_enabled() {
                 if let Some(bank) = banks.iter().find(|bank| {
@@ -474,12 +474,13 @@ impl BankForks {
 
                     is_root_bank_squashed = bank_slot == root;
 
+                    let mut snapshot_time = Measure::start("squash::snapshot_time");
                     if bank.is_startup_verification_complete() {
                         // Save off the status cache because these may get pruned if another
                         // `set_root()` is called before the snapshots package can be generated
                         let status_cache_slot_deltas =
                             bank.status_cache.read().unwrap().root_slot_deltas();
-                        if let Err(err) = accounts_background_request_sender.send_snapshot_request(
+                        if let Err(e) = accounts_background_request_sender.send_snapshot_request(
                             SnapshotRequest {
                                 snapshot_root_bank: Arc::clone(bank),
                                 status_cache_slot_deltas,
@@ -487,15 +488,19 @@ impl BankForks {
                                 enqueued: Instant::now(),
                             },
                         ) {
-                            warn!("Error sending snapshot request for bank {bank_slot}: {err}");
+                            warn!(
+                                "Error sending snapshot request for bank: {}, err: {:?}",
+                                bank_slot, e
+                            );
                         }
                     } else {
-                        info!("Not sending snapshot request for bank {bank_slot}: startup verification is incomplete");
+                        info!("Not sending snapshot request for bank: {}, startup verification is incomplete", bank_slot);
                     }
+                    snapshot_time.stop();
+                    total_snapshot_ms += snapshot_time.as_ms() as i64;
                 }
             }
         }
-        snapshot_time.stop();
 
         if !is_root_bank_squashed {
             squash_timing += root_bank.squash();
@@ -517,7 +522,7 @@ impl BankForks {
             SetRootMetrics {
                 timings: SetRootTimings {
                     total_squash_time: squash_timing,
-                    total_snapshot_ms: snapshot_time.as_ms() as i64,
+                    total_snapshot_ms,
                     prune_non_rooted_ms: prune_time.as_ms() as i64,
                     drop_parent_banks_ms: drop_parent_banks_time.as_ms() as i64,
                     prune_slots_ms: prune_slots_ms as i64,
