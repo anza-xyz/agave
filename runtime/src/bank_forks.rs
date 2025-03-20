@@ -20,6 +20,7 @@ use {
     },
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
+        cmp,
         collections::{hash_map::Entry, HashMap, HashSet},
         ops::Index,
         sync::{
@@ -79,7 +80,6 @@ pub struct BankForks {
 
     pub snapshot_config: Option<SnapshotConfig>,
 
-    pub accounts_hash_interval_slots: Slot,
     /// Highest slot request that has been sent to AccountsBackgroundService
     latest_abs_request_slot: Slot,
     in_vote_only_mode: Arc<AtomicBool>,
@@ -132,7 +132,6 @@ impl BankForks {
             banks,
             descendants,
             snapshot_config: None,
-            accounts_hash_interval_slots: u64::MAX,
             latest_abs_request_slot: root_slot,
             in_vote_only_mode: Arc::new(AtomicBool::new(false)),
             highest_slot_at_startup: 0,
@@ -400,6 +399,21 @@ impl BankForks {
         Ok((is_root_bank_squashed, squash_timing))
     }
 
+    /// Returns the interval, in slots, for sending an ABS request
+    fn abs_request_interval(&self) -> Slot {
+        let Some(snapshot_config) = self.snapshot_config.as_ref() else {
+            // If there's no snapshot config, then we shouldn't take snapshots.
+            // Return the max value to prevent sending an ABS request.
+            return Slot::MAX;
+        };
+
+        // N.B. This assumes if a snapshot kind is disabled that its interval will be Slot::MAX
+        cmp::min(
+            snapshot_config.full_snapshot_archive_interval_slots,
+            snapshot_config.incremental_snapshot_archive_interval_slots,
+        )
+    }
+
     fn do_set_root_return_metrics(
         &mut self,
         root: Slot,
@@ -446,12 +460,13 @@ impl BankForks {
         // After checking for EAH requests, also check for regular snapshot requests.
         //
         // This is needed when a snapshot request occurs in a slot after an EAH request, and is
-        // part of the same set of `banks` in a single `set_root()` invocation.  While (very)
-        // unlikely for a validator with default snapshot intervals (and accounts hash verifier
-        // intervals), it *is* possible, and there are tests to exercise this possibility.
+        // part of the same set of `banks` in a single `set_root()` invocation.
+        // While (very) unlikely for a validator with default snapshot intervals,
+        // it *is* possible, and there are tests to exercise this possibility.
+        let abs_request_interval = self.abs_request_interval();
         if let Some(bank) = banks.iter().find(|bank| {
             bank.slot() > self.latest_abs_request_slot
-                && bank.block_height() % self.accounts_hash_interval_slots == 0
+                && bank.block_height() % abs_request_interval == 0
         }) {
             let bank_slot = bank.slot();
             self.latest_abs_request_slot = bank_slot;
@@ -734,7 +749,7 @@ impl BankForks {
     }
 
     pub fn set_accounts_hash_interval_slots(&mut self, accounts_interval_slots: u64) {
-        self.accounts_hash_interval_slots = accounts_interval_slots;
+        // brooks TODO: remove me
     }
 
     /// Determine if this bank should request an epoch accounts hash
