@@ -35,6 +35,7 @@ use {
     solana_transaction_context::{IndexOfAccount, TransactionAccount},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::{
+        cell::UnsafeCell,
         num::{NonZeroU32, Saturating},
         sync::Arc,
     },
@@ -152,9 +153,20 @@ pub struct FeesOnlyTransaction {
     pub fee_details: FeeDetails,
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
+// This is an internal SVM type that tracks account changes throughout a
+// transaction batch and obviates the need to load accounts from accounts-db
+// more than once. It effectively wraps an `impl TransactionProcessingCallback`
+// type, and itself implements `TransactionProcessingCallback`, behaving
+// exactly like the `Bank` impl of this trait but also returns up-to-date
+// account states mid-batch.
+//
+// This type is created in `load_and_execute_sanitized_transactions()` to load
+// and process a single batch and is never passed between threads or reused
+// across batches. To ensure safety of the `UnsafeCell`, this struct should
+// never be made `Clone` and `account_cache` should never be marked `pub`.
+// The presence of `UnsafeCell` ensures this struct is `!Sync`.
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
-    account_cache: AHashMap<Pubkey, AccountSharedData>,
+    account_cache: UnsafeCell<AHashMap<Pubkey, AccountSharedData>>,
     callbacks: &'a CB,
     pub(crate) feature_set: Arc<FeatureSet>,
 }
@@ -176,28 +188,35 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
 
         Self {
-            account_cache,
+            account_cache: UnsafeCell::new(account_cache),
             callbacks,
             feature_set,
         }
     }
 
     pub(crate) fn load_account(
-        &mut self,
+        &self,
         account_key: &Pubkey,
         is_writable: bool,
     ) -> Option<LoadedTransactionAccount> {
-        let account = if let Some(account) = self.account_cache.get(account_key) {
+        let account = if let Some(account) = unsafe {
+            let account_cache = &*self.account_cache.get();
+            account_cache.get(account_key).cloned()
+        } {
             // If lamports is 0, a previous transaction deallocated this account.
             // We return None instead of the account we found so it can be created fresh.
             // We never evict from the cache, or else we would fetch stale state from accounts-db.
             if account.lamports() == 0 {
                 None
             } else {
-                Some(account.clone())
+                Some(account)
             }
         } else if let Some(account) = self.callbacks.get_account_shared_data(account_key) {
-            self.account_cache.insert(*account_key, account.clone());
+            unsafe {
+                let account_cache = &mut *self.account_cache.get();
+                account_cache.insert(*account_key, account.clone());
+            }
+
             Some(account)
         } else {
             None
@@ -222,7 +241,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     }
 
     pub(crate) fn update_accounts_for_executed_tx(
-        &mut self,
+        &self,
         message: &impl SVMMessage,
         executed_transaction: &ExecutedTransaction,
     ) {
@@ -240,34 +259,33 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     }
 
     pub(crate) fn update_accounts_for_failed_tx(
-        &mut self,
+        &self,
         message: &impl SVMMessage,
         rollback_accounts: &RollbackAccounts,
     ) {
         let fee_payer_address = message.fee_payer();
         match rollback_accounts {
-            RollbackAccounts::FeePayerOnly { fee_payer_account } => {
-                self.account_cache
-                    .insert(*fee_payer_address, fee_payer_account.clone());
-            }
-            RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-                self.account_cache
-                    .insert(*nonce.address(), nonce.account().clone());
-            }
+            RollbackAccounts::FeePayerOnly { fee_payer_account } => unsafe {
+                let account_cache = &mut *self.account_cache.get();
+                account_cache.insert(*fee_payer_address, fee_payer_account.clone());
+            },
+            RollbackAccounts::SameNonceAndFeePayer { nonce } => unsafe {
+                let account_cache = &mut *self.account_cache.get();
+                account_cache.insert(*nonce.address(), nonce.account().clone());
+            },
             RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce,
                 fee_payer_account,
-            } => {
-                self.account_cache
-                    .insert(*nonce.address(), nonce.account().clone());
-                self.account_cache
-                    .insert(*fee_payer_address, fee_payer_account.clone());
-            }
+            } => unsafe {
+                let account_cache = &mut *self.account_cache.get();
+                account_cache.insert(*nonce.address(), nonce.account().clone());
+                account_cache.insert(*fee_payer_address, fee_payer_account.clone());
+            },
         }
     }
 
     fn update_accounts_for_successful_tx(
-        &mut self,
+        &self,
         message: &impl SVMMessage,
         transaction_accounts: &[TransactionAccount],
     ) {
@@ -284,8 +302,25 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
                 continue;
             }
 
-            self.account_cache.insert(*address, account.clone());
+            unsafe {
+                let account_cache = &mut *self.account_cache.get();
+                account_cache.insert(*address, account.clone());
+            }
         }
+    }
+}
+impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for AccountLoader<'_, CB> {
+    fn account_matches_owners(&self, pubkey: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
+        self.load_account(pubkey, false).and_then(|loaded| {
+            owners
+                .iter()
+                .position(|entry| entry == loaded.account.owner())
+        })
+    }
+
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        self.load_account(pubkey, false)
+            .map(|loaded| loaded.account)
     }
 }
 
@@ -376,7 +411,7 @@ pub fn validate_fee_payer(
 }
 
 pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
-    account_loader: &mut AccountLoader<CB>,
+    account_loader: &AccountLoader<CB>,
     message: &impl SVMMessage,
     validation_result: TransactionValidationResult,
     error_metrics: &mut TransactionErrorMetrics,
@@ -425,7 +460,7 @@ struct LoadedTransactionAccounts {
 }
 
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
-    account_loader: &mut AccountLoader<CB>,
+    account_loader: &AccountLoader<CB>,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
     loaded_accounts_bytes_limit: NonZeroU32,
@@ -568,7 +603,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
 }
 
 fn load_transaction_account<CB: TransactionProcessingCallback>(
-    account_loader: &mut AccountLoader<CB>,
+    account_loader: &AccountLoader<CB>,
     message: &impl SVMMessage,
     account_key: &Pubkey,
     account_index: usize,
@@ -776,7 +811,7 @@ mod tests {
         let mut account_loader: AccountLoader<TestCallbacks> = (&callbacks).into();
         account_loader.feature_set = Arc::new(feature_set.clone());
         load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_tx,
             Ok(ValidatedTransactionDetails {
                 loaded_fee_payer_account: LoadedTransactionAccount {
@@ -1067,14 +1102,14 @@ mod tests {
             accounts_map,
             ..Default::default()
         };
-        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+        let account_loader = AccountLoader::new_with_account_cache_capacity(
             account_overrides,
             &callbacks,
             Arc::new(FeatureSet::all_enabled()),
             0,
         );
         load_transaction(
-            &mut account_loader,
+            &account_loader,
             &tx,
             Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
@@ -1348,7 +1383,7 @@ mod tests {
         mock_bank
             .accounts_map
             .insert(fee_payer_address, fee_payer_account.clone());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
         let fee_payer_rent_debit = 42;
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1359,7 +1394,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 loaded_size: fee_payer_account.data().len(),
@@ -1412,7 +1447,7 @@ mod tests {
         mock_bank
             .accounts_map
             .insert(key1.pubkey(), fee_payer_account.clone());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1422,7 +1457,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1472,7 +1507,7 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1482,7 +1517,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
@@ -1514,7 +1549,7 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1524,7 +1559,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
@@ -1567,7 +1602,7 @@ mod tests {
         mock_bank
             .accounts_map
             .insert(key2.pubkey(), fee_payer_account.clone());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1577,7 +1612,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1631,7 +1666,7 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
         mock_bank.accounts_map.insert(key2.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1641,7 +1676,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
@@ -1683,7 +1718,7 @@ mod tests {
         mock_bank
             .accounts_map
             .insert(key3.pubkey(), AccountSharedData::default());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1693,7 +1728,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
@@ -1743,7 +1778,7 @@ mod tests {
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1753,7 +1788,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1826,7 +1861,7 @@ mod tests {
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1836,7 +1871,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mut account_loader,
+            &account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1887,7 +1922,7 @@ mod tests {
         bank.accounts_map.insert(mint_keypair.pubkey(), mint_data);
         bank.accounts_map
             .insert(recipient, AccountSharedData::default());
-        let mut account_loader = (&bank).into();
+        let account_loader = (&bank).into();
 
         let tx = transfer(
             &mint_keypair,
@@ -1899,7 +1934,7 @@ mod tests {
         let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
         let mut error_metrics = TransactionErrorMetrics::default();
         let load_result = load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_tx.clone(),
             Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
@@ -1977,7 +2012,7 @@ mod tests {
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1995,7 +2030,7 @@ mod tests {
         });
 
         let load_result = load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_transaction,
             validation_result,
             &mut error_metrics,
@@ -2036,7 +2071,7 @@ mod tests {
     #[test]
     fn test_load_accounts_error() {
         let mock_bank = TestCallbacks::default();
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
         let rent_collector = RentCollector::default();
 
         let message = Message {
@@ -2059,7 +2094,7 @@ mod tests {
 
         let validation_result = Ok(ValidatedTransactionDetails::default());
         let load_result = load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_transaction,
             validation_result.clone(),
             &mut TransactionErrorMetrics::default(),
@@ -2077,7 +2112,7 @@ mod tests {
         let validation_result = Err(TransactionError::InvalidWritableAccount);
 
         let load_result = load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_transaction,
             validation_result,
             &mut TransactionErrorMetrics::default(),
@@ -2187,7 +2222,7 @@ mod tests {
         account3.set_executable(true);
         account3.set_owner(bpf_loader::id());
         mock_bank.accounts_map.insert(address3, account3.clone());
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let message = Message {
             account_keys: vec![address0, address1, address2, address3],
@@ -2225,7 +2260,7 @@ mod tests {
             ..ValidatedTransactionDetails::default()
         });
         let _load_results = load_transaction(
-            &mut account_loader,
+            &account_loader,
             &sanitized_transaction,
             validation_result,
             &mut TransactionErrorMetrics::default(),
@@ -2342,7 +2377,7 @@ mod tests {
         program_accounts.insert(program2, (&loader_v3, 0));
 
         let test_transaction_data_size = |transaction, expected_size| {
-            let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+            let account_loader = AccountLoader::new_with_account_cache_capacity(
                 None,
                 &mock_bank,
                 Arc::<FeatureSet>::default(),
@@ -2350,7 +2385,7 @@ mod tests {
             );
 
             let loaded_transaction_accounts = load_transaction_accounts(
-                &mut account_loader,
+                &account_loader,
                 &transaction,
                 LoadedTransactionAccount {
                     account: fee_payer_account.clone(),
