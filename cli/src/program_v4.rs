@@ -52,7 +52,7 @@ use {
     },
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
-    solana_sdk_ids::{loader_v4, system_program},
+    solana_sdk_ids::loader_v4,
     solana_signer::Signer,
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction::Transaction,
@@ -916,7 +916,7 @@ fn process_transfer_authority_of_program(
         messages,
         Vec::default(),
         Vec::default(),
-        None,
+        Some(new_auth_signer_index),
         0,
         config.output_format.formatted_string(&CliProgramId {
             program_id: program_address.to_string(),
@@ -1040,12 +1040,12 @@ fn send_messages(
     initial_messages: Vec<Vec<Instruction>>,
     write_messages: Vec<Vec<Instruction>>,
     final_messages: Vec<Vec<Instruction>>,
-    program_signer_index: Option<&SignerIndex>,
+    extra_signer_index: Option<&SignerIndex>,
     balance_needed: u64,
     ok_result: String,
 ) -> ProcessResult {
     let payer_pubkey = config.signers[0].pubkey();
-    let program_signer = program_signer_index.map(|index| config.signers[*index]);
+    let extra_signer = extra_signer_index.map(|index| config.signers[*index]);
     let blockhash = additional_cli_config
         .blockhash_query
         .get_blockhash(&rpc_client, config.commitment)?;
@@ -1119,20 +1119,22 @@ fn send_messages(
     };
 
     for message in initial_messages.into_iter() {
-        let signers: &[_] = if message.account_keys.contains(&system_program::id()) {
-            // The initial message that creates and initializes the account
-            // has up to 3 signatures (payer, program, and authority).
-            if let Some(initial_signer) = program_signer {
-                &[
-                    config.signers[0],
-                    initial_signer,
-                    config.signers[*auth_signer_index],
-                ]
-            } else {
-                return Err("Buffer account not created yet, must provide a key pair".into());
-            }
+        let use_extra_signer = extra_signer
+            .and_then(|keypair| {
+                message
+                    .account_keys
+                    .iter()
+                    .position(|pubkey| pubkey == &keypair.pubkey())
+            })
+            .map(|index_in_message| message.is_signer(index_in_message))
+            .unwrap_or(false);
+        let signers: &[_] = if use_extra_signer {
+            &[
+                config.signers[0],
+                config.signers[*auth_signer_index],
+                extra_signer.unwrap(),
+            ]
         } else {
-            // All other messages have up to 2 signatures (payer, and authority).
             &[config.signers[0], config.signers[*auth_signer_index]]
         };
         let result = send_or_return_message(message, signers)?;

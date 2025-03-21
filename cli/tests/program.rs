@@ -3220,7 +3220,7 @@ fn test_cli_program_v4() {
     config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Close {
         additional_cli_config: AdditionalCliConfig::default(),
         program_address: program_keypair.pubkey(),
-        authority_signer_index: 1,
+        authority_signer_index: 2,
     });
     let _response = process_command(&config);
     let _error = rpc_client
