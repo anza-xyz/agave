@@ -41,6 +41,42 @@ cherry-picked commit:
 $ git pull --rebase upstream master
 ```
 
+Any changes that break consensus must be behind a feature gate and must have
+a merged SIMD.
+
+All changes should have unit and integration tests that cover at least 90% of
+added code paths. These tests should run quickly and not be flaky.
+
+All changes should be stress-tested with relevant test cases, if relevant test cases
+are not present, then write them.
+
+All changes should be benchmarked and evidence posted to the PR.
+Microbenchmark results along with mainnet/testnet validator timings or profiles,
+bench-tps or other relevant integration benchmarks. Any code that adds complexity
+should be justified by a comisurate improvement in speed.
+
+All changes should be reviewed by subject matter experts.
+
+All changes should be merged to master branch first and only critical changes should
+be backported to release branches.
+
+Duplicate code should generally be avoided.
+
+Features should be activated on testnet before mainnet in the closest configuration to mainnet as possible
+Relevant metrics need to be monitored and approriate follow-up given after feature activation.
+
+Avoid “hack” or “one-off” solutions, prefer well-architected designs which are not fragile.
+
+Only use unwrap() in cases where you can prove it will never panic, and in cases where panic on
+unwrap() is desirable, prefer .expect().
+
+Prefer not to break semver, if absolutely necessary increment the appropriate versioning.
+
+Add a changelog entry for any appropriate changes that add features that should be called
+out in the release notes for new versions.
+
+Don't mix refactoring changes and logical changes together.
+
 ### How big is too big?
 
 If there are no functional changes, PRs can be very large and that's no
