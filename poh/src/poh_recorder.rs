@@ -402,8 +402,7 @@ impl PohRecorder {
         }
     }
 
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
+    pub fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
         assert!(self.working_bank.is_none());
         self.leader_bank_notifier.set_in_progress(&bank);
         let working_bank = WorkingBank {
