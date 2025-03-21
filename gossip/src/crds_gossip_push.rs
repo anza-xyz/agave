@@ -59,7 +59,7 @@ pub struct CrdsGossipPush {
     /// currently have this node in their `active_set`
     received_cache: Mutex<ReceivedCache>,
     push_fanout: usize,
-    pub(crate) msg_timeout: u64,
+    pub msg_timeout: u64,
     pub prune_timeout: u64,
     pub num_total: AtomicUsize,
     pub num_old: AtomicUsize,
