@@ -13,7 +13,6 @@ edition = { workspace = true }
 bincode = { workspace = true }
 bytemuck = { workspace = true }
 log = { workspace = true }
-num-derive = { workspace = true }
 num-traits = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true, features = [
     "bincode",
