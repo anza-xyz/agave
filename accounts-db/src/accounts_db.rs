@@ -6233,9 +6233,18 @@ impl AccountsDb {
             });
             datapoint_info!(
                 "accounts_db-flush_accounts_cache_aggressively",
-                ("num_flushed", flush_stats.num_accounts_flushed.0, i64),
-                ("num_purged", flush_stats.num_accounts_purged.0, i64),
-                ("total_flush_size", flush_stats.num_bytes_flushed.0, i64),
+                (
+                    "num_accounts_flushed",
+                    flush_stats.num_accounts_flushed.0,
+                    i64
+                ),
+                ("num_accounts_saved", flush_stats.num_accounts_purged.0, i64),
+                (
+                    "account_bytes_flushed",
+                    flush_stats.num_bytes_flushed.0,
+                    i64
+                ),
+                ("account_bytes_saved", flush_stats.num_bytes_purged.0, i64),
                 ("total_cache_size", self.accounts_cache.size(), i64),
                 ("total_frozen_slots", excess_slot_count, i64),
                 ("total_slots", self.accounts_cache.num_slots(), i64),
@@ -6255,6 +6264,16 @@ impl AccountsDb {
                 i64
             ),
             ("flush_roots_elapsed", flush_roots_elapsed.as_us(), i64),
+            (
+                "account_bytes_flushed",
+                flush_stats.num_bytes_flushed.0,
+                i64
+            ),
+            (
+                "num_accounts_flushed",
+                flush_stats.num_accounts_flushed.0,
+                i64
+            ),
             ("account_bytes_saved", flush_stats.num_bytes_purged.0, i64),
             ("num_accounts_saved", flush_stats.num_accounts_purged.0, i64),
             (
