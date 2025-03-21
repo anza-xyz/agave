@@ -397,6 +397,12 @@ pub fn load_and_process_ledger(
         }
     }
 
+    let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
+    let snapshot_controller = Arc::new(SnapshotController::new(
+        snapshot_request_sender,
+        SnapshotConfig::new_load_only(),
+        bank_forks.read().unwrap().root(),
+    ));
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
     let (accounts_package_sender, accounts_package_receiver) = crossbeam_channel::unbounded();
     let accounts_hash_verifier = AccountsHashVerifier::new(
@@ -404,17 +410,10 @@ pub fn load_and_process_ledger(
         accounts_package_receiver,
         pending_snapshot_packages,
         exit.clone(),
-        SnapshotConfig::new_load_only(),
-    );
-    let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-    let snapshot_controller = SnapshotController::new(
-        snapshot_request_sender.clone(),
-        snapshot_config.clone(),
-        bank_forks.read().unwrap().root(),
+        snapshot_controller.clone(),
     );
     let snapshot_request_handler = SnapshotRequestHandler {
-        snapshot_config,
-        snapshot_request_sender,
+        snapshot_controller: snapshot_controller.clone(),
         snapshot_request_receiver,
         accounts_package_sender,
     };

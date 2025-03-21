@@ -886,15 +886,25 @@ impl Validator {
             config.accounts_hash_interval_slots,
         ));
 
+        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let snapshot_controller = Arc::new(SnapshotController::new(
+            snapshot_request_sender.clone(),
+            config.snapshot_config.clone(),
+            bank_forks.read().unwrap().root(),
+        ));
+
         let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-        let snapshot_packager_service = if config.snapshot_config.should_generate_snapshots() {
+        let snapshot_packager_service = if snapshot_controller
+            .snapshot_config()
+            .should_generate_snapshots()
+        {
             let enable_gossip_push = true;
             let snapshot_packager_service = SnapshotPackagerService::new(
                 pending_snapshot_packages.clone(),
                 starting_snapshot_hashes,
                 exit.clone(),
                 cluster_info.clone(),
-                config.snapshot_config.clone(),
+                snapshot_controller.clone(),
                 enable_gossip_push,
             );
             Some(snapshot_packager_service)
@@ -908,18 +918,10 @@ impl Validator {
             accounts_package_receiver,
             pending_snapshot_packages,
             exit.clone(),
-            config.snapshot_config.clone(),
+            snapshot_controller.clone(),
         );
-
-        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
-        let snapshot_controller = Arc::new(SnapshotController::new(
-            snapshot_request_sender.clone(),
-            config.snapshot_config.clone(),
-            bank_forks.read().unwrap().root(),
-        ));
         let snapshot_request_handler = SnapshotRequestHandler {
-            snapshot_config: config.snapshot_config.clone(),
-            snapshot_request_sender,
+            snapshot_controller: snapshot_controller.clone(),
             snapshot_request_receiver,
             accounts_package_sender,
         };
@@ -1165,7 +1167,7 @@ impl Validator {
             let rpc_svc_config = JsonRpcServiceConfig {
                 rpc_addr,
                 rpc_config: config.rpc_config.clone(),
-                snapshot_config: Some(config.snapshot_config.clone()),
+                snapshot_config: Some(snapshot_controller.snapshot_config().clone()),
                 bank_forks: bank_forks.clone(),
                 block_commitment_cache: block_commitment_cache.clone(),
                 blockstore: blockstore.clone(),

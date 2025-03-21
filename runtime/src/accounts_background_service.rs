@@ -11,6 +11,7 @@ use {
         bank_forks::BankForks,
         snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController,
         snapshot_package::{self, AccountsPackage, AccountsPackageKind, SnapshotKind},
         snapshot_utils::{self, SnapshotError},
     },
@@ -134,8 +135,7 @@ pub enum SnapshotRequestKind {
 }
 
 pub struct SnapshotRequestHandler {
-    pub snapshot_config: SnapshotConfig,
-    pub snapshot_request_sender: SnapshotRequestSender,
+    pub snapshot_controller: Arc<SnapshotController>,
     pub snapshot_request_receiver: SnapshotRequestReceiver,
     pub accounts_package_sender: Sender<AccountsPackage>,
 }
@@ -193,12 +193,12 @@ impl SnapshotRequestHandler {
         /*num outstanding snapshot requests*/ usize,
         /*num re-enqueued snapshot requests*/ usize,
     )> {
+        let snapshot_config = self.snapshot_controller.snapshot_config();
         let mut requests: Vec<_> = self
             .snapshot_request_receiver
             .try_iter()
             .map(|request| {
-                let accounts_package_kind =
-                    new_accounts_package_kind(&request, &self.snapshot_config);
+                let accounts_package_kind = new_accounts_package_kind(&request, snapshot_config);
                 (request, accounts_package_kind)
             })
             .collect();
@@ -267,7 +267,8 @@ impl SnapshotRequestHandler {
                         snapshot_request.snapshot_root_bank.slot() > handled_request_slot
                     })
                     .map(|(snapshot_request, _)| {
-                        self.snapshot_request_sender
+                        self.snapshot_controller
+                            .request_sender()
                             .try_send(snapshot_request)
                             .expect("re-enqueue snapshot request");
                     })
@@ -867,9 +868,13 @@ mod test {
 
         let (accounts_package_sender, _accounts_package_receiver) = crossbeam_channel::unbounded();
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-        let snapshot_request_handler = SnapshotRequestHandler {
+        let snapshot_controller = Arc::new(SnapshotController::new(
+            snapshot_request_sender.clone(),
             snapshot_config,
-            snapshot_request_sender: snapshot_request_sender.clone(),
+            0,
+        ));
+        let snapshot_request_handler = SnapshotRequestHandler {
+            snapshot_controller,
             snapshot_request_receiver,
             accounts_package_sender,
         };
