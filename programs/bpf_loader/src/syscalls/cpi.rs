@@ -112,6 +112,7 @@ struct CallerAccount<'a, 'b> {
     // the pointer field and ref_to_len_in_vm points to the length field.
     vm_data_addr: u64,
     ref_to_len_in_vm: VmValue<'b, 'a, u64>,
+    realloc_counter: usize,
 }
 
 impl<'a, 'b> CallerAccount<'a, 'b> {
@@ -257,6 +258,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             serialized_data,
             vm_data_addr,
             ref_to_len_in_vm,
+            realloc_counter: 0,
         })
     }
 
@@ -366,6 +368,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             serialized_data,
             vm_data_addr: account_info.data_addr,
             ref_to_len_in_vm,
+            realloc_counter: 0,
         })
     }
 
@@ -934,7 +937,7 @@ where
                 return Err(Box::new(SyscallError::InvalidLength));
             }
             #[allow(clippy::indexing_slicing)]
-            let caller_account =
+            let mut caller_account =
                 do_translate(
                     invoke_context,
                     memory_mapping,
@@ -944,6 +947,7 @@ where
                     &account_infos[caller_account_index],
                     serialized_metadata,
                 )?;
+            caller_account.realloc_counter = callee_account.get_realloc_counter();
 
             // before initiating CPI, the caller may have modified the
             // account (caller_account). We need to update the corresponding
@@ -1362,8 +1366,12 @@ fn update_caller_account(
             // because of BorrowedAccount::make_data_mut or by a program that uses the
             // AccountSharedData API directly (deprecated).
             let callee_ptr = callee_account.get_data().as_ptr() as u64;
-            if region.host_addr.get() != callee_ptr {
+            let realloc_counter = callee_account.get_realloc_counter();
+            if realloc_counter != caller_account.realloc_counter
+                || region.host_addr.get() != callee_ptr
+            {
                 region.host_addr.set(callee_ptr);
+                caller_account.realloc_counter = realloc_counter;
                 zero_all_mapped_spare_capacity = true;
             }
         }
@@ -2708,6 +2716,7 @@ mod tests {
                 serialized_data: data,
                 vm_data_addr: self.vm_addr + mem::size_of::<u64>() as u64,
                 ref_to_len_in_vm: VmValue::Translated(&mut self.len),
+                realloc_counter: 0,
             }
         }
     }

@@ -267,17 +267,6 @@ impl TransactionContext {
     }
 
     /// Searches for an account by its key
-    #[cfg(not(target_os = "solana"))]
-    pub fn get_account_at_index(
-        &self,
-        index_in_transaction: IndexOfAccount,
-    ) -> Result<&RefCell<AccountSharedData>, InstructionError> {
-        self.accounts
-            .get(index_in_transaction)
-            .ok_or(InstructionError::NotEnoughAccountKeys)
-    }
-
-    /// Searches for an account by its key
     pub fn find_index_of_account(&self, pubkey: &Pubkey) -> Option<IndexOfAccount> {
         self.account_keys
             .iter()
@@ -413,7 +402,9 @@ impl TransactionContext {
                 .and_then(|instruction_context| {
                     // Verify all executable accounts have no outstanding refs
                     for account_index in instruction_context.program_accounts.iter() {
-                        self.get_account_at_index(*account_index)?
+                        self.accounts
+                            .get(*account_index)
+                            .ok_or(InstructionError::NotEnoughAccountKeys)?
                             .try_borrow_mut()
                             .map_err(|_| InstructionError::AccountBorrowOutstanding)?;
                     }
@@ -464,13 +455,16 @@ impl TransactionContext {
             }
             let index_in_transaction = instruction_context
                 .get_index_of_instruction_account_in_transaction(instruction_account_index)?;
-            instruction_accounts_lamport_sum = (self
-                .get_account_at_index(index_in_transaction)?
-                .try_borrow()
-                .map_err(|_| InstructionError::AccountBorrowOutstanding)?
-                .lamports() as u128)
-                .checked_add(instruction_accounts_lamport_sum)
-                .ok_or(InstructionError::ArithmeticOverflow)?;
+            instruction_accounts_lamport_sum = u128::from(
+                self.accounts
+                    .get(index_in_transaction)
+                    .ok_or(InstructionError::NotEnoughAccountKeys)?
+                    .try_borrow()
+                    .map_err(|_| InstructionError::AccountBorrowOutstanding)?
+                    .lamports(),
+            )
+            .checked_add(instruction_accounts_lamport_sum)
+            .ok_or(InstructionError::ArithmeticOverflow)?;
         }
         Ok(instruction_accounts_lamport_sum)
     }
@@ -661,6 +655,7 @@ impl InstructionContext {
             index_in_transaction,
             index_in_instruction,
             account,
+            reallocation_count: 0,
         })
     }
 
@@ -758,6 +753,8 @@ pub struct BorrowedAccount<'a> {
     index_in_transaction: IndexOfAccount,
     index_in_instruction: IndexOfAccount,
     account: RefMut<'a, AccountSharedData>,
+    /// Increased each time the data in account is reallocated to a different address
+    reallocation_count: usize,
 }
 
 impl BorrowedAccount<'_> {
@@ -784,6 +781,12 @@ impl BorrowedAccount<'_> {
     #[inline]
     pub fn get_owner(&self) -> &Pubkey {
         self.account.owner()
+    }
+
+    /// Returns the counter which is increased every time the data is reallocated to a different address
+    #[inline]
+    pub fn get_realloc_counter(&self) -> usize {
+        self.reallocation_count
     }
 
     /// Assignes the owner of this account (transaction wide)
@@ -904,7 +907,11 @@ impl BorrowedAccount<'_> {
         self.touch()?;
 
         self.update_accounts_resize_delta(data.len())?;
+        let p = self.account.data().as_ptr();
         self.account.set_data(data);
+        if self.account.data().as_ptr() != p {
+            self.reallocation_count = self.reallocation_count.saturating_add(1);
+        }
         Ok(())
     }
 
@@ -922,7 +929,11 @@ impl BorrowedAccount<'_> {
         // allocate + memcpy the current data if self.account is shared. We don't need the memcpy
         // here tho because account.set_data_from_slice(data) is going to replace the content
         // anyway.
+        let p = self.account.data().as_ptr();
         self.account.set_data_from_slice(data);
+        if self.account.data().as_ptr() != p {
+            self.reallocation_count = self.reallocation_count.saturating_add(1);
+        }
 
         Ok(())
     }
@@ -940,7 +951,11 @@ impl BorrowedAccount<'_> {
         }
         self.touch()?;
         self.update_accounts_resize_delta(new_length)?;
+        let p = self.account.data().as_ptr();
         self.account.resize(new_length, 0);
+        if self.account.data().as_ptr() != p {
+            self.reallocation_count = self.reallocation_count.saturating_add(1);
+        }
         Ok(())
     }
 
@@ -1008,7 +1023,11 @@ impl BorrowedAccount<'_> {
         // NOTE: The account memory region CoW code in bpf_loader::create_vm() implements the same
         // logic and must be kept in sync.
         if self.account.is_shared() {
+            let p = self.account.data().as_ptr();
             self.account.reserve(MAX_PERMITTED_DATA_INCREASE);
+            if self.account.data().as_ptr() != p {
+                self.reallocation_count = self.reallocation_count.saturating_add(1);
+            }
         }
     }
 
