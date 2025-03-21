@@ -137,7 +137,7 @@ pub struct Cli {
     #[arg(long="log", value_name = "FILE", value_parser = clap::value_parser!(String))]
     pub logfile: Option<String>,
 
-    /// The address of RPC server to which the vortexor will forward transaction
+    /// The address(es) of RPC server that the vortexor will forward transaction to
     #[arg(long, value_parser = parse_http_url, value_name = "URL")]
     pub rpc_server: Vec<Url>,
 
