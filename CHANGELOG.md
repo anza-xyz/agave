@@ -20,6 +20,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 * Account notifications for Geyser are no longer deduplicated when restorting from a snapshot.
 * Add `--no-snapshots` to disable generating snapshots.
+* `--block-production-method central-scheduler-greedy` is now the default.
 
 #### Deprecations
 * Using `--snapshot-interval-slots 0` to disable generating snapshots is now deprecated.
