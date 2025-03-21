@@ -5685,16 +5685,6 @@ impl Bank {
             )
         }?;
 
-        let move_precompile_verification_to_svm = self
-            .feature_set
-            .is_active(&feature_set::move_precompile_verification_to_svm::id());
-        if !move_precompile_verification_to_svm && {
-            verification_mode == TransactionVerificationMode::HashAndVerifyPrecompiles
-                || verification_mode == TransactionVerificationMode::FullVerification
-        } {
-            verify_precompiles(&sanitized_tx, &self.feature_set)?;
-        }
-
         Ok(sanitized_tx)
     }
 

@@ -8,7 +8,7 @@ use {
         TransactionSimulationDetails, TransactionStatus,
     },
     solana_client::connection_cache::ConnectionCache,
-    solana_feature_set::{move_precompile_verification_to_svm, FeatureSet},
+    solana_feature_set::FeatureSet,
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
@@ -159,21 +159,6 @@ impl BanksServer {
         }
         status
     }
-}
-
-fn verify_transaction(
-    transaction: &SanitizedTransaction,
-    feature_set: &Arc<FeatureSet>,
-) -> transaction::Result<()> {
-    transaction.verify()?;
-
-    let move_precompile_verification_to_svm =
-        feature_set.is_active(&move_precompile_verification_to_svm::id());
-    if !move_precompile_verification_to_svm {
-        verify_precompiles(transaction, feature_set)?;
-    }
-
-    Ok(())
 }
 
 fn simulate_transaction(
@@ -328,7 +313,7 @@ impl Banks for BanksServer {
             Err(err) => return Some(Err(err)),
         };
 
-        if let Err(err) = verify_transaction(&sanitized_transaction, &bank.feature_set) {
+        if let Err(err) = sanitized_transaction.verify() {
             return Some(Err(err));
         }
 
