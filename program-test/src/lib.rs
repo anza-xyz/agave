@@ -26,6 +26,7 @@ use {
         commitment::BlockCommitmentCache,
         genesis_utils::{create_genesis_config_with_leader_ex, GenesisConfigInfo},
         runtime_config::RuntimeConfig,
+        snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
     },
     solana_sdk::{
@@ -1175,7 +1176,7 @@ impl ProgramTestContext {
         let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
         let snapshot_controller = SnapshotController::new(
             abs_request_sender,
-            None, /* snapshot_config */
+            Some(SnapshotConfig::new_disabled()),
             bank_forks.root(),
         );
 

@@ -83,7 +83,7 @@ pub fn load(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
-    snapshot_config: Option<&SnapshotConfig>,
+    snapshot_config: &SnapshotConfig,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     block_meta_sender: Option<&BlockMetaSender>,
@@ -122,7 +122,7 @@ pub fn load_bank_forks(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
-    snapshot_config: Option<&SnapshotConfig>,
+    snapshot_config: &SnapshotConfig,
     process_options: &ProcessOptions,
     block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
@@ -130,12 +130,12 @@ pub fn load_bank_forks(
     exit: Arc<AtomicBool>,
 ) -> LoadResult {
     fn get_snapshots_to_load(
-        snapshot_config: Option<&SnapshotConfig>,
+        snapshot_config: &SnapshotConfig,
     ) -> Option<(
         FullSnapshotArchiveInfo,
         Option<IncrementalSnapshotArchiveInfo>,
     )> {
-        let Some(snapshot_config) = snapshot_config else {
+        if !snapshot_config.should_load_snapshots() {
             info!("Snapshots disabled; will load from genesis");
             return None;
         };
@@ -168,8 +168,6 @@ pub fn load_bank_forks(
         if let Some((full_snapshot_archive_info, incremental_snapshot_archive_info)) =
             get_snapshots_to_load(snapshot_config)
         {
-            // SAFETY: Having snapshots to load ensures a snapshot config
-            let snapshot_config = snapshot_config.unwrap();
             info!(
                 "Initializing bank snapshots dir: {}",
                 snapshot_config.bank_snapshots_dir.display()

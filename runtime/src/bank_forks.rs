@@ -647,6 +647,7 @@ mod tests {
             genesis_utils::{
                 create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
             },
+            snapshot_config::SnapshotConfig,
         },
         assert_matches::assert_matches,
         solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
@@ -763,8 +764,8 @@ mod tests {
         let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
         let snapshot_controller = SnapshotController::new(
             abs_request_sender,
-            None, /* snapshot_config */
-            0,    /* root_slot */
+            Some(SnapshotConfig::new_disabled()),
+            0, /* root_slot */
         );
         let bg_exit = Arc::new(AtomicBool::new(false));
         let bg_thread = {

@@ -34,6 +34,7 @@ use {
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
+        snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
         vote_sender_types::ReplayVoteSender,
@@ -848,12 +849,12 @@ pub fn test_process_blockstore(
     opts: &ProcessOptions,
     exit: Arc<AtomicBool>,
 ) -> (Arc<RwLock<BankForks>>, LeaderScheduleCache) {
-    let snapshot_config = None;
+    let snapshot_config = SnapshotConfig::new_disabled();
     let (bank_forks, leader_schedule_cache, ..) = crate::bank_forks_utils::load_bank_forks(
         genesis_config,
         blockstore,
         Vec::new(),
-        snapshot_config.as_ref(),
+        &snapshot_config,
         opts,
         None,
         None,
@@ -869,7 +870,7 @@ pub fn test_process_blockstore(
     let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
     let snapshot_controller = SnapshotController::new(
         abs_request_sender,
-        snapshot_config,
+        Some(snapshot_config),
         bank_forks.read().unwrap().root(),
     );
     let bg_exit = Arc::new(AtomicBool::new(false));
