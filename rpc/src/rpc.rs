@@ -4529,10 +4529,10 @@ pub mod tests {
             filter::MemcmpEncodedBytes,
         },
         solana_runtime::{
-            accounts_background_service::AbsRequestSender,
             bank::BankTestConfig,
             commitment::{BlockCommitment, CommitmentSlots},
             non_circulating_supply::non_circulating_accounts,
+            snapshot_controller::SnapshotController,
         },
         solana_sdk::{
             account::{Account, WritableAccount},
@@ -4885,7 +4885,7 @@ pub mod tests {
                 self.bank_forks
                     .write()
                     .unwrap()
-                    .set_root(*root, &AbsRequestSender::default(), Some(0))
+                    .set_root(*root, &SnapshotController::default(), Some(0))
                     .unwrap();
                 let block_time = self
                     .bank_forks

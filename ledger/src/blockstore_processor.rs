@@ -34,6 +34,7 @@ use {
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
+        snapshot_controller::SnapshotController,
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
         vote_sender_types::ReplayVoteSender,
     },
@@ -847,11 +848,30 @@ pub fn test_process_blockstore(
     opts: &ProcessOptions,
     exit: Arc<AtomicBool>,
 ) -> (Arc<RwLock<BankForks>>, LeaderScheduleCache) {
+    let snapshot_config = None;
+    let (bank_forks, leader_schedule_cache, ..) = crate::bank_forks_utils::load_bank_forks(
+        genesis_config,
+        blockstore,
+        Vec::new(),
+        snapshot_config.as_ref(),
+        opts,
+        None,
+        None,
+        None,
+        exit.clone(),
+    )
+    .unwrap();
+
     // Spin up a thread to be a fake Accounts Background Service.  Need to intercept and handle all
     // EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze() waiting for
     // an in-flight EAH calculation to complete.
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
     let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
+    let snapshot_controller = SnapshotController::new(
+        abs_request_sender,
+        snapshot_config,
+        bank_forks.read().unwrap().root(),
+    );
     let bg_exit = Arc::new(AtomicBool::new(false));
     let bg_thread = {
         let exit = Arc::clone(&bg_exit);
@@ -879,19 +899,6 @@ pub fn test_process_blockstore(
         })
     };
 
-    let (bank_forks, leader_schedule_cache, ..) = crate::bank_forks_utils::load_bank_forks(
-        genesis_config,
-        blockstore,
-        Vec::new(),
-        None,
-        opts,
-        None,
-        None,
-        None,
-        exit,
-    )
-    .unwrap();
-
     process_blockstore_from_root(
         blockstore,
         &bank_forks,
@@ -900,7 +907,7 @@ pub fn test_process_blockstore(
         None,
         None,
         None,
-        &abs_request_sender,
+        &snapshot_controller,
     )
     .unwrap();
 
@@ -967,7 +974,7 @@ pub fn process_blockstore_from_root(
     transaction_status_sender: Option<&TransactionStatusSender>,
     block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
-    accounts_background_request_sender: &AbsRequestSender,
+    snapshot_controller: &SnapshotController,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let (start_slot, start_slot_hash) = {
         // Starting slot must be a root, and thus has no parents
@@ -1034,7 +1041,7 @@ pub fn process_blockstore_from_root(
             block_meta_sender,
             entry_notification_sender,
             &mut timing,
-            accounts_background_request_sender,
+            snapshot_controller,
         )?
     } else {
         // If there's no meta in the blockstore for the input `start_slot`,
@@ -1847,7 +1854,7 @@ fn load_frozen_forks(
     block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     timing: &mut ExecuteTimings,
-    accounts_background_request_sender: &AbsRequestSender,
+    snapshot_controller: &SnapshotController,
 ) -> result::Result<(u64, usize), BlockstoreProcessorError> {
     let blockstore_max_root = blockstore.max_root();
     let mut root = bank_forks.read().unwrap().root();
@@ -2009,11 +2016,10 @@ fn load_frozen_forks(
 
                 leader_schedule_cache.set_root(new_root_bank);
                 new_root_bank.prune_program_cache(root, new_root_bank.epoch());
-                let _ = bank_forks.write().unwrap().set_root(
-                    root,
-                    accounts_background_request_sender,
-                    None,
-                )?;
+                let _ = bank_forks
+                    .write()
+                    .unwrap()
+                    .set_root(root, snapshot_controller, None)?;
                 m.stop();
                 set_root_us += m.as_us();
 
@@ -4166,11 +4172,7 @@ pub mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(
-                1,
-                &solana_runtime::accounts_background_service::AbsRequestSender::default(),
-                None,
-            )
+            .set_root(1, &SnapshotController::default(), None)
             .unwrap();
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
@@ -4184,7 +4186,7 @@ pub mod tests {
             None,
             None,
             None,
-            &AbsRequestSender::default(),
+            &SnapshotController::default(),
         )
         .unwrap();
 

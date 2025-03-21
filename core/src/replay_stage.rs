@@ -59,12 +59,12 @@ use {
     },
     solana_rpc_client_api::response::SlotUpdate,
     solana_runtime::{
-        accounts_background_service::AbsRequestSender,
         bank::{bank_hash_details, Bank, NewBankOptions},
         bank_forks::{BankForks, SetRootError, MAX_ROOT_DISTANCE_FOR_VOTE_ONLY},
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
+        snapshot_controller::SnapshotController,
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
@@ -275,12 +275,12 @@ pub struct ReplayStageConfig {
     pub log_messages_bytes_limit: Option<usize>,
     pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     pub banking_tracer: Arc<BankingTracer>,
+    pub snapshot_controller: Arc<SnapshotController>,
 }
 
 pub struct ReplaySenders {
     pub rpc_subscriptions: Arc<RpcSubscriptions>,
     pub slot_status_notifier: Option<SlotStatusNotifier>,
-    pub accounts_background_request_sender: AbsRequestSender,
     pub transaction_status_sender: Option<TransactionStatusSender>,
     pub block_meta_sender: Option<BlockMetaSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
@@ -566,12 +566,12 @@ impl ReplayStage {
             log_messages_bytes_limit,
             prioritization_fee_cache,
             banking_tracer,
+            snapshot_controller,
         } = config;
 
         let ReplaySenders {
             rpc_subscriptions,
             slot_status_notifier,
-            accounts_background_request_sender,
             transaction_status_sender,
             block_meta_sender,
             entry_notification_sender,
@@ -998,7 +998,7 @@ impl ReplayStage {
                         &blockstore,
                         &leader_schedule_cache,
                         &lockouts_sender,
-                        &accounts_background_request_sender,
+                        &snapshot_controller,
                         &rpc_subscriptions,
                         &block_commitment_cache,
                         &mut heaviest_subtree_fork_choice,
@@ -2389,7 +2389,7 @@ impl ReplayStage {
         blockstore: &Blockstore,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         lockouts_sender: &Sender<CommitmentAggregationData>,
-        accounts_background_request_sender: &AbsRequestSender,
+        snapshot_controller: &SnapshotController,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
@@ -2419,7 +2419,7 @@ impl ReplayStage {
                 progress,
                 blockstore,
                 leader_schedule_cache,
-                accounts_background_request_sender,
+                snapshot_controller,
                 rpc_subscriptions,
                 block_commitment_cache,
                 heaviest_subtree_fork_choice,
@@ -3997,7 +3997,7 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         blockstore: &Blockstore,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
-        accounts_background_request_sender: &AbsRequestSender,
+        snapshot_controller: &SnapshotController,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
@@ -4048,7 +4048,7 @@ impl ReplayStage {
             new_root,
             bank_forks,
             progress,
-            accounts_background_request_sender,
+            snapshot_controller,
             highest_super_majority_root,
             heaviest_subtree_fork_choice,
             duplicate_slots_tracker,
@@ -4083,7 +4083,7 @@ impl ReplayStage {
         new_root: Slot,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
-        accounts_background_request_sender: &AbsRequestSender,
+        snapshot_controller: &SnapshotController,
         highest_super_majority_root: Option<Slot>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
@@ -4097,7 +4097,7 @@ impl ReplayStage {
         bank_forks.read().unwrap().prune_program_cache(new_root);
         let removed_banks = bank_forks.write().unwrap().set_root(
             new_root,
-            accounts_background_request_sender,
+            snapshot_controller,
             highest_super_majority_root,
         )?;
 
@@ -4357,7 +4357,6 @@ pub(crate) mod tests {
             slot_status_notifier::SlotStatusNotifierInterface,
         },
         solana_runtime::{
-            accounts_background_service::AbsRequestSender,
             commitment::{BlockCommitment, VOTE_THRESHOLD_SIZE},
             genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
         },
@@ -4694,7 +4693,7 @@ pub(crate) mod tests {
             root,
             &bank_forks,
             &mut progress,
-            &AbsRequestSender::default(),
+            &SnapshotController::default(),
             None,
             &mut heaviest_subtree_fork_choice,
             &mut duplicate_slots_tracker,
@@ -4773,7 +4772,7 @@ pub(crate) mod tests {
             root,
             &bank_forks,
             &mut progress,
-            &AbsRequestSender::default(),
+            &SnapshotController::default(),
             Some(confirmed_root),
             &mut heaviest_subtree_fork_choice,
             &mut DuplicateSlotsTracker::default(),
@@ -5844,7 +5843,7 @@ pub(crate) mod tests {
         let bank9 = bank_forks.get(9).unwrap();
         bank_forks.insert(Bank::new_from_parent(bank9, &Pubkey::default(), 10));
         bank_forks
-            .set_root(9, &AbsRequestSender::default(), None)
+            .set_root(9, &SnapshotController::default(), None)
             .unwrap();
         let total_epoch_stake = bank0.total_epoch_stake();
 
@@ -5940,7 +5939,7 @@ pub(crate) mod tests {
             .unwrap()
             .is_leader_slot = true;
         bank_forks
-            .set_root(0, &AbsRequestSender::default(), None)
+            .set_root(0, &SnapshotController::default(), None)
             .unwrap();
         let total_epoch_stake = bank_forks.root_bank().total_epoch_stake();
 
@@ -6025,7 +6024,7 @@ pub(crate) mod tests {
             .unwrap()
             .is_leader_slot = true;
         bank_forks
-            .set_root(0, &AbsRequestSender::default(), None)
+            .set_root(0, &SnapshotController::default(), None)
             .unwrap();
 
         let total_epoch_stake = num_validators as u64 * stake_per_validator;
@@ -6652,7 +6651,7 @@ pub(crate) mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(3, &AbsRequestSender::default(), None)
+            .set_root(3, &SnapshotController::default(), None)
             .unwrap();
         let mut descendants = bank_forks.read().unwrap().descendants();
         let mut ancestors = bank_forks.read().unwrap().ancestors();
@@ -9233,11 +9232,7 @@ pub(crate) mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(
-                1,
-                &solana_runtime::accounts_background_service::AbsRequestSender::default(),
-                None,
-            )
+            .set_root(1, &SnapshotController::default(), None)
             .unwrap();
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
@@ -9251,7 +9246,7 @@ pub(crate) mod tests {
             None,
             None,
             None,
-            &AbsRequestSender::default(),
+            &SnapshotController::default(),
         )
         .unwrap();
 
@@ -9426,7 +9421,7 @@ pub(crate) mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(1, &AbsRequestSender::default(), None)
+            .set_root(1, &SnapshotController::default(), None)
             .unwrap();
 
         // Mark 0 as duplicate confirmed, should fail as it is 0 < root
@@ -9541,7 +9536,7 @@ pub(crate) mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(1, &AbsRequestSender::default(), None)
+            .set_root(1, &SnapshotController::default(), None)
             .unwrap();
 
         // Mark 0 as duplicate confirmed, should fail as it is 0 < root

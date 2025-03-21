@@ -248,12 +248,12 @@ mod tests {
         solana_hash::Hash,
         solana_program::clock::Slot,
         solana_runtime::{
-            accounts_background_service::AbsRequestSender,
             bank::Bank,
             epoch_stakes::EpochStakes,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
+            snapshot_controller::SnapshotController,
         },
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -290,7 +290,7 @@ mod tests {
         assert!(bank_forks
             .write()
             .unwrap()
-            .set_root(1, &AbsRequestSender::default(), None)
+            .set_root(1, &SnapshotController::default(), None)
             .is_ok());
         let root_bank = bank_forks.read().unwrap().root_bank();
         let root_slot = root_bank.slot();

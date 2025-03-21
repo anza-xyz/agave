@@ -50,9 +50,9 @@ mod tests {
     use {
         super::*,
         crate::{
-            accounts_background_service::AbsRequestSender,
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            snapshot_controller::SnapshotController,
         },
         solana_pubkey::Pubkey,
     };
@@ -80,7 +80,7 @@ mod tests {
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(1, &AbsRequestSender::default(), None)
+                .set_root(1, &SnapshotController::default(), None)
                 .unwrap();
             let bank = bank_forks.read().unwrap().root_bank();
 

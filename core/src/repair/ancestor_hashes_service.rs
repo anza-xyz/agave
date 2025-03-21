@@ -924,7 +924,7 @@ mod test {
             get_tmp_ledger_path_auto_delete, shred::Nonce,
         },
         solana_net_utils::bind_to_unspecified,
-        solana_runtime::{accounts_background_service::AbsRequestSender, bank_forks::BankForks},
+        solana_runtime::{bank_forks::BankForks, snapshot_controller::SnapshotController},
         solana_sdk::{
             hash::Hash,
             signature::{Keypair, Signer},
@@ -1901,7 +1901,7 @@ mod test {
             let mut w_bank_forks = bank_forks.write().unwrap();
             w_bank_forks.insert(new_root_bank);
             w_bank_forks
-                .set_root(new_root_slot, &AbsRequestSender::default(), None)
+                .set_root(new_root_slot, &SnapshotController::default(), None)
                 .unwrap();
         }
         popular_pruned_slot_pool.insert(dead_duplicate_confirmed_slot);

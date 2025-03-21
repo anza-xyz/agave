@@ -19,12 +19,12 @@ use {
     },
     crossbeam_channel::unbounded,
     solana_runtime::{
-        accounts_background_service::AbsRequestSender,
         bank::Bank,
         bank_forks::BankForks,
         genesis_utils::{
             create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
+        snapshot_controller::SnapshotController,
     },
     solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signer},
     solana_vote::vote_transaction,
@@ -233,7 +233,7 @@ impl VoteSimulator {
             new_root,
             &self.bank_forks,
             &mut self.progress,
-            &AbsRequestSender::default(),
+            &SnapshotController::default(),
             None,
             &mut self.heaviest_subtree_fork_choice,
             &mut DuplicateSlotsTracker::default(),

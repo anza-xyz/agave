@@ -267,9 +267,9 @@ mod tests {
         super::*,
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_runtime::{
-            accounts_background_service::AbsRequestSender,
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
+            snapshot_controller::SnapshotController,
         },
         solana_sdk::{account::Account, pubkey::Pubkey, signature::Signer},
         solana_stake_program::stake_state,
@@ -583,7 +583,7 @@ mod tests {
             bank_forks
                 .write()
                 .unwrap()
-                .set_root(x, &AbsRequestSender::default(), None)
+                .set_root(x, &SnapshotController::default(), None)
                 .unwrap();
         }
 
@@ -629,7 +629,7 @@ mod tests {
             .unwrap()
             .set_root(
                 root,
-                &AbsRequestSender::default(),
+                &SnapshotController::default(),
                 Some(highest_super_majority_root),
             )
             .unwrap();
@@ -717,7 +717,7 @@ mod tests {
             .unwrap()
             .set_root(
                 root,
-                &AbsRequestSender::default(),
+                &SnapshotController::default(),
                 Some(highest_super_majority_root),
             )
             .unwrap();

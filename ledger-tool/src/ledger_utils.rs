@@ -35,6 +35,7 @@ use {
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController,
         snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
@@ -403,6 +404,11 @@ pub fn load_and_process_ledger(
     );
     let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
     let accounts_background_request_sender = AbsRequestSender::new(snapshot_request_sender.clone());
+    let snapshot_controller = SnapshotController::new(
+        accounts_background_request_sender,
+        snapshot_config,
+        bank_forks.read().unwrap().root(),
+    );
     let snapshot_request_handler = SnapshotRequestHandler {
         snapshot_config: SnapshotConfig::new_load_only(),
         snapshot_request_sender,
@@ -433,7 +439,7 @@ pub fn load_and_process_ledger(
         transaction_status_sender.as_ref(),
         block_meta_sender.as_ref(),
         None, // entry_notification_sender
-        &accounts_background_request_sender,
+        &snapshot_controller,
     )
     .map(|_| LoadAndProcessLedgerOutput {
         bank_forks,
