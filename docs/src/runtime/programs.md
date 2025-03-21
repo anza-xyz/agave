@@ -25,19 +25,6 @@ transfer lamports from System Program owned accounts and pay transaction fees.
 - Program id: `11111111111111111111111111111111`
 - Instructions: [SystemInstruction](https://docs.rs/solana-program/VERSION_FOR_DOCS_RS/solana_program/system_instruction/enum.SystemInstruction.html)
 
-## Config Program
-
-Add configuration data to the chain, followed by the list of public keys that
-are allowed to modify it
-
-- Program id: `Config1111111111111111111111111111111111111`
-- Instructions: [config_instruction](https://docs.rs/solana-config-program/VERSION_FOR_DOCS_RS/solana_config_program/config_instruction/index.html)
-
-Unlike the other programs, the Config program does not define any individual
-instructions. It has just one implicit instruction: "store". Its
-instruction data is a set of keys that gate access to the account and the
-data to store inside of it.
-
 ## Stake Program
 
 Create and manage accounts representing stake and rewards for delegations to
