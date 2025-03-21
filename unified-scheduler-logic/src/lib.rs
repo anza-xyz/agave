@@ -469,6 +469,10 @@ impl TaskInner {
             .with_borrow_mut(token, |usage_count| usage_count.decrement_self().is_zero());
         did_unblock.then_some(self)
     }
+
+    pub fn into_transaction(self: Task) -> RuntimeTransaction<SanitizedTransaction> {
+        Task::into_inner(self).unwrap().transaction
+    }
 }
 
 /// [`Task`]'s per-address context to lock a [usage_queue](UsageQueue) with [certain kind of
