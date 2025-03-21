@@ -97,7 +97,8 @@ strip = true
 [features]
 sbf_c = []
 sbf_rust = []
-dummy-for-ci-check = ["sbf_c", "sbf_rust"]
+sbf_sanity_list = []
+dummy-for-ci-check = ["sbf_c", "sbf_rust", "sbf_sanity_list"]
 # This was needed for ci
 frozen-abi = []
 

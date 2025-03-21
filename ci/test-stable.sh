@@ -14,17 +14,15 @@ annotate() {
 
 cargo_build_sbf_sanity() {
   cargo_build_sbf="$(realpath ./cargo-build-sbf)"
-  # These programs must match those available on the list:
-  # https://github.com/anza-xyz/agave/blob/e12e6fbf76a0a3ba6acc85c3ef43467a7f90f38b/programs/sbf/tests/programs.rs#L149-L169
-  local sanity_programs=("128bit" "alloc" "alt_bn128" "alt_bn128_compression" "curve25519" "custom_heap" "dep_crate"
-  "external_spend" "iter" "many_args" "mem" "membuiltins" "noop" "panic" "param_passing" "poseidon" "rand"
-  "remaining_compute_units" "sanity" "secp256k1_recover" "sha")
 
   pushd programs/sbf
+  # Generate the sanity programs list
+  cargo test --features="sbf_rust,sbf_sanity_list" --test programs test_program_sbf_sanity
+  mapfile -t rust_programs < <(cat sanity_programs.txt)
 
   pushd rust
   # This is done in a loop to mock how developers invoke `cargo-build-sbf`
-  for program in "${sanity_programs[@]}"
+  for program in "${rust_programs[@]}"
   do
     pushd "$program"
     $cargo_build_sbf --arch "$1"

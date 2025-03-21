@@ -170,6 +170,20 @@ fn test_program_sbf_sanity() {
         ]);
     }
 
+    #[cfg(all(feature = "sbf_rust", feature = "sbf_sanity_list"))]
+    {
+        // This code generates the list of sanity programs for a CI job to build with
+        // cargo-build-sbf and ensure it is working correctly.
+        use std::{env, fs::File, io::Write};
+        let current_dir = env::current_dir().unwrap();
+        let mut file = File::create(current_dir.join("sanity_programs.txt")).unwrap();
+        for program in programs.iter() {
+            writeln!(file, "{}", program.0.trim_start_matches("solana_sbf_rust_"))
+                .expect("Failed to write to file");
+        }
+    }
+
+    #[cfg(not(feature = "sbf_sanity_list"))]
     for program in programs.iter() {
         println!("Test program: {:?}", program.0);
 
