@@ -51,16 +51,24 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
         let is_simple_vote_tx =
             is_simple_vote_tx.unwrap_or_else(|| is_simple_vote_transaction(&transaction));
 
-        let precompile_signature_details =
-            get_precompile_signature_details(transaction.program_instructions_iter());
+        // To avoid iterating over program_instructions_iter() 3 times: 2 times in get_precompite..
+        let mut program_ids_with_instructions = Vec::new();
+        for (program_id, instruction) in transaction.program_instructions_iter() {
+            program_ids_with_instructions.push((program_id, instruction));
+        }
+
+        let precompile_signature_details = get_precompile_signature_details(
+            program_ids_with_instructions.as_slice().iter().cloned(),
+        );
         let signature_details = TransactionSignatureDetails::new(
             u64::from(transaction.num_required_signatures()),
             precompile_signature_details.num_secp256k1_instruction_signatures,
             precompile_signature_details.num_ed25519_instruction_signatures,
             precompile_signature_details.num_secp256r1_instruction_signatures,
         );
-        let compute_budget_instruction_details =
-            ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;
+        let compute_budget_instruction_details = ComputeBudgetInstructionDetails::try_from(
+            program_ids_with_instructions.as_slice().iter().cloned(),
+        )?;
 
         Ok(Self {
             transaction,

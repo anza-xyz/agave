@@ -51,13 +51,14 @@ pub struct ComputeBudgetInstructionDetails {
 }
 
 impl ComputeBudgetInstructionDetails {
-    pub fn try_from<'a>(
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
-    ) -> Result<Self> {
+    pub fn try_from<'a, I>(instructions: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+    {
         let mut filter = ComputeBudgetProgramIdFilter::new();
         let mut compute_budget_instruction_details = ComputeBudgetInstructionDetails::default();
 
-        for (i, (program_id, instruction)) in instructions.clone().enumerate() {
+        for (i, (program_id, instruction)) in instructions.clone().into_iter().enumerate() {
             if filter.is_compute_budget_program(instruction.program_id_index as usize, program_id) {
                 compute_budget_instruction_details.process_instruction(i as u8, &instruction)?;
             } else {

@@ -11,9 +11,10 @@ pub struct PrecompileSignatureDetails {
 }
 
 /// Get transaction signature details.
-pub fn get_precompile_signature_details<'a>(
-    instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
-) -> PrecompileSignatureDetails {
+pub fn get_precompile_signature_details<'a, I>(instructions: I) -> PrecompileSignatureDetails
+where
+    I: IntoIterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
+{
     let mut filter = SignatureDetailsFilter::new();
 
     // Wrapping arithmetic is safe below because the maximum number of signatures
