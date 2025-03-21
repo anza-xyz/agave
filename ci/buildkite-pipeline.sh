@@ -271,19 +271,22 @@ EOF
       "downstream-projects skipped as no relevant files were modified"
   fi
 
-  # Coverage...
-  if affects \
-             .rs$ \
-             Cargo.lock$ \
-             Cargo.toml$ \
-             ^ci/rust-version.sh \
-             ^ci/test-coverage.sh \
-             ^scripts/coverage.sh \
-      ; then
-    command_step coverage "ci/docker-run-default-image.sh ci/test-coverage.sh" 80
-  else
-    annotate --style info --context test-coverage \
-      "Coverage skipped as no .rs files were modified"
+  # only run coverage on push builds
+  if [[ -z $CI_PULL_REQUEST ]]; then
+    # Coverage...
+    if affects \
+              .rs$ \
+              Cargo.lock$ \
+              Cargo.toml$ \
+              ^ci/rust-version.sh \
+              ^ci/test-coverage.sh \
+              ^scripts/coverage.sh \
+        ; then
+      command_step coverage "ci/docker-run-default-image.sh ci/test-coverage.sh" 80
+    else
+      annotate --style info --context test-coverage \
+        "Coverage skipped as no .rs files were modified"
+    fi
   fi
 }
 
