@@ -8892,6 +8892,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-keypair",
  "solana-measure",
+ "solana-metrics",
  "solana-quic-definitions",
  "solana-rpc-client",
  "solana-streamer",
