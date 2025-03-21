@@ -10,7 +10,7 @@ use {
         bank::{Bank, BankSlotDelta, DropCallback},
         bank_forks::BankForks,
         snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController,
         snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind},
         snapshot_utils::SnapshotError,
     },
@@ -135,8 +135,7 @@ pub enum SnapshotRequestKind {
 }
 
 pub struct SnapshotRequestHandler {
-    pub snapshot_config: SnapshotConfig,
-    pub snapshot_request_sender: SnapshotRequestSender,
+    pub snapshot_controller: Arc<SnapshotController>,
     pub snapshot_request_receiver: SnapshotRequestReceiver,
     pub accounts_package_sender: Sender<AccountsPackage>,
 }
@@ -255,7 +254,8 @@ impl SnapshotRequestHandler {
                         snapshot_request.snapshot_root_bank.slot() > handled_request_slot
                     })
                     .map(|snapshot_request| {
-                        self.snapshot_request_sender
+                        self.snapshot_controller
+                            .request_sender()
                             .try_send(snapshot_request)
                             .expect("re-enqueue snapshot request");
                     })
@@ -800,7 +800,10 @@ fn cmp_snapshot_request_kinds_by_priority(
 mod test {
     use {
         super::*,
-        crate::{bank::epoch_accounts_hash_utils, genesis_utils::create_genesis_config},
+        crate::{
+            bank::epoch_accounts_hash_utils, genesis_utils::create_genesis_config,
+            snapshot_config::SnapshotConfig,
+        },
         crossbeam_channel::unbounded,
         solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
         solana_sdk::{
@@ -859,9 +862,13 @@ mod test {
 
         let (accounts_package_sender, _accounts_package_receiver) = crossbeam_channel::unbounded();
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-        let snapshot_request_handler = SnapshotRequestHandler {
+        let snapshot_controller = Arc::new(SnapshotController::new(
+            snapshot_request_sender.clone(),
             snapshot_config,
-            snapshot_request_sender: snapshot_request_sender.clone(),
+            0,
+        ));
+        let snapshot_request_handler = SnapshotRequestHandler {
+            snapshot_controller,
             snapshot_request_receiver,
             accounts_package_sender,
         };

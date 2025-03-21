@@ -15,6 +15,7 @@ use {
     solana_runtime::{
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController,
         snapshot_package::{
             self, AccountsHashAlgorithm, AccountsPackage, AccountsPackageKind, SnapshotKind,
             SnapshotPackage,
@@ -43,7 +44,7 @@ impl AccountsHashVerifier {
         accounts_package_receiver: Receiver<AccountsPackage>,
         pending_snapshot_packages: Arc<Mutex<PendingSnapshotPackages>>,
         exit: Arc<AtomicBool>,
-        snapshot_config: SnapshotConfig,
+        snapshot_controller: Arc<SnapshotController>,
     ) -> Self {
         // If there are no accounts packages to process, limit how often we re-check
         const LOOP_LIMITER: Duration = Duration::from_millis(DEFAULT_MS_PER_SLOT);
@@ -71,10 +72,11 @@ impl AccountsHashVerifier {
                     info!("handling accounts package: {accounts_package:?}");
                     let enqueued_time = accounts_package.enqueued.elapsed();
 
+                    let snapshot_config = snapshot_controller.snapshot_config();
                     let (result, handling_time_us) = measure_us!(Self::process_accounts_package(
                         accounts_package,
                         &pending_snapshot_packages,
-                        &snapshot_config,
+                        snapshot_config,
                     ));
                     if let Err(err) = result {
                         error!(
