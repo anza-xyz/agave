@@ -32,7 +32,7 @@ pub fn add_genesis_account(genesis_config: &mut GenesisConfig) -> u64 {
 
     account.set_lamports(lamports.max(1));
 
-    genesis_config.add_account(solana_sdk_ids::config::id(), account);
+    genesis_config.add_account(solana_stake_interface::config::id(), account);
 
     lamports
 }
