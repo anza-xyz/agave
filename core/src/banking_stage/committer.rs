@@ -2,11 +2,13 @@ use {
     super::leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
     itertools::Itertools,
     solana_ledger::{
-        blockstore_processor::TransactionStatusSender, token_balances::collect_token_balances,
+        blockstore_processor::TransactionStatusSender,
+        token_balances::collect_token_balances,
+        transaction_balances::{calculate_transaction_balances, BalanceInfo},
     },
     solana_measure::measure_us,
     solana_runtime::{
-        bank::{Bank, ProcessedTransactionCounts, TransactionBalancesSet},
+        bank::{Bank, ProcessedTransactionCounts},
         bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::TransactionBatch,
@@ -72,7 +74,7 @@ impl Committer {
         processing_results: Vec<TransactionProcessingResult>,
         starting_transaction_index: Option<usize>,
         bank: &Arc<Bank>,
-        pre_balance_info: &mut PreBalanceInfo,
+        pre_balance_info: &mut PreBalanceInfo, // HANA remove
         execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
         processed_counts: &ProcessedTransactionCounts,
     ) -> (u64, Vec<CommitTransactionDetails>) {
@@ -81,6 +83,8 @@ impl Committer {
             .zip(batch.sanitized_transactions())
             .filter_map(|(processing_result, tx)| processing_result.was_processed().then_some(tx))
             .collect_vec();
+
+        let balance_info = calculate_transaction_balances(batch, &processing_results, bank);
 
         let (commit_results, commit_time_us) = measure_us!(bank.commit_transactions(
             batch.sanitized_transactions(),
@@ -116,7 +120,8 @@ impl Committer {
                 commit_results,
                 bank,
                 batch,
-                pre_balance_info,
+                pre_balance_info, // HANA remove
+                balance_info,
                 starting_transaction_index,
             );
             self.prioritization_fee_cache
@@ -131,7 +136,8 @@ impl Committer {
         commit_results: Vec<TransactionCommitResult>,
         bank: &Arc<Bank>,
         batch: &TransactionBatch<impl TransactionWithMeta>,
-        pre_balance_info: &mut PreBalanceInfo,
+        pre_balance_info: &mut PreBalanceInfo, // HANA remove
+        balance_info: BalanceInfo,
         starting_transaction_index: Option<usize>,
     ) {
         if let Some(transaction_status_sender) = &self.transaction_status_sender {
@@ -142,7 +148,6 @@ impl Committer {
                 .iter()
                 .map(|tx| tx.as_sanitized_transaction().into_owned())
                 .collect_vec();
-            let post_balances = bank.collect_balances(batch);
             let post_token_balances =
                 collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals);
             let mut transaction_index = starting_transaction_index.unwrap_or_default();
@@ -162,10 +167,7 @@ impl Committer {
                 bank.slot(),
                 txs,
                 commit_results,
-                TransactionBalancesSet::new(
-                    std::mem::take(&mut pre_balance_info.native),
-                    post_balances,
-                ),
+                balance_info.0,
                 TransactionTokenBalancesSet::new(
                     std::mem::take(&mut pre_balance_info.token),
                     post_token_balances,
