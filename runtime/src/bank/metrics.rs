@@ -24,6 +24,7 @@ pub(crate) struct RewardsMetrics {
     pub(crate) store_vote_accounts_us: AtomicU64,
     pub(crate) vote_accounts_cache_miss_count: AtomicU64,
     pub(crate) hash_partition_rewards_us: u64,
+    pub(crate) assert_us: u64,
 }
 
 pub(crate) struct NewBankTimings {
@@ -103,6 +104,7 @@ pub(crate) fn report_new_epoch_metrics(
             metrics.hash_partition_rewards_us,
             i64
         ),
+        ("assert_us", metrics.assert_us, i64),
     );
 }
 

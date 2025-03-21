@@ -109,7 +109,8 @@ impl Bank {
             thread_pool,
             metrics,
         );
-        let vote_rewards = self.store_vote_accounts_partitioned(vote_account_rewards, metrics);
+        let (vote_rewards, total_vote_rewards) =
+            self.store_vote_accounts_partitioned(vote_account_rewards, metrics);
 
         // update reward history of JUST vote_rewards, stake_rewards is vec![] here
         self.update_reward_history(vec![], vote_rewards);
@@ -119,21 +120,23 @@ impl Bank {
             total_stake_rewards_lamports,
         } = stake_rewards_by_partition;
 
-        // the remaining code mirrors `update_rewards_with_thread_pool()`
+        let (_, assert_us) = measure_us!({
+            // the remaining code mirrors `update_rewards_with_thread_pool()`
+            let new_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
 
-        let new_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
+            // This is for vote rewards only.
+            let validator_rewards_paid = new_vote_balance_and_staked - old_vote_balance_and_staked;
+            assert_eq!(total_vote_rewards, validator_rewards_paid);
+            self.assert_validator_rewards_paid(validator_rewards_paid);
 
-        // This is for vote rewards only.
-        let validator_rewards_paid = new_vote_balance_and_staked - old_vote_balance_and_staked;
-        self.assert_validator_rewards_paid(validator_rewards_paid);
-
-        // verify that we didn't pay any more than we expected to
-        assert!(point_value.rewards >= validator_rewards_paid + total_stake_rewards_lamports);
-
-        info!(
-            "distributed vote rewards: {} out of {}, remaining {}",
-            validator_rewards_paid, point_value.rewards, total_stake_rewards_lamports
-        );
+            // verify that we didn't pay any more than we expected to
+            assert!(point_value.rewards >= validator_rewards_paid + total_stake_rewards_lamports);
+            info!(
+                "distributed vote rewards: {} out of {}, remaining {}",
+                validator_rewards_paid, point_value.rewards, total_stake_rewards_lamports
+            );
+        });
+        metrics.assert_us += assert_us;
 
         let (num_stake_accounts, num_vote_accounts) = {
             let stakes = self.stakes_cache.stakes();
@@ -142,8 +145,7 @@ impl Bank {
                 stakes.vote_accounts().len(),
             )
         };
-        self.capitalization
-            .fetch_add(validator_rewards_paid, Relaxed);
+        self.capitalization.fetch_add(total_vote_rewards, Relaxed);
 
         let active_stake = if let Some(stake_history_entry) =
             self.stakes_cache.stakes().history().get(prev_epoch)
@@ -160,7 +162,7 @@ impl Bank {
             ("validator_rate", validator_rate, f64),
             ("foundation_rate", foundation_rate, f64),
             ("epoch_duration_in_years", prev_epoch_duration_in_years, f64),
-            ("validator_rewards", validator_rewards_paid, i64),
+            ("validator_rewards", total_vote_rewards, i64),
             ("active_stake", active_stake, i64),
             ("pre_capitalization", capitalization, i64),
             ("post_capitalization", self.capitalization(), i64),
@@ -169,7 +171,7 @@ impl Bank {
         );
 
         CalculateRewardsAndDistributeVoteRewardsResult {
-            distributed_rewards: validator_rewards_paid,
+            distributed_rewards: total_vote_rewards,
             point_value,
             stake_rewards_by_partition,
         }
@@ -179,7 +181,8 @@ impl Bank {
         &self,
         vote_account_rewards: VoteRewardsAccounts,
         metrics: &RewardsMetrics,
-    ) -> Vec<(Pubkey, RewardInfo)> {
+    ) -> (Vec<(Pubkey, RewardInfo)>, u64) {
+        let mut total_rewards = 0;
         let (_, measure_us) = measure_us!({
             // reformat data to make it not sparse.
             // `StorableAccounts` does not efficiently handle sparse data.
@@ -189,7 +192,10 @@ impl Bank {
                 .iter()
                 .filter_map(|account| account.as_ref())
                 .enumerate()
-                .map(|(i, account)| (&vote_account_rewards.rewards[i].0, account))
+                .map(|(i, account)| {
+                    total_rewards += vote_account_rewards.rewards[i].1.lamports;
+                    (&vote_account_rewards.rewards[i].0, account)
+                })
                 .collect::<Vec<_>>();
             self.store_accounts((self.slot(), &to_store[..]));
         });
@@ -198,7 +204,7 @@ impl Bank {
             .store_vote_accounts_us
             .fetch_add(measure_us, Relaxed);
 
-        vote_account_rewards.rewards
+        (vote_account_rewards.rewards, total_rewards as u64)
     }
 
     /// Calculate rewards from previous epoch to prepare for partitioned distribution.
@@ -626,9 +632,16 @@ mod tests {
 
         let metrics = RewardsMetrics::default();
 
-        let stored_vote_accounts =
+        let (stored_vote_accounts, total_vote_rewards) =
             bank.store_vote_accounts_partitioned(vote_rewards_account, &metrics);
         assert_eq!(expected_vote_rewards_num, stored_vote_accounts.len());
+        assert_eq!(
+            vote_rewards
+                .iter()
+                .map(|e| e.as_ref().unwrap().1.vote_rewards)
+                .sum::<u64>(),
+            total_vote_rewards
+        );
 
         // load accounts to make sure they were stored correctly
         vote_rewards.iter().for_each(|e| {
@@ -649,8 +662,10 @@ mod tests {
         let vote_rewards = VoteRewardsAccounts::default();
         let metrics = RewardsMetrics::default();
 
-        let stored_vote_accounts = bank.store_vote_accounts_partitioned(vote_rewards, &metrics);
+        let (stored_vote_accounts, total_vote_rewards) =
+            bank.store_vote_accounts_partitioned(vote_rewards, &metrics);
         assert_eq!(expected, stored_vote_accounts.len());
+        assert_eq!(0, total_vote_rewards);
     }
 
     #[test]
