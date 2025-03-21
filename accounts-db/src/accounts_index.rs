@@ -73,7 +73,6 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
 };
 pub type ScanResult<T> = Result<T, ScanError>;
 pub type SlotList<T> = Vec<(Slot, T)>;
-pub type SlotSlice<'s, T> = &'s [(Slot, T)];
 pub type RefCount = u64;
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -968,12 +967,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     pub fn get_rooted_entries(
         &self,
-        slice: SlotSlice<T>,
+        slot_list: &[(Slot, T)],
         max_inclusive: Option<Slot>,
     ) -> SlotList<T> {
         let max_inclusive = max_inclusive.unwrap_or(Slot::MAX);
         let lock = &self.roots_tracker.read().unwrap().alive_roots;
-        slice
+        slot_list
             .iter()
             .filter(|(slot, _)| *slot <= max_inclusive && lock.contains(slot))
             .cloned()
@@ -1011,19 +1010,19 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         Self::min_ongoing_scan_root_from_btree(&self.ongoing_scan_roots.read().unwrap())
     }
 
-    // Given a SlotSlice `L`, a list of ancestors and a maximum slot, find the latest element
+    // Given a SlotList `L`, a list of ancestors and a maximum slot, find the latest element
     // in `L`, where the slot `S` is an ancestor or root, and if `S` is a root, then `S <= max_root`
     pub(crate) fn latest_slot(
         &self,
         ancestors: Option<&Ancestors>,
-        slice: SlotSlice<T>,
+        slot_list: &[(Slot, T)],
         max_root_inclusive: Option<Slot>,
     ) -> Option<usize> {
         let mut current_max = 0;
         let mut rv = None;
         if let Some(ancestors) = ancestors {
             if !ancestors.is_empty() {
-                for (i, (slot, _t)) in slice.iter().rev().enumerate() {
+                for (i, (slot, _t)) in slot_list.iter().rev().enumerate() {
                     if (rv.is_none() || *slot > current_max) && ancestors.contains_key(slot) {
                         rv = Some(i);
                         current_max = *slot;
@@ -1035,7 +1034,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let max_root_inclusive = max_root_inclusive.unwrap_or(Slot::MAX);
         let mut tracker = None;
 
-        for (i, (slot, _t)) in slice.iter().rev().enumerate() {
+        for (i, (slot, _t)) in slot_list.iter().rev().enumerate() {
             if (rv.is_none() || *slot > current_max) && *slot <= max_root_inclusive {
                 let lock = match tracker {
                     Some(inner) => inner,
@@ -1049,7 +1048,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             }
         }
 
-        rv.map(|index| slice.len() - 1 - index)
+        rv.map(|index| slot_list.len() - 1 - index)
     }
 
     pub fn hold_range_in_memory<R>(&self, range: &R, start_holding: bool, thread_pool: &ThreadPool)
@@ -1209,14 +1208,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         });
     }
 
-    // Get the maximum root <= `max_allowed_root` from the given `slice`
+    // Get the maximum root <= `max_allowed_root` from the given `slot_list`
     fn get_newest_root_in_slot_list(
         alive_roots: &RollingBitField,
-        slice: SlotSlice<T>,
+        slot_list: &[(Slot, T)],
         max_allowed_root_inclusive: Option<Slot>,
     ) -> Slot {
         let mut max_root = 0;
-        for (slot, _) in slice.iter() {
+        for (slot, _) in slot_list.iter() {
             if let Some(max_allowed_root_inclusive) = max_allowed_root_inclusive {
                 if *slot > max_allowed_root_inclusive {
                     continue;
