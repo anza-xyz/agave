@@ -259,7 +259,7 @@ pub enum AccountsIndexScanResult {
 /// T: account info type to interact in in-memory items
 /// U: account info type to be persisted to disk
 pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
-    pub account_maps: Vec<Arc<InMemAccountsIndex<T, U>>>,
+    pub account_maps: Box<[Arc<InMemAccountsIndex<T, U>>]>,
     pub bin_calculator: PubkeyBinCalculator24,
     program_id_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_mint_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
@@ -404,7 +404,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         config: Option<AccountsIndexConfig>,
         exit: Arc<AtomicBool>,
     ) -> (
-        Vec<Arc<InMemAccountsIndex<T, U>>>,
+        Box<[Arc<InMemAccountsIndex<T, U>>]>,
         PubkeyBinCalculator24,
         AccountsIndexStorage<T, U>,
     ) {
@@ -415,9 +415,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // create bin_calculator early to verify # bins is reasonable
         let bin_calculator = PubkeyBinCalculator24::new(bins);
         let storage = AccountsIndexStorage::new(bins, &config, exit);
-        let account_maps = (0..bins)
+
+        let account_maps: Box<_> = (0..bins)
             .map(|bin| Arc::clone(&storage.in_mem[bin]))
-            .collect::<Vec<_>>();
+            .collect();
         (account_maps, bin_calculator, storage)
     }
 
