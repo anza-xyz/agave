@@ -564,6 +564,12 @@ impl BucketMapHolderStats {
                     "accounts_index"
                 },
                 (
+                    "estimate_mem_bytes",
+                    self.count_in_mem.load(Ordering::Relaxed)
+                        * InMemAccountsIndex::<T, U>::approx_size_of_one_entry(),
+                    i64
+                ),
+                (
                     "count_in_mem",
                     self.count_in_mem.load(Ordering::Relaxed),
                     i64
