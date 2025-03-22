@@ -14,6 +14,14 @@ use {
 pub const ACCOUNTS_RUN_DIR: &str = "run";
 pub const ACCOUNTS_SNAPSHOT_DIR: &str = "snapshot";
 
+#[macro_export]
+macro_rules! test_assert {
+    ($($tt: tt)*) => {
+        #[cfg(test)]
+        assert!($($tt)*)
+    }
+}
+
 /// For all account_paths, create the run/ and snapshot/ sub directories.
 /// If an account_path directory does not exist, create it.
 /// It returns (account_run_paths, account_snapshot_paths) or error
