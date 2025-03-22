@@ -170,6 +170,18 @@ fn test_program_sbf_sanity() {
         ]);
     }
 
+    #[cfg(all(feature = "sbf_rust", feature = "sbf_sanity_list"))]
+    {
+        use std::{env, fs::File, io::Write};
+        let current_dir = env::current_dir().unwrap();
+        let mut file = File::create(current_dir.join("sanity_programs.txt")).unwrap();
+        for program in programs.iter() {
+            writeln!(file, "{}", program.0.trim_start_matches("solana_sbf_rust_"))
+                .expect("Failed to write to file");
+        }
+    }
+
+    #[cfg(not(feature = "sbf_sanity_list"))]
     for program in programs.iter() {
         println!("Test program: {:?}", program.0);
 
@@ -4095,6 +4107,7 @@ fn test_cpi_change_account_data_memory_allocation() {
 }
 
 #[test]
+#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 fn test_cpi_invalid_account_info_pointers() {
     solana_logger::setup();
 
