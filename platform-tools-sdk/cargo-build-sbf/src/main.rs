@@ -517,6 +517,23 @@ fn check_undefined_symbols(config: &Config, program: &Path) {
     }
 }
 
+// Check if we have all binaries in place to execute the build command.
+// If the download failed or the binaries were somehow deleted, inform the user how to fix it.
+fn corrupted_toolchain(config: &Config) -> bool {
+    let toolchain_path = config
+        .sbf_sdk
+        .join("dependencies")
+        .join("platform-tools")
+        .join("rust");
+
+    if !toolchain_path.exists() {
+        return true;
+    }
+
+    let binaries = toolchain_path.join("bin");
+    !binaries.exists() || !binaries.join("rustc").exists() || !binaries.join("cargo").exists()
+}
+
 // check whether custom solana toolchain is linked, and link it if it is not.
 fn link_solana_toolchain(config: &Config) {
     let toolchain_path = config
@@ -726,6 +743,14 @@ fn build_solana_package(
             );
             env::remove_var("RUSTC")
         }
+    }
+
+    if corrupted_toolchain(config) {
+        error!(
+            "The Solana toolchain is corrupted. Please, run cargo-build-sbf with the \
+        --force-tools-install argument to fix it."
+        );
+        exit(1);
     }
 
     let llvm_bin = config
