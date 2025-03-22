@@ -33,6 +33,7 @@ Release channels have their own copy of this changelog:
   * Deprecate `--tower-storage` and all `--etcd-*` arguments
   * SDK:
     * `cargo-build-sbf`: add `--skip-tools-install` flag to avoid downloading platform tools and `--no-rustup-override` flag to not use rustup when invoking `cargo`. Useful for immutable environments like Nix.
+  * `--block-production-method central-scheduler-greedy` is now the default.
 
 ## 2.1.0
 * Breaking:
