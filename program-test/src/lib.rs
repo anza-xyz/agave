@@ -20,12 +20,13 @@ use {
         serialization::serialize_parameters, stable_log,
     },
     solana_runtime::{
-        accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
+        accounts_background_service::SnapshotRequestKind,
         bank::Bank,
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         genesis_utils::{create_genesis_config_with_leader_ex, GenesisConfigInfo},
         runtime_config::RuntimeConfig,
+        snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
     },
     solana_sdk::{
@@ -1172,15 +1173,18 @@ impl ProgramTestContext {
         };
 
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-        let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
         let snapshot_controller = SnapshotController::new(
-            abs_request_sender,
-            None, /* snapshot_config */
+            snapshot_request_sender,
+            SnapshotConfig::new_disabled(),
             bank_forks.root(),
         );
 
         bank_forks
-            .set_root(pre_warp_slot, &snapshot_controller, Some(pre_warp_slot))
+            .set_root(
+                pre_warp_slot,
+                Some(&snapshot_controller),
+                Some(pre_warp_slot),
+            )
             .unwrap();
 
         // The call to `set_root()` above will send an EAH request.  Need to intercept and handle
@@ -1246,7 +1250,7 @@ impl ProgramTestContext {
         bank_forks
             .set_root(
                 pre_warp_slot,
-                &SnapshotController::default(),
+                None, // snapshot_controller
                 Some(pre_warp_slot),
             )
             .unwrap();

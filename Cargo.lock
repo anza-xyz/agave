@@ -11184,6 +11184,7 @@ version = "2.3.0"
 dependencies = [
  "anyhow",
  "assert_matches",
+ "crossbeam-channel",
  "log",
  "prost",
  "prost-build",

@@ -95,7 +95,7 @@ use {
     },
     solana_runtime::{
         accounts_background_service::{
-            AbsRequestHandlers, AbsRequestSender, AccountsBackgroundService, DroppedSlotsReceiver,
+            AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
         bank::Bank,
@@ -886,15 +886,25 @@ impl Validator {
             config.accounts_hash_interval_slots,
         ));
 
+        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let snapshot_controller = Arc::new(SnapshotController::new(
+            snapshot_request_sender.clone(),
+            config.snapshot_config.clone(),
+            bank_forks.read().unwrap().root(),
+        ));
+
         let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-        let snapshot_packager_service = if config.snapshot_config.should_generate_snapshots() {
+        let snapshot_packager_service = if snapshot_controller
+            .snapshot_config()
+            .should_generate_snapshots()
+        {
             let enable_gossip_push = true;
             let snapshot_packager_service = SnapshotPackagerService::new(
                 pending_snapshot_packages.clone(),
                 starting_snapshot_hashes,
                 exit.clone(),
                 cluster_info.clone(),
-                config.snapshot_config.clone(),
+                snapshot_controller.clone(),
                 enable_gossip_push,
             );
             Some(snapshot_packager_service)
@@ -908,20 +918,10 @@ impl Validator {
             accounts_package_receiver,
             pending_snapshot_packages,
             exit.clone(),
-            config.snapshot_config.clone(),
+            snapshot_controller.clone(),
         );
-
-        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
-        let accounts_background_request_sender =
-            AbsRequestSender::new(snapshot_request_sender.clone());
-        let snapshot_controller = Arc::new(SnapshotController::new(
-            accounts_background_request_sender,
-            Some(config.snapshot_config.clone()),
-            bank_forks.read().unwrap().root(),
-        ));
         let snapshot_request_handler = SnapshotRequestHandler {
-            snapshot_config: config.snapshot_config.clone(),
-            snapshot_request_sender,
+            snapshot_controller: snapshot_controller.clone(),
             snapshot_request_receiver,
             accounts_package_sender,
         };
@@ -1167,7 +1167,7 @@ impl Validator {
             let rpc_svc_config = JsonRpcServiceConfig {
                 rpc_addr,
                 rpc_config: config.rpc_config.clone(),
-                snapshot_config: Some(config.snapshot_config.clone()),
+                snapshot_config: Some(snapshot_controller.snapshot_config().clone()),
                 bank_forks: bank_forks.clone(),
                 block_commitment_cache: block_commitment_cache.clone(),
                 blockstore: blockstore.clone(),
@@ -1528,7 +1528,7 @@ impl Validator {
             &max_slots,
             block_metadata_notifier,
             config.wait_to_vote_slot,
-            snapshot_controller.clone(),
+            Some(snapshot_controller.clone()),
             config.runtime_config.log_messages_bytes_limit,
             connection_cache_for_warmup,
             &prioritization_fee_cache,
@@ -1559,8 +1559,7 @@ impl Validator {
                 wen_restart_repair_slots: wen_restart_repair_slots.clone(),
                 wait_for_supermajority_threshold_percent:
                     WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT,
-                snapshot_config: config.snapshot_config.clone(),
-                snapshot_controller: snapshot_controller.clone(),
+                snapshot_controller: Some(snapshot_controller.clone()),
                 abs_status: accounts_background_service.status().clone(),
                 genesis_config_hash: genesis_config.hash(),
                 exit: exit.clone(),
@@ -2082,7 +2081,7 @@ fn load_blockstore(
             genesis_config,
             &blockstore,
             config.account_paths.clone(),
-            Some(&config.snapshot_config),
+            &config.snapshot_config,
             &process_options,
             transaction_history_services.block_meta_sender.as_ref(),
             entry_notifier_service
@@ -2204,7 +2203,7 @@ impl<'a> ProcessBlockStore<'a> {
                 self.transaction_status_sender,
                 self.block_meta_sender.as_ref(),
                 self.entry_notification_sender,
-                self.snapshot_controller,
+                Some(self.snapshot_controller),
             )
             .map_err(|err| {
                 exit.store(true, Ordering::Relaxed);
@@ -2299,7 +2298,7 @@ fn maybe_warp_slot(
             solana_accounts_db::accounts_db::CalcAccountsHashDataSource::Storages,
         ));
         bank_forks
-            .set_root(warp_slot, snapshot_controller, Some(warp_slot))
+            .set_root(warp_slot, Some(snapshot_controller), Some(warp_slot))
             .map_err(|err| err.to_string())?;
         leader_schedule_cache.set_root(&bank_forks.root_bank());
 

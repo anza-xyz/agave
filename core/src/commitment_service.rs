@@ -269,7 +269,6 @@ mod tests {
         solana_runtime::{
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
-            snapshot_controller::SnapshotController,
         },
         solana_sdk::{account::Account, pubkey::Pubkey, signature::Signer},
         solana_stake_program::stake_state,
@@ -580,11 +579,7 @@ mod tests {
             .root_slot
             .unwrap();
         for x in 0..root {
-            bank_forks
-                .write()
-                .unwrap()
-                .set_root(x, &SnapshotController::default(), None)
-                .unwrap();
+            bank_forks.write().unwrap().set_root(x, None, None).unwrap();
         }
 
         // Add an additional bank/vote that will root slot 2
@@ -627,11 +622,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(
-                root,
-                &SnapshotController::default(),
-                Some(highest_super_majority_root),
-            )
+            .set_root(root, None, Some(highest_super_majority_root))
             .unwrap();
         let highest_super_majority_root_bank =
             bank_forks.read().unwrap().get(highest_super_majority_root);
@@ -715,11 +706,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(
-                root,
-                &SnapshotController::default(),
-                Some(highest_super_majority_root),
-            )
+            .set_root(root, None, Some(highest_super_majority_root))
             .unwrap();
         let highest_super_majority_root_bank =
             bank_forks.read().unwrap().get(highest_super_majority_root);

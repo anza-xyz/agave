@@ -81,10 +81,7 @@ mod tests {
     use {
         super::*,
         solana_clock::Slot,
-        solana_runtime::{
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            snapshot_controller::SnapshotController,
-        },
+        solana_runtime::genesis_utils::{create_genesis_config, GenesisConfigInfo},
     };
 
     #[test]
@@ -161,7 +158,6 @@ mod tests {
             let bank = Bank::new_from_parent(bank, &Pubkey::new_unique(), slot);
             bank_forks.write().unwrap().insert(bank);
         }
-        let snapshot_controller = SnapshotController::default();
         // root is still 0, epoch 0.
         let root_bank = bank_forks.read().unwrap().get(0).unwrap();
         verify_epoch_specs(
@@ -174,7 +170,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(17, &snapshot_controller, None)
+            .set_root(17, None, None)
             .unwrap();
         let root_bank = bank_forks.read().unwrap().get(17).unwrap();
         verify_epoch_specs(
@@ -187,7 +183,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(19, &snapshot_controller, None)
+            .set_root(19, None, None)
             .unwrap();
         let root_bank = bank_forks.read().unwrap().get(19).unwrap();
         verify_epoch_specs(
@@ -200,7 +196,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(37, &snapshot_controller, None)
+            .set_root(37, None, None)
             .unwrap();
         let root_bank = bank_forks.read().unwrap().get(37).unwrap();
         verify_epoch_specs(
@@ -213,7 +209,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(59, &snapshot_controller, None)
+            .set_root(59, None, None)
             .unwrap();
         let root_bank = bank_forks.read().unwrap().get(59).unwrap();
         verify_epoch_specs(
@@ -226,7 +222,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(97, &snapshot_controller, None)
+            .set_root(97, None, None)
             .unwrap();
         let root_bank = bank_forks.read().unwrap().get(97).unwrap();
         verify_epoch_specs(

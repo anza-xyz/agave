@@ -52,7 +52,6 @@ mod tests {
         crate::{
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            snapshot_controller::SnapshotController,
         },
         solana_pubkey::Pubkey,
     };
@@ -77,11 +76,7 @@ mod tests {
             assert_eq!(bank.slot(), cached_root_bank.slot());
         }
         {
-            bank_forks
-                .write()
-                .unwrap()
-                .set_root(1, &SnapshotController::default(), None)
-                .unwrap();
+            bank_forks.write().unwrap().set_root(1, None, None).unwrap();
             let bank = bank_forks.read().unwrap().root_bank();
 
             // cached slot and bank are not updated until we call `root_bank()`

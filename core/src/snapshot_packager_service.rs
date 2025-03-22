@@ -7,7 +7,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
-        snapshot_config::SnapshotConfig, snapshot_hash::StartingSnapshotHashes,
+        snapshot_controller::SnapshotController, snapshot_hash::StartingSnapshotHashes,
         snapshot_package::SnapshotPackage, snapshot_utils,
     },
     std::{
@@ -33,13 +33,14 @@ impl SnapshotPackagerService {
         starting_snapshot_hashes: Option<StartingSnapshotHashes>,
         exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
-        snapshot_config: SnapshotConfig,
+        snapshot_controller: Arc<SnapshotController>,
         enable_gossip_push: bool,
     ) -> Self {
         let t_snapshot_packager = Builder::new()
             .name("solSnapshotPkgr".to_string())
             .spawn(move || {
                 info!("SnapshotPackagerService has started");
+                let snapshot_config = snapshot_controller.snapshot_config();
                 renice_this_thread(snapshot_config.packager_thread_niceness_adj).unwrap();
                 let mut snapshot_gossip_manager = enable_gossip_push
                     .then(|| SnapshotGossipManager::new(cluster_info, starting_snapshot_hashes));
@@ -69,7 +70,7 @@ impl SnapshotPackagerService {
                     let (archive_result, archive_time_us) =
                         measure_us!(snapshot_utils::serialize_and_archive_snapshot_package(
                             snapshot_package,
-                            &snapshot_config,
+                            snapshot_config,
                         ));
                     if let Err(err) = archive_result {
                         error!(

@@ -1,6 +1,8 @@
 use {
     crate::{
-        accounts_background_service::{AbsRequestSender, SnapshotRequest, SnapshotRequestKind},
+        accounts_background_service::{
+            SnapshotRequest, SnapshotRequestKind, SnapshotRequestSender,
+        },
         bank::{epoch_accounts_hash_utils, Bank, SquashTiming},
         bank_forks::SetRootError,
         snapshot_config::SnapshotConfig,
@@ -18,17 +20,16 @@ use {
     },
 };
 
-#[derive(Default)]
 pub struct SnapshotController {
-    abs_request_sender: AbsRequestSender,
-    snapshot_config: Option<SnapshotConfig>,
+    abs_request_sender: SnapshotRequestSender,
+    snapshot_config: SnapshotConfig,
     latest_abs_request_slot: AtomicU64,
 }
 
 impl SnapshotController {
     pub fn new(
-        abs_request_sender: AbsRequestSender,
-        snapshot_config: Option<SnapshotConfig>,
+        abs_request_sender: SnapshotRequestSender,
+        snapshot_config: SnapshotConfig,
         root_slot: Slot,
     ) -> Self {
         Self {
@@ -36,6 +37,14 @@ impl SnapshotController {
             snapshot_config,
             latest_abs_request_slot: AtomicU64::new(root_slot),
         }
+    }
+
+    pub fn snapshot_config(&self) -> &SnapshotConfig {
+        &self.snapshot_config
+    }
+
+    pub fn request_sender(&self) -> &SnapshotRequestSender {
+        &self.abs_request_sender
     }
 
     fn latest_abs_request_slot(&self) -> Slot {
@@ -62,43 +71,38 @@ impl SnapshotController {
         // unlikely for a validator with default snapshot intervals (and accounts hash verifier
         // intervals), it *is* possible, and there are tests to exercise this possibility.
         if let Some(abs_request_interval) = self.abs_request_interval() {
-            if self.abs_request_sender.is_snapshot_creation_enabled() {
-                if let Some(bank) = banks.iter().find(|bank| {
-                    bank.slot() > self.latest_abs_request_slot()
-                        && bank.block_height() % abs_request_interval == 0
-                }) {
-                    let bank_slot = bank.slot();
-                    self.set_latest_abs_request_slot(bank_slot);
-                    squash_timing += bank.squash();
+            if let Some(bank) = banks.iter().find(|bank| {
+                bank.slot() > self.latest_abs_request_slot()
+                    && bank.block_height() % abs_request_interval == 0
+            }) {
+                let bank_slot = bank.slot();
+                self.set_latest_abs_request_slot(bank_slot);
+                squash_timing += bank.squash();
 
-                    is_root_bank_squashed = bank_slot == root;
+                is_root_bank_squashed = bank_slot == root;
 
-                    let mut snapshot_time = Measure::start("squash::snapshot_time");
-                    if bank.is_startup_verification_complete() {
-                        // Save off the status cache because these may get pruned if another
-                        // `set_root()` is called before the snapshots package can be generated
-                        let status_cache_slot_deltas =
-                            bank.status_cache.read().unwrap().root_slot_deltas();
-                        if let Err(e) =
-                            self.abs_request_sender
-                                .send_snapshot_request(SnapshotRequest {
-                                    snapshot_root_bank: Arc::clone(bank),
-                                    status_cache_slot_deltas,
-                                    request_kind: SnapshotRequestKind::Snapshot,
-                                    enqueued: Instant::now(),
-                                })
-                        {
-                            warn!(
-                                "Error sending snapshot request for bank: {}, err: {:?}",
-                                bank_slot, e
-                            );
-                        }
-                    } else {
-                        info!("Not sending snapshot request for bank: {}, startup verification is incomplete", bank_slot);
+                let mut snapshot_time = Measure::start("squash::snapshot_time");
+                if bank.is_startup_verification_complete() {
+                    // Save off the status cache because these may get pruned if another
+                    // `set_root()` is called before the snapshots package can be generated
+                    let status_cache_slot_deltas =
+                        bank.status_cache.read().unwrap().root_slot_deltas();
+                    if let Err(e) = self.abs_request_sender.send(SnapshotRequest {
+                        snapshot_root_bank: Arc::clone(bank),
+                        status_cache_slot_deltas,
+                        request_kind: SnapshotRequestKind::Snapshot,
+                        enqueued: Instant::now(),
+                    }) {
+                        warn!(
+                            "Error sending snapshot request for bank: {}, err: {:?}",
+                            bank_slot, e
+                        );
                     }
-                    snapshot_time.stop();
-                    total_snapshot_ms += snapshot_time.as_ms();
+                } else {
+                    info!("Not sending snapshot request for bank: {}, startup verification is incomplete", bank_slot);
                 }
+                snapshot_time.stop();
+                total_snapshot_ms += snapshot_time.as_ms();
             }
         }
 
@@ -109,13 +113,13 @@ impl SnapshotController {
     ///
     /// Returns None if ABS requests should not be sent
     fn abs_request_interval(&self) -> Option<Slot> {
-        self.snapshot_config.as_ref().and_then(|snapshot_config| {
-            snapshot_config.should_generate_snapshots().then(||
-                // N.B. This assumes if a snapshot is disabled that its interval will be Slot::MAX
-                cmp::min(
-                    snapshot_config.full_snapshot_archive_interval_slots,
-                    snapshot_config.incremental_snapshot_archive_interval_slots,
-                ))
+        self.snapshot_config.should_generate_snapshots().then(|| {
+            // N.B. This assumes if a snapshot is disabled that its interval will be Slot::MAX
+            cmp::min(
+                self.snapshot_config.full_snapshot_archive_interval_slots,
+                self.snapshot_config
+                    .incremental_snapshot_archive_interval_slots,
+            )
         })
     }
 
@@ -162,17 +166,18 @@ impl SnapshotController {
                 .accounts_db
                 .epoch_accounts_hash_manager
                 .set_in_flight(eah_bank.slot());
-            if let Err(e) = self
-                .abs_request_sender
-                .send_snapshot_request(SnapshotRequest {
-                    snapshot_root_bank: Arc::clone(eah_bank),
-                    status_cache_slot_deltas: Vec::default(),
-                    request_kind: SnapshotRequestKind::EpochAccountsHash,
-                    enqueued: Instant::now(),
-                })
-            {
-                return Err(SetRootError::SendEpochAccountHashError(eah_bank.slot(), e));
-            };
+
+            if let Err(err) = self.abs_request_sender.send(SnapshotRequest {
+                snapshot_root_bank: Arc::clone(eah_bank),
+                status_cache_slot_deltas: Vec::default(),
+                request_kind: SnapshotRequestKind::EpochAccountsHash,
+                enqueued: Instant::now(),
+            }) {
+                return Err(SetRootError::SendEpochAccountHashError(
+                    eah_bank.slot(),
+                    err,
+                ));
+            }
         }
 
         Ok((is_root_bank_squashed, squash_timing))

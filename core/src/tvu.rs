@@ -145,7 +145,7 @@ impl Tvu {
         max_slots: &Arc<MaxSlots>,
         block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         wait_to_vote_slot: Option<Slot>,
-        snapshot_controller: Arc<SnapshotController>,
+        snapshot_controller: Option<Arc<SnapshotController>>,
         log_messages_bytes_limit: Option<usize>,
         connection_cache: Option<&Arc<ConnectionCache>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
@@ -573,7 +573,7 @@ pub mod tests {
             &Arc::new(MaxSlots::default()),
             None,
             None,
-            Arc::new(SnapshotController::default()),
+            None, // snapshot_controller
             None,
             Some(&Arc::new(ConnectionCache::new("connection_cache_test"))),
             &ignored_prioritization_fee_cache,

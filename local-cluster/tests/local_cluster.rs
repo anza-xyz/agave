@@ -2330,7 +2330,7 @@ fn create_snapshot_to_hard_fork(
                 .unwrap()
                 .0,
         ],
-        Some(&snapshot_config),
+        &snapshot_config,
         process_options,
         None,
         None,
