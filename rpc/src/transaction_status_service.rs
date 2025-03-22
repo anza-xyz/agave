@@ -140,6 +140,7 @@ impl TransactionStatusService {
                         executed_units,
                         fee_details,
                         rent_debits,
+                        post_accounts_states,
                         ..
                     } = committed_tx;
 
@@ -185,6 +186,7 @@ impl TransactionStatusService {
                             transaction.signature(),
                             &transaction_status_meta,
                             &transaction,
+                            post_accounts_states,
                         );
                     }
 
@@ -268,6 +270,7 @@ pub(crate) mod tests {
         },
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
         solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_sdk::account::AccountSharedData,
         solana_sdk::{
             account_utils::StateMut,
             clock::Slot,
@@ -325,6 +328,7 @@ pub(crate) mod tests {
             signature: &Signature,
             transaction_status_meta: &TransactionStatusMeta,
             transaction: &SanitizedTransaction,
+            _post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
         ) {
             self.notifications.insert(
                 TestNotifierKey {
@@ -393,6 +397,8 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits,
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            //Do we need to put something here?
+            post_accounts_states: vec![],
         });
 
         let balances = TransactionBalancesSet {
@@ -519,6 +525,8 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits: RentDebits::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            //Do we need to put something here?
+            post_accounts_states: vec![],
         });
 
         let balances = TransactionBalancesSet {
