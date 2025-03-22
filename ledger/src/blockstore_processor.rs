@@ -3495,12 +3495,16 @@ pub mod tests {
         assert_eq!(bank.get_balance(&keypair1.pubkey()), 3);
     }
 
-    #[test_case(true; "rent_collected")]
-    #[test_case(false; "rent_not_collected")]
-    fn test_transaction_result_does_not_affect_bankhash(fee_payer_in_rent_partition: bool) {
+    #[test_case(true, true; "rent_collected")]
+    #[test_case(false, true; "rent_not_collected")]
+    #[test_case(true, false; "rent_not-collected_part_rent_disabled")]
+    fn test_transaction_result_does_not_affect_bankhash(
+        fee_payer_in_rent_partition: bool,
+        should_run_partitioned_rent_collection: bool,
+    ) {
         solana_logger::setup();
         let GenesisConfigInfo {
-            genesis_config,
+            mut genesis_config,
             mint_keypair,
             ..
         } = if fee_payer_in_rent_partition {
@@ -3508,6 +3512,12 @@ pub mod tests {
         } else {
             create_genesis_config_with_mint_keypair(Keypair::from_seed(&[1u8; 32]).unwrap(), 1000)
         };
+
+        if should_run_partitioned_rent_collection {
+            genesis_config
+                .accounts
+                .remove(&solana_feature_set::disable_partitioned_rent_collection::id());
+        }
 
         fn get_instruction_errors() -> Vec<InstructionError> {
             vec![
@@ -3656,7 +3666,10 @@ pub mod tests {
                     .last_blockhash
             );
             // AND should not affect bankhash IF the rent is collected during freeze.
-            assert_eq!(ok_bank_details == bank_details, fee_payer_in_rent_partition);
+            assert_eq!(
+                ok_bank_details == bank_details,
+                fee_payer_in_rent_partition && should_run_partitioned_rent_collection
+            );
             // Different types of transaction failure should not affect bank hash
             if let Some(prev_bank_details) = &err_bank_details {
                 assert_eq!(
