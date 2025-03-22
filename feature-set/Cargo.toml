@@ -1,0 +1,28 @@
+[package]
+name = "agave-feature-set"
+version = "2.3.0"
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+ahash = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-feature-set-interface = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-hash = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false }
+solana-sha256-hasher = { workspace = true }
+
+[features]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+
+[lints]
+workspace = true

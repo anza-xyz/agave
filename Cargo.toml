@@ -50,6 +50,7 @@ members = [
     "download-utils",
     "entry",
     "faucet",
+    "feature-set",
     "fee",
     "genesis",
     "genesis-utils",
@@ -176,6 +177,7 @@ check-cfg = [
 Inflector = "0.11.4"
 axum = "0.7.9"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.3.0" }
+agave-feature-set = { path = "feature-set", version = "=2.3.0" }
 agave-transaction-view = { path = "transaction-view", version = "=2.3.0" }
 aquamarine = "0.6.0"
 aes-gcm-siv = "0.11.1"
@@ -408,6 +410,7 @@ solana-derivation-path = "=2.2.1"
 solana-download-utils = { path = "download-utils", version = "=2.3.0" }
 solana-ed25519-program = "=2.2.1"
 solana-entry = { path = "entry", version = "=2.3.0" }
+solana-feature-set-interface = "=4.0.0"
 solana-program-entrypoint = "=2.2.1"
 solana-epoch-info = "=2.2.1"
 solana-epoch-rewards = "=2.2.1"
