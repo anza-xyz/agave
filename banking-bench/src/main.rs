@@ -2,10 +2,10 @@
 use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
     assert_matches::assert_matches,
-    clap::{crate_description, crate_name, Arg, ArgEnum, Command},
+    clap::{crate_description, crate_name, Arg, Command},
     crossbeam_channel::{unbounded, Receiver},
     log::*,
-    rand::{thread_rng, Rng},
+    rand::{seq::SliceRandom, thread_rng, Rng},
     rayon::prelude::*,
     solana_core::{
         banking_stage::{update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage},
@@ -79,7 +79,7 @@ fn check_txs(
     no_bank
 }
 
-#[derive(ArgEnum, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum WriteLockContention {
     /// No transactions lock the same accounts.
     None,
@@ -87,20 +87,30 @@ enum WriteLockContention {
     SameBatchOnly,
     /// All transactions write lock the same account.
     Full,
+    /// Transactions randomly lock any two accounts from the pool of accounts, contention depends
+    /// on the number of accounts.
+    AccountContention(i64),
 }
 
-impl WriteLockContention {
-    fn possible_values<'a>() -> impl Iterator<Item = clap::PossibleValue<'a>> {
-        Self::value_variants()
-            .iter()
-            .filter_map(|v| v.to_possible_value())
-    }
-}
-
-impl std::str::FromStr for WriteLockContention {
-    type Err = String;
-    fn from_str(input: &str) -> Result<Self, String> {
-        ArgEnum::from_str(input, false)
+fn parse_write_lock_contention(argument: &str) -> Result<WriteLockContention, String> {
+    if let Some(("account-contention", value)) = argument.split_once("=") {
+        match value.parse::<i64>() {
+            Ok(num_accts) if num_accts > 1 => Ok(WriteLockContention::AccountContention(num_accts)),
+            _ => Err("Account contention value must be an integer greater than 1".to_string()),
+        }  
+    } else {
+        match argument {
+            "none" => Ok(WriteLockContention::None),
+            "same-batch-only" => Ok(WriteLockContention::SameBatchOnly),
+            "full" => Ok(WriteLockContention::Full),
+            _ => Err(format!(
+                "Invalid contention option. Valid options are:\n\
+                 - none\n\
+                 - same-batch-only\n\
+                 - full\n\
+                 - account-contention=N (where N is a positive integer)"
+            )),
+        }
     }
 }
 
@@ -112,47 +122,95 @@ fn make_accounts_txs(
     simulate_mint: bool,
     mint_txs_percentage: usize,
 ) -> Vec<Transaction> {
+    let payer_keypair = Keypair::new();
     let to_pubkey = pubkey::new_rand();
-    let chunk_pubkeys: Vec<pubkey::Pubkey> = (0..total_num_transactions / packets_per_batch)
-        .map(|_| pubkey::new_rand())
-        .collect();
-    let payer_key = Keypair::new();
-    (0..total_num_transactions)
-        .into_par_iter()
-        .map(|i| {
-            let is_simulated_mint = is_simulated_mint_transaction(
-                simulate_mint,
-                i,
-                packets_per_batch,
-                mint_txs_percentage,
-            );
-            // simulated mint transactions have higher compute-unit-price
-            let compute_unit_price = if is_simulated_mint { 5 } else { 1 };
-            let mut new = make_transfer_transaction_with_compute_unit_price(
-                &payer_key,
-                &to_pubkey,
-                1,
-                hash,
-                compute_unit_price,
-            );
-            let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
-            new.message.account_keys[0] = pubkey::new_rand();
-            new.message.account_keys[1] = match contention {
-                WriteLockContention::None => pubkey::new_rand(),
-                WriteLockContention::SameBatchOnly => {
-                    // simulated mint transactions have conflict accounts
-                    if is_simulated_mint {
-                        chunk_pubkeys[i / packets_per_batch]
-                    } else {
-                        pubkey::new_rand()
+    
+    if let WriteLockContention::AccountContention(num_accts) = contention{
+        let accounts: Vec<Pubkey> = (0..num_accts)
+            .map(|_| pubkey::new_rand())
+            .collect();
+
+        (0..total_num_transactions)
+            .into_par_iter()
+            .map(|i| {
+                let mut rng = thread_rng();
+                let from_pubkey = accounts.choose(&mut rng).unwrap();
+                let to_pubkey = loop {
+                    let candidate = accounts.choose(&mut rng).unwrap();
+                    if candidate != from_pubkey {break candidate}
+                };
+                
+                // simulated mint transactions have higher compute unit price.
+                let is_simulated_mint = is_simulated_mint_transaction(
+                    simulate_mint, i,
+                    packets_per_batch,
+                    mint_txs_percentage
+                );
+
+                let compute_unit_price = if is_simulated_mint { 5 } else { 1 };
+
+                let lamports =  (i + 1) as u64; //ensure non zero and non-constant lamports transferred.
+
+                let mut new_tx = make_transfer_transaction_with_compute_unit_price(
+                    &payer_keypair,
+                    to_pubkey,
+                    lamports,
+                    hash,
+                    compute_unit_price
+                );
+
+                new_tx.message.account_keys[0] = *from_pubkey;
+                new_tx.message.account_keys[1] = *to_pubkey;
+        
+                let sig: [u8;64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
+                new_tx.signatures = vec![Signature::from(sig)];
+                new_tx
+
+            })
+            .collect()
+    } else {
+        let chunk_pubkeys: Vec<pubkey::Pubkey> = (0..total_num_transactions / packets_per_batch)
+            .map(|_| pubkey::new_rand())
+            .collect();
+
+        (0..total_num_transactions)
+            .into_par_iter()
+            .map(|i| {
+                let is_simulated_mint = is_simulated_mint_transaction(
+                    simulate_mint,
+                    i,
+                    packets_per_batch,
+                    mint_txs_percentage,
+                );
+                // simulated mint transactions have higher compute-unit-price
+                let compute_unit_price = if is_simulated_mint { 5 } else { 1 };
+                let mut new = make_transfer_transaction_with_compute_unit_price(
+                    &payer_keypair,
+                    &to_pubkey,
+                    1,
+                    hash,
+                    compute_unit_price,
+                );
+                let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
+                new.message.account_keys[0] = pubkey::new_rand();
+                new.message.account_keys[1] = match contention {
+                    WriteLockContention::None => pubkey::new_rand(),
+                    WriteLockContention::SameBatchOnly => {
+                        // simulated mint transactions have conflict accounts
+                        if is_simulated_mint {
+                            chunk_pubkeys[i / packets_per_batch]
+                        } else {
+                            pubkey::new_rand()
+                        }
                     }
-                }
-                WriteLockContention::Full => to_pubkey,
-            };
-            new.signatures = vec![Signature::from(sig)];
-            new
-        })
-        .collect()
+                    WriteLockContention::Full => to_pubkey,
+                    WriteLockContention::AccountContention(_) => unreachable!(),
+                };
+                new.signatures = vec![Signature::from(sig)];
+                new
+            })
+            .collect()
+    }
 }
 
 // In simulating mint, `mint_txs_percentage` transactions in a batch are mint transaction
@@ -271,8 +329,8 @@ fn main() {
             Arg::new("write_lock_contention")
                 .long("write-lock-contention")
                 .takes_value(true)
-                .possible_values(WriteLockContention::possible_values())
-                .help("Accounts that test transactions write lock"),
+                .value_parser(parse_write_lock_contention)
+                .help("Accounts that test transactions write lock. Use 'none', 'same-batch-only', 'full',or 'n'/'account-contention n' where n is an integer greater than 1"),
         )
         .arg(
             Arg::new("batches_per_iteration")
@@ -336,7 +394,8 @@ fn main() {
         .value_of_t::<usize>("batches_per_iteration")
         .unwrap_or(BankingStage::num_threads() as usize);
     let write_lock_contention = matches
-        .value_of_t::<WriteLockContention>("write_lock_contention")
+        .get_one::<WriteLockContention>("write_lock_contention")
+        .copied()
         .unwrap_or(WriteLockContention::None);
     let mint_txs_percentage = matches
         .value_of_t::<usize>("mint_txs_percentage")
@@ -397,6 +456,7 @@ fn main() {
                 let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
                 fund.signatures = vec![Signature::from(sig)];
                 bank.process_transaction(&fund).unwrap();
+                bank.clear_signatures(); // needed for account contention because there is a non-zero chance of funding the same address.
             });
     });
 
