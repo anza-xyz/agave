@@ -5272,9 +5272,9 @@ dependencies = [
 
 [[package]]
 name = "solana-bn254"
-version = "2.2.1"
+version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9abc69625158faaab02347370b91c0d8e0fe347bf9287239f0fbe8f5864d91da"
+checksum = "4420f125118732833f36facf96a27e7b78314b2d642ba07fa9ffdacd8d79e243"
 dependencies = [
  "ark-bn254",
  "ark-ec",
