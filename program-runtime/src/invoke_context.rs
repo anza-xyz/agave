@@ -12,8 +12,7 @@ use {
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_set::{
-        lift_cpi_caller_restriction, move_precompile_verification_to_svm,
-        remove_accounts_executable_flag_checks, FeatureSet,
+        lift_cpi_caller_restriction, remove_accounts_executable_flag_checks, FeatureSet,
     },
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta},
@@ -499,17 +498,11 @@ impl<'a> InvokeContext<'a> {
         self.push()?;
 
         let feature_set = self.get_feature_set();
-        let move_precompile_verification_to_svm =
-            feature_set.is_active(&move_precompile_verification_to_svm::id());
-        if move_precompile_verification_to_svm {
-            let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
-            precompile
-                .verify(instruction_data, &instruction_datas, feature_set)
-                .map_err(InstructionError::from)
-                .and(self.pop())
-        } else {
-            self.pop()
-        }
+        let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
+        precompile
+            .verify(instruction_data, &instruction_datas, feature_set)
+            .map_err(InstructionError::from)
+            .and(self.pop())
     }
 
     /// Calls the instruction's program entrypoint method

@@ -490,10 +490,7 @@ fn start_verify_transactions_gpu<Tx: TransactionWithMeta + Send + Sync + 'static
 ) -> Result<EntrySigVerificationState<Tx>> {
     let verify_func = {
         move |versioned_tx: VersionedTransaction| -> Result<Tx> {
-            verify(
-                versioned_tx,
-                TransactionVerificationMode::HashAndVerifyPrecompiles,
-            )
+            verify(versioned_tx, TransactionVerificationMode::HashOnly)
         }
     };
 
