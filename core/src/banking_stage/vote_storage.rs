@@ -30,22 +30,17 @@ pub struct VoteStorage {
     vote_source: VoteSource,
 }
 
-/// Convenient wrapper for shared-state between vote_storage and the consumer.
-pub struct ConsumeScannerPayload<'a> {
-    pub reached_end_of_slot: bool,
-    pub sanitized_transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
-    pub slot_metrics_tracker: &'a mut LeaderSlotMetricsTracker,
-    pub error_counters: TransactionErrorMetrics,
-}
-
 fn consume_scan_should_process_packet(
     bank: &Bank,
     banking_stage_stats: &BankingStageStats,
     packet: &ImmutableDeserializedPacket,
-    payload: &mut ConsumeScannerPayload,
+    reached_end_of_slot: bool,
+    error_counters: &mut TransactionErrorMetrics,
+    sanitized_transactions: &mut Vec<RuntimeTransaction<SanitizedTransaction>>,
+    slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
 ) -> bool {
     // If end of the slot, return should process (quick loop after reached end of slot)
-    if payload.reached_end_of_slot {
+    if reached_end_of_slot {
         return true;
     }
 
@@ -59,9 +54,7 @@ fn consume_scan_should_process_packet(
         )
         .map(|(tx, _deactivation_slot)| tx));
 
-    payload
-        .slot_metrics_tracker
-        .increment_transactions_from_packets_us(sanitization_time_us);
+    slot_metrics_tracker.increment_transactions_from_packets_us(sanitization_time_us);
     banking_stage_stats
         .packet_conversion_elapsed
         .fetch_add(sanitization_time_us, Ordering::Relaxed);
@@ -79,16 +72,11 @@ fn consume_scan_should_process_packet(
             return false;
         }
 
-        if Consumer::check_fee_payer_unlocked(
-            bank,
-            &sanitized_transaction,
-            &mut payload.error_counters,
-        )
-        .is_err()
+        if Consumer::check_fee_payer_unlocked(bank, &sanitized_transaction, error_counters).is_err()
         {
             return false;
         }
-        payload.sanitized_transactions.push(sanitized_transaction);
+        sanitized_transactions.push(sanitized_transaction);
         true
     } else {
         false
@@ -147,7 +135,12 @@ impl VoteStorage {
         mut processing_function: F,
     ) -> bool
     where
-        F: FnMut(usize, &mut ConsumeScannerPayload) -> Option<Vec<usize>>,
+        F: FnMut(
+            usize,
+            &mut bool,
+            &mut Vec<RuntimeTransaction<SanitizedTransaction>>,
+            &mut LeaderSlotMetricsTracker,
+        ) -> Option<Vec<usize>>,
     {
         if matches!(self.vote_source, VoteSource::Gossip) {
             panic!("Gossip vote thread should not be processing transactions");
@@ -164,12 +157,11 @@ impl VoteStorage {
             .latest_unprocessed_votes
             .should_deprecate_legacy_vote_ixs();
 
-        let mut payload = ConsumeScannerPayload {
-            reached_end_of_slot: false,
-            sanitized_transactions: Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE),
-            slot_metrics_tracker,
-            error_counters: TransactionErrorMetrics::default(),
-        };
+        let mut reached_end_of_slot = false;
+
+        let mut sanitized_transactions = Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
+
+        let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
 
         let mut vote_packets =
             ArrayVec::<Arc<ImmutableDeserializedPacket>, UNPROCESSED_BUFFER_STEP_SIZE>::new();
@@ -180,15 +172,21 @@ impl VoteStorage {
                     &bank,
                     banking_stage_stats,
                     packet,
-                    &mut payload,
+                    reached_end_of_slot,
+                    &mut error_counters,
+                    &mut sanitized_transactions,
+                    slot_metrics_tracker,
                 ) {
                     vote_packets.push(packet.clone());
                 }
             });
 
-            if let Some(retryable_vote_indices) =
-                processing_function(vote_packets.len(), &mut payload)
-            {
+            if let Some(retryable_vote_indices) = processing_function(
+                vote_packets.len(),
+                &mut reached_end_of_slot,
+                &mut sanitized_transactions,
+                slot_metrics_tracker,
+            ) {
                 self.latest_unprocessed_votes.insert_batch(
                     retryable_vote_indices.iter().filter_map(|i| {
                         LatestValidatorVotePacket::new_from_immutable(
@@ -215,7 +213,7 @@ impl VoteStorage {
             }
         }
 
-        payload.reached_end_of_slot
+        reached_end_of_slot
     }
 
     pub fn clear(&mut self) {
@@ -287,7 +285,10 @@ mod tests {
             bank.clone(),
             &BankingStageStats::default(),
             &mut LeaderSlotMetricsTracker::new(0),
-            |packets_to_process_len, _payload| {
+            |packets_to_process_len,
+             _reached_end_of_slot,
+             _sanitized_transactions,
+             _slot_metrics_tracker| {
                 // Return all packets indexes as retryable
                 Some((0..packets_to_process_len).collect())
             },

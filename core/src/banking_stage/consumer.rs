@@ -7,7 +7,7 @@ use {
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         qos_service::QosService,
         scheduler_messages::MaxAge,
-        vote_storage::{ConsumeScannerPayload, VoteStorage},
+        vote_storage::VoteStorage,
         BankingStageStats,
     },
     itertools::Itertools,
@@ -26,13 +26,15 @@ use {
         transaction_batch::TransactionBatch,
         verify_precompiles::verify_precompiles,
     },
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+    },
     solana_sdk::{
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
         saturating_add_assign,
         timing::timestamp,
-        transaction::{self, TransactionError},
+        transaction::{self, SanitizedTransaction, TransactionError},
     },
     solana_svm::{
         account_loader::{validate_fee_payer, TransactionCheckResult},
@@ -128,14 +130,19 @@ impl Consumer {
             bank_start.working_bank.clone(),
             banking_stage_stats,
             slot_metrics_tracker,
-            |packets_to_process_len, payload| {
+            |packets_to_process_len,
+             reached_end_of_slot_par,
+             sanitized_transaction,
+             slot_metrics_tracker| {
                 self.do_process_packets(
                     bank_start,
-                    payload,
+                    reached_end_of_slot_par,
+                    sanitized_transaction,
                     banking_stage_stats,
                     &mut consumed_buffered_packets_count,
                     &mut rebuffered_packet_count,
                     packets_to_process_len,
+                    slot_metrics_tracker,
                 )
             },
         );
@@ -168,13 +175,15 @@ impl Consumer {
     fn do_process_packets(
         &self,
         bank_start: &BankStart,
-        payload: &mut ConsumeScannerPayload,
+        reached_end_of_slot: &mut bool,
+        sanitized_transactions: &mut Vec<RuntimeTransaction<SanitizedTransaction>>,
         banking_stage_stats: &BankingStageStats,
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
         packets_to_process_len: usize,
+        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> Option<Vec<usize>> {
-        if payload.reached_end_of_slot {
+        if *reached_end_of_slot {
             return None;
         }
 
@@ -182,16 +191,16 @@ impl Consumer {
             .process_packets_transactions(
                 &bank_start.working_bank,
                 &bank_start.bank_creation_time,
-                &payload.sanitized_transactions,
+                sanitized_transactions,
                 banking_stage_stats,
-                payload.slot_metrics_tracker,
+                slot_metrics_tracker,
             ));
-        payload
-            .slot_metrics_tracker
+
+        slot_metrics_tracker
             .increment_process_packets_transactions_us(process_packets_transactions_us);
 
-        // Clear payload for next iteration
-        payload.sanitized_transactions.clear();
+        // Clear sanitized_transactions for next iteration
+        sanitized_transactions.clear();
 
         let ProcessTransactionsSummary {
             reached_max_poh_height,
@@ -200,7 +209,7 @@ impl Consumer {
         } = process_transactions_summary;
 
         if reached_max_poh_height || !bank_start.should_working_bank_still_be_processing_txs() {
-            payload.reached_end_of_slot = true;
+            *reached_end_of_slot = true;
         }
 
         // The difference between all transactions passed to execution and the ones that
@@ -217,8 +226,7 @@ impl Consumer {
         // transactions in this batch
         *rebuffered_packet_count += retryable_transaction_indexes.len();
 
-        payload
-            .slot_metrics_tracker
+        slot_metrics_tracker
             .increment_retryable_packets_count(retryable_transaction_indexes.len() as u64);
 
         Some(retryable_transaction_indexes)
