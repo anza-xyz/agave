@@ -3,7 +3,6 @@ use {
     solana_program_test::*,
     solana_sdk::{
         ed25519_instruction::new_ed25519_instruction,
-        feature_set,
         instruction::InstructionError,
         precompiles::PrecompileError,
         signature::Signer,

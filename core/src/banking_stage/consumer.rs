@@ -11,7 +11,6 @@ use {
         BankingStageStats,
     },
     itertools::Itertools,
-    solana_feature_set as feature_set,
     solana_fee::FeeFeatures,
     solana_ledger::token_balances::collect_token_balances,
     solana_measure::{measure::Measure, measure_us},
@@ -24,7 +23,6 @@ use {
     solana_runtime::{
         bank::{Bank, LoadAndExecuteTransactionsOutput},
         transaction_batch::TransactionBatch,
-        verify_precompiles::verify_precompiles,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
