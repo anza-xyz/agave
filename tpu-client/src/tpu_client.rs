@@ -14,7 +14,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_signature::Signature,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
-    solana_transaction_error::TransportResult,
+    solana_transaction_error::{TransportError, TransportResult},
     std::{
         collections::VecDeque,
         net::UdpSocket,
@@ -121,13 +121,27 @@ where
             .get_leader_tpu_service()
             .unique_leader_tpu_sockets(self.tpu_client.get_fanout_slots());
 
+        let mut last_error: Option<TransportError> = None;
+        let mut some_success = false;
         for tpu_address in &leaders {
             let cache = self.tpu_client.get_connection_cache();
             let conn = cache.get_connection(tpu_address);
-            conn.send_data_async(wire_transaction.clone())?;
+            if let Err(err) = conn.send_data_async(wire_transaction.clone()) {
+                last_error = Some(err);
+            } else {
+                some_success = true;
+            }
         }
 
-        Ok(())
+        if !some_success {
+            Err(if let Some(err) = last_error {
+                err
+            } else {
+                std::io::Error::new(std::io::ErrorKind::Other, "No sends attempted").into()
+            })
+        } else {
+            Ok(())
+        }
     }
 
     /// Serialize and send a batch of transactions to the current and upcoming leader TPUs according
