@@ -140,7 +140,7 @@ mod tests {
             make_instruction(&program_ids, 1, &[]),
         ];
 
-        let signature_details = get_precompile_signature_details(instructions.into_iter());
+        let signature_details = get_precompile_signature_details(instructions);
         assert_eq!(signature_details.num_secp256k1_instruction_signatures, 0);
         assert_eq!(signature_details.num_ed25519_instruction_signatures, 0);
     }
@@ -164,7 +164,7 @@ mod tests {
             make_instruction(&program_ids, 3, &[3]),
         ];
 
-        let signature_details = get_precompile_signature_details(instructions.into_iter());
+        let signature_details = get_precompile_signature_details(instructions);
         assert_eq!(signature_details.num_secp256k1_instruction_signatures, 6);
         assert_eq!(signature_details.num_ed25519_instruction_signatures, 5);
         assert_eq!(signature_details.num_secp256r1_instruction_signatures, 7);
@@ -182,7 +182,7 @@ mod tests {
             make_instruction(&program_ids, 1, &[]),
         ];
 
-        let signature_details = get_precompile_signature_details(instructions.into_iter());
+        let signature_details = get_precompile_signature_details(instructions);
         assert_eq!(signature_details.num_secp256k1_instruction_signatures, 0);
         assert_eq!(signature_details.num_ed25519_instruction_signatures, 0);
         assert_eq!(signature_details.num_secp256r1_instruction_signatures, 0);
