@@ -226,7 +226,6 @@ impl AccountsHashVerifier {
         Self::submit_for_packaging(
             accounts_package,
             pending_snapshot_packages,
-            snapshot_config,
             merkle_or_lattice_accounts_hash,
             bank_incremental_snapshot_persistence,
         );
@@ -489,16 +488,13 @@ impl AccountsHashVerifier {
     fn submit_for_packaging(
         accounts_package: AccountsPackage,
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
-        snapshot_config: &SnapshotConfig,
         merkle_or_lattice_accounts_hash: MerkleOrLatticeAccountsHash,
         bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     ) {
-        if !snapshot_config.should_generate_snapshots()
-            || !matches!(
-                accounts_package.package_kind,
-                AccountsPackageKind::Snapshot(_)
-            )
-        {
+        if !matches!(
+            accounts_package.package_kind,
+            AccountsPackageKind::Snapshot(_)
+        ) {
             return;
         }
 
