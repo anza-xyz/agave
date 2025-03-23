@@ -813,7 +813,7 @@ impl LocalCluster {
             );
             LocalCluster::send_transaction_with_retries(
                 client,
-                &[from_account],
+                &[from_account, vote_account],
                 &mut transaction,
                 10,
                 0,
