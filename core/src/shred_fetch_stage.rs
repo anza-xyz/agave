@@ -53,6 +53,7 @@ impl ShredFetchStage {
     // updates packets received on a channel and sends them on another channel
     fn modify_packets(
         recvr: PacketBatchReceiver,
+        recvr_stats: Option<Arc<StreamerReceiveStats>>,
         sendr: Sender<PacketBatch>,
         bank_forks: &RwLock<BankForks>,
         shred_version: u16,
@@ -160,7 +161,11 @@ impl ShredFetchStage {
                     packet.meta_mut().flags.insert(flags);
                 }
             }
-            stats.maybe_submit(name, STATS_SUBMIT_CADENCE);
+            if stats.maybe_submit(name, STATS_SUBMIT_CADENCE) {
+                if let Some(stats) = recvr_stats.as_ref() {
+                    stats.report();
+                }
+            }
             if sendr.send(packet_batch).is_err() {
                 break;
             }
@@ -178,11 +183,13 @@ impl ShredFetchStage {
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
         name: &'static str,
+        receiver_name: &'static str,
         flags: PacketFlags,
         repair_context: Option<RepairContext>,
         turbine_disabled: Arc<AtomicBool>,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
         let (packet_sender, packet_receiver) = unbounded();
+        let receiver_stats = Arc::new(StreamerReceiveStats::new(receiver_name));
         let streamers = sockets
             .into_iter()
             .enumerate()
@@ -193,7 +200,7 @@ impl ShredFetchStage {
                     exit.clone(),
                     packet_sender.clone(),
                     recycler.clone(),
-                    Arc::new(StreamerReceiveStats::new("packet_modifier")),
+                    receiver_stats.clone(),
                     None,  // coalesce
                     true,  // use_pinned_memory
                     None,  // in_vote_only_mode
@@ -206,6 +213,7 @@ impl ShredFetchStage {
             .spawn(move || {
                 Self::modify_packets(
                     packet_receiver,
+                    Some(receiver_stats),
                     sender,
                     &bank_forks,
                     shred_version,
@@ -250,6 +258,7 @@ impl ShredFetchStage {
             bank_forks.clone(),
             shred_version,
             "shred_fetch",
+            "shred_fetch_receiver",
             PacketFlags::empty(),
             None, // repair_context
             turbine_disabled.clone(),
@@ -265,6 +274,7 @@ impl ShredFetchStage {
             bank_forks.clone(),
             shred_version,
             "shred_fetch_repair",
+            "shred_fetch_repair_receiver",
             PacketFlags::REPAIR,
             Some(repair_context.clone()),
             turbine_disabled.clone(),
@@ -299,6 +309,7 @@ impl ShredFetchStage {
                     .spawn(move || {
                         Self::modify_packets(
                             packet_receiver,
+                            None,
                             sender,
                             &bank_forks,
                             shred_version,
@@ -332,6 +343,7 @@ impl ShredFetchStage {
                 .spawn(move || {
                     Self::modify_packets(
                         packet_receiver,
+                        None,
                         sender,
                         &bank_forks,
                         shred_version,
