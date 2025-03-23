@@ -1253,12 +1253,10 @@ fn test_snapshot_restart_tower() {
         .unwrap();
     let validator_info = cluster.exit_node(&validator_id);
 
-    // Get slot after which this was generated
     let full_snapshot_archives_dir = &leader_snapshot_test_config
         .validator_config
         .snapshot_config
         .full_snapshot_archives_dir;
-
     let full_snapshot_archive_info = cluster.wait_for_next_full_snapshot(
         full_snapshot_archives_dir,
         Some(Duration::from_secs(5 * 60)),
