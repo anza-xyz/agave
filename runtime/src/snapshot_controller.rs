@@ -11,7 +11,6 @@ use {
     solana_measure::measure::Measure,
     solana_sdk::clock::Slot,
     std::{
-        cmp,
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc,
@@ -19,6 +18,11 @@ use {
         time::Instant,
     },
 };
+
+struct SnapshotGenerationIntervals {
+    full_snapshot_interval: Slot,
+    incremental_snapshot_interval: Slot,
+}
 
 pub struct SnapshotController {
     abs_request_sender: SnapshotRequestSender,
@@ -62,10 +66,21 @@ impl SnapshotController {
         // part of the same set of `banks` in a single `set_root()` invocation.  While (very)
         // unlikely for a validator with default snapshot intervals (and accounts hash verifier
         // intervals), it *is* possible, and there are tests to exercise this possibility.
-        if let Some(abs_request_interval) = self.abs_request_interval() {
-            if let Some(bank) = banks.iter().find(|bank| {
-                bank.slot() > self.latest_abs_request_slot()
-                    && bank.block_height() % abs_request_interval == 0
+        if let Some(SnapshotGenerationIntervals {
+            full_snapshot_interval,
+            incremental_snapshot_interval,
+        }) = self.snapshot_generation_intervals()
+        {
+            if let Some((bank, request_kind)) = banks.iter().find_map(|bank| {
+                if bank.slot() <= self.latest_abs_request_slot() {
+                    None
+                } else if bank.block_height() % full_snapshot_interval == 0 {
+                    Some((bank, SnapshotRequestKind::FullSnapshot))
+                } else if bank.block_height() % incremental_snapshot_interval == 0 {
+                    Some((bank, SnapshotRequestKind::IncrementalSnapshot))
+                } else {
+                    None
+                }
             }) {
                 let bank_slot = bank.slot();
                 self.set_latest_abs_request_slot(bank_slot);
@@ -82,7 +97,7 @@ impl SnapshotController {
                     if let Err(e) = self.abs_request_sender.send(SnapshotRequest {
                         snapshot_root_bank: Arc::clone(bank),
                         status_cache_slot_deltas,
-                        request_kind: SnapshotRequestKind::Snapshot,
+                        request_kind,
                         enqueued: Instant::now(),
                     }) {
                         warn!(
@@ -101,18 +116,19 @@ impl SnapshotController {
         Ok((is_root_bank_squashed, squash_timing, total_snapshot_ms))
     }
 
-    /// Returns the interval, in slots, for sending an ABS request
+    /// Returns the intervals, in slots, for sending snapshot requests
     ///
-    /// Returns None if ABS requests should not be sent
-    fn abs_request_interval(&self) -> Option<Slot> {
-        self.snapshot_config.should_generate_snapshots().then(|| {
-            // N.B. This assumes if a snapshot is disabled that its interval will be Slot::MAX
-            cmp::min(
-                self.snapshot_config.full_snapshot_archive_interval_slots,
-                self.snapshot_config
+    /// Returns None if snapshot generation is disabled and snapshot requests
+    /// should not be sent
+    fn snapshot_generation_intervals(&self) -> Option<SnapshotGenerationIntervals> {
+        self.snapshot_config
+            .should_generate_snapshots()
+            .then_some(SnapshotGenerationIntervals {
+                full_snapshot_interval: self.snapshot_config.full_snapshot_archive_interval_slots,
+                incremental_snapshot_interval: self
+                    .snapshot_config
                     .incremental_snapshot_archive_interval_slots,
-            )
-        })
+            })
     }
 
     /// Sends an EpochAccountsHash request if one of the `banks` crosses the EAH boundary.
