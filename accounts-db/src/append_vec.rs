@@ -88,14 +88,17 @@ pub enum AppendVecError {
 pub(crate) struct ValidSlice<'a>(&'a [u8]);
 
 impl<'a> ValidSlice<'a> {
+    #[inline(always)]
     pub(crate) fn new(data: &'a [u8]) -> Self {
         Self(data)
     }
 
+    #[inline(always)]
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
 
+    #[inline(always)]
     #[cfg(all(unix, test))]
     pub(crate) fn slice(&self) -> &[u8] {
         self.0
@@ -268,12 +271,8 @@ pub struct AppendVec {
 }
 
 const PAGE_SIZE: u64 = 4 * 1024;
-/// big enough for 3x the largest account size
-const SCAN_BUFFER_SIZE: usize =
-    page_align((STORE_META_OVERHEAD as u64 + MAX_PERMITTED_DATA_LENGTH) * 3) as usize;
-const fn page_align(size: u64) -> u64 {
-    (size + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1)
-}
+// 1MiB
+const SCAN_BUFFER_SIZE: usize = 1024 * 1024;
 
 /// Buffer size to use when scanning *without* needing account data
 ///
@@ -972,10 +971,14 @@ impl AppendVec {
                 }
             }
             AppendVecFileBacking::File(file) => {
-                let buffer_size = std::cmp::min(SCAN_BUFFER_SIZE, self_len);
-                let mut reader =
-                    BufferedReader::new(buffer_size, self_len, file, STORE_META_OVERHEAD);
-                while reader.read().ok() == Some(BufferedReaderStatus::Success) {
+                let buffer_size = std::cmp::min(PAGE_SIZE as usize, self_len);
+                let mut reader = BufferedReader::new(
+                    buffer_size,
+                    self_len,
+                    file,
+                    mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>(),
+                );
+                while let Ok(BufferedReaderStatus::Success) = reader.read() {
                     let (offset, bytes) = reader.get_offset_and_data();
                     let (stored_meta, next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
                     let (account_meta, _) = Self::get_type::<AccountMeta>(bytes, next).unwrap();
@@ -1030,7 +1033,7 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 let mut reader =
                     BufferedReader::new(SCAN_BUFFER_SIZE, self.len(), file, STORE_META_OVERHEAD);
-                while reader.read().ok() == Some(BufferedReaderStatus::Success) {
+                while let Ok(BufferedReaderStatus::Success) = reader.read() {
                     let (offset, bytes_subset) = reader.get_offset_and_data();
                     let (meta, next): (&StoredMeta, _) = Self::get_type(bytes_subset, 0).unwrap();
                     let (account_meta, next): (&AccountMeta, _) =
@@ -1053,6 +1056,8 @@ impl AppendVec {
                         callback(account);
                         reader.advance_offset(stored_size);
                     } else {
+                        // resize to worst case to avoid multiple resizes
+                        reader.resize(STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize);
                         // fall through and read the whole account again. we need refs for StoredMeta and data.
                         reader.set_required_data_len(
                             STORE_META_OVERHEAD.saturating_add(data_len as usize),
@@ -1142,14 +1147,14 @@ impl AppendVec {
                 }
             }
             AppendVecFileBacking::File(file) => {
-                let buffer_size = std::cmp::min(SCAN_BUFFER_SIZE_WITHOUT_DATA, self_len);
+                let buffer_size = std::cmp::min(PAGE_SIZE as usize, self_len);
                 let mut reader =
-                    BufferedReader::new(buffer_size, self_len, file, STORE_META_OVERHEAD);
-                while reader.read().ok() == Some(BufferedReaderStatus::Success) {
+                    BufferedReader::new(buffer_size, self_len, file, mem::size_of::<StoredMeta>());
+                while let Ok(BufferedReaderStatus::Success) = reader.read() {
                     let (offset, bytes) = reader.get_offset_and_data();
                     let (stored_meta, _) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
                     let next = Self::next_account_offset(offset, stored_meta);
-                    if next.offset_to_end_of_data > self.len() {
+                    if next.offset_to_end_of_data > self_len {
                         // data doesn't fit, so don't include this pubkey
                         break;
                     }

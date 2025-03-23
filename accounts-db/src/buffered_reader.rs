@@ -24,7 +24,7 @@ pub struct BufferedReader<'a> {
     /// when we are next asked to read from file, start at this offset
     file_offset_of_next_read: usize,
     /// the most recently read data. `buf_valid_bytes` specifies the range of `buf` that is valid.
-    buf: Box<[MaybeUninit<u8>]>,
+    buf: Vec<MaybeUninit<u8>>,
     /// specifies the range of `buf` that contains valid data that has not been used by the caller
     buf_valid_bytes: Range<usize>,
     /// offset in the file of the `buf_valid_bytes`.`start`
@@ -52,7 +52,7 @@ impl<'a> BufferedReader<'a> {
         let buffer_size = buffer_size.min(file_len_valid);
         Self {
             file_offset_of_next_read: 0,
-            buf: Box::new_uninit_slice(buffer_size),
+            buf: vec![MaybeUninit::uninit(); buffer_size],
             buf_valid_bytes: 0..0,
             file_last_offset: 0,
             read_requirements: None,
@@ -115,7 +115,12 @@ impl<'a> BufferedReader<'a> {
             self.file_offset_of_next_read += additional_amount_to_skip;
         }
     }
+    #[inline(always)]
+    pub fn resize(&mut self, len: usize) {
+        self.buf.resize(len, MaybeUninit::uninit());
+    }
     /// specify the amount of data required to read next time `read` is called
+    #[inline(always)]
     pub fn set_required_data_len(&mut self, len: usize) {
         self.read_requirements = Some(len);
     }
