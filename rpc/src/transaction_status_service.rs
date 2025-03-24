@@ -186,7 +186,7 @@ impl TransactionStatusService {
                             transaction.signature(),
                             &transaction_status_meta,
                             &transaction,
-                            post_accounts_states,
+                            &post_accounts_states,
                         );
                     }
 
@@ -328,7 +328,7 @@ pub(crate) mod tests {
             signature: &Signature,
             transaction_status_meta: &TransactionStatusMeta,
             transaction: &SanitizedTransaction,
-            _post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
+            _post_accounts_states: &[(Pubkey, AccountSharedData)],
         ) {
             self.notifications.insert(
                 TestNotifierKey {
