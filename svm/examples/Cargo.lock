@@ -7246,6 +7246,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "bs58",
+ "futures 0.3.31",
  "indicatif",
  "log",
  "reqwest 0.12.15",
