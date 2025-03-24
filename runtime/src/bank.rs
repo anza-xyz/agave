@@ -546,7 +546,6 @@ impl PartialEq for Bank {
             block_height,
             collector_id,
             collector_fees,
-            fee_rate_governor,
             collected_rent,
             rent_collector,
             epoch_schedule,
@@ -610,7 +609,6 @@ impl PartialEq for Bank {
             && block_height == &other.block_height
             && collector_id == &other.collector_id
             && collector_fees.load(Relaxed) == other.collector_fees.load(Relaxed)
-            && fee_rate_governor == &other.fee_rate_governor
             && collected_rent.load(Relaxed) == other.collected_rent.load(Relaxed)
             && rent_collector == &other.rent_collector
             && epoch_schedule == &other.epoch_schedule
@@ -826,9 +824,6 @@ pub struct Bank {
 
     /// Fees that have been collected
     collector_fees: AtomicU64,
-
-    /// Track cluster signature throughput and adjust fee rate
-    pub(crate) fee_rate_governor: FeeRateGovernor,
 
     /// Rent that has been collected
     collected_rent: AtomicU64,
@@ -1105,7 +1100,6 @@ impl Bank {
             block_height: u64::default(),
             collector_id: Pubkey::default(),
             collector_fees: AtomicU64::default(),
-            fee_rate_governor: FeeRateGovernor::default(),
             collected_rent: AtomicU64::default(),
             rent_collector: RentCollector::default(),
             epoch_schedule: EpochSchedule::default(),
@@ -1283,10 +1277,6 @@ impl Bank {
 
         let (status_cache, status_cache_time_us) = measure_us!(Arc::clone(&parent.status_cache));
 
-        let (fee_rate_governor, fee_components_time_us) = measure_us!(
-            FeeRateGovernor::new_derived(&parent.fee_rate_governor, parent.signature_count())
-        );
-
         let bank_id = rc.bank_id_generator.fetch_add(1, Relaxed) + 1;
         let (blockhash_queue, blockhash_queue_time_us) =
             measure_us!(RwLock::new(parent.blockhash_queue.read().unwrap().clone()));
@@ -1339,7 +1329,6 @@ impl Bank {
                 .block_height
                 .checked_add(1)
                 .expect("block height addition overflowed"),
-            fee_rate_governor,
             capitalization: AtomicU64::new(parent.capitalization()),
             vote_only_bank,
             inflation: parent.inflation.clone(),
@@ -1487,7 +1476,6 @@ impl Bank {
                 bank_rc_creation_time_us,
                 total_elapsed_time_us: time.as_us(),
                 status_cache_time_us,
-                fee_components_time_us,
                 blockhash_queue_time_us,
                 stakes_cache_time_us,
                 epoch_stakes_time_us,
@@ -1758,7 +1746,6 @@ impl Bank {
             block_height: fields.block_height,
             collector_id: fields.collector_id,
             collector_fees: AtomicU64::new(fields.collector_fees),
-            fee_rate_governor: fields.fee_rate_governor,
             collected_rent: AtomicU64::new(fields.collected_rent),
             // clone()-ing is needed to consider a gated behavior in rent_collector
             rent_collector: Self::get_rent_collector_from(&fields.rent_collector, fields.epoch),
@@ -1951,7 +1938,9 @@ impl Bank {
             block_height: self.block_height,
             collector_id: self.collector_id,
             collector_fees: self.collector_fees.load(Relaxed),
-            fee_rate_governor: self.fee_rate_governor.clone(),
+            // Bank no longer has fee-rate-governor, it can be removed from snapshot in followup
+            // refactoring.
+            fee_rate_governor: FeeRateGovernor::default(),
             collected_rent: self.collected_rent.load(Relaxed),
             rent_collector: self.rent_collector.clone(),
             epoch_schedule: self.epoch_schedule.clone(),
@@ -2705,9 +2694,6 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")] collector_id_for_tests: Option<Pubkey>,
         #[cfg(feature = "dev-context-only-utils")] genesis_hash: Option<Hash>,
     ) {
-        // Bootstrap validator collects fees until `new_from_parent` is called.
-        self.fee_rate_governor = genesis_config.fee_rate_governor.clone();
-
         for (pubkey, account) in genesis_config.accounts.iter() {
             assert!(
                 self.get_account(pubkey).is_none(),
@@ -6483,14 +6469,12 @@ impl Bank {
 
         if new_feature_activations.contains(&feature_set::pico_inflation::id()) {
             *self.inflation.write().unwrap() = Inflation::pico();
-            self.fee_rate_governor.burn_percent = solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
             self.rent_collector.rent.burn_percent = 50; // 50% rent burn
         }
 
         if !new_feature_activations.is_disjoint(&self.feature_set.full_inflation_features_enabled())
         {
             *self.inflation.write().unwrap() = Inflation::full();
-            self.fee_rate_governor.burn_percent = solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
             self.rent_collector.rent.burn_percent = 50; // 50% rent burn
         }
 
