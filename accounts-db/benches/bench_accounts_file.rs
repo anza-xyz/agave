@@ -4,7 +4,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         accounts_file::StorageAccess,
-        append_vec::{self, AppendVec, SCAN_BUFFER_SIZE_WITHOUT_DATA},
+        append_vec::{self, AppendVec},
         tiered_storage::{
             file::TieredReadableFile,
             hot::{HotStorageReader, HotStorageWriter},
@@ -103,15 +103,9 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
     // 3% of accounts have no data
     // 75% of accounts are 165 bytes (a token account)
     // 20% of accounts are 200 bytes (a stake account)
-    // 1% of accounts are 256 kibibytes (pathological case for the scan buffer)
+    // 1% of accounts are 64 kibibytes (pathological case for the scan buffer)
     // 1% of accounts are 10 mebibytes (the max size for an account)
-    let data_sizes = [
-        0,
-        165,
-        200,
-        SCAN_BUFFER_SIZE_WITHOUT_DATA,
-        MAX_PERMITTED_DATA_LENGTH as usize,
-    ];
+    let data_sizes = [0, 165, 200, 1 << 16, MAX_PERMITTED_DATA_LENGTH as usize];
     let weights = [3, 75, 20, 1, 1];
 
     for accounts_count in ACCOUNTS_COUNTS {

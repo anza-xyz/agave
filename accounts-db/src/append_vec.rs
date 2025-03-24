@@ -13,7 +13,7 @@ use {
         },
         accounts_hash::AccountHash,
         accounts_index::ZeroLamport,
-        buffered_reader::{BufferedReader, BufferedReaderStatus},
+        buffered_reader::{BufferedReader, BufferedReaderStatus, Stack},
         file_io::read_into_buffer,
         storable_accounts::StorableAccounts,
         u64_align,
@@ -270,27 +270,9 @@ pub struct AppendVec {
     remove_file_on_drop: AtomicBool,
 }
 
-const PAGE_SIZE: u64 = 4 * 1024;
+const PAGE_SIZE: usize = 4 * 1024;
 // 1MiB
 const SCAN_BUFFER_SIZE: usize = 1024 * 1024;
-
-/// Buffer size to use when scanning *without* needing account data
-///
-/// When scanning without needing account data, it is desirable to only read the account metadata
-/// and skip over the account data.  In theory, we could read a single account's metadata at a time,
-/// then skip ahead to the next account, entirely bypassing the account's data.  However this comes
-/// at the cost of requiring one syscall per scanning each account, which is expensive.  Ideally
-/// we'd like to use the fewest syscalls and also read the least amount of extraneous account data.
-/// As a compromise, we use a much smaller buffer, yet still large enough to amortize syscall cost.
-///
-/// On mnb, the overwhelming majority of accounts are token accounts, which use 165 bytes of data.
-/// Including storage overhead and alignment, that's 304 bytes per account.
-/// Per slot, *with* rent rewrites, we store 1,200 to 1,500 accounts.  With a 64 KiB buffer, we'd
-/// be able to hold about 215 accounts, so there would not be many syscalls needed to scan
-/// the file.  Since we also expect some larger accounts, this will also avoid reading/copying
-/// large account data.  This should be a decent starting value, and can be modified over time.
-#[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
-const SCAN_BUFFER_SIZE_WITHOUT_DATA: usize = 1 << 16;
 
 pub struct AppendVecStat {
     pub open_as_mmap: AtomicU64,
@@ -728,7 +710,7 @@ impl AppendVec {
             }
             AppendVecFileBacking::File(file) => {
                 // 4096 was just picked to be a single page size
-                let mut buf = [MaybeUninit::<u8>::uninit(); PAGE_SIZE as usize];
+                let mut buf = [MaybeUninit::<u8>::uninit(); PAGE_SIZE];
                 // SAFETY: `read_into_buffer` will only write to uninitialized memory.
                 let bytes_read = read_into_buffer(file, self.len(), offset, unsafe {
                     slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len())
@@ -798,7 +780,7 @@ impl AppendVec {
                     account.to_account_shared_data()
                 }),
             AppendVecFileBacking::File(file) => {
-                let mut buf = MaybeUninit::<[u8; PAGE_SIZE as usize]>::uninit();
+                let mut buf = MaybeUninit::<[u8; PAGE_SIZE]>::uninit();
                 let bytes_read =
                     read_into_buffer(file, self.len(), offset, unsafe { &mut *buf.as_mut_ptr() })
                         .ok()?;
@@ -971,9 +953,7 @@ impl AppendVec {
                 }
             }
             AppendVecFileBacking::File(file) => {
-                let buffer_size = std::cmp::min(PAGE_SIZE as usize, self_len);
-                let mut reader = BufferedReader::new(
-                    buffer_size,
+                let mut reader = BufferedReader::<Stack<PAGE_SIZE>>::new_stack(
                     self_len,
                     file,
                     mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>(),
@@ -1031,8 +1011,12 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                let mut reader =
-                    BufferedReader::new(SCAN_BUFFER_SIZE, self.len(), file, STORE_META_OVERHEAD);
+                let mut reader = BufferedReader::new_heap(
+                    SCAN_BUFFER_SIZE,
+                    self.len(),
+                    file,
+                    STORE_META_OVERHEAD,
+                );
                 while let Ok(BufferedReaderStatus::Success) = reader.read() {
                     let (offset, bytes_subset) = reader.get_offset_and_data();
                     let (meta, next): (&StoredMeta, _) = Self::get_type(bytes_subset, 0).unwrap();
@@ -1040,11 +1024,11 @@ impl AppendVec {
                         Self::get_type(bytes_subset, next).unwrap();
                     let (hash, next): (&AccountHash, _) =
                         Self::get_type(bytes_subset, next).unwrap();
-                    let data_len = meta.data_len;
-                    if bytes_subset.len() - next >= data_len as usize {
+                    let data_len = meta.data_len as usize;
+                    if bytes_subset.len() - next >= data_len {
                         // we already read enough data to load this account
-                        let data = &bytes_subset.0[next..(next + data_len as usize)];
-                        let stored_size = u64_align!(next + (data_len as usize));
+                        let data = &bytes_subset.0[next..(next + data_len)];
+                        let stored_size = u64_align!(next + data_len);
                         let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
                             meta,
                             account_meta,
@@ -1056,12 +1040,10 @@ impl AppendVec {
                         callback(account);
                         reader.advance_offset(stored_size);
                     } else {
-                        // resize to worst case to avoid multiple resizes
+                        // resize to worst case to avoid multiple reallocations
                         reader.resize(STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize);
                         // fall through and read the whole account again. we need refs for StoredMeta and data.
-                        reader.set_required_data_len(
-                            STORE_META_OVERHEAD.saturating_add(data_len as usize),
-                        )
+                        reader.set_required_data_len(STORE_META_OVERHEAD.saturating_add(data_len))
                     }
                 }
             }
@@ -1147,9 +1129,11 @@ impl AppendVec {
                 }
             }
             AppendVecFileBacking::File(file) => {
-                let buffer_size = std::cmp::min(PAGE_SIZE as usize, self_len);
-                let mut reader =
-                    BufferedReader::new(buffer_size, self_len, file, mem::size_of::<StoredMeta>());
+                let mut reader = BufferedReader::<Stack<PAGE_SIZE>>::new_stack(
+                    self_len,
+                    file,
+                    mem::size_of::<StoredMeta>(),
+                );
                 while let Ok(BufferedReaderStatus::Success) = reader.read() {
                     let (offset, bytes) = reader.get_offset_and_data();
                     let (stored_meta, _) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
@@ -1880,7 +1864,7 @@ pub mod tests {
         {
             // Set up a test account with data_len larger than PAGE_SIZE (i.e.
             // AppendVec internal buffer size is PAGESIZE).
-            let data_len: usize = 2 * PAGE_SIZE as usize;
+            let data_len: usize = 2 * PAGE_SIZE;
             let account = create_test_account_with(data_len);
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(path, true, aligned_stored_size(data_len)));
@@ -1889,7 +1873,7 @@ pub mod tests {
         }
 
         // Truncate the AppendVec to PAGESIZE. This will cause get_account* to fail to load the account.
-        let truncated_accounts_len: usize = PAGE_SIZE as usize;
+        let truncated_accounts_len: usize = PAGE_SIZE;
         let av = AppendVec::new_from_file_unchecked(path, truncated_accounts_len, storage_access)
             .unwrap();
         let account = av.get_account_shared_data(0);
