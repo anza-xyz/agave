@@ -238,7 +238,7 @@ impl TransactionFrame {
             offset: usize::from(self.instructions.offset),
             num_instructions: self.instructions.num_instructions,
             index: 0,
-            cached_offsets_and_lens: &self.instructions.cached_offsets_and_lens,
+            frames: &self.instructions.frames,
         }
     }
 

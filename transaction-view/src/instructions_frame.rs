@@ -17,11 +17,11 @@ pub(crate) struct InstructionsFrame {
     pub(crate) num_instructions: u16,
     /// The offset to the first instruction in the transaction.
     pub(crate) offset: u16,
-    pub(crate) cached_offsets_and_lens: Vec<InstructionOffsetAndLens>,
+    pub(crate) frames: Vec<InstructionFrame>,
 }
 
 #[derive(Debug)]
-pub(crate) struct InstructionOffsetAndLens {
+pub(crate) struct InstructionFrame {
     num_accounts: u16,
     data_len: u16,
     num_accounts_len: u8, // either 1 or 2
@@ -51,8 +51,8 @@ impl InstructionsFrame {
         // length is less than u16::MAX, so we can safely cast to u16.
         let instructions_offset = *offset as u16;
 
-        // Pre-allocate buffer for cached offsets and lengths.
-        let mut cached_offsets_and_lens = Vec::with_capacity(usize::from(num_instructions));
+        // Pre-allocate buffer for frames.
+        let mut frames = Vec::with_capacity(usize::from(num_instructions));
 
         // The instructions do not have a fixed size. So we must iterate over
         // each instruction to find the total size of the instructions,
@@ -80,7 +80,7 @@ impl InstructionsFrame {
             let data_len_len = offset.wrapping_sub(data_len_offset) as u8;
             advance_offset_for_array::<u8>(bytes, offset, data_len)?;
 
-            cached_offsets_and_lens.push(InstructionOffsetAndLens {
+            frames.push(InstructionFrame {
                 num_accounts,
                 num_accounts_len,
                 data_len,
@@ -91,7 +91,7 @@ impl InstructionsFrame {
         Ok(Self {
             num_instructions,
             offset: instructions_offset,
-            cached_offsets_and_lens,
+            frames,
         })
     }
 }
@@ -102,7 +102,7 @@ pub struct InstructionsIterator<'a> {
     pub(crate) offset: usize,
     pub(crate) num_instructions: u16,
     pub(crate) index: u16,
-    pub(crate) cached_offsets_and_lens: &'a [InstructionOffsetAndLens],
+    pub(crate) frames: &'a [InstructionFrame],
 }
 
 impl<'a> Iterator for InstructionsIterator<'a> {
@@ -111,12 +111,12 @@ impl<'a> Iterator for InstructionsIterator<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.num_instructions {
-            let InstructionOffsetAndLens {
+            let InstructionFrame {
                 num_accounts,
                 num_accounts_len,
                 data_len,
                 data_len_len,
-            } = self.cached_offsets_and_lens[usize::from(self.index)];
+            } = self.frames[usize::from(self.index)];
 
             self.index = self.index.wrapping_add(1);
 
