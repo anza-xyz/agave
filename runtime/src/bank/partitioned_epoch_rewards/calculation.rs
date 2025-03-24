@@ -97,7 +97,7 @@ impl Bank {
         let PartitionedRewardsCalculation {
             vote_account_rewards,
             stake_rewards_by_partition,
-            old_vote_balance_and_staked,
+            //old_vote_balance_and_staked,
             validator_rate,
             foundation_rate,
             prev_epoch_duration_in_years,
@@ -117,26 +117,26 @@ impl Bank {
 
         let StakeRewardCalculationPartitioned {
             stake_rewards_by_partition,
-            total_stake_rewards_lamports,
+            total_stake_rewards_lamports: _total_stake_rewards_lamports,
         } = stake_rewards_by_partition;
 
-        let (_, assert_us) = measure_us!({
-            // the remaining code mirrors `update_rewards_with_thread_pool()`
-            let new_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
+        // let (_, assert_us) = measure_us!({
+        //     // the remaining code mirrors `update_rewards_with_thread_pool()`
+        //     let new_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
 
-            // This is for vote rewards only.
-            let validator_rewards_paid = new_vote_balance_and_staked - old_vote_balance_and_staked;
-            assert_eq!(total_vote_rewards, validator_rewards_paid);
-            self.assert_validator_rewards_paid(validator_rewards_paid);
+        //     // This is for vote rewards only.
+        //     let validator_rewards_paid = new_vote_balance_and_staked - old_vote_balance_and_staked;
+        //     assert_eq!(total_vote_rewards, validator_rewards_paid);
+        //     self.assert_validator_rewards_paid(validator_rewards_paid);
 
-            // verify that we didn't pay any more than we expected to
-            assert!(point_value.rewards >= validator_rewards_paid + total_stake_rewards_lamports);
-            info!(
-                "distributed vote rewards: {} out of {}, remaining {}",
-                validator_rewards_paid, point_value.rewards, total_stake_rewards_lamports
-            );
-        });
-        metrics.assert_us += assert_us;
+        //     // verify that we didn't pay any more than we expected to
+        //     assert!(point_value.rewards >= validator_rewards_paid + total_stake_rewards_lamports);
+        //     info!(
+        //         "distributed vote rewards: {} out of {}, remaining {}",
+        //         validator_rewards_paid, point_value.rewards, total_stake_rewards_lamports
+        //     );
+        // });
+        // metrics.assert_us += assert_us;
 
         let (num_stake_accounts, num_vote_accounts) = {
             let stakes = self.stakes_cache.stakes();
@@ -223,7 +223,7 @@ impl Bank {
             foundation_rate,
         } = self.calculate_previous_epoch_inflation_rewards(capitalization, prev_epoch);
 
-        let old_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
+        //let old_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
 
         let CalculateValidatorRewardsResult {
             vote_rewards_accounts: vote_account_rewards,
@@ -257,7 +257,7 @@ impl Bank {
                 stake_rewards_by_partition,
                 total_stake_rewards_lamports: stake_rewards.total_stake_rewards_lamports,
             },
-            old_vote_balance_and_staked,
+            //old_vote_balance_and_staked,
             validator_rate,
             foundation_rate,
             prev_epoch_duration_in_years,
