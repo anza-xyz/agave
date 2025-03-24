@@ -74,7 +74,7 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
         socket_addr_space,
     )
     .unwrap();
-    assert!(cluster_nodes.len() >= nodes);
+    assert_eq!(cluster_nodes.len(), nodes);
     let ignore_nodes = Arc::new(ignore_nodes);
     cluster_nodes.par_iter().for_each(|ingress_node| {
         if ignore_nodes.contains(ingress_node.pubkey()) {
