@@ -270,6 +270,7 @@ impl BankingStageHelper {
     }
 
     pub fn generate_task_ids(&self, count: usize) -> usize {
+        // if count were 0, the same previously-used task id would be returned...
         assert!(count > 0);
         self.next_task_id.fetch_add(count, Relaxed)
     }
