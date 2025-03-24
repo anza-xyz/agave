@@ -257,7 +257,7 @@ impl<'a> StorableAccountsBySlot<'a> {
     }
     /// given an overall index for all accounts in self:
     /// return (slots_and_accounts index, index within those accounts)
-    fn find_internal_index(&self, index: usize) -> (usize, usize) {
+    fn find_internal_index_loop(&self, index: usize) -> (usize, usize) {
         // search offsets for the accounts slice that contains 'index'.
         // This could be a binary search.
         for (offset_index, next_offset) in self.starting_offsets.iter().enumerate() {
@@ -272,6 +272,22 @@ impl<'a> StorableAccountsBySlot<'a> {
             }
         }
         panic!("failed");
+    }
+
+    /// given an overall index for all accounts in self:
+    /// return (slots_and_accounts index, index within those accounts)
+    fn find_internal_index(&self, index: usize) -> (usize, usize) {
+        match self.starting_offsets.binary_search(&index) {
+            Ok(offset_index) => (offset_index, 0),
+            Err(offset_index) => {
+                let prior_offset = if offset_index > 0 {
+                    self.starting_offsets[offset_index - 1]
+                } else {
+                    0
+                };
+                (offset_index, index - prior_offset)
+            }
+        }
     }
 }
 
