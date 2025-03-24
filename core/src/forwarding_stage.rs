@@ -17,11 +17,18 @@ use {
     solana_net_utils::bind_to_unspecified,
     solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::PohRecorder,
-    solana_runtime::{bank::Bank, root_bank_cache::RootBankCache},
+    solana_runtime::{
+        bank::{Bank, CollectorFeeDetails},
+        root_bank_cache::RootBankCache,
+    },
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
     },
-    solana_sdk::{fee::FeeBudgetLimits, packet, transaction::MessageHash},
+    solana_sdk::{
+        fee::{FeeBudgetLimits, FeeDetails},
+        packet,
+        transaction::MessageHash,
+    },
     solana_streamer::sendmmsg::batch_send,
     std::{
         net::{SocketAddr, UdpSocket},
@@ -371,7 +378,10 @@ fn calculate_priority(
     let signature_fee = signature_details
         .total_signatures()
         .saturating_mul(bank.fee_structure().lamports_per_signature);
-    let fee = signature_fee.saturating_add(prioritization_fee);
+    let fee_details = FeeDetails::new(signature_fee, prioritization_fee);
+
+    let (reward, _burn) =
+        bank.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details));
 
     let cost = CostModel::estimate_cost(
         transaction,
@@ -388,7 +398,7 @@ fn calculate_priority(
     const MULTIPLIER: u64 = 1_000_000;
     Some(
         MULTIPLIER
-            .saturating_mul(fee)
+            .saturating_mul(reward)
             .wrapping_div(cost.sum().saturating_add(1)),
     )
 }

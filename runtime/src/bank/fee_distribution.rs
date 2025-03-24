@@ -77,7 +77,7 @@ impl Bank {
         reward
     }
 
-    fn calculate_reward_and_burn_fee_details(
+    pub fn calculate_reward_and_burn_fee_details(
         &self,
         fee_details: &CollectorFeeDetails,
     ) -> (u64, u64) {

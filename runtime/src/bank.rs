@@ -271,7 +271,7 @@ impl AddAssign for SquashTiming {
 }
 
 #[derive(Debug, Default, PartialEq)]
-pub(crate) struct CollectorFeeDetails {
+pub struct CollectorFeeDetails {
     transaction_fee: u64,
     priority_fee: u64,
 }
