@@ -2,8 +2,8 @@ SBF_SDK_PATH := ../../platform-tools-sdk/sbf
 SRC_DIR := c/src
 OUT_DIR := target/deploy
 
-clean-all: clean
-	cargo clean
+clean-all:
+	rm -rf target/deploy target/sbpf*
 
 test-all:
 	SBF_OUT_DIR=$(OUT_DIR) cargo test --features="sbf_rust,sbf_c" $(TEST_ARGS)

@@ -17,7 +17,9 @@ cargo_build_sbf_sanity() {
 
   pushd programs/sbf
   # Generate the sanity programs list
-  cargo test --features="sbf_rust,sbf_sanity_list" --test programs test_program_sbf_sanity
+  if [ ! -f sanity_programs.txt ]; then
+    cargo test --features="sbf_rust,sbf_sanity_list" --test programs test_program_sbf_sanity
+  fi
   mapfile -t rust_programs < <(cat sanity_programs.txt)
 
   pushd rust
