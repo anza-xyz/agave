@@ -1349,6 +1349,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     // The most normal case
                     false
                 }
+                // This should never be observed because the scheduler thread makes all running
+                // tasks are conflict-free
+                Err(TransactionError::AccountInUse)
+                // This should have been validated by blockstore by now
+                | Err(TransactionError::AccountLoadedTwice)
+                | Err(TransactionError::TooManyAccountLocks)
+                // Block verification should never see this:
+                | Err(TransactionError::CommitCancelled) => {
+                    unreachable!()
+                }
                 Err(error) => {
                     error!("error is detected while accumulating....: {error:?}");
                     *result = Err(error);
@@ -1373,6 +1383,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             session_ending,
                             handler_context,
                         );
+                    }
+                    // This should never be observed because the scheduler thread makes all running
+                    // tasks are conflict-free
+                    Err(TransactionError::AccountInUse)
+                    // This should have been validated by banking_packet_handler by now
+                    | Err(TransactionError::AccountLoadedTwice)
+                    | Err(TransactionError::TooManyAccountLocks) => {
+                        unreachable!();
                     }
                     Err(ref error) => {
                         // The other errors; just discard tasks. These are permanently
