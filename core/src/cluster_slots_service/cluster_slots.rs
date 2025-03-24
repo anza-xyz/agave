@@ -64,12 +64,10 @@ impl ClusterSlots {
         let epoch_slots_list: Vec<_> = {
             epoch_slots_list
                 .into_iter()
-                .map(|epoch_slots| {
-                    let stake = validator_stakes
+                .filter_map(|epoch_slots| {
+                    validator_stakes
                         .get(&epoch_slots.from)
-                        .cloned()
-                        .unwrap_or(0);
-                    (epoch_slots, stake)
+                        .map(|&stake| (epoch_slots, stake))
                 })
                 .collect()
         };
