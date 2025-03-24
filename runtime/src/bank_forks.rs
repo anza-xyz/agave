@@ -764,7 +764,7 @@ mod tests {
         let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
         let snapshot_controller = SnapshotController::new(
             abs_request_sender,
-            Some(SnapshotConfig::new_disabled()),
+            SnapshotConfig::new_disabled(),
             0, /* root_slot */
         );
         let bg_exit = Arc::new(AtomicBool::new(false));

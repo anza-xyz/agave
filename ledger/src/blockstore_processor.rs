@@ -870,7 +870,7 @@ pub fn test_process_blockstore(
     let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
     let snapshot_controller = SnapshotController::new(
         abs_request_sender,
-        Some(snapshot_config),
+        snapshot_config,
         bank_forks.read().unwrap().root(),
     );
     let bg_exit = Arc::new(AtomicBool::new(false));

@@ -1176,7 +1176,7 @@ impl ProgramTestContext {
         let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
         let snapshot_controller = SnapshotController::new(
             abs_request_sender,
-            Some(SnapshotConfig::new_disabled()),
+            SnapshotConfig::new_disabled(),
             bank_forks.root(),
         );
 

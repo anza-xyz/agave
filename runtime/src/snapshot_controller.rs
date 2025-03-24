@@ -21,14 +21,14 @@ use {
 #[derive(Default)]
 pub struct SnapshotController {
     abs_request_sender: AbsRequestSender,
-    snapshot_config: Option<SnapshotConfig>,
+    snapshot_config: SnapshotConfig,
     latest_abs_request_slot: AtomicU64,
 }
 
 impl SnapshotController {
     pub fn new(
         abs_request_sender: AbsRequestSender,
-        snapshot_config: Option<SnapshotConfig>,
+        snapshot_config: SnapshotConfig,
         root_slot: Slot,
     ) -> Self {
         Self {
@@ -109,13 +109,13 @@ impl SnapshotController {
     ///
     /// Returns None if ABS requests should not be sent
     fn abs_request_interval(&self) -> Option<Slot> {
-        self.snapshot_config.as_ref().and_then(|snapshot_config| {
-            snapshot_config.should_generate_snapshots().then(||
-                // N.B. This assumes if a snapshot is disabled that its interval will be Slot::MAX
-                cmp::min(
-                    snapshot_config.full_snapshot_archive_interval_slots,
-                    snapshot_config.incremental_snapshot_archive_interval_slots,
-                ))
+        self.snapshot_config.should_generate_snapshots().then(|| {
+            // N.B. This assumes if a snapshot is disabled that its interval will be Slot::MAX
+            cmp::min(
+                self.snapshot_config.full_snapshot_archive_interval_slots,
+                self.snapshot_config
+                    .incremental_snapshot_archive_interval_slots,
+            )
         })
     }
 

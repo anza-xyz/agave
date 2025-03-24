@@ -200,7 +200,7 @@ impl BackgroundServices {
             AbsRequestSender::new(snapshot_request_sender.clone());
         let snapshot_controller = SnapshotController::new(
             accounts_background_request_sender,
-            Some(snapshot_config.clone()),
+            snapshot_config.clone(),
             bank_forks.read().unwrap().root(),
         );
         let snapshot_request_handler = SnapshotRequestHandler {
