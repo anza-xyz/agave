@@ -284,16 +284,16 @@ impl BankingStageHelper {
         })
     }
 
-    pub fn send_new_task(&self, task: Task) {
-        self.new_task_sender
-            .send(NewTaskPayload::Payload(task))
-            .unwrap();
-    }
-
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
         let new_index = self.generate_task_ids(1);
         let transaction = executed_task.into_transaction();
         self.create_new_task(transaction, new_index)
+    }
+
+    pub fn send_new_task(&self, task: Task) {
+        self.new_task_sender
+            .send(NewTaskPayload::Payload(task))
+            .unwrap();
     }
 }
 
