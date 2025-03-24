@@ -3,12 +3,8 @@ use {
     solana_gossip::{
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
-    solana_runtime::{bank::Bank, epoch_stakes::NodeIdToVoteAccounts},
-    solana_sdk::{
-        clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
-        pubkey::Pubkey,
-        timing::AtomicInterval,
-    },
+    solana_runtime::bank::Bank,
+    solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
     std::{
         collections::{BTreeMap, HashMap},
         sync::{Arc, Mutex, RwLock},
@@ -17,14 +13,16 @@ use {
 
 // Limit the size of cluster-slots map in case
 // of receiving bogus epoch slots values.
-const CLUSTER_SLOTS_TRIM_SIZE: usize = 524_288; // 512K
+// This also constraints the size of the datastructure
+// if we are really far behind.
+const CLUSTER_SLOTS_TRIM_SIZE: usize = 5000;
 
 pub(crate) type SlotPubkeys = HashMap</*node:*/ Pubkey, /*stake:*/ u64>;
 
 #[derive(Default)]
 pub struct ClusterSlots {
     cluster_slots: RwLock<BTreeMap<Slot, Arc<RwLock<SlotPubkeys>>>>,
-    validator_stakes: RwLock<Arc<NodeIdToVoteAccounts>>,
+    validator_stakes: RwLock<Arc<SlotPubkeys>>,
     epoch: RwLock<Option<u64>>,
     cursor: Mutex<Cursor>,
     last_report: AtomicInterval,
@@ -35,38 +33,49 @@ impl ClusterSlots {
         self.cluster_slots.read().unwrap().get(&slot).cloned()
     }
 
-    pub(crate) fn update(&self, root_bank: &Bank, cluster_info: &ClusterInfo) {
-        self.update_peers(root_bank);
+    pub(crate) fn update(
+        &self,
+        root_bank: &Bank,
+        validator_stakes: &Arc<SlotPubkeys>,
+        cluster_info: &ClusterInfo,
+    ) {
+        self.update_peers(validator_stakes, root_bank);
         let epoch_slots = {
             let mut cursor = self.cursor.lock().unwrap();
             cluster_info.get_epoch_slots(&mut cursor)
         };
         let num_epoch_slots = root_bank.get_slots_in_epoch(root_bank.epoch());
-        self.update_internal(root_bank.slot(), epoch_slots, num_epoch_slots);
+        self.update_internal(
+            root_bank.slot(),
+            validator_stakes,
+            epoch_slots,
+            num_epoch_slots,
+        );
     }
 
-    fn update_internal(&self, root: Slot, epoch_slots_list: Vec<EpochSlots>, num_epoch_slots: u64) {
+    fn update_internal(
+        &self,
+        root: Slot,
+        validator_stakes: &SlotPubkeys,
+        epoch_slots_list: Vec<EpochSlots>,
+        num_epoch_slots: u64,
+    ) {
         // Attach validator's total stake.
         let epoch_slots_list: Vec<_> = {
-            let validator_stakes = self.validator_stakes.read().unwrap();
             epoch_slots_list
                 .into_iter()
                 .map(|epoch_slots| {
-                    let stake = match validator_stakes.get(&epoch_slots.from) {
-                        Some(v) => v.total_stake,
-                        None => 0,
-                    };
+                    let stake = validator_stakes
+                        .get(&epoch_slots.from)
+                        .cloned()
+                        .unwrap_or(0);
                     (epoch_slots, stake)
                 })
                 .collect()
         };
-        // Discard slots at or before current root or epochs ahead.
-        let slot_range = (root + 1)
-            ..root.saturating_add(
-                num_epoch_slots
-                    .max(DEFAULT_SLOTS_PER_EPOCH)
-                    .saturating_mul(2),
-            );
+        // Discard slots at or before current root or too far ahead.
+        let slot_range =
+            (root + 1)..root.saturating_add(num_epoch_slots.min(CLUSTER_SLOTS_TRIM_SIZE as u64));
         let slot_nodes_stakes = epoch_slots_list
             .iter()
             .flat_map(|(epoch_slots, stake)| {
@@ -114,20 +123,10 @@ impl ClusterSlots {
                     .sum::<usize>();
                 (cluster_slots_cap, pubkeys_capacity)
             };
-            let (validator_stakes_cap, validator_pubkeys_len) = {
-                let validator_stakes = self.validator_stakes.read().unwrap();
-                let validator_len = validator_stakes
-                    .iter()
-                    .map(|(_pubkey, vote_accounts)| vote_accounts.vote_accounts.capacity())
-                    .sum::<usize>();
-                (validator_stakes.capacity(), validator_len)
-            };
             datapoint_info!(
                 "cluster-slots-size",
                 ("cluster_slots_capacity", cluster_slots_cap, i64),
                 ("pubkeys_capacity", pubkeys_capacity, i64),
-                ("validator_stakes_capacity", validator_stakes_cap, i64),
-                ("validator_pubkeys_len", validator_pubkeys_len, i64),
             );
         }
     }
@@ -139,7 +138,7 @@ impl ClusterSlots {
             .read()
             .unwrap()
             .get(&node_id)
-            .map(|v| v.total_stake)
+            .cloned()
             .unwrap_or(0);
         let slot_pubkeys = self
             .cluster_slots
@@ -151,18 +150,12 @@ impl ClusterSlots {
         slot_pubkeys.write().unwrap().insert(node_id, balance);
     }
 
-    fn update_peers(&self, root_bank: &Bank) {
+    fn update_peers(&self, staked_nodes: &Arc<SlotPubkeys>, root_bank: &Bank) {
         let root_epoch = root_bank.epoch();
         let my_epoch = *self.epoch.read().unwrap();
 
         if Some(root_epoch) != my_epoch {
-            let validator_stakes = root_bank
-                .epoch_stakes(root_epoch)
-                .expect("Bank must have epoch stakes for its own epoch")
-                .node_id_to_vote_accounts()
-                .clone();
-
-            *self.validator_stakes.write().unwrap() = validator_stakes;
+            *self.validator_stakes.write().unwrap() = staked_nodes.clone();
             *self.epoch.write().unwrap() = Some(root_epoch);
         }
     }
@@ -175,13 +168,7 @@ impl ClusterSlots {
             let validator_stakes = self.validator_stakes.read().unwrap();
             repair_peers
                 .iter()
-                .map(|peer| {
-                    validator_stakes
-                        .get(peer.pubkey())
-                        .map(|node| node.total_stake)
-                        .unwrap_or(0)
-                        + 1
-                })
+                .map(|peer| validator_stakes.get(peer.pubkey()).cloned().unwrap_or(0) + 1)
                 .collect()
         };
         let Some(slot_peers) = self.lookup(slot) else {
@@ -216,7 +203,7 @@ impl ClusterSlots {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_runtime::epoch_stakes::NodeVoteAccounts};
+    use {super::*, solana_sdk::clock::DEFAULT_SLOTS_PER_EPOCH};
 
     #[test]
     fn test_default() {
@@ -227,7 +214,7 @@ mod tests {
     #[test]
     fn test_update_noop() {
         let cs = ClusterSlots::default();
-        cs.update_internal(0, vec![], DEFAULT_SLOTS_PER_EPOCH);
+        cs.update_internal(0, &HashMap::new(), vec![], DEFAULT_SLOTS_PER_EPOCH);
         assert!(cs.cluster_slots.read().unwrap().is_empty());
     }
 
@@ -235,7 +222,12 @@ mod tests {
     fn test_update_empty() {
         let cs = ClusterSlots::default();
         let epoch_slot = EpochSlots::default();
-        cs.update_internal(0, vec![epoch_slot], DEFAULT_SLOTS_PER_EPOCH);
+        cs.update_internal(
+            0,
+            &HashMap::new(),
+            vec![epoch_slot],
+            DEFAULT_SLOTS_PER_EPOCH,
+        );
         assert!(cs.lookup(0).is_none());
     }
 
@@ -245,7 +237,12 @@ mod tests {
         let cs = ClusterSlots::default();
         let mut epoch_slot = EpochSlots::default();
         epoch_slot.fill(&[0], 0);
-        cs.update_internal(0, vec![epoch_slot], DEFAULT_SLOTS_PER_EPOCH);
+        cs.update_internal(
+            0,
+            &HashMap::new(),
+            vec![epoch_slot],
+            DEFAULT_SLOTS_PER_EPOCH,
+        );
         assert!(cs.lookup(0).is_none());
     }
 
@@ -254,7 +251,12 @@ mod tests {
         let cs = ClusterSlots::default();
         let mut epoch_slot = EpochSlots::default();
         epoch_slot.fill(&[1], 0);
-        cs.update_internal(0, vec![epoch_slot], DEFAULT_SLOTS_PER_EPOCH);
+        cs.update_internal(
+            0,
+            &HashMap::new(),
+            vec![epoch_slot],
+            DEFAULT_SLOTS_PER_EPOCH,
+        );
         assert!(cs.lookup(0).is_none());
         assert!(cs.lookup(1).is_some());
         assert_eq!(
@@ -303,15 +305,7 @@ mod tests {
             .unwrap()
             .insert(0, Arc::new(RwLock::new(map)));
         //make sure default weights are used as well
-        let validator_stakes: HashMap<_, _> = vec![(
-            k1,
-            NodeVoteAccounts {
-                total_stake: u64::MAX / 2,
-                vote_accounts: vec![Pubkey::default()],
-            },
-        )]
-        .into_iter()
-        .collect();
+        let validator_stakes: HashMap<_, _> = vec![(k1, u64::MAX / 2)].into_iter().collect();
         *cs.validator_stakes.write().unwrap() = Arc::new(validator_stakes);
         let c1 = ContactInfo::new(k1, /*wallclock:*/ 0, /*shred_version:*/ 0);
         let c2 = ContactInfo::new(k2, /*wallclock:*/ 0, /*shred_version:*/ 0);
@@ -339,15 +333,9 @@ mod tests {
             .is_empty());
 
         // Give second validator max stake
-        let validator_stakes: HashMap<_, _> = vec![(
-            *contact_infos[1].pubkey(),
-            NodeVoteAccounts {
-                total_stake: u64::MAX / 2,
-                vote_accounts: vec![Pubkey::default()],
-            },
-        )]
-        .into_iter()
-        .collect();
+        let validator_stakes: HashMap<_, _> = vec![(*contact_infos[1].pubkey(), u64::MAX / 2)]
+            .into_iter()
+            .collect();
         *cs.validator_stakes.write().unwrap() = Arc::new(validator_stakes);
 
         // Mark the first validator as completed slot 9, should pick that validator,
@@ -366,20 +354,9 @@ mod tests {
         let mut epoch_slot = EpochSlots::default();
         epoch_slot.fill(&[1], 0);
 
-        let map = Arc::new(
-            vec![(
-                Pubkey::default(),
-                NodeVoteAccounts {
-                    total_stake: 1,
-                    vote_accounts: vec![Pubkey::default()],
-                },
-            )]
-            .into_iter()
-            .collect(),
-        );
+        let map = vec![(Pubkey::default(), 1)].into_iter().collect();
 
-        *cs.validator_stakes.write().unwrap() = map;
-        cs.update_internal(0, vec![epoch_slot], DEFAULT_SLOTS_PER_EPOCH);
+        cs.update_internal(0, &map, vec![epoch_slot], DEFAULT_SLOTS_PER_EPOCH);
         assert!(cs.lookup(1).is_some());
         assert_eq!(
             cs.lookup(1)
