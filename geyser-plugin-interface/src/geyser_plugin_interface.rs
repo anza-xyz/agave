@@ -177,7 +177,8 @@ pub struct ReplicaTransactionInfoV3<'a> {
 
     /// The transaction's index in the block
     pub index: usize,
-    /// States of accounts that was in transaction
+
+    /// States of accounts that were involved in the transaction
     pub post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
 }
 
