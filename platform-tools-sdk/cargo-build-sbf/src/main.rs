@@ -526,12 +526,12 @@ fn corrupted_toolchain(config: &Config) -> bool {
         .join("platform-tools")
         .join("rust");
 
-    if !toolchain_path.exists() {
-        return true;
-    }
-
     let binaries = toolchain_path.join("bin");
-    !binaries.exists() || !binaries.join("rustc").exists() || !binaries.join("cargo").exists()
+
+    !toolchain_path.try_exists().unwrap_or(false)
+        || !binaries.try_exists().unwrap_or(false)
+        || !binaries.join("rustc").try_exists().unwrap_or(false)
+        || !binaries.join("cargo").try_exists().unwrap_or(false)
 }
 
 // check whether custom solana toolchain is linked, and link it if it is not.
