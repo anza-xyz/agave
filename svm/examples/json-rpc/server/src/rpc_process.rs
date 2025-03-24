@@ -333,7 +333,6 @@ impl JsonRpcRequestProcessor {
                     enable_log_recording: true,
                     enable_return_data_recording: true,
                 },
-                transaction_account_lock_limit: Some(64),
             },
         );
 

@@ -635,7 +635,6 @@ impl Consumer {
                     recording_config: ExecutionRecordingConfig::new_single_setting(
                         transaction_status_sender_enabled
                     ),
-                    transaction_account_lock_limit: Some(bank.get_transaction_account_lock_limit()),
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;

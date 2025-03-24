@@ -115,8 +115,6 @@ pub struct TransactionProcessingConfig<'a> {
     pub limit_to_load_programs: bool,
     /// Recording capabilities for transaction execution.
     pub recording_config: ExecutionRecordingConfig,
-    /// The max number of accounts that a transaction may lock.
-    pub transaction_account_lock_limit: Option<usize>,
 }
 
 /// Runtime environment for transaction batch processing.
