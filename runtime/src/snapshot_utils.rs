@@ -1040,6 +1040,15 @@ fn archive_snapshot(
 
         let do_archive_files = |encoder: &mut dyn Write| -> std::result::Result<(), E> {
             let mut archive = tar::Builder::new(encoder);
+            // Disable sparse file handling.  This seems to be the root cause of an issue when
+            // upgrading v2.0 to v2.1, and the tar crate from 0.4.41 to 0.4.42.
+            // Since the tarball will still go through compression (zstd/etc) afterwards, disabling
+            // sparse handling in the tar itself should be fine.
+            //
+            // Likely introduced in [^1].  Tracking resolution in [^2].
+            // [^1] https://github.com/alexcrichton/tar-rs/pull/375
+            // [^2] https://github.com/alexcrichton/tar-rs/issues/403
+            archive.sparse(false);
             // Serialize the version and snapshots files before accounts so we can quickly determine the version
             // and other bank fields. This is necessary if we want to interleave unpacking with reconstruction
             archive
