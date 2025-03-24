@@ -752,7 +752,7 @@ pub mod reduce_stake_warmup_cooldown {
     solana_pubkey::declare_id!("GwtDQBghCTBgmX2cpEGNPxTEBUTQRaDMGTr5qychdGMj");
 }
 
-pub mod revise_turbine_epoch_stakes {
+mod revise_turbine_epoch_stakes {
     solana_pubkey::declare_id!("BTWmtJC8U5ZLMbBUUA1k6As62sYjPEjAiNAT55xYGdJU");
 }
 
@@ -977,7 +977,7 @@ pub mod disable_account_loader_special_case {
 }
 
 pub mod enable_secp256r1_precompile {
-    solana_pubkey::declare_id!("srremy31J5Y25FrAApwVb9kZcfXbusYMMsvTK9aWv5q");
+    solana_pubkey::declare_id!("sryYyFwxzJop1Bh9XpyiVWjZP4nfHExiqNp3Dh71W9i");
 }
 
 pub mod accounts_lt_hash {
@@ -1010,22 +1010,6 @@ pub mod raise_block_limits_to_50m {
 
 pub mod drop_unchained_merkle_shreds {
     solana_pubkey::declare_id!("3A9WtMU4aHuryD3VN7SFKdfXto8HStLb1Jj6HjkgfnGL");
-}
-
-pub mod relax_intrabatch_account_locks {
-    solana_pubkey::declare_id!("EbAhnReKK8Sf88CvAfAXbgKji8DV48rsp4q2sgHqgWef");
-}
-
-pub mod create_slashing_program {
-    solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
-}
-
-pub mod disable_partitioned_rent_collection {
-    solana_pubkey::declare_id!("2B2SBNbUcr438LtGXNcJNBP2GBSxjx81F945SdSkUSfC");
-}
-
-pub mod enable_vote_address_leader_schedule {
-    solana_pubkey::declare_id!("5JsG4NWH8Jbrqdd8uL6BNwnyZK3dQSoieRXG5vmofj9y");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -1256,10 +1240,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
         (fix_alt_bn128_multiplication_input_length::id(), "fix alt_bn128 multiplication input length SIMD-0222 #3686"),
         (drop_unchained_merkle_shreds::id(), "drops unchained Merkle shreds #2149"),
-        (relax_intrabatch_account_locks::id(), "Allow batched transactions to read/write and write/write the same accounts SIMD-0083"),
-        (create_slashing_program::id(), "creates an enshrined slashing program SIMD-0204"),
-        (disable_partitioned_rent_collection::id(), "Disable partitioned rent collection SIMD-0175 #4562"),
-        (enable_vote_address_leader_schedule::id(), "Enable vote address leader schedule SIMD-0180 #4573"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
