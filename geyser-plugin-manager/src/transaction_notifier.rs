@@ -33,7 +33,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
         signature: &Signature,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &SanitizedTransaction,
-        post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
+        post_accounts_states: &[(Pubkey, AccountSharedData)],
     ) {
         let mut measure = Measure::start("geyser-plugin-notify_plugins_of_transaction_info");
         let transaction_log_info = Self::build_replica_transaction_info(
@@ -93,7 +93,7 @@ impl TransactionNotifierImpl {
         signature: &'a Signature,
         transaction_status_meta: &'a TransactionStatusMeta,
         transaction: &'a SanitizedTransaction,
-        post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
+        post_accounts_states: &'a [(Pubkey, AccountSharedData)],
     ) -> ReplicaTransactionInfoV3<'a> {
         ReplicaTransactionInfoV3 {
             index,
