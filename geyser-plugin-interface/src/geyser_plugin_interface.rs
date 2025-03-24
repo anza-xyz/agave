@@ -179,7 +179,7 @@ pub struct ReplicaTransactionInfoV3<'a> {
     pub index: usize,
 
     /// States of accounts that were involved in the transaction
-    pub post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
+    pub post_accounts_states: &'a [(Pubkey, AccountSharedData)],
 }
 
 /// A wrapper to future-proof ReplicaTransactionInfo handling.
