@@ -3475,15 +3475,18 @@ mod tests {
             .unwrap()
             .set_limits(u64::MAX, u64::MAX, u64::MAX);
 
+        // Taking poh_recorder is needed to avoid race conditions between poh and scheduler, which
+        // already has readily-runnable tx in the buffer, unlike the previous bank;
+        // This will be addressed in the next pr...
+        let mut poh_recorder = poh_recorder.write().unwrap();
+
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context);
         // Make sure the same scheduler is used to test its internal cross-session behavior
         assert_eq!(scheduler.id(), old_scheduler_id);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank(bank.clone_with_scheduler(), true);
+        poh_recorder.set_bank(bank.clone_with_scheduler(), true);
+        drop(poh_recorder);
 
         // Calling wait_for_completed_scheduler() for block production scheduler causes it to be
         // interrupted immediately; so need to wait for successful landing of the retried task.
