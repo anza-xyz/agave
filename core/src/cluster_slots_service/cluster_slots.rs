@@ -15,7 +15,7 @@ use {
 // of receiving bogus epoch slots values.
 // This also constraints the size of the datastructure
 // if we are really far behind.
-const CLUSTER_SLOTS_TRIM_SIZE: usize = 5000;
+const CLUSTER_SLOTS_TRIM_SIZE: usize = 1500;
 
 pub(crate) type SlotPubkeys = HashMap</*node:*/ Pubkey, /*stake:*/ u64>;
 
