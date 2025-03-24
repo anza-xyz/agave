@@ -23,6 +23,7 @@ use {
     dyn_clone::{clone_trait_object, DynClone},
     log::*,
     scopeguard::defer,
+    solana_clock::Slot,
     solana_cost_model::cost_model::CostModel,
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
@@ -40,7 +41,6 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::clock::Slot,
     solana_svm::transaction_processing_result::ProcessedTransaction,
     solana_timings::ExecuteTimings,
     solana_transaction::sanitized::SanitizedTransaction,
