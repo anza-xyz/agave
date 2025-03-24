@@ -160,7 +160,7 @@ impl fmt::Display for SendTransactionStats {
     }
 }
 
-/// For external use it is useful to be have direct access to data and PartialEq but
+/// For external use it is useful to have direct access to data and `PartialEq` but
 /// we cannot have that on top of atomics. This macro creates a structure with the same
 /// fields but of type u64.
 macro_rules! define_non_atomic_struct_for {
