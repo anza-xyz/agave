@@ -49,8 +49,8 @@ mod packet_container;
 /// this should be evaluated with new stage.
 const FORWARD_BATCH_SIZE: usize = 128;
 
-// One function has been split into two so that VoteClient and NonVoteClient
-// could manage their addresses internally, providing better encapsulation.
+///
+// Does it need to be pub?
 pub trait ForwardAddressGetter: Clone + Send + Sync + 'static {
     // Why added `max_count` -- because tpu-client-next refreshes connections
     // before using them by trying to connect, while ConnectionCache refreshes
@@ -103,10 +103,6 @@ impl<F: ForwardAddressGetter> VoteClient<F> {
         self.current_address.is_some()
     }
 
-    // Why it doesn't make sense to pass pairs of (Vec<u8>, SocketAddr):
-    // because we actually always send to the same address, this generic argument making
-    // a false impression.
-    // Why not implementing the same ForwardingClient trait -- to have batch: &mut
     fn send_batch(&self, batch: &mut Vec<Vec<u8>>) {
         assert!(
             self.current_address.is_some(),
@@ -192,7 +188,7 @@ impl<F: ForwardAddressGetter> LeaderUpdater for ForwardingStageLeaderUpdater<F> 
 struct TpuClientNextClient<F: ForwardAddressGetter> {
     runtime_handle: Handle,
     sender: mpsc::Sender<TransactionBatch>,
-    join_handle:
+    _join_handle:
         TokioJoinHandle<Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>>,
     forward_address_getter: F,
 }
@@ -225,99 +221,104 @@ impl<F: ForwardAddressGetter> ForwardingClient for TpuClientNextClient<F> {
     }
 }
 
-impl<F: ForwardAddressGetter, Client: ForwardingClient> ForwardingStage<F, Client> {
-    //TODO(klykov) should it be part of the ForwardingStage? It doesn't use Client, so this creates confusion I guess
-    pub fn spawn_with_connection_cache(
-        receiver: Receiver<(BankingPacketBatch, bool)>,
-        connection_cache: Arc<ConnectionCache>,
-        root_bank_cache: RootBankCache,
-        forward_address_getter: F,
-        data_budget: DataBudget,
-    ) -> JoinHandle<()> {
-        let non_vote_client =
-            ConnectionCacheClient::new(connection_cache, forward_address_getter.clone());
-        let vote_client = VoteClient::new(forward_address_getter);
-        let forwarding_stage = ForwardingStage::new(
-            receiver,
-            vote_client,
-            non_vote_client,
-            root_bank_cache,
-            data_budget,
-        );
-        Builder::new()
-            .name("solFwdStage".to_string())
-            .spawn(move || forwarding_stage.run())
-            .unwrap()
-    }
+pub fn spawn_with_connection_cache<F>(
+    receiver: Receiver<(BankingPacketBatch, bool)>,
+    connection_cache: Arc<ConnectionCache>,
+    root_bank_cache: RootBankCache,
+    forward_address_getter: F,
+    data_budget: DataBudget,
+) -> JoinHandle<()>
+where
+    F: ForwardAddressGetter,
+{
+    let non_vote_client =
+        ConnectionCacheClient::new(connection_cache, forward_address_getter.clone());
+    let vote_client = VoteClient::new(forward_address_getter);
+    let forwarding_stage = ForwardingStage::new(
+        receiver,
+        vote_client,
+        non_vote_client,
+        root_bank_cache,
+        data_budget,
+    );
+    Builder::new()
+        .name("solFwdStage".to_string())
+        .spawn(move || forwarding_stage.run())
+        .unwrap()
+}
 
-    // TODO this client should be introduced on a level up to use proper identity
-    fn spawn_tpu_client_next(
-        runtime_handle: tokio::runtime::Handle,
-        forward_address_getter: F,
-    ) -> TpuClientNextClient<F> {
-        let (sender, receiver) = mpsc::channel(16); // random number of now
-        let validator_identity = None;
-        let join_handle = runtime_handle.spawn({
-            let forward_address_getter = forward_address_getter.clone();
-            async move {
-                let cancel = CancellationToken::new();
-                let leader_updater = ForwardingStageLeaderUpdater {
-                    forward_address_getter: forward_address_getter.clone(),
-                };
-                let config = ConnectionWorkersSchedulerConfig {
-                    bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
-                    stake_identity: validator_identity, // In CC, do we send with identity?
-                    num_connections: 1,
-                    skip_check_transaction_age: false,
-                    worker_channel_size: 2,
-                    max_reconnect_attempts: 4,
-                    leaders_fanout: Fanout {
-                        send: 1,
-                        connect: 1,
-                    },
-                };
-                ConnectionWorkersScheduler::run(
-                    config,
-                    Box::new(leader_updater),
-                    receiver,
-                    cancel.clone(),
-                )
-                .await
-            }
-        });
-        TpuClientNextClient {
-            runtime_handle,
-            sender,
-            join_handle,
-            forward_address_getter,
+// TODO this client should be introduced on a level up to use proper identity
+fn spawn_tpu_client_next<F>(
+    runtime_handle: tokio::runtime::Handle,
+    forward_address_getter: F,
+) -> TpuClientNextClient<F>
+where
+    F: ForwardAddressGetter,
+{
+    let (sender, receiver) = mpsc::channel(16); // random number of now
+    let validator_identity = None;
+    let _join_handle = runtime_handle.spawn({
+        let forward_address_getter = forward_address_getter.clone();
+        async move {
+            let cancel = CancellationToken::new();
+            let leader_updater = ForwardingStageLeaderUpdater {
+                forward_address_getter: forward_address_getter.clone(),
+            };
+            let config = ConnectionWorkersSchedulerConfig {
+                bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
+                stake_identity: validator_identity, // In CC, do we send with identity?
+                num_connections: 1,
+                skip_check_transaction_age: false,
+                worker_channel_size: 2,
+                max_reconnect_attempts: 4,
+                leaders_fanout: Fanout {
+                    send: 1,
+                    connect: 1,
+                },
+            };
+            ConnectionWorkersScheduler::run(
+                config,
+                Box::new(leader_updater),
+                receiver,
+                cancel.clone(),
+            )
+            .await
         }
+    });
+    TpuClientNextClient {
+        runtime_handle,
+        sender,
+        _join_handle,
+        forward_address_getter,
     }
+}
 
-    pub fn spawn_with_tpu_client_next(
-        receiver: Receiver<(BankingPacketBatch, bool)>,
-        tokio_runtime: tokio::runtime::Handle,
-        root_bank_cache: RootBankCache,
-        forward_address_getter: F,
-        data_budget: DataBudget,
-    ) -> JoinHandle<()> {
-        let non_vote_client = ForwardingStage::<F, TpuClientNextClient<F>>::spawn_tpu_client_next(
-            tokio_runtime,
-            forward_address_getter.clone(),
-        );
-        let vote_client = VoteClient::new(forward_address_getter);
-        let forwarding_stage = ForwardingStage::new(
-            receiver,
-            vote_client,
-            non_vote_client,
-            root_bank_cache,
-            data_budget,
-        );
-        Builder::new()
-            .name("solFwdStage".to_string())
-            .spawn(move || forwarding_stage.run())
-            .unwrap()
-    }
+pub fn spawn_with_tpu_client_next<F>(
+    receiver: Receiver<(BankingPacketBatch, bool)>,
+    tokio_runtime: tokio::runtime::Handle,
+    root_bank_cache: RootBankCache,
+    forward_address_getter: F,
+    data_budget: DataBudget,
+) -> JoinHandle<()>
+where
+    F: ForwardAddressGetter,
+{
+    let non_vote_client = spawn_tpu_client_next(tokio_runtime, forward_address_getter.clone());
+    let vote_client = VoteClient::new(forward_address_getter);
+    let forwarding_stage = ForwardingStage::new(
+        receiver,
+        vote_client,
+        non_vote_client,
+        root_bank_cache,
+        data_budget,
+    );
+    Builder::new()
+        .name("solFwdStage".to_string())
+        .spawn(move || forwarding_stage.run())
+        .unwrap()
+}
 
+impl<F: ForwardAddressGetter, Client: ForwardingClient> ForwardingStage<F, Client> {
     fn new(
         receiver: Receiver<(BankingPacketBatch, bool)>,
         vote_client: VoteClient<F>,
