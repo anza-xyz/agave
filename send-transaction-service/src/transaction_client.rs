@@ -240,6 +240,7 @@ pub struct TpuClientNextClient {
 type TpuClientJoinHandle =
     TokioJoinHandle<Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>>;
 
+const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
 impl TpuClientNextClient {
     pub fn new<T>(
         runtime_handle: Handle,
@@ -267,10 +268,10 @@ impl TpuClientNextClient {
             };
         let config = Self::create_config(identity, leader_forward_count as usize);
         let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
-        // leaking handle to this task, as it will run until the end of life of the process
-        runtime_handle.spawn(scheduler.stats.clone().report_to_influxdb(
+        // leaking handle to this task, as it will run until the cancel signal is received
+        runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
             "send-transaction-service-TPU-client",
-            Duration::from_secs(3),
+            METRICS_REPORTING_INTERVAL,
             cancel.clone(),
         ));
         let handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
@@ -332,6 +333,12 @@ impl TpuClientNextClient {
             match result {
                 Ok(scheduler) => {
                     let cancel = CancellationToken::new();
+                    // leaking handle to this task, as it will run until the cancel signal is received
+                    runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
+                        "send-transaction-service-TPU-client",
+                        METRICS_REPORTING_INTERVAL,
+                        cancel.clone(),
+                    ));
                     let join_handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
 
                     let Ok(mut lock) = handle.lock() else {
@@ -397,7 +404,7 @@ impl TransactionClient for TpuClientNextClient {
                 Ok(scheduler) => {
                     debug!(
                         "tpu-client-next statistics over all the connections: {:?}",
-                        scheduler.stats
+                        scheduler.get_stats()
                     );
                 }
                 Err(error) => error!("tpu-client-next exits with error {error}."),

@@ -5,7 +5,7 @@ use {
     crate::SendTransactionStats,
     solana_metrics::datapoint_info,
     std::{sync::Arc, time::Duration},
-    tokio::time::interval,
+    tokio::{select, time::interval},
     tokio_util::sync::CancellationToken,
 };
 
@@ -49,5 +49,6 @@ impl SendTransactionStats {
                 }
                 _ = cancel.cancelled() => break,
             }
+        }
     }
 }

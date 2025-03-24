@@ -32,7 +32,7 @@ pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
 pub struct ConnectionWorkersScheduler {
     leader_updater: Box<dyn LeaderUpdater>,
     transaction_receiver: TransactionReceiver,
-    pub stats: Arc<SendTransactionStats>,
+    stats: Arc<SendTransactionStats>,
 }
 
 /// Errors that arise from running [`ConnectionWorkersSchedulerError`].
@@ -143,6 +143,8 @@ pub trait WorkersBroadcaster {
 }
 
 impl ConnectionWorkersScheduler {
+    /// Creates the scheduler, which manages the distribution of transactions to
+    /// the network's upcoming leaders.
     pub fn new(
         leader_updater: Box<dyn LeaderUpdater>,
         transaction_receiver: mpsc::Receiver<TransactionBatch>,
@@ -155,8 +157,12 @@ impl ConnectionWorkersScheduler {
         }
     }
 
-    /// Starts the scheduler, which manages the distribution of transactions to
-    /// the network's upcoming leaders.
+    /// Retrieves a reference to the statistics of the scheduler
+    pub fn get_stats(&self) -> Arc<SendTransactionStats> {
+        self.stats.clone()
+    }
+
+    /// Starts the scheduler.
     ///
     /// This method is a shorthand for
     /// [`ConnectionWorkersScheduler::run_with_broadcaster`] using
