@@ -1,5 +1,7 @@
-//! This module defines [`SendTransactionStats`] which is used to collect per IP
-//! statistics about relevant network errors.
+//! This module defines [`SendTransactionStats`] which is used to collect
+//! statistics about relevant network events. This will aggregate
+//! events from all transactions and all leaders. Stats can be reset at
+//! any time to start a new monitoring period.
 
 use {
     super::QuicError,
@@ -158,9 +160,9 @@ impl fmt::Display for SendTransactionStats {
     }
 }
 
-/// For tests it is useful to be have PartialEq but we cannot have it on top of
-/// atomics. This macro creates a structure with the same attributes but of type
-/// u64.
+/// For external use it is useful to be have direct access to data and PartialEq but
+/// we cannot have that on top of atomics. This macro creates a structure with the same
+/// fields but of type u64.
 macro_rules! define_non_atomic_struct_for {
     ($name:ident, $atomic_name:ident, {$($field:ident),* $(,)?}) => {
         #[derive(Debug, Default, PartialEq)]

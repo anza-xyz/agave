@@ -97,7 +97,7 @@ async fn join_scheduler(
         .await
         .unwrap()
         .expect("Scheduler should stop successfully.");
-    scheduler.stats.read_and_reset()
+    scheduler.get_stats().read_and_reset()
 }
 
 // Specify the pessimistic time to finish generation and result checks.
