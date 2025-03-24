@@ -54,7 +54,6 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
-        ops::ControlFlow,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
             Arc, Mutex, MutexGuard, OnceLock, Weak,
@@ -1330,14 +1329,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 
     #[must_use]
-    fn accumulate_result_with_timings(
+    fn abort_or_accumulate_result_with_timings(
         mode: SchedulingMode,
         (result, timings): &mut ResultWithTimings,
         executed_task: Box<ExecutedTask>,
         state_machine: &mut SchedulingStateMachine,
         session_ending: &mut bool,
         handler_context: &HandlerContext,
-    ) -> ControlFlow<(), ()> {
+    ) -> bool {
         sleepless_testing::at(CheckPoint::TaskAccumulated(
             executed_task.task.task_index(),
             &executed_task.result_with_timings.0,
@@ -1348,12 +1347,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             BlockVerification => match executed_task.result_with_timings.0 {
                 Ok(()) => {
                     // The most normal case
-                    ControlFlow::Continue(())
+                    false
                 }
                 Err(error) => {
                     error!("error is detected while accumulating....: {error:?}");
                     *result = Err(error);
-                    ControlFlow::Break(())
+                    true
                 }
             },
             BlockProduction => {
@@ -1382,7 +1381,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     }
                 };
                 // Don't abort at all in block production unlike block verification
-                ControlFlow::Continue(())
+                false
             }
         }
     }
@@ -1634,7 +1633,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
 
-                                if let ControlFlow::Break(()) = Self::accumulate_result_with_timings(
+                                if Self::abort_or_accumulate_result_with_timings(
                                     scheduling_mode,
                                     &mut result_with_timings,
                                     executed_task,
@@ -1688,7 +1687,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
 
-                                if let ControlFlow::Break(()) = Self::accumulate_result_with_timings(
+                                if Self::abort_or_accumulate_result_with_timings(
                                     scheduling_mode,
                                     &mut result_with_timings,
                                     executed_task,
