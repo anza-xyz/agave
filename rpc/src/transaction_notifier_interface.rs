@@ -15,7 +15,7 @@ pub trait TransactionNotifier {
         signature: &Signature,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &SanitizedTransaction,
-        post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
+        post_accounts_states: &[(Pubkey, AccountSharedData)],
     );
 }
 
