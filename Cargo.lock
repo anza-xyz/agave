@@ -6450,6 +6450,7 @@ dependencies = [
  "solana-test-validator",
  "solana-transaction-status",
  "solana-version",
+ "spl-memo",
  "spl-token",
 ]
 

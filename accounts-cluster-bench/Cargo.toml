@@ -30,6 +30,7 @@ solana-streamer = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-token = { workspace = true, features = ["no-entrypoint"] }
+spl-memo = { workspace = true, features = ["no-entrypoint"] }
 
 [dev-dependencies]
 solana-accounts-db = { workspace = true }
