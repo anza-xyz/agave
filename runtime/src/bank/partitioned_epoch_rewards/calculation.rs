@@ -120,7 +120,7 @@ impl Bank {
             total_stake_rewards_lamports,
         } = stake_rewards_by_partition;
 
-        let (_, assert_us) = measure_us!({
+        let (_, assert_reward_payment_us) = measure_us!({
             // the remaining code mirrors `update_rewards_with_thread_pool()`
             let new_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
 
@@ -136,7 +136,7 @@ impl Bank {
                 validator_rewards_paid, point_value.rewards, total_stake_rewards_lamports
             );
         });
-        metrics.assert_us += assert_us;
+        metrics.assert_reward_payment_us += assert_reward_payment_us;
 
         let (num_stake_accounts, num_vote_accounts) = {
             let stakes = self.stakes_cache.stakes();
