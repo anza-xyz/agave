@@ -168,6 +168,11 @@ The `slot` points to the slot the transaction is executed at.
 For more details, please refer to the Rust documentation in
 [`agave-geyser-plugin-interface`].
 
+# Timing Relationships of Various Plugin Callbacks.
+
+Account update via update_account: As mentioned previously when is_startup is
+false, the account is updated during transaction processing.
+
 ## Example PostgreSQL Plugin
 
 The [`solana-accountsdb-plugin-postgres`] repository implements a plugin storing
