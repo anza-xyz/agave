@@ -4,6 +4,10 @@ debug = true
 split-debuginfo = "packed"
 lto = false                # Preserve the 'thin local LTO' for this build.
 
+[profile.release]
+split-debuginfo = "unpacked"
+lto = "thin"
+
 [profile.release-with-lto]
 inherits = "release"
 split-debuginfo = "unpacked"
