@@ -41,11 +41,6 @@ pub fn cmp_accounts_package_kinds_by_priority(
         (Kind::Snapshot(snapshot_kind_a), Kind::Snapshot(snapshot_kind_b)) => {
             cmp_snapshot_kinds_by_priority(snapshot_kind_a, snapshot_kind_b)
         }
-        (Kind::Snapshot(_), _) => Greater,
-        (_, Kind::Snapshot(_)) => Less,
-
-        // Accounts Hash Verifier packages
-        (Kind::AccountsHashVerifier, Kind::AccountsHashVerifier) => Equal,
     }
 }
 
@@ -183,11 +178,6 @@ mod tests {
                 Greater,
             ),
             (
-                new(AccountsPackageKind::EpochAccountsHash, 123),
-                new(AccountsPackageKind::AccountsHashVerifier, 123),
-                Greater,
-            ),
-            (
                 new(
                     AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
                     123,
@@ -237,14 +227,6 @@ mod tests {
                     AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
                     123,
                 ),
-                Greater,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    123,
-                ),
-                new(AccountsPackageKind::AccountsHashVerifier, 123),
                 Greater,
             ),
             (
@@ -321,29 +303,6 @@ mod tests {
                 ),
                 Greater,
             ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    123,
-                ),
-                new(AccountsPackageKind::AccountsHashVerifier, 123),
-                Greater,
-            ),
-            (
-                new(AccountsPackageKind::AccountsHashVerifier, 11),
-                new(AccountsPackageKind::AccountsHashVerifier, 22),
-                Less,
-            ),
-            (
-                new(AccountsPackageKind::AccountsHashVerifier, 22),
-                new(AccountsPackageKind::AccountsHashVerifier, 22),
-                Equal,
-            ),
-            (
-                new(AccountsPackageKind::AccountsHashVerifier, 33),
-                new(AccountsPackageKind::AccountsHashVerifier, 22),
-                Greater,
-            ),
         ] {
             let actual_result =
                 cmp_accounts_packages_by_priority(&accounts_package_a, &accounts_package_b);
@@ -370,11 +329,6 @@ mod tests {
                 Greater,
             ),
             (
-                AccountsPackageKind::EpochAccountsHash,
-                AccountsPackageKind::AccountsHashVerifier,
-                Greater,
-            ),
-            (
                 AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
                 AccountsPackageKind::EpochAccountsHash,
                 Less,
@@ -387,11 +341,6 @@ mod tests {
             (
                 AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
                 AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                Greater,
-            ),
-            (
-                AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                AccountsPackageKind::AccountsHashVerifier,
                 Greater,
             ),
             (
@@ -418,16 +367,6 @@ mod tests {
                 AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
                 AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(4)),
                 Greater,
-            ),
-            (
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                AccountsPackageKind::AccountsHashVerifier,
-                Greater,
-            ),
-            (
-                AccountsPackageKind::AccountsHashVerifier,
-                AccountsPackageKind::AccountsHashVerifier,
-                Equal,
             ),
         ] {
             let actual_result = cmp_accounts_package_kinds_by_priority(

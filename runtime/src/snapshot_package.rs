@@ -115,25 +115,6 @@ impl AccountsPackage {
         )
     }
 
-    /// Package up fields needed to verify an accounts hash
-    #[must_use]
-    pub fn new_for_accounts_hash_verifier(
-        package_kind: AccountsPackageKind,
-        bank: &Bank,
-        snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-        accounts_hash_for_testing: Option<AccountsHash>,
-    ) -> Self {
-        assert_eq!(package_kind, AccountsPackageKind::AccountsHashVerifier);
-        Self::_new(
-            package_kind,
-            bank,
-            snapshot_storages,
-            accounts_hash_for_testing,
-            AccountsHashAlgorithm::Merkle,
-            None,
-        )
-    }
-
     /// Package up fields needed to compute an EpochAccountsHash
     #[must_use]
     pub fn new_for_epoch_accounts_hash(
@@ -185,7 +166,7 @@ impl AccountsPackage {
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         Self {
-            package_kind: AccountsPackageKind::AccountsHashVerifier,
+            package_kind: AccountsPackageKind::EpochAccountsHash,
             slot: Slot::default(),
             block_height: Slot::default(),
             snapshot_storages: Vec::default(),
@@ -234,7 +215,6 @@ pub struct SupplementalSnapshotInfo {
 /// packages do share some processing: such as calculating the accounts hash.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AccountsPackageKind {
-    AccountsHashVerifier,
     Snapshot(SnapshotKind),
     EpochAccountsHash,
 }
