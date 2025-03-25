@@ -22,7 +22,6 @@ pub fn cmp_accounts_packages_by_priority(a: &AccountsPackage, b: &AccountsPackag
 /// - Epoch Accounts Hash
 /// - Full Snapshot
 /// - Incremental Snapshot
-/// - Accounts Hash Verifier
 ///
 /// If two `Snapshot`s are compared, their snapshot kinds are the tiebreaker.
 #[must_use]

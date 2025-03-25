@@ -777,7 +777,6 @@ fn new_accounts_package_kind(
 /// - Epoch Accounts Hash
 /// - Full Snapshot
 /// - Incremental Snapshot
-/// - Accounts Hash Verifier
 ///
 /// If two requests of the same kind are being compared, their bank slots are the tiebreaker.
 #[must_use]
