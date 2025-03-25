@@ -262,12 +262,10 @@ mod tests {
     #[test]
     fn test_update_new_multiple_slots() {
         let cs = ClusterSlots::default();
-        let mut epoch_slot1 = EpochSlots::default();
-        epoch_slot1.from = Pubkey::new_unique();
+        let mut epoch_slot1 = EpochSlots { from: Pubkey::new_unique(), ..Default::default() };
         epoch_slot1.fill(&[2, 4, 5], 0);
         let from1 = epoch_slot1.from;
-        let mut epoch_slot2 = EpochSlots::default();
-        epoch_slot2.from = Pubkey::new_unique();
+        let mut epoch_slot2 = EpochSlots { from: Pubkey::new_unique(), ..Default::default() };
         epoch_slot2.fill(&[1, 3, 5], 1);
         let from2 = epoch_slot2.from;
         cs.update_internal(
