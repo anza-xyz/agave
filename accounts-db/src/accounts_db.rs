@@ -6039,7 +6039,7 @@ impl AccountsDb {
             return ZERO_LAMPORT_ACCOUNT_LT_HASH;
         }
 
-        let hasher = Self::hash_account_helper(account, pubkey);
+        let hasher = Self::hash_account_helper(account, pubkey, RentEpochInAccountHash::Excluded);
         let lt_hash = LtHash::with(&hasher);
         AccountLtHash(lt_hash)
     }
@@ -6050,13 +6050,17 @@ impl AccountsDb {
             return ZERO_LAMPORT_ACCOUNT_HASH;
         }
 
-        let hasher = Self::hash_account_helper(account, pubkey);
+        let hasher = Self::hash_account_helper(account, pubkey, RentEpochInAccountHash::Included);
         let hash = Hash::new_from_array(hasher.finalize().into());
         AccountHash(hash)
     }
 
     /// Hashes `account` and returns the underlying Hasher
-    fn hash_account_helper(account: &impl ReadableAccount, pubkey: &Pubkey) -> blake3::Hasher {
+    fn hash_account_helper(
+        account: &impl ReadableAccount,
+        pubkey: &Pubkey,
+        rent_epoch_in_account_hash: RentEpochInAccountHash,
+    ) -> blake3::Hasher {
         let mut hasher = blake3::Hasher::new();
 
         // allocate a buffer on the stack that's big enough
@@ -6068,7 +6072,12 @@ impl AccountsDb {
 
         // collect lamports, rent_epoch into buffer to hash
         buffer.extend_from_slice(&account.lamports().to_le_bytes());
-        buffer.extend_from_slice(&account.rent_epoch().to_le_bytes());
+
+        if rent_epoch_in_account_hash == RentEpochInAccountHash::Included {
+            // conditionally hash in the rent epoch
+            // once the rent epoch is permanently excluded, also remove the 8 bytes in the META_SIZE above
+            buffer.extend_from_slice(&account.rent_epoch().to_le_bytes());
+        }
 
         let data = account.data();
         if data.len() > DATA_SIZE {
@@ -9230,6 +9239,15 @@ impl AccountsDb {
             );
         }
     }
+}
+
+/// Should the rent_epoch field be used to compute the hash of an account?
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum RentEpochInAccountHash {
+    /// Do include the rent_epoch when computing the hash of an account
+    Included,
+    /// Do *not* include the rent_epoch when computing the hash of an account
+    Excluded,
 }
 
 /// Specify the source of the accounts data when calculating the accounts hash
