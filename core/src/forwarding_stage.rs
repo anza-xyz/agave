@@ -22,12 +22,11 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
     },
+    solana_sdk::signer::keypair::Keypair,
     solana_sdk::{fee::FeeBudgetLimits, packet, transaction::MessageHash},
     solana_streamer::sendmmsg::batch_send,
     solana_tpu_client_next::{
-        connection_workers_scheduler::{
-            ConnectionWorkersSchedulerConfig, Fanout, TransactionStatsAndReceiver,
-        },
+        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
@@ -38,7 +37,7 @@ use {
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::{runtime::Handle, sync::mpsc, task::JoinHandle as TokioJoinHandle},
+    tokio::{runtime::Handle as RuntimeHandle, sync::mpsc, task::JoinHandle as TokioJoinHandle},
     tokio_util::sync::CancellationToken,
 };
 
@@ -76,6 +75,17 @@ impl<T: LikeClusterInfo> ForwardAddressGetter for (T, Arc<RwLock<PohRecorder>>) 
     fn get_vote_forwarding_addresses(&self) -> Option<SocketAddr> {
         next_leader_tpu_vote(&self.0, &self.1).map(|(_, s)| s)
     }
+}
+
+/// [`ForwardingClientOption`] enum represents the available client types for TPU
+/// communication:
+/// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
+///       connections efficiently.
+/// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate and
+///       requires a reference to a [`Keypair`].
+pub enum ForwardingClientOption<'a> {
+    ConnectionCache(Arc<ConnectionCache>),
+    TpuClientNext((&'a Keypair, RuntimeHandle)),
 }
 
 pub trait ForwardingClient: Send + Sync + 'static {
@@ -185,11 +195,14 @@ impl<F: ForwardAddressGetter> LeaderUpdater for ForwardingStageLeaderUpdater<F> 
     async fn stop(&mut self) {}
 }
 
+type TpuClientJoinHandle =
+    TokioJoinHandle<Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>>;
+
+// TODO(klykov): make this stoppable somehow?
 struct TpuClientNextClient<F: ForwardAddressGetter> {
-    runtime_handle: Handle,
+    runtime_handle: RuntimeHandle,
     sender: mpsc::Sender<TransactionBatch>,
-    _join_handle:
-        TokioJoinHandle<Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>>,
+    _join_handle: TpuClientJoinHandle,
     forward_address_getter: F,
 }
 
@@ -247,8 +260,8 @@ where
         .unwrap()
 }
 
-// TODO this client should be introduced on a level up to use proper identity
 fn spawn_tpu_client_next<F>(
+    stake_identity: Option<&Keypair>,
     runtime_handle: tokio::runtime::Handle,
     forward_address_getter: F,
 ) -> TpuClientNextClient<F>
@@ -256,36 +269,33 @@ where
     F: ForwardAddressGetter,
 {
     let (sender, receiver) = mpsc::channel(16); // random number of now
-    let validator_identity = None;
-    let _join_handle = runtime_handle.spawn({
-        let forward_address_getter = forward_address_getter.clone();
-        async move {
-            let cancel = CancellationToken::new();
-            let leader_updater = ForwardingStageLeaderUpdater {
-                forward_address_getter: forward_address_getter.clone(),
-            };
-            // TODO(klykov): move these constants to some named consts on top of module with comments.
-            let config = ConnectionWorkersSchedulerConfig {
-                bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
-                stake_identity: validator_identity,
-                num_connections: 1,
-                skip_check_transaction_age: false,
-                worker_channel_size: 2,
-                max_reconnect_attempts: 4,
-                leaders_fanout: Fanout {
-                    send: 1,
-                    connect: 1,
-                },
-            };
-            ConnectionWorkersScheduler::run(
-                config,
-                Box::new(leader_updater),
-                receiver,
-                cancel.clone(),
-            )
-            .await
-        }
-    });
+    let cancel = CancellationToken::new();
+    let leader_updater = ForwardingStageLeaderUpdater {
+        forward_address_getter: forward_address_getter.clone(),
+    };
+    const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
+    // TODO(klykov): move these constants to some named consts on top of module with comments.
+    let config = ConnectionWorkersSchedulerConfig {
+        bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
+        stake_identity: stake_identity.map(Into::into),
+        num_connections: 1,
+        skip_check_transaction_age: false,
+        worker_channel_size: 2,
+        max_reconnect_attempts: 4,
+        leaders_fanout: Fanout {
+            send: 1,
+            connect: 1,
+        },
+    };
+
+    let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
+    // leaking handle to this task, as it will run until the cancel signal is received
+    runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
+        "forwarding-stage-TPU-client",
+        METRICS_REPORTING_INTERVAL,
+        cancel.clone(),
+    ));
+    let _join_handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
     TpuClientNextClient {
         runtime_handle,
         sender,
@@ -296,6 +306,7 @@ where
 
 pub fn spawn_with_tpu_client_next<F>(
     receiver: Receiver<(BankingPacketBatch, bool)>,
+    stake_identity: Option<&Keypair>,
     tokio_runtime: tokio::runtime::Handle,
     root_bank_cache: RootBankCache,
     forward_address_getter: F,
@@ -304,7 +315,11 @@ pub fn spawn_with_tpu_client_next<F>(
 where
     F: ForwardAddressGetter,
 {
-    let non_vote_client = spawn_tpu_client_next(tokio_runtime, forward_address_getter.clone());
+    let non_vote_client = spawn_tpu_client_next(
+        stake_identity,
+        tokio_runtime,
+        forward_address_getter.clone(),
+    );
     let vote_client = VoteClient::new(forward_address_getter);
     let forwarding_stage = ForwardingStage::new(
         receiver,

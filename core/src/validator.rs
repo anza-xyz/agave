@@ -26,7 +26,7 @@ use {
         system_monitor_service::{
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
-        tpu::{Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
+        tpu::{ForwardingClientOption, Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     anyhow::{anyhow, Context, Result},
@@ -1569,21 +1569,25 @@ impl Validator {
             return Err(ValidatorError::WenRestartFinished.into());
         }
 
-        let forwarding_tpu_client = if config.use_tpu_client_next {
-            let tpu_client_next_runtime = if let Ok(runtime) = current_runtime_handle {
-                runtime
-            } else {
+        let tpu_client_next_runtime =
+            (current_runtime_handle.is_err() && config.use_tpu_client_next).then(|| {
                 // TODO(klykov): think about adequate parameters for this runtime.
                 tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
-                    .thread_name("solTpuQuic")
+                    .thread_name("solTpuClientNextRt")
                     .build()
                     .unwrap()
-            };
-            ForwardingClientOption::TpuClientNext(
+            });
+
+        let forwarding_tpu_client = if config.use_tpu_client_next {
+            let runtime_handle = tpu_client_next_runtime
+                .as_ref()
+                .map(TokioRuntime::handle)
+                .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+            ForwardingClientOption::TpuClientNext((
                 Arc::as_ref(&identity_keypair),
-                tpu_client_next_runtime,
-            )
+                runtime_handle.clone(),
+            ))
         } else {
             ForwardingClientOption::ConnectionCache(connection_cache.clone())
         };
@@ -1701,6 +1705,7 @@ impl Validator {
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
+            tpu_client_next_runtime,
         })
     }
 

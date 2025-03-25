@@ -1,14 +1,19 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
-use etcd_client::Client;
 pub use solana_sdk::net::DEFAULT_TPU_COALESCE;
+
+// TODO(klykov): maybe will not be need
+pub use crate::forwarding_stage::ForwardingClientOption;
+
 // allow multiple connections for NAT and any open/close overlap
+use crate::forwarding_stage::spawn_with_tpu_client_next;
 #[deprecated(
     since = "2.2.0",
     note = "Use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER instead"
 )]
 pub use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER as MAX_QUIC_CONNECTIONS_PER_PEER;
+
 use {
     crate::{
         banking_stage::BankingStage,
@@ -35,6 +40,7 @@ use {
     },
     solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
+    solana_poh::transaction_recorder::TransactionRecorder,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotificationSender,
         rpc_subscriptions::RpcSubscriptions,
@@ -58,7 +64,6 @@ use {
         thread::{self, JoinHandle},
         time::Duration,
     },
-    tokio::runtime::Runtime as TokioRuntime,
     tokio::sync::mpsc::Sender as AsyncSender,
 };
 
@@ -88,23 +93,13 @@ pub struct Tpu {
     tpu_vote_quic_t: thread::JoinHandle<()>,
 }
 
-/// [`ForwardingClientOption`] enum represents the available client types for TPU
-/// communication:
-/// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
-///       connections efficiently.
-/// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate and
-///       requires a reference to a [`Keypair`].
-pub enum ForwardingClientOption<'a> {
-    ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext((&'a Keypair, TokioRuntime::Handle)),
-}
-
 impl Tpu {
     #[deprecated(since = "2.3.0", note = "Use new_with_client instead.")]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        transaction_recorder: TransactionRecorder,
         entry_receiver: Receiver<WorkingBankEntry>,
         retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
@@ -146,6 +141,7 @@ impl Tpu {
         Self::new_with_client(
             cluster_info,
             poh_recorder,
+            transaction_recorder,
             entry_receiver,
             retransmit_slots_receiver,
             sockets,
@@ -189,6 +185,7 @@ impl Tpu {
     pub fn new_with_client(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        transaction_recorder: TransactionRecorder,
         entry_receiver: Receiver<WorkingBankEntry>,
         retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
@@ -384,26 +381,11 @@ impl Tpu {
                     DataBudget::default(),
                 )
             }
-            ForwardingClientOption::TpuClientNext((identity_keypair, tpu_runtime_handle)) => {
-                let my_tpu_address = config
-                    .cluster_info
-                    .my_contact_info()
-                    .tpu(Protocol::QUIC)
-                    .ok_or(format!(
-                        "Invalid {:?} socket address for TPU",
-                        Protocol::QUIC
-                    ))?;
-                let client = TpuClientNextClient::new(
-                    tpu_runtime_handle,
-                    my_tpu_address,
-                    config.send_transaction_service_config.tpu_peers.clone(),
-                    leader_info,
-                    config.send_transaction_service_config.leader_forward_count,
-                    Some(identity_keypair),
-                );
-                spawn_with_connection_cache(
+            ForwardingClientOption::TpuClientNext((stake_identity, tpu_runtime_handle)) => {
+                spawn_with_tpu_client_next(
                     forward_stage_receiver,
-                    connection_cache.clone(),
+                    Some(stake_identity),
+                    tpu_runtime_handle,
                     RootBankCache::new(bank_forks.clone()),
                     (cluster_info.clone(), poh_recorder.clone()),
                     DataBudget::default(),
