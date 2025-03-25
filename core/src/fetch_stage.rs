@@ -5,8 +5,11 @@ use {
     crossbeam_channel::{unbounded, RecvTimeoutError},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
-    solana_packet::{Packet, PacketFlags},
-    solana_perf::{packet::PacketBatchRecycler, recycler::Recycler},
+    solana_packet::PacketFlags,
+    solana_perf::{
+        packet::{PacketBatchRecycler, PacketRefMut},
+        recycler::Recycler,
+    },
     solana_poh::poh_recorder::PohRecorder,
     solana_streamer::streamer::{
         self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats,
@@ -98,7 +101,7 @@ impl FetchStage {
         sendr: &PacketBatchSender,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
     ) -> Result<()> {
-        let mark_forwarded = |packet: &mut Packet| {
+        let mark_forwarded = |mut packet: PacketRefMut| {
             packet.meta_mut().flags |= PacketFlags::FORWARDED;
         };
 

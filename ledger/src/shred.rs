@@ -55,6 +55,8 @@ pub(crate) use self::{
     merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
     payload::serde_bytes_payload,
 };
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet};
 pub use {
     self::{
         payload::Payload,
@@ -75,7 +77,7 @@ use {
     solana_entry::entry::{create_ticks, Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_perf::packet::Packet,
+    solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::hashv,
     solana_signature::{Signature, SIGNATURE_BYTES},
@@ -422,6 +424,16 @@ impl Shred {
         let size = payload.len();
         packet.buffer_mut()[..size].copy_from_slice(&payload[..]);
         packet.meta_mut().size = size;
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub fn to_packet(&self) -> BytesPacket {
+        let buffer: &[u8] = match self.payload() {
+            Payload::Shared(bytes) => bytes.as_ref(),
+            Payload::Unique(bytes) => bytes.as_ref(),
+        };
+        let buffer = Bytes::copy_from_slice(buffer);
+        BytesPacket::new(buffer, Meta::default())
     }
 
     // TODO: Should this sanitize output?
@@ -868,14 +880,17 @@ pub(crate) fn make_merkle_shreds_from_entries(
 
 // Accepts shreds in the slot range [root + 1, max_slot].
 #[must_use]
-pub fn should_discard_shred(
-    packet: &Packet,
+pub fn should_discard_shred<'a, P>(
+    packet: P,
     root: Slot,
     max_slot: Slot,
     shred_version: u16,
     drop_unchained_merkle_shreds: impl Fn(Slot) -> bool,
     stats: &mut ShredFetchStats,
-) -> bool {
+) -> bool
+where
+    P: Into<PacketRef<'a>>,
+{
     debug_assert!(root < max_slot);
     let shred = match layout::get_shred(packet) {
         None => {

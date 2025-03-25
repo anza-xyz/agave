@@ -122,6 +122,7 @@ solana-account-decoder = { workspace = true }
 solana-ledger = { path = ".", features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
+solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
