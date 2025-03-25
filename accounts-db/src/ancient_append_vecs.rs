@@ -3750,8 +3750,10 @@ pub mod tests {
                         }
                         1 => {
                             // non-empty slot list (but ignored) because slot_list = 1
-                            let slot_list =
-                                vec![(slot, AccountInfo::new(StorageLocation::Cached, lamports))];
+                            let slot_list = vec![(
+                                slot,
+                                AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                            )];
                             alive_accounts.add(2, &account, &slot_list);
                             assert!(alive_accounts.one_ref.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
@@ -3763,10 +3765,13 @@ pub mod tests {
                         2 => {
                             // multiple slot list, ref_count=2, this is NOT newest alive, so many_refs_old_alive
                             let slot_list = vec![
-                                (slot, AccountInfo::new(StorageLocation::Cached, lamports)),
+                                (
+                                    slot,
+                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                                ),
                                 (
                                     slot + 1,
-                                    AccountInfo::new(StorageLocation::Cached, lamports),
+                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
                                 ),
                             ];
                             alive_accounts.add(2, &account, &slot_list);
@@ -3780,10 +3785,13 @@ pub mod tests {
                         3 => {
                             // multiple slot list, ref_count=2, this is newest
                             let slot_list = vec![
-                                (slot, AccountInfo::new(StorageLocation::Cached, lamports)),
+                                (
+                                    slot,
+                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                                ),
                                 (
                                     slot - 1,
-                                    AccountInfo::new(StorageLocation::Cached, lamports),
+                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
                                 ),
                             ];
                             alive_accounts.add(2, &account, &slot_list);

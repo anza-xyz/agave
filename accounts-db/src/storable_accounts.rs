@@ -109,6 +109,8 @@ pub trait StorableAccounts<'a>: Sync {
         index: usize,
         callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret;
+    /// whether account at 'index' has zero lamports
+    fn is_zero_lamport(&self, index: usize) -> bool;
     /// None if account is zero lamports
     fn account_default_if_zero_lamport<Ret>(
         &self,
@@ -152,6 +154,9 @@ impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(&'a Pubkey, &'a AccountSh
     ) -> Ret {
         callback((self.1[index].0, self.1[index].1).into())
     }
+    fn is_zero_lamport(&self, index: usize) -> bool {
+        self.1[index].1.is_zero_lamport()
+    }
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data
         self.target_slot()
@@ -171,6 +176,9 @@ impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(Pubkey, AccountSharedData
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         callback((&self.1[index].0, &self.1[index].1).into())
+    }
+    fn is_zero_lamport(&self, index: usize) -> bool {
+        self.1[index].1.is_zero_lamport()
     }
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data
@@ -292,6 +300,10 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
         writer.storage = Some(storage);
         ret
     }
+    fn is_zero_lamport(&self, index: usize) -> bool {
+        let indexes = self.find_internal_index(index);
+        self.slots_and_accounts[indexes.0].1[indexes.1].is_zero_lamport()
+    }
     fn slot(&self, index: usize) -> Slot {
         let indexes = self.find_internal_index(index);
         self.slots_and_accounts[indexes.0].0
@@ -335,6 +347,9 @@ pub mod tests {
         ) -> Ret {
             callback(self.1[index].into())
         }
+        fn is_zero_lamport(&self, index: usize) -> bool {
+            self.1[index].is_zero_lamport()
+        }
         fn slot(&self, _index: usize) -> Slot {
             // per-index slot is not unique per slot when per-account slot is not included in the source data
             self.0
@@ -359,6 +374,9 @@ pub mod tests {
         ) -> Ret {
             callback((&self.1[index].0, &self.1[index].1).into())
         }
+        fn is_zero_lamport(&self, index: usize) -> bool {
+            self.1[index].1.lamports() == 0
+        }
         fn slot(&self, _index: usize) -> Slot {
             // per-index slot is not unique per slot when per-account slot is not included in the source data
             self.target_slot()
@@ -381,6 +399,9 @@ pub mod tests {
             mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
         ) -> Ret {
             callback(self.1[index].into())
+        }
+        fn is_zero_lamport(&self, index: usize) -> bool {
+            self.1[index].is_zero_lamport()
         }
         fn slot(&self, _index: usize) -> Slot {
             // same other slot for all accounts
@@ -545,7 +566,7 @@ pub mod tests {
                             .for_each(|(account, offset)| {
                                 account.index_info = AccountInfo::new(
                                     StorageLocation::AppendVec(0, *offset),
-                                    if account.is_zero_lamport() { 0 } else { 1 },
+                                    account.is_zero_lamport(),
                                 )
                             });
                     }
@@ -684,7 +705,7 @@ pub mod tests {
                                             |(account, offset)| {
                                                 account.index_info = AccountInfo::new(
                                                     StorageLocation::AppendVec(0, *offset),
-                                                    if account.is_zero_lamport() { 0 } else { 1 },
+                                                    account.is_zero_lamport(),
                                                 )
                                             },
                                         );
