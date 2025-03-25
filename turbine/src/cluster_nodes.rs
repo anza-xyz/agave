@@ -312,17 +312,17 @@ pub fn new_cluster_nodes<T: 'static>(
         .enumerate()
         .map(|(ix, node)| (*node.pubkey(), ix))
         .collect();
+    // Paranoid check to ensure the correct operation of the datastructure.
+    assert!(
+        index.contains_key(&self_pubkey),
+        "Own public key should be present in ClusterNodes.index"
+    );
     let broadcast = TypeId::of::<T>() == TypeId::of::<BroadcastStage>();
     let stakes = nodes.iter().map(|node| node.stake);
     let mut weighted_shuffle = WeightedShuffle::new("cluster-nodes", stakes);
     if broadcast {
         weighted_shuffle.remove_index(index[&self_pubkey]);
     }
-    // Paranoid check to ensure the correct operation of the weighted shuffle.
-    assert!(
-        index.contains_key(&self_pubkey),
-        "Own public key should be present in ClusterNodes.index"
-    );
     ClusterNodes {
         pubkey: self_pubkey,
         nodes,
@@ -740,6 +740,79 @@ mod tests {
         std::{fmt::Debug, hash::Hash},
         test_case::test_case,
     };
+    #[test]
+    fn test_dedup_tvu_addrs() {
+        let mut nodes = vec![
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 0,
+                    tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
+                    tvu_quic: None,
+                }),
+                stake: 1,
+            },
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 0,
+                    tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
+                    tvu_quic: None,
+                }),
+                stake: 2,
+            },
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 0,
+                    tvu_udp: Some("2.2.2.2:2".parse().unwrap()),
+                    tvu_quic: None,
+                }),
+                stake: 3,
+            },
+        ];
+        dedup_tvu_addrs(&mut nodes, Pubkey::new_unique());
+        assert_eq!(nodes.len(), 3);
+        match &nodes[1].node {
+            NodeId::ContactInfo(contact_info) => {
+                // dedup should have removed the TVU address from identity reusing the same socket
+                assert!(contact_info.tvu_udp.is_none());
+            }
+            NodeId::Pubkey(_pubkey) => panic!(),
+        }
+    }
+    #[test]
+    fn test_dedup_tvu_addrs_preserves_unstaked_id() {
+        let pk = Pubkey::new_unique();
+        let mut nodes = vec![
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: pk.clone(),
+                    wallclock: 0,
+                    tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
+                    tvu_quic: None,
+                }),
+                stake: 0,
+            },
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 0,
+                    tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
+                    tvu_quic: None,
+                }),
+                stake: 2,
+            },
+        ];
+        dedup_tvu_addrs(&mut nodes, pk);
+        assert_eq!(nodes.len(), 2);
+        match &nodes[0].node {
+            NodeId::ContactInfo(contact_info) => {
+                assert!(contact_info.tvu_udp.is_some());
+            }
+            NodeId::Pubkey(_pubkey) => panic!(),
+        }
+    }
 
     #[test]
     fn test_cluster_nodes_retransmit() {
