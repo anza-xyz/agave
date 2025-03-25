@@ -7584,7 +7584,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util 0.7.13",
+ "tokio-util 0.7.14",
  "trees",
 ]
 

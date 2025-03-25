@@ -589,6 +589,9 @@ pub struct Validator {
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
+    // This runtime is used when tpu-client-next is used instead of
+    // ConnectionCache. The former has it's own runtime.
+    tpu_client_next_runtime: Option<TokioRuntime>,
 }
 
 impl Validator {
@@ -1566,7 +1569,25 @@ impl Validator {
             return Err(ValidatorError::WenRestartFinished.into());
         }
 
-        let (tpu, mut key_notifies) = Tpu::new(
+        let forwarding_tpu_client = if config.use_tpu_client_next {
+            let tpu_client_next_runtime = if let Ok(runtime) = current_runtime_handle {
+                runtime
+            } else {
+                // TODO(klykov): think about adequate parameters for this runtime.
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .thread_name("solTpuQuic")
+                    .build()
+                    .unwrap()
+            };
+            ForwardingClientOption::TpuClientNext(
+                Arc::as_ref(&identity_keypair),
+                tpu_client_next_runtime,
+            )
+        } else {
+            ForwardingClientOption::ConnectionCache(connection_cache.clone())
+        };
+        let (tpu, mut key_notifies) = Tpu::new_with_client(
             &cluster_info,
             &poh_recorder,
             transaction_recorder,
@@ -1597,7 +1618,7 @@ impl Validator {
             bank_notification_sender.map(|sender| sender.sender),
             config.tpu_coalesce,
             duplicate_confirmed_slot_sender,
-            &connection_cache,
+            forwarding_tpu_client,
             turbine_quic_endpoint_sender,
             &identity_keypair,
             config.runtime_config.log_messages_bytes_limit,

@@ -264,9 +264,10 @@ where
             let leader_updater = ForwardingStageLeaderUpdater {
                 forward_address_getter: forward_address_getter.clone(),
             };
+            // TODO(klykov): move these constants to some named consts on top of module with comments.
             let config = ConnectionWorkersSchedulerConfig {
                 bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
-                stake_identity: validator_identity, // In CC, do we send with identity?
+                stake_identity: validator_identity,
                 num_connections: 1,
                 skip_check_transaction_age: false,
                 worker_channel_size: 2,
