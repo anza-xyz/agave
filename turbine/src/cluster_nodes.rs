@@ -787,7 +787,7 @@ mod tests {
         let mut nodes = vec![
             Node {
                 node: NodeId::ContactInfo(ContactInfo {
-                    pubkey: pk.clone(),
+                    pubkey: pk,
                     wallclock: 0,
                     tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
                     tvu_quic: None,
