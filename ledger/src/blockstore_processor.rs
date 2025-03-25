@@ -278,10 +278,10 @@ pub fn execute_batch<'a>(
 // error and the block will be marked dead if the cost limit is exceeded
 fn check_block_cost_limits<Tx: TransactionWithMeta>(
     bank: &Bank,
-    tx_costs: &[TransactionCost<'_, Tx>],
+    tx_costs: &[Option<TransactionCost<'_, Tx>>],
 ) -> Result<()> {
     let mut cost_tracker = bank.write_cost_tracker().unwrap();
-    for tx_cost in tx_costs {
+    for tx_cost in tx_costs.iter().flatten() {
         cost_tracker
             .try_add(tx_cost)
             .map_err(TransactionError::from)?;
@@ -294,7 +294,7 @@ fn get_and_check_transaction_costs<'a, Tx: TransactionWithMeta>(
     bank: &Bank,
     timings: &mut ExecuteTimings,
     commit_results: &[TransactionCommitResult],
-) -> Result<Vec<TransactionCost<'a, Tx>>> {
+) -> Result<Vec<Option<TransactionCost<'a, Tx>>>> {
     let sanitized_transactions = batch.sanitized_transactions();
     assert_eq!(sanitized_transactions.len(), commit_results.len());
 
@@ -302,7 +302,7 @@ fn get_and_check_transaction_costs<'a, Tx: TransactionWithMeta>(
         let tx_costs: Vec<_> = commit_results
             .iter()
             .zip(sanitized_transactions)
-            .filter_map(|(commit_result, tx)| {
+            .map(|(commit_result, tx)| {
                 if let Ok(committed_tx) = commit_result {
                     Some(CostModel::calculate_cost_for_executed_transaction(
                         tx,
@@ -5315,13 +5315,18 @@ pub mod tests {
             .unwrap()
             .set_limits(u64::MAX, block_limit, u64::MAX);
 
-        let tx_costs = vec![tx_cost];
+        let tx_costs = vec![None, Some(tx_cost), None];
         // The transaction will fit when added the first time
         assert!(check_block_cost_limits(&bank, &tx_costs).is_ok());
-        // But not when added a second time
+        // But adding a second time will exceed block limit
         assert_eq!(
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
             check_block_cost_limits(&bank, &tx_costs)
         );
+        // Adding more None's will noop (even though the block is already full)
+        let (none_costs, _): (Vec<_>, Vec<_>) =
+            tx_costs.into_iter().partition(|tx_cost| tx_cost.is_none());
+        assert_eq!(none_costs.len(), 2);
+        assert!(check_block_cost_limits(&bank, &none_costs).is_ok());
     }
 }
