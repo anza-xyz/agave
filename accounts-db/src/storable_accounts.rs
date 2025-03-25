@@ -1,6 +1,4 @@
 //! trait for abstracting underlying storage of pubkey and account pairs to be written
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     crate::{
         account_storage::stored_account_info::StoredAccountInfo,
@@ -259,12 +257,12 @@ impl<'a> StorableAccountsBySlot<'a> {
         }
     }
 
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    #[cfg(feature = "dev-context-only-utils")]
     /// given an overall index for all accounts in self:
     /// return (slots_and_accounts index, index within those accounts)
     /// This is the baseline unoptimized implementation. It is not used in the validator. It
     /// is used for testing an optimized version below - `find_internal_index.`
-    fn find_internal_index_loop(&self, index: usize) -> (usize, usize) {
+    pub fn find_internal_index_loop(&self, index: usize) -> (usize, usize) {
         // search offsets for the accounts slice that contains 'index'.
         // This could be a binary search.
         for (offset_index, next_offset) in self.starting_offsets.iter().enumerate() {
@@ -379,6 +377,7 @@ pub mod tests {
             accounts_hash::AccountHash,
             append_vec::{AccountMeta, StoredAccountMeta, StoredMeta},
         },
+        rand::Rng,
         solana_account::{accounts_equal, AccountSharedData, WritableAccount},
         solana_hash::Hash,
         std::sync::Arc,
@@ -860,7 +859,6 @@ pub mod tests {
         let mut total = 0;
         for _slot in 0..10_u64 {
             // generate random accounts per slot
-            use rand::Rng;
             let n = rand::thread_rng().gen_range(1..10);
             total += n;
             let accounts = (0..n).map(|_| &account_from_storage).collect::<Vec<_>>();
