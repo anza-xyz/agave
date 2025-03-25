@@ -406,7 +406,7 @@ impl PohRecorder {
         }
     }
 
-    pub fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
+    pub(crate) fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
         self.handle_set_bank(bank, track_transaction_indexes);
     }
 

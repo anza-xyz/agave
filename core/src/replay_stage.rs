@@ -1161,6 +1161,7 @@ impl ReplayStage {
                         &my_pubkey,
                         &bank_forks,
                         &poh_recorder,
+                        &poh_controller,
                         &leader_schedule_cache,
                         &rpc_subscriptions,
                         &slot_status_notifier,
@@ -2081,6 +2082,7 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         bank_forks: &Arc<RwLock<BankForks>>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        poh_controller: &PohController,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
@@ -2222,7 +2224,7 @@ impl ReplayStage {
 
             update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                 bank_forks,
-                poh_recorder,
+                poh_controller,
                 tpu_bank,
                 track_transaction_indexes,
             );
@@ -8575,6 +8577,7 @@ pub(crate) mod tests {
             validator_node_to_vote_keys,
             leader_schedule_cache,
             poh_recorder,
+            poh_controller,
             vote_simulator,
             rpc_subscriptions,
             ref my_pubkey,
@@ -8588,7 +8591,6 @@ pub(crate) mod tests {
             ..
         } = vote_simulator;
 
-        let poh_recorder = Arc::new(poh_recorder);
         let (retransmit_slots_sender, _) = unbounded();
 
         // Use a bank slot when I was not leader to avoid panic for dumping my own slot
@@ -8677,6 +8679,7 @@ pub(crate) mod tests {
             my_pubkey,
             bank_forks,
             &poh_recorder,
+            &poh_controller,
             &leader_schedule_cache,
             &rpc_subscriptions,
             &None,
@@ -9341,6 +9344,7 @@ pub(crate) mod tests {
             &my_pubkey,
             &bank_forks,
             &poh_recorder,
+            &poh_controller,
             &leader_schedule_cache,
             &rpc_subscriptions,
             &None,
@@ -9368,6 +9372,7 @@ pub(crate) mod tests {
             &my_pubkey,
             &bank_forks,
             &poh_recorder,
+            &poh_controller,
             &leader_schedule_cache,
             &rpc_subscriptions,
             &None,

@@ -34,7 +34,10 @@ use {
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
     solana_perf::packet::PACKETS_PER_BATCH,
-    solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
+    solana_poh::{
+        poh_controller::PohController, poh_recorder::PohRecorder,
+        transaction_recorder::TransactionRecorder,
+    },
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
@@ -730,15 +733,14 @@ impl BankingStage {
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     bank_forks: &RwLock<BankForks>,
-    poh_recorder: &RwLock<PohRecorder>,
+    poh_controller: &PohController,
     tpu_bank: Bank,
     track_transaction_indexes: bool,
 ) {
     let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
-    poh_recorder
-        .write()
-        .unwrap()
-        .set_bank(tpu_bank, track_transaction_indexes);
+    poh_controller
+        .set_bank(tpu_bank, track_transaction_indexes)
+        .unwrap();
 }
 
 #[cfg(test)]

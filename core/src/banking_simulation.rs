@@ -502,7 +502,7 @@ impl SimulatorLoop {
                 self.retransmit_slots_sender.send(bank.slot()).unwrap();
                 update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                     &self.bank_forks,
-                    &self.poh_recorder,
+                    &self.poh_controller,
                     new_bank,
                     false,
                 );
