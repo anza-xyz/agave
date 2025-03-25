@@ -1,7 +1,10 @@
 //! The `poh_service` module implements a service that records the passing of
 //! "ticks", a measure of time in the PoH stream
 use {
-    crate::poh_recorder::{PohRecorder, Record},
+    crate::{
+        bank_message::BankMessage,
+        poh_recorder::{PohRecorder, Record},
+    },
     crossbeam_channel::Receiver,
     log::*,
     solana_entry::poh::Poh,
@@ -102,6 +105,7 @@ impl PohService {
         pinned_cpu_core: usize,
         hashes_per_batch: u64,
         record_receiver: Receiver<Record>,
+        bank_message_receiver: Receiver<BankMessage>,
     ) -> Self {
         let poh_config = poh_config.clone();
         let tick_producer = Builder::new()
@@ -114,6 +118,7 @@ impl PohService {
                             &poh_config,
                             &poh_exit,
                             record_receiver,
+                            bank_message_receiver,
                         );
                     } else {
                         Self::short_lived_low_power_tick_producer(
@@ -121,6 +126,7 @@ impl PohService {
                             &poh_config,
                             &poh_exit,
                             record_receiver,
+                            bank_message_receiver,
                         );
                     }
                 } else {
@@ -136,6 +142,7 @@ impl PohService {
                         ticks_per_slot,
                         hashes_per_batch,
                         record_receiver,
+                        bank_message_receiver,
                         Self::target_ns_per_tick(
                             ticks_per_slot,
                             poh_config.target_tick_duration.as_nanos() as u64,
@@ -165,9 +172,11 @@ impl PohService {
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
         record_receiver: Receiver<Record>,
+        bank_message_receiver: Receiver<BankMessage>,
     ) {
         let mut last_tick = Instant::now();
         while !poh_exit.load(Ordering::Relaxed) {
+            Self::check_and_handle_bank_messages(&poh_recorder, &bank_message_receiver);
             let remaining_tick_time = poh_config
                 .target_tick_duration
                 .saturating_sub(last_tick.elapsed());
@@ -209,12 +218,14 @@ impl PohService {
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
         record_receiver: Receiver<Record>,
+        bank_message_receiver: Receiver<BankMessage>,
     ) {
         let mut warned = false;
         let mut elapsed_ticks = 0;
         let mut last_tick = Instant::now();
         let num_ticks = poh_config.target_tick_count.unwrap();
         while elapsed_ticks < num_ticks {
+            Self::check_and_handle_bank_messages(&poh_recorder, &bank_message_receiver);
             let remaining_tick_time = poh_config
                 .target_tick_duration
                 .saturating_sub(last_tick.elapsed());
@@ -330,12 +341,14 @@ impl PohService {
         ticks_per_slot: u64,
         hashes_per_batch: u64,
         record_receiver: Receiver<Record>,
+        bank_message_receiver: Receiver<BankMessage>,
         target_ns_per_tick: u64,
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut timing = PohTiming::new();
         let mut next_record = None;
         loop {
+            Self::check_and_handle_bank_messages(&poh_recorder, &bank_message_receiver);
             let should_tick = Self::record_or_hash(
                 &mut next_record,
                 &poh_recorder,
@@ -367,6 +380,25 @@ impl PohService {
         }
     }
 
+    fn check_and_handle_bank_messages(
+        poh_recorder: &RwLock<PohRecorder>,
+        bank_message_receiver: &Receiver<BankMessage>,
+    ) {
+        for bank_message in bank_message_receiver.try_iter() {
+            let mut recorder = poh_recorder.write().unwrap();
+            match bank_message {
+                BankMessage::Reset {
+                    reset_bank,
+                    next_leader_slot,
+                } => recorder.reset(reset_bank, next_leader_slot),
+                BankMessage::SetBank {
+                    bank,
+                    track_transaction_indexes,
+                } => recorder.set_bank(bank, track_transaction_indexes),
+            }
+        }
+    }
+
     pub fn join(self) -> thread::Result<()> {
         self.tick_producer.join()
     }
@@ -376,6 +408,7 @@ impl PohService {
 mod tests {
     use {
         super::*,
+        crate::poh_controller::PohController,
         crossbeam_channel::unbounded,
         rand::{thread_rng, Rng},
         solana_clock::DEFAULT_HASHES_PER_TICK,
@@ -484,6 +517,7 @@ mod tests {
             .map(|x| x.parse().unwrap())
             .unwrap_or(DEFAULT_HASHES_PER_BATCH);
         let (_record_sender, record_receiver) = unbounded();
+        let (_controller, bank_message_receiver) = PohController::new();
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &poh_config,
@@ -492,6 +526,7 @@ mod tests {
             DEFAULT_PINNED_CPU_CORE,
             hashes_per_batch,
             record_receiver,
+            bank_message_receiver,
         );
         poh_recorder.write().unwrap().set_bank_for_test(bank);
 

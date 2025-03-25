@@ -820,8 +820,14 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (exit, poh_recorder, transaction_recorder, poh_service, _entry_receiever) =
-            create_test_recorder(bank, blockstore, None, None);
+        let (
+            exit,
+            poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _entry_receiever,
+        ) = create_test_recorder(bank, blockstore, None, None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -878,8 +884,14 @@ mod tests {
             target_tick_count: Some(bank.max_tick_height() + num_extra_ticks),
             ..PohConfig::default()
         };
-        let (exit, poh_recorder, transaction_recorder, poh_service, entry_receiver) =
-            create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
+        let (
+            exit,
+            poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            entry_receiver,
+        ) = create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -945,8 +957,14 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (exit, poh_recorder, transaction_recorder, poh_service, entry_receiver) =
-            create_test_recorder(bank.clone(), blockstore, None, None);
+        let (
+            exit,
+            poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            entry_receiver,
+        ) = create_test_recorder(bank.clone(), blockstore, None, None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -1098,8 +1116,14 @@ mod tests {
         let entry_receiver = {
             // start a banking_stage to eat verified receiver
             let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-            let (exit, poh_recorder, transaction_recorder, poh_service, entry_receiver) =
-                create_test_recorder(bank.clone(), blockstore, None, None);
+            let (
+                exit,
+                poh_recorder,
+                _poh_controller,
+                transaction_recorder,
+                poh_service,
+                entry_receiver,
+            ) = create_test_recorder(bank.clone(), blockstore, None, None);
             let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
             let cluster_info = Arc::new(cluster_info);
             let _banking_stage = BankingStage::new(
@@ -1285,8 +1309,14 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (exit, poh_recorder, transaction_recorder, poh_service, _entry_receiver) =
-            create_test_recorder(bank.clone(), blockstore, None, None);
+        let (
+            exit,
+            poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _entry_receiver,
+        ) = create_test_recorder(bank.clone(), blockstore, None, None);
         let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
         let cluster_info = Arc::new(cluster_info);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();

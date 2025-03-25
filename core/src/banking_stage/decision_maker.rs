@@ -175,8 +175,14 @@ mod tests {
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let ledger_path = temp_dir();
         let blockstore = Arc::new(Blockstore::open(ledger_path.as_path()).unwrap());
-        let (exit, poh_recorder, _transaction_recorder, poh_service, _entry_receiver) =
-            create_test_recorder(bank.clone(), blockstore, None, None);
+        let (
+            exit,
+            poh_recorder,
+            _poh_controller,
+            _transaction_recorder,
+            poh_service,
+            _entry_receiver,
+        ) = create_test_recorder(bank.clone(), blockstore, None, None);
         // Drop the poh service immediately to avoid potential ticking
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
