@@ -2167,4 +2167,43 @@ pub mod tests {
             size + mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>()
         });
     }
+
+    // Test to make sure that `is_dirty` is tracked properly
+    // * `reopen_as_readonly()` copies `is_dirty`
+    // * `flush()` clears `is_dirty`
+    #[test_case(false)]
+    #[test_case(true)]
+    fn test_is_dirty(begins_dirty: bool) {
+        let file = get_append_vec_path("test_is_dirty");
+
+        let mut av = AppendVec::new(&file.path, true, 1024 * 1024);
+        // don't delete the file when the AppendVec is dropped (let TempFile do it)
+        *av.remove_file_on_drop.get_mut() = false;
+
+        // ensure the append vec begins not dirty
+        assert!(!*av.is_dirty.get_mut());
+
+        if begins_dirty {
+            av.append_account_test(&create_test_account(10)).unwrap();
+        }
+        assert_eq!(*av.is_dirty.get_mut(), begins_dirty);
+
+        let mut av2 = av.reopen_as_readonly().unwrap();
+        // don't delete the file when the AppendVec is dropped (let TempFile do it)
+        *av2.remove_file_on_drop.get_mut() = false;
+
+        // ensure `is_dirty` did not change
+        assert_eq!(*av.is_dirty.get_mut(), begins_dirty);
+        assert_eq!(*av2.is_dirty.get_mut(), begins_dirty);
+
+        // ensure we can flush the new append vec
+        assert!(av2.flush().is_ok());
+        // and now should not be dirty
+        assert!(!*av2.is_dirty.get_mut());
+
+        // ensure we can flush the old append vec too
+        assert!(av.flush().is_ok());
+        // and now should not be dirty
+        assert!(!*av.is_dirty.get_mut());
+    }
 }
