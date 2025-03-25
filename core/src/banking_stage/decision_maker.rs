@@ -189,7 +189,10 @@ mod tests {
 
         let my_pubkey = Pubkey::new_unique();
         let decision_maker = DecisionMaker::new(my_pubkey, poh_recorder.clone());
-        poh_recorder.write().unwrap().reset(bank.clone(), None);
+        poh_recorder
+            .write()
+            .unwrap()
+            .reset_for_test(bank.clone(), None);
         let slot = bank.slot() + 1;
         let bank = Arc::new(Bank::new_from_parent(bank, &my_pubkey, slot));
 
@@ -206,7 +209,7 @@ mod tests {
         // Will be leader shortly - Hold
         for next_leader_slot_offset in [0, 1].into_iter() {
             let next_leader_slot = bank.slot() + next_leader_slot_offset;
-            poh_recorder.write().unwrap().reset(
+            poh_recorder.write().unwrap().reset_for_test(
                 bank.clone(),
                 Some((
                     next_leader_slot,
@@ -223,7 +226,7 @@ mod tests {
         // Will be leader - ForwardAndHold
         for next_leader_slot_offset in [2, 19].into_iter() {
             let next_leader_slot = bank.slot() + next_leader_slot_offset;
-            poh_recorder.write().unwrap().reset(
+            poh_recorder.write().unwrap().reset_for_test(
                 bank.clone(),
                 Some((
                     next_leader_slot,
@@ -239,7 +242,7 @@ mod tests {
 
         // Known leader, not me - Forward
         {
-            poh_recorder.write().unwrap().reset(bank, None);
+            poh_recorder.write().unwrap().reset_for_test(bank, None);
             let decision = decision_maker.make_consume_or_forward_decision_no_cache();
             assert_matches!(decision, BufferedPacketsDecision::Forward);
         }

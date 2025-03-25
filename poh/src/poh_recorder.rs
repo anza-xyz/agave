@@ -864,6 +864,15 @@ impl PohRecorder {
     pub fn clear_bank_for_test(&mut self) {
         self.clear_bank();
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn reset_for_test(
+        &mut self,
+        reset_bank: Arc<Bank>,
+        next_leader_slot: Option<(Slot, Slot)>,
+    ) {
+        self.reset(reset_bank, next_leader_slot);
+    }
 }
 
 #[allow(clippy::type_complexity)]
