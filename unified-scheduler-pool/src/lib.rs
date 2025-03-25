@@ -1328,6 +1328,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
     }
 
+    /// Returns `true` if the caller should abort.
     #[must_use]
     fn abort_or_accumulate_result_with_timings(
         mode: SchedulingMode,
