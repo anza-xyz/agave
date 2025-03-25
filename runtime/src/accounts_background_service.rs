@@ -11,7 +11,7 @@ use {
         bank_forks::BankForks,
         snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
-        snapshot_package::{self, AccountsPackage, AccountsPackageKind, SnapshotKind},
+        snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind},
         snapshot_utils::SnapshotError,
     },
     crossbeam_channel::{Receiver, SendError, Sender},
@@ -150,12 +150,8 @@ impl SnapshotRequestHandler {
         non_snapshot_time_us: u128,
         exit: &AtomicBool,
     ) -> Option<Result<u64, SnapshotError>> {
-        let (
-            snapshot_request,
-            accounts_package_kind,
-            num_outstanding_requests,
-            num_re_enqueued_requests,
-        ) = self.get_next_snapshot_request()?;
+        let (snapshot_request, num_outstanding_requests, num_re_enqueued_requests) =
+            self.get_next_snapshot_request()?;
 
         datapoint_info!(
             "handle_snapshot_requests",
@@ -168,6 +164,7 @@ impl SnapshotRequestHandler {
             ),
         );
 
+        let accounts_package_kind = new_accounts_package_kind(&snapshot_request)?;
         Some(self.handle_snapshot_request(
             test_hash_calculation,
             non_snapshot_time_us,
@@ -190,18 +187,10 @@ impl SnapshotRequestHandler {
         &self,
     ) -> Option<(
         SnapshotRequest,
-        AccountsPackageKind,
         /*num outstanding snapshot requests*/ usize,
         /*num re-enqueued snapshot requests*/ usize,
     )> {
-        let mut requests: Vec<_> = self
-            .snapshot_request_receiver
-            .try_iter()
-            .map(|request| {
-                let accounts_package_kind = new_accounts_package_kind(&request);
-                (request, accounts_package_kind)
-            })
-            .collect();
+        let mut requests: Vec<_> = self.snapshot_request_receiver.try_iter().collect();
         let requests_len = requests.len();
         debug!("outstanding snapshot requests ({requests_len}): {requests:?}");
 
@@ -211,14 +200,14 @@ impl SnapshotRequestHandler {
             0 => None,
             1 => {
                 // SAFETY: We know the len is 1, so `pop` will return `Some`
-                let (snapshot_request, accounts_package_kind) = requests.pop().unwrap();
-                Some((snapshot_request, accounts_package_kind, 1, 0))
+                let snapshot_request = requests.pop().unwrap();
+                Some((snapshot_request, 1, 0))
             }
             _ => {
                 let num_eah_requests = requests
                     .iter()
-                    .filter(|(_, account_package_kind)| {
-                        *account_package_kind == AccountsPackageKind::EpochAccountsHash
+                    .filter(|request| {
+                        request.request_kind == SnapshotRequestKind::EpochAccountsHash
                     })
                     .count();
                 assert!(
@@ -244,10 +233,9 @@ impl SnapshotRequestHandler {
                 // be at most one EpochAccountsHash request, so `y` is the only other request we
                 // need to check.  If `y` is a FullSnapshot request *with a lower slot* than `z`,
                 // then handle `y` first.
-                let (snapshot_request, accounts_package_kind) = if z.1
-                    == AccountsPackageKind::EpochAccountsHash
-                    && y.1 == AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)
-                    && y.0.snapshot_root_bank.slot() < z.0.snapshot_root_bank.slot()
+                let snapshot_request = if z.request_kind == SnapshotRequestKind::EpochAccountsHash
+                    && y.request_kind == SnapshotRequestKind::FullSnapshot
+                    && y.snapshot_root_bank.slot() < z.snapshot_root_bank.slot()
                 {
                     // SAFETY: We know the len is > 1, so both `pop`s will return `Some`
                     let z = requests.pop().unwrap();
@@ -263,22 +251,17 @@ impl SnapshotRequestHandler {
                 // re-enqueue any remaining requests for slots GREATER-THAN the one that will be handled
                 let num_re_enqueued_requests = requests
                     .into_iter()
-                    .filter(|(snapshot_request, _)| {
+                    .filter(|snapshot_request| {
                         snapshot_request.snapshot_root_bank.slot() > handled_request_slot
                     })
-                    .map(|(snapshot_request, _)| {
+                    .map(|snapshot_request| {
                         self.snapshot_request_sender
                             .try_send(snapshot_request)
                             .expect("re-enqueue snapshot request");
                     })
                     .count();
 
-                Some((
-                    snapshot_request,
-                    accounts_package_kind,
-                    requests_len,
-                    num_re_enqueued_requests,
-                ))
+                Some((snapshot_request, requests_len, num_re_enqueued_requests))
             }
         }
     }
@@ -387,14 +370,6 @@ impl SnapshotRequestHandler {
                         status_cache_slot_deltas,
                         accounts_hash_for_testing,
                     ),
-                    AccountsPackageKind::AccountsHashVerifier => {
-                        AccountsPackage::new_for_accounts_hash_verifier(
-                            accounts_package_kind,
-                            &snapshot_root_bank,
-                            snapshot_storages,
-                            accounts_hash_for_testing,
-                        )
-                    }
                     AccountsPackageKind::EpochAccountsHash => panic!(
                         "Illegal account package type: EpochAccountsHash packages must \
                          be from an EpochAccountsHash request!"
@@ -747,11 +722,11 @@ impl AbsStatus {
 
 /// Get the AccountsPackageKind from a given SnapshotRequest
 #[must_use]
-fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> AccountsPackageKind {
+fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> Option<AccountsPackageKind> {
     match snapshot_request.request_kind {
-        SnapshotRequestKind::EpochAccountsHash => AccountsPackageKind::EpochAccountsHash,
+        SnapshotRequestKind::EpochAccountsHash => Some(AccountsPackageKind::EpochAccountsHash),
         SnapshotRequestKind::FullSnapshot => {
-            AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)
+            Some(AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot))
         }
         SnapshotRequestKind::IncrementalSnapshot => {
             if let Some(latest_full_snapshot_slot) = snapshot_request
@@ -761,11 +736,16 @@ fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> AccountsPack
                 .accounts_db
                 .latest_full_snapshot_slot()
             {
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(
-                    latest_full_snapshot_slot,
+                Some(AccountsPackageKind::Snapshot(
+                    SnapshotKind::IncrementalSnapshot(latest_full_snapshot_slot),
                 ))
             } else {
-                AccountsPackageKind::AccountsHashVerifier
+                warn!(
+                    "Ignoring IncrementalSnapshot request for slot {} because there is no latest \
+                     full snapshot",
+                    snapshot_request.snapshot_root_bank.slot()
+                );
+                None
             }
         }
     }
@@ -777,23 +757,45 @@ fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> AccountsPack
 /// - Epoch Accounts Hash
 /// - Full Snapshot
 /// - Incremental Snapshot
-/// - Accounts Hash Verifier
 ///
 /// If two requests of the same kind are being compared, their bank slots are the tiebreaker.
 #[must_use]
-fn cmp_requests_by_priority(
-    a: &(SnapshotRequest, AccountsPackageKind),
-    b: &(SnapshotRequest, AccountsPackageKind),
+fn cmp_requests_by_priority(a: &SnapshotRequest, b: &SnapshotRequest) -> std::cmp::Ordering {
+    let slot_a = a.snapshot_root_bank.slot();
+    let slot_b = b.snapshot_root_bank.slot();
+    cmp_snapshot_request_kinds_by_priority(&a.request_kind, &b.request_kind)
+        .then(slot_a.cmp(&slot_b))
+}
+
+/// Compare snapshot request kinds by priority
+///
+/// Priority, from highest to lowest:
+/// - Epoch Accounts Hash
+/// - Full Snapshot
+/// - Incremental Snapshot
+///
+/// If two `Snapshot`s are compared, their snapshot kinds are the tiebreaker.
+#[must_use]
+fn cmp_snapshot_request_kinds_by_priority(
+    a: &SnapshotRequestKind,
+    b: &SnapshotRequestKind,
 ) -> std::cmp::Ordering {
-    let (snapshot_request_a, accounts_package_kind_a) = a;
-    let (snapshot_request_b, accounts_package_kind_b) = b;
-    let slot_a = snapshot_request_a.snapshot_root_bank.slot();
-    let slot_b = snapshot_request_b.snapshot_root_bank.slot();
-    snapshot_package::cmp_accounts_package_kinds_by_priority(
-        accounts_package_kind_a,
-        accounts_package_kind_b,
-    )
-    .then(slot_a.cmp(&slot_b))
+    use {
+        std::cmp::Ordering::{Equal, Greater, Less},
+        SnapshotRequestKind as Kind,
+    };
+    match (a, b) {
+        // Epoch Accounts Hash packages
+        (Kind::EpochAccountsHash, Kind::EpochAccountsHash) => Equal,
+        (Kind::EpochAccountsHash, _) => Greater,
+        (_, Kind::EpochAccountsHash) => Less,
+
+        // Snapshot packages
+        (Kind::FullSnapshot, Kind::FullSnapshot) => Equal,
+        (Kind::FullSnapshot, Kind::IncrementalSnapshot) => Greater,
+        (Kind::IncrementalSnapshot, Kind::FullSnapshot) => Less,
+        (Kind::IncrementalSnapshot, Kind::IncrementalSnapshot) => Equal,
+    }
 }
 
 #[cfg(test)]
@@ -917,14 +919,9 @@ mod test {
         // fss 240 <-- handled 2nd
         // iss 270
         // iss 300 <-- handled 3rd
-        // ahv 301
-        // ahv 302
-        // ahv 303 <-- handled 4th
         //
-        // (slots not called out will all be AHV)
         // Also, incremental snapshots before slot 240 (the first full snapshot handled), will
-        // actually be AHV since the latest full snapshot slot will be `None`.  This is expected and
-        // fine; but maybe unexpected for a reader/debugger without this additional context.
+        // actually be skipped since the latest full snapshot slot will be `None`.
         let mut make_banks = |num_banks| {
             for _ in 0..num_banks {
                 let slot = bank.slot() + 1;
@@ -955,24 +952,24 @@ mod test {
 
         // Ensure the EAH is handled 1st
         assert_eq!(latest_full_snapshot_slot(&bank0), None);
-        let (snapshot_request, accounts_package_kind, ..) = snapshot_request_handler
+        let (snapshot_request, ..) = snapshot_request_handler
             .get_next_snapshot_request()
             .unwrap();
         assert_eq!(
-            accounts_package_kind,
-            AccountsPackageKind::EpochAccountsHash
+            snapshot_request.request_kind,
+            SnapshotRequestKind::EpochAccountsHash
         );
         assert_eq!(snapshot_request.snapshot_root_bank.slot(), 100);
 
         // Ensure the full snapshot from slot 240 is handled 2nd
         // (the older full snapshots are skipped and dropped)
         assert_eq!(latest_full_snapshot_slot(&bank0), None);
-        let (snapshot_request, accounts_package_kind, ..) = snapshot_request_handler
+        let (snapshot_request, ..) = snapshot_request_handler
             .get_next_snapshot_request()
             .unwrap();
         assert_eq!(
-            accounts_package_kind,
-            AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)
+            snapshot_request.request_kind,
+            SnapshotRequestKind::FullSnapshot
         );
         assert_eq!(snapshot_request.snapshot_root_bank.slot(), 240);
         set_latest_full_snapshot_slot(&bank0, 240);
@@ -980,12 +977,12 @@ mod test {
         // Ensure the incremental snapshot from slot 300 is handled 3rd
         // (the older incremental snapshots are skipped and dropped)
         assert_eq!(latest_full_snapshot_slot(&bank0), Some(240));
-        let (snapshot_request, accounts_package_kind, ..) = snapshot_request_handler
+        let (snapshot_request, ..) = snapshot_request_handler
             .get_next_snapshot_request()
             .unwrap();
         assert_eq!(
-            accounts_package_kind,
-            AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(240))
+            snapshot_request.request_kind,
+            SnapshotRequestKind::IncrementalSnapshot
         );
         assert_eq!(snapshot_request.snapshot_root_bank.slot(), 300);
 
@@ -1002,9 +999,6 @@ mod test {
         // eah 500 <-- handled 2nd
         // iss 510
         // iss 540 <-- handled 3rd
-        // ahv 541
-        // ahv 542
-        // ahv 543 <-- handled 4th
         //
         // This test differs from the one above by having an older full snapshot request that must
         // be handled before the new epoch accounts hash request.
@@ -1012,35 +1006,35 @@ mod test {
 
         // Ensure the full snapshot is handled 1st
         assert_eq!(latest_full_snapshot_slot(&bank0), Some(240));
-        let (snapshot_request, accounts_package_kind, ..) = snapshot_request_handler
+        let (snapshot_request, ..) = snapshot_request_handler
             .get_next_snapshot_request()
             .unwrap();
         assert_eq!(
-            accounts_package_kind,
-            AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)
+            snapshot_request.request_kind,
+            SnapshotRequestKind::FullSnapshot
         );
         assert_eq!(snapshot_request.snapshot_root_bank.slot(), 480);
         set_latest_full_snapshot_slot(&bank0, 480);
 
         // Ensure the EAH is handled 2nd
         assert_eq!(latest_full_snapshot_slot(&bank0), Some(480));
-        let (snapshot_request, accounts_package_kind, ..) = snapshot_request_handler
+        let (snapshot_request, ..) = snapshot_request_handler
             .get_next_snapshot_request()
             .unwrap();
         assert_eq!(
-            accounts_package_kind,
-            AccountsPackageKind::EpochAccountsHash
+            snapshot_request.request_kind,
+            SnapshotRequestKind::EpochAccountsHash
         );
         assert_eq!(snapshot_request.snapshot_root_bank.slot(), 500);
 
         // Ensure the incremental snapshot is handled 3rd
         assert_eq!(latest_full_snapshot_slot(&bank0), Some(480));
-        let (snapshot_request, accounts_package_kind, ..) = snapshot_request_handler
+        let (snapshot_request, ..) = snapshot_request_handler
             .get_next_snapshot_request()
             .unwrap();
         assert_eq!(
-            accounts_package_kind,
-            AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(480))
+            snapshot_request.request_kind,
+            SnapshotRequestKind::IncrementalSnapshot
         );
         assert_eq!(snapshot_request.snapshot_root_bank.slot(), 540);
 
@@ -1113,5 +1107,63 @@ mod test {
         drop(fork0_bank0);
         let num_banks_purged = pruned_banks_request_handler.handle_request(&fork0_bank3);
         assert_eq!(num_banks_purged, 7);
+    }
+
+    #[test]
+    fn test_cmp_snapshot_request_kinds_by_priority() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        for (snapshot_request_kind_a, snapshot_request_kind_b, expected_result) in [
+            (
+                SnapshotRequestKind::EpochAccountsHash,
+                SnapshotRequestKind::EpochAccountsHash,
+                Equal,
+            ),
+            (
+                SnapshotRequestKind::EpochAccountsHash,
+                SnapshotRequestKind::FullSnapshot,
+                Greater,
+            ),
+            (
+                SnapshotRequestKind::EpochAccountsHash,
+                SnapshotRequestKind::IncrementalSnapshot,
+                Greater,
+            ),
+            (
+                SnapshotRequestKind::FullSnapshot,
+                SnapshotRequestKind::EpochAccountsHash,
+                Less,
+            ),
+            (
+                SnapshotRequestKind::FullSnapshot,
+                SnapshotRequestKind::FullSnapshot,
+                Equal,
+            ),
+            (
+                SnapshotRequestKind::FullSnapshot,
+                SnapshotRequestKind::IncrementalSnapshot,
+                Greater,
+            ),
+            (
+                SnapshotRequestKind::IncrementalSnapshot,
+                SnapshotRequestKind::EpochAccountsHash,
+                Less,
+            ),
+            (
+                SnapshotRequestKind::IncrementalSnapshot,
+                SnapshotRequestKind::FullSnapshot,
+                Less,
+            ),
+            (
+                SnapshotRequestKind::IncrementalSnapshot,
+                SnapshotRequestKind::IncrementalSnapshot,
+                Equal,
+            ),
+        ] {
+            let actual_result = cmp_snapshot_request_kinds_by_priority(
+                &snapshot_request_kind_a,
+                &snapshot_request_kind_b,
+            );
+            assert_eq!(expected_result, actual_result);
+        }
     }
 }
