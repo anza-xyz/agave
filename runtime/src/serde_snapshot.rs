@@ -1079,7 +1079,7 @@ where
             // initial accounts hashes in accounts db.
             let old_accounts_hash = accounts_db.set_accounts_hash_from_snapshot(
                 incremental_snapshot_persistence.full_slot,
-                incremental_snapshot_persistence.full_hash.clone(),
+                incremental_snapshot_persistence.full_hash,
                 incremental_snapshot_persistence.full_capitalization,
             );
             assert!(
@@ -1089,7 +1089,7 @@ where
             let old_incremental_accounts_hash = accounts_db
                 .set_incremental_accounts_hash_from_snapshot(
                     *slot,
-                    incremental_snapshot_persistence.incremental_hash.clone(),
+                    incremental_snapshot_persistence.incremental_hash,
                     incremental_snapshot_persistence.incremental_capitalization,
                 );
             assert!(
@@ -1101,7 +1101,7 @@ where
             // intended to be an incremental snapshot.
             let old_accounts_hash = accounts_db.set_accounts_hash_from_snapshot(
                 *slot,
-                bank_hash_info.accounts_hash.clone(),
+                bank_hash_info.accounts_hash,
                 capitalizations.0,
             );
             assert!(
@@ -1143,7 +1143,7 @@ where
                 let old_incremental_accounts_hash = accounts_db
                     .set_incremental_accounts_hash_from_snapshot(
                         *slot,
-                        incremental_snapshot_persistence.incremental_hash.clone(),
+                        incremental_snapshot_persistence.incremental_hash,
                         incremental_snapshot_persistence.incremental_capitalization,
                     );
                 assert!(
@@ -1155,7 +1155,7 @@ where
                 // Hash feature is disabled; the accounts hash in `BankHashInfo` is valid.
                 let old_accounts_hash = accounts_db.set_accounts_hash_from_snapshot(
                     *slot,
-                    bank_hash_info.accounts_hash.clone(),
+                    bank_hash_info.accounts_hash,
                     capitalizations
                         .1
                         .expect("capitalization from incremental snapshot"),

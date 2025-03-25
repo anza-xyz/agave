@@ -261,12 +261,7 @@ mod tests {
             assert_eq!(dbank.get_accounts_hash(), None);
             assert_eq!(
                 dbank.get_incremental_accounts_hash(),
-                Some(
-                    incremental_snapshot_persistence
-                        .incremental_hash
-                        .clone()
-                        .into()
-                ),
+                Some(incremental_snapshot_persistence.incremental_hash.into()),
             );
         } else {
             assert_eq!(dbank.get_accounts_hash(), Some(expected_accounts_hash));

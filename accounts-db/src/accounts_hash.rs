@@ -1294,7 +1294,7 @@ pub struct AccountsDeltaHash(pub Hash);
 
 /// Snapshot serde-safe accounts delta hash
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerdeAccountsDeltaHash(pub Hash);
 
 impl From<SerdeAccountsDeltaHash> for AccountsDeltaHash {
@@ -1310,7 +1310,7 @@ impl From<AccountsDeltaHash> for SerdeAccountsDeltaHash {
 
 /// Snapshot serde-safe accounts hash
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerdeAccountsHash(pub Hash);
 
 impl From<SerdeAccountsHash> for AccountsHash {
@@ -1326,7 +1326,7 @@ impl From<AccountsHash> for SerdeAccountsHash {
 
 /// Snapshot serde-safe incremental accounts hash
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerdeIncrementalAccountsHash(pub Hash);
 
 impl From<SerdeIncrementalAccountsHash> for IncrementalAccountsHash {
