@@ -415,6 +415,7 @@ struct SimulatorLoop {
     freeze_time_by_slot: FreezeTimeBySlot,
     base_event_time: SystemTime,
     poh_recorder: Arc<RwLock<PohRecorder>>,
+    poh_controller: PohController,
     simulated_leader: Pubkey,
     bank_forks: Arc<RwLock<BankForks>>,
     blockstore: Arc<Blockstore>,
@@ -456,10 +457,9 @@ impl SimulatorLoop {
                     GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
                 );
                 debug!("{next_leader_slot:?}");
-                self.poh_recorder
-                    .write()
-                    .unwrap()
-                    .reset(bank.clone_without_scheduler(), next_leader_slot);
+                self.poh_controller
+                    .reset(bank.clone_without_scheduler(), next_leader_slot)
+                    .expect("poh service exists");
                 info!("Bank::new_from_parent()!");
 
                 logger.log_jitter(&bank);
@@ -744,7 +744,7 @@ impl BankingSimulator {
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let (record_sender, record_receiver) = unbounded();
         let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
-        let (_poh_controller, bank_message_receiver) = PohController::new();
+        let (poh_controller, bank_message_receiver) = PohController::new();
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
@@ -887,6 +887,7 @@ impl BankingSimulator {
             freeze_time_by_slot,
             base_event_time,
             poh_recorder,
+            poh_controller,
             simulated_leader,
             bank_forks,
             blockstore,
