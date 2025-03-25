@@ -5912,6 +5912,7 @@ dependencies = [
  "bytes",
  "chrono",
  "conditional-mod",
+ "core_affinity",
  "crossbeam-channel",
  "dashmap",
  "derive_more 1.0.0",
