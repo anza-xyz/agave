@@ -285,9 +285,12 @@ fn test_corrupted_toolchain() {
 
     fs::rename(bin_folder.parent().unwrap().join("bin2"), &bin_folder)
         .expect("Failed to rename file");
-    let rust_folder = bin_folder.parent().unwrap();
-    fs::rename(rust_folder, rust_folder.parent().unwrap().join("rust_2"))
-        .expect("Failed to rename file");
+    let right_rust_folder = bin_folder.parent().unwrap();
+    let wrong_rust_folder = right_rust_folder.parent().unwrap().join("rust_2");
+    fs::rename(right_rust_folder, &wrong_rust_folder).expect("Failed to rename file");
 
     assert_failed_command();
+
+    // Revert to the original name, so other tests can run correctly.
+    fs::rename(wrong_rust_folder, right_rust_folder).expect("Failed to rename file");
 }
