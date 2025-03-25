@@ -14,7 +14,7 @@ use {
 // of receiving bogus epoch slots values.
 // This also constraints the size of the datastructure
 // if we are really far behind.
-const CLUSTER_SLOTS_TRIM_SIZE: usize = 5000;
+const CLUSTER_SLOTS_TRIM_SIZE: usize = 1500;
 
 pub(crate) type SlotPubkeys = HashMap</*node:*/ Pubkey, /*stake:*/ u64>;
 
@@ -84,16 +84,16 @@ impl ClusterSlots {
         }
         let mut slots_to_patch = HashMap::with_capacity(1024);
         for epoch_slots in epoch_slots_list {
-            /*
+            
             //filter out unstaked nodes
-            let Some(sender_stake) = validator_stakes.get(&epoch_slots.from) else {
+            let Some(&sender_stake) = validator_stakes.get(&epoch_slots.from) else {
                 continue;
             };
-            */
+            /*
             let sender_stake = validator_stakes
                 .get(&epoch_slots.from)
                 .cloned()
-                .unwrap_or(0);
+                .unwrap_or(0);*/
             let updates = epoch_slots
                 .to_slots(root)
                 .filter(|slot| slot_range.contains(slot));
@@ -101,7 +101,7 @@ impl ClusterSlots {
             for slot in updates {
                 let e = slots_to_patch
                     .entry(slot)
-                    .or_insert_with(|| Vec::with_capacity(16));
+                    .or_insert_with(|| Vec::with_capacity(128));
                 e.push((epoch_slots.from, sender_stake));
             }
         }
