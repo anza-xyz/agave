@@ -1220,11 +1220,8 @@ impl AppendVec {
         if !offsets.is_empty() {
             // If we've actually written to the AppendVec, make sure we mark it as dirty.
             // This ensures we properly flush it later.
-            // As an optimization to reduce unnecessary cache line invalidations,
-            // only write the `is_dirty` atomic if currently *not* dirty.
-            // (This also ensures the 'dirty counter' datapoint is correct.)
-            if !self.is_dirty.load(Ordering::Acquire) {
-                self.is_dirty.store(true, Ordering::Release);
+            let was_dirty = self.is_dirty.swap(true, Ordering::AcqRel);
+            if !was_dirty {
                 APPEND_VEC_STATS.files_dirty.fetch_add(1, Ordering::Relaxed);
             }
         }
