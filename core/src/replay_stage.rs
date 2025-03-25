@@ -8628,7 +8628,7 @@ pub(crate) mod tests {
         poh_recorder
             .write()
             .unwrap()
-            .reset(bank_to_dump, Some((slot_to_dump + 1, slot_to_dump + 1)));
+            .reset_for_test(bank_to_dump, Some((slot_to_dump + 1, slot_to_dump + 1)));
         assert_eq!(poh_recorder.read().unwrap().start_slot(), slot_to_dump);
 
         // Now dump and repair slot_to_dump

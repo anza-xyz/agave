@@ -541,7 +541,7 @@ fn main() {
             poh_recorder
                 .write()
                 .unwrap()
-                .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
+                .reset_for_test(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
             poh_time.stop();
 
             let mut new_bank_time = Measure::start("new_bank");
