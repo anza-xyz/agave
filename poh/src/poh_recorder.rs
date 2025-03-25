@@ -279,6 +279,10 @@ impl PohRecorder {
 
     // synchronize PoH with a bank
     pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
+        self.handle_reset(reset_bank, next_leader_slot);
+    }
+
+    fn handle_reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
         self.clear_bank();
         self.reset_poh(reset_bank, true);
 
@@ -403,6 +407,10 @@ impl PohRecorder {
     }
 
     pub fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
+        self.handle_set_bank(bank, track_transaction_indexes);
+    }
+
+    fn handle_set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
         assert!(self.working_bank.is_none());
         self.leader_bank_notifier.set_in_progress(&bank);
         let working_bank = WorkingBank {
