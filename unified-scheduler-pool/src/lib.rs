@@ -1351,7 +1351,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 // This should never be observed because the scheduler thread makes all running
                 // tasks are conflict-free
                 Err(TransactionError::AccountInUse)
-                // This should have been validated by blockstore by now
+                // These should have been validated by blockstore by now
                 | Err(TransactionError::AccountLoadedTwice)
                 | Err(TransactionError::TooManyAccountLocks)
                 // Block verification should never see this:
@@ -1386,7 +1386,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     // This should never be observed because the scheduler thread makes all running
                     // tasks are conflict-free
                     Err(TransactionError::AccountInUse)
-                    // This should have been validated by banking_packet_handler by now
+                    // These should have been validated by banking_packet_handler by now
                     | Err(TransactionError::AccountLoadedTwice)
                     | Err(TransactionError::TooManyAccountLocks) => {
                         unreachable!();
