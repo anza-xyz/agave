@@ -249,9 +249,10 @@ mod tests {
         let cs = ClusterSlots::default();
         let mut epoch_slot = EpochSlots::default();
         epoch_slot.fill(&[1], 0);
+        let from = epoch_slot.from;
         cs.update_internal(
             0,
-            &HashMap::new(),
+            &HashMap::from([(from, 42)]),
             vec![epoch_slot],
             DEFAULT_SLOTS_PER_EPOCH,
         );
@@ -263,7 +264,7 @@ mod tests {
                 .read()
                 .unwrap()
                 .get(&Pubkey::default()),
-            Some(&0)
+            Some(&42)
         );
     }
 
