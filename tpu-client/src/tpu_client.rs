@@ -104,11 +104,11 @@ where
         self.invoke(self.tpu_client.try_send_transaction(transaction))
     }
 
-    /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
-    /// NOTE: send_wire_transaction() and try_send_transaction() above both fail in a specific case when used in LocalCluster
-    /// They both invoke the nonblocking TPUClient and both fail when calling "transfer_with_client()" multiple times
-    /// I do not full understand WHY the nonblocking TPUClient fails in this specific case. But the method defined below
-    /// does work although it has only been tested in LocalCluster integration tests
+    /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout.
+    ///
+    /// Returns an error if:
+    /// 1. there are no known tpu sockets to send to
+    /// 2. any of the sends fail, even if other sends succeeded.
     pub fn send_transaction_to_upcoming_leaders(
         &self,
         transaction: &Transaction,
@@ -133,12 +133,10 @@ where
             }
         }
 
-        if !some_success {
-            Err(if let Some(err) = last_error {
-                err
-            } else {
-                std::io::Error::new(std::io::ErrorKind::Other, "No sends attempted").into()
-            })
+        if let Some(err) = last_error {
+            Err(err)
+        } else if !some_success {
+            std::io::Error::new(std::io::ErrorKind::Other, "No sends attempted").into()
         } else {
             Ok(())
         }

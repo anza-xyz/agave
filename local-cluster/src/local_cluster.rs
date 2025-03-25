@@ -703,6 +703,12 @@ impl LocalCluster {
         attempts: usize,
         pending_confirmations: usize,
     ) -> std::result::Result<Signature, TransportError> {
+        // @gregcusack: send_wire_transaction() and try_send_transaction() both fail in
+        // a specific case when used in LocalCluster. They both invoke the nonblocking
+        // TPUClient and both fail when calling `transfer_with_client()` multiple times.
+        // I do not full understand WHY the nonblocking TPUClient fails in this specific
+        // case. But the method defined below does work although it has only been tested
+        // in LocalCluster integration tests
         for attempt in 0..attempts {
             let now = Instant::now();
             let mut num_confirmed = 0;
