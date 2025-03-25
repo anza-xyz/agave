@@ -6,6 +6,7 @@
 //! Otherwise, an ancient append vec is the same as any other append vec
 use {
     crate::{
+        test_assert,
         account_storage::ShrinkInProgress,
         accounts_db::{
             stats::{ShrinkAncientStats, ShrinkStatsSub},
@@ -1199,7 +1200,7 @@ pub fn is_ancient(storage: &AccountsFile) -> bool {
 /// Debug builds check this invariant, and will panic if broken.
 fn div_ceil(x: u64, y: NonZeroU64) -> u64 {
     let y = y.get();
-    debug_assert!(
+    test_assert!(
         x.checked_add(y).is_some(),
         "x + y must not overflow! x: {x}, y: {y}",
     );
