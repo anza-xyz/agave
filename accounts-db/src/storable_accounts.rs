@@ -111,6 +111,8 @@ pub trait StorableAccounts<'a>: Sync {
     ) -> Ret;
     /// whether account at 'index' has zero lamports
     fn is_zero_lamport(&self, index: usize) -> bool;
+    /// data length of account at 'index'
+    fn data_len(&self, index: usize) -> usize;
     /// None if account is zero lamports
     fn account_default_if_zero_lamport<Ret>(
         &self,
@@ -157,6 +159,9 @@ impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(&'a Pubkey, &'a AccountSh
     fn is_zero_lamport(&self, index: usize) -> bool {
         self.1[index].1.is_zero_lamport()
     }
+    fn data_len(&self, index: usize) -> usize {
+        self.1[index].1.data().len()
+    }
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data
         self.target_slot()
@@ -179,6 +184,9 @@ impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(Pubkey, AccountSharedData
     }
     fn is_zero_lamport(&self, index: usize) -> bool {
         self.1[index].1.is_zero_lamport()
+    }
+    fn data_len(&self, index: usize) -> usize {
+        self.1[index].1.data().len()
     }
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data
@@ -304,6 +312,10 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
         let indexes = self.find_internal_index(index);
         self.slots_and_accounts[indexes.0].1[indexes.1].is_zero_lamport()
     }
+    fn data_len(&self, index: usize) -> usize {
+        let indexes = self.find_internal_index(index);
+        self.slots_and_accounts[indexes.0].1[indexes.1].data_len()
+    }
     fn slot(&self, index: usize) -> Slot {
         let indexes = self.find_internal_index(index);
         self.slots_and_accounts[indexes.0].0
@@ -350,6 +362,9 @@ pub mod tests {
         fn is_zero_lamport(&self, index: usize) -> bool {
             self.1[index].is_zero_lamport()
         }
+        fn data_len(&self, index: usize) -> usize {
+            self.1[index].data_len()
+        }
         fn slot(&self, _index: usize) -> Slot {
             // per-index slot is not unique per slot when per-account slot is not included in the source data
             self.0
@@ -377,6 +392,9 @@ pub mod tests {
         fn is_zero_lamport(&self, index: usize) -> bool {
             self.1[index].1.lamports() == 0
         }
+        fn data_len(&self, index: usize) -> usize {
+            self.1[index].1.data().len()
+        }
         fn slot(&self, _index: usize) -> Slot {
             // per-index slot is not unique per slot when per-account slot is not included in the source data
             self.target_slot()
@@ -402,6 +420,9 @@ pub mod tests {
         }
         fn is_zero_lamport(&self, index: usize) -> bool {
             self.1[index].is_zero_lamport()
+        }
+        fn data_len(&self, index: usize) -> usize {
+            self.1[index].data_len()
         }
         fn slot(&self, _index: usize) -> Slot {
             // same other slot for all accounts

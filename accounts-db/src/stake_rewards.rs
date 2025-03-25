@@ -44,6 +44,9 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [StakeReward]) {
     fn is_zero_lamport(&self, index: usize) -> bool {
         self.1[index].is_zero_lamport()
     }
+    fn data_len(&self, index: usize) -> usize {
+        self.1[index].stake_account.data().len()
+    }
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data
         self.target_slot()

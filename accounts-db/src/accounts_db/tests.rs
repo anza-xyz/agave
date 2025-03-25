@@ -54,6 +54,9 @@ where
     fn is_zero_lamport(&self, index: usize) -> bool {
         self.1[index].1.lamports() == 0
     }
+    fn data_len(&self, index: usize) -> usize {
+        self.1[index].1.data().len()
+    }
     fn account<Ret>(
         &self,
         index: usize,
