@@ -587,14 +587,14 @@ impl BankingStage {
     fn spawn_vote_worker(
         id: u32,
         packet_receiver: BankingPacketReceiver,
-        mut decision_maker: DecisionMaker,
+        decision_maker: DecisionMaker,
         bank_forks: Arc<RwLock<BankForks>>,
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
         vote_storage: VoteStorage,
     ) -> JoinHandle<()> {
-        let mut packet_receiver = PacketReceiver::new(id, packet_receiver);
+        let packet_receiver = PacketReceiver::new(id, packet_receiver);
         let consumer = Consumer::new(
             committer,
             transaction_recorder,
@@ -605,14 +605,8 @@ impl BankingStage {
         Builder::new()
             .name(format!("solBanknStgTx{id:02}"))
             .spawn(move || {
-                VoteWorker::run(
-                    &mut packet_receiver,
-                    &mut decision_maker,
-                    &bank_forks,
-                    &consumer,
-                    id,
-                    vote_storage,
-                )
+                VoteWorker::new(decision_maker, packet_receiver, bank_forks, consumer, id)
+                    .run(vote_storage)
             })
             .unwrap()
     }

@@ -10,43 +10,58 @@ use {
     crossbeam_channel::RecvTimeoutError,
     solana_measure::measure_us,
     solana_runtime::bank_forks::BankForks,
-    std::{sync::RwLock, time::Instant},
+    std::{
+        sync::{Arc, RwLock},
+        time::Instant,
+    },
 };
 
-pub struct VoteWorker;
+pub struct VoteWorker {
+    decision_maker: DecisionMaker,
+    packet_receiver: PacketReceiver,
+    bank_forks: Arc<RwLock<BankForks>>,
+    consumer: Consumer,
+    id: u32,
+}
 
 impl VoteWorker {
-    pub fn run(
-        packet_receiver: &mut PacketReceiver,
-        decision_maker: &mut DecisionMaker,
-        bank_forks: &RwLock<BankForks>,
-        consumer: &Consumer,
+    pub fn new(
+        decision_maker: DecisionMaker,
+        packet_receiver: PacketReceiver,
+        bank_forks: Arc<RwLock<BankForks>>,
+        consumer: Consumer,
         id: u32,
-        mut vote_storage: VoteStorage,
-    ) {
-        let mut banking_stage_stats = BankingStageStats::new(id);
+    ) -> Self {
+        Self {
+            decision_maker,
+            packet_receiver,
+            bank_forks,
+            consumer,
+            id,
+        }
+    }
 
-        let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(id);
+    pub fn run(mut self, mut vote_storage: VoteStorage) {
+        let mut banking_stage_stats = BankingStageStats::new(self.id);
+        let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(self.id);
+
         let mut last_metrics_update = Instant::now();
 
         loop {
             if !vote_storage.is_empty()
                 || last_metrics_update.elapsed() >= SLOT_BOUNDARY_CHECK_PERIOD
             {
-                let (_, process_buffered_packets_us) = measure_us!(Self::process_buffered_packets(
-                    decision_maker,
-                    bank_forks,
-                    consumer,
+                let (_, process_buffered_packets_us) = measure_us!(self.process_buffered_packets(
                     &mut vote_storage,
-                    &banking_stage_stats,
-                    &mut slot_metrics_tracker,
+                    &mut banking_stage_stats,
+                    &mut slot_metrics_tracker
                 ));
                 slot_metrics_tracker
                     .increment_process_buffered_packets_us(process_buffered_packets_us);
                 last_metrics_update = Instant::now();
             }
 
-            match packet_receiver.receive_and_buffer_packets(
+            match self.packet_receiver.receive_and_buffer_packets(
                 &mut vote_storage,
                 &mut banking_stage_stats,
                 &mut slot_metrics_tracker,
@@ -58,20 +73,17 @@ impl VoteWorker {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn process_buffered_packets(
-        decision_maker: &mut DecisionMaker,
-        bank_forks: &RwLock<BankForks>,
-        consumer: &Consumer,
+        &mut self,
         vote_storage: &mut VoteStorage,
-        banking_stage_stats: &BankingStageStats,
+        banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
         if vote_storage.should_not_process() {
             return;
         }
         let (decision, make_decision_us) =
-            measure_us!(decision_maker.make_consume_or_forward_decision());
+            measure_us!(self.decision_maker.make_consume_or_forward_decision());
         let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(decision.bank_start());
         slot_metrics_tracker.increment_make_decision_us(make_decision_us);
 
@@ -82,8 +94,8 @@ impl VoteWorker {
                 // packet processing metrics from the next slot towards the metrics
                 // of the previous slot
                 slot_metrics_tracker.apply_action(metrics_action);
-                let (_, consume_buffered_packets_us) = measure_us!(consumer
-                    .consume_buffered_packets(
+                let (_, consume_buffered_packets_us) =
+                    measure_us!(self.consumer.consume_buffered_packets(
                         &bank_start,
                         vote_storage,
                         banking_stage_stats,
@@ -95,14 +107,14 @@ impl VoteWorker {
             BufferedPacketsDecision::Forward => {
                 // get current working bank from bank_forks, use it to sanitize transaction and
                 // load all accounts from address loader;
-                let current_bank = bank_forks.read().unwrap().working_bank();
+                let current_bank = self.bank_forks.read().unwrap().working_bank();
                 vote_storage.cache_epoch_boundary_info(&current_bank);
                 vote_storage.clear();
             }
             BufferedPacketsDecision::ForwardAndHold => {
                 // get current working bank from bank_forks, use it to sanitize transaction and
                 // load all accounts from address loader;
-                let current_bank = bank_forks.read().unwrap().working_bank();
+                let current_bank = self.bank_forks.read().unwrap().working_bank();
                 vote_storage.cache_epoch_boundary_info(&current_bank);
             }
             BufferedPacketsDecision::Hold => {}
