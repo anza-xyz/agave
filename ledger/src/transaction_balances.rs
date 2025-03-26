@@ -2,10 +2,14 @@
 
 use {
     crate::{
-        blockstore_processor::TransactionStatusSender, token_balances::{TokenBalanceData, collect_token_balances, collect_token_balance_from_account},
+        blockstore_processor::TransactionStatusSender,
+        token_balances::{
+            collect_token_balance_from_account, collect_token_balances,
+            process_and_store_token_balance, TokenBalanceData,
+        },
     },
-solana_account_decoder::parse_token::is_known_spl_token_id,
     itertools::Itertools,
+    solana_account_decoder::parse_token::is_known_spl_token_id,
     solana_measure::measure_us,
     solana_runtime::{
         bank::{Bank, ProcessedTransactionCounts, TransactionBalancesSet},
@@ -16,10 +20,6 @@ solana_account_decoder::parse_token::is_known_spl_token_id,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{account::ReadableAccount, pubkey::Pubkey, saturating_add_assign},
-    spl_token_2022::{
-        extension::StateWithExtensions,
-        state::{Account as TokenAccount, Mint},
-    },
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::{
@@ -29,6 +29,10 @@ solana_account_decoder::parse_token::is_known_spl_token_id,
     },
     solana_transaction_status::{
         token_balances::TransactionTokenBalancesSet, TransactionTokenBalance,
+    },
+    spl_token_2022::{
+        extension::StateWithExtensions,
+        state::{Account as TokenAccount, Mint},
     },
     std::{collections::HashMap, sync::Arc},
 };
@@ -67,6 +71,11 @@ solana_account_decoder::parse_token::is_known_spl_token_id,
 // * is it fine to exclude failed transactions
 // * how does it cope with missing balances from new (pre) and closed (post) accounts
 //   because the existing code does not capture 0 bals for these
+//
+// HANA LATEST ok we back up in here whats good
+// new me. new rules. new hatred for edge cases and no mercy shown
+// the new rule i am going to enforce is we *only* report token balances if the mint existed already
+// we dont do any mint tracking. that shit is like 80% of the problem with this
 
 // HANA idk struct maybe
 pub type BalanceInfo = (TransactionBalancesSet, TransactionTokenBalancesSet);
@@ -79,7 +88,7 @@ pub fn calculate_transaction_balances(
     // running pre-balances and current mint decimals as we step through results
     let mut native: HashMap<Pubkey, u64> = HashMap::default();
     let mut token: HashMap<Pubkey, Option<TokenBalanceData>> = HashMap::default();
-    let mut mint_decimals: HashMap<Pubkey, Option<u8>> = HashMap::default();
+    let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::default();
 
     // accumulated pre/post lamport balances for each transaction
     let mut native_pre_balances: Vec<Vec<u64>> = Vec::with_capacity(processing_results.len());
@@ -125,6 +134,7 @@ pub fn calculate_transaction_balances(
             tx_native_post.push(native_post_balance);
         }
 
+        // push the native balances for this transaction. these are full regardless of execution result
         native_pre_balances.push(tx_native_pre);
         native_post_balances.push(tx_native_post);
 
@@ -134,71 +144,74 @@ pub fn calculate_transaction_balances(
 
         // next get token balances if the transaction was successful and included the token program
         if result.was_processed_with_successful_result() && has_token_program {
-            let result_accounts =  match result {
+            let result_accounts = match result {
                 Ok(ProcessedTransaction::Executed(ref executed)) if executed.was_successful() => {
                     &executed.loaded_transaction.accounts
                 }
-                // unreachable
-                _ => continue,
+                _ => unreachable!(),
             };
 
-            // get pre- and post-balances together. we rely on the presence of the mint in the transaction
-            // we ignore pre-balances under a variety of scenarios where mints or accounts change in pathological ways
-            // this allows us to produce trustworthy post-balances even in extreme scenarios
+            // get pre- and post-balances together. we only report balances for mints that exist prior to the batch
+            // this can produce incorrect UiAmount in pathological cases of closing and reopening mints
+            // but since mints can only be done when supply is 0, this does not affect any real usecase
             for (index, (key, account)) in result_accounts.into_iter().enumerate() {
-                // if the transaction succeeded this cannot be a token account
+                // if the transaction succeeded and either of these are true, this cannot be a token account
                 if transaction.is_invoked(index) || is_known_spl_token_id(key) {
                     continue;
                 }
 
-                // we ignore anything that isnt an open, valid token account *after* the transaction
+                // get the pre-balance. this implicitly stores decimals for the mint, if it exists
+                // push it, and keep working with this key regardless of whether it exists
+                if let Some(pre_token_state) =
+                    collect_token_balance_from_account(&mut token, &bank, &key, &mut mint_decimals)
+                {
+                    tx_token_pre.push(pre_token_state.to_transaction_balance(index as u8));
+                }
+
+                // we now look at the state post-execution
+                // start with the obvious signs it is not a token account; prior state is irrelevant
                 if !is_known_spl_token_id(account.owner()) || account.lamports() == 0 {
+                    token.insert(*key, None);
                     continue;
                 }
 
-                // parse the post-transaction account state
-                let Ok(token_account) = StateWithExtensions::<TokenAccount>::unpack(account.data()) else {
+                // parse and store the account if it might be a token account so we can retreive it back
+                // we pass through this function so we catch if the account address was reused on a different mint
+                // the same rule applies that, to emit a balance, the mint must have existed prior to the batch
+                let post_token_state = if let Ok(token_account) =
+                    StateWithExtensions::<TokenAccount>::unpack(account.data())
+                {
+                    process_and_store_token_balance(
+                        &mut token,
+                        &bank,
+                        &key,
+                        token_account,
+                        account.owner(),
+                        &mut mint_decimals,
+                    )
+                } else {
+                    token.insert(*key, None);
                     continue;
                 };
 
-                // parse the mint. if it is not present, the............
-                // nevermind. this doesnt work. rack up another failure
-                // transfers dont require the mint. the *only* way is to track *all* mints in the batch
-                // which means all my efforts toward doing this outside of svm... are complicated
-            }
-
-/*
-            // first get pre-balances from prior transactions or bank, using prior or bank decimals
-            for (index, key) in transaction.account_keys().iter().enumerate() {
-                // this cannot be a token account if the transaction succeeded
-                if transaction.is_invoked(index) || is_known_spl_token_id(key) {
-                    continue;
-                }
-
-                if let Some(balance) = collect_token_balance_from_account(&mut token, bank, key, &mut mint_decimals) {
-                    tx_token_pre.push(balance.to_transaction_balance(index as u8));
+                // now get the post-execution token balance
+                if let Some(post_token_state) =
+                    collect_token_balance_from_account(&mut token, &bank, &key, &mut mint_decimals)
+                {
+                    tx_token_post.push(post_token_state.to_transaction_balance(index as u8));
                 }
             }
-
-            // next update all mint decimals
-            for (index, (key, account)) in result_accounts.into_iter().enumerate() {
-                // this cannot be a mint if the transaction succeeded
-                if transaction.is_invoked(index) || is_known_spl_token_id(key) {
-                    continue;
-                }
-
-                // HANA this is maddening. we have to screen anything that *could have been* a mint
-                // otherwise in a case where we see an account where a previous transaction edited the mint
-                // we would fall back to the bank state. this is the one thing 
-
-                || !is_known_spl_token_id(account.owner()) {
-
-                //let result_account = result
-            }
-*/
         }
+
+        // push the token balances for this transaction. these are empty if the transaction failed
+        // this is intended because it is assumed they can be zipped with the batch
+        // if the transaction succeeded, all valid token accounts with pre-batch valid mints are contained
+        // pre and post may be different lengths for each transaction if an account was opened or closed
+        token_pre_balances.push(tx_token_pre);
+        token_post_balances.push(tx_token_post);
     }
 
+    // construct the proper balance sets and return
     (
         TransactionBalancesSet::new(native_pre_balances, native_post_balances),
         TransactionTokenBalancesSet::new(token_pre_balances, token_post_balances),

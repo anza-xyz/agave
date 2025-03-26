@@ -55,15 +55,17 @@ pub fn collect_token_balances(
                     continue;
                 }
 
-                /* HANA fix decimals hashmap
                 if let Some(TokenBalanceData {
                     mint,
                     ui_token_amount,
                     owner,
                     program_id,
-                }) = collect_token_balance_from_account(&mut HashMap::default(), // HANA placeholder 
-                bank, account_id, mint_decimals)
-                {
+                }) = collect_token_balance_from_account(
+                    &mut HashMap::default(), // HANA placeholder
+                    bank,
+                    account_id,
+                    mint_decimals,
+                ) {
                     transaction_balances.push(TransactionTokenBalance {
                         account_index: index as u8,
                         mint,
@@ -72,7 +74,6 @@ pub fn collect_token_balances(
                         program_id,
                     });
                 }
-                */
             }
         }
         balances.push(transaction_balances);
@@ -94,7 +95,7 @@ pub(crate) struct TokenBalanceData {
 }
 
 impl TokenBalanceData {
-    pub fn to_transaction_balance(self, account_index: u8) -> TransactionTokenBalance {
+    pub(crate) fn to_transaction_balance(self, account_index: u8) -> TransactionTokenBalance {
         TransactionTokenBalance {
             account_index,
             mint: self.mint,
@@ -106,42 +107,57 @@ impl TokenBalanceData {
 }
 
 pub(crate) fn collect_token_balance_from_account(
-    token_data: &mut HashMap<Pubkey, Option<TokenBalanceData>>,
+    token_data_store: &mut HashMap<Pubkey, Option<TokenBalanceData>>,
     bank: &Bank,
     account_id: &Pubkey,
-    mint_decimals: &mut HashMap<Pubkey, Option<u8>>,
+    mint_decimals: &mut HashMap<Pubkey, u8>,
 ) -> Option<TokenBalanceData> {
-    match token_data.get(account_id).cloned() {
+    match token_data_store.get(account_id).cloned() {
         // exists and seen in this batch
         Some(Some(balance)) => Some(balance),
-        // once existed, but closed in this batch
+        // was seen to not exist, or once existed but closed in this batch
         Some(None) => None,
-        // never modified this batch
-        // safe (and necessary) to load from bank
+        // not seen this batch yet. safe (and necessary) to load from accounts-db
         None => {
-    let account = bank.get_account(account_id)?;
+            // if we go to accounts-db and miss, store None so we skip it next time
+            let Some(account) = bank
+                .get_account(account_id)
+                .filter(|account| is_known_spl_token_id(account.owner()))
+            else {
+                token_data_store.insert(*account_id, None);
+                return None;
+            };
 
-    if !is_known_spl_token_id(account.owner()) {
-        return None;
-    }
+            let token_account = StateWithExtensions::<TokenAccount>::unpack(account.data()).ok()?;
 
-    let token_account = StateWithExtensions::<TokenAccount>::unpack(account.data()).ok()?;
-    let mint = token_account.base.mint;
-
-    let decimals = match mint_decimals.get(&mint).cloned() {
-        // exists and seen already
-        Some(Some(decimals)) => decimals,
-        // mint was closed or is otherwise invalid
-        Some(None) => return None,
-        // not yet seen
-        None => {
-            let decimals = get_mint_decimals(bank, &mint)?;
-            mint_decimals.insert(mint, Some(decimals));
-            decimals
+            process_and_store_token_balance(
+                token_data_store,
+                bank,
+                account_id,
+                token_account,
+                account.owner(),
+                mint_decimals,
+            )
         }
-    };
+    }
+}
 
-    let balance = Some(TokenBalanceData {
+pub(crate) fn process_and_store_token_balance(
+    token_data_store: &mut HashMap<Pubkey, Option<TokenBalanceData>>,
+    bank: &Bank,
+    account_id: &Pubkey,
+    token_account: StateWithExtensions<'_, TokenAccount>,
+    program_id: &Pubkey,
+    mint_decimals: &mut HashMap<Pubkey, u8>,
+) -> Option<TokenBalanceData> {
+    let mint = token_account.base.mint;
+    let decimals = mint_decimals.get(&mint).cloned().or_else(|| {
+        let decimals = get_mint_decimals(bank, &mint)?;
+        mint_decimals.insert(mint, decimals);
+        Some(decimals)
+    })?;
+
+    let token_balance_data = Some(TokenBalanceData {
         mint: token_account.base.mint.to_string(),
         owner: token_account.base.owner.to_string(),
         ui_token_amount: token_amount_to_ui_amount_v3(
@@ -151,12 +167,12 @@ pub(crate) fn collect_token_balance_from_account(
             // any consideration for interest.
             &SplTokenAdditionalDataV2::with_decimals(decimals),
         ),
-        program_id: account.owner().to_string(),
+        program_id: program_id.to_string(),
     });
-    token_data.insert(*account_id, balance.clone());
-    balance
+    token_data_store.insert(*account_id, token_balance_data.clone());
+
+    token_balance_data
 }
-}}
 
 #[cfg(test)]
 mod test {
