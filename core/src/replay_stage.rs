@@ -3673,7 +3673,7 @@ impl ReplayStage {
                 .get_hash(last_voted_slot)
                 .expect("Must exist for us to have frozen descendant"),
             bank.feature_set
-                .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
+                .is_active(&agave_feature_set::enable_tower_sync_ix::id()),
             block_id,
         );
         // Since we are updating our tower we need to update associated caches for previously computed

@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_feature_set::{FeatureSet, FEATURE_NAMES},
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -15,7 +16,6 @@ use {
         consensus::tower_storage::TowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
-    solana_feature_set::FEATURE_NAMES,
     solana_geyser_plugin_manager::{
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
@@ -46,7 +46,6 @@ use {
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         exit::Exit,
-        feature_set::FeatureSet,
         fee_calculator::FeeRateGovernor,
         instruction::{AccountMeta, Instruction},
         message::Message,
@@ -788,7 +787,7 @@ impl TestValidator {
         let mint_lamports = sol_to_lamports(500_000_000.);
 
         // Only activate features which are not explicitly deactivated.
-        let mut feature_set = FeatureSet::default().inactive;
+        let mut feature_set = FeatureSet::default().inactive().clone();
         for feature in &config.deactivate_feature_set {
             if feature_set.remove(feature) {
                 info!("Feature for {:?} deactivated", feature)
@@ -1220,7 +1219,7 @@ mod test {
 
     #[tokio::test]
     async fn test_deactivate_features() {
-        let mut control = FeatureSet::default().inactive;
+        let mut control = FeatureSet::default().inactive().clone();
         let mut deactivate_features = Vec::new();
         [
             solana_sdk::feature_set::deprecate_rewards_sysvar::id(),

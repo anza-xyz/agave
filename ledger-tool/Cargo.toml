@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 bs58 = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
@@ -37,7 +38,6 @@ solana-compute-budget = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }

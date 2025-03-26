@@ -1,5 +1,6 @@
 use {
     super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
+    agave_feature_set as feature_set,
     itertools::Itertools,
     rand::{thread_rng, Rng},
     solana_perf::packet::Packet,
@@ -7,7 +8,6 @@ use {
     solana_sdk::{
         account::from_account,
         clock::{Slot, UnixTimestamp},
-        feature_set::{self},
         hash::Hash,
         program_utils::limited_deserialize,
         pubkey::Pubkey,

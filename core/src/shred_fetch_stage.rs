@@ -2,10 +2,10 @@
 
 use {
     crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
+    agave_feature_set::{self as feature_set, FeatureSet},
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     itertools::Itertools,
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
     solana_perf::packet::{

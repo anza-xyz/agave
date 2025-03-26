@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 bytemuck = { workspace = true }
 log = { workspace = true }
@@ -19,7 +20,6 @@ solana-address-lookup-table-interface = { workspace = true, features = [
     "bincode",
     "bytemuck",
 ] }
-solana-feature-set = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]

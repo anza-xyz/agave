@@ -1,6 +1,7 @@
 //! A helper to initialize Solana SVM API's `TransactionBatchProcessor`.
 
 use {
+    agave_feature_set::FeatureSet,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_fee_structure::FeeDetails,
@@ -8,7 +9,7 @@ use {
         execution_budget::SVMTransactionExecutionBudget,
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
     },
-    solana_sdk::{clock::Slot, feature_set::FeatureSet, transaction},
+    solana_sdk::{clock::Slot, transaction},
     solana_svm::{
         account_loader::CheckedTransactionDetails,
         transaction_processing_callback::TransactionProcessingCallback,

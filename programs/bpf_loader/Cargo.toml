@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 agave-precompiles = { workspace = true }
 bincode = { workspace = true }
 libsecp256k1 = { workspace = true }
@@ -25,7 +26,6 @@ solana-bn254 = { workspace = true }
 solana-clock = { workspace = true }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true }

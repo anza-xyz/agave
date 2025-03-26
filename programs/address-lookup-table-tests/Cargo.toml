@@ -12,12 +12,12 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dev-dependencies]
+agave-feature-set = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
 solana-account = { workspace = true }
 solana-address-lookup-table-program = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-instruction = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-program-test = { workspace = true }

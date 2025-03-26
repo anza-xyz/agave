@@ -1,9 +1,9 @@
 use {
     crate::{broadcast_stage::BroadcastStage, retransmit_stage::RetransmitStage},
+    agave_feature_set as feature_set,
     lazy_lru::LruCache,
     rand::{seq::SliceRandom, Rng, SeedableRng},
     rand_chacha::ChaChaRng,
-    solana_feature_set as feature_set,
     solana_gossip::{
         cluster_info::ClusterInfo,
         contact_info::{ContactInfo as GossipContactInfo, Protocol},

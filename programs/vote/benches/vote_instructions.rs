@@ -1,10 +1,10 @@
 use {
+    agave_feature_set::{deprecate_legacy_vote_ixs, FeatureSet},
     bincode::serialize,
     criterion::{criterion_group, criterion_main, Criterion},
     solana_account::{self as account, create_account_for_test, Account, AccountSharedData},
     solana_clock::{Clock, Slot},
     solana_epoch_schedule::EpochSchedule,
-    solana_feature_set::{deprecate_legacy_vote_ixs, FeatureSet},
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta},
     solana_program_runtime::invoke_context::mock_process_instruction,

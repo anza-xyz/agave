@@ -1,6 +1,6 @@
 use {
+    agave_feature_set::FeatureSet,
     agave_precompiles::get_precompiles,
-    solana_feature_set::FeatureSet,
     solana_sdk::{
         instruction::InstructionError,
         transaction::{Result, TransactionError},

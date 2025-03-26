@@ -8,6 +8,7 @@ use {
         feature::{status_from_account, CliFeatureStatus},
         program::calculate_max_chunk_size,
     },
+    agave_feature_set::{FeatureSet, FEATURE_NAMES},
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     solana_account::Account,
@@ -29,7 +30,6 @@ use {
         },
         tpu_client::{TpuClient, TpuClientConfig},
     },
-    solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_instruction::Instruction,
     solana_loader_v4_interface::{
         instruction,

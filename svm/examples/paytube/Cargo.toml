@@ -6,6 +6,7 @@ edition = { workspace = true }
 publish = false
 
 [dependencies]
+agave-feature-set = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-client = { workspace = true }
 solana-compute-budget = { workspace = true }

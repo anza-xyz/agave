@@ -1,8 +1,8 @@
 use {
     super::{Bank, BankStatusCache},
+    agave_feature_set::FeatureSet,
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_feature_set::FeatureSet,
     solana_fee::{calculate_fee_details, FeeFeatures},
     solana_perf::perf_libs,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
@@ -300,8 +300,7 @@ mod tests {
             setup_nonce_with_bank,
         },
         solana_sdk::{
-            feature_set::FeatureSet, hash::Hash, message::Message, signature::Keypair,
-            signer::Signer, system_instruction,
+            hash::Hash, message::Message, signature::Keypair, signer::Signer, system_instruction,
         },
     };
 

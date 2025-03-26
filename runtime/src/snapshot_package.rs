@@ -4,6 +4,7 @@ use {
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
     },
+    agave_feature_set as feature_set,
     log::*,
     solana_accounts_db::{
         account_storage::meta::StoredMetaWriteVersion,
@@ -15,7 +16,7 @@ use {
         epoch_accounts_hash::EpochAccountsHash,
     },
     solana_sdk::{
-        clock::Slot, feature_set, hash::Hash, rent_collector::RentCollector,
+        clock::Slot, hash::Hash, rent_collector::RentCollector,
         sysvar::epoch_schedule::EpochSchedule,
     },
     std::{

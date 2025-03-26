@@ -625,7 +625,7 @@ impl Tower {
             bank.slot(),
             bank.hash(),
             bank.feature_set
-                .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
+                .is_active(&agave_feature_set::enable_tower_sync_ix::id()),
             block_id,
         )
     }

@@ -10,10 +10,10 @@ use {
         },
         result::{Error, Result},
     },
+    agave_feature_set as feature_set,
     assert_matches::debug_assert_matches,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     rayon::{prelude::*, ThreadPool},
-    solana_feature_set as feature_set,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},

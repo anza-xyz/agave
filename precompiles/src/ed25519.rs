@@ -1,10 +1,10 @@
 use {
+    agave_feature_set::{ed25519_precompile_verify_strict, FeatureSet},
     ed25519_dalek::{ed25519::signature::Signature, Verifier},
     solana_ed25519_program::{
         Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
         SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
     },
-    solana_feature_set::{ed25519_precompile_verify_strict, FeatureSet},
     solana_precompile_error::PrecompileError,
 };
 
@@ -120,7 +120,6 @@ pub mod tests {
         solana_ed25519_program::{
             new_ed25519_instruction, offsets_to_ed25519_instruction, DATA_START,
         },
-        solana_feature_set::FeatureSet,
         solana_instruction::Instruction,
     };
 

@@ -9,6 +9,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
@@ -22,7 +23,6 @@ solana-banks-client = { workspace = true }
 solana-banks-interface = { workspace = true }
 solana-banks-server = { workspace = true }
 solana-compute-budget = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-inline-spl = { workspace = true }
 solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }

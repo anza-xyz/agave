@@ -99,14 +99,18 @@ impl<'a> SnapshotMinimizer<'a> {
 
     /// Used to get active bank feature accounts in `minimize`.
     fn get_active_bank_features(&self) {
-        self.bank.feature_set.active.iter().for_each(|(pubkey, _)| {
-            self.minimized_account_set.insert(*pubkey);
-        });
+        self.bank
+            .feature_set
+            .active()
+            .iter()
+            .for_each(|(pubkey, _)| {
+                self.minimized_account_set.insert(*pubkey);
+            });
     }
 
     /// Used to get inactive bank feature accounts in `minimize`
     fn get_inactive_bank_features(&self) {
-        self.bank.feature_set.inactive.iter().for_each(|pubkey| {
+        self.bank.feature_set.inactive().iter().for_each(|pubkey| {
             self.minimized_account_set.insert(*pubkey);
         });
     }

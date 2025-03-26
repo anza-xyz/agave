@@ -1,7 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use {
+    agave_feature_set::{enable_secp256r1_precompile, FeatureSet},
     lazy_static::lazy_static,
-    solana_feature_set::{enable_secp256r1_precompile, FeatureSet},
     solana_message::compiled_instruction::CompiledInstruction,
     solana_precompile_error::PrecompileError,
     solana_pubkey::Pubkey,

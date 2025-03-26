@@ -6,7 +6,7 @@
 // in other words the utility functions in this file should not be broken out into modules or used elsewhere
 
 use {
-    solana_feature_set::{
+    agave_feature_set::{
         move_stake_and_move_lamports_ixs, stake_raise_minimum_delegation_to_1_sol,
     },
     solana_program_test::*,

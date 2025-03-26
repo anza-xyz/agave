@@ -12,6 +12,7 @@ use {
         },
         program::*,
     },
+    agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App,
@@ -40,7 +41,6 @@ use {
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_ledger::{
         blockstore::{banking_trace_path, create_new_ledger, Blockstore},
         blockstore_options::{AccessType, LedgerColumnOptions},

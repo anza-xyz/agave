@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 clap = { workspace = true }
@@ -26,7 +27,6 @@ solana-commitment-config = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-feature-gate-interface = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-inflation = { workspace = true }

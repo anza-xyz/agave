@@ -6,13 +6,13 @@ pub mod syscalls;
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
-    solana_account::WritableAccount,
-    solana_bincode::limited_deserialize,
-    solana_clock::Slot,
-    solana_feature_set::{
+    agave_feature_set::{
         bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
         enable_loader_v4, remove_accounts_executable_flag_checks,
     },
+    solana_account::WritableAccount,
+    solana_bincode::limited_deserialize,
+    solana_clock::Slot,
     solana_instruction::{error::InstructionError, AccountMeta},
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
@@ -1646,7 +1646,7 @@ fn execute<'a, 'b: 'a>(
             ProgramResult::Err(mut error) => {
                 if invoke_context
                     .get_feature_set()
-                    .is_active(&solana_feature_set::deplete_cu_meter_on_vm_failure::id())
+                    .is_active(&agave_feature_set::deplete_cu_meter_on_vm_failure::id())
                     && !matches!(error, EbpfError::SyscallError(_))
                 {
                     // when an exception is thrown during the execution of a
