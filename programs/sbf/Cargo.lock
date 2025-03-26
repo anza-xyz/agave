@@ -84,6 +84,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-precompiles"
+version = "2.3.0"
+dependencies = [
+ "bincode",
+ "bytemuck",
+ "digest 0.10.7",
+ "ed25519-dalek",
+ "lazy_static",
+ "libsecp256k1 0.6.0",
+ "openssl",
+ "sha3",
+ "solana-ed25519-program",
+ "solana-feature-set",
+ "solana-message",
+ "solana-precompile-error",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-secp256k1-program",
+ "solana-secp256r1-program",
+]
+
+[[package]]
 name = "agave-reserved-account-keys"
 version = "2.3.0"
 dependencies = [
@@ -5511,6 +5533,7 @@ dependencies = [
 name = "solana-bpf-loader-program"
 version = "2.3.0"
 dependencies = [
+ "agave-precompiles",
  "bincode",
  "libsecp256k1 0.6.0",
  "num-traits",
@@ -5535,7 +5558,6 @@ dependencies = [
  "solana-measure",
  "solana-packet",
  "solana-poseidon",
- "solana-precompiles",
  "solana-program-entrypoint",
  "solana-program-runtime",
  "solana-pubkey",
@@ -6069,9 +6091,9 @@ dependencies = [
 
 [[package]]
 name = "solana-ed25519-program"
-version = "2.2.1"
+version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c0c4dfce08d71d8f1e9b7d1b4e2c7101a8109903ad481acbbc1119a73d459f2"
+checksum = "9d0fc717048fdbe5d2ee7d673d73e6a30a094002f4a29ca7630ac01b6bddec04"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -7113,6 +7135,7 @@ dependencies = [
 name = "solana-program-runtime"
 version = "2.3.0"
 dependencies = [
+ "agave-precompiles",
  "base64 0.22.1",
  "bincode",
  "enum-iterator",
@@ -7133,7 +7156,6 @@ dependencies = [
  "solana-log-collector",
  "solana-measure",
  "solana-metrics",
- "solana-precompiles",
  "solana-program-entrypoint",
  "solana-pubkey",
  "solana-rent",
@@ -7527,6 +7549,7 @@ dependencies = [
 name = "solana-runtime"
 version = "2.3.0"
 dependencies = [
+ "agave-precompiles",
  "agave-reserved-account-keys",
  "ahash 0.8.11",
  "aquamarine",
@@ -8616,6 +8639,7 @@ dependencies = [
 name = "solana-svm"
 version = "2.3.0"
 dependencies = [
+ "agave-precompiles",
  "ahash 0.8.11",
  "itertools 0.12.1",
  "log",
@@ -8637,7 +8661,6 @@ dependencies = [
  "solana-message",
  "solana-nonce",
  "solana-nonce-account",
- "solana-precompiles",
  "solana-program",
  "solana-program-runtime",
  "solana-pubkey",
