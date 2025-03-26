@@ -11,7 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 chrono = { workspace = true, features = ["default"] }
-clap = "2.33.0"
+clap = "4.5.31"
 rpassword = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }

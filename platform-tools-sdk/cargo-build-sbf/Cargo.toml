@@ -12,7 +12,7 @@ edition = { workspace = true }
 [dependencies]
 bzip2 = { workspace = true }
 cargo_metadata = { workspace = true }
-clap = { version = "3.1.5", features = ["cargo", "env"] }
+clap = { version = "4.5.31", features = ["cargo", "env"] }
 itertools = { workspace = true }
 log = { workspace = true, features = ["std"] }
 regex = { workspace = true }
