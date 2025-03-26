@@ -6,6 +6,7 @@ authors = { workspace = true }
 repository = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+readme = false
 
 [dev-dependencies]
 bytemuck = { workspace = true }
