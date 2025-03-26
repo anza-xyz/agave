@@ -35,8 +35,7 @@ pub fn read_byte(bytes: &[u8], offset: &mut usize) -> Result<u8> {
 /// Read a byte and advance the offset without any bounds checks.
 ///
 /// * `bytes` - Slice of bytes to read from.
-/// * `offset` - Curernt offset into `bytes`.
-/// * `num_elements` - Number of `T` elements in the slice.
+/// * `offset` - Current offset into `bytes`.
 ///
 /// # Safety
 /// 1. `bytes` must be a valid slice of bytes.
@@ -129,7 +128,7 @@ pub fn optimized_read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result
 /// of type `T`. If the buffer is too short, return Err.
 ///
 /// * `bytes` - Slice of bytes to read from.
-/// * `offset` - Curernt offset into `bytes`.
+/// * `offset` - Current offset into `bytes`.
 /// * `num_elements` - Number of `T` elements in the array.
 ///
 /// Assumptions:
@@ -152,7 +151,7 @@ pub fn advance_offset_for_array<T: Sized>(
 /// If the buffer is too short, return Err.
 ///
 /// * `bytes` - Slice of bytes to read from.
-/// * `offset` - Curernt offset into `bytes`.
+/// * `offset` - Current offset into `bytes`.
 ///
 /// Assumptions:
 /// 1. The current offset is not greater than `bytes.len()`.
@@ -170,7 +169,7 @@ pub fn advance_offset_for_type<T: Sized>(bytes: &[u8], offset: &mut usize) -> Re
 /// If the buffer is too short, return Err.
 ///
 /// * `bytes` - Slice of bytes to read from.
-/// * `offset` - Curernt offset into `bytes`.
+/// * `offset` - Current offset into `bytes`.
 /// * `num_elements` - Number of `T` elements in the slice.
 ///
 /// # Safety
@@ -195,7 +194,7 @@ pub unsafe fn read_slice_data<'a, T: Sized>(
 /// and advancing the offset.
 ///
 /// * `bytes` - Slice of bytes to read from.
-/// * `offset` - Curernt offset into `bytes`.
+/// * `offset` - Current offset into `bytes`.
 /// * `num_elements` - Number of `T` elements in the slice.
 ///
 /// # Safety
@@ -222,7 +221,7 @@ pub unsafe fn unchecked_read_slice_data<'a, T: Sized>(
 /// If the buffer is too short, return Err.
 ///
 /// * `bytes` - Slice of bytes to read from.
-/// * `offset` - Curernt offset into `bytes`.
+/// * `offset` - Current offset into `bytes`.
 ///
 /// # Safety
 /// 1. `bytes` must be a valid slice of bytes.
