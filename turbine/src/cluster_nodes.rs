@@ -29,7 +29,7 @@ use {
         any::TypeId,
         cell::RefCell,
         cmp::Ordering,
-        collections::{HashMap, HashSet},
+        collections::{hash_map::Entry, HashMap},
         iter::repeat_with,
         marker::PhantomData,
         net::SocketAddr,
@@ -72,6 +72,7 @@ enum NodeId {
 pub(crate) struct ContactInfo {
     pubkey: Pubkey,
     wallclock: u64,
+    outset: u64,
     tvu_quic: Option<SocketAddr>,
     tvu_udp: Option<SocketAddr>,
 }
@@ -116,6 +117,14 @@ impl Node {
         match &self.node {
             NodeId::Pubkey(_) => None,
             NodeId::ContactInfo(node) => Some(node),
+        }
+    }
+
+    #[inline]
+    fn outset(&self) -> Option<u64> {
+        match &self.node {
+            NodeId::Pubkey(_) => None,
+            NodeId::ContactInfo(node) => Some(node.outset),
         }
     }
 
@@ -406,48 +415,90 @@ fn cmp_nodes_stake(a: &Node, b: &Node) -> Ordering {
 
 // Dedups socket addresses so that if there are 2 nodes in the cluster with the
 // same TVU socket-addr, we only send shreds to one of them.
+// This will prefer to keep the ports with the latest outset value, if possible
 // Additionally limits number of nodes at the same IP address to
 // MAX_NUM_NODES_PER_IP_ADDRESS.
 fn dedup_tvu_addrs(nodes: &mut Vec<Node>, keep_identity: Pubkey) {
     const TVU_PROTOCOLS: [Protocol; 2] = [Protocol::UDP, Protocol::QUIC];
     let capacity = nodes.len().saturating_mul(2);
     // Tracks (Protocol, SocketAddr) tuples already observed.
-    let mut addrs = HashSet::with_capacity(capacity);
+    let mut addrs = HashMap::with_capacity(capacity);
     // Maps IP addresses to number of nodes at that IP address.
     let mut counts = HashMap::with_capacity(capacity);
-    nodes.retain_mut(|node| {
-        let node_stake = node.stake;
-        let Some(node) = node.contact_info_mut() else {
-            // Need to keep staked identities without gossip ContactInfo for
-            // deterministic shuffle.
-            return node_stake > 0u64;
+    for idx in 0..nodes.len() {
+        let Some(node) = nodes[idx].contact_info().cloned() else {
+            continue;
         };
-        // Do not delete the provided keep_identity
-        if node.pubkey == keep_identity {
-            return true;
-        }
+        let outset = node.outset;
         // Dedup socket addresses and limit nodes at same IP address.
         for protocol in TVU_PROTOCOLS {
             let Some(addr) = node.tvu(protocol) else {
                 continue;
             };
+            // Check if someone has claimed the same port before
+            match addrs.entry(addr) {
+                Entry::Occupied(mut entry) => {
+                    let conflict_idx: usize = *entry.get();
+                    let conflict_outset: u64 = nodes[conflict_idx].outset().unwrap_or(0);
+                    // Compute the index of the node that would get its TVU address removed
+                    let ridx = if conflict_outset > outset {
+                        // other entry is newer then whatever idx is pointing to
+                        // so we need to remove nodes[idx] TVU address
+                        idx
+                    } else {
+                        // set current index as "authoritative" owner of the address
+                        *entry.get_mut() = idx;
+                        //remove nodes[conflict_idx] TVU address
+                        conflict_idx
+                    };
+                    // this should never happen, but if it does we want to know
+                    if nodes[ridx].contact_info().unwrap().pubkey == keep_identity {
+                        warn!("Trying to remove my own TVU address!!!");
+                        debug_assert!(false, "Tried removing own TVU address");
+                    } else {
+                        nodes[ridx]
+                            .contact_info_mut()
+                            .unwrap()
+                            .remove_tvu_addr(protocol);
+                    }
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(idx);
+                }
+            }
             let count: usize = *counts
-                .entry((protocol, addr.ip()))
+                .entry(addr.ip())
                 .and_modify(|count| *count += 1)
                 .or_insert(1);
-            if !addrs.insert((protocol, addr)) || count > MAX_NUM_NODES_PER_IP_ADDRESS {
+            if count > MAX_NUM_NODES_PER_IP_ADDRESS {
                 // Remove the respective TVU address so that no more shreds are
                 // sent to this socket address.
-                node.remove_tvu_addr(protocol);
+                nodes[idx]
+                    .contact_info_mut()
+                    .unwrap()
+                    .remove_tvu_addr(protocol);
             }
         }
-        // Always keep staked nodes for deterministic shuffle,
-        // but drop non-staked nodes if they have no valid TVU address.
-        node_stake > 0u64
-            || TVU_PROTOCOLS
+        nodes.retain_mut(|node| {
+            let node_stake = node.stake;
+            // Always keep staked nodes for deterministic shuffle.
+            if node_stake > 0 {
+                return true;
+            }
+            // Do not purge the provided keep_identity to maintain datastructure invariants
+            if *node.pubkey() == keep_identity {
+                return true;
+            }
+            // If node has no contact info we do not keep it.
+            let Some(node) = node.contact_info_mut() else {
+                return false;
+            };
+            // drop non-staked nodes if they have no valid TVU address left.
+            TVU_PROTOCOLS
                 .into_iter()
                 .any(|protocol| node.tvu(protocol).is_some())
-    })
+        });
+    }
 }
 
 fn get_seeded_rng(leader: &Pubkey, shred: &ShredId) -> ChaChaRng {
@@ -605,6 +656,7 @@ impl From<&GossipContactInfo> for ContactInfo {
         Self {
             pubkey: *node.pubkey(),
             wallclock: node.wallclock(),
+            outset: node.outset(),
             tvu_quic: node.tvu(Protocol::QUIC),
             tvu_udp: node.tvu(Protocol::UDP),
         }
@@ -737,16 +789,66 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        std::{fmt::Debug, hash::Hash},
+        std::{collections::HashSet, fmt::Debug, hash::Hash},
         test_case::test_case,
     };
+    #[test]
+    fn test_dedup_tvu_addrs_across_protocols() {
+        let mut nodes = vec![
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 10,
+                    outset: 5,
+                    tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
+                    tvu_quic: Some("1.1.1.1:2".parse().unwrap()),
+                }),
+                stake: 1,
+            },
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 20,
+                    outset: 7,
+                    tvu_udp: Some("1.1.1.1:2".parse().unwrap()),
+                    tvu_quic: Some("1.1.1.1:1".parse().unwrap()),
+                }),
+                stake: 2,
+            },
+        ];
+        dedup_tvu_addrs(&mut nodes, Pubkey::new_unique());
+        assert_eq!(nodes.len(), 2, "No staked identities should be removed");
+        match &nodes[0].node {
+            NodeId::ContactInfo(contact_info) => {
+                assert!(contact_info.tvu_udp.is_none(),
+        "dedup should have removed the TVU address from identity reusing the same socket");
+                assert!(contact_info.tvu_quic.is_none(),
+                        "dedup should have removed the TVU address from identity reusing the same socket");
+            }
+            NodeId::Pubkey(_pubkey) => panic!(),
+        }
+        match &nodes[1].node {
+            NodeId::ContactInfo(contact_info) => {
+                assert!(
+                    contact_info.tvu_udp.is_some(),
+                    "but only from the one that has the earliest outset"
+                );
+                assert!(
+                    contact_info.tvu_quic.is_some(),
+                    "but only from the one that has the earliest outset"
+                );
+            }
+            NodeId::Pubkey(_pubkey) => panic!(),
+        }
+    }
     #[test]
     fn test_dedup_tvu_addrs() {
         let mut nodes = vec![
             Node {
                 node: NodeId::ContactInfo(ContactInfo {
                     pubkey: Pubkey::new_unique(),
-                    wallclock: 0,
+                    wallclock: 10,
+                    outset: 5,
                     tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
                     tvu_quic: None,
                 }),
@@ -755,7 +857,8 @@ mod tests {
             Node {
                 node: NodeId::ContactInfo(ContactInfo {
                     pubkey: Pubkey::new_unique(),
-                    wallclock: 0,
+                    wallclock: 20,
+                    outset: 7,
                     tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
                     tvu_quic: None,
                 }),
@@ -764,7 +867,8 @@ mod tests {
             Node {
                 node: NodeId::ContactInfo(ContactInfo {
                     pubkey: Pubkey::new_unique(),
-                    wallclock: 0,
+                    wallclock: 30,
+                    outset: 3,
                     tvu_udp: Some("2.2.2.2:2".parse().unwrap()),
                     tvu_quic: None,
                 }),
@@ -772,11 +876,20 @@ mod tests {
             },
         ];
         dedup_tvu_addrs(&mut nodes, Pubkey::new_unique());
-        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes.len(), 3, "No staked identities should be removed");
+        match &nodes[0].node {
+            NodeId::ContactInfo(contact_info) => {
+                assert!(contact_info.tvu_udp.is_none(),
+    "dedup should have removed the TVU address from identity reusing the same socket");
+            }
+            NodeId::Pubkey(_pubkey) => panic!(),
+        }
         match &nodes[1].node {
             NodeId::ContactInfo(contact_info) => {
-                // dedup should have removed the TVU address from identity reusing the same socket
-                assert!(contact_info.tvu_udp.is_none());
+                assert!(
+                    contact_info.tvu_udp.is_some(),
+                    "but only from the one that has the earliest outset"
+                );
             }
             NodeId::Pubkey(_pubkey) => panic!(),
         }
@@ -788,7 +901,8 @@ mod tests {
             Node {
                 node: NodeId::ContactInfo(ContactInfo {
                     pubkey: pk,
-                    wallclock: 0,
+                    wallclock: 10,
+                    outset: 9,
                     tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
                     tvu_quic: None,
                 }),
@@ -797,7 +911,8 @@ mod tests {
             Node {
                 node: NodeId::ContactInfo(ContactInfo {
                     pubkey: Pubkey::new_unique(),
-                    wallclock: 0,
+                    wallclock: 20,
+                    outset: 5,
                     tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
                     tvu_quic: None,
                 }),
@@ -805,6 +920,10 @@ mod tests {
             },
         ];
         dedup_tvu_addrs(&mut nodes, pk);
+        assert_eq!(nodes.len(), 2);
+        // deliberately feed a random keep_identity, as we should be preserving
+        // also on the grounds of outset time
+        dedup_tvu_addrs(&mut nodes, Pubkey::new_unique());
         assert_eq!(nodes.len(), 2);
         match &nodes[0].node {
             NodeId::ContactInfo(contact_info) => {
