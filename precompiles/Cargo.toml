@@ -28,6 +28,16 @@ solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 
+[dev-dependencies]
+hex = { workspace = true }
+rand0-7 = { workspace = true }
+solana-hash = { workspace = true }
+solana-keccak-hasher = { workspace = true }
+solana-keypair = { workspace = true }
+solana-logger = { workspace = true }
+solana-sdk = { workspace = true }
+solana-signer = { workspace = true }
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true

@@ -162,3 +162,412 @@ fn get_data_slice<'a>(
 
     Ok(&instruction[start..end])
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        bytemuck::bytes_of,
+        solana_feature_set::FeatureSet,
+        solana_sdk::{
+            hash::Hash,
+            signature::{Keypair, Signer},
+            transaction::Transaction,
+        },
+        solana_secp256r1_program::{new_secp256r1_instruction, DATA_START, SECP256R1_ORDER},
+    };
+
+    fn test_case(
+        num_signatures: u16,
+        offsets: &Secp256r1SignatureOffsets,
+    ) -> Result<(), PrecompileError> {
+        assert_eq!(
+            bytemuck::bytes_of(offsets).len(),
+            SIGNATURE_OFFSETS_SERIALIZED_SIZE
+        );
+
+        let mut instruction_data = vec![0u8; DATA_START];
+        instruction_data[0..SIGNATURE_OFFSETS_START].copy_from_slice(bytes_of(&num_signatures));
+        instruction_data[SIGNATURE_OFFSETS_START..DATA_START].copy_from_slice(bytes_of(offsets));
+        verify(
+            &instruction_data,
+            &[&[0u8; 100]],
+            &FeatureSet::all_enabled(),
+        )
+    }
+
+    #[test]
+    fn test_invalid_offsets() {
+        solana_logger::setup();
+
+        let mut instruction_data = vec![0u8; DATA_START];
+        let offsets = Secp256r1SignatureOffsets::default();
+        instruction_data[0..SIGNATURE_OFFSETS_START].copy_from_slice(bytes_of(&1u16));
+        instruction_data[SIGNATURE_OFFSETS_START..DATA_START].copy_from_slice(bytes_of(&offsets));
+        instruction_data.truncate(instruction_data.len() - 1);
+
+        assert_eq!(
+            verify(
+                &instruction_data,
+                &[&[0u8; 100]],
+                &FeatureSet::all_enabled()
+            ),
+            Err(PrecompileError::InvalidInstructionDataSize)
+        );
+
+        let offsets = Secp256r1SignatureOffsets {
+            signature_instruction_index: 1,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidDataOffsets)
+        );
+
+        let offsets = Secp256r1SignatureOffsets {
+            message_instruction_index: 1,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidDataOffsets)
+        );
+
+        let offsets = Secp256r1SignatureOffsets {
+            public_key_instruction_index: 1,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidDataOffsets)
+        );
+    }
+
+    #[test]
+    fn test_invalid_signature_data_size() {
+        solana_logger::setup();
+
+        // Test data.len() < SIGNATURE_OFFSETS_START
+        let small_data = vec![0u8; SIGNATURE_OFFSETS_START - 1];
+        assert_eq!(
+            verify(&small_data, &[&[]], &FeatureSet::all_enabled()),
+            Err(PrecompileError::InvalidInstructionDataSize)
+        );
+
+        // Test num_signatures == 0
+        let mut zero_sigs_data = vec![0u8; DATA_START];
+        zero_sigs_data[0] = 0; // Set num_signatures to 0
+        assert_eq!(
+            verify(&zero_sigs_data, &[&[]], &FeatureSet::all_enabled()),
+            Err(PrecompileError::InvalidInstructionDataSize)
+        );
+
+        // Test num_signatures > 8
+        let mut too_many_sigs = vec![0u8; DATA_START];
+        too_many_sigs[0] = 9; // Set num_signatures to 9
+        assert_eq!(
+            verify(&too_many_sigs, &[&[]], &FeatureSet::all_enabled()),
+            Err(PrecompileError::InvalidInstructionDataSize)
+        );
+    }
+    #[test]
+    fn test_message_data_offsets() {
+        let offsets = Secp256r1SignatureOffsets {
+            message_data_offset: 99,
+            message_data_size: 1,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidSignature)
+        );
+
+        let offsets = Secp256r1SignatureOffsets {
+            message_data_offset: 100,
+            message_data_size: 1,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidDataOffsets)
+        );
+
+        let offsets = Secp256r1SignatureOffsets {
+            message_data_offset: 100,
+            message_data_size: 1000,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidDataOffsets)
+        );
+
+        let offsets = Secp256r1SignatureOffsets {
+            message_data_offset: u16::MAX,
+            message_data_size: u16::MAX,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidDataOffsets)
+        );
+    }
+
+    #[test]
+    fn test_pubkey_offset() {
+        let offsets = Secp256r1SignatureOffsets {
+            public_key_offset: u16::MAX,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidDataOffsets)
+        );
+
+        let offsets = Secp256r1SignatureOffsets {
+            public_key_offset: 100 - (COMPRESSED_PUBKEY_SERIALIZED_SIZE as u16) + 1,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidDataOffsets)
+        );
+    }
+
+    #[test]
+    fn test_signature_offset() {
+        let offsets = Secp256r1SignatureOffsets {
+            signature_offset: u16::MAX,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidDataOffsets)
+        );
+
+        let offsets = Secp256r1SignatureOffsets {
+            signature_offset: 100 - (SIGNATURE_SERIALIZED_SIZE as u16) + 1,
+            ..Secp256r1SignatureOffsets::default()
+        };
+        assert_eq!(
+            test_case(1, &offsets),
+            Err(PrecompileError::InvalidDataOffsets)
+        );
+    }
+
+    #[test]
+    fn test_secp256r1() {
+        solana_logger::setup();
+        let message_arr = b"hello";
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let signing_key = EcKey::generate(&group).unwrap();
+        let mut instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
+        let mint_keypair = Keypair::new();
+        let feature_set = FeatureSet::all_enabled();
+
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction.clone()],
+            Some(&mint_keypair.pubkey()),
+            &[&mint_keypair],
+            Hash::default(),
+        );
+
+        assert!(tx.verify_precompiles(&feature_set).is_ok());
+
+        // The message is the last field in the instruction data so
+        // changing its last byte will also change the signature validity
+        let message_byte_index = instruction.data.len() - 1;
+        instruction.data[message_byte_index] =
+            instruction.data[message_byte_index].wrapping_add(12);
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction.clone()],
+            Some(&mint_keypair.pubkey()),
+            &[&mint_keypair],
+            Hash::default(),
+        );
+
+        assert!(tx.verify_precompiles(&feature_set).is_err());
+    }
+
+    #[test]
+    fn test_secp256r1_high_s() {
+        solana_logger::setup();
+        let message_arr = b"hello";
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let signing_key = EcKey::generate(&group).unwrap();
+        let mut instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
+
+        // To double check that the untampered low-S value signature passes
+        let feature_set = FeatureSet::all_enabled();
+        let tx_pass = verify(
+            instruction.data.as_slice(),
+            &[instruction.data.as_slice()],
+            &feature_set,
+        );
+        assert!(tx_pass.is_ok());
+
+        // Determine offsets at which to perform the S-value manipulation
+        let public_key_offset = DATA_START;
+        let signature_offset = public_key_offset + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
+        let s_offset = signature_offset + FIELD_SIZE;
+
+        // Create a high S value by doing order - s
+        let order = BigNum::from_slice(&SECP256R1_ORDER).unwrap();
+        let current_s =
+            BigNum::from_slice(&instruction.data[s_offset..s_offset + FIELD_SIZE]).unwrap();
+        let mut high_s = BigNum::new().unwrap();
+        high_s.checked_sub(&order, &current_s).unwrap();
+
+        // Replace the S value in the signature with our high S
+        instruction.data[s_offset..s_offset + FIELD_SIZE].copy_from_slice(&high_s.to_vec());
+
+        // Since Transaction::verify_precompiles only returns a vague
+        // `InvalidAccountIndex` error on precompile failure, we use verify()
+        // here directly to check for the specific
+        // InvalidSignatureValueRange error
+        let tx_fail = verify(
+            instruction.data.as_slice(),
+            &[instruction.data.as_slice()],
+            &feature_set,
+        );
+        assert!(tx_fail.unwrap_err() == PrecompileError::InvalidSignature);
+    }
+    #[test]
+    fn test_new_secp256r1_instruction_31byte_components() {
+        solana_logger::setup();
+        let message_arr = b"hello";
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let signing_key = EcKey::generate(&group).unwrap();
+
+        // Keep generating signatures until we get one with a 31-byte component
+        loop {
+            let instruction = new_secp256r1_instruction(message_arr, signing_key.clone()).unwrap();
+
+            // Extract r and s from the signature
+            let signature_offset = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
+            let r = &instruction.data[signature_offset..signature_offset + FIELD_SIZE];
+            let s =
+                &instruction.data[signature_offset + FIELD_SIZE..signature_offset + 2 * FIELD_SIZE];
+
+            // Convert to BigNum and back to get byte representation
+            let r_bn = BigNum::from_slice(r).unwrap();
+            let s_bn = BigNum::from_slice(s).unwrap();
+            let r_bytes = r_bn.to_vec();
+            let s_bytes = s_bn.to_vec();
+
+            if r_bytes.len() == 31 || s_bytes.len() == 31 {
+                // Once found, verify the signature and break out of the loop
+                let mint_keypair = Keypair::new();
+                let tx = Transaction::new_signed_with_payer(
+                    &[instruction],
+                    Some(&mint_keypair.pubkey()),
+                    &[&mint_keypair],
+                    Hash::default(),
+                );
+
+                let feature_set = FeatureSet::all_enabled();
+                assert!(tx.verify_precompiles(&feature_set).is_ok());
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn test_new_secp256r1_instruction_signing_key() {
+        solana_logger::setup();
+        let message_arr = b"hello";
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let signing_key = EcKey::generate(&group).unwrap();
+        assert!(new_secp256r1_instruction(message_arr, signing_key).is_ok());
+
+        let incorrect_group = EcGroup::from_curve_name(Nid::X9_62_PRIME192V1).unwrap();
+        let incorrect_key = EcKey::generate(&incorrect_group).unwrap();
+        assert!(new_secp256r1_instruction(message_arr, incorrect_key).is_err());
+    }
+    #[test]
+    fn test_secp256r1_order() {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let mut ctx = BigNumContext::new().unwrap();
+        let mut openssl_order = BigNum::new().unwrap();
+        group.order(&mut openssl_order, &mut ctx).unwrap();
+
+        let our_order = BigNum::from_slice(&SECP256R1_ORDER).unwrap();
+        assert_eq!(our_order, openssl_order);
+    }
+
+    #[test]
+    fn test_secp256r1_order_minus_one() {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let mut ctx = BigNumContext::new().unwrap();
+        let mut openssl_order = BigNum::new().unwrap();
+        group.order(&mut openssl_order, &mut ctx).unwrap();
+
+        let mut expected_order_minus_one = BigNum::new().unwrap();
+        expected_order_minus_one
+            .checked_sub(&openssl_order, &BigNum::from_u32(1).unwrap())
+            .unwrap();
+
+        let our_order_minus_one = BigNum::from_slice(&SECP256R1_ORDER_MINUS_ONE).unwrap();
+        assert_eq!(our_order_minus_one, expected_order_minus_one);
+    }
+
+    #[test]
+    fn test_secp256r1_half_order() {
+        // Get the secp256r1 curve group
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+
+        // Get the order from OpenSSL
+        let mut ctx = BigNumContext::new().unwrap();
+        let mut openssl_order = BigNum::new().unwrap();
+        group.order(&mut openssl_order, &mut ctx).unwrap();
+
+        // Calculate half order
+        let mut calculated_half_order = BigNum::new().unwrap();
+        let two = BigNum::from_u32(2).unwrap();
+        calculated_half_order
+            .checked_div(&openssl_order, &two, &mut ctx)
+            .unwrap();
+
+        // Get our constant half order
+        let our_half_order = BigNum::from_slice(&SECP256R1_HALF_ORDER).unwrap();
+
+        // Compare the calculated half order with our constant
+        assert_eq!(calculated_half_order, our_half_order);
+    }
+
+    #[test]
+    fn test_secp256r1_order_relationships() {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let mut ctx = BigNumContext::new().unwrap();
+        let mut openssl_order = BigNum::new().unwrap();
+        group.order(&mut openssl_order, &mut ctx).unwrap();
+
+        let our_order = BigNum::from_slice(&SECP256R1_ORDER).unwrap();
+        let our_order_minus_one = BigNum::from_slice(&SECP256R1_ORDER_MINUS_ONE).unwrap();
+        let our_half_order = BigNum::from_slice(&SECP256R1_HALF_ORDER).unwrap();
+
+        // Verify our order matches OpenSSL's order
+        assert_eq!(our_order, openssl_order);
+
+        // Verify order - 1
+        let mut expected_order_minus_one = BigNum::new().unwrap();
+        expected_order_minus_one
+            .checked_sub(&openssl_order, &BigNum::from_u32(1).unwrap())
+            .unwrap();
+        assert_eq!(our_order_minus_one, expected_order_minus_one);
+
+        // Verify half order
+        let mut expected_half_order = BigNum::new().unwrap();
+        expected_half_order
+            .checked_div(&openssl_order, &BigNum::from_u32(2).unwrap(), &mut ctx)
+            .unwrap();
+        assert_eq!(our_half_order, expected_half_order);
+
+        // Verify half order * 2 = order - 1
+        let mut double_half_order = BigNum::new().unwrap();
+        double_half_order
+            .checked_mul(&our_half_order, &BigNum::from_u32(2).unwrap(), &mut ctx)
+            .unwrap();
+        assert_eq!(double_half_order, expected_order_minus_one);
+    }
+}
