@@ -4,10 +4,11 @@ use {
             account_map_entry::{
                 AccountMapEntry, AccountMapEntryMeta, PreAllocatedAccountMapEntry,
             },
-            DiskIndexValue, IndexValue, RefCount, SlotList, UpsertReclaim, ZeroLamport,
+            DiskIndexValue, IndexValue, RefCount, SlotList, UpsertReclaim,
         },
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         bucket_map_holder_stats::BucketMapHolderStats,
+        is_zero_lamport::IsZeroLamport,
         pubkey_bins::PubkeyBinCalculator24,
         waitable_condvar::WaitableCondvar,
     },

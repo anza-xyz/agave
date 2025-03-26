@@ -3,7 +3,7 @@ use {
     crate::{
         account_storage::meta::StoredAccountMeta,
         accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
-        accounts_index::ZeroLamport,
+        is_zero_lamport::IsZeroLamport,
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
@@ -30,7 +30,7 @@ impl<'a> From<&'a StoredAccountMeta<'a>> for AccountForStorage<'a> {
     }
 }
 
-impl ZeroLamport for AccountForStorage<'_> {
+impl IsZeroLamport for AccountForStorage<'_> {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
     }

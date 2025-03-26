@@ -1,6 +1,9 @@
 use {
-    super::{DiskIndexValue, IndexValue, RefCount, SlotList, ZeroLamport},
-    crate::bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
+    super::{DiskIndexValue, IndexValue, RefCount, SlotList},
+    crate::{
+        bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
+        is_zero_lamport::IsZeroLamport,
+    },
     log::*,
     solana_clock::Slot,
     std::sync::{
@@ -124,7 +127,7 @@ pub enum PreAllocatedAccountMapEntry<T: IndexValue> {
     Raw((Slot, T)),
 }
 
-impl<T: IndexValue> ZeroLamport for PreAllocatedAccountMapEntry<T> {
+impl<T: IndexValue> IsZeroLamport for PreAllocatedAccountMapEntry<T> {
     fn is_zero_lamport(&self) -> bool {
         match self {
             PreAllocatedAccountMapEntry::Entry(entry) => {

@@ -12,9 +12,9 @@ use {
             StoredAccountsInfo, ALIGN_BOUNDARY_OFFSET,
         },
         accounts_hash::AccountHash,
-        accounts_index::ZeroLamport,
         buffered_reader::{BufferedReader, BufferedReaderStatus, Stack},
         file_io::read_into_buffer,
+        is_zero_lamport::IsZeroLamport,
         storable_accounts::StorableAccounts,
         u64_align,
     },
@@ -211,14 +211,14 @@ pub(crate) struct IndexInfoInner {
     pub data_len: u64,
 }
 
-impl ZeroLamport for IndexInfoInner {
+impl IsZeroLamport for IndexInfoInner {
     #[inline(always)]
     fn is_zero_lamport(&self) -> bool {
         self.lamports == 0
     }
 }
 
-impl ZeroLamport for IndexInfo {
+impl IsZeroLamport for IndexInfo {
     #[inline(always)]
     fn is_zero_lamport(&self) -> bool {
         self.index_info.is_zero_lamport()

@@ -10,6 +10,7 @@ use {
         ancestors::Ancestors,
         bucket_map_holder::Age,
         contains::Contains,
+        is_zero_lamport::IsZeroLamport,
         pubkey_bins::PubkeyBinCalculator24,
         rolling_bit_field::RollingBitField,
         secondary_index::*,
@@ -178,7 +179,7 @@ pub trait IsCached {
     fn is_cached(&self) -> bool;
 }
 
-pub trait IndexValue: 'static + IsCached + ZeroLamport + DiskIndexValue {}
+pub trait IndexValue: 'static + IsCached + IsZeroLamport + DiskIndexValue {}
 
 pub trait DiskIndexValue:
     'static + Clone + Debug + PartialEq + Copy + Default + Sync + Send
@@ -234,10 +235,6 @@ pub struct AccountsIndexRootsStats {
     pub unrooted_cleaned_count: usize,
     pub clean_unref_from_storage_us: u64,
     pub clean_dead_slot_us: u64,
-}
-
-pub trait ZeroLamport {
-    fn is_zero_lamport(&self) -> bool;
 }
 
 #[derive(Copy, Clone)]
@@ -2001,7 +1998,7 @@ pub mod tests {
         }
     }
 
-    impl ZeroLamport for AccountInfoTest {
+    impl IsZeroLamport for AccountInfoTest {
         fn is_zero_lamport(&self) -> bool {
             true
         }
@@ -3521,13 +3518,13 @@ pub mod tests {
             false
         }
     }
-    impl ZeroLamport for bool {
+    impl IsZeroLamport for bool {
         fn is_zero_lamport(&self) -> bool {
             false
         }
     }
 
-    impl ZeroLamport for u64 {
+    impl IsZeroLamport for u64 {
         fn is_zero_lamport(&self) -> bool {
             false
         }

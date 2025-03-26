@@ -4,9 +4,8 @@
 //! Note that AccountInfo is saved to disk buckets during runtime, but disk buckets are recreated at startup.
 use {
     crate::{
-        accounts_db::AccountsFileId,
-        accounts_file::ALIGN_BOUNDARY_OFFSET,
-        accounts_index::{IsCached, ZeroLamport},
+        accounts_db::AccountsFileId, accounts_file::ALIGN_BOUNDARY_OFFSET,
+        accounts_index::IsCached, is_zero_lamport::IsZeroLamport,
     },
     modular_bitfield::prelude::*,
 };
@@ -97,7 +96,7 @@ pub struct AccountOffsetAndFlags {
     packed_offset_and_flags: PackedOffsetAndFlags,
 }
 
-impl ZeroLamport for AccountInfo {
+impl IsZeroLamport for AccountInfo {
     fn is_zero_lamport(&self) -> bool {
         self.account_offset_and_flags
             .packed_offset_and_flags

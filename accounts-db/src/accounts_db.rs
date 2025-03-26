@@ -51,8 +51,7 @@ use {
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
             AccountsIndexConfig, AccountsIndexRootsStats, AccountsIndexScanResult, DiskIndexValue,
             IndexKey, IndexValue, IsCached, RefCount, ScanConfig, ScanFilter, ScanResult, SlotList,
-            UpsertReclaim, ZeroLamport, ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS,
-            ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
+            UpsertReclaim, ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
         },
         accounts_index_storage::Startup,
         accounts_partition::RentPayingAccountsByPartition,
@@ -66,6 +65,7 @@ use {
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
         contains::Contains,
         epoch_accounts_hash::EpochAccountsHashManager,
+        is_zero_lamport::IsZeroLamport,
         partitioned_rewards::{
             PartitionedEpochRewardsConfig, DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
         },
@@ -571,7 +571,7 @@ pub struct AccountFromStorage {
     pub pubkey: Pubkey,
 }
 
-impl ZeroLamport for AccountFromStorage {
+impl IsZeroLamport for AccountFromStorage {
     fn is_zero_lamport(&self) -> bool {
         self.index_info.is_zero_lamport()
     }
@@ -870,13 +870,13 @@ impl GenerateIndexTimings {
 impl IndexValue for AccountInfo {}
 impl DiskIndexValue for AccountInfo {}
 
-impl ZeroLamport for AccountSharedData {
+impl IsZeroLamport for AccountSharedData {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
     }
 }
 
-impl ZeroLamport for Account {
+impl IsZeroLamport for Account {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
     }
@@ -1878,7 +1878,7 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
     }
 }
 
-impl ZeroLamport for StoredAccountMeta<'_> {
+impl IsZeroLamport for StoredAccountMeta<'_> {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
     }

@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        accounts_index::ZeroLamport,
+        is_zero_lamport::IsZeroLamport,
         storable_accounts::{AccountForStorage, StorableAccounts},
     },
     solana_account::{AccountSharedData, ReadableAccount},
@@ -25,7 +25,7 @@ impl StakeReward {
     }
 }
 
-impl ZeroLamport for StakeReward {
+impl IsZeroLamport for StakeReward {
     fn is_zero_lamport(&self) -> bool {
         self.stake_account.lamports() == 0
     }
