@@ -6,6 +6,7 @@ edition = { workspace = true }
 publish = false
 
 [dependencies]
+agave-reserved-account-keys = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }

@@ -261,6 +261,7 @@ pub(crate) mod tests {
     use {
         super::*,
         crate::transaction_notifier_interface::TransactionNotifier,
+        agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::unbounded,
         dashmap::DashMap,
         solana_account_decoder::{
@@ -277,7 +278,6 @@ pub(crate) mod tests {
             nonce_account,
             pubkey::Pubkey,
             rent_debits::RentDebits,
-            reserved_account_keys::ReservedAccountKeys,
             signature::{Keypair, Signature, Signer},
             system_transaction,
             transaction::{

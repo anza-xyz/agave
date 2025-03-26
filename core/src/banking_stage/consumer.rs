@@ -858,6 +858,7 @@ mod tests {
         crate::banking_stage::tests::{
             create_slow_genesis_config, sanitize_transactions, simulate_poh,
         },
+        agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::{unbounded, Receiver},
         solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
         solana_entry::entry::{next_entry, next_versioned_entry},
@@ -890,7 +891,6 @@ mod tests {
             nonce_account::verify_nonce_account,
             poh_config::PohConfig,
             pubkey::Pubkey,
-            reserved_account_keys::ReservedAccountKeys,
             signature::Keypair,
             signer::Signer,
             system_program, system_transaction,

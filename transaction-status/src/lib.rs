@@ -22,6 +22,7 @@ use {
         parse_accounts::{parse_legacy_message_accounts, parse_v0_message_accounts},
         parse_instruction::parse,
     },
+    agave_reserved_account_keys::ReservedAccountKeys,
     base64::{prelude::BASE64_STANDARD, Engine},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -31,7 +32,6 @@ use {
         AccountKeys, Message, VersionedMessage,
     },
     solana_pubkey::Pubkey,
-    solana_reserved_account_keys::ReservedAccountKeys,
     solana_signature::Signature,
     solana_transaction::{
         versioned::{TransactionVersion, VersionedTransaction},

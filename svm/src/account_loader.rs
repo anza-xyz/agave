@@ -675,6 +675,7 @@ mod tests {
             transaction_account_state_info::TransactionAccountStateInfo,
             transaction_processing_callback::TransactionProcessingCallback,
         },
+        agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         solana_epoch_schedule::EpochSchedule,
         solana_feature_set::FeatureSet,
@@ -695,7 +696,6 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_rent_debits::RentDebits,
-        solana_reserved_account_keys::ReservedAccountKeys,
         solana_sdk::rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_sdk_ids::{
             bpf_loader, bpf_loader_upgradeable, native_loader, system_program, sysvar,

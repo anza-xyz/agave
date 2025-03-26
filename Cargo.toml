@@ -108,6 +108,7 @@ members = [
     "rayon-threadlimit",
     "rbpf-cli",
     "remote-wallet",
+    "reserved-account-keys",
     "rpc",
     "rpc-client",
     "rpc-client-api",
@@ -181,6 +182,7 @@ Inflector = "0.11.4"
 axum = "0.7.9"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.3.0" }
 agave-feature-set = { path = "feature-set", version = "=2.3.0" }
+agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.3.0" }
 agave-transaction-view = { path = "transaction-view", version = "=2.3.0" }
 aquamarine = "0.6.0"
 aes-gcm-siv = "0.11.1"
@@ -493,7 +495,6 @@ solana-remote-wallet = { path = "remote-wallet", version = "=2.3.0", default-fea
 solana-rent = "=2.2.1"
 solana-rent-collector = "=2.2.1"
 solana-rent-debits = "=2.2.1"
-solana-reserved-account-keys = "=2.2.1"
 solana-reward-info = "=2.2.1"
 solana-sanitize = "=2.2.1"
 solana-secp256r1-program = "=2.2.1"

@@ -50,11 +50,11 @@ impl Ord for DeserializedPacket {
 mod tests {
     use {
         super::*,
+        agave_reserved_account_keys::ReservedAccountKeys,
         solana_perf::packet::PacketFlags,
         solana_runtime::bank::Bank,
         solana_sdk::{
             hash::Hash,
-            reserved_account_keys::ReservedAccountKeys,
             signature::{Keypair, Signer},
             system_transaction,
             transaction::Transaction,

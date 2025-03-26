@@ -12,6 +12,7 @@ use {
         },
         program::*,
     },
+    agave_reserved_account_keys::ReservedAccountKeys,
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App,
         AppSettings, Arg, ArgMatches, SubCommand,
@@ -74,7 +75,6 @@ use {
         native_token::{lamports_to_sol, sol_to_lamports, Sol},
         pubkey::Pubkey,
         rent::Rent,
-        reserved_account_keys::ReservedAccountKeys,
         shred_version::compute_shred_version,
         stake::{self, state::StakeStateV2},
         system_program,

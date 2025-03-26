@@ -116,6 +116,7 @@ pub(crate) fn process_message(
 mod tests {
     use {
         super::*,
+        agave_reserved_account_keys::ReservedAccountKeys,
         openssl::{
             ec::{EcGroup, EcKey},
             nid::Nid,
@@ -136,7 +137,6 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_reserved_account_keys::ReservedAccountKeys,
         solana_sdk::native_loader::create_loadable_account_for_test,
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
         solana_secp256k1_program::new_secp256k1_instruction,

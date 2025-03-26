@@ -2,13 +2,13 @@
 
 use {
     crate::bigtable::RowKey,
+    agave_reserved_account_keys::ReservedAccountKeys,
     log::*,
     serde::{Deserialize, Serialize},
     solana_clock::{Slot, UnixTimestamp},
     solana_message::v0::LoadedAddresses,
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
-    solana_reserved_account_keys::ReservedAccountKeys,
     solana_serde::default_on_eof,
     solana_signature::Signature,
     solana_storage_proto::convert::{entries, generated, tx_by_addr},

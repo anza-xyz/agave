@@ -2,6 +2,7 @@
 
 use {
     crate::{bank::Bank, static_ids},
+    agave_reserved_account_keys::ReservedAccountKeys,
     dashmap::DashSet,
     log::info,
     rayon::{
@@ -22,7 +23,6 @@ use {
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::Slot,
         pubkey::Pubkey,
-        reserved_account_keys::ReservedAccountKeys,
     },
     std::{
         collections::HashSet,

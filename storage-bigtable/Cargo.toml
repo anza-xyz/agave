@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-reserved-account-keys = { workspace = true }
 backoff = { workspace = true, features = ["tokio"] }
 bincode = { workspace = true }
 bytes = { workspace = true }
@@ -34,7 +35,6 @@ solana-clock = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-reserved-account-keys = { workspace = true }
 solana-serde = { workspace = true }
 solana-signature = { workspace = true }
 solana-storage-proto = { workspace = true }

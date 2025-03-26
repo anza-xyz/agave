@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-reserved-account-keys = { workspace = true }
 ahash = { workspace = true }
 aquamarine = { workspace = true }
 arrayref = { workspace = true }
