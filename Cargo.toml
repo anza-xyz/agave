@@ -84,6 +84,7 @@ members = [
     "poh",
     "poh-bench",
     "poseidon",
+    "precompiles",
     "program-runtime",
     "program-test",
     "programs/address-lookup-table",
@@ -182,6 +183,7 @@ Inflector = "0.11.4"
 axum = "0.7.9"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.3.0" }
 agave-feature-set = { path = "feature-set", version = "=2.3.0" }
+agave-precompiles = { path = "precompiles", version = "=2.3.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.3.0" }
 agave-transaction-view = { path = "transaction-view", version = "=2.3.0" }
 aquamarine = "0.6.0"
@@ -413,7 +415,7 @@ solana-decode-error = "=2.2.1"
 solana-define-syscall = "=2.2.1"
 solana-derivation-path = "=2.2.1"
 solana-download-utils = { path = "download-utils", version = "=2.3.0" }
-solana-ed25519-program = "=2.2.1"
+solana-ed25519-program = "=2.2.2"
 solana-entry = { path = "entry", version = "=2.3.0" }
 solana-feature-set-interface = "=4.0.0"
 solana-program-entrypoint = "=2.2.1"
@@ -477,7 +479,6 @@ solana-poh = { path = "poh", version = "=2.3.0" }
 solana-poh-config = "=2.2.1"
 solana-poseidon = { path = "poseidon", version = "=2.3.0" }
 solana-precompile-error = "=2.2.1"
-solana-precompiles = "=2.2.1"
 solana-presigner = "=2.2.1"
 solana-program = { version = "=2.2.1", default-features = false }
 solana-program-error = "=2.2.1"
@@ -497,7 +498,7 @@ solana-rent-collector = "=2.2.1"
 solana-rent-debits = "=2.2.1"
 solana-reward-info = "=2.2.1"
 solana-sanitize = "=2.2.1"
-solana-secp256r1-program = "=2.2.1"
+solana-secp256r1-program = "=2.2.2"
 solana-seed-derivable = "=2.2.1"
 solana-seed-phrase = "=2.2.1"
 solana-serde = "=2.2.1"

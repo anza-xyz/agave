@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-precompiles = { workspace = true }
 bincode = { workspace = true }
 libsecp256k1 = { workspace = true }
 num-traits = { workspace = true }
@@ -34,7 +35,6 @@ solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-packet = { workspace = true }
 solana-poseidon = { workspace = true }
-solana-precompiles = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }

@@ -1,8 +1,8 @@
 use {
+    agave_precompiles::get_precompile,
     solana_account::WritableAccount,
     solana_instructions_sysvar as instructions,
     solana_measure::measure_us,
-    solana_precompiles::get_precompile,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},

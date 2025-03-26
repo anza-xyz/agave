@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-precompiles = { workspace = true }
 ahash = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -37,7 +38,6 @@ solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
-solana-precompiles = { workspace = true }
 solana-program = { workspace = true, default-features = false }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
