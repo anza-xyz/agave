@@ -555,21 +555,18 @@ fn test_snapshot_download() {
 fn test_incremental_snapshot_download() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 node
-    let accounts_hash_interval = 3;
-    let incremental_snapshot_interval = accounts_hash_interval * 3;
+    let incremental_snapshot_interval = 9;
     let full_snapshot_interval = incremental_snapshot_interval * 3;
     let num_account_paths = 3;
 
     let leader_snapshot_test_config = SnapshotValidatorConfig::new(
         full_snapshot_interval,
         incremental_snapshot_interval,
-        accounts_hash_interval,
         num_account_paths,
     );
     let validator_snapshot_test_config = SnapshotValidatorConfig::new(
         full_snapshot_interval,
         incremental_snapshot_interval,
-        accounts_hash_interval,
         num_account_paths,
     );
 
@@ -594,10 +591,10 @@ fn test_incremental_snapshot_download() {
         .snapshot_config
         .incremental_snapshot_archives_dir;
 
-    debug!("snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}\n\taccounts hash interval: {}",
-           full_snapshot_interval,
-           incremental_snapshot_interval,
-           accounts_hash_interval);
+    debug!(
+        "snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}",
+        full_snapshot_interval, incremental_snapshot_interval,
+    );
     debug!(
         "leader config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: {}\n\tincremental snapshot archives dir: {}",
         leader_snapshot_test_config
@@ -729,21 +726,18 @@ fn test_incremental_snapshot_download() {
 fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_startup() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // If these intervals change, also make sure to change the loop timers accordingly.
-    let accounts_hash_interval = 3;
-    let incremental_snapshot_interval = accounts_hash_interval * 3;
+    let incremental_snapshot_interval = 9;
     let full_snapshot_interval = incremental_snapshot_interval * 5;
 
     let num_account_paths = 3;
     let leader_snapshot_test_config = SnapshotValidatorConfig::new(
         full_snapshot_interval,
         incremental_snapshot_interval,
-        accounts_hash_interval,
         num_account_paths,
     );
     let mut validator_snapshot_test_config = SnapshotValidatorConfig::new(
         full_snapshot_interval,
         incremental_snapshot_interval,
-        accounts_hash_interval,
         num_account_paths,
     );
     // The test has asserts that require the validator always boots from snapshot archives
@@ -762,10 +756,10 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
-    info!("snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}\n\taccounts hash interval: {}",
-           full_snapshot_interval,
-           incremental_snapshot_interval,
-           accounts_hash_interval);
+    info!(
+        "snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}",
+        full_snapshot_interval, incremental_snapshot_interval,
+    );
     debug!(
         "leader config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: {}\n\tincremental snapshot archives dir: {}",
         leader_snapshot_test_config
@@ -1183,7 +1177,6 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     let final_validator_snapshot_test_config = SnapshotValidatorConfig::new(
         full_snapshot_interval,
         incremental_snapshot_interval,
-        accounts_hash_interval,
         num_account_paths,
     );
 
@@ -4993,24 +4986,12 @@ fn test_boot_from_local_state() {
     const FULL_SNAPSHOT_INTERVAL: Slot = 100;
     const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 10;
 
-    let validator1_config = SnapshotValidatorConfig::new(
-        FULL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        2,
-    );
-    let validator2_config = SnapshotValidatorConfig::new(
-        FULL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        4,
-    );
-    let validator3_config = SnapshotValidatorConfig::new(
-        FULL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        3,
-    );
+    let validator1_config =
+        SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 2);
+    let validator2_config =
+        SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 4);
+    let validator3_config =
+        SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 3);
 
     let mut cluster_config = ClusterConfig {
         node_stakes: vec![100 * DEFAULT_NODE_STAKE],
@@ -5285,12 +5266,8 @@ fn test_boot_from_local_state_missing_archive() {
     const FULL_SNAPSHOT_INTERVAL: Slot = 20;
     const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 10;
 
-    let validator_config = SnapshotValidatorConfig::new(
-        FULL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        7,
-    );
+    let validator_config =
+        SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 7);
 
     let mut cluster_config = ClusterConfig {
         node_stakes: vec![100 * DEFAULT_NODE_STAKE],

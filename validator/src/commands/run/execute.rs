@@ -982,12 +982,6 @@ pub fn execute(
         packager_thread_niceness_adj: snapshot_packager_niceness_adj,
     };
 
-    // The accounts hash interval shall match the snapshot interval
-    validator_config.accounts_hash_interval_slots = std::cmp::min(
-        full_snapshot_archive_interval_slots,
-        incremental_snapshot_archive_interval_slots,
-    );
-
     info!(
         "Snapshot configuration: full snapshot interval: {}, incremental snapshot interval: {}",
         if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
@@ -1014,10 +1008,7 @@ pub fn execute(
         );
     }
 
-    if !is_snapshot_config_valid(
-        &validator_config.snapshot_config,
-        validator_config.accounts_hash_interval_slots,
-    ) {
+    if !is_snapshot_config_valid(&validator_config.snapshot_config) {
         Err(
             "invalid snapshot configuration provided: snapshot intervals are incompatible. \
              \n\t- full snapshot interval MUST be a multiple of incremental snapshot interval \
