@@ -850,18 +850,25 @@ mod tests {
                     }),
                 ),
             ];
-            let instruction_accounts: Vec<InstructionAccount> = [1, 1, 2, 3, 4, 4, 5, 6]
+            let instruction_accounts_indexes = [1, 1, 2, 3, 4, 4, 5, 6];
+            let instruction_accounts: Vec<InstructionAccount> = instruction_accounts_indexes
                 .into_iter()
                 .enumerate()
-                .map(
-                    |(index_in_instruction, index_in_transaction)| InstructionAccount {
+                .map(|(index_in_instruction, index_in_transaction)| {
+                    let index_in_callee = instruction_accounts_indexes
+                        .get(0..index_in_instruction)
+                        .unwrap()
+                        .iter()
+                        .position(|account_index| *account_index == index_in_transaction)
+                        .unwrap_or(index_in_instruction);
+                    InstructionAccount {
                         index_in_transaction,
                         index_in_caller: index_in_transaction,
-                        index_in_callee: index_in_transaction - 1,
+                        index_in_callee: index_in_callee as IndexOfAccount,
                         is_signer: false,
                         is_writable: index_in_instruction >= 4,
-                    },
-                )
+                    }
+                })
                 .collect();
             let instruction_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
             let program_indices = [0];
