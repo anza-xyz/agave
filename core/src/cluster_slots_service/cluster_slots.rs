@@ -3,6 +3,7 @@ use {
     solana_gossip::{
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
+    solana_pubkey::{PubkeyHasher, PubkeyHasherBuilder},
     solana_runtime::bank::Bank,
     solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
     std::{
@@ -16,11 +17,14 @@ use {
 // of receiving bogus epoch slots values.
 // This also constraints the size of the datastructure
 // if we are really really far behind.
-const CLUSTER_SLOTS_TRIM_SIZE: usize = 50000;
+const CLUSTER_SLOTS_TRIM_SIZE: usize = 5000;
 // Make hashmaps this many times bigger to reduce collisions
 const HASHMAP_OVERSIZE: usize = 2;
 
-pub(crate) type SlotPubkeys = DashMap</*node:*/ Pubkey, /*stake:*/ u64>;
+pub(crate) type SlotPubkeys =
+    DashMap</*node:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>;
+pub(crate) type SlotPubkeys2 =
+    RwLock<HashMap</*node:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>>;
 
 #[derive(Default)]
 pub struct ClusterSlots {
@@ -76,8 +80,15 @@ impl ClusterSlots {
         capacity: usize,
     ) {
         assert!(cluster_slots.is_empty());
+        //DashMap::with_capacity_and_hasher(capacity, hasher);
         for slot in slot_range.clone() {
-            cluster_slots.push_back((slot, Arc::new(DashMap::with_capacity(capacity))));
+            cluster_slots.push_back((
+                slot,
+                Arc::new(DashMap::with_capacity_and_hasher(
+                    capacity,
+                    PubkeyHasherBuilder::default(),
+                )),
+            ));
         }
     }
 
@@ -139,7 +150,10 @@ impl ClusterSlots {
                             map
                         }
                         // if we can not reuse just allocate a new one
-                        Err(_) => DashMap::with_capacity(map_capacity),
+                        Err(_) => DashMap::with_capacity_and_hasher(
+                            map_capacity,
+                            PubkeyHasherBuilder::default(),
+                        ),
                     };
                     cluster_slots.push_back((slot, Arc::new(map)));
                 } else {
@@ -274,6 +288,269 @@ impl ClusterSlots {
     }
 }
 
+#[derive(Default)]
+pub struct ClusterSlots2 {
+    cluster_slots: RwLock<VecDeque<(Slot, Arc<SlotPubkeys2>)>>,
+    validator_stakes: RwLock<Arc<HashMap<Pubkey, u64>>>,
+    epoch: RwLock<Option<u64>>,
+    cursor: Mutex<Cursor>,
+    last_report: AtomicInterval,
+}
+
+impl ClusterSlots2 {
+    pub fn lookup(&self, slot: Slot) -> Option<Arc<SlotPubkeys2>> {
+        let cluster_slots = self.cluster_slots.read().unwrap();
+        Self::_lookup(slot, &cluster_slots).cloned()
+    }
+
+    fn _lookup(
+        slot: Slot,
+        cluster_slots: &VecDeque<(Slot, Arc<SlotPubkeys2>)>,
+    ) -> Option<&Arc<SlotPubkeys2>> {
+        let idx = cluster_slots
+            .binary_search_by_key(&slot, |(s, _)| *s)
+            .ok()?;
+        Some(&cluster_slots[idx].1)
+    }
+
+    pub(crate) fn update(
+        &self,
+        root_bank: &Bank,
+        validator_stakes: &Arc<HashMap<Pubkey, u64>>,
+        cluster_info: &ClusterInfo,
+    ) {
+        self.update_peers(validator_stakes, root_bank);
+        let epoch_slots = {
+            let mut cursor = self.cursor.lock().unwrap();
+            cluster_info.get_epoch_slots(&mut cursor)
+        };
+        let num_epoch_slots = root_bank.get_slots_in_epoch(root_bank.epoch());
+        self.update_internal(
+            root_bank.slot(),
+            validator_stakes,
+            epoch_slots,
+            num_epoch_slots,
+        );
+        self.report_cluster_slots_size();
+    }
+
+    // Initialize cluster_slots during startup
+    // This should not be called during normal operation!
+    fn initialize_cluster_slots(
+        slot_range: &Range<Slot>,
+        cluster_slots: &mut VecDeque<(Slot, Arc<SlotPubkeys2>)>,
+        capacity: usize,
+    ) {
+        assert!(cluster_slots.is_empty());
+        for slot in slot_range.clone() {
+            cluster_slots.push_back((
+                slot,
+                Arc::new(RwLock::new(HashMap::with_capacity_and_hasher(
+                    capacity,
+                    PubkeyHasherBuilder::default(),
+                ))),
+            ));
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn generate_fill_for_tests(
+        &self,
+        stakes: &HashMap<Pubkey, u64>,
+        root: u64,
+        slots: Range<Slot>,
+    ) {
+        let mut epochslots = Vec::with_capacity(stakes.len());
+        let slots_vec: Vec<u64> = slots.clone().collect();
+        if !slots_vec.is_empty() {
+            assert!(slots.start > root);
+            for (pk, _) in stakes.iter() {
+                let mut epoch_slot = EpochSlots {
+                    from: *pk,
+                    ..Default::default()
+                };
+
+                epoch_slot.fill(&slots_vec, slots.start);
+                epochslots.push(epoch_slot);
+            }
+        }
+        self.update_internal(root, &stakes, epochslots, 100000000);
+    }
+
+    fn update_internal(
+        &self,
+        root: Slot,
+        validator_stakes: &HashMap<Pubkey, u64>,
+        epoch_slots_list: Vec<EpochSlots>,
+        num_epoch_slots: u64,
+    ) {
+        // Discard slots at or before current root or too far ahead.
+        let slot_range = (root + 1)
+            ..root.saturating_add(num_epoch_slots.min(CLUSTER_SLOTS_TRIM_SIZE as u64 + 1));
+        // ensure the datastructure has the correct window in scope
+        {
+            let map_capacity = validator_stakes.len() * HASHMAP_OVERSIZE;
+            let mut cluster_slots = self.cluster_slots.write().unwrap();
+
+            if cluster_slots.is_empty() {
+                Self::initialize_cluster_slots(&slot_range, &mut cluster_slots, map_capacity);
+            }
+            // discard and recycle outdated elements
+            loop {
+                let (slot, _) = cluster_slots
+                    .front()
+                    .expect("After initialization the ring buffer is not empty");
+                if *slot < root + 1 {
+                    // pop useless record from the front
+                    let (_, map) = cluster_slots.pop_front().unwrap();
+                    // try to reuse its map allocation at the back of the datastructure
+                    let slot = cluster_slots.back().unwrap().0 + 1;
+                    let map = match Arc::try_unwrap(map) {
+                        Ok(map) => {
+                            map.write().unwrap().clear();
+                            map
+                        }
+                        // if we can not reuse just allocate a new one
+                        Err(_) => RwLock::new(HashMap::with_capacity_and_hasher(
+                            map_capacity,
+                            PubkeyHasherBuilder::default(),
+                        )),
+                    };
+                    cluster_slots.push_back((slot, Arc::new(map)));
+                } else {
+                    break;
+                }
+            }
+            debug_assert!(cluster_slots.len() == CLUSTER_SLOTS_TRIM_SIZE);
+        }
+
+        let mut slots_to_patch = HashMap::with_capacity(1024);
+        for epoch_slots in epoch_slots_list {
+            //filter out unstaked nodes
+            let Some(sender_stake) = validator_stakes.get(&epoch_slots.from) else {
+                continue;
+            };
+            /*
+            let sender_stake = validator_stakes
+                .get(&epoch_slots.from)
+                .cloned()
+                .unwrap_or(0);*/
+            let sender_stake = *sender_stake;
+            let updates = epoch_slots
+                .to_slots(root)
+                .filter(|slot| slot_range.contains(slot));
+            // figure out which entries would get updated by the new message and cache them
+            for slot in updates {
+                let e = slots_to_patch
+                    .entry(slot)
+                    .or_insert_with(|| Vec::with_capacity(128));
+                e.push((epoch_slots.from, sender_stake));
+            }
+        }
+
+        {
+            let cluster_slots = self.cluster_slots.read().unwrap();
+            for (slot, patches) in slots_to_patch {
+                let mut map = Self::_lookup(slot, &cluster_slots)
+                    .unwrap()
+                    .write()
+                    .unwrap();
+                map.extend(patches);
+            }
+        }
+    }
+
+    /// Returns number of stored entries
+    fn datastructure_size(&self) -> usize {
+        let cluster_slots = self.cluster_slots.read().unwrap();
+
+        cluster_slots
+            .iter()
+            .map(|(_slot, slot_pubkeys)| slot_pubkeys.read().unwrap().len())
+            .sum::<usize>()
+    }
+
+    fn report_cluster_slots_size(&self) {
+        if self.last_report.should_update(10_000) {
+            datapoint_info!(
+                "cluster-slots-size",
+                ("total_entries", self.datastructure_size() as i64, i64),
+            );
+        }
+    }
+
+    #[cfg(test)]
+    // patches the given node_id into the internal structures
+    // to pretend as if it has submitted epoch slots for a given slot
+    pub(crate) fn insert_node_id(&self, slot: Slot, node_id: Pubkey) {
+        let balance = self
+            .validator_stakes
+            .read()
+            .unwrap()
+            .get(&node_id)
+            .cloned()
+            .unwrap_or(0);
+        if let Some(slot_pubkeys) = self.lookup(slot) {
+            slot_pubkeys.write().unwrap().insert(node_id, balance);
+        } else {
+            let mut cluster_slots = self.cluster_slots.write().unwrap();
+            let mut hm = HashMap::default();
+            hm.insert(node_id, balance);
+            cluster_slots.push_back((slot, Arc::new(RwLock::new(hm))));
+            cluster_slots.make_contiguous().sort_by_key(|(k, _)| *k);
+        }
+    }
+
+    fn update_peers(&self, staked_nodes: &Arc<HashMap<Pubkey, u64>>, root_bank: &Bank) {
+        let root_epoch = root_bank.epoch();
+        let my_epoch = *self.epoch.read().unwrap();
+
+        if Some(root_epoch) != my_epoch {
+            *self.validator_stakes.write().unwrap() = staked_nodes.clone();
+            *self.epoch.write().unwrap() = Some(root_epoch);
+        }
+    }
+
+    pub(crate) fn compute_weights(&self, slot: Slot, repair_peers: &[ContactInfo]) -> Vec<u64> {
+        if repair_peers.is_empty() {
+            return Vec::default();
+        }
+        let stakes = {
+            let validator_stakes = self.validator_stakes.read().unwrap();
+            repair_peers
+                .iter()
+                .map(|peer| validator_stakes.get(peer.pubkey()).cloned().unwrap_or(0) + 1)
+                .collect()
+        };
+        let Some(slot_peers) = self.lookup(slot) else {
+            return stakes;
+        };
+        let slot_peers = slot_peers.read().unwrap();
+        repair_peers
+            .iter()
+            .map(|peer| slot_peers.get(peer.pubkey()).cloned().unwrap_or(0))
+            .zip(stakes)
+            .map(|(a, b)| (a / 2 + b / 2).max(1u64))
+            .collect()
+    }
+
+    pub(crate) fn compute_weights_exclude_nonfrozen(
+        &self,
+        slot: Slot,
+        repair_peers: &[ContactInfo],
+    ) -> Vec<(u64, usize)> {
+        self.lookup(slot)
+            .map(|slot_peers| {
+                let slot_peers = slot_peers.read().unwrap();
+                repair_peers
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, ci)| Some((slot_peers.get(ci.pubkey())? + 1, i)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
 #[cfg(test)]
 mod tests {
     use {super::*, solana_sdk::clock::DEFAULT_SLOTS_PER_EPOCH};
@@ -355,7 +632,7 @@ mod tests {
     #[test]
     fn test_best_peer_2() {
         let cs = ClusterSlots::default();
-        let map = DashMap::new();
+        let map = DashMap::default();
         let k1 = solana_pubkey::new_rand();
         let k2 = solana_pubkey::new_rand();
         map.insert(k1, u64::MAX / 2);
@@ -372,7 +649,7 @@ mod tests {
     #[test]
     fn test_best_peer_3() {
         let cs = ClusterSlots::default();
-        let map = DashMap::new();
+        let map = DashMap::default();
         let k1 = solana_pubkey::new_rand();
         let k2 = solana_pubkey::new_rand();
         map.insert(k2, 0);
