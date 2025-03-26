@@ -1,5 +1,6 @@
 use {
     crate::cli_output::CliSignatureVerificationStatus,
+    agave_reserved_account_keys::ReservedAccountKeys,
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono::{DateTime, Local, SecondsFormat, TimeZone, Utc},
     console::style,
@@ -12,7 +13,6 @@ use {
     solana_native_token::lamports_to_sol,
     solana_program::stake,
     solana_pubkey::Pubkey,
-    solana_reserved_account_keys::ReservedAccountKeys,
     solana_signature::Signature,
     solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
     solana_transaction_error::TransactionError,

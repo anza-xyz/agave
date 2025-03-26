@@ -9,6 +9,7 @@
 
 #[cfg(feature = "sbf_rust")]
 use {
+    agave_reserved_account_keys::ReservedAccountKeys,
     borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
@@ -47,7 +48,6 @@ use {
         message::{Message, SanitizedMessage},
         pubkey::Pubkey,
         rent::Rent,
-        reserved_account_keys::ReservedAccountKeys,
         signature::{Keypair, Signer},
         stake,
         system_instruction::MAX_PERMITTED_DATA_LENGTH,

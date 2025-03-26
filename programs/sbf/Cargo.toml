@@ -15,6 +15,7 @@ check-cfg = [
 ]
 
 [workspace.dependencies]
+agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=2.3.0" }
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"
@@ -101,6 +102,7 @@ dummy-for-ci-check = ["sbf_c", "sbf_rust"]
 frozen-abi = []
 
 [dev-dependencies]
+agave-reserved-account-keys = { workspace = true }
 agave-validator = { workspace = true }
 bincode = { workspace = true }
 borsh = { workspace = true }

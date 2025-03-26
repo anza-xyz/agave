@@ -107,6 +107,11 @@ tokio = { workspace = true, features = ["full"] }
 trees = { workspace = true }
 
 [dev-dependencies]
+<<<<<<< HEAD
+=======
+agave-reserved-account-keys = { workspace = true }
+criterion = { workspace = true }
+>>>>>>> df2d3d83c (Add agave-reserved-account-keys crate (#5513))
 fs_extra = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }

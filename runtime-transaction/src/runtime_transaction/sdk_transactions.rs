@@ -153,6 +153,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
 mod tests {
     use {
         super::*,
+        agave_reserved_account_keys::ReservedAccountKeys,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_feature_set::FeatureSet,
         solana_hash::Hash,
@@ -160,7 +161,6 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::{Message, SimpleAddressLoader},
         solana_program::vote::{self, state::Vote},
-        solana_reserved_account_keys::ReservedAccountKeys,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{versioned::VersionedTransaction, Transaction},

@@ -71,6 +71,7 @@ impl TransactionAccountStateInfo {
 mod test {
     use {
         super::*,
+        agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::AccountSharedData,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -79,7 +80,6 @@ mod test {
             SanitizedMessage,
         },
         solana_rent::Rent,
-        solana_reserved_account_keys::ReservedAccountKeys,
         solana_sdk::rent_collector::RentCollector,
         solana_signer::Signer,
         solana_transaction_context::TransactionContext,

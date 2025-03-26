@@ -60,6 +60,7 @@ crate-type = ["lib"]
 name = "solana_svm"
 
 [dev-dependencies]
+agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 ed25519-dalek = { workspace = true }
@@ -81,7 +82,6 @@ solana-logger = { workspace = true }
 solana-native-token = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
-solana-reserved-account-keys = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-secp256k1-program = { workspace = true }

@@ -204,6 +204,7 @@ dependencies = [
 name = "agave-ledger-tool"
 version = "2.2.6"
 dependencies = [
+ "agave-reserved-account-keys",
  "assert_cmd",
  "bs58",
  "bytecount",
@@ -257,6 +258,20 @@ dependencies = [
  "thiserror 2.0.11",
  "tikv-jemallocator",
  "tokio",
+]
+
+[[package]]
+name = "agave-reserved-account-keys"
+version = "2.3.0"
+dependencies = [
+ "lazy_static",
+ "solana-feature-set",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-message",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-sysvar",
 ]
 
 [[package]]
@@ -6897,6 +6912,7 @@ name = "solana-cli-output"
 version = "2.2.6"
 dependencies = [
  "Inflector",
+ "agave-reserved-account-keys",
  "base64 0.22.1",
  "chrono",
  "clap 2.33.3",
@@ -6922,7 +6938,6 @@ dependencies = [
  "solana-packet",
  "solana-program",
  "solana-pubkey",
- "solana-reserved-account-keys",
  "solana-rpc-client-api",
  "solana-sdk-ids",
  "solana-signature",
@@ -7199,6 +7214,7 @@ name = "solana-core"
 version = "2.2.6"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-reserved-account-keys",
  "agave-transaction-view",
  "ahash 0.8.11",
  "anyhow",
@@ -7307,6 +7323,7 @@ dependencies = [
 name = "solana-cost-model"
 version = "2.2.6"
 dependencies = [
+ "agave-reserved-account-keys",
  "ahash 0.8.11",
  "itertools 0.12.1",
  "lazy_static",
@@ -7333,7 +7350,6 @@ dependencies = [
  "solana-metrics",
  "solana-packet",
  "solana-pubkey",
- "solana-reserved-account-keys",
  "solana-runtime-transaction",
  "solana-sdk-ids",
  "solana-signature",
@@ -7475,6 +7491,7 @@ dependencies = [
 name = "solana-entry"
 version = "2.2.6"
 dependencies = [
+ "agave-reserved-account-keys",
  "assert_matches",
  "bincode",
  "crossbeam-channel",
@@ -7495,7 +7512,6 @@ dependencies = [
  "solana-perf",
  "solana-pubkey",
  "solana-rayon-threadlimit",
- "solana-reserved-account-keys",
  "solana-runtime-transaction",
  "solana-sha256-hasher",
  "solana-signature",
@@ -8079,6 +8095,11 @@ dependencies = [
 name = "solana-ledger"
 version = "2.2.6"
 dependencies = [
+<<<<<<< HEAD
+=======
+ "agave-reserved-account-keys",
+ "anyhow",
+>>>>>>> df2d3d83c (Add agave-reserved-account-keys crate (#5513))
  "assert_matches",
  "bincode",
  "bitflags 2.8.0",
@@ -9067,6 +9088,7 @@ dependencies = [
 name = "solana-rpc"
 version = "2.2.6"
 dependencies = [
+ "agave-reserved-account-keys",
  "base64 0.22.1",
  "bincode",
  "bs58",
@@ -9277,6 +9299,7 @@ dependencies = [
 name = "solana-runtime"
 version = "2.2.6"
 dependencies = [
+ "agave-reserved-account-keys",
  "agave-transaction-view",
  "ahash 0.8.11",
  "aquamarine",
@@ -9376,6 +9399,7 @@ dependencies = [
 name = "solana-runtime-transaction"
 version = "2.2.6"
 dependencies = [
+ "agave-reserved-account-keys",
  "agave-transaction-view",
  "bincode",
  "criterion",
@@ -9391,7 +9415,6 @@ dependencies = [
  "solana-message",
  "solana-program",
  "solana-pubkey",
- "solana-reserved-account-keys",
  "solana-sdk-ids",
  "solana-signature",
  "solana-signer",
@@ -9827,6 +9850,7 @@ dependencies = [
 name = "solana-storage-bigtable"
 version = "2.2.6"
 dependencies = [
+ "agave-reserved-account-keys",
  "backoff",
  "bincode",
  "bytes",
@@ -9851,7 +9875,6 @@ dependencies = [
  "solana-message",
  "solana-metrics",
  "solana-pubkey",
- "solana-reserved-account-keys",
  "solana-serde",
  "solana-signature",
  "solana-storage-proto",
@@ -9944,6 +9967,7 @@ dependencies = [
 name = "solana-svm"
 version = "2.2.6"
 dependencies = [
+ "agave-reserved-account-keys",
  "ahash 0.8.11",
  "assert_matches",
  "bincode",
@@ -9992,7 +10016,6 @@ dependencies = [
  "solana-pubkey",
  "solana-rent",
  "solana-rent-debits",
- "solana-reserved-account-keys",
  "solana-sbpf",
  "solana-sdk",
  "solana-sdk-ids",
@@ -10488,6 +10511,7 @@ name = "solana-transaction-status"
 version = "2.2.6"
 dependencies = [
  "Inflector",
+ "agave-reserved-account-keys",
  "base64 0.22.1",
  "bincode",
  "borsh 1.5.5",
@@ -10506,7 +10530,6 @@ dependencies = [
  "solana-message",
  "solana-program",
  "solana-pubkey",
- "solana-reserved-account-keys",
  "solana-reward-info",
  "solana-sdk-ids",
  "solana-signature",
