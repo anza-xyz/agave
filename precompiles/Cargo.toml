@@ -33,6 +33,7 @@ rand0-7 = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true }
 solana-logger = { workspace = true }
+solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
