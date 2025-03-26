@@ -2,7 +2,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 extern crate test;
-use std::{collections::HashMap, sync::atomic::AtomicU64};
+use std::{collections::HashMap, sync::atomic::AtomicU64, sync::atomic::Ordering};
 
 use solana_core::cluster_slots_service::cluster_slots::{ClusterSlots, ClusterSlots2};
 use solana_pubkey::Pubkey;
@@ -16,7 +16,7 @@ fn generate_stakes(num_nodes: usize) -> HashMap<Pubkey, u64> {
     let stakes = HashMap::from_iter(nodes.iter().map(|e| (*e, 42)));
     stakes
 }
-/*
+
 #[bench]
 fn bench_cluster_slots_update(bencher: &mut Bencher) {
     let cs = ClusterSlots2::default();
@@ -29,10 +29,12 @@ fn bench_cluster_slots_update(bencher: &mut Bencher) {
             cur_slot,
             (cur_slot + 2)..(cur_slot + NUM_SLOTS_PER_EPOCH_SLOTS + 2),
         );
+
         black_box(&cs);
         cur_slot += 1;
-    })
-}*/
+    });
+    dbg!(cs.total_writes.load(Ordering::Relaxed));
+}
 /*
 #[bench]
 fn bench_cluster_slots_update_original(bencher: &mut Bencher) {
@@ -65,7 +67,8 @@ fn bench_cluster_slots_update_no_fp(bencher: &mut Bencher) {
         );
         black_box(&cs);
         cur_slot += 1;
-    })
+    });
+    dbg!(cs.total_writes.load(Ordering::Relaxed));
 }
 /*
 #[bench]

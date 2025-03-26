@@ -1,4 +1,8 @@
-use std::ops::Range;
+use std::{
+    collections::btree_map,
+    ops::Range,
+    sync::atomic::{AtomicU64, Ordering},
+};
 use {
     itertools::Itertools,
     solana_gossip::{
@@ -24,6 +28,7 @@ pub(crate) type SlotPubkeys = HashMap</*node:*/ Pubkey, /*stake:*/ u64>;
 pub struct ClusterSlots {
     cluster_slots: RwLock<BTreeMap<Slot, Arc<RwLock<SlotPubkeys>>>>,
     validator_stakes: RwLock<Arc<SlotPubkeys>>,
+    pub total_writes: AtomicU64,
     epoch: RwLock<Option<u64>>,
     cursor: Mutex<Cursor>,
     last_report: AtomicInterval,
@@ -63,28 +68,56 @@ impl ClusterSlots {
         num_epoch_slots: u64,
     ) {
         // Discard slots at or before current root or too far ahead.
-        let slot_range =
-            (root + 1)..root.saturating_add(num_epoch_slots.min(CLUSTER_SLOTS_TRIM_SIZE as u64));
-        let mut cluster_slots = self.cluster_slots.write().unwrap();
+        let slot_range = (root + 1)
+            ..root.saturating_add(num_epoch_slots.min(CLUSTER_SLOTS_TRIM_SIZE as u64 + 1));
+        {
+            let mut cluster_slots = self.cluster_slots.write().unwrap();
+            if cluster_slots.contains_key(&root) {
+                // split off possibly outdated old entries
+                *cluster_slots = cluster_slots.split_off(&(root + 1));
+            }
+
+            // ensure entries in cluster_slots are present for any valid epochslot we might get
+            // to avoid excessive write-locking
+            for slot in slot_range.clone().rev() {
+                match cluster_slots.entry(slot) {
+                    btree_map::Entry::Vacant(entry) => {
+                        entry.insert(Arc::new(RwLock::new(HashMap::new())));
+                    }
+                    //once we hit existing entry, the previous slots should be already populated
+                    btree_map::Entry::Occupied(_) => break,
+                }
+            }
+        }
+        let mut slots_to_patch = HashMap::with_capacity(1024);
         for epoch_slots in epoch_slots_list {
-            let Some(sender_stake) = validator_stakes.get(&epoch_slots.from) else {
+            //filter out unstaked nodes
+            let Some(&sender_stake) = validator_stakes.get(&epoch_slots.from) else {
                 continue;
             };
+            /*
+            let sender_stake = validator_stakes
+                .get(&epoch_slots.from)
+                .cloned()
+                .unwrap_or(0);*/
             let updates = epoch_slots
                 .to_slots(root)
-                .filter(|slot| slot_range.contains(slot))
-                .zip(std::iter::repeat((epoch_slots.from, *sender_stake)));
-            for (slot, (pubkey, stake)) in updates {
-                let entry = cluster_slots.entry(slot).or_insert_with(|| {
-                    Arc::new(RwLock::new(HashMap::with_capacity(validator_stakes.len())))
-                });
+                .filter(|slot| slot_range.contains(slot));
+            // figure out which entries would get updated by the new message and cache them
+            for slot in updates {
+                let e = slots_to_patch
+                    .entry(slot)
+                    .or_insert_with(|| Vec::with_capacity(128));
+                self.total_writes.fetch_add(1, Ordering::Relaxed);
+                e.push((epoch_slots.from, sender_stake));
+            }
+        }
 
-                entry
-                    .write()
-                    .unwrap()
-                    .entry(pubkey)
-                    .and_modify(|e| *e = stake)
-                    .or_insert(stake);
+        {
+            let cluster_slots = self.cluster_slots.read().unwrap();
+            for (slot, patches) in slots_to_patch {
+                let mut slot_wg = cluster_slots.get(&slot).unwrap().write().unwrap();
+                slot_wg.extend(patches);
             }
         }
     }
