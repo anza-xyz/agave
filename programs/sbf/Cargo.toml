@@ -15,7 +15,7 @@ check-cfg = [
 ]
 
 [workspace.dependencies]
-agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=2.3.0" }
+agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=2.2.6" }
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"

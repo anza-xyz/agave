@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "agave-reserved-account-keys"
-version = "2.3.0"
+version = "2.2.6"
 dependencies = [
  "lazy_static",
  "solana-feature-set",
@@ -8095,11 +8095,7 @@ dependencies = [
 name = "solana-ledger"
 version = "2.2.6"
 dependencies = [
-<<<<<<< HEAD
-=======
  "agave-reserved-account-keys",
- "anyhow",
->>>>>>> df2d3d83c (Add agave-reserved-account-keys crate (#5513))
  "assert_matches",
  "bincode",
  "bitflags 2.8.0",

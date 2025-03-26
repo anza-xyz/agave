@@ -174,15 +174,10 @@ check-cfg = [
 [workspace.dependencies]
 Inflector = "0.11.4"
 axum = "0.7.9"
-<<<<<<< HEAD
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.2.6" }
+agave-feature-set = { path = "feature-set", version = "=2.2.6" }
+agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.2.6" }
 agave-transaction-view = { path = "transaction-view", version = "=2.2.6" }
-=======
-agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.3.0" }
-agave-feature-set = { path = "feature-set", version = "=2.3.0" }
-agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.3.0" }
-agave-transaction-view = { path = "transaction-view", version = "=2.3.0" }
->>>>>>> df2d3d83c (Add agave-reserved-account-keys crate (#5513))
 aquamarine = "0.6.0"
 aes-gcm-siv = "0.11.1"
 ahash = "0.8.11"
