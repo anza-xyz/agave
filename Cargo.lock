@@ -277,18 +277,15 @@ dependencies = [
  "sha3",
  "solana-ed25519-program",
  "solana-feature-set",
- "solana-hash",
+ "solana-instruction",
  "solana-keccak-hasher",
- "solana-keypair",
  "solana-logger",
  "solana-message",
  "solana-precompile-error",
  "solana-pubkey",
- "solana-sdk",
  "solana-sdk-ids",
  "solana-secp256k1-program",
  "solana-secp256r1-program",
- "solana-signer",
 ]
 
 [[package]]

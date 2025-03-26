@@ -132,12 +132,8 @@ pub mod tests {
         super::*,
         rand0_7::{thread_rng, Rng},
         solana_feature_set::FeatureSet,
-        solana_hash::Hash,
         solana_keccak_hasher as keccak,
-        solana_keypair::Keypair,
-        solana_sdk::transaction::Transaction,
         solana_secp256k1_program::{new_secp256k1_instruction, DATA_START},
-        solana_signer::Signer,
     };
 
     fn test_case(
@@ -310,28 +306,13 @@ pub mod tests {
 
         let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
         let message_arr = b"hello";
-        let mut secp_instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
-        let mint_keypair = Keypair::new();
+        let mut instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
         let feature_set = solana_feature_set::FeatureSet::all_enabled();
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
 
-        let tx = Transaction::new_signed_with_payer(
-            &[secp_instruction.clone()],
-            Some(&mint_keypair.pubkey()),
-            &[&mint_keypair],
-            Hash::default(),
-        );
-
-        assert!(tx.verify_precompiles(&feature_set).is_ok());
-
-        let index = thread_rng().gen_range(0, secp_instruction.data.len());
-        secp_instruction.data[index] = secp_instruction.data[index].wrapping_add(12);
-        let tx = Transaction::new_signed_with_payer(
-            &[secp_instruction],
-            Some(&mint_keypair.pubkey()),
-            &[&mint_keypair],
-            Hash::default(),
-        );
-        assert!(tx.verify_precompiles(&feature_set).is_err());
+        let index = thread_rng().gen_range(0, instruction.data.len());
+        instruction.data[index] = instruction.data[index].wrapping_add(12);
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_err());
     }
 
     // Signatures are malleable.

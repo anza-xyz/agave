@@ -169,11 +169,6 @@ mod tests {
         super::*,
         bytemuck::bytes_of,
         solana_feature_set::FeatureSet,
-        solana_sdk::{
-            hash::Hash,
-            signature::{Keypair, Signer},
-            transaction::Transaction,
-        },
         solana_secp256r1_program::{new_secp256r1_instruction, DATA_START, SECP256R1_ORDER},
     };
 
@@ -362,31 +357,17 @@ mod tests {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let signing_key = EcKey::generate(&group).unwrap();
         let mut instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
-        let mint_keypair = Keypair::new();
         let feature_set = FeatureSet::all_enabled();
 
-        let tx = Transaction::new_signed_with_payer(
-            &[instruction.clone()],
-            Some(&mint_keypair.pubkey()),
-            &[&mint_keypair],
-            Hash::default(),
-        );
-
-        assert!(tx.verify_precompiles(&feature_set).is_ok());
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
 
         // The message is the last field in the instruction data so
         // changing its last byte will also change the signature validity
         let message_byte_index = instruction.data.len() - 1;
         instruction.data[message_byte_index] =
             instruction.data[message_byte_index].wrapping_add(12);
-        let tx = Transaction::new_signed_with_payer(
-            &[instruction.clone()],
-            Some(&mint_keypair.pubkey()),
-            &[&mint_keypair],
-            Hash::default(),
-        );
 
-        assert!(tx.verify_precompiles(&feature_set).is_err());
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_err());
     }
 
     #[test]
@@ -421,15 +402,7 @@ mod tests {
         // Replace the S value in the signature with our high S
         instruction.data[s_offset..s_offset + FIELD_SIZE].copy_from_slice(&high_s.to_vec());
 
-        // Since Transaction::verify_precompiles only returns a vague
-        // `InvalidAccountIndex` error on precompile failure, we use verify()
-        // here directly to check for the specific
-        // InvalidSignatureValueRange error
-        let tx_fail = verify(
-            instruction.data.as_slice(),
-            &[instruction.data.as_slice()],
-            &feature_set,
-        );
+        let tx_fail = verify(&instruction.data, &[&instruction.data], &feature_set);
         assert!(tx_fail.unwrap_err() == PrecompileError::InvalidSignature);
     }
     #[test]
@@ -457,16 +430,8 @@ mod tests {
 
             if r_bytes.len() == 31 || s_bytes.len() == 31 {
                 // Once found, verify the signature and break out of the loop
-                let mint_keypair = Keypair::new();
-                let tx = Transaction::new_signed_with_payer(
-                    &[instruction],
-                    Some(&mint_keypair.pubkey()),
-                    &[&mint_keypair],
-                    Hash::default(),
-                );
-
                 let feature_set = FeatureSet::all_enabled();
-                assert!(tx.verify_precompiles(&feature_set).is_ok());
+                assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
                 break;
             }
         }

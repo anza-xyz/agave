@@ -121,10 +121,7 @@ pub mod tests {
             new_ed25519_instruction, offsets_to_ed25519_instruction, DATA_START,
         },
         solana_feature_set::FeatureSet,
-        solana_hash::Hash,
-        solana_keypair::Keypair,
-        solana_sdk::{instruction::Instruction, transaction::Transaction},
-        solana_signer::Signer,
+        solana_instruction::Instruction,
     };
 
     pub fn new_ed25519_instruction_raw(
@@ -340,17 +337,9 @@ pub mod tests {
         let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
         let message_arr = b"hello";
         let mut instruction = new_ed25519_instruction(&privkey, message_arr);
-        let mint_keypair = Keypair::new();
         let feature_set = FeatureSet::all_enabled();
 
-        let tx = Transaction::new_signed_with_payer(
-            &[instruction.clone()],
-            Some(&mint_keypair.pubkey()),
-            &[&mint_keypair],
-            Hash::default(),
-        );
-
-        assert!(tx.verify_precompiles(&feature_set).is_ok());
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
 
         let index = loop {
             let index = thread_rng().gen_range(0, instruction.data.len());
@@ -361,13 +350,7 @@ pub mod tests {
         };
 
         instruction.data[index] = instruction.data[index].wrapping_add(12);
-        let tx = Transaction::new_signed_with_payer(
-            &[instruction],
-            Some(&mint_keypair.pubkey()),
-            &[&mint_keypair],
-            Hash::default(),
-        );
-        assert!(tx.verify_precompiles(&feature_set).is_err());
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_err());
     }
 
     #[test]
@@ -411,17 +394,9 @@ pub mod tests {
             instruction.data.extend_from_slice(message);
         }
 
-        let mint_keypair = Keypair::new();
         let feature_set = FeatureSet::all_enabled();
 
-        let tx = Transaction::new_signed_with_payer(
-            &[instruction.clone()],
-            Some(&mint_keypair.pubkey()),
-            &[&mint_keypair],
-            Hash::default(),
-        );
-
-        assert!(tx.verify_precompiles(&feature_set).is_ok());
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
 
         let index = loop {
             let index = thread_rng().gen_range(0, instruction.data.len());
@@ -432,36 +407,23 @@ pub mod tests {
         };
 
         instruction.data[index] = instruction.data[index].wrapping_add(12);
-        let tx = Transaction::new_signed_with_payer(
-            &[instruction],
-            Some(&mint_keypair.pubkey()),
-            &[&mint_keypair],
-            Hash::default(),
-        );
-        assert!(tx.verify_precompiles(&feature_set).is_err());
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_err());
     }
 
     #[test]
     fn test_ed25519_malleability() {
         solana_logger::setup();
-        let mint_keypair = Keypair::new();
 
         // sig created via ed25519_dalek: both pass
         let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
         let message_arr = b"hello";
         let instruction = new_ed25519_instruction(&privkey, message_arr);
-        let tx = Transaction::new_signed_with_payer(
-            &[instruction.clone()],
-            Some(&mint_keypair.pubkey()),
-            &[&mint_keypair],
-            Hash::default(),
-        );
 
         let feature_set = FeatureSet::default();
-        assert!(tx.verify_precompiles(&feature_set).is_ok());
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
 
         let feature_set = FeatureSet::all_enabled();
-        assert!(tx.verify_precompiles(&feature_set).is_ok());
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
 
         // malleable sig: verify_strict does NOT pass
         // for example, test number 5:
@@ -473,17 +435,12 @@ pub mod tests {
         let signature = &hex::decode("00000000000000000000000000000000000000000000000000000000000000009472a69cd9a701a50d130ed52189e2455b23767db52cacb8716fb896ffeeac09").unwrap();
         let message = b"ed25519vectors 3";
         let instruction = new_ed25519_instruction_raw(pubkey, signature, message);
-        let tx = Transaction::new_signed_with_payer(
-            &[instruction.clone()],
-            Some(&mint_keypair.pubkey()),
-            &[&mint_keypair],
-            Hash::default(),
-        );
 
         let feature_set = FeatureSet::default();
-        assert!(tx.verify_precompiles(&feature_set).is_ok());
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
 
+        // verify_strict does NOT pass
         let feature_set = FeatureSet::all_enabled();
-        assert!(tx.verify_precompiles(&feature_set).is_err()); // verify_strict does NOT pass
+        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_err());
     }
 }
