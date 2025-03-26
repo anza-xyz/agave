@@ -77,14 +77,11 @@ use {
 // the new rule i am going to enforce is we *only* report token balances if the mint existed already
 // we dont do any mint tracking. that shit is like 80% of the problem with this
 
-// HANA idk struct maybe
-pub type BalanceInfo = (TransactionBalancesSet, TransactionTokenBalancesSet);
-
 pub fn calculate_transaction_balances(
     batch: &TransactionBatch<impl TransactionWithMeta>,
     processing_results: &[TransactionProcessingResult],
     bank: &Arc<Bank>,
-) -> BalanceInfo {
+) -> (TransactionBalancesSet, TransactionTokenBalancesSet) {
     // running pre-balances and current mint decimals as we step through results
     let mut native: HashMap<Pubkey, u64> = HashMap::default();
     let mut token: HashMap<Pubkey, Option<TokenBalanceData>> = HashMap::default();
@@ -154,7 +151,7 @@ pub fn calculate_transaction_balances(
             // get pre- and post-balances together. we only report balances for mints that exist prior to the batch
             // this can produce incorrect UiAmount in pathological cases of closing and reopening mints
             // but since mints can only be done when supply is 0, this does not affect any real usecase
-            for (index, (key, account)) in result_accounts.into_iter().enumerate() {
+            for (index, (key, account)) in result_accounts.iter().enumerate() {
                 // if the transaction succeeded and either of these are true, this cannot be a token account
                 if transaction.is_invoked(index) || is_known_spl_token_id(key) {
                     continue;
@@ -163,9 +160,9 @@ pub fn calculate_transaction_balances(
                 // get the pre-balance. this implicitly stores decimals for the mint, if it exists
                 // push it, and keep working with this key regardless of whether it exists
                 if let Some(pre_token_state) =
-                    collect_token_balance_from_account(&mut token, &bank, &key, &mut mint_decimals)
+                    collect_token_balance_from_account(&mut token, bank, key, &mut mint_decimals)
                 {
-                    tx_token_pre.push(pre_token_state.to_transaction_balance(index as u8));
+                    tx_token_pre.push(pre_token_state.into_transaction_balance(index as u8));
                 }
 
                 // we now look at the state post-execution
@@ -183,8 +180,8 @@ pub fn calculate_transaction_balances(
                 {
                     process_and_store_token_balance(
                         &mut token,
-                        &bank,
-                        &key,
+                        bank,
+                        key,
                         token_account,
                         account.owner(),
                         &mut mint_decimals,
@@ -196,9 +193,9 @@ pub fn calculate_transaction_balances(
 
                 // now get the post-execution token balance
                 if let Some(post_token_state) =
-                    collect_token_balance_from_account(&mut token, &bank, &key, &mut mint_decimals)
+                    collect_token_balance_from_account(&mut token, bank, key, &mut mint_decimals)
                 {
-                    tx_token_post.push(post_token_state.to_transaction_balance(index as u8));
+                    tx_token_post.push(post_token_state.into_transaction_balance(index as u8));
                 }
             }
         }

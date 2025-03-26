@@ -95,7 +95,7 @@ pub(crate) struct TokenBalanceData {
 }
 
 impl TokenBalanceData {
-    pub(crate) fn to_transaction_balance(self, account_index: u8) -> TransactionTokenBalance {
+    pub(crate) fn into_transaction_balance(self, account_index: u8) -> TransactionTokenBalance {
         TransactionTokenBalance {
             account_index,
             mint: self.mint,
