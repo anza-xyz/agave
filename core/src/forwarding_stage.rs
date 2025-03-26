@@ -180,7 +180,6 @@ impl<F: ForwardAddressGetter> LeaderUpdater for ForwardingStageLeaderUpdater<F> 
 type TpuClientJoinHandle =
     TokioJoinHandle<Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>>;
 
-// TODO(klykov): make this stoppable somehow?
 struct TpuClientNextClient<F: ForwardAddressGetter> {
     runtime_handle: RuntimeHandle,
     sender: mpsc::Sender<TransactionBatch>,
@@ -208,7 +207,7 @@ impl<F: ForwardAddressGetter> TpuClientNextClient<F> {
         let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
-            "forwarding-stage-TPU-client",
+            "forwarding-stage-tpu-client",
             METRICS_REPORTING_INTERVAL,
             cancel.clone(),
         ));
@@ -699,14 +698,14 @@ mod tests {
 
     /// Addresses to use for forwarding.
     #[derive(Clone)]
-    pub struct ForwardingAddresses {
+    pub struct ForwardingAddressesForTest {
         /// Forwarding address for TPU (non-votes)
         pub tpu: Option<SocketAddr>,
         /// Forwarding address for votes
         pub tpu_vote: Option<SocketAddr>,
     }
 
-    impl ForwardAddressGetter for ForwardingAddresses {
+    impl ForwardAddressGetter for ForwardingAddressesForTest {
         fn get_non_vote_forwarding_addresses(
             &self,
             max_count: u64,
@@ -769,21 +768,24 @@ mod tests {
             .set_read_timeout(Some(Duration::from_millis(10)))
             .unwrap();
 
-        let forwarding_addresses = ForwardingAddresses {
+        let forwarding_addresses = ForwardingAddressesForTest {
             tpu_vote: Some(vote_socket.local_addr().unwrap()),
             tpu: Some(non_vote_socket.local_addr().unwrap()),
         };
 
         let (packet_batch_sender, packet_batch_receiver) = unbounded();
         let connection_cache = Arc::new(ConnectionCache::with_udp("connection_cache_test", 1));
+        let non_vote_client =
+            ConnectionCacheClient::new(connection_cache, forwarding_addresses.clone());
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
         let root_bank_cache = RootBankCache::new(bank_forks);
+        let vote_client = VoteClient::new(forwarding_addresses);
         let mut forwarding_stage = ForwardingStage::new(
             packet_batch_receiver,
-            connection_cache,
+            vote_client,
+            non_vote_client,
             root_bank_cache,
-            forwarding_addresses,
             DataBudget::default(),
         );
 
