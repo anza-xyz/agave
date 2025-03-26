@@ -1,11 +1,13 @@
 [package]
 name = "agave-feature-set"
 version = { workspace = true }
+description = "Solana runtime feature declarations"
 authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+readme = false
 
 [dependencies]
 ahash = { workspace = true }
