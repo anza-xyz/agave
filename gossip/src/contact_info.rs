@@ -234,6 +234,10 @@ impl ContactInfo {
     pub fn wallclock(&self) -> u64 {
         self.wallclock
     }
+    #[inline]
+    pub fn outset(&self) -> u64 {
+        self.outset
+    }
 
     #[inline]
     pub fn shred_version(&self) -> u16 {
