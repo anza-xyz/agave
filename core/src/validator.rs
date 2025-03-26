@@ -2770,8 +2770,7 @@ pub fn is_snapshot_config_valid(snapshot_config: &SnapshotConfig) -> bool {
     } else if incremental_snapshot_interval_slots == 0 {
         false
     } else {
-        full_snapshot_interval_slots % incremental_snapshot_interval_slots == 0
-            && full_snapshot_interval_slots > incremental_snapshot_interval_slots
+        full_snapshot_interval_slots > incremental_snapshot_interval_slots
     }
 }
 
@@ -3157,7 +3156,7 @@ mod tests {
             }
         }
 
-        assert!(is_snapshot_config_valid(&new_snapshot_config(300, 100)));
+        assert!(is_snapshot_config_valid(&new_snapshot_config(300, 200)));
 
         assert!(is_snapshot_config_valid(&new_snapshot_config(
             snapshot_bank_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
@@ -3176,20 +3175,24 @@ mod tests {
             DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
         )));
 
+        // Full snaphot intervals used to be required to be a multiple of
+        // incremental snapshot intervals, but that's no longer the case
+        // so test that the check is relaxed.
+        assert!(is_snapshot_config_valid(&new_snapshot_config(100, 42)));
+        assert!(is_snapshot_config_valid(&new_snapshot_config(444, 200)));
+        assert!(is_snapshot_config_valid(&new_snapshot_config(400, 222)));
+
         assert!(!is_snapshot_config_valid(&new_snapshot_config(0, 100)));
         assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 0)));
         assert!(!is_snapshot_config_valid(&new_snapshot_config(0, 0)));
         assert!(!is_snapshot_config_valid(&new_snapshot_config(42, 100)));
-        assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 42)));
         assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 100)));
         assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 200)));
-        assert!(!is_snapshot_config_valid(&new_snapshot_config(444, 200)));
-        assert!(!is_snapshot_config_valid(&new_snapshot_config(400, 222)));
 
         assert!(is_snapshot_config_valid(&SnapshotConfig::new_load_only()));
         assert!(is_snapshot_config_valid(&SnapshotConfig {
-            full_snapshot_archive_interval_slots: 41,
-            incremental_snapshot_archive_interval_slots: 37,
+            full_snapshot_archive_interval_slots: 37,
+            incremental_snapshot_archive_interval_slots: 41,
             ..SnapshotConfig::new_load_only()
         }));
         assert!(is_snapshot_config_valid(&SnapshotConfig {

@@ -1010,8 +1010,6 @@ pub fn execute(
     if !is_snapshot_config_valid(&validator_config.snapshot_config) {
         Err(
             "invalid snapshot configuration provided: snapshot intervals are incompatible. \
-             \n\t- full snapshot interval MUST be a multiple of incremental snapshot interval \
-             (if enabled) \
              \n\t- full snapshot interval MUST be larger than incremental snapshot interval \
              (if enabled)"
                 .to_string(),
