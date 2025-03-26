@@ -209,7 +209,7 @@ pub struct PropagatedStats {
     pub is_leader_slot: bool,
     pub prev_leader_slot: Option<Slot>,
     pub slot_vote_tracker: Option<Arc<RwLock<SlotVoteTracker>>>,
-    pub cluster_slot_pubkeys: Option<Arc<RwLock<SlotPubkeys>>>,
+    pub cluster_slot_pubkeys: Option<Arc<SlotPubkeys>>,
     pub total_epoch_stake: u64,
 }
 
