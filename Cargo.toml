@@ -372,7 +372,7 @@ solana-big-mod-exp = "=2.2.1"
 solana-bincode = "=2.2.1"
 solana-blake3-hasher = "=2.2.1"
 solana-bloom = { path = "bloom", version = "=2.2.6" }
-solana-bn254 = "=2.2.1"
+solana-bn254 = "=2.2.2"
 solana-borsh = "=2.2.1"
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=2.2.6" }
 solana-bucket-map = { path = "bucket_map", version = "=2.2.6" }

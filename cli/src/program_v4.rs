@@ -51,7 +51,7 @@ use {
     },
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
-    solana_sdk_ids::{loader_v4, system_program},
+    solana_sdk_ids::loader_v4,
     solana_signer::Signer,
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction::Transaction,
@@ -116,6 +116,7 @@ pub enum ProgramV4CliCommand {
         authority_signer_index: SignerIndex,
         next_version_signer_index: SignerIndex,
     },
+    // Retract
     Show {
         account_pubkey: Option<Pubkey>,
         authority: Pubkey,
@@ -605,15 +606,21 @@ pub fn process_program_v4_subcommand(
 }
 
 // This function can be used for the following use-cases
-// * Deploy a new program
+// * Upload a new buffer account without deploying it (preparation for two-step redeployment)
+//   - buffer_address must be `Some(program_signer.pubkey())`
+//   - upload_signer_index must be `Some(program_signer_index)`
+// * Upload a new program account and deploy it
 //   - buffer_address must be `None`
 //   - upload_signer_index must be `Some(program_signer_index)`
-// * Redeploy an exisiting program using the original program account
+// * Single-step redeploy an exisiting program using the original program account
 //   - buffer_address must be `None`
 //   - upload_signer_index must be `None`
-// * Redeploy an exisiting program using a buffer account
+// * Single-step redeploy an exisiting program using a buffer account
 //   - buffer_address must be `Some(buffer_signer.pubkey())`
 //   - upload_signer_index must be `Some(buffer_signer_index)`
+// * Two-step redeploy an exisiting program using a buffer account
+//   - buffer_address must be `Some(buffer_signer.pubkey())`
+//   - upload_signer_index must be None
 pub fn process_deploy_program(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig,
@@ -633,7 +640,10 @@ pub fn process_deploy_program(
         .get_account_with_commitment(program_address, config.commitment)?
         .value;
     let program_account_exists = program_account.is_some();
-    if buffer_address.is_some() != upload_signer_index.is_some() {
+    if upload_signer_index
+        .map(|index| &config.signers[*index].pubkey() == program_address)
+        .unwrap_or(false)
+    {
         // Deploy new program
         if program_account_exists {
             return Err("Program account does exist already. Did you perhaps intent to redeploy an existing program instead? Then use --program-id instead of --program-keypair.".into());
@@ -791,7 +801,10 @@ pub fn process_deploy_program(
     }
 
     // Create and add deploy messages
-    let final_messages = vec![if buffer_address.is_some() {
+    let final_messages = if buffer_address == Some(program_address) {
+        // Upload to buffer only and skip actual deployment
+        Vec::new()
+    } else if buffer_address.is_some() {
         // Redeploy with a buffer account
         let mut instructions = Vec::default();
         if let Some(retract_instruction) = retract_instruction {
@@ -802,14 +815,17 @@ pub fn process_deploy_program(
             &authority_pubkey,
             upload_address,
         ));
-        instructions
+        vec![instructions]
     } else {
         // Deploy new program or redeploy without a buffer account
         if let Some(retract_instruction) = retract_instruction {
             initial_messages.insert(0, vec![retract_instruction]);
         }
-        vec![instruction::deploy(program_address, &authority_pubkey)]
-    }];
+        vec![vec![instruction::deploy(
+            program_address,
+            &authority_pubkey,
+        )]]
+    };
 
     send_messages(
         rpc_client,
@@ -899,7 +915,7 @@ fn process_transfer_authority_of_program(
         messages,
         Vec::default(),
         Vec::default(),
-        None,
+        Some(new_auth_signer_index),
         0,
         config.output_format.formatted_string(&CliProgramId {
             program_id: program_address.to_string(),
@@ -1023,12 +1039,12 @@ fn send_messages(
     initial_messages: Vec<Vec<Instruction>>,
     write_messages: Vec<Vec<Instruction>>,
     final_messages: Vec<Vec<Instruction>>,
-    program_signer_index: Option<&SignerIndex>,
+    extra_signer_index: Option<&SignerIndex>,
     balance_needed: u64,
     ok_result: String,
 ) -> ProcessResult {
     let payer_pubkey = config.signers[0].pubkey();
-    let program_signer = program_signer_index.map(|index| config.signers[*index]);
+    let extra_signer = extra_signer_index.map(|index| config.signers[*index]);
     let blockhash = additional_cli_config
         .blockhash_query
         .get_blockhash(&rpc_client, config.commitment)?;
@@ -1102,20 +1118,22 @@ fn send_messages(
     };
 
     for message in initial_messages.into_iter() {
-        let signers: &[_] = if message.account_keys.contains(&system_program::id()) {
-            // The initial message that creates and initializes the account
-            // has up to 3 signatures (payer, program, and authority).
-            if let Some(initial_signer) = program_signer {
-                &[
-                    config.signers[0],
-                    initial_signer,
-                    config.signers[*auth_signer_index],
-                ]
-            } else {
-                return Err("Buffer account not created yet, must provide a key pair".into());
-            }
+        let use_extra_signer = extra_signer
+            .and_then(|keypair| {
+                message
+                    .account_keys
+                    .iter()
+                    .position(|pubkey| pubkey == &keypair.pubkey())
+            })
+            .map(|index_in_message| message.is_signer(index_in_message))
+            .unwrap_or(false);
+        let signers: &[_] = if use_extra_signer {
+            &[
+                config.signers[0],
+                config.signers[*auth_signer_index],
+                extra_signer.unwrap(),
+            ]
         } else {
-            // All other messages have up to 2 signatures (payer, and authority).
             &[config.signers[0], config.signers[*auth_signer_index]]
         };
         let result = send_or_return_message(message, signers)?;
@@ -1489,6 +1507,19 @@ mod tests {
         .is_ok());
 
         assert!(process_deploy_program(
+            Arc::new(rpc_client_no_existing_program()),
+            &config,
+            &AdditionalCliConfig::default(),
+            &program_signer.pubkey(),
+            Some(&program_signer.pubkey()),
+            Some(&1),
+            &2,
+            &program_data,
+            None..None,
+        )
+        .is_ok());
+
+        assert!(process_deploy_program(
             Arc::new(rpc_client_wrong_account_owner()),
             &config,
             &AdditionalCliConfig::default(),
@@ -1831,6 +1862,35 @@ mod tests {
                     additional_cli_config: AdditionalCliConfig::default(),
                     program_address: program_keypair.pubkey(),
                     buffer_address: None,
+                    upload_signer_index: Some(1),
+                    authority_signer_index: 0,
+                    path_to_elf: Some("/Users/test/program.so".to_string()),
+                    upload_range: None..None,
+                }),
+                signers: vec![
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&program_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program-v4",
+            "deploy",
+            "/Users/test/program.so",
+            "--program-id",
+            &program_keypair_file,
+            "--buffer",
+            &program_keypair_file,
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
+                    additional_cli_config: AdditionalCliConfig::default(),
+                    program_address: program_keypair.pubkey(),
+                    buffer_address: Some(program_keypair.pubkey()),
                     upload_signer_index: Some(1),
                     authority_signer_index: 0,
                     path_to_elf: Some("/Users/test/program.so".to_string()),
