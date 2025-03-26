@@ -773,8 +773,6 @@ fn cmp_requests_by_priority(a: &SnapshotRequest, b: &SnapshotRequest) -> std::cm
 /// - Epoch Accounts Hash
 /// - Full Snapshot
 /// - Incremental Snapshot
-///
-/// If two `Snapshot`s are compared, their snapshot kinds are the tiebreaker.
 #[must_use]
 fn cmp_snapshot_request_kinds_by_priority(
     a: &SnapshotRequestKind,
