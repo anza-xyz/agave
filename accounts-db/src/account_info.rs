@@ -124,7 +124,7 @@ impl IsCached for StorageLocation {
 const CACHE_VIRTUAL_STORAGE_ID: AccountsFileId = AccountsFileId::MAX;
 
 impl AccountInfo {
-    pub fn new(storage_location: StorageLocation, lamports: u64) -> Self {
+    pub fn new(storage_location: StorageLocation, is_zero_lamport: bool) -> Self {
         let mut packed_offset_and_flags = PackedOffsetAndFlags::default();
         let store_id = match storage_location {
             StorageLocation::AppendVec(store_id, offset) => {
@@ -146,7 +146,7 @@ impl AccountInfo {
                 CACHE_VIRTUAL_STORAGE_ID
             }
         };
-        packed_offset_and_flags.set_is_zero_lamport(lamports == 0);
+        packed_offset_and_flags.set_is_zero_lamport(is_zero_lamport);
         let account_offset_and_flags = AccountOffsetAndFlags {
             packed_offset_and_flags,
         };
@@ -202,7 +202,7 @@ mod test {
             ALIGN_BOUNDARY_OFFSET,
             4 * ALIGN_BOUNDARY_OFFSET,
         ] {
-            let info = AccountInfo::new(StorageLocation::AppendVec(0, offset), 0);
+            let info = AccountInfo::new(StorageLocation::AppendVec(0, offset), true);
             assert!(info.offset() == offset);
         }
     }
@@ -211,13 +211,13 @@ mod test {
     #[should_panic(expected = "illegal offset")]
     fn test_illegal_offset() {
         let offset = (MAXIMUM_APPEND_VEC_FILE_SIZE - (ALIGN_BOUNDARY_OFFSET as u64)) as Offset;
-        AccountInfo::new(StorageLocation::AppendVec(0, offset), 0);
+        AccountInfo::new(StorageLocation::AppendVec(0, offset), true);
     }
 
     #[test]
     #[should_panic(expected = "illegal offset")]
     fn test_alignment() {
         let offset = 1; // not aligned
-        AccountInfo::new(StorageLocation::AppendVec(0, offset), 0);
+        AccountInfo::new(StorageLocation::AppendVec(0, offset), true);
     }
 }
