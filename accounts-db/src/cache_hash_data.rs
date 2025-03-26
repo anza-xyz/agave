@@ -373,16 +373,8 @@ impl CacheHashData {
         self.stats
             .write_to_mmap_us
             .fetch_add(m2.as_us(), Ordering::Relaxed);
-<<<<<<< HEAD
-        self.stats
-            .flush_mmap_us
-            .fetch_add(measure_flush_us, Ordering::Relaxed);
         self.stats.save_us.fetch_add(m.as_us(), Ordering::Relaxed);
         self.stats.saved_to_cache.fetch_add(1, Ordering::Relaxed);
-=======
-        stats.save_us.fetch_add(m.as_us(), Ordering::Relaxed);
-        stats.saved_to_cache.fetch_add(1, Ordering::Relaxed);
->>>>>>> 9d662b889 (Stops flushing the accounts hash cache mmaps (#5490))
         Ok(())
     }
 }
