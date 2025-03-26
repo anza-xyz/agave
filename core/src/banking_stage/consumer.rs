@@ -1,7 +1,6 @@
 use {
     super::{
         committer::{CommitTransactionDetails, Committer},
-        immutable_deserialized_packet::ImmutableDeserializedPacket,
         leader_slot_metrics::{
             CommittedTransactionsCounts, LeaderSlotMetricsTracker, ProcessTransactionsSummary,
         },

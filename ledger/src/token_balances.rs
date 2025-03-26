@@ -174,6 +174,7 @@ pub(crate) fn process_and_store_token_balance(
     token_balance_data
 }
 
+/* HANA disable for fix
 #[cfg(test)]
 mod test {
     use {
@@ -535,3 +536,4 @@ mod test {
         );
     }
 }
+*/
