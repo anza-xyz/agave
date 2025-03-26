@@ -267,7 +267,7 @@ fn bank_forks_from_snapshot(
                     bank_snapshot.slot,
                     latest_snapshot_archive_slot,
                     use_snapshot_archives_at_startup::cli::LONG_ARG,
-                    UseSnapshotArchivesAtStartup::Never.to_string(),
+                    UseSnapshotArchivesAtStartup::Never,
                 );
             }
             Some(bank_snapshot)
