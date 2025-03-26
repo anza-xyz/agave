@@ -2362,26 +2362,6 @@ impl Bank {
         }
     }
 
-    fn assert_validator_rewards_paid(&self, validator_rewards_paid: u64) {
-        assert_eq!(
-            validator_rewards_paid,
-            u64::try_from(
-                self.rewards
-                    .read()
-                    .unwrap()
-                    .par_iter()
-                    .map(|(_address, reward_info)| {
-                        match reward_info.reward_type {
-                            RewardType::Voting | RewardType::Staking => reward_info.lamports,
-                            _ => 0,
-                        }
-                    })
-                    .sum::<i64>()
-            )
-            .unwrap()
-        );
-    }
-
     fn filter_stake_delegations<'a>(
         &self,
         stakes: &'a Stakes<StakeAccount<Delegation>>,
