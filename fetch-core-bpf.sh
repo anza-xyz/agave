@@ -6,7 +6,9 @@
 
 set -e
 
-source fetch-programs.sh
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+
+source "$here"/fetch-programs.sh
 
 PREFIX="core-bpf"
 
