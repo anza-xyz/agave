@@ -8,7 +8,6 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
-readme = false
 
 [dependencies]
 bincode = { workspace = true }
