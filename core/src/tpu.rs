@@ -3,11 +3,9 @@
 
 pub use solana_sdk::net::DEFAULT_TPU_COALESCE;
 
-// TODO(klykov): maybe will not be need
 pub use crate::forwarding_stage::ForwardingClientOption;
 
 // allow multiple connections for NAT and any open/close overlap
-use crate::forwarding_stage::spawn_with_tpu_client_next;
 #[deprecated(
     since = "2.2.0",
     note = "Use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER instead"
@@ -23,7 +21,7 @@ use {
             VerifiedVoteSender, VoteTracker,
         },
         fetch_stage::FetchStage,
-        forwarding_stage::spawn_with_connection_cache,
+        forwarding_stage::spawn_forwarding_stage,
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
@@ -371,27 +369,13 @@ impl Tpu {
             prioritization_fee_cache,
         );
 
-        let forwarding_stage = match client {
-            ForwardingClientOption::ConnectionCache(connection_cache) => {
-                spawn_with_connection_cache(
-                    forward_stage_receiver,
-                    connection_cache.clone(),
-                    RootBankCache::new(bank_forks.clone()),
-                    (cluster_info.clone(), poh_recorder.clone()),
-                    DataBudget::default(),
-                )
-            }
-            ForwardingClientOption::TpuClientNext((stake_identity, tpu_runtime_handle)) => {
-                spawn_with_tpu_client_next(
-                    forward_stage_receiver,
-                    Some(stake_identity),
-                    tpu_runtime_handle,
-                    RootBankCache::new(bank_forks.clone()),
-                    (cluster_info.clone(), poh_recorder.clone()),
-                    DataBudget::default(),
-                )
-            }
-        };
+        let forwarding_stage = spawn_forwarding_stage(
+            forward_stage_receiver,
+            client,
+            RootBankCache::new(bank_forks.clone()),
+            (cluster_info.clone(), poh_recorder.clone()),
+            DataBudget::default(),
+        );
 
         let (entry_receiver, tpu_entry_notifier) =
             if let Some(entry_notification_sender) = entry_notification_sender {
