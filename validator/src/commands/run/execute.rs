@@ -397,7 +397,6 @@ pub fn execute(
         };
 
     let mut accounts_index_config = AccountsIndexConfig {
-        started_from_validator: true, // this is the only place this is set
         num_flush_threads: Some(accounts_index_flush_threads),
         ..AccountsIndexConfig::default()
     };

@@ -978,10 +978,7 @@ impl TestValidator {
         }
 
         let accounts_db_config = Some(AccountsDbConfig {
-            index: Some(AccountsIndexConfig {
-                started_from_validator: true,
-                ..AccountsIndexConfig::default()
-            }),
+            index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
             ..AccountsDbConfig::default()
         });
