@@ -8,8 +8,10 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    std::cmp::Ordering,
-    std::sync::{Arc, RwLock},
+    std::{
+        cmp::Ordering,
+        sync::{Arc, RwLock},
+    },
 };
 
 /// hold a ref to an account to store. The account could be represented in memory a few different ways
