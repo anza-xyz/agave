@@ -52,13 +52,12 @@ for file in "${files[@]}"; do
 
   # crates.io will reject publication if certain fields are not populated
   # https://doc.rust-lang.org/cargo/reference/publishing.html#before-publishing-a-new-crate
-  IFS=$'\t' read -r lic licf desc home repo readme < <(toml get "$file" . | jq -r "
+  IFS=$'\t' read -r lic licf desc home repo < <(toml get "$file" . | jq -r "
     (.package.license | tojson)\
     +\"\t\"+(.package.license_file | tojson)\
     +\"\t\"+(.package.description | tojson)\
     +\"\t\"+(.package.homepage | tojson)\
     +\"\t\"+(.package.repository | tojson)\
-    +\"\t\"+(.package.readme | tojson)\
   ")
 
   declare missing_metadata=()
@@ -81,11 +80,6 @@ for file in "${files[@]}"; do
     missing_metadata+=( "repository" )
   else
     echo "✅ repository"
-  fi
-  if [ "$readme" = "null" ]; then
-    missing_metadata+=( "readme" )
-  else
-    echo "✅ readme"
   fi
 
   if [ ${#missing_metadata[@]} -ne 0 ]; then
