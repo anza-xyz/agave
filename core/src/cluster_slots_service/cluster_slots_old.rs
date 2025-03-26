@@ -30,7 +30,7 @@ pub struct ClusterSlots {
 }
 
 impl ClusterSlots {
-    pub(crate) fn lookup(&self, slot: Slot) -> Option<Arc<RwLock<SlotPubkeys>>> {
+    pub fn lookup(&self, slot: Slot) -> Option<Arc<RwLock<SlotPubkeys>>> {
         self.cluster_slots.read().unwrap().get(&slot).cloned()
     }
 
@@ -95,17 +95,19 @@ impl ClusterSlots {
         root: Slot,
         slots: Range<Slot>,
     ) {
-        assert!(slots.start > root);
         let mut epochslots = Vec::with_capacity(stakes.len());
         let slots_vec: Vec<u64> = slots.clone().collect();
-        for (pk, _) in stakes.iter() {
-            let mut epoch_slot = EpochSlots {
-                from: *pk,
-                ..Default::default()
-            };
+        if !slots_vec.is_empty() {
+            assert!(slots.start > root);
+            for (pk, _) in stakes.iter() {
+                let mut epoch_slot = EpochSlots {
+                    from: *pk,
+                    ..Default::default()
+                };
 
-            epoch_slot.fill(&slots_vec, slots.start);
-            epochslots.push(epoch_slot);
+                epoch_slot.fill(&slots_vec, slots.start);
+                epochslots.push(epoch_slot);
+            }
         }
         self.update_internal(root, &stakes, epochslots, 100000000);
     }
@@ -116,17 +118,19 @@ impl ClusterSlots {
         root: u64,
         slots: Range<Slot>,
     ) {
-        assert!(slots.start > root);
         let mut epochslots = Vec::with_capacity(stakes.len());
         let slots_vec: Vec<u64> = slots.clone().collect();
-        for (pk, _) in stakes.iter() {
-            let mut epoch_slot = EpochSlots {
-                from: *pk,
-                ..Default::default()
-            };
+        if !slots_vec.is_empty() {
+            assert!(slots.start > root);
+            for (pk, _) in stakes.iter() {
+                let mut epoch_slot = EpochSlots {
+                    from: *pk,
+                    ..Default::default()
+                };
 
-            epoch_slot.fill(&slots_vec, slots.start);
-            epochslots.push(epoch_slot);
+                epoch_slot.fill(&slots_vec, slots.start);
+                epochslots.push(epoch_slot);
+            }
         }
         self.update_internal_fp(root, &stakes, epochslots, 100000000);
     }
