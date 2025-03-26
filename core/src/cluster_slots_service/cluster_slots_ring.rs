@@ -8,11 +8,8 @@ use {
     solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
     std::{
         collections::{HashMap, VecDeque},
-        ops::{DerefMut, Range},
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            Arc, Mutex, RwLock,
-        },
+        ops::Range,
+        sync::{Arc, Mutex, RwLock},
     },
 };
 
@@ -22,7 +19,7 @@ use {
 // if we are really really far behind.
 const CLUSTER_SLOTS_TRIM_SIZE: usize = 5000;
 // Make hashmaps this many times bigger to reduce collisions
-const HASHMAP_OVERSIZE: usize = 4;
+const HASHMAP_OVERSIZE: usize = 2;
 
 pub(crate) type SlotPubkeys =
     DashMap</*node:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>;
@@ -168,7 +165,6 @@ impl ClusterSlots {
 
         let mut slots_to_patch = HashMap::with_capacity(1024);
         for epoch_slots in epoch_slots_list {
-            
             //filter out unstaked nodes
             let Some(sender_stake) = validator_stakes.get(&epoch_slots.from) else {
                 continue;
@@ -291,33 +287,29 @@ impl ClusterSlots {
     }
 }
 
-type RowContent = (Slot, AtomicU64, Arc<SlotPubkeys2>);
 #[derive(Default)]
 pub struct ClusterSlots2 {
-    cluster_slots: RwLock<VecDeque<RowContent>>,
+    cluster_slots: RwLock<VecDeque<(Slot, Arc<SlotPubkeys2>)>>,
     validator_stakes: RwLock<Arc<HashMap<Pubkey, u64>>>,
-    total_stake: AtomicU64,
-    pub total_writes: AtomicU64,
     epoch: RwLock<Option<u64>>,
     cursor: Mutex<Cursor>,
     last_report: AtomicInterval,
 }
 
 impl ClusterSlots2 {
-    #[inline]
     pub fn lookup(&self, slot: Slot) -> Option<Arc<SlotPubkeys2>> {
         let cluster_slots = self.cluster_slots.read().unwrap();
-        Some(Self::_lookup(slot, &cluster_slots)?.2.clone())
+        Self::_lookup(slot, &cluster_slots).cloned()
     }
 
-    #[inline]
-    fn _lookup(slot: Slot, cluster_slots: &VecDeque<RowContent>) -> Option<&RowContent> {
-        let start = cluster_slots.front()?.0;
-        if slot < start {
-            return None;
-        }
-        let idx = slot - start;
-        cluster_slots.get(idx as usize)
+    fn _lookup(
+        slot: Slot,
+        cluster_slots: &VecDeque<(Slot, Arc<SlotPubkeys2>)>,
+    ) -> Option<&Arc<SlotPubkeys2>> {
+        let idx = cluster_slots
+            .binary_search_by_key(&slot, |(s, _)| *s)
+            .ok()?;
+        Some(&cluster_slots[idx].1)
     }
 
     pub(crate) fn update(
@@ -345,14 +337,13 @@ impl ClusterSlots2 {
     // This should not be called during normal operation!
     fn initialize_cluster_slots(
         slot_range: &Range<Slot>,
-        cluster_slots: &mut VecDeque<RowContent>,
+        cluster_slots: &mut VecDeque<(Slot, Arc<SlotPubkeys2>)>,
         capacity: usize,
     ) {
         assert!(cluster_slots.is_empty());
         for slot in slot_range.clone() {
             cluster_slots.push_back((
                 slot,
-                AtomicU64::new(0),
                 Arc::new(RwLock::new(HashMap::with_capacity_and_hasher(
                     capacity,
                     PubkeyHasherBuilder::default(),
@@ -365,13 +356,9 @@ impl ClusterSlots2 {
     pub fn generate_fill_for_tests(
         &self,
         stakes: &HashMap<Pubkey, u64>,
-        root: Slot,
+        root: u64,
         slots: Range<Slot>,
     ) {
-        self.total_stake.store(
-            stakes.iter().map(|v| *v.1).sum(),
-            std::sync::atomic::Ordering::Relaxed,
-        );
         let mut epochslots = Vec::with_capacity(stakes.len());
         let slots_vec: Vec<u64> = slots.clone().collect();
         if !slots_vec.is_empty() {
@@ -396,7 +383,6 @@ impl ClusterSlots2 {
         epoch_slots_list: Vec<EpochSlots>,
         num_epoch_slots: u64,
     ) {
-        let total_stake = self.total_stake.load(std::sync::atomic::Ordering::Relaxed);
         // Discard slots at or before current root or too far ahead.
         let slot_range = (root + 1)
             ..root.saturating_add(num_epoch_slots.min(CLUSTER_SLOTS_TRIM_SIZE as u64 + 1));
@@ -410,38 +396,37 @@ impl ClusterSlots2 {
             }
             // discard and recycle outdated elements
             loop {
-                let (slot, _, _) = cluster_slots
+                let (slot, _) = cluster_slots
                     .front()
                     .expect("After initialization the ring buffer is not empty");
-                if *slot >= root {
+                if *slot < root + 1 {
+                    // pop useless record from the front
+                    let (_, map) = cluster_slots.pop_front().unwrap();
+                    // try to reuse its map allocation at the back of the datastructure
+                    let slot = cluster_slots.back().unwrap().0 + 1;
+                    let map = match Arc::try_unwrap(map) {
+                        Ok(map) => {
+                            map.write().unwrap().clear();
+                            map
+                        }
+                        // if we can not reuse just allocate a new one
+                        Err(_) => RwLock::new(HashMap::with_capacity_and_hasher(
+                            map_capacity,
+                            PubkeyHasherBuilder::default(),
+                        )),
+                    };
+                    cluster_slots.push_back((slot, Arc::new(map)));
+                } else {
                     break;
                 }
-                // pop useless record from the front
-                let (_, _, map) = cluster_slots.pop_front().unwrap();
-                // try to reuse its map allocation at the back of the datastructure
-                let slot = cluster_slots.back().unwrap().0 + 1;
-                let map = match Arc::try_unwrap(map) {
-                    Ok(map) => {
-                        map.write().unwrap().clear();
-                        map
-                    }
-                    // if we can not reuse just allocate a new one
-                    Err(_) => RwLock::new(HashMap::with_capacity_and_hasher(
-                        map_capacity,
-                        PubkeyHasherBuilder::default(),
-                    )),
-                };
-                cluster_slots.push_back((slot, AtomicU64::new(0), Arc::new(map)));
             }
             debug_assert!(cluster_slots.len() == CLUSTER_SLOTS_TRIM_SIZE);
         }
 
-        let cluster_slots = self.cluster_slots.read().unwrap();
-        let mut slots_to_patch =
-            HashMap::with_capacity_and_hasher(1024, PubkeyHasherBuilder::default());
+        let mut slots_to_patch = HashMap::with_capacity(1024);
         for epoch_slots in epoch_slots_list {
             //filter out unstaked nodes
-            let Some(&sender_stake) = validator_stakes.get(&epoch_slots.from) else {
+            let Some(sender_stake) = validator_stakes.get(&epoch_slots.from) else {
                 continue;
             };
             /*
@@ -449,35 +434,28 @@ impl ClusterSlots2 {
                 .get(&epoch_slots.from)
                 .cloned()
                 .unwrap_or(0);*/
+            let sender_stake = *sender_stake;
             let updates = epoch_slots
                 .to_slots(root)
                 .filter(|slot| slot_range.contains(slot));
             // figure out which entries would get updated by the new message and cache them
             for slot in updates {
-                let (_, slot_weight, _) = cluster_slots.get(slot as usize).unwrap();
-                let slot_weight = slot_weight.load(std::sync::atomic::Ordering::Relaxed) as f32;
-                if slot_weight / total_stake as f32 > 0.75 {
-                    continue;
-                }
                 let e = slots_to_patch
                     .entry(slot)
                     .or_insert_with(|| Vec::with_capacity(128));
-                self.total_writes.fetch_add(1, Ordering::Relaxed);
                 e.push((epoch_slots.from, sender_stake));
             }
         }
 
-        for (slot, patches) in slots_to_patch {
-            let (_, weight, map) = Self::_lookup(slot, &cluster_slots).unwrap();
-            let mut map_lock = map.write().unwrap();
-            let map_lock_ref = map_lock.deref_mut();
-            let mut weight_update = 0;
-            for (key, stake) in patches {
-                if map_lock_ref.insert(key, stake).is_none() {
-                    weight_update += stake;
-                };
+        {
+            let cluster_slots = self.cluster_slots.read().unwrap();
+            for (slot, patches) in slots_to_patch {
+                let mut map = Self::_lookup(slot, &cluster_slots)
+                    .unwrap()
+                    .write()
+                    .unwrap();
+                map.extend(patches);
             }
-            weight.fetch_add(weight_update, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -487,7 +465,7 @@ impl ClusterSlots2 {
 
         cluster_slots
             .iter()
-            .map(|(_slot, _confirmed, slot_pubkeys)| slot_pubkeys.read().unwrap().len())
+            .map(|(_slot, slot_pubkeys)| slot_pubkeys.read().unwrap().len())
             .sum::<usize>()
     }
 
@@ -517,8 +495,8 @@ impl ClusterSlots2 {
             let mut cluster_slots = self.cluster_slots.write().unwrap();
             let mut hm = HashMap::default();
             hm.insert(node_id, balance);
-            cluster_slots.push_back((slot, AtomicU64::new(0), Arc::new(RwLock::new(hm))));
-            cluster_slots.make_contiguous().sort_by_key(|(k, _, _)| *k);
+            cluster_slots.push_back((slot, Arc::new(RwLock::new(hm))));
+            cluster_slots.make_contiguous().sort_by_key(|(k, _)| *k);
         }
     }
 
@@ -528,10 +506,6 @@ impl ClusterSlots2 {
 
         if Some(root_epoch) != my_epoch {
             *self.validator_stakes.write().unwrap() = staked_nodes.clone();
-            self.total_stake.store(
-                staked_nodes.iter().map(|v| *v.1).sum(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
             *self.epoch.write().unwrap() = Some(root_epoch);
         }
     }
@@ -625,10 +599,16 @@ mod tests {
     #[test]
     fn test_update_new_multiple_slots() {
         let cs = ClusterSlots::default();
-        let mut epoch_slot1 = EpochSlots { from: Pubkey::new_unique(), ..Default::default() };
+        let mut epoch_slot1 = EpochSlots {
+            from: Pubkey::new_unique(),
+            ..Default::default()
+        };
         epoch_slot1.fill(&[2, 4, 5], 0);
         let from1 = epoch_slot1.from;
-        let mut epoch_slot2 = EpochSlots { from: Pubkey::new_unique(), ..Default::default() };
+        let mut epoch_slot2 = EpochSlots {
+            from: Pubkey::new_unique(),
+            ..Default::default()
+        };
         epoch_slot2.fill(&[1, 3, 5], 1);
         let from2 = epoch_slot2.from;
         cs.update_internal(
@@ -706,9 +686,9 @@ mod tests {
 
         // None of these validators have completed slot 9, so should
         // return nothing
-        let (w, i) = cs.compute_weights_exclude_nonfrozen(slot, &contact_infos);
-        assert!(w.is_empty());
-        assert!(i.is_empty());
+        assert!(cs
+            .compute_weights_exclude_nonfrozen(slot, &contact_infos)
+            .is_empty());
 
         // Give second validator max stake
         let validator_stakes: HashMap<_, _> = vec![(*contact_infos[1].pubkey(), u64::MAX / 2)]
@@ -720,9 +700,10 @@ mod tests {
         // even though it only has default stake, while the other validator has
         // max stake
         cs.insert_node_id(slot, *contact_infos[0].pubkey());
-        let (w, i) = cs.compute_weights_exclude_nonfrozen(slot, &contact_infos);
-        assert_eq!(w, [1]);
-        assert_eq!(i, [0]);
+        assert_eq!(
+            cs.compute_weights_exclude_nonfrozen(slot, &contact_infos),
+            vec![(1, 0)]
+        );
     }
 
     #[test]

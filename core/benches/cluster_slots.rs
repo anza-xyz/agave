@@ -12,7 +12,7 @@ const LOOKUP_SLOTS_TO_SIMULATE: usize = 100;
 const NUM_SLOTS_PER_EPOCH_SLOTS: u64 = 100;
 const NUM_NODES: usize = 1000;
 fn generate_stakes(num_nodes: usize) -> HashMap<Pubkey, u64> {
-    let nodes: Vec<_> = (0..num_nodes).map(|_| Pubkey::new_unique()).collect();
+    let nodes: Vec<_> = (0..num_nodes).map(|_| solana_pubkey::new_rand()).collect();
     let stakes = HashMap::from_iter(nodes.iter().map(|e| (*e, 42)));
     stakes
 }
