@@ -175,7 +175,6 @@ use {
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{
         collections::{HashMap, HashSet},
-        convert::TryFrom,
         fmt,
         ops::{AddAssign, RangeFull, RangeInclusive},
         path::PathBuf,
