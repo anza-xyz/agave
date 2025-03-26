@@ -19,7 +19,7 @@ use {
         stakes::Stakes,
     },
     dashmap::DashMap,
-    log::debug,
+    log::{debug, info},
     rayon::{
         iter::{IntoParallelRefIterator, ParallelIterator},
         ThreadPool,
@@ -116,8 +116,15 @@ impl Bank {
 
         let StakeRewardCalculationPartitioned {
             stake_rewards_by_partition,
-            total_stake_rewards_lamports: _total_stake_rewards_lamports,
+            total_stake_rewards_lamports,
         } = stake_rewards_by_partition;
+
+        // verify that we didn't pay any more than we expected to
+        assert!(point_value.rewards >= total_vote_rewards + total_stake_rewards_lamports);
+        info!(
+            "distributed vote rewards: {} out of {}, remaining {}",
+            total_vote_rewards, point_value.rewards, total_stake_rewards_lamports
+        );
 
         let (num_stake_accounts, num_vote_accounts) = {
             let stakes = self.stakes_cache.stakes();
