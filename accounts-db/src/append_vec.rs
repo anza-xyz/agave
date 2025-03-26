@@ -210,6 +210,20 @@ pub(crate) struct IndexInfoInner {
     pub data_len: u64,
 }
 
+impl ZeroLamport for IndexInfoInner {
+    #[inline(always)]
+    fn is_zero_lamport(&self) -> bool {
+        self.lamports == 0
+    }
+}
+
+impl ZeroLamport for IndexInfo {
+    #[inline(always)]
+    fn is_zero_lamport(&self) -> bool {
+        self.index_info.is_zero_lamport()
+    }
+}
+
 /// offsets to help navigate the persisted format of `AppendVec`
 #[derive(Debug)]
 struct AccountOffsets {
