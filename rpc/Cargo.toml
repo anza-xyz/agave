@@ -55,6 +55,7 @@ solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }

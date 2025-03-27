@@ -83,11 +83,11 @@ use {
             self, AddressLoader, MessageHash, SanitizedTransaction, TransactionError,
             VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
         },
-        transaction_context::TransactionAccount,
     },
     solana_send_transaction_service::send_transaction_service::TransactionInfo,
     solana_stake_program,
     solana_storage_bigtable::Error as StorageError,
+    solana_transaction_context::TransactionAccount,
     solana_transaction_status::{
         map_inner_instructions, BlockEncodingOptions, ConfirmedBlock,
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta,

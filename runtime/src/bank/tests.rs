@@ -101,7 +101,6 @@ use {
             Result, SanitizedTransaction, Transaction, TransactionError,
             TransactionVerificationMode,
         },
-        transaction_context::TransactionAccount,
     },
     solana_stake_program::stake_state::{self, StakeStateV2},
     solana_svm::{
@@ -112,6 +111,7 @@ use {
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::ExecuteTimings,
+    solana_transaction_context::TransactionAccount,
     solana_vote_program::{
         vote_instruction,
         vote_state::{
