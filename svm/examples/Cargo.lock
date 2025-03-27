@@ -7017,6 +7017,7 @@ dependencies = [
  "solana-streamer",
  "solana-svm",
  "solana-tpu-client",
+ "solana-transaction-context 2.3.0",
  "solana-transaction-status",
  "solana-version",
  "solana-vote",

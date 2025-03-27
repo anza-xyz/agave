@@ -73,7 +73,7 @@ pub use {
         error::EbpfError,
         vm::{get_runtime_environment_key, EbpfVm},
     },
-    solana_sdk::transaction_context::IndexOfAccount,
+    solana_transaction_context::IndexOfAccount,
 };
 
 pub mod programs;
