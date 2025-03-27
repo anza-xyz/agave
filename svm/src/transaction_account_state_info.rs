@@ -79,7 +79,7 @@ mod test {
             SanitizedMessage,
         },
         solana_rent::Rent,
-        solana_sdk::rent_collector::RentCollector,
+        solana_rent_collector::RentCollector,
         solana_signer::Signer,
         solana_transaction_context::TransactionContext,
         solana_transaction_error::TransactionError,

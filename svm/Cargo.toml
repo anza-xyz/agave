@@ -32,16 +32,18 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
+solana-loader-v3-interface = { workspace = true }
+solana-loader-v4-interface = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
-solana-program = { workspace = true, default-features = false }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
+solana-rent-collector = { workspace = true }
 solana-rent-debits = { workspace = true }
 solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }

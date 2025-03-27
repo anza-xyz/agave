@@ -24,8 +24,8 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::RentDue,
+    solana_rent_collector::{CollectedInfo, RENT_EXEMPT_RENT_EPOCH},
     solana_rent_debits::RentDebits,
-    solana_sdk::rent_collector::{CollectedInfo, RENT_EXEMPT_RENT_EPOCH},
     solana_sdk_ids::{
         native_loader,
         sysvar::{self, slot_history},
@@ -682,6 +682,7 @@ mod tests {
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
+        solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_message::{
             compiled_instruction::CompiledInstruction,
             v0::{LoadedAddresses, LoadedMessage},
@@ -689,14 +690,13 @@ mod tests {
         },
         solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
         solana_nonce::{self as nonce, versions::Versions as NonceVersions},
-        solana_program::bpf_loader_upgradeable::UpgradeableLoaderState,
         solana_program_runtime::execution_budget::{
             DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
+        solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_rent_debits::RentDebits,
-        solana_sdk::rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_sdk_ids::{
             bpf_loader, bpf_loader_upgradeable, native_loader, system_program, sysvar,
         },

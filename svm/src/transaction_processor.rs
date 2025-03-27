@@ -30,7 +30,10 @@ use {
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_log_collector::LogCollector,
     solana_measure::{measure::Measure, measure_us},
-    solana_message::compiled_instruction::CompiledInstruction,
+    solana_message::{
+        compiled_instruction::CompiledInstruction,
+        inner_instruction::{InnerInstruction, InnerInstructionsList},
+    },
     solana_nonce::{
         state::{DurableNonce, State as NonceState},
         versions::Versions as NonceVersions,
@@ -46,10 +49,7 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        inner_instruction::{InnerInstruction, InnerInstructionsList},
-        rent_collector::RentCollector,
-    },
+    solana_rent_collector::RentCollector,
     solana_sdk_ids::{native_loader, system_program},
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
@@ -1178,8 +1178,8 @@ mod tests {
             loaded_programs::{BlockRelation, ProgramCacheEntryType},
         },
         solana_rent::Rent,
+        solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_rent_debits::RentDebits,
-        solana_sdk::rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_sdk_ids::{bpf_loader, system_program, sysvar},
         solana_signature::Signature,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},

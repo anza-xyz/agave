@@ -122,7 +122,9 @@ mod tests {
             nid::Nid,
         },
         rand0_7::thread_rng,
-        solana_account::{AccountSharedData, ReadableAccount},
+        solana_account::{
+            Account, AccountSharedData, ReadableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+        },
         solana_ed25519_program::new_ed25519_instruction,
         solana_feature_set::FeatureSet,
         solana_hash::Hash,
@@ -137,13 +139,23 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_sdk::native_loader::create_loadable_account_for_test,
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
         solana_secp256k1_program::new_secp256k1_instruction,
         solana_secp256r1_program::new_secp256r1_instruction,
         solana_transaction_context::TransactionContext,
         std::sync::Arc,
     };
+
+    fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
+        let (lamports, rent_epoch) = DUMMY_INHERITABLE_ACCOUNT_FIELDS;
+        AccountSharedData::from(Account {
+            lamports,
+            owner: native_loader::id(),
+            data: name.as_bytes().to_vec(),
+            executable: true,
+            rent_epoch,
+        })
+    }
 
     fn new_sanitized_message(message: Message) -> SanitizedMessage {
         SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
