@@ -1427,18 +1427,8 @@ impl Bank {
             new.distribute_partitioned_epoch_rewards();
         });
 
-        let (_epoch, slot_index) = new.epoch_schedule.get_epoch_and_slot_index(new.slot);
-        let slots_in_epoch = new.epoch_schedule.get_slots_in_epoch(new.epoch);
-
-        let (_, cache_preparation_time_us) = measure_us!(new
-            .transaction_processor
-            .prepare_program_cache_for_upcoming_feature_set(
-                &new,
-                &new.compute_active_feature_set(true).0,
-                &new.compute_budget.unwrap_or_default().to_budget(),
-                slot_index,
-                slots_in_epoch,
-            ));
+        let (_, cache_preparation_time_us) =
+            measure_us!(new.prepare_program_cache_for_upcoming_feature_set());
 
         // Update sysvars before processing transactions
         let (_, update_sysvars_time_us) = measure_us!({
@@ -1531,6 +1521,20 @@ impl Bank {
             .write()
             .unwrap()
             .set_fork_graph(fork_graph);
+    }
+
+    fn prepare_program_cache_for_upcoming_feature_set(&self) {
+        let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
+        let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
+
+        self.transaction_processor
+            .prepare_program_cache_for_upcoming_feature_set(
+                self,
+                &self.compute_active_feature_set(true).0,
+                &self.compute_budget.unwrap_or_default().to_budget(),
+                slot_index,
+                slots_in_epoch,
+            );
     }
 
     pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
