@@ -20,7 +20,7 @@ use {
 // of receiving bogus epoch slots values.
 // This also constraints the size of the datastructure
 // if we are really far behind.
-const CLUSTER_SLOTS_TRIM_SIZE: usize = 5000;
+const CLUSTER_SLOTS_TRIM_SIZE: usize = 50000;
 
 pub(crate) type SlotPubkeys = HashMap</*node:*/ Pubkey, /*stake:*/ u64>;
 
@@ -89,6 +89,7 @@ impl ClusterSlots {
                 }
             }
         }
+
         let mut slots_to_patch = HashMap::with_capacity(1024);
         for epoch_slots in epoch_slots_list {
             //filter out unstaked nodes
@@ -116,8 +117,9 @@ impl ClusterSlots {
         {
             let cluster_slots = self.cluster_slots.read().unwrap();
             for (slot, patches) in slots_to_patch {
-                let mut slot_wg = cluster_slots.get(&slot).unwrap().write().unwrap();
-                slot_wg.extend(patches);
+                let map = cluster_slots.get(&slot).unwrap();
+                let mut map_wg = map.write().unwrap();
+                map_wg.extend(patches);
             }
         }
     }

@@ -8,7 +8,7 @@ use solana_core::cluster_slots_service::cluster_slots::{ClusterSlots, ClusterSlo
 use solana_pubkey::Pubkey;
 use test::{black_box, Bencher};
 
-const LOOKUP_SLOTS_TO_SIMULATE: usize = 100;
+const LOOKUP_SLOTS_TO_SIMULATE: usize = 1000;
 const NUM_SLOTS_PER_EPOCH_SLOTS: u64 = 100;
 const NUM_NODES: usize = 1000;
 fn generate_stakes(num_nodes: usize) -> HashMap<Pubkey, u64> {
@@ -33,6 +33,7 @@ fn bench_cluster_slots_update(bencher: &mut Bencher) {
         black_box(&cs);
         cur_slot += 1;
     });
+    dbg!(cur_slot);
     dbg!(cs.total_writes.load(Ordering::Relaxed));
 }
 /*
@@ -68,6 +69,7 @@ fn bench_cluster_slots_update_no_fp(bencher: &mut Bencher) {
         black_box(&cs);
         cur_slot += 1;
     });
+    dbg!(cur_slot);
     dbg!(cs.total_writes.load(Ordering::Relaxed));
 }
 /*
