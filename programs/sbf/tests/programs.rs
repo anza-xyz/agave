@@ -9,11 +9,11 @@
 
 #[cfg(feature = "sbf_rust")]
 use {
+    agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
     borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_runtime::{
         bank::Bank,
@@ -231,7 +231,7 @@ fn test_program_sbf_loader_deprecated() {
         } = create_genesis_config(50);
         genesis_config
             .accounts
-            .remove(&solana_feature_set::disable_deploy_of_alloc_free_syscall::id())
+            .remove(&agave_feature_set::disable_deploy_of_alloc_free_syscall::id())
             .unwrap();
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let program_id = create_program(&bank, &bpf_loader_deprecated::id(), program);
@@ -1908,7 +1908,7 @@ fn test_program_sbf_disguised_as_sbf_loader() {
             ..
         } = create_genesis_config(50);
         let mut bank = Bank::new_for_tests(&genesis_config);
-        bank.deactivate_feature(&solana_feature_set::remove_bpf_loader_incorrect_program_id::id());
+        bank.deactivate_feature(&agave_feature_set::remove_bpf_loader_incorrect_program_id::id());
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank);
         let authority_keypair = Keypair::new();

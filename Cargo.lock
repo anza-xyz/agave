@@ -204,6 +204,7 @@ dependencies = [
 name = "agave-ledger-tool"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "agave-reserved-account-keys",
  "assert_cmd",
  "bs58",
@@ -234,7 +235,6 @@ dependencies = [
  "solana-core",
  "solana-cost-model",
  "solana-entry",
- "solana-feature-set",
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-ledger",
@@ -265,6 +265,7 @@ dependencies = [
 name = "agave-precompiles"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "bincode",
  "bytemuck",
  "digest 0.10.7",
@@ -276,7 +277,6 @@ dependencies = [
  "rand 0.7.3",
  "sha3",
  "solana-ed25519-program",
- "solana-feature-set",
  "solana-instruction",
  "solana-keccak-hasher",
  "solana-logger",
@@ -292,8 +292,8 @@ dependencies = [
 name = "agave-reserved-account-keys"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "lazy_static",
- "solana-feature-set",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-message",
@@ -6319,6 +6319,7 @@ dependencies = [
 name = "solana-address-lookup-table-program"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "bincode",
  "bytemuck",
  "log",
@@ -6327,7 +6328,6 @@ dependencies = [
  "solana-address-lookup-table-interface",
  "solana-bincode",
  "solana-clock",
- "solana-feature-set",
  "solana-instruction",
  "solana-log-collector",
  "solana-packet",
@@ -6342,12 +6342,12 @@ dependencies = [
 name = "solana-address-lookup-table-program-tests"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "assert_matches",
  "bincode",
  "criterion",
  "solana-account",
  "solana-address-lookup-table-program",
- "solana-feature-set",
  "solana-instruction",
  "solana-program-runtime",
  "solana-program-test",
@@ -6425,12 +6425,12 @@ dependencies = [
 name = "solana-banks-server"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "bincode",
  "crossbeam-channel",
  "futures 0.3.31",
  "solana-banks-interface",
  "solana-client",
- "solana-feature-set",
  "solana-runtime",
  "solana-runtime-transaction",
  "solana-sdk",
@@ -6456,6 +6456,7 @@ dependencies = [
 name = "solana-bench-tps"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "chrono",
  "clap 2.33.3",
  "crossbeam-channel",
@@ -6473,7 +6474,6 @@ dependencies = [
  "solana-connection-cache",
  "solana-core",
  "solana-faucet",
- "solana-feature-set",
  "solana-genesis",
  "solana-gossip",
  "solana-local-cluster",
@@ -6600,6 +6600,7 @@ dependencies = [
 name = "solana-bpf-loader-program"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "agave-precompiles",
  "assert_matches",
  "bincode",
@@ -6621,7 +6622,6 @@ dependencies = [
  "solana-curve25519",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
- "solana-feature-set",
  "solana-fee-calculator",
  "solana-hash",
  "solana-instruction",
@@ -6692,11 +6692,11 @@ dependencies = [
 name = "solana-builtins"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
  "solana-config-program",
- "solana-feature-set",
  "solana-loader-v4-program",
  "solana-program-runtime",
  "solana-pubkey",
@@ -6712,6 +6712,7 @@ dependencies = [
 name = "solana-builtins-default-costs"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "ahash 0.8.11",
  "lazy_static",
  "log",
@@ -6722,7 +6723,6 @@ dependencies = [
  "solana-builtins-default-costs",
  "solana-compute-budget-program",
  "solana-config-program",
- "solana-feature-set",
  "solana-frozen-abi",
  "solana-loader-v4-program",
  "solana-pubkey",
@@ -6832,6 +6832,7 @@ dependencies = [
 name = "solana-cli"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "assert_matches",
  "bincode",
  "bs58",
@@ -6871,7 +6872,6 @@ dependencies = [
  "solana-faucet",
  "solana-feature-gate-client",
  "solana-feature-gate-interface",
- "solana-feature-set",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
@@ -7129,6 +7129,7 @@ dependencies = [
 name = "solana-compute-budget-instruction"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "bincode",
  "criterion",
  "log",
@@ -7137,7 +7138,6 @@ dependencies = [
  "solana-builtins-default-costs",
  "solana-compute-budget",
  "solana-compute-budget-interface",
- "solana-feature-set",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
@@ -7179,12 +7179,12 @@ dependencies = [
 name = "solana-compute-budget-program-bench"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "criterion",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
  "solana-compute-budget-program",
- "solana-feature-set",
  "solana-message",
  "solana-sdk-ids",
  "solana-svm-transaction",
@@ -7245,6 +7245,7 @@ name = "solana-core"
 version = "2.2.6"
 dependencies = [
  "agave-banking-stage-ingress-types",
+ "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-transaction-view",
  "ahash 0.8.11",
@@ -7294,7 +7295,6 @@ dependencies = [
  "solana-core",
  "solana-cost-model",
  "solana-entry",
- "solana-feature-set",
  "solana-fee",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
@@ -7354,6 +7354,7 @@ dependencies = [
 name = "solana-cost-model"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "agave-reserved-account-keys",
  "ahash 0.8.11",
  "itertools 0.12.1",
@@ -7369,7 +7370,6 @@ dependencies = [
  "solana-compute-budget-interface",
  "solana-compute-budget-program",
  "solana-cost-model",
- "solana-feature-set",
  "solana-fee-structure",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
@@ -7718,7 +7718,7 @@ dependencies = [
 name = "solana-fee"
 version = "2.2.6"
 dependencies = [
- "solana-feature-set",
+ "agave-feature-set",
  "solana-fee-structure",
  "solana-svm-transaction",
 ]
@@ -7795,6 +7795,7 @@ dependencies = [
 name = "solana-genesis"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "base64 0.22.1",
  "bincode",
  "clap 2.33.3",
@@ -7806,6 +7807,15 @@ dependencies = [
  "solana-clap-utils",
  "solana-cli-config",
  "solana-entry",
+<<<<<<< HEAD
+=======
+ "solana-epoch-schedule",
+ "solana-feature-gate-interface",
+ "solana-fee-calculator",
+ "solana-genesis-config",
+ "solana-inflation",
+ "solana-keypair",
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "solana-ledger",
  "solana-logger",
  "solana-rpc-client",
@@ -7895,6 +7905,12 @@ dependencies = [
 name = "solana-gossip"
 version = "2.2.6"
 dependencies = [
+<<<<<<< HEAD
+=======
+ "agave-feature-set",
+ "anyhow",
+ "arrayvec",
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "assert_matches",
  "bincode",
  "bs58",
@@ -7925,7 +7941,11 @@ dependencies = [
  "solana-client",
  "solana-connection-cache",
  "solana-entry",
+<<<<<<< HEAD
  "solana-feature-set",
+=======
+ "solana-epoch-schedule",
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-ledger",
@@ -8126,6 +8146,7 @@ dependencies = [
 name = "solana-ledger"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "agave-reserved-account-keys",
  "assert_matches",
  "bincode",
@@ -8166,7 +8187,6 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-cost-model",
  "solana-entry",
- "solana-feature-set",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-logger",
@@ -8839,6 +8859,7 @@ dependencies = [
 name = "solana-program-runtime"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "agave-precompiles",
  "assert_matches",
  "base64 0.22.1",
@@ -8854,7 +8875,11 @@ dependencies = [
  "solana-compute-budget",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
+<<<<<<< HEAD
  "solana-feature-set",
+=======
+ "solana-fee-structure",
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
@@ -8882,6 +8907,7 @@ dependencies = [
 name = "solana-program-test"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "assert_matches",
  "async-trait",
  "base64 0.22.1",
@@ -8896,7 +8922,6 @@ dependencies = [
  "solana-banks-server",
  "solana-bpf-loader-program",
  "solana-compute-budget",
- "solana-feature-set",
  "solana-inline-spl",
  "solana-instruction",
  "solana-log-collector",
@@ -9117,6 +9142,7 @@ dependencies = [
 name = "solana-rpc"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "agave-reserved-account-keys",
  "base64 0.22.1",
  "bincode",
@@ -9143,7 +9169,6 @@ dependencies = [
  "solana-client",
  "solana-entry",
  "solana-faucet",
- "solana-feature-set",
  "solana-gossip",
  "solana-inline-spl",
  "solana-ledger",
@@ -9329,6 +9354,7 @@ dependencies = [
 name = "solana-runtime"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "agave-precompiles",
  "agave-reserved-account-keys",
  "agave-transaction-view",
@@ -9383,7 +9409,6 @@ dependencies = [
  "solana-compute-budget-instruction",
  "solana-config-program",
  "solana-cost-model",
- "solana-feature-set",
  "solana-fee",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
@@ -9431,6 +9456,7 @@ dependencies = [
 name = "solana-runtime-transaction"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-transaction-view",
  "bincode",
@@ -9440,7 +9466,6 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
- "solana-feature-set",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
@@ -9485,9 +9510,9 @@ dependencies = [
 
 [[package]]
 name = "solana-sdk"
-version = "2.2.1"
+version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4808e8d7f3c931657e615042d4176b423e66f64dc99e3dc3c735a197e512029b"
+checksum = "e8af90d2ce445440e0548fa4a5f96fe8b265c22041a68c942012ffadd029667d"
 dependencies = [
  "bincode",
  "bs58",
@@ -9832,6 +9857,7 @@ dependencies = [
 name = "solana-stake-program"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "assert_matches",
  "bincode",
  "criterion",
@@ -9844,7 +9870,6 @@ dependencies = [
  "solana-config-program",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
- "solana-feature-set",
  "solana-genesis-config",
  "solana-instruction",
  "solana-log-collector",
@@ -9869,9 +9894,9 @@ dependencies = [
 name = "solana-stake-program-tests"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "assert_matches",
  "bincode",
- "solana-feature-set",
  "solana-program-test",
  "solana-sdk",
  "solana-vote-program",
@@ -9999,6 +10024,7 @@ dependencies = [
 name = "solana-svm"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "agave-precompiles",
  "agave-reserved-account-keys",
  "ahash 0.8.11",
@@ -10026,7 +10052,6 @@ dependencies = [
  "solana-compute-budget-program",
  "solana-ed25519-program",
  "solana-epoch-schedule",
- "solana-feature-set",
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-frozen-abi",
@@ -10123,6 +10148,7 @@ dependencies = [
 name = "solana-system-program"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "assert_matches",
  "bincode",
  "criterion",
@@ -10132,7 +10158,6 @@ dependencies = [
  "solana-account",
  "solana-bincode",
  "solana-compute-budget",
- "solana-feature-set",
  "solana-hash",
  "solana-instruction",
  "solana-log-collector",
@@ -10220,6 +10245,7 @@ dependencies = [
 name = "solana-test-validator"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "base64 0.22.1",
  "bincode",
  "crossbeam-channel",
@@ -10230,7 +10256,6 @@ dependencies = [
  "solana-cli-output",
  "solana-compute-budget",
  "solana-core",
- "solana-feature-set",
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-ledger",
@@ -10434,9 +10459,9 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction"
-version = "2.2.1"
+version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "753b3e9afed170e4cfc0ea1e87b5dfdc6d4a50270869414edd24c6ea1f529b29"
+checksum = "abec848d081beb15a324c633cd0e0ab33033318063230389895cae503ec9b544"
 dependencies = [
  "bincode",
  "serde",
@@ -10452,7 +10477,6 @@ dependencies = [
  "solana-message",
  "solana-precompiles",
  "solana-pubkey",
- "solana-reserved-account-keys",
  "solana-sanitize",
  "solana-sdk-ids",
  "solana-short-vec",
@@ -10605,6 +10629,7 @@ dependencies = [
 name = "solana-turbine"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "assert_matches",
  "bincode",
  "bs58",
@@ -10621,7 +10646,6 @@ dependencies = [
  "rayon",
  "rustls 0.23.22",
  "solana-entry",
- "solana-feature-set",
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-ledger",
@@ -10738,10 +10762,14 @@ checksum = "7bbf6d7a3c0b28dd5335c52c0e9eae49d0ae489a8f324917faf0ded65a812c1d"
 name = "solana-version"
 version = "2.2.6"
 dependencies = [
+<<<<<<< HEAD
  "semver 1.0.25",
+=======
+ "agave-feature-set",
+ "semver 1.0.26",
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "serde",
  "serde_derive",
- "solana-feature-set",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-sanitize",
@@ -10851,6 +10879,7 @@ dependencies = [
 name = "solana-vote-program"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "assert_matches",
  "bincode",
  "criterion",
@@ -10863,7 +10892,6 @@ dependencies = [
  "solana-bincode",
  "solana-clock",
  "solana-epoch-schedule",
- "solana-feature-set",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
@@ -10996,12 +11024,12 @@ dependencies = [
 name = "solana-zk-token-proof-program"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "bytemuck",
  "criterion",
  "curve25519-dalek 4.1.3",
  "num-derive",
  "num-traits",
- "solana-feature-set",
  "solana-instruction",
  "solana-log-collector",
  "solana-program-runtime",

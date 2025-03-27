@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 bytemuck = { workspace = true }
 digest = { workspace = true }
@@ -19,7 +20,6 @@ libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 sha3 = { workspace = true }
 solana-ed25519-program = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-message = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-pubkey = { workspace = true }

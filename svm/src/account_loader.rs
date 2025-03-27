@@ -9,12 +9,16 @@ use {
         transaction_execution_result::ExecutedTransaction,
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
     },
+    agave_feature_set::{self as feature_set, FeatureSet},
     ahash::{AHashMap, AHashSet},
     solana_account::{
         Account, AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS,
     },
+<<<<<<< HEAD
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_feature_set::{self as feature_set, FeatureSet},
+=======
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_fee_structure::FeeDetails,
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
     solana_instructions_sysvar::construct_instructions_data,
@@ -641,11 +645,11 @@ mod tests {
             transaction_account_state_info::TransactionAccountStateInfo,
             transaction_processing_callback::TransactionProcessingCallback,
         },
+        agave_feature_set::FeatureSet,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_limits},
         solana_epoch_schedule::EpochSchedule,
-        solana_feature_set::FeatureSet,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
@@ -759,7 +763,7 @@ mod tests {
     fn all_features_except(exclude: Option<&[Pubkey]>) -> FeatureSet {
         let mut features = FeatureSet::all_enabled();
         if let Some(exclude) = exclude {
-            features.active.retain(|k, _v| !exclude.contains(k));
+            features.active_mut().retain(|k, _v| !exclude.contains(k));
         }
         features
     }

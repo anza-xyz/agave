@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 agave-precompiles = { workspace = true }
 ahash = { workspace = true }
 itertools = { workspace = true }
@@ -21,9 +22,12 @@ serde_derive = { workspace = true }
 solana-account = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-clock = { workspace = true }
+<<<<<<< HEAD
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-feature-set = { workspace = true }
+=======
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
 solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",

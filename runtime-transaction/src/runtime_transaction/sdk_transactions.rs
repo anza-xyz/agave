@@ -153,9 +153,9 @@ impl RuntimeTransaction<SanitizedTransaction> {
 mod tests {
     use {
         super::*,
+        agave_feature_set::FeatureSet,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_compute_budget_interface::ComputeBudgetInstruction,
-        solana_feature_set::FeatureSet,
         solana_hash::Hash,
         solana_instruction::Instruction,
         solana_keypair::Keypair,

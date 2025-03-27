@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 agave-precompiles = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
@@ -24,7 +25,11 @@ solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
+<<<<<<< HEAD
 solana-feature-set = { workspace = true }
+=======
+solana-fee-structure = { workspace = true }
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }

@@ -12,6 +12,21 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
+<<<<<<< HEAD
+=======
+    crate::syscalls::mem_ops::is_nonoverlapping,
+    agave_feature_set::{
+        self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
+        bpf_account_data_direct_mapping, curve25519_syscall_enabled,
+        disable_deploy_of_alloc_free_syscall, disable_fees_sysvar, disable_sbpf_v0_execution,
+        enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall, enable_big_mod_exp_syscall,
+        enable_get_epoch_stake_syscall, enable_poseidon_syscall,
+        enable_sbpf_v1_deployment_and_execution, enable_sbpf_v2_deployment_and_execution,
+        enable_sbpf_v3_deployment_and_execution, get_sysvar_syscall_enabled,
+        last_restart_slot_sysvar, reenable_sbpf_v0_execution,
+        remaining_compute_units_syscall_enabled, FeatureSet,
+    },
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     agave_precompiles::is_precompile,
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
@@ -24,17 +39,6 @@ use {
     },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_cpi::MAX_RETURN_DATA,
-    solana_feature_set::{
-        self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
-        bpf_account_data_direct_mapping, curve25519_syscall_enabled,
-        disable_deploy_of_alloc_free_syscall, disable_fees_sysvar, disable_sbpf_v0_execution,
-        enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall, enable_big_mod_exp_syscall,
-        enable_get_epoch_stake_syscall, enable_poseidon_syscall,
-        enable_sbpf_v1_deployment_and_execution, enable_sbpf_v2_deployment_and_execution,
-        enable_sbpf_v3_deployment_and_execution, get_sysvar_syscall_enabled,
-        last_restart_slot_sysvar, reenable_sbpf_v0_execution,
-        remaining_compute_units_syscall_enabled, FeatureSet,
-    },
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
     solana_keccak_hasher as keccak,

@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }
 num-derive = { workspace = true }
@@ -20,7 +21,6 @@ solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }

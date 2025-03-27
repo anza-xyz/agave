@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 ahash = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
@@ -18,7 +19,6 @@ solana-address-lookup-table-program = { workspace = true }
 solana-bpf-loader-program = { workspace = true, features = ["svm-internal"] }
 solana-compute-budget-program = { workspace = true, features = ["svm-internal"] }
 solana-config-program = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }

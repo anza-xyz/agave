@@ -1,8 +1,16 @@
 use {
+    agave_feature_set::{deprecate_legacy_vote_ixs, FeatureSet},
     bincode::serialize,
     criterion::{criterion_group, criterion_main, Criterion},
+<<<<<<< HEAD
     solana_account::{self as account, AccountSharedData},
     solana_clock::Clock,
+=======
+    solana_account::{self as account, create_account_for_test, Account, AccountSharedData},
+    solana_clock::{Clock, Slot},
+    solana_epoch_schedule::EpochSchedule,
+    solana_hash::Hash,
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_instruction::{error::InstructionError, AccountMeta},
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_pubkey::Pubkey,

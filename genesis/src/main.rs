@@ -2,6 +2,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    agave_feature_set::FEATURE_NAMES,
     base64::{prelude::BASE64_STANDARD, Engine},
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
@@ -16,6 +17,12 @@ use {
         },
     },
     solana_entry::poh::compute_hashes_per_tick,
+<<<<<<< HEAD
+=======
+    solana_epoch_schedule::EpochSchedule,
+    solana_feature_gate_interface as feature,
+    solana_fee_calculator::FeeRateGovernor,
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_genesis::{
         genesis_accounts::add_genesis_accounts, Base64Account, StakedValidatorAccountInfo,
         ValidatorAccountsFile,

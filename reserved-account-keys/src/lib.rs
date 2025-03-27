@@ -4,8 +4,8 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use {
+    agave_feature_set::{self as feature_set, FeatureSet},
     lazy_static::lazy_static,
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
         address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
@@ -230,7 +230,7 @@ mod tests {
 
         // Updating the active set with an activated feature should also activate
         // the corresponding reserved key from inactive to active
-        feature_set.active.insert(feature_ids[0], 0);
+        feature_set.active_mut().insert(feature_ids[0], 0);
         reserved_account_keys.update_active_set(&feature_set);
 
         assert!(reserved_account_keys.is_reserved(&active_reserved_key));
@@ -239,7 +239,7 @@ mod tests {
 
         // Update the active set again to ensure that the inactive map is
         // properly retained
-        feature_set.active.insert(feature_ids[1], 0);
+        feature_set.active_mut().insert(feature_ids[1], 0);
         reserved_account_keys.update_active_set(&feature_set);
 
         assert!(reserved_account_keys.is_reserved(&active_reserved_key));

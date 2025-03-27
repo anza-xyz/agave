@@ -1,4 +1,5 @@
 use {
+    agave_feature_set::FeatureSet,
     openssl::{
         bn::{BigNum, BigNumContext},
         ec::{EcGroup, EcKey, EcPoint},
@@ -6,7 +7,6 @@ use {
         pkey::PKey,
         sign::Verifier,
     },
-    solana_feature_set::FeatureSet,
     solana_precompile_error::PrecompileError,
     solana_secp256r1_program::{
         Secp256r1SignatureOffsets, COMPRESSED_PUBKEY_SERIALIZED_SIZE, FIELD_SIZE,
@@ -168,7 +168,6 @@ mod tests {
     use {
         super::*,
         bytemuck::bytes_of,
-        solana_feature_set::FeatureSet,
         solana_secp256r1_program::{new_secp256r1_instruction, DATA_START, SECP256R1_ORDER},
     };
 

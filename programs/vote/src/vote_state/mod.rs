@@ -2,12 +2,12 @@
 //! Receive and processes votes from validators
 pub use solana_vote_interface::state::{vote_state_versions::*, *};
 use {
+    agave_feature_set::{self as feature_set, FeatureSet},
     log::*,
     serde_derive::{Deserialize, Serialize},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
     solana_epoch_schedule::EpochSchedule,
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,

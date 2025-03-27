@@ -11,6 +11,7 @@ use {
         },
         feature::{status_from_account, CliFeatureStatus},
     },
+    agave_feature_set::{FeatureSet, FEATURE_NAMES},
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
@@ -41,8 +42,11 @@ use {
         tpu_client::{TpuClient, TpuClientConfig},
     },
     solana_commitment_config::CommitmentConfig,
+<<<<<<< HEAD
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::{FeatureSet, FEATURE_NAMES},
+=======
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_instruction::{error::InstructionError, Instruction},
     solana_keypair::{keypair_from_seed, read_keypair_file, Keypair},
     solana_loader_v3_interface::{
@@ -1386,6 +1390,7 @@ fn process_program_deploy(
         fetch_feature_set(&rpc_client)?
     };
 
+<<<<<<< HEAD
     if !skip_feature_verification {
         if feature_set.is_active(&solana_feature_set::enable_loader_v4::id()) {
             warn!("Loader-v4 is available now. Please migrate your program.");
@@ -1395,6 +1400,12 @@ fn process_program_deploy(
         {
             return Err("No new programs can be deployed on loader-v3. Please use the program-v4 subcommand instead.".into());
         }
+=======
+    if !skip_feature_verification
+        && feature_set.is_active(&agave_feature_set::enable_loader_v4::id())
+    {
+        warn!("Loader-v4 is available now. Please migrate your program.");
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     }
 
     let (program_data, program_len, buffer_program_data) =

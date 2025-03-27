@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -34,7 +35,6 @@ solana-accounts-db = { workspace = true }
 solana-client = { workspace = true }
 solana-entry = { workspace = true }
 solana-faucet = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-gossip = { workspace = true }
 solana-inline-spl = { workspace = true }
 solana-ledger = { workspace = true }

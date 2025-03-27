@@ -1,4 +1,5 @@
 use {
+    agave_feature_set::FeatureSet,
     log::*,
     solana_bpf_loader_program::syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallInvokeSignedRust, SyscallLog,
@@ -20,7 +21,6 @@ use {
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::{Clock, Slot, UnixTimestamp},
-        feature_set::FeatureSet,
         message::AccountKeys,
         native_loader,
         pubkey::Pubkey,

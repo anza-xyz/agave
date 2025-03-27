@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 use {
+    agave_feature_set as feature_set,
     bytemuck::Pod,
-    solana_feature_set as feature_set,
     solana_instruction::{error::InstructionError, TRANSACTION_LEVEL_STACK_HEIGHT},
     solana_log_collector::ic_msg,
     solana_program_runtime::{declare_process_instruction, invoke_context::InvokeContext},

@@ -1,6 +1,6 @@
 use {
+    agave_feature_set::FeatureSet,
     digest::Digest,
-    solana_feature_set::FeatureSet,
     solana_precompile_error::PrecompileError,
     solana_secp256k1_program::{
         construct_eth_pubkey, SecpSignatureOffsets, HASHED_PUBKEY_SERIALIZED_SIZE,
@@ -131,7 +131,6 @@ pub mod tests {
     use {
         super::*,
         rand0_7::{thread_rng, Rng},
-        solana_feature_set::FeatureSet,
         solana_keccak_hasher as keccak,
         solana_secp256k1_program::{new_secp256k1_instruction, DATA_START},
     };
@@ -307,7 +306,7 @@ pub mod tests {
         let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
         let message_arr = b"hello";
         let mut instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
-        let feature_set = solana_feature_set::FeatureSet::all_enabled();
+        let feature_set = FeatureSet::all_enabled();
         assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
 
         let index = thread_rng().gen_range(0, instruction.data.len());

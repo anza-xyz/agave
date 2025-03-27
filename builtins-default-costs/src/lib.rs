@@ -3,9 +3,9 @@
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
+    agave_feature_set::{self as feature_set, FeatureSet},
     ahash::AHashMap,
     lazy_static::lazy_static,
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
         address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,

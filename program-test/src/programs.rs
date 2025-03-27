@@ -1,10 +1,12 @@
-use solana_sdk::{
-    account::{Account, AccountSharedData},
-    bpf_loader,
-    bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
-    feature_set,
-    pubkey::Pubkey,
-    rent::Rent,
+use {
+    agave_feature_set as feature_set,
+    solana_sdk::{
+        account::{Account, AccountSharedData},
+        bpf_loader,
+        bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
+        pubkey::Pubkey,
+        rent::Rent,
+    },
 };
 
 mod spl_memo_1_0 {

@@ -3,6 +3,7 @@
 #![allow(clippy::items_after_test_module)]
 
 use {
+    agave_feature_set::enable_alt_bn128_syscall,
     assert_matches::assert_matches,
     serde_json::Value,
     solana_cli::{
@@ -15,7 +16,10 @@ use {
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet,
+<<<<<<< HEAD
     solana_feature_set::{disable_new_loader_v3_deployments, enable_alt_bn128_syscall},
+=======
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_message::Message,
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},

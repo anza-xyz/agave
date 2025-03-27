@@ -18,6 +18,7 @@ use {
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
+    agave_feature_set::{remove_accounts_executable_flag_checks, FeatureSet},
     log::debug,
     percentage::Percentage,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
@@ -25,12 +26,15 @@ use {
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     solana_clock::{Epoch, Slot},
+<<<<<<< HEAD
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_feature_set::{
         enable_transaction_loading_failure_fees, remove_accounts_executable_flag_checks, FeatureSet,
     },
     solana_fee_structure::{FeeBudgetLimits, FeeDetails, FeeStructure},
+=======
+>>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_log_collector::LogCollector,
@@ -1205,13 +1209,13 @@ mod tests {
             rollback_accounts::RollbackAccounts,
             transaction_processing_callback::AccountState,
         },
+        agave_feature_set::FeatureSet,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{create_account_shared_data_for_test, WritableAccount},
         solana_clock::Clock,
         solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_epoch_schedule::EpochSchedule,
-        solana_feature_set::FeatureSet,
         solana_fee_calculator::FeeCalculator,
         solana_fee_structure::{FeeDetails, FeeStructure},
         solana_hash::Hash,
