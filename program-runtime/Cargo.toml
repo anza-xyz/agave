@@ -37,11 +37,6 @@ solana-last-restart-slot = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true, optional = true }
-<<<<<<< HEAD
-solana-precompiles = { workspace = true }
-=======
-solana-program-entrypoint = { workspace = true }
->>>>>>> e1162f731d (Add agave-precompiles crate (#5509))
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }

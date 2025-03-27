@@ -12,11 +12,7 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
-<<<<<<< HEAD
-=======
-    crate::syscalls::mem_ops::is_nonoverlapping,
     agave_precompiles::is_precompile,
->>>>>>> e1162f731d (Add agave-precompiles crate (#5509))
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,

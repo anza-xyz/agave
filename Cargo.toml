@@ -175,18 +175,11 @@ check-cfg = [
 [workspace.dependencies]
 Inflector = "0.11.4"
 axum = "0.7.9"
-<<<<<<< HEAD
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.2.6" }
 agave-feature-set = { path = "feature-set", version = "=2.2.6" }
+agave-precompiles = { path = "precompiles", version = "=2.2.6" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.2.6" }
 agave-transaction-view = { path = "transaction-view", version = "=2.2.6" }
-=======
-agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.3.0" }
-agave-feature-set = { path = "feature-set", version = "=2.3.0" }
-agave-precompiles = { path = "precompiles", version = "=2.3.0" }
-agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.3.0" }
-agave-transaction-view = { path = "transaction-view", version = "=2.3.0" }
->>>>>>> e1162f731d (Add agave-precompiles crate (#5509))
 aquamarine = "0.6.0"
 aes-gcm-siv = "0.11.1"
 ahash = "0.8.11"
@@ -415,15 +408,9 @@ solana-curve25519 = { path = "curves/curve25519", version = "=2.2.6" }
 solana-decode-error = "=2.2.1"
 solana-define-syscall = "=2.2.1"
 solana-derivation-path = "=2.2.1"
-<<<<<<< HEAD
 solana-download-utils = { path = "download-utils", version = "=2.2.6" }
-solana-ed25519-program = "=2.2.1"
-solana-entry = { path = "entry", version = "=2.2.6" }
-=======
-solana-download-utils = { path = "download-utils", version = "=2.3.0" }
 solana-ed25519-program = "=2.2.2"
-solana-entry = { path = "entry", version = "=2.3.0" }
->>>>>>> e1162f731d (Add agave-precompiles crate (#5509))
+solana-entry = { path = "entry", version = "=2.2.6" }
 solana-feature-set-interface = "=4.0.0"
 solana-program-entrypoint = "=2.2.1"
 solana-epoch-info = "=2.2.1"
@@ -434,7 +421,7 @@ solana-example-mocks = "=2.2.1"
 solana-faucet = { path = "faucet", version = "=2.2.6" }
 solana-feature-gate-client = "0.0.2"
 solana-feature-gate-interface = "=2.2.1"
-solana-feature-set = "=2.2.1"
+solana-feature-set = "=2.2.4" # will be removed
 solana-fee-calculator = "=2.2.1"
 solana-fee = { path = "fee", version = "=2.2.6" }
 solana-fee-structure = "=2.2.1"

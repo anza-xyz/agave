@@ -43,7 +43,7 @@ solana-compute-budget = { path = "../../compute-budget", version = "=2.2.6" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=2.2.6" }
 solana-curve25519 = { path = "../../curves/curve25519", version = "=2.2.6" }
 solana-decode-error = "=2.2.1"
-solana-feature-set = "=2.2.1"
+solana-feature-set = "=2.2.4" # will be removed
 solana-fee = { path = "../../fee", version = "=2.2.6" }
 solana-ledger = { path = "../../ledger", version = "=2.2.6" }
 solana-log-collector = { path = "../../log-collector", version = "=2.2.6" }
