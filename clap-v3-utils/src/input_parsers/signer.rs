@@ -106,7 +106,7 @@ impl SignerSource {
         matches: &ArgMatches,
         name: &str,
     ) -> Result<Option<Vec<Keypair>>, Box<dyn error::Error>> {
-        let sources = matches.try_get_many::<Self>(name)?;
+        let sources = matches.try_get_many::<Self>(name).ok().flatten();
         if let Some(sources) = sources {
             let keypairs = sources
                 .filter_map(|source| keypair_from_source(matches, source, name, true).ok())
@@ -139,7 +139,7 @@ impl SignerSource {
         name: &str,
         wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
     ) -> Result<Option<Vec<(Box<dyn Signer>, Pubkey)>>, Box<dyn error::Error>> {
-        let sources = matches.try_get_many::<Self>(name)?;
+        let sources = matches.try_get_many::<Self>(name).ok().flatten();
         if let Some(sources) = sources {
             let signers = sources
                 .filter_map(|source| {
@@ -172,7 +172,7 @@ impl SignerSource {
         name: &str,
         wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
     ) -> Result<Option<Vec<Pubkey>>, Box<dyn std::error::Error>> {
-        let sources = matches.try_get_many::<Self>(name)?;
+        let sources = matches.try_get_many::<Self>(name).ok().flatten();
         if let Some(sources) = sources {
             let pubkeys = sources
                 .filter_map(|source| pubkey_from_source(matches, source, name, wallet_manager).ok())
@@ -354,11 +354,15 @@ pub fn try_keypairs_of(
     matches: &ArgMatches,
     name: &str,
 ) -> Result<Option<Vec<Keypair>>, Box<dyn error::Error>> {
-    Ok(matches.try_get_many::<String>(name)?.map(|values| {
-        values
-            .filter_map(|value| extract_keypair(matches, name, value).ok().flatten())
-            .collect()
-    }))
+    Ok(matches
+        .try_get_many::<String>(name)
+        .ok()
+        .flatten()
+        .map(|values| {
+            values
+                .filter_map(|value| extract_keypair(matches, name, value).ok().flatten())
+                .collect()
+        }))
 }
 
 fn extract_keypair(
@@ -391,7 +395,7 @@ pub fn try_pubkeys_of(
     matches: &ArgMatches,
     name: &str,
 ) -> Result<Option<Vec<Pubkey>>, Box<dyn error::Error>> {
-    if let Some(pubkey_strings) = matches.try_get_many::<String>(name)? {
+    if let Some(pubkey_strings) = matches.try_get_many::<String>(name).ok().flatten() {
         let mut pubkeys = Vec::with_capacity(pubkey_strings.len());
         for pubkey_string in pubkey_strings {
             pubkeys.push(pubkey_string.parse::<Pubkey>()?);
@@ -424,7 +428,7 @@ pub fn try_pubkeys_sigs_of(
     matches: &ArgMatches,
     name: &str,
 ) -> Result<Option<Vec<(Pubkey, Signature)>>, Box<dyn error::Error>> {
-    if let Some(pubkey_signer_strings) = matches.try_get_many::<String>(name)? {
+    if let Some(pubkey_signer_strings) = matches.try_get_many::<String>(name).ok().flatten() {
         let mut pubkey_sig_pairs = Vec::with_capacity(pubkey_signer_strings.len());
         for pubkey_signer_string in pubkey_signer_strings {
             let (pubkey_string, sig_string) = pubkey_signer_string
@@ -478,7 +482,7 @@ pub fn pubkeys_of_multiple_signers(
     name: &str,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<Option<Vec<Pubkey>>, Box<dyn std::error::Error>> {
-    if let Some(pubkey_matches) = matches.try_get_many::<String>(name)? {
+    if let Some(pubkey_matches) = matches.try_get_many::<String>(name).ok().flatten() {
         let mut pubkeys: Vec<Pubkey> = vec![];
         for signer in pubkey_matches {
             pubkeys.push(pubkey_from_path(matches, signer, name, wallet_manager)?);
