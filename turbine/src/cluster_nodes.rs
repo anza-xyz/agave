@@ -441,7 +441,7 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>, keep_identity: Pubkey) {
                     let conflict_idx: usize = *entry.get();
                     let conflict_outset: u64 = nodes[conflict_idx].outset().unwrap_or(0);
                     // Compute the index of the node that would get its TVU address removed
-                    let ridx = if conflict_outset > outset {
+                    let index_to_update = if conflict_outset > outset {
                         // other entry is newer then whatever idx is pointing to
                         // so we need to remove nodes[idx] TVU address
                         idx
@@ -452,11 +452,11 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>, keep_identity: Pubkey) {
                         conflict_idx
                     };
                     // this should never happen, but if it does we want to know
-                    if nodes[ridx].contact_info().unwrap().pubkey == keep_identity {
+                    if nodes[index_to_update].contact_info().unwrap().pubkey == keep_identity {
                         warn!("Trying to remove my own TVU address!!!");
                         debug_assert!(false, "Tried removing own TVU address");
                     } else {
-                        nodes[ridx]
+                        nodes[index_to_update]
                             .contact_info_mut()
                             .unwrap()
                             .remove_tvu_addr(protocol);
@@ -479,26 +479,26 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>, keep_identity: Pubkey) {
                     .remove_tvu_addr(protocol);
             }
         }
-        nodes.retain_mut(|node| {
-            let node_stake = node.stake;
-            // Always keep staked nodes for deterministic shuffle.
-            if node_stake > 0 {
-                return true;
-            }
-            // Do not purge the provided keep_identity to maintain datastructure invariants
-            if *node.pubkey() == keep_identity {
-                return true;
-            }
-            // If node has no contact info we do not keep it.
-            let Some(node) = node.contact_info_mut() else {
-                return false;
-            };
-            // drop non-staked nodes if they have no valid TVU address left.
-            TVU_PROTOCOLS
-                .into_iter()
-                .any(|protocol| node.tvu(protocol).is_some())
-        });
     }
+    nodes.retain_mut(|node| {
+        let node_stake = node.stake;
+        // Always keep staked nodes for deterministic shuffle.
+        if node_stake > 0 {
+            return true;
+        }
+        // Do not purge the provided keep_identity to maintain datastructure invariants
+        if *node.pubkey() == keep_identity {
+            return true;
+        }
+        // If node has no contact info we do not keep it.
+        let Some(node) = node.contact_info_mut() else {
+            return false;
+        };
+        // drop non-staked nodes if they have no valid TVU address left.
+        TVU_PROTOCOLS
+            .into_iter()
+            .any(|protocol| node.tvu(protocol).is_some())
+    });
 }
 
 fn get_seeded_rng(leader: &Pubkey, shred: &ShredId) -> ChaChaRng {
