@@ -3,7 +3,6 @@
 use {
     ahash::{AHashMap, AHashSet},
     solana_epoch_schedule::EpochSchedule,
-    solana_feature_set_interface::FeatureSet as SdkFeatureSet,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::Hasher,
@@ -13,60 +12,59 @@ use {
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
-    feature_set: SdkFeatureSet,
+    active: AHashMap<Pubkey, u64>,
+    inactive: AHashSet<Pubkey>,
 }
 
 impl Default for FeatureSet {
     fn default() -> Self {
-        // All features disabled
         Self {
-            feature_set: SdkFeatureSet {
-                active: AHashMap::new(),
-                inactive: AHashSet::from_iter((*FEATURE_NAMES).keys().cloned()),
-            },
+            // All features disabled
+            active: AHashMap::new(),
+            inactive: AHashSet::from_iter((*FEATURE_NAMES).keys().cloned()),
         }
     }
 }
 
 impl FeatureSet {
     pub fn new(active: AHashMap<Pubkey, u64>, inactive: AHashSet<Pubkey>) -> Self {
-        Self {
-            feature_set: SdkFeatureSet { active, inactive },
-        }
+        Self { active, inactive }
     }
 
     pub fn active(&self) -> &AHashMap<Pubkey, u64> {
-        &self.feature_set.active
+        &self.active
     }
 
     pub fn active_mut(&mut self) -> &mut AHashMap<Pubkey, u64> {
-        &mut self.feature_set.active
+        &mut self.active
     }
 
     pub fn inactive(&self) -> &AHashSet<Pubkey> {
-        &self.feature_set.inactive
+        &self.inactive
     }
 
     pub fn inactive_mut(&mut self) -> &mut AHashSet<Pubkey> {
-        &mut self.feature_set.inactive
+        &mut self.inactive
     }
 
     pub fn is_active(&self, feature_id: &Pubkey) -> bool {
-        self.feature_set.is_active(feature_id)
+        self.active.contains_key(feature_id)
     }
 
     pub fn activated_slot(&self, feature_id: &Pubkey) -> Option<u64> {
-        self.feature_set.activated_slot(feature_id)
+        self.active.get(feature_id).copied()
     }
 
     /// Activate a feature
     pub fn activate(&mut self, feature_id: &Pubkey, slot: u64) {
-        self.feature_set.activate(feature_id, slot)
+        self.inactive.remove(feature_id);
+        self.active.insert(*feature_id, slot);
     }
 
     /// Deactivate a feature
     pub fn deactivate(&mut self, feature_id: &Pubkey) {
-        self.feature_set.deactivate(feature_id)
+        self.active.remove(feature_id);
+        self.inactive.insert(*feature_id);
     }
 
     /// List of enabled features that trigger full inflation
@@ -91,10 +89,8 @@ impl FeatureSet {
     /// All features enabled, useful for testing
     pub fn all_enabled() -> Self {
         Self {
-            feature_set: SdkFeatureSet {
-                active: AHashMap::from_iter((*FEATURE_NAMES).keys().cloned().map(|key| (key, 0))),
-                inactive: AHashSet::new(),
-            },
+            active: AHashMap::from_iter((*FEATURE_NAMES).keys().cloned().map(|key| (key, 0))),
+            inactive: AHashSet::new(),
         }
     }
 
@@ -1296,7 +1292,6 @@ mod test {
         let mut feature_set = FeatureSet::default();
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
-            .feature_set
             .active
             .insert(full_inflation::devnet_and_testnet::id(), 42);
         assert_eq!(
@@ -1314,12 +1309,10 @@ mod test {
         let mut feature_set = FeatureSet::default();
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
-            .feature_set
             .active
             .insert(full_inflation::mainnet::certusone::vote::id(), 42);
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
-            .feature_set
             .active
             .insert(full_inflation::mainnet::certusone::enable::id(), 42);
         assert_eq!(
@@ -1334,12 +1327,10 @@ mod test {
         let mut feature_set = FeatureSet::default();
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
-            .feature_set
             .active
             .insert(full_inflation::mainnet::certusone::enable::id(), 42);
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
-            .feature_set
             .active
             .insert(full_inflation::mainnet::certusone::vote::id(), 42);
         assert_eq!(
