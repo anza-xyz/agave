@@ -939,6 +939,29 @@ impl serde::Serialize for AccountsScanner {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct CliAccounts {
+    pub accounts: Vec<CliAccount>,
+}
+
+impl fmt::Display for CliAccounts {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for account in &self.accounts {
+            write!(f, "{account}")?;
+            let account_data = account.keyed_account.account.data.decode();
+            if let Some(data) = account_data {
+                if !data.is_empty() {
+                    use pretty_hex::*;
+                    writeln!(f, "{:?}", data.hex_dump())?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+impl QuietDisplay for CliAccounts {}
+impl VerboseDisplay for CliAccounts {}
+
 pub fn output_account(
     pubkey: &Pubkey,
     account: &AccountSharedData,

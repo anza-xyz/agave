@@ -217,6 +217,7 @@ dependencies = [
  "itertools 0.12.1",
  "log",
  "num_cpus",
+ "pretty-hex",
  "rayon",
  "regex",
  "serde",
