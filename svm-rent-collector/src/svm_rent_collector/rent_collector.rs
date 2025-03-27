@@ -3,13 +3,11 @@
 
 use {
     crate::svm_rent_collector::SVMRentCollector,
-    solana_sdk::{
-        account::AccountSharedData,
-        clock::Epoch,
-        pubkey::Pubkey,
-        rent::{Rent, RentDue},
-        rent_collector::{CollectedInfo, RentCollector},
-    },
+    solana_account::AccountSharedData,
+    solana_clock::Epoch,
+    solana_pubkey::Pubkey,
+    solana_rent::{Rent, RentDue},
+    solana_rent_collector::{CollectedInfo, RentCollector},
 };
 
 impl SVMRentCollector for RentCollector {
@@ -31,11 +29,12 @@ mod tests {
     use {
         super::*,
         crate::rent_state::RentState,
-        solana_sdk::{
-            account::ReadableAccount, clock::Epoch, epoch_schedule::EpochSchedule, pubkey::Pubkey,
-            transaction::TransactionError,
-        },
+        solana_account::ReadableAccount,
+        solana_clock::Epoch,
+        solana_epoch_schedule::EpochSchedule,
+        solana_pubkey::Pubkey,
         solana_transaction_context::{IndexOfAccount, TransactionContext},
+        solana_transaction_error::TransactionError,
     };
 
     #[test]
@@ -207,7 +206,7 @@ mod tests {
         let result = rent_collector.check_rent_state_with_account(
             &pre_rent_state,
             &post_rent_state,
-            &solana_sdk::incinerator::id(),
+            &solana_sdk_ids::incinerator::id(),
             &AccountSharedData::default(),
             account_index,
         );

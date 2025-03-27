@@ -2,15 +2,13 @@
 
 use {
     crate::rent_state::RentState,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Epoch,
-        pubkey::Pubkey,
-        rent::{Rent, RentDue},
-        rent_collector::CollectedInfo,
-        transaction::{Result, TransactionError},
-    },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_clock::Epoch,
+    solana_pubkey::Pubkey,
+    solana_rent::{Rent, RentDue},
+    solana_rent_collector::CollectedInfo,
     solana_transaction_context::{IndexOfAccount, TransactionContext},
+    solana_transaction_error::{TransactionError, TransactionResult},
 };
 
 mod rent_collector;
@@ -33,7 +31,7 @@ pub trait SVMRentCollector {
         post_rent_state: Option<&RentState>,
         transaction_context: &TransactionContext,
         index: IndexOfAccount,
-    ) -> Result<()> {
+    ) -> TransactionResult<()> {
         if let Some((pre_rent_state, post_rent_state)) = pre_rent_state.zip(post_rent_state) {
             let expect_msg =
                 "account must exist at TransactionContext index if rent-states are Some";
@@ -65,8 +63,8 @@ pub trait SVMRentCollector {
         address: &Pubkey,
         _account_state: &AccountSharedData,
         account_index: IndexOfAccount,
-    ) -> Result<()> {
-        if !solana_sdk::incinerator::check_id(address)
+    ) -> TransactionResult<()> {
+        if !solana_sdk_ids::incinerator::check_id(address)
             && !self.transition_allowed(pre_rent_state, post_rent_state)
         {
             let account_index = account_index as u8;

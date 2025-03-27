@@ -8019,8 +8019,14 @@ dependencies = [
 name = "solana-svm-rent-collector"
 version = "2.3.0"
 dependencies = [
- "solana-sdk",
+ "solana-account",
+ "solana-clock",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-rent-collector",
+ "solana-sdk-ids",
  "solana-transaction-context 2.3.0",
+ "solana-transaction-error",
 ]
 
 [[package]]
