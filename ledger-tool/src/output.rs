@@ -5,6 +5,7 @@ use {
     },
     chrono::{Local, TimeZone},
     itertools::Either,
+    pretty_hex::PrettyHex,
     serde::ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
     serde_derive::{Deserialize, Serialize},
     solana_account_decoder::{encode_ui_account, UiAccountData, UiAccountEncoding},
@@ -951,7 +952,6 @@ impl fmt::Display for CliAccounts {
             let account_data = account.keyed_account.account.data.decode();
             if let Some(data) = account_data {
                 if !data.is_empty() {
-                    use pretty_hex::*;
                     writeln!(f, "{:?}", data.hex_dump())?;
                 }
             }
