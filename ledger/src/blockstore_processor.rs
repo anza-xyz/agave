@@ -3509,15 +3509,6 @@ pub mod tests {
             create_genesis_config_with_mint_keypair(Keypair::from_seed(&[1u8; 32]).unwrap(), 1000)
         };
 
-<<<<<<< HEAD
-=======
-        if should_run_partitioned_rent_collection {
-            genesis_config
-                .accounts
-                .remove(&agave_feature_set::disable_partitioned_rent_collection::id());
-        }
-
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
         fn get_instruction_errors() -> Vec<InstructionError> {
             vec![
                 InstructionError::GenericError,

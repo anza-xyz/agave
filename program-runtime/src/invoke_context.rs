@@ -8,20 +8,14 @@ use {
         sysvar_cache::SysvarCache,
     },
     agave_feature_set::{
-        lift_cpi_caller_restriction, remove_accounts_executable_flag_checks, FeatureSet,
+        lift_cpi_caller_restriction, move_precompile_verification_to_svm,
+        remove_accounts_executable_flag_checks, FeatureSet,
     },
     agave_precompiles::Precompile,
     solana_account::{create_account_shared_data_for_test, AccountSharedData},
     solana_clock::Slot,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_epoch_schedule::EpochSchedule,
-<<<<<<< HEAD
-    solana_feature_set::{
-        lift_cpi_caller_restriction, move_precompile_verification_to_svm,
-        remove_accounts_executable_flag_checks, FeatureSet,
-    },
-=======
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta},
     solana_log_collector::{ic_msg, LogCollector},
@@ -722,12 +716,8 @@ macro_rules! with_mock_invoke_context {
         $transaction_accounts:expr $(,)?
     ) => {
         use {
-<<<<<<< HEAD
-            solana_compute_budget::compute_budget::ComputeBudget,
-            solana_feature_set::FeatureSet,
-=======
             agave_feature_set::FeatureSet,
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
+            solana_compute_budget::compute_budget::ComputeBudget,
             solana_log_collector::LogCollector,
             solana_type_overrides::sync::Arc,
             $crate::{

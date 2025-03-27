@@ -73,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "agave-feature-set"
-version = "2.3.0"
+version = "2.2.6"
 dependencies = [
  "ahash 0.8.11",
  "solana-epoch-schedule",
@@ -2944,9 +2944,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.169"
+version = "0.2.171"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5aba8db14291edd000dfcc4d620c7ebfb122c613afb886ca8803fa4e128a20a"
+checksum = "c19937216e9d3aa9956d9bb8dfc0b0c8beb6058fc4f7a4dc4d850edf86a237d6"
 
 [[package]]
 name = "libloading"
@@ -4802,9 +4802,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.138"
+version = "1.0.140"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d434192e7da787e94a6ea7e9670b26a036d0ca41e0b7efb2676dd32bae872949"
+checksum = "20068b6e96dc6c9bd23e01df8827e6c7e1f2fddd43c21810382803c136b99373"
 dependencies = [
  "itoa",
  "memchr",
@@ -6205,11 +6205,7 @@ dependencies = [
 name = "solana-gossip"
 version = "2.2.6"
 dependencies = [
-<<<<<<< HEAD
-=======
  "agave-feature-set",
- "arrayvec",
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "assert_matches",
  "bincode",
  "bv",
@@ -6234,13 +6230,6 @@ dependencies = [
  "solana-client",
  "solana-connection-cache",
  "solana-entry",
-<<<<<<< HEAD
- "solana-feature-set",
-=======
- "solana-epoch-schedule",
- "solana-hash",
- "solana-keypair",
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "solana-ledger",
  "solana-logger",
  "solana-measure",
@@ -6551,13 +6540,15 @@ dependencies = [
 
 [[package]]
 name = "solana-logger"
-version = "2.2.1"
+version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "593dbcb81439d37b02757e90bd9ab56364de63f378c55db92a6fbd6a2e47ab36"
+checksum = "db8e777ec1afd733939b532a42492d888ec7c88d8b4127a5d867eb45c6eb5cd5"
 dependencies = [
  "env_logger",
  "lazy_static",
+ "libc",
  "log",
+ "signal-hook",
 ]
 
 [[package]]
@@ -6970,11 +6961,6 @@ dependencies = [
  "solana-compute-budget",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
-<<<<<<< HEAD
- "solana-feature-set",
-=======
- "solana-fee-structure",
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "solana-hash",
  "solana-instruction",
  "solana-last-restart-slot",
@@ -8458,12 +8444,8 @@ dependencies = [
  "solana-account",
  "solana-bpf-loader-program",
  "solana-clock",
-<<<<<<< HEAD
  "solana-compute-budget",
  "solana-compute-budget-instruction",
- "solana-feature-set",
-=======
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "solana-fee-structure",
  "solana-hash",
  "solana-instruction",

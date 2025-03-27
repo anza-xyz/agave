@@ -7,24 +7,15 @@ pub mod syscalls;
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
-<<<<<<< HEAD
-    solana_account::WritableAccount,
-    solana_bincode::limited_deserialize,
-    solana_clock::Slot,
-    solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
-    solana_feature_set::{
+    agave_feature_set::{
         bpf_account_data_direct_mapping, disable_new_loader_v3_deployments,
         enable_bpf_loader_set_authority_checked_ix, enable_loader_v4,
         remove_accounts_executable_flag_checks,
-=======
-    agave_feature_set::{
-        bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
-        enable_loader_v4, remove_accounts_executable_flag_checks,
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     },
     solana_account::WritableAccount,
     solana_bincode::limited_deserialize,
     solana_clock::Slot,
+    solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
     solana_instruction::{error::InstructionError, AccountMeta},
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,

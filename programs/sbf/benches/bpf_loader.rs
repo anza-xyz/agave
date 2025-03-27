@@ -17,16 +17,11 @@ extern crate test;
 use {
     agave_feature_set::FeatureSet,
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
-<<<<<<< HEAD
     solana_bpf_loader_program::{
         create_vm, serialization::serialize_parameters,
         syscalls::create_program_runtime_environment_v1,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_feature_set::FeatureSet,
-=======
-    solana_bpf_loader_program::{create_vm, syscalls::create_program_runtime_environment_v1},
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_measure::measure::Measure,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_runtime::{

@@ -1,10 +1,7 @@
 use {
     super::*,
-<<<<<<< HEAD
     crate::serialization::account_data_region_memory_state,
-=======
-    agave_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix},
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
+    agave_feature_set::enable_bpf_loader_set_authority_checked_ix,
     scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,

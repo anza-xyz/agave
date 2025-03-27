@@ -1,4 +1,5 @@
 use {
+    agave_feature_set::{move_precompile_verification_to_svm, FeatureSet},
     bincode::{deserialize, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
     futures::{future, prelude::stream::StreamExt},
@@ -8,7 +9,6 @@ use {
         TransactionSimulationDetails, TransactionStatus,
     },
     solana_client::connection_cache::ConnectionCache,
-    solana_feature_set::{move_precompile_verification_to_svm, FeatureSet},
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,

@@ -1,9 +1,9 @@
 use {
+    agave_feature_set as feature_set,
     assert_matches::assert_matches,
     solana_program_test::*,
     solana_sdk::{
         ed25519_instruction::new_ed25519_instruction,
-        feature_set,
         instruction::InstructionError,
         precompiles::PrecompileError,
         signature::Signer,

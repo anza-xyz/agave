@@ -17,12 +17,6 @@ use {
         },
     },
     solana_entry::poh::compute_hashes_per_tick,
-<<<<<<< HEAD
-=======
-    solana_epoch_schedule::EpochSchedule,
-    solana_feature_gate_interface as feature,
-    solana_fee_calculator::FeeRateGovernor,
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_genesis::{
         genesis_accounts::add_genesis_accounts, Base64Account, StakedValidatorAccountInfo,
         ValidatorAccountsFile,
@@ -37,7 +31,6 @@ use {
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         feature,
-        feature_set::FEATURE_NAMES,
         fee_calculator::FeeRateGovernor,
         genesis_config::{ClusterType, GenesisConfig},
         inflation::Inflation,

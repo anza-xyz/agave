@@ -1,8 +1,8 @@
 use {
     super::Bank,
     crate::bank::CollectorFeeDetails,
+    agave_feature_set::reward_full_priority_fee,
     log::{debug, warn},
-    solana_feature_set::reward_full_priority_fee,
     solana_fee::FeeFeatures,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{

@@ -1652,12 +1652,12 @@ impl Bank {
 fn test_rent_eager_collect_rent_in_partition(should_collect_rent: bool) {
     solana_logger::setup();
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
-    for feature_id in FeatureSet::default().inactive {
-        if feature_id != solana_feature_set::skip_rent_rewrites::id()
+    for feature_id in FeatureSet::default().inactive() {
+        if feature_id != &agave_feature_set::skip_rent_rewrites::id()
             && (!should_collect_rent
-                || feature_id != solana_feature_set::disable_rent_fees_collection::id())
+                || feature_id != &agave_feature_set::disable_rent_fees_collection::id())
         {
-            activate_feature(&mut genesis_config, feature_id);
+            activate_feature(&mut genesis_config, *feature_id);
         }
     }
 
@@ -7253,7 +7253,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(FeatureSet::all_enabled());
-    bank.deactivate_feature(&solana_feature_set::disable_new_loader_v3_deployments::id());
+    bank.deactivate_feature(&agave_feature_set::disable_new_loader_v3_deployments::id());
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
 
@@ -11861,51 +11861,6 @@ fn test_get_rent_paying_pubkeys() {
     );
 }
 
-<<<<<<< HEAD
-=======
-/// Ensure that accounts rent epoch is updated correctly by rent collection
-#[test_case(true; "enable partitioned rent fees collection")]
-#[test_case(false; "disable partitioned rent fees collection")]
-fn test_partitioned_rent_collection(should_run_partitioned_rent_collection: bool) {
-    let GenesisConfigInfo {
-        mut genesis_config, ..
-    } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
-    genesis_config.rent = Rent::default();
-    if should_run_partitioned_rent_collection {
-        genesis_config
-            .accounts
-            .remove(&agave_feature_set::disable_partitioned_rent_collection::id());
-    }
-
-    let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-
-    let slot = bank.slot() + bank.slot_count_per_normal_epoch();
-    let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
-
-    // make another bank so that any reclaimed accounts from the previous bank do not impact
-    // this test
-    let slot = bank.slot() + bank.slot_count_per_normal_epoch();
-    let bank: Arc<Bank> = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
-
-    // Store an account into the bank that is rent-exempt
-    let rent_exempt_balance = genesis_config.rent.minimum_balance(0);
-    let account_pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(rent_exempt_balance, 0, &Pubkey::default());
-    bank.store_account(&account_pubkey, &account);
-
-    // Run partitioned rent collection. If enabled, partitioned rent collection
-    // will update the rent epoch for any rent exempt accounts whose rent epoch
-    // is not already set to RENT_EXEMPT_RENT_EPOCH.
-    bank.collect_rent_eagerly();
-    let updated_account = bank.get_account(&account_pubkey).unwrap();
-    if should_run_partitioned_rent_collection {
-        assert_eq!(updated_account.rent_epoch(), RENT_EXEMPT_RENT_EPOCH);
-    } else {
-        assert_eq!(updated_account.rent_epoch(), INITIAL_RENT_EPOCH);
-    }
-}
-
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
 /// Ensure that accounts data size is updated correctly by rent collection
 #[test_case(true; "enable rent fees collection")]
 #[test_case(false; "disable rent fees collection")]
@@ -11917,14 +11872,7 @@ fn test_accounts_data_size_and_rent_collection(should_collect_rent: bool) {
     if should_collect_rent {
         genesis_config
             .accounts
-<<<<<<< HEAD
-            .remove(&solana_feature_set::disable_rent_fees_collection::id());
-=======
             .remove(&agave_feature_set::disable_rent_fees_collection::id());
-        genesis_config
-            .accounts
-            .remove(&agave_feature_set::disable_partitioned_rent_collection::id());
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     }
 
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -12605,16 +12553,7 @@ where
     let len2 = 456;
 
     // create initial bank and fund the alice account
-<<<<<<< HEAD
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(mint_lamports);
-=======
-    let (mut genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(mint_lamports);
-    if should_run_partitioned_rent_collection {
-        genesis_config
-            .accounts
-            .remove(&agave_feature_set::disable_partitioned_rent_collection::id());
-    }
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let bank_client = BankClient::new_shared(bank.clone());
     bank_client
@@ -14025,70 +13964,3 @@ fn test_rehash_accounts_modified() {
     // let the show begin
     bank.rehash();
 }
-<<<<<<< HEAD
-=======
-
-#[test]
-fn test_should_use_vote_keyed_leader_schedule() {
-    let genesis_config = genesis_utils::create_genesis_config(10_000).genesis_config;
-    let epoch_schedule = &genesis_config.epoch_schedule;
-    let create_test_bank = |bank_epoch: Epoch, feature_activation_slot: Option<Slot>| -> Bank {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        bank.epoch = bank_epoch;
-        let mut feature_set = FeatureSet::default();
-        if let Some(feature_activation_slot) = feature_activation_slot {
-            let feature_activation_epoch = bank.epoch_schedule().get_epoch(feature_activation_slot);
-            assert!(feature_activation_epoch <= bank_epoch);
-            feature_set.activate(
-                &agave_feature_set::enable_vote_address_leader_schedule::id(),
-                feature_activation_slot,
-            );
-        }
-        bank.feature_set = Arc::new(feature_set);
-        bank
-    };
-
-    // Test feature activation at genesis
-    let test_bank = create_test_bank(0, Some(0));
-    for epoch in 0..10 {
-        assert_eq!(
-            test_bank.should_use_vote_keyed_leader_schedule(epoch),
-            Some(true),
-        );
-    }
-
-    // Test feature activated in previous epoch
-    let slot_in_prev_epoch = epoch_schedule.get_first_slot_in_epoch(1);
-    let test_bank = create_test_bank(2, Some(slot_in_prev_epoch));
-    for epoch in 0..=(test_bank.epoch + 1) {
-        assert_eq!(
-            test_bank.should_use_vote_keyed_leader_schedule(epoch),
-            Some(epoch >= test_bank.epoch),
-        );
-    }
-
-    // Test feature activated in current epoch
-    let current_epoch_slot = epoch_schedule.get_last_slot_in_epoch(1);
-    let test_bank = create_test_bank(1, Some(current_epoch_slot));
-    for epoch in 0..=(test_bank.epoch + 1) {
-        assert_eq!(
-            test_bank.should_use_vote_keyed_leader_schedule(epoch),
-            Some(epoch > test_bank.epoch),
-        );
-    }
-
-    // Test feature not activated yet
-    let test_bank = create_test_bank(1, None);
-    let max_cached_leader_schedule = epoch_schedule.get_leader_schedule_epoch(test_bank.slot());
-    for epoch in 0..=(max_cached_leader_schedule + 1) {
-        if epoch <= max_cached_leader_schedule {
-            assert_eq!(
-                test_bank.should_use_vote_keyed_leader_schedule(epoch),
-                Some(false),
-            );
-        } else {
-            assert_eq!(test_bank.should_use_vote_keyed_leader_schedule(epoch), None);
-        }
-    }
-}
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))

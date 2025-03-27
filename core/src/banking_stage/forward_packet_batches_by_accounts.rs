@@ -1,12 +1,12 @@
 use {
     super::immutable_deserialized_packet::ImmutableDeserializedPacket,
+    agave_feature_set::FeatureSet,
     core::num::NonZeroU64,
     solana_cost_model::{
         block_cost_limits,
         cost_model::CostModel,
         cost_tracker::{CostTracker, UpdatedCosts},
     },
-    solana_feature_set::FeatureSet,
     solana_perf::packet::Packet,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     std::sync::Arc,
@@ -167,7 +167,7 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::unprocessed_packet_batches::DeserializedPacket,
-        solana_feature_set::FeatureSet,
+        agave_feature_set::FeatureSet,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,

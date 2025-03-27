@@ -14,11 +14,7 @@ use {
     solana_account::{
         Account, AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS,
     },
-<<<<<<< HEAD
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
-    solana_feature_set::{self as feature_set, FeatureSet},
-=======
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_fee_structure::FeeDetails,
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
     solana_instructions_sysvar::construct_instructions_data,

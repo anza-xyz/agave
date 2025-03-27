@@ -22,15 +22,6 @@ solana-accounts-db = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-entry = { workspace = true }
-<<<<<<< HEAD
-=======
-solana-epoch-schedule = { workspace = true }
-solana-feature-gate-interface = { workspace = true }
-solana-fee-calculator = { workspace = true }
-solana-genesis-config = { workspace = true }
-solana-inflation = { workspace = true }
-solana-keypair = { workspace = true }
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
 solana-ledger = { workspace = true }
 solana-logger = { workspace = true }
 solana-rpc-client = { workspace = true }

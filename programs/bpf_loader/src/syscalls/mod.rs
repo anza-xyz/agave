@@ -12,9 +12,6 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
-<<<<<<< HEAD
-=======
-    crate::syscalls::mem_ops::is_nonoverlapping,
     agave_feature_set::{
         self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
         bpf_account_data_direct_mapping, curve25519_syscall_enabled,
@@ -26,7 +23,6 @@ use {
         last_restart_slot_sysvar, reenable_sbpf_v0_execution,
         remaining_compute_units_syscall_enabled, FeatureSet,
     },
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     agave_precompiles::is_precompile,
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},

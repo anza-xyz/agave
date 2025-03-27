@@ -73,17 +73,6 @@ mod tests {
         let genesis_config =
             create_genesis_config_with_leader(0, &pubkey, bootstrap_validator_stake_lamports())
                 .genesis_config;
-<<<<<<< HEAD
-=======
-
-        if !use_vote_keyed_leader_schedule {
-            deactivate_features(
-                &mut genesis_config,
-                &vec![agave_feature_set::enable_vote_address_leader_schedule::id()],
-            );
-        }
-
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
         let bank = Bank::new_for_tests(&genesis_config);
 
         let pubkeys_and_stakes: HashMap<_, _> = bank

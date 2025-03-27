@@ -158,7 +158,7 @@ pub static STATELESS_BUILTINS: &[StatelessBuiltinPrototype] = &[StatelessBuiltin
     core_bpf_migration_config: Some(CoreBpfMigrationConfig {
         source_buffer_address: buffer_accounts::feature_gate_program::id(),
         upgrade_authority_address: None,
-        feature_id: solana_feature_set::migrate_feature_gate_program_to_core_bpf::id(),
+        feature_id: agave_feature_set::migrate_feature_gate_program_to_core_bpf::id(),
         migration_target: CoreBpfMigrationTargetType::Stateless,
         datapoint_name: "migrate_stateless_to_core_bpf_feature_gate_program",
     }),

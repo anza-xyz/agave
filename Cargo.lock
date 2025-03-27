@@ -3764,9 +3764,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.169"
+version = "0.2.170"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5aba8db14291edd000dfcc4d620c7ebfb122c613afb886ca8803fa4e128a20a"
+checksum = "875b3680cb2f8f71bdcf9a30f38d48282f5d3c95cbf9b3fa57269bb5d5c06828"
 
 [[package]]
 name = "libloading"
@@ -5760,9 +5760,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.138"
+version = "1.0.139"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d434192e7da787e94a6ea7e9670b26a036d0ca41e0b7efb2676dd32bae872949"
+checksum = "44f86c3acccc9c65b153fe1b85a3be07fe5515274ec9f0653b4a0875731c72a6"
 dependencies = [
  "itoa",
  "memchr",
@@ -7511,6 +7511,7 @@ dependencies = [
 name = "solana-ed25519-program-tests"
 version = "2.2.6"
 dependencies = [
+ "agave-feature-set",
  "assert_matches",
  "ed25519-dalek",
  "rand 0.8.5",
@@ -7807,15 +7808,6 @@ dependencies = [
  "solana-clap-utils",
  "solana-cli-config",
  "solana-entry",
-<<<<<<< HEAD
-=======
- "solana-epoch-schedule",
- "solana-feature-gate-interface",
- "solana-fee-calculator",
- "solana-genesis-config",
- "solana-inflation",
- "solana-keypair",
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "solana-ledger",
  "solana-logger",
  "solana-rpc-client",
@@ -7905,12 +7897,7 @@ dependencies = [
 name = "solana-gossip"
 version = "2.2.6"
 dependencies = [
-<<<<<<< HEAD
-=======
  "agave-feature-set",
- "anyhow",
- "arrayvec",
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "assert_matches",
  "bincode",
  "bs58",
@@ -7941,11 +7928,6 @@ dependencies = [
  "solana-client",
  "solana-connection-cache",
  "solana-entry",
-<<<<<<< HEAD
- "solana-feature-set",
-=======
- "solana-epoch-schedule",
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-ledger",
@@ -8360,13 +8342,15 @@ dependencies = [
 
 [[package]]
 name = "solana-logger"
-version = "2.2.1"
+version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "593dbcb81439d37b02757e90bd9ab56364de63f378c55db92a6fbd6a2e47ab36"
+checksum = "db8e777ec1afd733939b532a42492d888ec7c88d8b4127a5d867eb45c6eb5cd5"
 dependencies = [
  "env_logger",
  "lazy_static",
+ "libc",
  "log",
+ "signal-hook",
 ]
 
 [[package]]
@@ -8875,11 +8859,6 @@ dependencies = [
  "solana-compute-budget",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
-<<<<<<< HEAD
- "solana-feature-set",
-=======
- "solana-fee-structure",
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
@@ -10762,12 +10741,8 @@ checksum = "7bbf6d7a3c0b28dd5335c52c0e9eae49d0ae489a8f324917faf0ded65a812c1d"
 name = "solana-version"
 version = "2.2.6"
 dependencies = [
-<<<<<<< HEAD
- "semver 1.0.25",
-=======
  "agave-feature-set",
- "semver 1.0.26",
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
+ "semver 1.0.25",
  "serde",
  "serde_derive",
  "solana-frozen-abi",

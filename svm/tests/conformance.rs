@@ -7,11 +7,7 @@ use {
     lazy_static::lazy_static,
     prost::Message,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
-<<<<<<< HEAD
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_feature_set::{FeatureSet, FEATURE_NAMES},
-=======
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_log_collector::LogCollector,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},

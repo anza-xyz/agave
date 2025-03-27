@@ -10,11 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-<<<<<<< HEAD
-=======
 agave-feature-set = { workspace = true }
-arrayvec = { workspace = true }
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
@@ -39,11 +35,6 @@ solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
-<<<<<<< HEAD
-solana-feature-set = { workspace = true }
-=======
-solana-epoch-schedule = { workspace = true }
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }

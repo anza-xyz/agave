@@ -1,12 +1,6 @@
 use {
     super::{Bank, BankStatusCache},
-    agave_feature_set::FeatureSet,
     solana_accounts_db::blockhash_queue::BlockhashQueue,
-<<<<<<< HEAD
-=======
-    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_fee::{calculate_fee_details, FeeFeatures},
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_perf::perf_libs,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
@@ -236,6 +230,7 @@ mod tests {
             get_nonce_blockhash, get_nonce_data_from_account, new_sanitized_message,
             setup_nonce_with_bank,
         },
+        agave_feature_set::FeatureSet,
         solana_sdk::{
             hash::Hash, message::Message, signature::Keypair, signer::Signer, system_instruction,
         },

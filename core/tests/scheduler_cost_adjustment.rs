@@ -5,10 +5,6 @@ use {
         DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
     },
     solana_cost_model::cost_model::CostModel,
-<<<<<<< HEAD
-    solana_feature_set::{self as feature_set},
-=======
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{

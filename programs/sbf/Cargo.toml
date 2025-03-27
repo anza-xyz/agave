@@ -15,12 +15,8 @@ check-cfg = [
 ]
 
 [workspace.dependencies]
-<<<<<<< HEAD
+agave-feature-set = { path = "../../feature-set", version = "=2.2.6" }
 agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=2.2.6" }
-=======
-agave-feature-set = { path = "../../feature-set", version = "=2.3.0" }
-agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=2.3.0" }
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"
@@ -48,12 +44,10 @@ solana-compute-budget = { path = "../../compute-budget", version = "=2.2.6" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=2.2.6" }
 solana-curve25519 = { path = "../../curves/curve25519", version = "=2.2.6" }
 solana-decode-error = "=2.2.1"
-<<<<<<< HEAD
-solana-feature-set = "=2.2.4" # will be removed
 solana-fee = { path = "../../fee", version = "=2.2.6" }
 solana-ledger = { path = "../../ledger", version = "=2.2.6" }
 solana-log-collector = { path = "../../log-collector", version = "=2.2.6" }
-solana-logger = "=2.2.1"
+solana-logger = "=2.3.1"
 solana-measure = { path = "../../measure", version = "=2.2.6" }
 solana-poseidon = { path = "../../poseidon/", version = "=2.2.6" }
 solana-program = "=2.2.1"
@@ -68,28 +62,7 @@ solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=2.2.6" }
 solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=2.2.6" }
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=2.2.6" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=2.2.6" }
-solana-sdk = "=2.2.1"
-=======
-solana-fee = { path = "../../fee", version = "=2.3.0" }
-solana-ledger = { path = "../../ledger", version = "=2.3.0" }
-solana-log-collector = { path = "../../log-collector", version = "=2.3.0" }
-solana-logger = "=2.3.1"
-solana-measure = { path = "../../measure", version = "=2.3.0" }
-solana-poseidon = { path = "../../poseidon/", version = "=2.3.0" }
-solana-program = "=2.2.1"
-solana-program-runtime = { path = "../../program-runtime", version = "=2.3.0" }
-solana-runtime = { path = "../../runtime", version = "=2.3.0" }
-solana-runtime-transaction = { path = "../../runtime-transaction", version = "=2.3.0" }
-solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=2.3.0" }
-solana-sbf-rust-invoke-dep = { path = "rust/invoke_dep", version = "=2.3.0" }
-solana-sbf-rust-invoked-dep = { path = "rust/invoked_dep", version = "=2.3.0" }
-solana-sbf-rust-many-args-dep = { path = "rust/many_args_dep", version = "=2.3.0" }
-solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=2.3.0" }
-solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=2.3.0" }
-solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=2.3.0" }
-solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=2.3.0" }
 solana-sdk = "=2.2.2"
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
 solana-sbpf = "=0.10.0"
 solana-secp256k1-recover = "=2.2.1"
 solana-svm = { path = "../../svm", version = "=2.2.6" }

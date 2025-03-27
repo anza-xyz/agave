@@ -1,13 +1,9 @@
 use {
-<<<<<<< HEAD
     super::{
         forward_packet_batches_by_accounts::ForwardPacketBatchesByAccounts,
         immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
     },
-=======
-    super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
     agave_feature_set as feature_set,
->>>>>>> cb32984a9b (Migrate from solana-feature-set to agave-feature-set (#5520))
     itertools::Itertools,
     rand::{thread_rng, Rng},
     solana_perf::packet::Packet,
