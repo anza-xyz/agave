@@ -843,7 +843,10 @@ mod tests {
         solana_ledger::{
             blockstore::{entries_to_test_shreds, Blockstore},
             blockstore_processor::TransactionStatusSender,
-            genesis_utils::GenesisConfigInfo,
+            genesis_utils::{
+                bootstrap_validator_stake_lamports, create_genesis_config_with_leader,
+                GenesisConfigInfo,
+            },
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
@@ -986,11 +989,14 @@ mod tests {
     fn test_bank_process_and_record_transactions() {
         solana_logger::setup();
         let GenesisConfigInfo {
-            mut genesis_config,
+            genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(10_000);
-        genesis_config.ticks_per_slot = 64;
+        } = create_genesis_config_with_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        );
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let pubkey = solana_pubkey::new_rand();
 
@@ -1119,11 +1125,14 @@ mod tests {
     fn test_bank_nonce_update_blockhash_queried_before_transaction_record() {
         solana_logger::setup();
         let GenesisConfigInfo {
-            mut genesis_config,
+            genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(10_000);
-        genesis_config.ticks_per_slot = 64;
+        } = create_genesis_config_with_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        );
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let pubkey = Pubkey::new_unique();
 
