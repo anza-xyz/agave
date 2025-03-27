@@ -340,6 +340,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-syscalls"
+version = "3.0.0"
+
+[[package]]
 name = "agave-thread-manager"
 version = "3.0.0"
 dependencies = [

@@ -109,6 +109,7 @@ members = [
     "svm-feature-set",
     "svm-rent-collector",
     "svm-transaction",
+    "syscalls",
     "test-validator",
     "thin-client",
     "thread-manager",
@@ -182,6 +183,7 @@ agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=
 agave-io-uring = { path = "io-uring", version = "=3.0.0" }
 agave-precompiles = { path = "precompiles", version = "=3.0.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.0.0" }
+agave-syscalls = { path = "syscalls", version = "=3.0.0" }
 agave-thread-manager = { path = "thread-manager", version = "=3.0.0" }
 agave-transaction-view = { path = "transaction-view", version = "=3.0.0" }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.0.0" }
