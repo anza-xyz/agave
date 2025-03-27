@@ -129,6 +129,7 @@ members = [
     "svm-conformance",
     "svm-rent-collector",
     "svm-transaction",
+    "syscalls",
     "test-validator",
     "thin-client",
     "thread-manager",
@@ -186,6 +187,7 @@ agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", vers
 agave-feature-set = { path = "feature-set", version = "=2.3.0" }
 agave-precompiles = { path = "precompiles", version = "=2.3.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.3.0" }
+agave-syscalls = { path = "syscalls", version = "=2.3.0" }
 agave-transaction-view = { path = "transaction-view", version = "=2.3.0" }
 aquamarine = "0.6.0"
 aes-gcm-siv = "0.11.1"
