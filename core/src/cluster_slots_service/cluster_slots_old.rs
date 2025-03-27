@@ -116,14 +116,20 @@ impl ClusterSlots {
 
         {
             let cluster_slots = self.cluster_slots.read().unwrap();
-            for (slot, patches) in slots_to_patch {
-                let map = cluster_slots.get(&slot).unwrap();
-                let mut map_wg = map.write().unwrap();
-                map_wg.extend(patches);
-            }
+            Self::write_updates(&cluster_slots, slots_to_patch);
         }
     }
 
+    fn write_updates(
+        cluster_slots: &BTreeMap<Slot, Arc<RwLock<SlotPubkeys>>>,
+        slots_to_patch: HashMap<Slot, Vec<(Pubkey, u64)>>,
+    ) {
+        for (slot, patches) in slots_to_patch {
+            let map = cluster_slots.get(&slot).unwrap();
+            let mut map_wg = map.write().unwrap();
+            map_wg.extend(patches);
+        }
+    }
     #[cfg(feature = "dev-context-only-utils")]
     pub fn generate_fill_for_tests(
         &self,
@@ -131,20 +137,9 @@ impl ClusterSlots {
         root: Slot,
         slots: Range<Slot>,
     ) {
-        let mut epochslots = Vec::with_capacity(stakes.len());
-        let slots_vec: Vec<u64> = slots.clone().collect();
-        if !slots_vec.is_empty() {
-            assert!(slots.start > root);
-            for (pk, _) in stakes.iter() {
-                let mut epoch_slot = EpochSlots {
-                    from: *pk,
-                    ..Default::default()
-                };
-
-                epoch_slot.fill(&slots_vec, slots.start);
-                epochslots.push(epoch_slot);
-            }
-        }
+        assert!(slots.start > root);
+        let epochslots =
+            crate::cluster_slots_service::cluster_slots::make_epoch_slots(&stakes, slots);
         self.update_internal(root, &stakes, epochslots, 100000000);
     }
     #[cfg(feature = "dev-context-only-utils")]
