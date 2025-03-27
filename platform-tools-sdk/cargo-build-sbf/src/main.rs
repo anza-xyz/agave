@@ -1181,7 +1181,7 @@ fn main() {
             Arg::new("optimize-size")
                 .long("optimize-size")
                 .takes_value(false)
-                .help("Optimize program for size. This option can decrease a program size in about 20%, but increases CU consumption")
+                .help("Optimize program for size. This option may reduce program size, potentially increasing CU consumption.")
         )
         .get_matches_from(args);
 
