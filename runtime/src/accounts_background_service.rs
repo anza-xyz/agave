@@ -163,14 +163,38 @@ impl SnapshotRequestHandler {
             ),
         );
 
-        let accounts_package_kind = new_accounts_package_kind(&snapshot_request)?;
-        Some(self.handle_snapshot_request(
-            test_hash_calculation,
-            non_snapshot_time_us,
-            snapshot_request,
-            accounts_package_kind,
-            exit,
-        ))
+        // Check for an in-flight EAH calculation.  If there is one, drop and do not handle the
+        // snapshot request, otherwise we may we blocked here for a while (this would block the
+        // whole ABS loop (flush/clean/shrink/etc), which can lead to OOMs).
+        //
+        // The next time we're here, we'll check again if the EAH calc has finished, and we'll
+        // handle the next newest snapshot request.
+        //
+        // Note, if the snapshot request is the actual EAH request, then still handle it.
+        if snapshot_request
+            .snapshot_root_bank
+            .rc
+            .accounts
+            .accounts_db
+            .epoch_accounts_hash_manager
+            .is_in_flight()
+            && snapshot_request.request_kind != SnapshotRequestKind::EpochAccountsHash
+        {
+            info!(
+                "An EpochAccountsHash calculation is in-flight, so dropping \
+                 this snapshot request: {snapshot_request:?}",
+            );
+            None
+        } else {
+            let accounts_package_kind = new_accounts_package_kind(&snapshot_request)?;
+            Some(self.handle_snapshot_request(
+                test_hash_calculation,
+                non_snapshot_time_us,
+                snapshot_request,
+                accounts_package_kind,
+                exit,
+            ))
+        }
     }
 
     /// Get the next snapshot request to handle

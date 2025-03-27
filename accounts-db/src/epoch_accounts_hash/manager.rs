@@ -1,7 +1,10 @@
 use {
     super::EpochAccountsHash,
     solana_clock::Slot,
-    std::sync::{Condvar, Mutex},
+    std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Condvar, Mutex,
+    },
 };
 
 /// Manage the epoch accounts hash
@@ -14,14 +17,19 @@ pub struct Manager {
     state: Mutex<State>,
     /// This condition variable is used to wait for an in-flight EAH calculation to complete
     cvar: Condvar,
+    /// Raise this flag when the EAH calculation is in-flight.
+    /// Others can query this flag instead of having to lock `state`, which will be much cheaper.
+    in_flight_flag: AtomicBool,
 }
 
 impl Manager {
     #[must_use]
     fn _new(state: State) -> Self {
+        let is_in_flight = matches!(&state, State::InFlight(_));
         Self {
             state: Mutex::new(state),
             cvar: Condvar::new(),
+            in_flight_flag: AtomicBool::new(is_in_flight),
         }
     }
 
@@ -44,6 +52,7 @@ impl Manager {
             panic!("An epoch accounts hash calculation is already in-flight from slot {old_slot}!");
         }
         *state = State::InFlight(slot);
+        self.in_flight_flag.store(true, Ordering::Release);
     }
 
     /// An epoch accounts hash calculation has completed; update our state
@@ -57,6 +66,7 @@ impl Manager {
             );
         }
         *state = State::Valid(epoch_accounts_hash, slot);
+        self.in_flight_flag.store(false, Ordering::Release);
         self.cvar.notify_all();
     }
 
@@ -83,6 +93,11 @@ impl Manager {
             State::Valid(epoch_accounts_hash, _slot) => Some(*epoch_accounts_hash),
             _ => None,
         }
+    }
+
+    /// Is an epoch accounts hash calculation in flight?
+    pub fn is_in_flight(&self) -> bool {
+        self.in_flight_flag.load(Ordering::Acquire)
     }
 }
 
@@ -172,5 +187,18 @@ mod tests {
         // Test: State is Invalid, should panic
         let manager = Manager::new_invalid();
         let _epoch_accounts_hash = manager.wait_get_epoch_accounts_hash();
+    }
+
+    #[test]
+    fn test_is_in_flight() {
+        let manager = Manager::new_invalid();
+        assert!(!manager.is_in_flight());
+
+        let in_flight_slot = 123;
+        manager.set_in_flight(in_flight_slot);
+        assert!(manager.is_in_flight());
+
+        manager.set_valid(EpochAccountsHash::new(Hash::new_unique()), 5678);
+        assert!(!manager.is_in_flight());
     }
 }
