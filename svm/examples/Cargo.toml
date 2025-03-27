@@ -37,7 +37,7 @@ solana-logger = "=2.3.1"
 solana-perf = { path = "../../perf" }
 solana-program-runtime = { path = "../../program-runtime" }
 solana-rpc-client-api = { path = "../../rpc-client-api" }
-solana-sdk = "=2.2.1"
+solana-sdk = "=2.2.2"
 solana-svm = { path = "../" }
 solana-system-program = { path = "../../programs/system" }
 solana-version = { path = "../../version" }
