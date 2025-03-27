@@ -7967,7 +7967,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-account",
- "solana-bpf-loader-program",
  "solana-clock",
  "solana-feature-set",
  "solana-fee-structure",

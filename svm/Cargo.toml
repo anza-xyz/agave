@@ -19,7 +19,6 @@ qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
 solana-account = { workspace = true }
-solana-bpf-loader-program = { workspace = true }
 solana-clock = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true }
@@ -68,6 +67,7 @@ openssl = { workspace = true }
 prost = { workspace = true }
 rand0-7 = { workspace = true }
 shuttle = { workspace = true }
+solana-bpf-loader-program = { workspace = true }
 solana-clock = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
