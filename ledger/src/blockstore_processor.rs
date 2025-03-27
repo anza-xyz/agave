@@ -219,6 +219,7 @@ pub fn execute_batch<'a>(
         }
     };
 
+    // TODO HANA we need to put the balance stuff in the pre-commit callback... do this next
     let (commit_results, balances) = batch
         .bank()
         .load_execute_and_commit_transactions_with_pre_commit_callback(

@@ -1,6 +1,6 @@
 use {
     super::{
-        committer::{CommitTransactionDetails, Committer, PreBalanceInfo},
+        committer::{CommitTransactionDetails, Committer},
         leader_slot_metrics::{
             CommittedTransactionsCounts, LeaderSlotMetricsTracker, ProcessTransactionsSummary,
         },
@@ -12,7 +12,6 @@ use {
     },
     itertools::Itertools,
     solana_fee::FeeFeatures,
-    solana_ledger::token_balances::collect_token_balances,
     solana_measure::{measure::Measure, measure_us},
     solana_poh::{
         poh_recorder::{BankStart, PohRecorderError},
@@ -544,17 +543,8 @@ impl Consumer {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
 
-        let mut pre_balance_info = PreBalanceInfo::default();
-        let (_, collect_balances_us) = measure_us!({
-            // If the extra meta-data services are enabled for RPC, collect the
-            // pre-balances for native and token programs.
-            if transaction_status_sender_enabled {
-                pre_balance_info.native = bank.collect_balances(batch);
-                pre_balance_info.token =
-                    collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals)
-            }
-        });
-        execute_and_commit_timings.collect_balances_us = collect_balances_us;
+        // HANA REMOVE
+        //execute_and_commit_timings.collect_balances_us = collect_balances_us;
 
         let min_max = batch
             .sanitized_transactions()
@@ -693,7 +683,6 @@ impl Consumer {
                     processing_results,
                     starting_transaction_index,
                     bank,
-                    &mut pre_balance_info,
                     &mut execute_and_commit_timings,
                     &processed_counts,
                 )
