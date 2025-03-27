@@ -19,11 +19,11 @@ use {
         message::v0::LoadedAddresses,
         slot_hashes::SlotHashes,
         transaction::{Result, SanitizedTransaction},
-        transaction_context::TransactionAccount,
     },
     solana_svm_transaction::{
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
     },
+    solana_transaction_context::TransactionAccount,
     std::{
         cmp::Reverse,
         collections::{BinaryHeap, HashSet},

@@ -41,6 +41,7 @@ solana-svm = { path = "../" }
 solana-system-program = { path = "../../programs/system" }
 solana-version = { path = "../../version" }
 solana-test-validator = { path = "../../test-validator" }
+solana-transaction-context = "=2.2.1"
 solana-transaction-status = { path = "../../transaction-status" }
 spl-associated-token-account = "=6.0.0"
 spl-token = "=7.0.0"

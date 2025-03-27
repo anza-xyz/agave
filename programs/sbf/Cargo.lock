@@ -5132,6 +5132,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-sdk",
  "solana-svm-transaction",
+ "solana-transaction-context",
  "static_assertions",
  "tar",
  "tempfile",
@@ -5196,6 +5197,7 @@ dependencies = [
  "solana-banks-interface",
  "solana-program",
  "solana-sdk",
+ "solana-transaction-context",
  "tarpc",
  "thiserror 2.0.11",
  "tokio",
@@ -5209,6 +5211,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-sdk",
+ "solana-transaction-context",
  "tarpc",
 ]
 
@@ -6399,6 +6402,7 @@ dependencies = [
  "solana-svm",
  "solana-svm-transaction",
  "solana-timings",
+ "solana-transaction-context",
  "solana-transaction-status",
  "solana-vote",
  "solana-vote-program",
@@ -6961,6 +6965,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-svm",
  "solana-timings",
+ "solana-transaction-context",
  "solana-vote-program",
  "thiserror 2.0.11",
  "tokio",
@@ -7360,6 +7365,7 @@ dependencies = [
  "solana-svm-transaction",
  "solana-system-program",
  "solana-timings",
+ "solana-transaction-context",
  "solana-transaction-status-client-types",
  "solana-unified-scheduler-logic",
  "solana-version",
@@ -7438,6 +7444,7 @@ dependencies = [
  "solana-svm",
  "solana-svm-transaction",
  "solana-timings",
+ "solana-transaction-context",
  "solana-transaction-status",
  "solana-type-overrides",
  "solana-vote",
@@ -8423,6 +8430,7 @@ name = "solana-svm-rent-collector"
 version = "2.2.6"
 dependencies = [
  "solana-sdk",
+ "solana-transaction-context",
 ]
 
 [[package]]
