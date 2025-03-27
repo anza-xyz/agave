@@ -7,6 +7,7 @@ use {
         stable_log,
         sysvar_cache::SysvarCache,
     },
+    agave_precompiles::Precompile,
     solana_account::{create_account_shared_data_for_test, AccountSharedData},
     solana_clock::Slot,
     solana_compute_budget::compute_budget::ComputeBudget,
@@ -19,7 +20,6 @@ use {
     solana_instruction::{error::InstructionError, AccountMeta},
     solana_log_collector::{ic_msg, LogCollector},
     solana_measure::measure::Measure,
-    solana_precompiles::Precompile,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,

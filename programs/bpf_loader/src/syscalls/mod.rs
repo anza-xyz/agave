@@ -12,6 +12,11 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
+<<<<<<< HEAD
+=======
+    crate::syscalls::mem_ops::is_nonoverlapping,
+    agave_precompiles::is_precompile,
+>>>>>>> e1162f731d (Add agave-precompiles crate (#5509))
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
@@ -39,7 +44,6 @@ use {
     solana_keccak_hasher as keccak,
     solana_log_collector::{ic_logger_msg, ic_msg},
     solana_poseidon as poseidon,
-    solana_precompiles::is_precompile,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_memory::is_nonoverlapping,
     solana_program_runtime::{invoke_context::InvokeContext, stable_log},
