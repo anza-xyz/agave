@@ -11,6 +11,9 @@ use test::{black_box, Bencher};
 const LOOKUP_SLOTS_TO_SIMULATE: usize = 1000;
 const NUM_SLOTS_PER_EPOCH_SLOTS: u64 = 100;
 const NUM_NODES: usize = 1000;
+//handy for running with profiler
+const NUM_INNER_LOOPS: usize = 1;
+
 fn generate_stakes(num_nodes: usize) -> HashMap<Pubkey, u64> {
     let nodes: Vec<_> = (0..num_nodes).map(|_| Pubkey::new_unique()).collect();
     let stakes = HashMap::from_iter(nodes.iter().map(|e| (*e, 42)));
@@ -43,13 +46,16 @@ fn bench_cluster_slots_update_no_fp(bencher: &mut Bencher) {
     cs.generate_fill_for_tests(&stakes, 0, 1..10);
     let mut cur_slot = 0;
     bencher.iter(|| {
-        cs.generate_fill_for_tests(
-            &stakes,
-            cur_slot,
-            (cur_slot + 2)..(cur_slot + NUM_SLOTS_PER_EPOCH_SLOTS + 2),
-        );
-        assert!(!cs.lookup(cur_slot + 3).unwrap().read().unwrap().is_empty());
-        cur_slot += 1;
+        for _ in 0..NUM_INNER_LOOPS {
+            cs.generate_fill_for_tests(
+                &stakes,
+                cur_slot,
+                (cur_slot + 2)..(cur_slot + NUM_SLOTS_PER_EPOCH_SLOTS + 2),
+            );
+            assert!(!cs.lookup(cur_slot + 3).unwrap().read().unwrap().is_empty());
+
+            cur_slot += 1;
+        }
     });
     dbg!(cur_slot);
     dbg!(cs.total_writes.load(Ordering::Relaxed));
@@ -62,14 +68,16 @@ fn bench_cluster_slots_update_new_and_fast(bencher: &mut Bencher) {
     cs.generate_fill_for_tests(&stakes, 0, 1..10);
     let mut cur_slot = 0;
     bencher.iter(|| {
-        cs.generate_fill_for_tests(
-            &stakes,
-            cur_slot,
-            (cur_slot + 2)..(cur_slot + NUM_SLOTS_PER_EPOCH_SLOTS + 2),
-        );
+        for _ in 0..NUM_INNER_LOOPS {
+            cs.generate_fill_for_tests(
+                &stakes,
+                cur_slot,
+                (cur_slot + 2)..(cur_slot + NUM_SLOTS_PER_EPOCH_SLOTS + 2),
+            );
 
-        assert!(!cs.lookup(cur_slot + 3).unwrap().read().unwrap().is_empty());
-        cur_slot += 1;
+            assert!(!cs.lookup(cur_slot + 3).unwrap().read().unwrap().is_empty());
+            cur_slot += 1;
+        }
     });
     dbg!(cur_slot);
     dbg!(cs.total_writes.load(Ordering::Relaxed));

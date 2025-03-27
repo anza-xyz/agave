@@ -4,11 +4,12 @@ use {
     solana_gossip::{
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
-    solana_pubkey::PubkeyHasherBuilder,
+    //solana_pubkey::PubkeyHasherBuilder,
     solana_runtime::bank::Bank,
     solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
     std::{
         collections::{HashMap, VecDeque},
+        hash::RandomState,
         ops::{DerefMut, Range},
         sync::{
             atomic::{AtomicU64, Ordering},
@@ -28,6 +29,8 @@ const HASHMAP_OVERSIZE: usize = 1;
 pub(crate) type SlotPubkeysDashMap =
     DashMap</*node:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>;
 
+//type PubkeyHasherBuilder = RandomState;
+use solana_pubkey::PubkeyHasherBuilder;
 pub(crate) type SlotPubkeysHashMap =
     RwLock<HashMap</*node:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>>;
 pub type Stake = u64;
@@ -243,13 +246,14 @@ impl ClusterSlots2 {
                 .filter(|slot| slot_range.contains(slot));
             // figure out which entries would get updated by the new message and cache them
             for slot in updates {
-                let (_, slot_weight, _) = cluster_slots.get(slot as usize).unwrap();
+                let (s, slot_weight, _) = Self::_lookup(slot, &cluster_slots).unwrap();
+                assert_eq!(*s, slot);
                 let slot_weight = slot_weight.load(std::sync::atomic::Ordering::Relaxed) as f64;
                 // once slot is confirmed beyond `DUPLICATE_THRESHOLD` we should not need
                 // to update the stakes for it anymore
                 // floats can be funny, give us a bit of margin
                 if slot_weight / total_stake as f64 > DUPLICATE_THRESHOLD * 1.1 {
-                    continue;
+                    //    continue;
                 }
                 let e = slots_to_patch
                     .entry(slot)
