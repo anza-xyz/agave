@@ -171,8 +171,43 @@ For more details, please refer to the Rust documentation in
 # Timing Relationships of Various Plugin Callbacks.
 
 Account update via update_account: As mentioned previously when is_startup is
-false, the account is updated during transaction processing.
+false, the account is updated during transaction processing. The account update
+has information about the transaction causing the update in the txn field.
 
+```
+pub struct ReplicaAccountInfoV3<'a> {
+    /// The Pubkey for the account
+    pub pubkey: &'a [u8],
+
+    /// The lamports for the account
+    pub lamports: u64,
+
+    /// The Pubkey of the owner program account
+    pub owner: &'a [u8],
+
+    /// This account's data contains a loaded program (and is now read-only)
+    pub executable: bool,
+
+    /// The epoch at which this account will next owe rent
+    pub rent_epoch: u64,
+
+    /// The data held in this account.
+    pub data: &'a [u8],
+
+    /// A global monotonically increasing atomic number, which can be used
+    /// to tell the order of the account update. For example, when an
+    /// account is updated in the same slot multiple times, the update
+    /// with higher write_version should supersede the one with lower
+    /// write_version.
+    pub write_version: u64,
+
+    /// Reference to transaction causing this account modification
+    pub txn: Option<&'a SanitizedTransaction>,
+}
+```
+
+The updates are sent serially for different accounts in the transaction for a
+slot. 
 ## Example PostgreSQL Plugin
 
 The [`solana-accountsdb-plugin-postgres`] repository implements a plugin storing
