@@ -103,6 +103,10 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
         self.transaction.program_instructions_iter()
     }
 
+    fn static_account_keys(&self) -> &[Pubkey] {
+        self.transaction.static_account_keys()
+    }
+
     fn account_keys(&self) -> AccountKeys {
         self.transaction.account_keys()
     }

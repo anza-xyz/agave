@@ -10438,6 +10438,7 @@ dependencies = [
  "solana-system-interface",
  "solana-transaction",
  "static_assertions",
+ "test-case",
 ]
 
 [[package]]

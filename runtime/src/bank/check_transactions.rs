@@ -237,7 +237,10 @@ impl Bank {
         &self,
         message: &impl SVMMessage,
     ) -> Option<(Pubkey, AccountSharedData, NonceData)> {
-        let nonce_address = message.get_durable_nonce()?;
+        let require_static_nonce_account = self
+            .feature_set
+            .is_active(&agave_feature_set::require_static_nonce_account::id());
+        let nonce_address = message.get_durable_nonce(require_static_nonce_account)?;
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
         let nonce_data =
             nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
@@ -300,8 +303,20 @@ mod tests {
             setup_nonce_with_bank,
         },
         solana_sdk::{
-            hash::Hash, message::Message, signature::Keypair, signer::Signer, system_instruction,
+            hash::Hash,
+            instruction::CompiledInstruction,
+            message::{
+                v0::{self, LoadedAddresses, MessageAddressTableLookup},
+                Message, MessageHeader, SanitizedMessage, SanitizedVersionedMessage,
+                SimpleAddressLoader, VersionedMessage,
+            },
+            signature::Keypair,
+            signer::Signer,
+            system_instruction::{self, SystemInstruction},
+            system_program,
         },
+        std::collections::HashSet,
+        test_case::test_case,
     };
 
     #[test]
@@ -491,8 +506,79 @@ mod tests {
             .check_load_and_advance_message_nonce_account(
                 &message,
                 &bank.next_durable_nonce(),
-                lamports_per_signature
+                lamports_per_signature,
             )
             .is_none());
+    }
+
+    #[test_case(true; "test_check_and_load_message_nonce_account_nonce_is_alt_disallowed")]
+    #[test_case(false; "test_check_and_load_message_nonce_account_nonce_is_alt_allowed")]
+    fn test_check_and_load_message_nonce_account_nonce_is_alt(require_static_nonce_account: bool) {
+        let feature_set = if require_static_nonce_account {
+            FeatureSet::all_enabled()
+        } else {
+            FeatureSet::default()
+        };
+        let nonce_authority = Pubkey::new_unique();
+        let (bank, _mint_keypair, _custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
+            10_000_000,
+            |_| {},
+            5_000_000,
+            250_000,
+            Some(nonce_authority),
+            feature_set,
+        )
+        .unwrap();
+
+        let nonce_pubkey = nonce_keypair.pubkey();
+        let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
+        let loaded_addresses = LoadedAddresses {
+            writable: vec![nonce_pubkey],
+            readonly: vec![],
+        };
+
+        let message = SanitizedMessage::try_new(
+            SanitizedVersionedMessage::try_new(VersionedMessage::V0(v0::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                account_keys: vec![nonce_authority, system_program::id()],
+                recent_blockhash: nonce_hash,
+                instructions: vec![CompiledInstruction::new(
+                    1, // index of system program
+                    &SystemInstruction::AdvanceNonceAccount,
+                    vec![
+                        2, // index of alt nonce account
+                        0, // index of nonce_authority
+                    ],
+                )],
+                address_table_lookups: vec![MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: (0..loaded_addresses.writable.len())
+                        .map(|x| x as u8)
+                        .collect(),
+                    readonly_indexes: (0..loaded_addresses.readonly.len())
+                        .map(|x| (loaded_addresses.writable.len() + x) as u8)
+                        .collect(),
+                }],
+            }))
+            .unwrap(),
+            SimpleAddressLoader::Enabled(loaded_addresses),
+            &HashSet::new(),
+        )
+        .unwrap();
+
+        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
+        assert_eq!(
+            bank.check_load_and_advance_message_nonce_account(
+                &message,
+                &bank.next_durable_nonce(),
+                lamports_per_signature
+            )
+            .is_none(),
+            require_static_nonce_account,
+        );
     }
 }

@@ -1,4 +1,5 @@
 #![cfg(test)]
+#![allow(clippy::arithmetic_side_effects)]
 use {
     crate::svm_message::SVMMessage,
     solana_hash::Hash,
@@ -13,10 +14,12 @@ use {
     solana_sdk_ids::system_program,
     solana_system_interface::instruction::SystemInstruction,
     std::collections::HashSet,
+    test_case::test_case,
 };
 
-#[test]
-fn test_get_durable_nonce() {
+#[test_case(true; "test_get_durable_nonce_static_nonce_account")]
+#[test_case(false; "test_get_durable_nonce_alt_nonce_account")]
+fn test_get_durable_nonce(require_static_nonce_account: bool) {
     fn create_message_for_test(
         num_signers: u8,
         num_writable: u8,
@@ -71,7 +74,7 @@ fn test_get_durable_nonce() {
     {
         let message = create_message_for_test(1, 1, vec![Pubkey::new_unique()], vec![], None);
         assert!(SanitizedMessage::get_durable_nonce(&message).is_none());
-        assert!(SVMMessage::get_durable_nonce(&message).is_none());
+        assert!(SVMMessage::get_durable_nonce(&message, require_static_nonce_account).is_none());
     }
 
     // system program id instruction - invalid
@@ -84,7 +87,7 @@ fn test_get_durable_nonce() {
             None,
         );
         assert!(SanitizedMessage::get_durable_nonce(&message).is_none());
-        assert!(SVMMessage::get_durable_nonce(&message).is_none());
+        assert!(SVMMessage::get_durable_nonce(&message, require_static_nonce_account).is_none());
     }
 
     // system program id instruction - not nonce
@@ -101,7 +104,7 @@ fn test_get_durable_nonce() {
             None,
         );
         assert!(SanitizedMessage::get_durable_nonce(&message).is_none());
-        assert!(SVMMessage::get_durable_nonce(&message).is_none());
+        assert!(SVMMessage::get_durable_nonce(&message, require_static_nonce_account).is_none());
     }
 
     // system program id - nonce instruction (no accounts)
@@ -118,7 +121,7 @@ fn test_get_durable_nonce() {
             None,
         );
         assert!(SanitizedMessage::get_durable_nonce(&message).is_none());
-        assert!(SVMMessage::get_durable_nonce(&message).is_none());
+        assert!(SVMMessage::get_durable_nonce(&message, require_static_nonce_account).is_none());
     }
 
     // system program id - nonce instruction (non-fee-payer, non-writable)
@@ -137,7 +140,7 @@ fn test_get_durable_nonce() {
             None,
         );
         assert!(SanitizedMessage::get_durable_nonce(&message).is_none());
-        assert!(SVMMessage::get_durable_nonce(&message).is_none());
+        assert!(SVMMessage::get_durable_nonce(&message, require_static_nonce_account).is_none());
     }
 
     // system program id - nonce instruction fee-payer
@@ -158,7 +161,10 @@ fn test_get_durable_nonce() {
             SanitizedMessage::get_durable_nonce(&message),
             Some(&payer_nonce)
         );
-        assert_eq!(SVMMessage::get_durable_nonce(&message), Some(&payer_nonce));
+        assert_eq!(
+            SVMMessage::get_durable_nonce(&message, require_static_nonce_account),
+            Some(&payer_nonce)
+        );
     }
 
     // system program id - nonce instruction w/ trailing bytes fee-payer
@@ -181,7 +187,10 @@ fn test_get_durable_nonce() {
             SanitizedMessage::get_durable_nonce(&message),
             Some(&payer_nonce)
         );
-        assert_eq!(SVMMessage::get_durable_nonce(&message), Some(&payer_nonce));
+        assert_eq!(
+            SVMMessage::get_durable_nonce(&message, require_static_nonce_account),
+            Some(&payer_nonce)
+        );
     }
 
     // system program id - nonce instruction (non-fee-payer)
@@ -200,7 +209,10 @@ fn test_get_durable_nonce() {
             None,
         );
         assert_eq!(SanitizedMessage::get_durable_nonce(&message), Some(&nonce));
-        assert_eq!(SVMMessage::get_durable_nonce(&message), Some(&nonce));
+        assert_eq!(
+            SVMMessage::get_durable_nonce(&message, require_static_nonce_account),
+            Some(&nonce)
+        );
     }
 
     // system program id - nonce instruction (non-fee-payer, multiple accounts)
@@ -220,7 +232,10 @@ fn test_get_durable_nonce() {
             None,
         );
         assert_eq!(SanitizedMessage::get_durable_nonce(&message), Some(&nonce));
-        assert_eq!(SVMMessage::get_durable_nonce(&message), Some(&nonce));
+        assert_eq!(
+            SVMMessage::get_durable_nonce(&message, require_static_nonce_account),
+            Some(&nonce)
+        );
     }
 
     // system program id - nonce instruction (non-fee-payer, loaded account)
@@ -242,7 +257,10 @@ fn test_get_durable_nonce() {
             }),
         );
         assert_eq!(SanitizedMessage::get_durable_nonce(&message), Some(&nonce));
-        assert_eq!(SVMMessage::get_durable_nonce(&message), Some(&nonce));
+        assert_eq!(
+            SVMMessage::get_durable_nonce(&message, require_static_nonce_account),
+            (!require_static_nonce_account).then_some(&nonce)
+        );
     }
 }
 

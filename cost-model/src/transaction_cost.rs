@@ -209,6 +209,10 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
         core::iter::empty()
     }
 
+    fn static_account_keys(&self) -> &[Pubkey] {
+        &self.0
+    }
+
     fn account_keys(&self) -> solana_message::AccountKeys {
         solana_message::AccountKeys::new(&self.0, None)
     }
