@@ -928,6 +928,7 @@ fn do_create_test_recorder(
         crate::poh_service::DEFAULT_HASHES_PER_BATCH,
         record_receiver,
         bank_message_receiver,
+        poh_controller.pending_message(),
     );
 
     (

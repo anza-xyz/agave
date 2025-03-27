@@ -1344,6 +1344,7 @@ impl Validator {
             config.poh_hashes_per_batch,
             record_receiver,
             bank_message_receiver,
+            poh_controller.pending_message(),
         );
         assert_eq!(
             blockstore.get_new_shred_signals_len(),

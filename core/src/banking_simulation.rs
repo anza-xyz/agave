@@ -754,6 +754,7 @@ impl BankingSimulator {
             DEFAULT_HASHES_PER_BATCH,
             record_receiver,
             bank_message_receiver,
+            poh_controller.pending_message(),
         );
 
         // Enable BankingTracer to approximate the real environment as close as possible because
