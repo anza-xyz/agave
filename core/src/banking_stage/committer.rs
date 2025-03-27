@@ -170,6 +170,8 @@ impl Committer {
                     std::mem::take(&mut pre_balance_info.token),
                     post_token_balances,
                 ),
+                // TODO: fill me in
+                vec![],
                 batch_transaction_indexes,
             );
         }

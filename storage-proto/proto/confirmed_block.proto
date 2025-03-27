@@ -65,6 +65,8 @@ message TransactionStatusMeta {
     // Available since Solana v1.10.35 / v1.11.6.
     // Set to `None` for txs executed on earlier versions.
     optional uint64 compute_units_consumed = 16;
+    // Total transaction cost
+    optional uint64 cost_units = 17;
 }
 
 message TransactionError {
