@@ -986,10 +986,11 @@ mod tests {
     fn test_bank_process_and_record_transactions() {
         solana_logger::setup();
         let GenesisConfigInfo {
-            genesis_config,
+            mut genesis_config,
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
+        genesis_config.ticks_per_slot = 64;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let pubkey = solana_pubkey::new_rand();
 
@@ -1118,10 +1119,11 @@ mod tests {
     fn test_bank_nonce_update_blockhash_queried_before_transaction_record() {
         solana_logger::setup();
         let GenesisConfigInfo {
-            genesis_config,
+            mut genesis_config,
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
+        genesis_config.ticks_per_slot = 64;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let pubkey = Pubkey::new_unique();
 
