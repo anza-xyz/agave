@@ -288,9 +288,14 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("snapshots")
             .value_name("DIR")
             .takes_value(true)
-            .help(
+            .help("Use DIR as the base location for snapshots.")
+            .long_help(
                 "Use DIR as the base location for snapshots. \
-                 A subdirectory named \"snapshots\" will be created. \
+                 Snapshot archives will use DIR unless --full-snapshot-archive-path or \
+                 --incremental-snapshot-archive-path is specified. \
+                 Additionally, a subdirectory named \"snapshots\" will be created in DIR. \
+                 This subdirectory holds internal files/data that are used when generating \
+                 snapshot archives. \
                  [default: --ledger value]",
              ),
     )
