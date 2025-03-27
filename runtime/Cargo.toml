@@ -54,7 +54,6 @@ solana-bucket-map = { workspace = true }
 solana-builtins = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
-solana-config-program = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-fee = { workspace = true }

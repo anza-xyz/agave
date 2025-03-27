@@ -15,7 +15,7 @@ log = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
-solana-config-program = { workspace = true }
+solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-feature-set = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-instruction = { workspace = true }

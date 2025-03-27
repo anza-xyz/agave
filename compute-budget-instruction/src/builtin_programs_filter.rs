@@ -116,10 +116,6 @@ mod test {
                 feature_set::migrate_stake_program_to_core_bpf::id(),
             ),
             (
-                solana_sdk_ids::config::id(),
-                feature_set::migrate_config_program_to_core_bpf::id(),
-            ),
-            (
                 solana_sdk_ids::address_lookup_table::id(),
                 feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
             ),

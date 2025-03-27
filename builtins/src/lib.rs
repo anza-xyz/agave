@@ -77,19 +77,6 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
         program_id: solana_stake_program::id(),
         entrypoint: solana_stake_program::stake_instruction::Entrypoint::vm,
     },
-    BuiltinPrototype {
-        core_bpf_migration_config: Some(CoreBpfMigrationConfig {
-            source_buffer_address: buffer_accounts::config_program::id(),
-            upgrade_authority_address: None,
-            feature_id: solana_feature_set::migrate_config_program_to_core_bpf::id(),
-            migration_target: CoreBpfMigrationTargetType::Builtin,
-            datapoint_name: "migrate_builtin_to_core_bpf_config_program",
-        }),
-        name: "config_program",
-        enable_feature_id: None,
-        program_id: solana_config_program::id(),
-        entrypoint: solana_config_program::config_processor::Entrypoint::vm,
-    },
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: solana_bpf_loader_deprecated_program,
@@ -368,36 +355,34 @@ mod tests {
         );
         // Stake has a live migration config, so it has no test-only configs
         // to test here.
-        // Config has a live migration config, so it has no test-only configs
-        // to test here.
         assert_eq!(
-            &super::BUILTINS[4].core_bpf_migration_config,
+            &super::BUILTINS[3].core_bpf_migration_config,
             &Some(super::test_only::solana_bpf_loader_deprecated_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[5].core_bpf_migration_config,
+            &super::BUILTINS[4].core_bpf_migration_config,
             &Some(super::test_only::solana_bpf_loader_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[6].core_bpf_migration_config,
+            &super::BUILTINS[5].core_bpf_migration_config,
             &Some(super::test_only::solana_bpf_loader_upgradeable_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[7].core_bpf_migration_config,
+            &super::BUILTINS[6].core_bpf_migration_config,
             &Some(super::test_only::compute_budget_program::CONFIG)
         );
         // Address Lookup Table has a live migration config, so it has no
         // test-only configs to test here.
         assert_eq!(
-            &super::BUILTINS[9].core_bpf_migration_config,
+            &super::BUILTINS[8].core_bpf_migration_config,
             &Some(super::test_only::zk_token_proof_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[10].core_bpf_migration_config,
+            &super::BUILTINS[9].core_bpf_migration_config,
             &Some(super::test_only::loader_v4::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[11].core_bpf_migration_config,
+            &super::BUILTINS[10].core_bpf_migration_config,
             &Some(super::test_only::zk_elgamal_proof_program::CONFIG)
         );
     }
