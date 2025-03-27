@@ -702,6 +702,13 @@ mod tests {
     }
 
     #[test]
+    fn test_try_keypairs_of() {
+        let matches = ArgMatches::default();
+        let result = try_keypairs_of(&matches, "test").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn test_pubkey_of() {
         let keypair = Keypair::new();
         let outfile = tmp_file_path("test_pubkey_of.json", &keypair.pubkey());
@@ -742,6 +749,20 @@ mod tests {
     }
 
     #[test]
+    fn test_try_pubkeys_of() {
+        let matches = ArgMatches::default();
+        let result = try_pubkeys_of(&matches, "test").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_pubkeys_of_multiple_signers() {
+        let matches = ArgMatches::default();
+        let result = pubkeys_of_multiple_signers(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn test_pubkeys_sigs_of() {
         let key1 = solana_pubkey::new_rand();
         let key2 = solana_pubkey::new_rand();
@@ -755,6 +776,13 @@ mod tests {
             pubkeys_sigs_of(&matches, "multiple"),
             Some(vec![(key1, sig1), (key2, sig2)])
         );
+    }
+
+    #[test]
+    fn test_try_pubkeys_sigs_of() {
+        let matches = ArgMatches::default();
+        let result = try_pubkeys_sigs_of(&matches, "test").unwrap();
+        assert!(result.is_none());
     }
 
     #[test]
@@ -1051,5 +1079,26 @@ mod tests {
             .try_get_matches_from(vec!["test", "--signer", "usb://ledger"])
             .unwrap_err();
         assert_eq!(matches_error.kind, clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn test_try_get_signers() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_signers(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_get_keypairs() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_keypairs(&matches, "test").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_get_pubkeys() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_pubkeys(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
     }
 }
