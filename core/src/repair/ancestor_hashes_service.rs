@@ -788,17 +788,11 @@ impl AncestorHashesService {
                 let status = cluster_slots.lookup(*dead_slot);
                 if let Some(completed_dead_slot_pubkeys) = status {
                     let total_stake = epoch_stakes.total_stake();
-                    let node_id_to_vote_accounts = epoch_stakes.node_id_to_vote_accounts();
                     let total_completed_slot_stake: u64 = completed_dead_slot_pubkeys
                         .read()
                         .unwrap()
                         .iter()
-                        .map(|(node_key, _)| {
-                            node_id_to_vote_accounts
-                                .get(node_key)
-                                .map(|v| v.total_stake)
-                                .unwrap_or(0)
-                        })
+                        .map(|(_node_key, stake)| stake)
                         .sum();
                     // If sufficient number of validators froze this slot, then there's a chance
                     // this dead slot was duplicate confirmed and will make it into in the main fork.
