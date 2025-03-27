@@ -367,6 +367,22 @@ impl ClusterSlots2 {
         self.report_cluster_slots_size();
     }
 
+    fn write_updates(
+        cluster_slots: &VecDeque<RowContent>,
+        slots_to_patch: HashMap<Slot, Vec<(Pubkey, Stake)>>,
+    ) {
+        for (slot, patches) in slots_to_patch {
+            let (_, weight, map) = Self::_lookup(slot, &cluster_slots).unwrap();
+            let mut weight_update = 0;
+            let mut map_lock = map.write().unwrap();
+            for (key, stake) in patches {
+                if map_lock.insert(key, stake).is_none() {
+                    weight_update += stake;
+                };
+            }
+            weight.fetch_add(weight_update, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
     // Advance the cluster_slots ringbuffer, initialize if needed
     fn roll_cluster_slots(
         slot_range: &Range<Slot>,
@@ -466,8 +482,7 @@ impl ClusterSlots2 {
         }
 
         let cluster_slots = self.cluster_slots.read().unwrap();
-        let mut slots_to_patch =
-            HashMap::with_capacity_and_hasher(1024, PubkeyHasherBuilder::default());
+        let mut slots_to_patch = HashMap::with_capacity(1024);
         for epoch_slots in epoch_slots_list {
             //filter out unstaked nodes
             let Some(&sender_stake) = validator_stakes.get(&epoch_slots.from) else {
@@ -496,19 +511,7 @@ impl ClusterSlots2 {
                 e.push((epoch_slots.from, sender_stake));
             }
         }
-
-        for (slot, patches) in slots_to_patch {
-            let (_, weight, map) = Self::_lookup(slot, &cluster_slots).unwrap();
-            let mut weight_update = 0;
-            let mut map_lock = map.write().unwrap();
-            let map_lock_ref = map_lock.deref_mut();
-            for (key, stake) in patches {
-                if map_lock_ref.insert(key, stake).is_none() {
-                    weight_update += stake;
-                };
-            }
-            weight.fetch_add(weight_update, std::sync::atomic::Ordering::Relaxed);
-        }
+        Self::write_updates(&cluster_slots, slots_to_patch);
     }
 
     /// Returns number of stored entries
