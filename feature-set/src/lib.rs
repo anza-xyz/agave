@@ -1028,6 +1028,10 @@ pub mod enable_vote_address_leader_schedule {
     solana_pubkey::declare_id!("5JsG4NWH8Jbrqdd8uL6BNwnyZK3dQSoieRXG5vmofj9y");
 }
 
+pub mod raise_block_limits_to_60m {
+    solana_pubkey::declare_id!("6oMCUgfY6BzZ6jwB681J6ju5Bh6CjVXbd7NeWYqiXBSu");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1260,6 +1264,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (create_slashing_program::id(), "creates an enshrined slashing program SIMD-0204"),
         (disable_partitioned_rent_collection::id(), "Disable partitioned rent collection SIMD-0175 #4562"),
         (enable_vote_address_leader_schedule::id(), "Enable vote address leader schedule SIMD-0180 #4573"),
+        (raise_block_limits_to_60m::id(), "Raise block limit to 60M SIMD-0256"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
