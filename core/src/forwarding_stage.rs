@@ -89,24 +89,24 @@ impl<F: ForwardAddressGetter> VoteClient<F> {
             current_address: None,
         }
     }
+}
 
+impl<F: ForwardAddressGetter> ForwardingClient for VoteClient<F> {
     fn update_address(&mut self) -> bool {
         self.current_address = self.forward_address_getter.get_vote_forwarding_addresses();
         self.current_address.is_some()
     }
 
-    fn send_batch(&self, batch: &mut Vec<Vec<u8>>) {
+    fn send_batch(&self, input_batch: Vec<Vec<u8>>) {
         assert!(
             self.current_address.is_some(),
             "current_address should be updated before send_batch call."
         );
-        let batch_with_addresses = batch
+        let batch_with_addresses = input_batch
             .iter()
             .map(|bytes| (bytes, self.current_address.unwrap()));
         // TODO(klykov) Not really in favour of skipping these errors, need to think
         let _res = batch_send(&self.udp_socket, batch_with_addresses);
-
-        batch.clear();
     }
 }
 
@@ -580,7 +580,10 @@ impl<F: ForwardAddressGetter, Client: ForwardingClient> ForwardingStage<F, Clien
                 vote_batch.push(packet_data_vec);
                 if vote_batch.len() == vote_batch.capacity() {
                     self.metrics.votes_forwarded += vote_batch.len();
-                    self.vote_client.send_batch(&mut vote_batch);
+
+                    let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
+                    core::mem::swap(&mut batch, &mut vote_batch);
+                    self.vote_client.send_batch(batch);
                 }
             } else {
                 non_vote_batch.push(packet_data_vec);
@@ -597,7 +600,7 @@ impl<F: ForwardAddressGetter, Client: ForwardingClient> ForwardingStage<F, Clien
         // Send out remaining packets
         if !vote_batch.is_empty() {
             self.metrics.votes_forwarded += vote_batch.len();
-            self.vote_client.send_batch(&mut vote_batch);
+            self.vote_client.send_batch(vote_batch);
         }
         if !non_vote_batch.is_empty() {
             self.metrics.non_votes_forwarded += non_vote_batch.len();
