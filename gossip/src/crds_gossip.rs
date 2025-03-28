@@ -288,8 +288,10 @@ impl CrdsGossip {
         self_pubkey: Pubkey,
         stakes: &'a HashMap<Pubkey, u64>,
         epoch_duration: Duration,
+        default_timeout: Option<u64>,
     ) -> CrdsTimeouts<'a> {
-        self.pull.make_timeouts(self_pubkey, stakes, epoch_duration)
+        self.pull
+            .make_timeouts(self_pubkey, stakes, epoch_duration, default_timeout)
     }
 
     pub fn purge(

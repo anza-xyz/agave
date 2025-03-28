@@ -376,6 +376,7 @@ fn network_run_push(
                     node_pubkey,
                     &stakes,
                     Duration::from_millis(node.gossip.pull.crds_timeout),
+                    Some(node.gossip.push.msg_timeout),
                 );
                 node.gossip.purge(&node_pubkey, thread_pool, now, &timeouts);
                 let (entries, messages, _) = node.gossip.new_push_messages(
