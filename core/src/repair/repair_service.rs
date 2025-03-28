@@ -950,10 +950,11 @@ impl RepairService {
 
         // Filter out any peers that don't have a valid repair socket.
         let repair_peers: Vec<(Pubkey, SocketAddr, u32)> = peers_with_slot
+            .read()
+            .unwrap()
             .iter()
-            .filter_map(|entry| {
-                let pubkey = entry.key();
-                let stake = entry.value();
+            .filter_map(|(pubkey, stake)| {
+                let stake = stake.load(Ordering::Relaxed);
                 let peer_repair_addr = cluster_info
                     .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
                 if let Some(Some(peer_repair_addr)) = peer_repair_addr {
@@ -961,7 +962,7 @@ impl RepairService {
                     Some((
                         *pubkey,
                         peer_repair_addr,
-                        (*stake / solana_sdk::native_token::LAMPORTS_PER_SOL) as u32,
+                        (stake / solana_sdk::native_token::LAMPORTS_PER_SOL) as u32,
                     ))
                 } else {
                     None

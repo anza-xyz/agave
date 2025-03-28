@@ -9,7 +9,7 @@ static GLOBAL: Jemalloc = Jemalloc;
 extern crate test;
 use std::{collections::HashMap, sync::atomic::AtomicU64, sync::atomic::Ordering};
 
-use solana_core::cluster_slots_service::cluster_slots::{ClusterSlots, ClusterSlots2};
+use solana_core::cluster_slots_service::cluster_slots::ClusterSlots;
 use solana_pubkey::Pubkey;
 use test::{black_box, Bencher};
 
@@ -43,7 +43,7 @@ fn bench_cluster_slots_update_original(bencher: &mut Bencher) {
     })
 }*/
 
-#[bench]
+/*#[bench]
 fn bench_cluster_slots_update_dash_map(bencher: &mut Bencher) {
     let cs = ClusterSlots::default();
     let stakes = generate_stakes(NUM_NODES);
@@ -64,7 +64,7 @@ fn bench_cluster_slots_update_dash_map(bencher: &mut Bencher) {
     });
     dbg!(cur_slot);
     //dbg!(cs.total_writes.load(Ordering::Relaxed));
-}
+}*/
 #[bench]
 fn bench_cluster_slots_update_no_fp(bencher: &mut Bencher) {
     let cs = solana_core::cluster_slots_service::cluster_slots_old::ClusterSlots::default();
@@ -89,7 +89,7 @@ fn bench_cluster_slots_update_no_fp(bencher: &mut Bencher) {
 }
 #[bench]
 fn bench_cluster_slots_update_new_and_fast(bencher: &mut Bencher) {
-    let cs = ClusterSlots2::default();
+    let cs = ClusterSlots::default();
     let stakes = generate_stakes(NUM_NODES);
     let fav_stake: Vec<_> = stakes.keys().take(1).collect();
     //warmup
@@ -112,6 +112,7 @@ fn bench_cluster_slots_update_new_and_fast(bencher: &mut Bencher) {
     });
     dbg!(cur_slot);
     dbg!(cs.total_writes.load(Ordering::Relaxed));
+    dbg!(cs.total_allocations.load(Ordering::Relaxed));
 }
 /*
 #[bench]

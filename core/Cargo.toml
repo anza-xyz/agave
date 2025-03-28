@@ -108,6 +108,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 trees = { workspace = true }
 frozen-collections = "0.4.0"
+static_assertions.workspace = true
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
