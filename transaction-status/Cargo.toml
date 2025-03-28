@@ -28,6 +28,7 @@ solana-instruction = { workspace = true }
 solana-loader-v2-interface = { workspace = true, features = ["bincode"] }
 solana-message = { workspace = true }
 solana-program = { workspace = true }
+solana-program-option = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-reward-info = { workspace = true }
 solana-sdk-ids = { workspace = true }

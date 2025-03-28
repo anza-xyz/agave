@@ -886,6 +886,8 @@ mod tests {
             },
         },
         solana_net_utils::bind_to_unspecified,
+        solana_program_option::COption,
+        solana_program_pack::Pack,
         solana_rpc::rpc::create_validator_exit,
         solana_runtime::{
             bank::{Bank, BankTestConfig},
@@ -898,10 +900,7 @@ mod tests {
         },
         solana_streamer::socket::SocketAddrSpace,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
-        spl_token_2022::{
-            solana_program::{program_option::COption, program_pack::Pack},
-            state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
-        },
+        spl_token_2022::state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
         std::{collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
     };
 

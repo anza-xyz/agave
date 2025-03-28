@@ -43,6 +43,7 @@ use {
     },
     solana_metrics::inc_new_counter_info,
     solana_perf::packet::PACKET_DATA_SIZE,
+    solana_program_pack::Pack,
     solana_rpc_client_api::{
         config::*,
         custom_error::RpcCustomError,
@@ -101,7 +102,6 @@ use {
             interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
             BaseStateWithExtensions, StateWithExtensions,
         },
-        solana_program::program_pack::Pack,
         state::{Account as TokenAccount, Mint},
     },
     std::{
@@ -4508,6 +4508,7 @@ pub mod tests {
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path,
         },
+        solana_program_option::COption,
         solana_rpc_client_api::{
             custom_error::{
                 JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
@@ -4565,7 +4566,6 @@ pub mod tests {
                 mint_close_authority::MintCloseAuthority, BaseStateWithExtensionsMut,
                 ExtensionType, StateWithExtensionsMut,
             },
-            solana_program::{program_option::COption, pubkey::Pubkey as SplTokenPubkey},
             state::{AccountState as TokenAccountState, Mint},
         },
         std::{borrow::Cow, collections::HashMap, net::Ipv4Addr},
@@ -7705,12 +7705,12 @@ pub mod tests {
             let rpc = RpcHandler::start();
             let bank = rpc.working_bank();
             let RpcHandler { io, meta, .. } = rpc;
-            let mint = SplTokenPubkey::new_from_array([2; 32]);
-            let owner = SplTokenPubkey::new_from_array([3; 32]);
-            let delegate = SplTokenPubkey::new_from_array([4; 32]);
+            let mint = Pubkey::new_from_array([2; 32]);
+            let owner = Pubkey::new_from_array([3; 32]);
+            let delegate = Pubkey::new_from_array([4; 32]);
             let token_account_pubkey = solana_pubkey::new_rand();
             let token_with_different_mint_pubkey = solana_pubkey::new_rand();
-            let new_mint = SplTokenPubkey::new_from_array([5; 32]);
+            let new_mint = Pubkey::new_from_array([5; 32]);
             if program_id == solana_inline_spl::token_2022::id() {
                 // Add the token account
                 let account_base = TokenAccount {
@@ -8206,9 +8206,9 @@ pub mod tests {
         let bank = rpc.working_bank();
         let RpcHandler { io, meta, .. } = rpc;
 
-        let mint = SplTokenPubkey::new_from_array([2; 32]);
-        let owner = SplTokenPubkey::new_from_array([3; 32]);
-        let delegate = SplTokenPubkey::new_from_array([4; 32]);
+        let mint = Pubkey::new_from_array([2; 32]);
+        let owner = Pubkey::new_from_array([3; 32]);
+        let delegate = Pubkey::new_from_array([4; 32]);
         let token_account_pubkey = solana_pubkey::new_rand();
         let amount = 420;
         let delegated_amount = 30;

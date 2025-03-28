@@ -10,9 +10,9 @@ use {
     crate::parse_token::convert_account_state,
     solana_clock::UnixTimestamp,
     solana_program_pack::Pack,
+    solana_pubkey::Pubkey,
     spl_token_2022::{
         extension::{self, BaseState, BaseStateWithExtensions, ExtensionType, StateWithExtensions},
-        solana_program::pubkey::Pubkey,
         solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey,
     },
     spl_token_group_interface::state::{TokenGroup, TokenGroupMember},

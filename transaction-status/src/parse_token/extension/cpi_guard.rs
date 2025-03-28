@@ -40,11 +40,9 @@ pub(in crate::parse_token) fn parse_cpi_guard_instruction(
 mod test {
     use {
         super::*,
+        solana_message::Message,
         solana_pubkey::Pubkey,
-        spl_token_2022::{
-            extension::cpi_guard::instruction::{disable_cpi_guard, enable_cpi_guard},
-            solana_program::message::Message,
-        },
+        spl_token_2022::extension::cpi_guard::instruction::{disable_cpi_guard, enable_cpi_guard},
     };
 
     #[test]

@@ -9,13 +9,12 @@ use {
         },
         parse_token_extension::parse_extension,
     },
+    solana_program_option::COption,
+    solana_program_pack::Pack,
     solana_pubkey::Pubkey,
     spl_token_2022::{
         extension::{BaseStateWithExtensions, StateWithExtensions},
         generic_token_account::GenericTokenAccount,
-        solana_program::{
-            program_option::COption, program_pack::Pack, pubkey::Pubkey as SplTokenPubkey,
-        },
         state::{Account, AccountState, Mint, Multisig},
     },
     std::str::FromStr,
@@ -128,7 +127,7 @@ pub fn parse_token_v3(
                 .signers
                 .iter()
                 .filter_map(|pubkey| {
-                    if pubkey != &SplTokenPubkey::default() {
+                    if pubkey != &Pubkey::default() {
                         Some(pubkey.to_string())
                     } else {
                         None
@@ -231,8 +230,8 @@ mod test {
 
     #[test]
     fn test_parse_token() {
-        let mint_pubkey = SplTokenPubkey::new_from_array([2; 32]);
-        let owner_pubkey = SplTokenPubkey::new_from_array([3; 32]);
+        let mint_pubkey = Pubkey::new_from_array([2; 32]);
+        let owner_pubkey = Pubkey::new_from_array([3; 32]);
         let mut account_data = vec![0; Account::get_packed_len()];
         let mut account = Account::unpack_unchecked(&account_data).unwrap();
         account.mint = mint_pubkey;
@@ -290,11 +289,11 @@ mod test {
             }),
         );
 
-        let signer1 = SplTokenPubkey::new_from_array([1; 32]);
-        let signer2 = SplTokenPubkey::new_from_array([2; 32]);
-        let signer3 = SplTokenPubkey::new_from_array([3; 32]);
+        let signer1 = Pubkey::new_from_array([1; 32]);
+        let signer2 = Pubkey::new_from_array([2; 32]);
+        let signer3 = Pubkey::new_from_array([3; 32]);
         let mut multisig_data = vec![0; Multisig::get_packed_len()];
-        let mut signers = [SplTokenPubkey::default(); 11];
+        let mut signers = [Pubkey::default(); 11];
         signers[0] = signer1;
         signers[1] = signer2;
         signers[2] = signer3;
@@ -325,7 +324,7 @@ mod test {
 
     #[test]
     fn test_get_token_account_mint() {
-        let mint_pubkey = SplTokenPubkey::new_from_array([2; 32]);
+        let mint_pubkey = Pubkey::new_from_array([2; 32]);
         let mut account_data = vec![0; Account::get_packed_len()];
         let mut account = Account::unpack_unchecked(&account_data).unwrap();
         account.mint = mint_pubkey;
@@ -525,8 +524,8 @@ mod test {
 
     #[test]
     fn test_parse_token_account_with_extensions() {
-        let mint_pubkey = SplTokenPubkey::new_from_array([2; 32]);
-        let owner_pubkey = SplTokenPubkey::new_from_array([3; 32]);
+        let mint_pubkey = Pubkey::new_from_array([2; 32]);
+        let owner_pubkey = Pubkey::new_from_array([3; 32]);
 
         let account_base = Account {
             mint: mint_pubkey,
@@ -625,7 +624,7 @@ mod test {
 
     #[test]
     fn test_parse_token_mint_with_extensions() {
-        let owner_pubkey = SplTokenPubkey::new_from_array([3; 32]);
+        let owner_pubkey = Pubkey::new_from_array([3; 32]);
         let mint_size =
             ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::MintCloseAuthority])
                 .unwrap();

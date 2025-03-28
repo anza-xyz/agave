@@ -210,13 +210,13 @@ mod test {
         super::*,
         bytemuck::Zeroable,
         solana_instruction::{AccountMeta, Instruction},
+        solana_message::Message,
         solana_pubkey::Pubkey,
         spl_token_2022::{
             extension::confidential_transfer_fee::instruction::{
                 inner_withdraw_withheld_tokens_from_accounts,
                 inner_withdraw_withheld_tokens_from_mint,
             },
-            solana_program::message::Message,
             solana_zk_sdk::{
                 encryption::pod::auth_encryption::PodAeCiphertext,
                 zk_elgamal_proof_program::proof_data::CiphertextCiphertextEqualityProofData,

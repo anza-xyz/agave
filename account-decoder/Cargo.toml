@@ -28,6 +28,7 @@ solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
 solana-nonce = { workspace = true }
 solana-program = { workspace = true }
+solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
