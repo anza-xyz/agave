@@ -215,7 +215,7 @@ bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 byte-unit = "4.0.19"
 bytemuck = "1.22.0"
-bytemuck_derive = "1.8.1"
+bytemuck_derive = "1.9.3"
 bytes = "1.10"
 bzip2 = "0.4.4"
 caps = "0.5.5"
