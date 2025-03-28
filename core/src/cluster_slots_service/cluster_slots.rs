@@ -1,10 +1,10 @@
 use {
     crate::replay_stage::DUPLICATE_THRESHOLD,
     dashmap::DashMap,
+    frozen_collections::{FzHashMap, MapIteration, MapQuery},
     solana_gossip::{
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
-    //solana_pubkey::PubkeyHasherBuilder,
     solana_runtime::bank::Bank,
     solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
     std::{
@@ -24,15 +24,17 @@ use {
 // if we are really really far behind.
 const CLUSTER_SLOTS_TRIM_SIZE: usize = 5000;
 // Make hashmaps this many times bigger to reduce collisions
-const HASHMAP_OVERSIZE: usize = 1;
+const HASHMAP_OVERSIZE: usize = 4;
 
 pub(crate) type SlotPubkeysDashMap =
     DashMap</*node:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>;
 
 //type PubkeyHasherBuilder = RandomState;
 use solana_pubkey::PubkeyHasherBuilder;
+//pub(crate) type SlotPubkeysHashMap =
+//    RwLock<HashMap</*node:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>>;
 pub(crate) type SlotPubkeysHashMap =
-    RwLock<HashMap</*node:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>>;
+    RwLock<FzHashMap</*node:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>>;
 pub type Stake = u64;
 pub(crate) struct SlotSupporters {
     total_support: AtomicU64,
@@ -79,6 +81,7 @@ type RowContent = (Slot, AtomicU64, Arc<SlotPubkeysHashMap>);
 pub struct ClusterSlots2 {
     cluster_slots: RwLock<VecDeque<RowContent>>,
     validator_stakes: RwLock<Arc<HashMap<Pubkey, u64>>>,
+    prototype_map: SlotPubkeysHashMap,
     total_stake: AtomicU64,
     pub total_writes: AtomicU64,
     epoch: RwLock<Option<u64>>,
@@ -133,31 +136,35 @@ impl ClusterSlots2 {
             let mut weight_update = 0;
             let mut map_lock = map.write().unwrap();
             for (key, stake) in patches {
-                if map_lock.insert(key, stake).is_none() {
+                let val_ref = map_lock.get_mut(&key).unwrap();
+                if *val_ref == 0 {
                     weight_update += stake;
                 };
+                *val_ref = stake;
             }
             weight.fetch_add(weight_update, std::sync::atomic::Ordering::Relaxed);
         }
     }
     // Advance the cluster_slots ringbuffer, initialize if needed
     fn roll_cluster_slots(
+        &self,
+        validator_stakes: &HashMap<Pubkey, u64>,
         slot_range: &Range<Slot>,
         cluster_slots: &mut VecDeque<RowContent>,
         map_capacity: usize,
     ) {
         //startup init, this is very slow but only ever happens once
         if cluster_slots.is_empty() {
+            let prototype = validator_stakes.iter().map(|(k, v)| (*k, 0)).collect();
+            let prototype_map = FzHashMap::with_hasher(prototype, PubkeyHasherBuilder::default());
             for slot in slot_range.clone() {
                 cluster_slots.push_back((
                     slot,
                     AtomicU64::new(0),
-                    Arc::new(RwLock::new(HashMap::with_capacity_and_hasher(
-                        map_capacity,
-                        PubkeyHasherBuilder::default(),
-                    ))),
+                    Arc::new(RwLock::new(prototype_map.clone())),
                 ));
             }
+            *(self.prototype_map.write().unwrap()) = prototype_map;
         }
         let mut discard = 0;
         // discard and recycle outdated elements
@@ -176,14 +183,11 @@ impl ClusterSlots2 {
             let slot = cluster_slots.back().unwrap().0 + 1;
             let map = match Arc::try_unwrap(map) {
                 Ok(map) => {
-                    map.write().unwrap().clear();
+                    map.write().unwrap().values_mut().for_each(|v| *v = 0);
                     map
                 }
                 // if we can not reuse just allocate a new one
-                Err(_) => RwLock::new(HashMap::with_capacity_and_hasher(
-                    map_capacity,
-                    PubkeyHasherBuilder::default(),
-                )),
+                Err(_) => RwLock::new(self.prototype_map.read().unwrap().clone()),
             };
             cluster_slots.push_back((slot, AtomicU64::new(0), Arc::new(map)));
         }
@@ -226,7 +230,12 @@ impl ClusterSlots2 {
             let map_capacity = validator_stakes.len() * HASHMAP_OVERSIZE;
             let mut cluster_slots = self.cluster_slots.write().unwrap();
 
-            Self::roll_cluster_slots(&slot_range, &mut cluster_slots, map_capacity);
+            self.roll_cluster_slots(
+                validator_stakes,
+                &slot_range,
+                &mut cluster_slots,
+                map_capacity,
+            );
         }
 
         let cluster_slots = self.cluster_slots.read().unwrap();
@@ -269,10 +278,11 @@ impl ClusterSlots2 {
     fn datastructure_size(&self) -> usize {
         let cluster_slots = self.cluster_slots.read().unwrap();
 
-        cluster_slots
-            .iter()
-            .map(|(_slot, _confirmed, slot_pubkeys)| slot_pubkeys.read().unwrap().len())
-            .sum::<usize>()
+        /*cluster_slots
+        .iter()
+        .map(|(_slot, _confirmed, slot_pubkeys)| slot_pubkeys.read().unwrap().len())
+        .sum::<usize>()*/
+        0
     }
 
     fn report_cluster_slots_size(&self) {
@@ -533,19 +543,23 @@ pub struct ClusterSlots {
 }
 
 impl ClusterSlots {
+    #[inline]
     pub fn lookup(&self, slot: Slot) -> Option<Arc<SlotPubkeysDashMap>> {
         let cluster_slots = self.cluster_slots.read().unwrap();
-        Self::_lookup(slot, &cluster_slots).cloned()
+        Some(Self::_lookup(slot, &cluster_slots)?.1.clone())
     }
 
+    #[inline]
     fn _lookup(
         slot: Slot,
         cluster_slots: &VecDeque<(Slot, Arc<SlotPubkeysDashMap>)>,
-    ) -> Option<&Arc<SlotPubkeysDashMap>> {
-        let idx = cluster_slots
-            .binary_search_by_key(&slot, |(s, _)| *s)
-            .ok()?;
-        Some(&cluster_slots[idx].1)
+    ) -> Option<&(Slot, Arc<SlotPubkeysDashMap>)> {
+        let start = cluster_slots.front()?.0;
+        if slot < start {
+            return None;
+        }
+        let idx = slot - start;
+        cluster_slots.get(idx as usize)
     }
 
     pub(crate) fn update(
@@ -569,6 +583,17 @@ impl ClusterSlots {
         self.report_cluster_slots_size();
     }
 
+    fn write_updates(
+        cluster_slots: &VecDeque<(Slot, Arc<SlotPubkeysDashMap>)>,
+        slots_to_patch: HashMap<Slot, Vec<(Pubkey, Stake)>>,
+    ) {
+        for (slot, patches) in slots_to_patch {
+            let (_, map) = Self::_lookup(slot, &cluster_slots).unwrap();
+            for (key, stake) in patches {
+                if map.insert(key, stake).is_none() {};
+            }
+        }
+    }
     // Initialize cluster_slots during startup
     // This should not be called during normal operation!
     fn initialize_cluster_slots(
@@ -581,9 +606,10 @@ impl ClusterSlots {
         for slot in slot_range.clone() {
             cluster_slots.push_back((
                 slot,
-                Arc::new(DashMap::with_capacity_and_hasher(
+                Arc::new(DashMap::with_capacity_and_hasher_and_shard_amount(
                     capacity,
                     PubkeyHasherBuilder::default(),
+                    1024,
                 )),
             ));
         }
@@ -647,9 +673,10 @@ impl ClusterSlots {
                             map
                         }
                         // if we can not reuse just allocate a new one
-                        Err(_) => DashMap::with_capacity_and_hasher(
+                        Err(_) => DashMap::with_capacity_and_hasher_and_shard_amount(
                             map_capacity,
                             PubkeyHasherBuilder::default(),
+                            1024,
                         ),
                     };
                     cluster_slots.push_back((slot, Arc::new(map)));
@@ -686,13 +713,7 @@ impl ClusterSlots {
 
         {
             let cluster_slots = self.cluster_slots.read().unwrap();
-            for (slot, patches) in slots_to_patch {
-                let map = Self::_lookup(slot, &cluster_slots).unwrap();
-
-                for (key, stake) in patches {
-                    map.insert(key, stake);
-                }
-            }
+            Self::write_updates(&cluster_slots, slots_to_patch);
         }
     }
 
