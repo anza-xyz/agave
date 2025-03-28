@@ -1178,7 +1178,7 @@ fn main() {
                 .help("Build for the given target architecture"),
         )
         .arg(
-            Arg::new("optimize-size")
+            Arg::new("optimize_size")
                 .long("optimize-size")
                 .takes_value(false)
                 .help("Optimize program for size. This option may reduce program size, potentially increasing CU consumption.")
