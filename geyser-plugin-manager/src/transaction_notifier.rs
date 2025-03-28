@@ -2,12 +2,14 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaTransactionInfoV2, ReplicaTransactionInfoVersions,
+        ReplicaTransactionInfoV3, ReplicaTransactionInfoVersions,
     },
     log::*,
+    solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::*,
+    solana_pubkey::Pubkey,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
     solana_transaction::sanitized::SanitizedTransaction,
@@ -31,6 +33,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
         signature: &Signature,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &SanitizedTransaction,
+        post_accounts_states: &[(Pubkey, AccountSharedData)],
     ) {
         let mut measure = Measure::start("geyser-plugin-notify_plugins_of_transaction_info");
         let transaction_log_info = Self::build_replica_transaction_info(
@@ -38,6 +41,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
             signature,
             transaction_status_meta,
             transaction,
+            post_accounts_states,
         );
 
         let plugin_manager = self.plugin_manager.read().unwrap();
@@ -51,7 +55,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
                 continue;
             }
             match plugin.notify_transaction(
-                ReplicaTransactionInfoVersions::V0_0_2(&transaction_log_info),
+                ReplicaTransactionInfoVersions::V0_0_3(&transaction_log_info),
                 slot,
             ) {
                 Err(err) => {
@@ -89,13 +93,15 @@ impl TransactionNotifierImpl {
         signature: &'a Signature,
         transaction_status_meta: &'a TransactionStatusMeta,
         transaction: &'a SanitizedTransaction,
-    ) -> ReplicaTransactionInfoV2<'a> {
-        ReplicaTransactionInfoV2 {
+        post_accounts_states: &'a [(Pubkey, AccountSharedData)],
+    ) -> ReplicaTransactionInfoV3<'a> {
+        ReplicaTransactionInfoV3 {
             index,
             signature,
             is_vote: transaction.is_simple_vote_transaction(),
             transaction,
             transaction_status_meta,
+            post_accounts_states,
         }
     }
 }

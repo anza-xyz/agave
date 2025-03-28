@@ -3,7 +3,9 @@
 /// In addition, the dynamic library must export a "C" function _create_plugin which
 /// creates the implementation of the plugin.
 use {
+    solana_account::AccountSharedData,
     solana_clock::{Slot, UnixTimestamp},
+    solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
@@ -157,6 +159,29 @@ pub struct ReplicaTransactionInfoV2<'a> {
     pub index: usize,
 }
 
+/// Information about a transaction, including index in block and post accounts states data
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaTransactionInfoV3<'a> {
+    /// The first signature of the transaction, used for identifying the transaction.
+    pub signature: &'a Signature,
+
+    /// Indicates if the transaction is a simple vote transaction.
+    pub is_vote: bool,
+
+    /// The sanitized transaction.
+    pub transaction: &'a SanitizedTransaction,
+
+    /// Metadata of the transaction status.
+    pub transaction_status_meta: &'a TransactionStatusMeta,
+
+    /// The transaction's index in the block
+    pub index: usize,
+
+    /// States of accounts that were involved in the transaction
+    pub post_accounts_states: &'a [(Pubkey, AccountSharedData)],
+}
+
 /// A wrapper to future-proof ReplicaTransactionInfo handling.
 /// If there were a change to the structure of ReplicaTransactionInfo,
 /// there would be new enum entry for the newer version, forcing
@@ -165,6 +190,7 @@ pub struct ReplicaTransactionInfoV2<'a> {
 pub enum ReplicaTransactionInfoVersions<'a> {
     V0_0_1(&'a ReplicaTransactionInfo<'a>),
     V0_0_2(&'a ReplicaTransactionInfoV2<'a>),
+    V0_0_3(&'a ReplicaTransactionInfoV3<'a>),
 }
 
 #[derive(Clone, Debug)]
