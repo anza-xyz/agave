@@ -793,9 +793,9 @@ impl AncestorHashesService {
                         .read()
                         .unwrap()
                         .iter()
-                        .map(|(node_key, _)| {
+                        .map(|(key, _v)| {
                             node_id_to_vote_accounts
-                                .get(node_key)
+                                .get(key)
                                 .map(|v| v.total_stake)
                                 .unwrap_or(0)
                         })
