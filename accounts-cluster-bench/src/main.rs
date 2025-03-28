@@ -31,6 +31,7 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_transaction_status::UiTransactionEncoding,
+    spl_memo::build_memo,
     spl_token::state::Account,
     std::{
         cmp::min,
@@ -318,6 +319,7 @@ pub enum RpcBench {
     Transaction,
     TransactionParsed,
     FirstAvailableBlock,
+    SendAndConfirmTransaction,
 }
 
 #[derive(Debug)]
@@ -342,6 +344,7 @@ impl FromStr for RpcBench {
             "transaction" => Ok(RpcBench::Transaction),
             "transaction-parsed" => Ok(RpcBench::TransactionParsed),
             "version" => Ok(RpcBench::Version),
+            "send-and-confirm-transaction" => Ok(RpcBench::SendAndConfirmTransaction),
             _ => Err(RpcParseError::InvalidOption),
         }
     }
@@ -446,6 +449,7 @@ fn run_rpc_bench_loop(
     thread: usize,
     client: &RpcClient,
     base_keypair_pubkey: &Pubkey,
+    payer_keypairs: Arc<[Keypair]>,
     exit: &AtomicBool,
     program_id: &Pubkey,
     max_closed: &AtomicU64,
@@ -736,6 +740,40 @@ fn run_rpc_bench_loop(
                     }
                 }
             }
+            RpcBench::SendAndConfirmTransaction => {
+                let mut rng = rand::thread_rng();
+                let result: u64 = rng.gen();
+                let memo_instruction = build_memo(format!("{}", result).as_bytes(), &[]);
+
+                let latest_blockhash = client
+                    .get_latest_blockhash()
+                    .expect("Could not find latest blockhash");
+
+                let payer_keypair = payer_keypairs.first().expect("Need at least one payer");
+
+                let transaction = Transaction::new_signed_with_payer(
+                    &[memo_instruction],
+                    Some(&payer_keypair.pubkey()),
+                    &[&payer_keypair],
+                    latest_blockhash,
+                );
+
+                let mut rpc_time = Measure::start("send-and-confirm-transaction");
+                let result = client.send_and_confirm_transaction(&transaction);
+
+                match result {
+                    Ok(_r) => {
+                        rpc_time.stop();
+                        stats.success += 1;
+                        stats.total_success_time_us += rpc_time.as_us();
+                    }
+                    Err(_e) => {
+                        rpc_time.stop();
+                        stats.errors += 1;
+                        stats.total_errors_time_us += rpc_time.as_us();
+                    }
+                }
+            }
         }
 
         if last_print.elapsed().as_secs() > 3 {
@@ -756,6 +794,7 @@ fn make_rpc_bench_threads(
     seed_tracker: &SeedTracker,
     slot_height: &Arc<AtomicU64>,
     base_keypair_pubkey: Pubkey,
+    payer_keypairs: &Arc<[Keypair]>,
     num_rpc_bench_threads: usize,
     transaction_signature_tracker: &TransactionSignatureTracker,
 ) -> Vec<JoinHandle<()>> {
@@ -776,6 +815,7 @@ fn make_rpc_bench_threads(
                 let slot_height = slot_height.clone();
                 let transaction_signature_tracker = transaction_signature_tracker.clone();
                 let mint = *mint;
+                let payer_keypairs = payer_keypairs.clone();
                 Builder::new()
                     .name(format!("rpc-bench-{}", thread))
                     .spawn(move || {
@@ -785,6 +825,7 @@ fn make_rpc_bench_threads(
                             thread,
                             &client,
                             &base_keypair_pubkey,
+                            payer_keypairs,
                             &exit,
                             &program_id,
                             &max_closed,
@@ -803,7 +844,7 @@ fn make_rpc_bench_threads(
 #[allow(clippy::too_many_arguments)]
 fn run_accounts_bench(
     client: Arc<RpcClient>,
-    payer_keypairs: &[&Keypair],
+    payer_keypairs: Arc<[Keypair]>,
     iterations: usize,
     maybe_space: Option<u64>,
     batch_size: usize,
@@ -887,6 +928,7 @@ fn run_accounts_bench(
             &seed_tracker,
             &slot_height,
             base_keypair_pubkey,
+            &payer_keypairs,
             num_rpc_bench_threads,
             &transaction_signature_tracker,
         )
@@ -917,7 +959,7 @@ fn run_accounts_bench(
                         "Balance {} is less than needed: {}, doing airdrop...",
                         balance, lamports
                     );
-                    if !airdrop_lamports(&client, payer_keypairs[i], lamports * 100_000) {
+                    if !airdrop_lamports(&client, &payer_keypairs[i], lamports * 100_000) {
                         warn!("failed airdrop, exiting");
                         return;
                     }
@@ -972,7 +1014,7 @@ fn run_accounts_bench(
                         .into_par_iter()
                         .map(|_| {
                             let message = make_close_message(
-                                payer_keypairs[0],
+                                &payer_keypairs[0],
                                 &base_keypair,
                                 &seed_tracker.max_created,
                                 &seed_tracker.max_closed,
@@ -980,7 +1022,7 @@ fn run_accounts_bench(
                                 min_balance,
                                 mint.is_some(),
                             );
-                            let signers: Vec<&Keypair> = vec![payer_keypairs[0], &base_keypair];
+                            let signers: Vec<&Keypair> = vec![&payer_keypairs[0], &base_keypair];
                             Transaction::new(&signers, message, blockhash)
                         })
                         .collect();
@@ -1298,17 +1340,13 @@ fn main() {
 
     let mint = pubkey_of(&matches, "mint");
 
-    let payer_keypairs: Vec<_> = values_t_or_exit!(matches, "identity", String)
+    let payer_keypairs: Arc<_> = values_t_or_exit!(matches, "identity", String)
         .iter()
         .map(|keypair_string| {
             read_keypair_file(keypair_string)
                 .unwrap_or_else(|_| panic!("bad keypair {keypair_string:?}"))
         })
         .collect();
-    let mut payer_keypair_refs: Vec<&Keypair> = vec![];
-    for keypair in payer_keypairs.iter() {
-        payer_keypair_refs.push(keypair);
-    }
 
     let client = if let Some(addr) = matches.value_of("entrypoint") {
         let entrypoint_addr = solana_net_utils::parse_host_port(addr).unwrap_or_else(|e| {
@@ -1363,7 +1401,7 @@ fn main() {
 
     run_accounts_bench(
         client,
-        &payer_keypair_refs,
+        payer_keypairs,
         iterations,
         space,
         batch_size,
