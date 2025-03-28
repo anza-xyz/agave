@@ -2194,7 +2194,7 @@ pub mod tests {
         *av2.remove_file_on_drop.get_mut() = false;
 
         // ensure `is_dirty` is moved
-        assert_eq!(*av1.is_dirty.get_mut(), false);
+        assert!(!*av1.is_dirty.get_mut());
         assert_eq!(*av2.is_dirty.get_mut(), begins_dirty);
 
         // ensure we can flush the new append vec
