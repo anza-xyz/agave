@@ -1012,6 +1012,10 @@ pub mod drop_unchained_merkle_shreds {
     solana_pubkey::declare_id!("3A9WtMU4aHuryD3VN7SFKdfXto8HStLb1Jj6HjkgfnGL");
 }
 
+pub mod disable_partitioned_rent_collection {
+    solana_pubkey::declare_id!("2B2SBNbUcr438LtGXNcJNBP2GBSxjx81F945SdSkUSfC");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1240,6 +1244,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
         (fix_alt_bn128_multiplication_input_length::id(), "fix alt_bn128 multiplication input length SIMD-0222 #3686"),
         (drop_unchained_merkle_shreds::id(), "drops unchained Merkle shreds #2149"),
+        (disable_partitioned_rent_collection::id(), "SIMD-0175: Disable partitioned rent collection"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
