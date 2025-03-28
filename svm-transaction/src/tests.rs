@@ -1,5 +1,4 @@
 #![cfg(test)]
-#![allow(clippy::arithmetic_side_effects)]
 use {
     crate::svm_message::SVMMessage,
     solana_hash::Hash,
@@ -30,8 +29,10 @@ fn test_get_durable_nonce(require_static_nonce_account: bool) {
         let header = MessageHeader {
             num_required_signatures: num_signers,
             num_readonly_signed_accounts: 0,
-            num_readonly_unsigned_accounts: u8::try_from(account_keys.len()).unwrap()
-                - num_writable,
+            num_readonly_unsigned_accounts: u8::try_from(account_keys.len())
+                .unwrap()
+                .checked_sub(num_writable)
+                .unwrap(),
         };
         let (versioned_message, loader) = match loaded_addresses {
             None => (
@@ -55,7 +56,7 @@ fn test_get_durable_nonce(require_static_nonce_account: bool) {
                             .map(|x| x as u8)
                             .collect(),
                         readonly_indexes: (0..loaded_addresses.readonly.len())
-                            .map(|x| (loaded_addresses.writable.len() + x) as u8)
+                            .map(|x| loaded_addresses.writable.len().saturating_add(x) as u8)
                             .collect(),
                     }],
                 }),
