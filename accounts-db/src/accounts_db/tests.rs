@@ -50,6 +50,12 @@ impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for (Slot, &'a [(&'a Pu
 where
     AccountForStorage<'a>: From<&'a T>,
 {
+    fn is_zero_lamport(&self, index: usize) -> bool {
+        self.1[index].1.lamports() == 0
+    }
+    fn data_len(&self, index: usize) -> usize {
+        self.1[index].1.data().len()
+    }
     fn account<Ret>(
         &self,
         index: usize,
@@ -217,7 +223,7 @@ fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
     // offset has to be 8 byte aligned
     let offset = (i as usize) * std::mem::size_of::<u64>();
     AccountFromStorage {
-        index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i as u64),
+        index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i == 0),
         data_len: i as u64,
         pubkey: Pubkey::new_from_array([i; 32]),
     }
@@ -282,7 +288,7 @@ fn test_sort_and_remove_dups() {
         .collect::<Vec<_>>();
     test1.iter_mut().take(3).for_each(|entry| {
         entry.data_len = 2342342; // this one should be ignored, so modify the data_len so it will fail the compare below if it is used
-        entry.index_info = AccountInfo::new(StorageLocation::Cached, 23434);
+        entry.index_info = AccountInfo::new(StorageLocation::Cached, false);
     });
 
     let expected = [0, 1u8]
@@ -770,7 +776,7 @@ pub(crate) fn append_single_account_with_default_hash(
     if let Some(index) = add_to_index {
         let account_info = AccountInfo::new(
             StorageLocation::AppendVec(storage.id(), stored_accounts_info.offsets[0]),
-            account.lamports(),
+            account.lamports() == 0,
         );
         index.upsert(
             slot,
@@ -3144,10 +3150,10 @@ fn test_delete_dependencies() {
     let key0 = Pubkey::new_from_array([0u8; 32]);
     let key1 = Pubkey::new_from_array([1u8; 32]);
     let key2 = Pubkey::new_from_array([2u8; 32]);
-    let info0 = AccountInfo::new(StorageLocation::AppendVec(0, 0), 0);
-    let info1 = AccountInfo::new(StorageLocation::AppendVec(1, 0), 0);
-    let info2 = AccountInfo::new(StorageLocation::AppendVec(2, 0), 0);
-    let info3 = AccountInfo::new(StorageLocation::AppendVec(3, 0), 0);
+    let info0 = AccountInfo::new(StorageLocation::AppendVec(0, 0), true);
+    let info1 = AccountInfo::new(StorageLocation::AppendVec(1, 0), true);
+    let info2 = AccountInfo::new(StorageLocation::AppendVec(2, 0), true);
+    let info3 = AccountInfo::new(StorageLocation::AppendVec(3, 0), true);
     let mut reclaims = vec![];
     accounts_index.upsert(
         0,
@@ -5703,7 +5709,7 @@ fn test_filter_zero_lamport_clean_for_incremental_snapshots() {
     }
 
     let do_test = |test_params: TestParameters| {
-        let account_info = AccountInfo::new(StorageLocation::AppendVec(42, 128), 0);
+        let account_info = AccountInfo::new(StorageLocation::AppendVec(42, 128), true);
         let pubkey = solana_pubkey::new_rand();
         let mut key_set = HashSet::default();
         key_set.insert(pubkey);
@@ -7546,7 +7552,7 @@ fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
             storage.accounts.scan_accounts(|account| {
                 let info = AccountInfo::new(
                     StorageLocation::AppendVec(storage.id(), account.offset()),
-                    account.lamports(),
+                    account.is_zero_lamport(),
                 );
                 db.accounts_index.upsert(
                     slot,

@@ -348,7 +348,7 @@ fn bench_sort_and_remove_dups(b: &mut Bencher) {
         // offset has to be 8 byte aligned
         let offset = (i as usize) * std::mem::size_of::<u64>();
         AccountFromStorage {
-            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i as u64),
+            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i == 0),
             data_len: i as u64,
             pubkey: Pubkey::new_from_array([i; 32]),
         }
@@ -370,7 +370,7 @@ fn bench_sort_and_remove_dups_no_dups(b: &mut Bencher) {
         // offset has to be 8 byte aligned
         let offset = (i as usize) * std::mem::size_of::<u64>();
         AccountFromStorage {
-            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i as u64),
+            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i == 0),
             data_len: i as u64,
             pubkey: Pubkey::new_unique(),
         }
