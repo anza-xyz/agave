@@ -178,7 +178,6 @@ use {
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{
         collections::{HashMap, HashSet},
-        convert::TryFrom,
         fmt,
         ops::{AddAssign, RangeFull, RangeInclusive},
         path::PathBuf,
@@ -2440,26 +2439,6 @@ impl Bank {
             validator_rate,
             foundation_rate,
         }
-    }
-
-    fn assert_validator_rewards_paid(&self, validator_rewards_paid: u64) {
-        assert_eq!(
-            validator_rewards_paid,
-            u64::try_from(
-                self.rewards
-                    .read()
-                    .unwrap()
-                    .par_iter()
-                    .map(|(_address, reward_info)| {
-                        match reward_info.reward_type {
-                            RewardType::Voting | RewardType::Staking => reward_info.lamports,
-                            _ => 0,
-                        }
-                    })
-                    .sum::<i64>()
-            )
-            .unwrap()
-        );
     }
 
     fn filter_stake_delegations<'a>(

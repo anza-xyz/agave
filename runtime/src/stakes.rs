@@ -346,15 +346,6 @@ impl Stakes<StakeAccount> {
             .sum()
     }
 
-    /// Sum the lamports of the vote accounts and the delegated stake
-    pub(crate) fn vote_balance_and_staked(&self) -> u64 {
-        let get_stake = |stake_account: &StakeAccount| stake_account.delegation().stake;
-        let get_lamports = |(_, vote_account): (_, &VoteAccount)| vote_account.lamports();
-
-        self.stake_delegations.values().map(get_stake).sum::<u64>()
-            + self.vote_accounts.iter().map(get_lamports).sum::<u64>()
-    }
-
     fn remove_vote_account(&mut self, vote_pubkey: &Pubkey) -> Option<VoteAccount> {
         self.vote_accounts.remove(vote_pubkey).map(|(_, a)| a)
     }
@@ -638,39 +629,6 @@ pub(crate) mod tests {
             &vote_state::create_account(vote_pubkey, &solana_pubkey::new_rand(), 0, 1),
             &Rent::free(),
             stake,
-        )
-    }
-
-    fn create_warming_staked_node_accounts(
-        stake: u64,
-        epoch: Epoch,
-    ) -> ((Pubkey, AccountSharedData), (Pubkey, AccountSharedData)) {
-        let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account =
-            vote_state::create_account(&vote_pubkey, &solana_pubkey::new_rand(), 0, 1);
-        (
-            (vote_pubkey, vote_account),
-            create_warming_stake_account(stake, epoch, &vote_pubkey),
-        )
-    }
-
-    // add stake to a vote_pubkey                               (   stake    )
-    fn create_warming_stake_account(
-        stake: u64,
-        epoch: Epoch,
-        vote_pubkey: &Pubkey,
-    ) -> (Pubkey, AccountSharedData) {
-        let stake_pubkey = solana_pubkey::new_rand();
-        (
-            stake_pubkey,
-            stake_state::create_account_with_activation_epoch(
-                &stake_pubkey,
-                vote_pubkey,
-                &vote_state::create_account(vote_pubkey, &solana_pubkey::new_rand(), 0, 1),
-                &Rent::free(),
-                stake,
-                epoch,
-            ),
         )
     }
 
@@ -975,58 +933,6 @@ pub(crate) mod tests {
             let vote_accounts = stakes.vote_accounts();
             assert!(vote_accounts.get(&vote_pubkey).is_some());
             assert_eq!(vote_accounts.get_delegated_stake(&vote_pubkey), 0);
-        }
-    }
-
-    #[test]
-    fn test_vote_balance_and_staked_empty() {
-        let stakes = Stakes::<StakeAccount>::default();
-        assert_eq!(stakes.vote_balance_and_staked(), 0);
-    }
-
-    #[test]
-    fn test_vote_balance_and_staked_normal() {
-        let stakes_cache = StakesCache::default();
-        #[allow(non_local_definitions)]
-        impl Stakes<StakeAccount> {
-            fn vote_balance_and_warmed_staked(&self) -> u64 {
-                let vote_balance: u64 = self
-                    .vote_accounts
-                    .iter()
-                    .map(|(_pubkey, account)| account.lamports())
-                    .sum();
-                let warmed_stake: u64 = self
-                    .vote_accounts
-                    .delegated_stakes()
-                    .map(|(_pubkey, stake)| stake)
-                    .sum();
-                vote_balance + warmed_stake
-            }
-        }
-
-        let genesis_epoch = 0;
-        let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
-            create_warming_staked_node_accounts(10, genesis_epoch);
-        stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
-        stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
-
-        {
-            let stakes = stakes_cache.stakes();
-            assert_eq!(stakes.vote_balance_and_staked(), 11);
-            assert_eq!(stakes.vote_balance_and_warmed_staked(), 1);
-        }
-
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        for (epoch, expected_warmed_stake) in ((genesis_epoch + 1)..=3).zip(&[2, 3, 4]) {
-            stakes_cache.activate_epoch(epoch, &thread_pool, None);
-            // vote_balance_and_staked() always remain to return same lamports
-            // while vote_balance_and_warmed_staked() gradually increases
-            let stakes = stakes_cache.stakes();
-            assert_eq!(stakes.vote_balance_and_staked(), 11);
-            assert_eq!(
-                stakes.vote_balance_and_warmed_staked(),
-                *expected_warmed_stake
-            );
         }
     }
 }
