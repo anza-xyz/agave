@@ -1252,7 +1252,7 @@ fn main() {
         workspace: matches.is_present("workspace"),
         jobs: matches.value_of_t("jobs").ok(),
         arch: matches.value_of("arch").unwrap(),
-        optimize_size: matches.is_present("optimize-size"),
+        optimize_size: matches.is_present("optimize_size"),
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {
