@@ -1,19 +1,16 @@
 use {
     crate::replay_stage::DUPLICATE_THRESHOLD,
-    dashmap::DashMap,
-    frozen_collections::{FzHashMap, MapIteration, MapQuery},
     solana_gossip::{
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
-    solana_runtime::bank::Bank,
     solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
     std::{
         collections::{HashMap, VecDeque},
         hash::RandomState,
-        ops::{DerefMut, Range},
+        ops::Range,
         sync::{
             atomic::{AtomicU64, Ordering},
-            Arc, Mutex, RwLock, RwLockReadGuard,
+            Arc, Mutex, RwLock,
         },
     },
 };
@@ -22,14 +19,13 @@ use {
 // of receiving bogus epoch slots values.
 // This also constraints the size of the datastructure
 // if we are really really far behind.
-const CLUSTER_SLOTS_TRIM_SIZE: usize = 5000;
+const CLUSTER_SLOTS_TRIM_SIZE: usize = 50000;
 // Make hashmaps this many times bigger to reduce collisions
-const HASHMAP_OVERSIZE: usize = 4;
-
-pub(crate) type SlotPubkeysDashMap =
-    DashMap</*node:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>;
+const HASHMAP_OVERSIZE: usize = 2;
 
 pub type Stake = u64;
+
+//TODO: switch to solana_pubkey::PubkeyHasherBuilder
 type PubkeyHasherBuilder = RandomState;
 pub(crate) type ValidatorStakesMap = HashMap<Pubkey, Stake, PubkeyHasherBuilder>;
 
@@ -252,7 +248,7 @@ impl ClusterSlots {
         );
         assert!(slots.start > root);
         let epochslots = make_epoch_slots(stakes, slots);
-        self.update_internal(root, &stakes, epochslots);
+        self.update_internal(root, stakes, epochslots);
     }
 
     fn report_cluster_slots_size(&self) {
@@ -352,9 +348,10 @@ impl ClusterSlots {
             .unwrap_or_default()
     }
 }
+
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_sdk::clock::DEFAULT_SLOTS_PER_EPOCH};
+    use super::*;
 
     #[test]
     fn test_default() {
@@ -391,10 +388,16 @@ mod tests {
     #[test]
     fn test_update_new_multiple_slots() {
         let cs = ClusterSlots::default();
-        let mut epoch_slot1 = EpochSlots { from: Pubkey::new_unique(), ..Default::default() };
+        let mut epoch_slot1 = EpochSlots {
+            from: Pubkey::new_unique(),
+            ..Default::default()
+        };
         epoch_slot1.fill(&[2, 4, 5], 0);
         let from1 = epoch_slot1.from;
-        let mut epoch_slot2 = EpochSlots { from: Pubkey::new_unique(), ..Default::default() };
+        let mut epoch_slot2 = EpochSlots {
+            from: Pubkey::new_unique(),
+            ..Default::default()
+        };
         epoch_slot2.fill(&[1, 3, 5], 1);
         let from2 = epoch_slot2.from;
         cs.update_internal(
@@ -412,8 +415,8 @@ mod tests {
             cs.lookup(4).unwrap().read().unwrap()[&from1].load(Ordering::Relaxed),
             10
         );
-
-        let map = cs.lookup(5).unwrap().read().unwrap();
+        let binding = cs.lookup(5).unwrap();
+        let map = binding.read().unwrap();
         assert_eq!(map[&from1].load(Ordering::Relaxed), 10);
         assert_eq!(map[&from2].load(Ordering::Relaxed), 20);
     }
@@ -428,15 +431,16 @@ mod tests {
     #[test]
     fn test_best_peer_2() {
         let cs = ClusterSlots::default();
-        let map = DashMap::default();
-        let k1 = solana_pubkey::new_rand();
-        let k2 = solana_pubkey::new_rand();
-        map.insert(k1, u64::MAX / 2);
-        map.insert(k2, 0);
-        cs.cluster_slots
-            .write()
-            .unwrap()
-            .push_back((0, Arc::new(map)));
+        let mut map = HashMap::default();
+        let k1 = Pubkey::new_unique();
+        let k2 = Pubkey::new_unique();
+        map.insert(k1, AtomicU64::new(u64::MAX / 2));
+        map.insert(k2, AtomicU64::new(1));
+        cs.cluster_slots.write().unwrap().push_back((
+            0,
+            AtomicU64::new(0),
+            Arc::new(RwLock::new(map)),
+        ));
         let c1 = ContactInfo::new(k1, /*wallclock:*/ 0, /*shred_version:*/ 0);
         let c2 = ContactInfo::new(k2, /*wallclock:*/ 0, /*shred_version:*/ 0);
         assert_eq!(cs.compute_weights(0, &[c1, c2]), vec![u64::MAX / 4, 1]);
@@ -445,14 +449,15 @@ mod tests {
     #[test]
     fn test_best_peer_3() {
         let cs = ClusterSlots::default();
-        let map = DashMap::default();
+        let mut map = HashMap::default();
         let k1 = solana_pubkey::new_rand();
         let k2 = solana_pubkey::new_rand();
-        map.insert(k2, 0);
-        cs.cluster_slots
-            .write()
-            .unwrap()
-            .push_back((0, Arc::new(map)));
+        map.insert(k2, AtomicU64::new(1));
+        cs.cluster_slots.write().unwrap().push_back((
+            0,
+            AtomicU64::new(0),
+            Arc::new(RwLock::new(map)),
+        ));
         //make sure default weights are used as well
         let validator_stakes: HashMap<_, _> = vec![(k1, u64::MAX / 2)].into_iter().collect();
         *cs.validator_stakes.write().unwrap() = Arc::new(validator_stakes);
@@ -501,11 +506,20 @@ mod tests {
         let cs = ClusterSlots::default();
         let mut epoch_slot = EpochSlots::default();
         epoch_slot.fill(&[1], 0);
-
-        let map = vec![(Pubkey::default(), 1)].into_iter().collect();
+        let pk = Pubkey::new_unique();
+        let map = vec![(pk, 1)].into_iter().collect();
 
         cs.update_internal(0, &map, vec![epoch_slot]);
         assert!(cs.lookup(1).is_some());
-        assert_eq!(*cs.lookup(1).unwrap().get(&Pubkey::default()).unwrap(), 1);
+        assert_eq!(
+            cs.lookup(1)
+                .unwrap()
+                .read()
+                .unwrap()
+                .get(&pk)
+                .unwrap()
+                .load(Ordering::Relaxed),
+            1
+        );
     }
 }

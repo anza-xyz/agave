@@ -22,7 +22,6 @@ anyhow = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 base64 = { workspace = true }
-jemallocator = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
 bytes = { workspace = true }
@@ -75,7 +74,7 @@ solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
-solana-pubkey = { workspace = true, features=["rand"] }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-quic-client = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc = { workspace = true }
@@ -100,6 +99,7 @@ solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 solana-wen-restart = { workspace = true }
+static_assertions ={ workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 sys-info = { workspace = true }
@@ -107,8 +107,6 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 trees = { workspace = true }
-frozen-collections = "0.4.0"
-static_assertions.workspace = true
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
