@@ -304,6 +304,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.sysvar_cache.read().unwrap()
     }
 
+    /// Obtains write lock on `SysvarCache`
+    pub fn sysvar_cache_mut(&self) -> RwLockWriteGuard<SysvarCache> {
+        self.sysvar_cache.write().unwrap()
+    }
+
     /// Main entrypoint to the SVM.
     pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
         &self,
