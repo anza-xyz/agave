@@ -28,3 +28,6 @@ _ cargo +"$rust_nightly" run --release --manifest-path accounts-bench/Cargo.toml
 
 # Run zk-elgamal-proof benches.
 _ cargo +"$rust_nightly" bench --manifest-path programs/zk-elgamal-proof/Cargo.toml ${V:+--verbose} | tee -a "$BENCH_FILE"
+
+# Run precompile benches.
+_ cargo +"$rust_nightly" bench --manifest-path precompiles/Cargo.toml ${V:+--verbose} | tee -a "$BENCH_FILE"
