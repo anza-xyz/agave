@@ -432,7 +432,7 @@ fn main() {
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-    let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
+    let (exit, poh_recorder, poh_controller, transaction_recorder, poh_service, signal_receiver) =
         create_test_recorder(
             bank.clone(),
             blockstore.clone(),
@@ -541,7 +541,7 @@ fn main() {
             poh_recorder
                 .write()
                 .unwrap()
-                .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
+                .reset_for_test(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
             poh_time.stop();
 
             let mut new_bank_time = Measure::start("new_bank");
@@ -556,7 +556,7 @@ fn main() {
             assert_matches!(poh_recorder.read().unwrap().bank(), None);
             update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                 &bank_forks,
-                &poh_recorder,
+                &poh_controller,
                 new_bank,
                 false,
             );
