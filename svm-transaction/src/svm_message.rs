@@ -53,6 +53,9 @@ pub trait SVMMessage: Debug {
     /// the pubkey of the program.
     fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone;
 
+    /// Return the list of static account keys.
+    fn static_account_keys(&self) -> &[Pubkey];
+
     /// Return the account keys.
     fn account_keys(&self) -> AccountKeys;
 
@@ -81,7 +84,7 @@ pub trait SVMMessage: Debug {
     }
 
     /// If the message uses a durable nonce, return the pubkey of the nonce account
-    fn get_durable_nonce(&self) -> Option<&Pubkey> {
+    fn get_durable_nonce(&self, require_static_nonce_account: bool) -> Option<&Pubkey> {
         let account_keys = self.account_keys();
         self.instructions_iter()
             .nth(usize::from(NONCED_TX_MARKER_IX_INDEX))
@@ -104,7 +107,9 @@ pub trait SVMMessage: Debug {
             .and_then(|ix| {
                 ix.accounts.first().and_then(|idx| {
                     let index = usize::from(*idx);
-                    if !self.is_writable(index) {
+                    if (require_static_nonce_account && index >= self.static_account_keys().len())
+                        || !self.is_writable(index)
+                    {
                         None
                     } else {
                         account_keys.get(index)
