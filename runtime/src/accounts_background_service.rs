@@ -287,9 +287,9 @@ impl SnapshotRequestHandler {
         assert!(snapshot_root_bank.is_startup_verification_complete());
 
         if accounts_package_kind == AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot) {
-            // The latest full snapshot slot is what accounts-db uses to properly handle zero lamport
-            // accounts.  We are handling a full snapshot request here, and since taking a snapshot
-            // is not allowed to fail, we can update accounts-db now.
+            // The latest full snapshot slot is what accounts-db uses to properly handle
+            // zero lamport accounts.  We are handling a full snapshot request here, and
+            // since taking a snapshot is not allowed to fail, we can update accounts-db now.
             snapshot_root_bank
                 .rc
                 .accounts
@@ -299,7 +299,8 @@ impl SnapshotRequestHandler {
 
         let previous_accounts_hash = test_hash_calculation.then(|| {
             // We have to use the index version here.
-            // We cannot calculate the non-index way because cache has not been flushed and stores don't match reality.
+            // We cannot calculate the non-index way because cache
+            // has not been flushed and stores don't match reality.
             snapshot_root_bank.update_accounts_hash(
                 CalcAccountsHashDataSource::IndexForTests,
                 false,
@@ -562,26 +563,28 @@ impl AccountsBackgroundService {
 
                         // Check to see if there were any requests for snapshotting banks
                         // < the current root bank `bank` above.
-
-                        // Claim: Any snapshot request for slot `N` found here implies that the last cleanup
-                        // slot `M` satisfies `M < N`
                         //
-                        // Proof: Assume for contradiction that we find a snapshot request for slot `N` here,
-                        // but cleanup has already happened on some slot `M >= N`. Because the call to
-                        // `bank.clean_accounts(true)` (in the code below) implies we only clean slots `<= bank - 1`,
-                        // then that means in some *previous* iteration of this loop, we must have gotten a root
-                        // bank for slot some slot `R` where `R > N`, but did not see the snapshot for `N` in the
-                        // snapshot request channel.
+                        // Claim: Any snapshot request for slot `N` found here implies that the
+                        // last cleanup slot `M` satisfies `M < N`
                         //
-                        // However, this is impossible because BankForks.set_root() will always flush the snapshot
-                        // request for `N` to the snapshot request channel before setting a root `R > N`, and
-                        // snapshot_request_handler.handle_requests() will always look for the latest
-                        // available snapshot in the channel.
+                        // Proof: Assume for contradiction that we find a snapshot request for slot
+                        // `N` here, but cleanup has already happened on some slot `M >= N`.
+                        // Because the call to `bank.clean_accounts(true)` (in the code below)
+                        // implies we only clean slots `<= bank - 1`, then that means in some
+                        // *previous* iteration of this loop, we must have gotten a root bank for
+                        // slot some slot `R` where `R > N`, but did not see the snapshot for `N`
+                        // in the snapshot request channel.
+                        //
+                        // However, this is impossible because BankForks.set_root() will always
+                        // flush the snapshot request for `N` to the snapshot request channel
+                        // before setting a root `R > N`, and
+                        // snapshot_request_handler.handle_requests() will always look for the
+                        // latest available snapshot in the channel.
                         //
                         // NOTE: We must wait for startup verification to complete before handling
                         // snapshot requests.  This is because startup verification and snapshot
-                        // request handling can both kick off accounts hash calculations in background
-                        // threads, and these must not happen concurrently.
+                        // request handling can both kick off accounts hash calculations in
+                        // background threads, and these must not happen concurrently.
                         let snapshot_handle_result = bank
                             .is_startup_verification_complete()
                             .then(|| {
@@ -611,7 +614,10 @@ impl AccountsBackgroundService {
                                     last_cleaned_block_height = snapshot_block_height;
                                 }
                                 Err(err) => {
-                                    error!("Stopping AccountsBackgroundService! Fatal error while handling snapshot requests: {err}");
+                                    error!(
+                                        "Stopping AccountsBackgroundService! \
+                                        Fatal error while handling snapshot requests: {err}",
+                                    );
                                     exit.store(true, Ordering::Relaxed);
                                     break;
                                 }
@@ -634,11 +640,11 @@ impl AccountsBackgroundService {
                             }
                             // Do not 'shrink' until *after* the startup verification is complete.
                             // This is because startup verification needs to get the snapshot
-                            // storages *as they existed at startup* (to calculate the accounts hash).
-                            // If 'shrink' were to run, then it is possible startup verification
-                            // (1) could race with 'shrink', and fail to assert that shrinking is not in
-                            // progress, or (2) could get snapshot storages that were newer than what
-                            // was in the snapshot itself.
+                            // storages *as they existed at startup* (to calculate the accounts
+                            // hash).  If 'shrink' were to run, then it is possible startup
+                            // verification (1) could race with 'shrink', and fail to assert that
+                            // shrinking is not in progress, or (2) could get snapshot storages
+                            // that were newer than what was in the snapshot itself.
                             if bank.is_startup_verification_complete() {
                                 bank.shrink_candidate_slots();
                             }
