@@ -350,12 +350,12 @@ impl RpcSender for MockSender {
                 parent_slot: 429,
                 transactions: vec![EncodedTransactionWithStatusMeta {
                     transaction: EncodedTransaction::Binary(
-                        "ju9xZWuDBX4pRxX2oZkTjxU5jB4SSTgEGhX8bQ8PURNzyzqKMPPpNvWihx8zUe\
-                                 FfrbVNoAaEsNKZvGzAnTDy5bhNT9kt6KFCTBixpvrLCzg4M5UdFUQYrn1gdgjX\
-                                 pLHxcaShD81xBNaFDgnA2nkkdHnKtZt4hVSfKAmw3VRZbjrZ7L2fKZBx21CwsG\
-                                 hD6onjM2M3qZW5C8J6d1pj41MxKmZgPBSha3MyKkNLkAGFASK"
+                        "ASQffZKTaGW1YaJ5haQqVH7ZtK/zVZiYy/W5NaYO1aSqKiMvIGell7XKo5wimQwVSMMTEr4\
+                        lm5O9+DkF5QrvyAkBAAAC70MCfWZjFFXbkIVru6heL6R1kkGN+IIjav1M/yCDigdy9cB+bX6\
+                        mz0z3jZRqMKamWbSZZq0y+INBh+LY4YWCOwEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
+                        AAAAAAf8ABAAAAAA="
                             .to_string(),
-                        TransactionBinaryEncoding::Base58,
+                        TransactionBinaryEncoding::Base64,
                     ),
                     meta: None,
                     version: Some(TransactionVersion::LEGACY),
