@@ -35,7 +35,7 @@ use {
     solana_sbpf::{
         declare_builtin_function,
         ebpf::{self, MM_HEAP_START},
-        elf::Executable,
+        elf::{ElfError, Executable},
         error::{EbpfError, ProgramResult},
         memory_region::{AccessType, MemoryCowCallback, MemoryMapping, MemoryRegion},
         program::BuiltinProgram,
@@ -50,7 +50,6 @@ use {
     solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{cell::RefCell, mem, rc::Rc},
-    syscalls::morph_into_deployment_environment_v1,
 };
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
@@ -62,6 +61,28 @@ const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 
 thread_local! {
     pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
+}
+
+fn morph_into_deployment_environment_v1(
+    from: Arc<BuiltinProgram<InvokeContext>>,
+) -> Result<BuiltinProgram<InvokeContext>, ElfError> {
+    let mut config = from.get_config().clone();
+    config.reject_broken_elfs = true;
+    // Once the tests are being build using a toolchain which supports the newer SBPF versions,
+    // the deployment of older versions will be disabled:
+    // config.enabled_sbpf_versions =
+    //     *config.enabled_sbpf_versions.end()..=*config.enabled_sbpf_versions.end();
+
+    let mut result = BuiltinProgram::new_loader(config);
+
+    for (_key, (name, value)) in from.get_function_registry().iter() {
+        // Deployment of programs with sol_alloc_free is disabled. So do not register the syscall.
+        if name != *b"sol_alloc_free_" {
+            result.register_function(unsafe { std::str::from_utf8_unchecked(name) }, value)?;
+        }
+    }
+
+    Ok(result)
 }
 
 #[allow(clippy::too_many_arguments)]
