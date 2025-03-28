@@ -1012,6 +1012,17 @@ pub mod disable_partitioned_rent_collection {
     solana_pubkey::declare_id!("2B2SBNbUcr438LtGXNcJNBP2GBSxjx81F945SdSkUSfC");
 }
 
+<<<<<<< HEAD
+=======
+pub mod enable_vote_address_leader_schedule {
+    solana_pubkey::declare_id!("5JsG4NWH8Jbrqdd8uL6BNwnyZK3dQSoieRXG5vmofj9y");
+}
+
+pub mod raise_block_limits_to_60m {
+    solana_pubkey::declare_id!("6oMCUgfY6BzZ6jwB681J6ju5Bh6CjVXbd7NeWYqiXBSu");
+}
+
+>>>>>>> 75b72c0e3 (SIMD-0256: Raise block limit to 60M (#5171))
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1239,7 +1250,15 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
         (fix_alt_bn128_multiplication_input_length::id(), "fix alt_bn128 multiplication input length SIMD-0222 #3686"),
         (drop_unchained_merkle_shreds::id(), "drops unchained Merkle shreds #2149"),
+<<<<<<< HEAD
         (disable_partitioned_rent_collection::id(), "SIMD-0175: Disable partitioned rent collection"),
+=======
+        (relax_intrabatch_account_locks::id(), "Allow batched transactions to read/write and write/write the same accounts SIMD-0083"),
+        (create_slashing_program::id(), "creates an enshrined slashing program SIMD-0204"),
+        (disable_partitioned_rent_collection::id(), "Disable partitioned rent collection SIMD-0175 #4562"),
+        (enable_vote_address_leader_schedule::id(), "Enable vote address leader schedule SIMD-0180 #4573"),
+        (raise_block_limits_to_60m::id(), "Raise block limit to 60M SIMD-0256"),
+>>>>>>> 75b72c0e3 (SIMD-0256: Raise block limit to 60M (#5171))
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
