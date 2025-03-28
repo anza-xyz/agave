@@ -94,7 +94,7 @@ impl SignerSource {
         matches: &ArgMatches,
         name: &str,
     ) -> Result<Option<Keypair>, Box<dyn error::Error>> {
-        let source = matches.try_get_one::<Self>(name)?;
+        let source = matches.try_get_one::<Self>(name).ok().flatten();
         if let Some(source) = source {
             keypair_from_source(matches, source, name, true).map(Some)
         } else {
@@ -123,7 +123,7 @@ impl SignerSource {
         name: &str,
         wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
     ) -> Result<Option<(Box<dyn Signer>, Pubkey)>, Box<dyn error::Error>> {
-        let source = matches.try_get_one::<Self>(name)?;
+        let source = matches.try_get_one::<Self>(name).ok().flatten();
         if let Some(source) = source {
             let signer = signer_from_source(matches, source, name, wallet_manager)?;
             let signer_pubkey = signer.pubkey();
@@ -159,7 +159,7 @@ impl SignerSource {
         name: &str,
         wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
     ) -> Result<Option<Pubkey>, Box<dyn error::Error>> {
-        let source = matches.try_get_one::<Self>(name)?;
+        let source = matches.try_get_one::<Self>(name).ok().flatten();
         if let Some(source) = source {
             pubkey_from_source(matches, source, name, wallet_manager).map(Some)
         } else {
@@ -188,7 +188,7 @@ impl SignerSource {
         name: &str,
         wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        let source = matches.try_get_one::<Self>(name)?;
+        let source = matches.try_get_one::<Self>(name).ok().flatten();
         if let Some(source) = source {
             resolve_signer_from_source(matches, source, name, wallet_manager)
         } else {
@@ -343,7 +343,7 @@ pub fn try_keypair_of(
     matches: &ArgMatches,
     name: &str,
 ) -> Result<Option<Keypair>, Box<dyn error::Error>> {
-    if let Some(value) = matches.try_get_one::<String>(name)? {
+    if let Some(value) = matches.try_get_one::<String>(name).ok().flatten() {
         extract_keypair(matches, name, value)
     } else {
         Ok(None)
@@ -371,7 +371,9 @@ fn extract_keypair(
     path: &str,
 ) -> Result<Option<Keypair>, Box<dyn error::Error>> {
     if path == ASK_KEYWORD {
-        let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
+        let skip_validation = matches
+            .try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
+            .unwrap_or(false);
         keypair_from_seed_phrase(name, skip_validation, true, None, true).map(Some)
     } else {
         read_keypair_file(path).map(Some)
@@ -384,7 +386,7 @@ pub fn try_pubkey_of(
     matches: &ArgMatches,
     name: &str,
 ) -> Result<Option<Pubkey>, Box<dyn error::Error>> {
-    if let Some(pubkey) = matches.try_get_one::<Pubkey>(name)? {
+    if let Some(pubkey) = matches.try_get_one::<Pubkey>(name).ok().flatten() {
         Ok(Some(*pubkey))
     } else {
         Ok(try_keypair_of(matches, name)?.map(|keypair| keypair.pubkey()))
@@ -451,7 +453,7 @@ pub fn signer_of(
     name: &str,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<(Option<Box<dyn Signer>>, Option<Pubkey>), Box<dyn std::error::Error>> {
-    if let Some(location) = matches.try_get_one::<String>(name)? {
+    if let Some(location) = matches.try_get_one::<String>(name).ok().flatten() {
         let signer = signer_from_path(matches, location, name, wallet_manager)?;
         let signer_pubkey = signer.pubkey();
         Ok((Some(signer), Some(signer_pubkey)))
@@ -465,7 +467,7 @@ pub fn pubkey_of_signer(
     name: &str,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<Option<Pubkey>, Box<dyn std::error::Error>> {
-    if let Some(location) = matches.try_get_one::<String>(name)? {
+    if let Some(location) = matches.try_get_one::<String>(name).ok().flatten() {
         Ok(Some(pubkey_from_path(
             matches,
             location,
@@ -498,12 +500,12 @@ pub fn resolve_signer(
     name: &str,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    resolve_signer_from_path(
-        matches,
-        matches.try_get_one::<String>(name)?.unwrap(),
-        name,
-        wallet_manager,
-    )
+    let path = matches
+        .try_get_one::<String>(name)
+        .ok()
+        .flatten()
+        .ok_or_else(|| format!("Missing required path argument: {}", name))?;
+    resolve_signer_from_path(matches, path, name, wallet_manager)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -699,6 +701,13 @@ mod tests {
         assert!(keypair_of(&matches, "single").is_none());
 
         fs::remove_file(&outfile).unwrap();
+    }
+
+    #[test]
+    fn test_try_keypair_of() {
+        let matches = ArgMatches::default();
+        let result = try_keypair_of(&matches, "test").unwrap();
+        assert!(result.is_none());
     }
 
     #[test]
@@ -1082,9 +1091,30 @@ mod tests {
     }
 
     #[test]
+    fn test_signer_of() {
+        let matches = ArgMatches::default();
+        let result = signer_of(&matches, "test", &mut None).unwrap();
+        assert_eq!(result, (None, None));
+    }
+
+    #[test]
+    fn test_try_get_signer() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_signer(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn test_try_get_signers() {
         let matches = ArgMatches::default();
         let result = SignerSource::try_get_signers(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_get_keypair() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_keypair(&matches, "test").unwrap();
         assert!(result.is_none());
     }
 
@@ -1096,9 +1126,37 @@ mod tests {
     }
 
     #[test]
+    fn test_pubkey_of_signer() {
+        let matches = ArgMatches::default();
+        let result = pubkey_of_signer(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_pubkey_of() {
+        let matches = ArgMatches::default();
+        let result = try_pubkey_of(&matches, "test").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_get_pubkey() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_pubkey(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn test_try_get_pubkeys() {
         let matches = ArgMatches::default();
         let result = SignerSource::try_get_pubkeys(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_resolve() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_resolve(&matches, "test", &mut None).unwrap();
         assert!(result.is_none());
     }
 }

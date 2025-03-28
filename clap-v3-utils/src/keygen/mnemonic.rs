@@ -121,7 +121,10 @@ pub fn no_passphrase_and_message() -> (String, String) {
 pub fn acquire_passphrase_and_message(
     matches: &ArgMatches,
 ) -> Result<(String, String), Box<dyn error::Error>> {
-    if matches.try_contains_id(NO_PASSPHRASE_ARG.name)? {
+    if matches
+        .try_contains_id(NO_PASSPHRASE_ARG.name)
+        .unwrap_or(false)
+    {
         Ok(no_passphrase_and_message())
     } else {
         match prompt_passphrase(
