@@ -94,7 +94,7 @@ impl SignerSource {
         matches: &ArgMatches,
         name: &str,
     ) -> Result<Option<Keypair>, Box<dyn error::Error>> {
-        let source = matches.try_get_one::<Self>(name)?;
+        let source = matches.try_get_one::<Self>(name).ok().flatten();
         if let Some(source) = source {
             keypair_from_source(matches, source, name, true).map(Some)
         } else {
@@ -106,7 +106,7 @@ impl SignerSource {
         matches: &ArgMatches,
         name: &str,
     ) -> Result<Option<Vec<Keypair>>, Box<dyn error::Error>> {
-        let sources = matches.try_get_many::<Self>(name)?;
+        let sources = matches.try_get_many::<Self>(name).ok().flatten();
         if let Some(sources) = sources {
             let keypairs = sources
                 .filter_map(|source| keypair_from_source(matches, source, name, true).ok())
@@ -123,7 +123,7 @@ impl SignerSource {
         name: &str,
         wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
     ) -> Result<Option<(Box<dyn Signer>, Pubkey)>, Box<dyn error::Error>> {
-        let source = matches.try_get_one::<Self>(name)?;
+        let source = matches.try_get_one::<Self>(name).ok().flatten();
         if let Some(source) = source {
             let signer = signer_from_source(matches, source, name, wallet_manager)?;
             let signer_pubkey = signer.pubkey();
@@ -139,7 +139,7 @@ impl SignerSource {
         name: &str,
         wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
     ) -> Result<Option<Vec<(Box<dyn Signer>, Pubkey)>>, Box<dyn error::Error>> {
-        let sources = matches.try_get_many::<Self>(name)?;
+        let sources = matches.try_get_many::<Self>(name).ok().flatten();
         if let Some(sources) = sources {
             let signers = sources
                 .filter_map(|source| {
@@ -159,7 +159,7 @@ impl SignerSource {
         name: &str,
         wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
     ) -> Result<Option<Pubkey>, Box<dyn error::Error>> {
-        let source = matches.try_get_one::<Self>(name)?;
+        let source = matches.try_get_one::<Self>(name).ok().flatten();
         if let Some(source) = source {
             pubkey_from_source(matches, source, name, wallet_manager).map(Some)
         } else {
@@ -172,7 +172,7 @@ impl SignerSource {
         name: &str,
         wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
     ) -> Result<Option<Vec<Pubkey>>, Box<dyn std::error::Error>> {
-        let sources = matches.try_get_many::<Self>(name)?;
+        let sources = matches.try_get_many::<Self>(name).ok().flatten();
         if let Some(sources) = sources {
             let pubkeys = sources
                 .filter_map(|source| pubkey_from_source(matches, source, name, wallet_manager).ok())
@@ -188,7 +188,7 @@ impl SignerSource {
         name: &str,
         wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        let source = matches.try_get_one::<Self>(name)?;
+        let source = matches.try_get_one::<Self>(name).ok().flatten();
         if let Some(source) = source {
             resolve_signer_from_source(matches, source, name, wallet_manager)
         } else {
@@ -343,7 +343,7 @@ pub fn try_keypair_of(
     matches: &ArgMatches,
     name: &str,
 ) -> Result<Option<Keypair>, Box<dyn error::Error>> {
-    if let Some(value) = matches.try_get_one::<String>(name)? {
+    if let Some(value) = matches.try_get_one::<String>(name).ok().flatten() {
         extract_keypair(matches, name, value)
     } else {
         Ok(None)
@@ -354,11 +354,15 @@ pub fn try_keypairs_of(
     matches: &ArgMatches,
     name: &str,
 ) -> Result<Option<Vec<Keypair>>, Box<dyn error::Error>> {
-    Ok(matches.try_get_many::<String>(name)?.map(|values| {
-        values
-            .filter_map(|value| extract_keypair(matches, name, value).ok().flatten())
-            .collect()
-    }))
+    Ok(matches
+        .try_get_many::<String>(name)
+        .ok()
+        .flatten()
+        .map(|values| {
+            values
+                .filter_map(|value| extract_keypair(matches, name, value).ok().flatten())
+                .collect()
+        }))
 }
 
 fn extract_keypair(
@@ -367,7 +371,9 @@ fn extract_keypair(
     path: &str,
 ) -> Result<Option<Keypair>, Box<dyn error::Error>> {
     if path == ASK_KEYWORD {
-        let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
+        let skip_validation = matches
+            .try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
+            .unwrap_or(false);
         keypair_from_seed_phrase(name, skip_validation, true, None, true).map(Some)
     } else {
         read_keypair_file(path).map(Some)
@@ -380,7 +386,7 @@ pub fn try_pubkey_of(
     matches: &ArgMatches,
     name: &str,
 ) -> Result<Option<Pubkey>, Box<dyn error::Error>> {
-    if let Some(pubkey) = matches.try_get_one::<Pubkey>(name)? {
+    if let Some(pubkey) = matches.try_get_one::<Pubkey>(name).ok().flatten() {
         Ok(Some(*pubkey))
     } else {
         Ok(try_keypair_of(matches, name)?.map(|keypair| keypair.pubkey()))
@@ -391,7 +397,7 @@ pub fn try_pubkeys_of(
     matches: &ArgMatches,
     name: &str,
 ) -> Result<Option<Vec<Pubkey>>, Box<dyn error::Error>> {
-    if let Some(pubkey_strings) = matches.try_get_many::<String>(name)? {
+    if let Some(pubkey_strings) = matches.try_get_many::<String>(name).ok().flatten() {
         let mut pubkeys = Vec::with_capacity(pubkey_strings.len());
         for pubkey_string in pubkey_strings {
             pubkeys.push(pubkey_string.parse::<Pubkey>()?);
@@ -424,7 +430,7 @@ pub fn try_pubkeys_sigs_of(
     matches: &ArgMatches,
     name: &str,
 ) -> Result<Option<Vec<(Pubkey, Signature)>>, Box<dyn error::Error>> {
-    if let Some(pubkey_signer_strings) = matches.try_get_many::<String>(name)? {
+    if let Some(pubkey_signer_strings) = matches.try_get_many::<String>(name).ok().flatten() {
         let mut pubkey_sig_pairs = Vec::with_capacity(pubkey_signer_strings.len());
         for pubkey_signer_string in pubkey_signer_strings {
             let (pubkey_string, sig_string) = pubkey_signer_string
@@ -447,7 +453,7 @@ pub fn signer_of(
     name: &str,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<(Option<Box<dyn Signer>>, Option<Pubkey>), Box<dyn std::error::Error>> {
-    if let Some(location) = matches.try_get_one::<String>(name)? {
+    if let Some(location) = matches.try_get_one::<String>(name).ok().flatten() {
         let signer = signer_from_path(matches, location, name, wallet_manager)?;
         let signer_pubkey = signer.pubkey();
         Ok((Some(signer), Some(signer_pubkey)))
@@ -461,7 +467,7 @@ pub fn pubkey_of_signer(
     name: &str,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<Option<Pubkey>, Box<dyn std::error::Error>> {
-    if let Some(location) = matches.try_get_one::<String>(name)? {
+    if let Some(location) = matches.try_get_one::<String>(name).ok().flatten() {
         Ok(Some(pubkey_from_path(
             matches,
             location,
@@ -478,7 +484,7 @@ pub fn pubkeys_of_multiple_signers(
     name: &str,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<Option<Vec<Pubkey>>, Box<dyn std::error::Error>> {
-    if let Some(pubkey_matches) = matches.try_get_many::<String>(name)? {
+    if let Some(pubkey_matches) = matches.try_get_many::<String>(name).ok().flatten() {
         let mut pubkeys: Vec<Pubkey> = vec![];
         for signer in pubkey_matches {
             pubkeys.push(pubkey_from_path(matches, signer, name, wallet_manager)?);
@@ -494,12 +500,12 @@ pub fn resolve_signer(
     name: &str,
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    resolve_signer_from_path(
-        matches,
-        matches.try_get_one::<String>(name)?.unwrap(),
-        name,
-        wallet_manager,
-    )
+    let path = matches
+        .try_get_one::<String>(name)
+        .ok()
+        .flatten()
+        .ok_or_else(|| format!("Missing required path argument: {}", name))?;
+    resolve_signer_from_path(matches, path, name, wallet_manager)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -698,6 +704,20 @@ mod tests {
     }
 
     #[test]
+    fn test_try_keypair_of() {
+        let matches = ArgMatches::default();
+        let result = try_keypair_of(&matches, "test").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_keypairs_of() {
+        let matches = ArgMatches::default();
+        let result = try_keypairs_of(&matches, "test").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn test_pubkey_of() {
         let keypair = Keypair::new();
         let outfile = tmp_file_path("test_pubkey_of.json", &keypair.pubkey());
@@ -738,6 +758,20 @@ mod tests {
     }
 
     #[test]
+    fn test_try_pubkeys_of() {
+        let matches = ArgMatches::default();
+        let result = try_pubkeys_of(&matches, "test").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_pubkeys_of_multiple_signers() {
+        let matches = ArgMatches::default();
+        let result = pubkeys_of_multiple_signers(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn test_pubkeys_sigs_of() {
         let key1 = solana_pubkey::new_rand();
         let key2 = solana_pubkey::new_rand();
@@ -751,6 +785,13 @@ mod tests {
             pubkeys_sigs_of(&matches, "multiple"),
             Some(vec![(key1, sig1), (key2, sig2)])
         );
+    }
+
+    #[test]
+    fn test_try_pubkeys_sigs_of() {
+        let matches = ArgMatches::default();
+        let result = try_pubkeys_sigs_of(&matches, "test").unwrap();
+        assert!(result.is_none());
     }
 
     #[test]
@@ -1047,5 +1088,75 @@ mod tests {
             .try_get_matches_from(vec!["test", "--signer", "usb://ledger"])
             .unwrap_err();
         assert_eq!(matches_error.kind, clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn test_signer_of() {
+        let matches = ArgMatches::default();
+        let result = signer_of(&matches, "test", &mut None).unwrap();
+        assert_eq!(result, (None, None));
+    }
+
+    #[test]
+    fn test_try_get_signer() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_signer(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_get_signers() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_signers(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_get_keypair() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_keypair(&matches, "test").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_get_keypairs() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_keypairs(&matches, "test").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_pubkey_of_signer() {
+        let matches = ArgMatches::default();
+        let result = pubkey_of_signer(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_pubkey_of() {
+        let matches = ArgMatches::default();
+        let result = try_pubkey_of(&matches, "test").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_get_pubkey() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_pubkey(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_get_pubkeys() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_get_pubkeys(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_resolve() {
+        let matches = ArgMatches::default();
+        let result = SignerSource::try_resolve(&matches, "test", &mut None).unwrap();
+        assert!(result.is_none());
     }
 }
