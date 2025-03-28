@@ -23,6 +23,7 @@ histogram = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
+pretty-hex = { workspace = true }
 rayon = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }

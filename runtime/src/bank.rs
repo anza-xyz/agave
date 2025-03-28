@@ -96,7 +96,10 @@ use {
     solana_builtins::{prototype::BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{block_cost_limits::simd_0207_block_limits, cost_tracker::CostTracker},
+    solana_cost_model::{
+        block_cost_limits::{simd_0207_block_limits, simd_0256_block_limits},
+        cost_tracker::CostTracker,
+    },
     solana_fee::FeeFeatures,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_time, measure_us},
@@ -153,6 +156,7 @@ use {
     solana_svm::{
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
+        program_loader::load_program_with_pubkey,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -182,7 +186,7 @@ use {
         sync::{
             atomic::{
                 AtomicBool, AtomicI64, AtomicU64, AtomicUsize,
-                Ordering::{AcqRel, Acquire, Relaxed},
+                Ordering::{self, AcqRel, Acquire, Relaxed},
             },
             Arc, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
         },
@@ -201,7 +205,6 @@ use {
     solana_nonce_account::{get_system_account_kind, SystemAccountKind},
     solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
     solana_sdk::nonce,
-    solana_svm::program_loader::load_program_with_pubkey,
 };
 
 /// params to `verify_accounts_hash`
@@ -1427,18 +1430,8 @@ impl Bank {
             new.distribute_partitioned_epoch_rewards();
         });
 
-        let (_epoch, slot_index) = new.epoch_schedule.get_epoch_and_slot_index(new.slot);
-        let slots_in_epoch = new.epoch_schedule.get_slots_in_epoch(new.epoch);
-
-        let (_, cache_preparation_time_us) = measure_us!(new
-            .transaction_processor
-            .prepare_program_cache_for_upcoming_feature_set(
-                &new,
-                &new.compute_active_feature_set(true).0,
-                &new.compute_budget.unwrap_or_default().to_budget(),
-                slot_index,
-                slots_in_epoch,
-            ));
+        let (_, cache_preparation_time_us) =
+            measure_us!(new.prepare_program_cache_for_upcoming_feature_set());
 
         // Update sysvars before processing transactions
         let (_, update_sysvars_time_us) = measure_us!({
@@ -1531,6 +1524,94 @@ impl Bank {
             .write()
             .unwrap()
             .set_fork_graph(fork_graph);
+    }
+
+    fn prepare_program_cache_for_upcoming_feature_set(&self) {
+        let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
+        let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
+        let compute_budget = self.compute_budget.unwrap_or_default().to_budget();
+        let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
+
+        // Recompile loaded programs one at a time before the next epoch hits
+        let slots_in_recompilation_phase =
+            (solana_program_runtime::loaded_programs::MAX_LOADED_ENTRY_COUNT as u64)
+                .min(slots_in_epoch)
+                .checked_div(2)
+                .unwrap();
+
+        let mut program_cache = self.transaction_processor.program_cache.write().unwrap();
+
+        if program_cache.upcoming_environments.is_some() {
+            if let Some((key, program_to_recompile)) = program_cache.programs_to_recompile.pop() {
+                let effective_epoch = program_cache.latest_root_epoch.saturating_add(1);
+                drop(program_cache);
+                let environments_for_epoch = self
+                    .transaction_processor
+                    .program_cache
+                    .read()
+                    .unwrap()
+                    .get_environments_for_epoch(effective_epoch);
+                if let Some(recompiled) = load_program_with_pubkey(
+                    self,
+                    &environments_for_epoch,
+                    &key,
+                    self.slot,
+                    &mut ExecuteTimings::default(),
+                    false,
+                ) {
+                    recompiled.tx_usage_counter.fetch_add(
+                        program_to_recompile
+                            .tx_usage_counter
+                            .load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
+                    recompiled.ix_usage_counter.fetch_add(
+                        program_to_recompile
+                            .ix_usage_counter
+                            .load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
+                    let mut program_cache =
+                        self.transaction_processor.program_cache.write().unwrap();
+                    program_cache.assign_program(key, recompiled);
+                }
+            }
+        } else if self.epoch != program_cache.latest_root_epoch
+            || slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch
+        {
+            // Anticipate the upcoming program runtime environment for the next epoch,
+            // so we can try to recompile loaded programs before the feature transition hits.
+            drop(program_cache);
+            let mut program_cache = self.transaction_processor.program_cache.write().unwrap();
+            let program_runtime_environment_v1 = create_program_runtime_environment_v1(
+                &upcoming_feature_set,
+                &compute_budget,
+                false, /* deployment */
+                false, /* debugging_features */
+            )
+            .unwrap();
+            let program_runtime_environment_v2 = create_program_runtime_environment_v2(
+                &compute_budget,
+                false, /* debugging_features */
+            );
+            let mut upcoming_environments = program_cache.environments.clone();
+            let changed_program_runtime_v1 =
+                *upcoming_environments.program_runtime_v1 != program_runtime_environment_v1;
+            let changed_program_runtime_v2 =
+                *upcoming_environments.program_runtime_v2 != program_runtime_environment_v2;
+            if changed_program_runtime_v1 {
+                upcoming_environments.program_runtime_v1 = Arc::new(program_runtime_environment_v1);
+            }
+            if changed_program_runtime_v2 {
+                upcoming_environments.program_runtime_v2 = Arc::new(program_runtime_environment_v2);
+            }
+            program_cache.upcoming_environments = Some(upcoming_environments);
+            program_cache.programs_to_recompile = program_cache
+                .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2);
+            program_cache
+                .programs_to_recompile
+                .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
+        }
     }
 
     pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
@@ -4844,6 +4925,18 @@ impl Bank {
             );
         }
 
+        if self
+            .feature_set
+            .is_active(&feature_set::raise_block_limits_to_60m::id())
+        {
+            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0256_block_limits();
+            self.write_cost_tracker().unwrap().set_limits(
+                account_cost_limit,
+                block_cost_limit,
+                vote_cost_limit,
+            );
+        }
+
         // If the accounts delta hash is still in use, start the background account hasher
         if !self
             .feature_set
@@ -6545,8 +6638,21 @@ impl Bank {
             }
         }
 
-        if new_feature_activations.contains(&feature_set::raise_block_limits_to_50m::id()) {
+        if new_feature_activations.contains(&feature_set::raise_block_limits_to_50m::id())
+            && !self
+                .feature_set
+                .is_active(&feature_set::raise_block_limits_to_60m::id())
+        {
             let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
+            self.write_cost_tracker().unwrap().set_limits(
+                account_cost_limit,
+                block_cost_limit,
+                vote_cost_limit,
+            );
+        }
+
+        if new_feature_activations.contains(&feature_set::raise_block_limits_to_60m::id()) {
+            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0256_block_limits();
             self.write_cost_tracker().unwrap().set_limits(
                 account_cost_limit,
                 block_cost_limit,

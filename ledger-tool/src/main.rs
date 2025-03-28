@@ -7,7 +7,7 @@ use {
         ledger_path::*,
         ledger_utils::*,
         output::{
-            output_account, AccountsOutputConfig, AccountsOutputMode, AccountsOutputStreamer,
+            AccountsOutputConfig, AccountsOutputMode, AccountsOutputStreamer, CliAccounts,
             SlotBankHash,
         },
         program::*,
@@ -21,7 +21,7 @@ use {
     dashmap::DashMap,
     log::*,
     serde_derive::Serialize,
-    solana_account_decoder::UiAccountEncoding,
+    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource,
         accounts_index::{ScanConfig, ScanOrder},
@@ -34,7 +34,7 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::OutputFormat,
+    solana_cli_output::{CliAccount, CliAccountNewConfig, OutputFormat},
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
@@ -1671,20 +1671,46 @@ fn main() {
 
             match matches.subcommand() {
                 ("genesis", Some(arg_matches)) => {
+                    let output_format =
+                        OutputFormat::from_matches(arg_matches, "output_format", false);
+                    let output_accounts = arg_matches.is_present("accounts");
+
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let print_accounts = arg_matches.is_present("accounts");
-                    if print_accounts {
-                        let print_account_data = !arg_matches.is_present("no_account_data");
-                        let print_encoding_format = parse_encoding_format(arg_matches);
-                        for (pubkey, account) in genesis_config.accounts {
-                            output_account(
-                                &pubkey,
-                                &AccountSharedData::from(account),
-                                None,
-                                print_account_data,
-                                print_encoding_format,
-                            );
-                        }
+
+                    if output_accounts {
+                        let data_encoding = parse_encoding_format(arg_matches);
+                        let output_account_data = !arg_matches.is_present("no_account_data");
+                        let data_slice_config = if output_account_data {
+                            // None yields the entire account in the slice
+                            None
+                        } else {
+                            // usize::MAX is a sentinel that will yield an
+                            // empty data slice. Because of this, length is
+                            // ignored so any value will do
+                            let offset = usize::MAX;
+                            let length = 0;
+                            Some(UiDataSliceConfig { offset, length })
+                        };
+                        let cli_account_config = CliAccountNewConfig {
+                            data_encoding,
+                            data_slice_config,
+                            ..CliAccountNewConfig::default()
+                        };
+
+                        let accounts: Vec<_> = genesis_config
+                            .accounts
+                            .into_iter()
+                            .map(|(pubkey, account)| {
+                                CliAccount::new_with_config(
+                                    &pubkey,
+                                    &AccountSharedData::from(account),
+                                    &cli_account_config,
+                                )
+                            })
+                            .collect();
+                        let accounts = CliAccounts { accounts };
+
+                        println!("{}", output_format.formatted_string(&accounts));
                     } else {
                         println!("{genesis_config}");
                     }

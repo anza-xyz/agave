@@ -424,13 +424,6 @@ impl LocalCluster {
         )
         .unwrap();
 
-        discover_cluster(
-            &cluster.entry_point_info.gossip().unwrap(),
-            config.node_stakes.len(),
-            socket_addr_space,
-        )
-        .unwrap();
-
         cluster
     }
 

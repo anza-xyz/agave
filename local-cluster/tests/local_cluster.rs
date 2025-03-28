@@ -1277,7 +1277,7 @@ fn test_snapshot_restart_tower() {
     cluster_tests::spend_and_verify_all_nodes(
         restarted_node_info,
         &cluster.funding_keypair,
-        1,
+        2,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
         &cluster.connection_cache,

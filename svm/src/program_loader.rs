@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     crate::transaction_processing_callback::TransactionProcessingCallback,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
@@ -118,8 +116,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
 /// If the account doesn't exist it returns `None`. If the account does exist, it must be a program
 /// account (belong to one of the program loaders). Returns `Some(InvalidAccountData)` if the program
 /// account is `Closed`, contains invalid data or any of the programdata accounts are invalid.
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
+pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     environments: &ProgramRuntimeEnvironments,
     pubkey: &Pubkey,

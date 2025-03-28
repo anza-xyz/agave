@@ -3,7 +3,6 @@
 use {
     ahash::{AHashMap, AHashSet},
     solana_epoch_schedule::EpochSchedule,
-    solana_feature_set_interface::FeatureSet as SdkFeatureSet,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::Hasher,
@@ -13,60 +12,59 @@ use {
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
-    feature_set: SdkFeatureSet,
+    active: AHashMap<Pubkey, u64>,
+    inactive: AHashSet<Pubkey>,
 }
 
 impl Default for FeatureSet {
     fn default() -> Self {
-        // All features disabled
         Self {
-            feature_set: SdkFeatureSet {
-                active: AHashMap::new(),
-                inactive: AHashSet::from_iter((*FEATURE_NAMES).keys().cloned()),
-            },
+            // All features disabled
+            active: AHashMap::new(),
+            inactive: AHashSet::from_iter((*FEATURE_NAMES).keys().cloned()),
         }
     }
 }
 
 impl FeatureSet {
     pub fn new(active: AHashMap<Pubkey, u64>, inactive: AHashSet<Pubkey>) -> Self {
-        Self {
-            feature_set: SdkFeatureSet { active, inactive },
-        }
+        Self { active, inactive }
     }
 
     pub fn active(&self) -> &AHashMap<Pubkey, u64> {
-        &self.feature_set.active
+        &self.active
     }
 
     pub fn active_mut(&mut self) -> &mut AHashMap<Pubkey, u64> {
-        &mut self.feature_set.active
+        &mut self.active
     }
 
     pub fn inactive(&self) -> &AHashSet<Pubkey> {
-        &self.feature_set.inactive
+        &self.inactive
     }
 
     pub fn inactive_mut(&mut self) -> &mut AHashSet<Pubkey> {
-        &mut self.feature_set.inactive
+        &mut self.inactive
     }
 
     pub fn is_active(&self, feature_id: &Pubkey) -> bool {
-        self.feature_set.is_active(feature_id)
+        self.active.contains_key(feature_id)
     }
 
     pub fn activated_slot(&self, feature_id: &Pubkey) -> Option<u64> {
-        self.feature_set.activated_slot(feature_id)
+        self.active.get(feature_id).copied()
     }
 
     /// Activate a feature
     pub fn activate(&mut self, feature_id: &Pubkey, slot: u64) {
-        self.feature_set.activate(feature_id, slot)
+        self.inactive.remove(feature_id);
+        self.active.insert(*feature_id, slot);
     }
 
     /// Deactivate a feature
     pub fn deactivate(&mut self, feature_id: &Pubkey) {
-        self.feature_set.deactivate(feature_id)
+        self.active.remove(feature_id);
+        self.inactive.insert(*feature_id);
     }
 
     /// List of enabled features that trigger full inflation
@@ -91,10 +89,8 @@ impl FeatureSet {
     /// All features enabled, useful for testing
     pub fn all_enabled() -> Self {
         Self {
-            feature_set: SdkFeatureSet {
-                active: AHashMap::from_iter((*FEATURE_NAMES).keys().cloned().map(|key| (key, 0))),
-                inactive: AHashSet::new(),
-            },
+            active: AHashMap::from_iter((*FEATURE_NAMES).keys().cloned().map(|key| (key, 0))),
+            inactive: AHashSet::new(),
         }
     }
 
@@ -772,10 +768,6 @@ pub mod enable_loader_v4 {
     solana_pubkey::declare_id!("8Cb77yHjPWe9wuWUfXeh6iszFGCDGNCoFk3tprViYHNm");
 }
 
-pub mod disable_new_loader_v3_deployments {
-    solana_pubkey::declare_id!("EmhbpdVtZ2hWRGFWBDjn2i3SJD8Z36z4mpMcZJEnebnP");
-}
-
 pub mod require_rent_exempt_split_destination {
     solana_pubkey::declare_id!("D2aip4BBr8NPWtU9vLrwrBvbuaQ8w1zV38zFLxx4pfBV");
 }
@@ -965,7 +957,7 @@ pub mod enable_sbpf_v3_deployment_and_execution {
 }
 
 pub mod remove_accounts_executable_flag_checks {
-    solana_pubkey::declare_id!("FfgtauHUWKeXTzjXkua9Px4tNGBFHKZ9WaigM5VbbzFx");
+    solana_pubkey::declare_id!("FXs1zh47QbNnhXcnB6YiAQoJ4sGB91tKF3UFHLcKT7PM");
 }
 
 pub mod lift_cpi_caller_restriction {
@@ -1030,6 +1022,10 @@ pub mod enable_vote_address_leader_schedule {
 
 pub mod require_static_nonce_account {
     solana_pubkey::declare_id!("7VVhpg5oAjAmnmz1zCcSHb2Z9ecZB2FQqpnEwReka9Zm");
+}
+
+pub mod raise_block_limits_to_60m {
+    solana_pubkey::declare_id!("6oMCUgfY6BzZ6jwB681J6ju5Bh6CjVXbd7NeWYqiXBSu");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -1196,7 +1192,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (timely_vote_credits::id(), "use timeliness of votes in determining credits to award"),
         (remaining_compute_units_syscall_enabled::id(), "enable the remaining_compute_units syscall"),
         (enable_loader_v4::id(), "Enable Loader-v4 SIMD-0167"),
-        (disable_new_loader_v3_deployments::id(), "Disable new loader-v3 deployments SIMD-0167"),
         (require_rent_exempt_split_destination::id(), "Require stake split destination account to be rent exempt"),
         (better_error_codes_for_tx_lamport_check::id(), "better error codes for tx lamport check #33353"),
         (enable_alt_bn128_compression_syscall::id(), "add alt_bn128 compression syscalls"),
@@ -1265,6 +1260,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (disable_partitioned_rent_collection::id(), "Disable partitioned rent collection SIMD-0175 #4562"),
         (enable_vote_address_leader_schedule::id(), "Enable vote address leader schedule SIMD-0180 #4573"),
         (require_static_nonce_account::id(), "SIMD-0242: Static Nonce Account Only"),
+        (raise_block_limits_to_60m::id(), "Raise block limit to 60M SIMD-0256"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
@@ -1310,7 +1306,6 @@ mod test {
         let mut feature_set = FeatureSet::default();
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
-            .feature_set
             .active
             .insert(full_inflation::devnet_and_testnet::id(), 42);
         assert_eq!(
@@ -1328,12 +1323,10 @@ mod test {
         let mut feature_set = FeatureSet::default();
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
-            .feature_set
             .active
             .insert(full_inflation::mainnet::certusone::vote::id(), 42);
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
-            .feature_set
             .active
             .insert(full_inflation::mainnet::certusone::enable::id(), 42);
         assert_eq!(
@@ -1348,12 +1341,10 @@ mod test {
         let mut feature_set = FeatureSet::default();
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
-            .feature_set
             .active
             .insert(full_inflation::mainnet::certusone::enable::id(), 42);
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
-            .feature_set
             .active
             .insert(full_inflation::mainnet::certusone::vote::id(), 42);
         assert_eq!(
