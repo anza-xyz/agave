@@ -1,18 +1,17 @@
 #![feature(test)]
 #![allow(clippy::arithmetic_side_effects)]
-use jemallocator::Jemalloc;
-
-#[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
-
 extern crate test;
-use std::{collections::HashMap, sync::atomic::AtomicU64, sync::atomic::Ordering};
-
-use solana_core::{
-    cluster_slots_service::cluster_slots::ClusterSlots, replay_stage::DUPLICATE_THRESHOLD,
+use {
+    solana_core::{
+        cluster_slots_service::cluster_slots::ClusterSlots, replay_stage::DUPLICATE_THRESHOLD,
+    },
+    solana_pubkey::Pubkey,
+    std::{
+        collections::HashMap,
+        sync::atomic::{AtomicU64, Ordering},
+    },
+    test::{black_box, Bencher},
 };
-use solana_pubkey::Pubkey;
-use test::{black_box, Bencher};
 
 const LOOKUP_SLOTS_TO_SIMULATE: usize = 200;
 const NUM_SLOTS_PER_EPOCH_SLOTS: u64 = 50;
@@ -41,7 +40,8 @@ fn bench_cluster_slots_update_original(bencher: &mut Bencher) {
         );
         assert!(!cs.lookup(cur_slot + 3).unwrap().read().unwrap().is_empty());
         cur_slot += 1;
-    })
+    });
+    dbg!(cur_slot);
 }
 
 #[bench]
@@ -83,8 +83,6 @@ fn bench_cluster_slots_update_new_and_fast(bencher: &mut Bencher) {
             );
             let rl = cs.lookup(cur_slot + 3).unwrap();
             let rl = rl.read().unwrap();
-            //dbg!(&rl);
-
             assert!(rl.contains_key(fav_stake[0]));
             cur_slot += 1;
         }
@@ -127,10 +125,9 @@ fn bench_cluster_slots_contested_lookup(bencher: &mut Bencher) {
     let stakes = generate_stakes(NUM_NODES);
     println!("Initialization lookup new");
     cs.generate_fill_for_tests(&stakes, 0, 1..NUM_SLOTS_PER_EPOCH_SLOTS);
-    println!("Initialization done");
+    println!("Initialization done, this bench takes a while!");
     let cur_slot = AtomicU64::new(0);
     bencher.iter(|| {
-        println!("running slot {}", cur_slot.load(Ordering::Relaxed));
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 for _ in 0..LOOKUP_SLOTS_TO_SIMULATE {
@@ -141,7 +138,6 @@ fn bench_cluster_slots_contested_lookup(bencher: &mut Bencher) {
                         slot,
                         (slot + 1)..(slot + NUM_SLOTS_PER_EPOCH_SLOTS),
                     );
-                    //println!("producer:{slot}");
                 }
             });
             for _ in 0..REPAIR_THREADS {
@@ -170,7 +166,6 @@ fn bench_cluster_slots_contested_lookup(bencher: &mut Bencher) {
                                             * DUPLICATE_THRESHOLD
                                 );
                             }
-                            //println!("consumer:{slot}");
                         }
                     }
                     black_box(sum);
@@ -187,10 +182,9 @@ fn bench_cluster_slots_contested_lookup_old(bencher: &mut Bencher) {
     let stakes = generate_stakes(NUM_NODES);
     println!("Initialization lookup old");
     cs.generate_fill_for_tests(&stakes, 0, 1..NUM_SLOTS_PER_EPOCH_SLOTS);
-    println!("Initialization done");
+    println!("Initialization done, this bench takes a while to run!");
     let cur_slot = AtomicU64::new(0);
     bencher.iter(|| {
-        println!("running slot {}", cur_slot.load(Ordering::Relaxed));
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 for _ in 0..LOOKUP_SLOTS_TO_SIMULATE {
@@ -201,7 +195,6 @@ fn bench_cluster_slots_contested_lookup_old(bencher: &mut Bencher) {
                         slot,
                         (slot + 1)..(slot + NUM_SLOTS_PER_EPOCH_SLOTS),
                     );
-                    //println!("producer:{slot}");
                 }
             });
             for _ in 0..REPAIR_THREADS {
@@ -224,7 +217,6 @@ fn bench_cluster_slots_contested_lookup_old(bencher: &mut Bencher) {
                                 }
                             }
                         }
-                        //println!("consumer:{slot}");
                     }
                     black_box(sum);
                 });

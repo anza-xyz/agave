@@ -1,8 +1,3 @@
-use std::{
-    collections::btree_map,
-    ops::Range,
-    sync::atomic::{AtomicU64, Ordering},
-};
 use {
     itertools::Itertools,
     solana_gossip::{
@@ -11,8 +6,12 @@ use {
     solana_runtime::bank::Bank,
     solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
     std::{
-        collections::{BTreeMap, HashMap},
-        sync::{Arc, Mutex, RwLock},
+        collections::{btree_map, BTreeMap, HashMap},
+        ops::Range,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, Mutex, RwLock,
+        },
     },
 };
 
