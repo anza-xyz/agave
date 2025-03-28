@@ -488,27 +488,33 @@ mod tests {
         assert!(i.is_empty());
 
         // Give second validator max stake
-        let validator_stakes: HashMap<_, _> = vec![(*contact_infos[1].pubkey(), u64::MAX / 2)]
-            .into_iter()
-            .collect();
+        let validator_stakes: HashMap<_, _> = vec![
+            (*contact_infos[0].pubkey(), 42),
+            (*contact_infos[1].pubkey(), u64::MAX / 2),
+        ]
+        .into_iter()
+        .collect();
         *cs.validator_stakes.write().unwrap() = Arc::new(validator_stakes);
 
         // Mark the first validator as completed slot 9, should pick that validator,
-        // even though it only has default stake, while the other validator has
+        // even though it only has minimal stake, while the other validator has
         // max stake
         cs.insert_node_id(slot, *contact_infos[0].pubkey());
         let (w, i) = cs.compute_weights_exclude_nonfrozen(slot, &contact_infos);
-        assert_eq!(w, [1]);
+        assert_eq!(w, [43]);
         assert_eq!(i, [0]);
     }
 
     #[test]
     fn test_update_new_staked_slot() {
         let cs = ClusterSlots::default();
-        let mut epoch_slot = EpochSlots::default();
-        epoch_slot.fill(&[1], 0);
         let pk = Pubkey::new_unique();
-        let map = vec![(pk, 1)].into_iter().collect();
+        let mut epoch_slot = EpochSlots {
+            from: pk,
+            ..Default::default()
+        };
+        epoch_slot.fill(&[1], 0);
+        let map = HashMap::from([(pk, 1)]);
 
         cs.update_internal(0, &map, vec![epoch_slot]);
         assert!(cs.lookup(1).is_some());

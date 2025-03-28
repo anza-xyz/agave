@@ -7,7 +7,6 @@ use {
     solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
     std::{
         collections::{btree_map, BTreeMap, HashMap},
-        ops::Range,
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc, Mutex, RwLock,
@@ -134,7 +133,7 @@ impl ClusterSlots {
         &self,
         stakes: &HashMap<Pubkey, u64>,
         root: Slot,
-        slots: Range<Slot>,
+        slots: std::ops::Range<Slot>,
     ) {
         assert!(slots.start > root);
         let epochslots =
@@ -146,7 +145,7 @@ impl ClusterSlots {
         &self,
         stakes: &HashMap<Pubkey, u64>,
         root: u64,
-        slots: Range<Slot>,
+        slots: std::ops::Range<Slot>,
     ) {
         let epochslots =
             crate::cluster_slots_service::cluster_slots::make_epoch_slots(stakes, slots);
