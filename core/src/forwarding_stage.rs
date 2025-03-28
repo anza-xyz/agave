@@ -22,8 +22,10 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
     },
-    solana_sdk::signer::keypair::Keypair,
-    solana_sdk::{fee::FeeBudgetLimits, packet, transaction::MessageHash},
+    solana_sdk::{
+        fee::FeeBudgetLimits, packet, quic::NotifyKeyUpdate, signer::keypair::Keypair,
+        transaction::MessageHash,
+    },
     solana_streamer::sendmmsg::batch_send,
     solana_tpu_client_next::{
         connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
@@ -124,6 +126,7 @@ pub trait ForwardingClient: Send + Sync + 'static {
     fn send_batch(&self, input_batch: Vec<Vec<u8>>);
 }
 
+#[derive(Clone)]
 struct ConnectionCacheClient<F: ForwardAddressGetter> {
     connection_cache: Arc<ConnectionCache>,
     forward_address_getter: F,
@@ -160,6 +163,12 @@ impl<F: ForwardAddressGetter> ForwardingClient for ConnectionCacheClient<F> {
     }
 }
 
+impl<F: ForwardAddressGetter> NotifyKeyUpdate for ConnectionCacheClient<F> {
+    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        self.connection_cache.update_key(identity)
+    }
+}
+
 struct ForwardingStageLeaderUpdater<F: ForwardAddressGetter> {
     pub forward_address_getter: F,
 }
@@ -180,6 +189,7 @@ impl<F: ForwardAddressGetter> LeaderUpdater for ForwardingStageLeaderUpdater<F> 
 type TpuClientJoinHandle =
     TokioJoinHandle<Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>>;
 
+#[derive(Clone)]
 struct TpuClientNextClient<F: ForwardAddressGetter> {
     runtime_handle: RuntimeHandle,
     sender: mpsc::Sender<TransactionBatch>,
@@ -203,7 +213,7 @@ impl<F: ForwardAddressGetter> TpuClientNextClient<F> {
             forward_address_getter: forward_address_getter.clone(),
         };
 
-        let config = Self::create_config(stake_identity);
+        let config = Self::create_config(stake_identity, 1);
         let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
@@ -220,7 +230,10 @@ impl<F: ForwardAddressGetter> TpuClientNextClient<F> {
         }
     }
 
-    fn create_config(stake_identity: Option<&Keypair>) -> ConnectionWorkersSchedulerConfig {
+    fn create_config(
+        stake_identity: Option<&Keypair>,
+        leader_forward_count: usize,
+    ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
             bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
             stake_identity: stake_identity.map(Into::into),
@@ -229,10 +242,53 @@ impl<F: ForwardAddressGetter> TpuClientNextClient<F> {
             worker_channel_size: 2,
             max_reconnect_attempts: 4,
             leaders_fanout: Fanout {
-                send: 1,
-                connect: 4,
+                send: leader_forward_count,
+                connect: 4 * leader_forward_count,
             },
         }
+    }
+
+    async fn do_update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        let runtime_handle = self.runtime_handle.clone();
+        let config = Self::create_config(Some(identity), 1);
+        let handle = self.join_and_cancel.clone();
+
+        let join_handle = {
+            let Ok(mut lock) = handle.lock() else {
+                return Err("TpuClientNext task panicked.".into());
+            };
+            let (handle, token) = std::mem::take(&mut *lock);
+            token.cancel();
+            handle
+        };
+
+        if let Some(join_handle) = join_handle {
+            let Ok(result) = join_handle.await else {
+                return Err("TpuClientNext task panicked.".into());
+            };
+
+            match result {
+                Ok(scheduler) => {
+                    let cancel = CancellationToken::new();
+                    // leaking handle to this task, as it will run until the cancel signal is received
+                    runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
+                        "send-transaction-service-TPU-client",
+                        METRICS_REPORTING_INTERVAL,
+                        cancel.clone(),
+                    ));
+                    let join_handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
+
+                    let Ok(mut lock) = handle.lock() else {
+                        return Err("TpuClientNext task panicked.".into());
+                    };
+                    *lock = (Some(join_handle), cancel);
+                }
+                Err(error) => {
+                    return Err(Box::new(error));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -248,7 +304,7 @@ impl<F: ForwardAddressGetter> ForwardingClient for TpuClientNextClient<F> {
         self.forward_address_getter
             .get_non_vote_forwarding_addresses(1, Protocol::QUIC)
             .first()
-            .map_or(false, |first| first.is_some())
+            .is_some_and(|first| first.is_some())
     }
 
     fn send_batch(&self, input_batch: Vec<Vec<u8>>) {
@@ -264,13 +320,27 @@ impl<F: ForwardAddressGetter> ForwardingClient for TpuClientNextClient<F> {
     }
 }
 
+impl<F: ForwardAddressGetter> NotifyKeyUpdate for TpuClientNextClient<F> {
+    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        self.runtime_handle.block_on(self.do_update_key(identity))
+    }
+}
+
+/// [`SpawnForwardingStageResult`] contains the result of spawning the
+/// [`ForwardingStage`], including the background task handle and a shared
+/// notifier for client address updates.
+pub struct SpawnForwardingStageResult {
+    pub join_handle: JoinHandle<()>,
+    pub client_updater: Arc<dyn NotifyKeyUpdate + Send + Sync>,
+}
+
 pub fn spawn_forwarding_stage<F>(
     receiver: Receiver<(BankingPacketBatch, bool)>,
     client: ForwardingClientOption<'_>,
     root_bank_cache: RootBankCache,
     forward_address_getter: F,
     data_budget: DataBudget,
-) -> JoinHandle<()>
+) -> SpawnForwardingStageResult
 where
     F: ForwardAddressGetter,
 {
@@ -283,14 +353,17 @@ where
                 ForwardingStage::new(
                     receiver,
                     vote_client,
-                    non_vote_client,
+                    non_vote_client.clone(),
                     root_bank_cache,
                     data_budget,
                 );
-            Builder::new()
-                .name("solFwdStage".to_string())
-                .spawn(move || forwarding_stage.run())
-                .unwrap()
+            SpawnForwardingStageResult {
+                join_handle: Builder::new()
+                    .name("solFwdStage".to_string())
+                    .spawn(move || forwarding_stage.run())
+                    .unwrap(),
+                client_updater: Arc::new(non_vote_client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+            }
         }
         ForwardingClientOption::TpuClientNext((stake_identity, runtime_handle)) => {
             let non_vote_client = TpuClientNextClient::new(
@@ -301,25 +374,30 @@ where
             let forwarding_stage = ForwardingStage::new(
                 receiver,
                 vote_client,
-                non_vote_client,
+                non_vote_client.clone(),
                 root_bank_cache,
                 data_budget,
             );
-            Builder::new()
-                .name("solFwdStage".to_string())
-                .spawn(move || forwarding_stage.run())
-                .unwrap()
+            SpawnForwardingStageResult {
+                join_handle: Builder::new()
+                    .name("solFwdStage".to_string())
+                    .spawn(move || forwarding_stage.run())
+                    .unwrap(),
+                client_updater: Arc::new(non_vote_client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+            }
         }
     }
 }
 
+// TODO(klykov): If we remove ForwardAddressGetter and parametrize ForwardingStage with VoteClient,
+// We can use in tests MockClient and MockVoteClient avoiding network at all.
+// For that, you need to use ForwardingClient trait also for VoteClient.
 pub struct ForwardingStage<F: ForwardAddressGetter, Client: ForwardingClient> {
     receiver: Receiver<(BankingPacketBatch, bool)>,
     packet_container: PacketContainer,
 
     root_bank_cache: RootBankCache,
     vote_client: VoteClient<F>,
-    // TODO(klykov)
     non_vote_client: Client,
     data_budget: DataBudget,
 
@@ -708,8 +786,8 @@ mod tests {
     impl ForwardAddressGetter for ForwardingAddressesForTest {
         fn get_non_vote_forwarding_addresses(
             &self,
-            max_count: u64,
-            protocol: Protocol,
+            _max_count: u64,
+            _protocol: Protocol,
         ) -> Vec<Option<SocketAddr>> {
             vec![self.tpu]
         }

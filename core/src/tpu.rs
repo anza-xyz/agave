@@ -21,7 +21,7 @@ use {
             VerifiedVoteSender, VoteTracker,
         },
         fetch_stage::FetchStage,
-        forwarding_stage::spawn_forwarding_stage,
+        forwarding_stage::{spawn_forwarding_stage, SpawnForwardingStageResult},
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
@@ -133,7 +133,7 @@ impl Tpu {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         enable_block_production_forwarding: bool,
-        _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
+        generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
     ) -> (Self, Vec<Arc<dyn NotifyKeyUpdate + Sync + Send>>) {
         let client = ForwardingClientOption::ConnectionCache(connection_cache.clone());
         Self::new_with_client(
@@ -175,7 +175,7 @@ impl Tpu {
             block_production_method,
             transaction_struct,
             enable_block_production_forwarding,
-            _generator_config,
+            generator_config,
         )
     }
 
@@ -369,7 +369,10 @@ impl Tpu {
             prioritization_fee_cache,
         );
 
-        let forwarding_stage = spawn_forwarding_stage(
+        let SpawnForwardingStageResult {
+            join_handle: forwarding_stage,
+            client_updater,
+        } = spawn_forwarding_stage(
             forward_stage_receiver,
             client,
             RootBankCache::new(bank_forks.clone()),
@@ -419,7 +422,12 @@ impl Tpu {
                 tracer_thread_hdl,
                 tpu_vote_quic_t,
             },
-            vec![key_updater, forwards_key_updater, vote_streamer_key_updater],
+            vec![
+                key_updater,
+                forwards_key_updater,
+                vote_streamer_key_updater,
+                client_updater,
+            ],
         )
     }
 

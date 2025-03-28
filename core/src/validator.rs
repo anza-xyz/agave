@@ -591,7 +591,7 @@ pub struct Validator {
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
     // This runtime is used when tpu-client-next is used instead of
     // ConnectionCache. The former has it's own runtime.
-    tpu_client_next_runtime: Option<TokioRuntime>,
+    _tpu_client_next_runtime: Option<TokioRuntime>,
 }
 
 impl Validator {
@@ -1657,8 +1657,8 @@ impl Validator {
                 key_notifies.push(json_rpc_service.get_client_key_updater())
             }
         }
-        // add connection_cache because it is still used in Forwarder.
-        key_notifies.push(connection_cache);
+        // Don't add connection_cache to key_notifiers here because it is added
+        // once in tpu.rs.
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
             bank_forks: bank_forks.clone(),
@@ -1705,7 +1705,7 @@ impl Validator {
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
-            tpu_client_next_runtime,
+            _tpu_client_next_runtime: tpu_client_next_runtime,
         })
     }
 

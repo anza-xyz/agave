@@ -80,6 +80,6 @@ pub(crate) fn next_leaders(
 
     leader_pubkeys
         .iter()
-        .map(|leader_pubkey| cluster_info.lookup_contact_info(&leader_pubkey, &port_selector)?)
+        .map(|leader_pubkey| cluster_info.lookup_contact_info(leader_pubkey, &port_selector)?)
         .collect()
 }
