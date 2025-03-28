@@ -333,19 +333,20 @@ impl ClusterSlots {
         &self,
         slot: Slot,
         repair_peers: &[ContactInfo],
-    ) -> Vec<(u64, usize)> {
-        self.lookup(slot)
-            .map(|slot_peers| {
-                let slot_peers = slot_peers.read().unwrap();
-                repair_peers
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, ci)| {
-                        Some((slot_peers.get(ci.pubkey())?.load(Ordering::Relaxed) + 1, i))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+    ) -> (Vec<u64>, Vec<usize>) {
+        let Some(slot_peers) = self.lookup(slot) else {
+            return (vec![], vec![]);
+        };
+        let mut weights = Vec::with_capacity(repair_peers.len());
+        let mut indices = Vec::with_capacity(repair_peers.len());
+        let slot_peers = slot_peers.read().unwrap();
+        for (index, peer) in repair_peers.iter().enumerate() {
+            if let Some(stake) = slot_peers.get(peer.pubkey()) {
+                weights.push(stake.load(Ordering::Relaxed) + 1);
+                indices.push(index);
+            }
+        }
+        (weights, indices)
     }
 }
 
