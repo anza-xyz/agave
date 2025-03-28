@@ -790,10 +790,12 @@ impl AncestorHashesService {
                     let total_stake = epoch_stakes.total_stake();
                     let node_id_to_vote_accounts = epoch_stakes.node_id_to_vote_accounts();
                     let total_completed_slot_stake: u64 = completed_dead_slot_pubkeys
+                        .read()
+                        .unwrap()
                         .iter()
-                        .map(|entry| {
+                        .map(|(key, _v)| {
                             node_id_to_vote_accounts
-                                .get(entry.key())
+                                .get(key)
                                 .map(|v| v.total_stake)
                                 .unwrap_or(0)
                         })
