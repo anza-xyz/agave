@@ -595,19 +595,11 @@ impl AccountsBackgroundService {
                                 )
                             })
                             .flatten();
-                        if snapshot_handle_result.is_some() {
-                            last_snapshot_end_time = Some(Instant::now());
-                        }
-
-                        // Note that the flush will do an internal clean of the
-                        // cache up to bank.slot(), so should be safe as long
-                        // as any later snapshots that are taken are of
-                        // slots >= bank.slot()
-                        bank.flush_accounts_cache_if_needed();
 
                         if let Some(snapshot_handle_result) = snapshot_handle_result {
                             // Safe, see proof above
 
+                            last_snapshot_end_time = Some(Instant::now());
                             match snapshot_handle_result {
                                 Ok(snapshot_block_height) => {
                                     assert!(last_cleaned_block_height <= snapshot_block_height);
@@ -643,6 +635,12 @@ impl AccountsBackgroundService {
                                 bank.shrink_ancient_slots();
                                 bank.shrink_candidate_slots();
                             }
+                        } else {
+                            // Note that the flush will do an internal clean of the
+                            // cache up to bank.slot(), so should be safe as long
+                            // as any later snapshots that are taken are of
+                            // slots >= bank.slot()
+                            bank.flush_accounts_cache_if_needed();
                         }
                         stats.record_and_maybe_submit(start_time.elapsed());
                         sleep(Duration::from_millis(INTERVAL_MS));
