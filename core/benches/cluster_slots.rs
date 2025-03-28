@@ -1,5 +1,9 @@
 #![feature(test)]
 #![allow(clippy::arithmetic_side_effects)]
+use jemallocator::Jemalloc;
+
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 extern crate test;
 use std::{collections::HashMap, sync::atomic::AtomicU64, sync::atomic::Ordering};
