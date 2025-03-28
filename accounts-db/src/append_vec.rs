@@ -314,7 +314,7 @@ impl Drop for AppendVec {
     fn drop(&mut self) {
         APPEND_VEC_STATS.files_open.fetch_sub(1, Ordering::Relaxed);
 
-        if self.is_dirty.load(Ordering::Acquire) {
+        if *self.is_dirty.get_mut() {
             APPEND_VEC_STATS.files_dirty.fetch_sub(1, Ordering::Relaxed);
         }
 
