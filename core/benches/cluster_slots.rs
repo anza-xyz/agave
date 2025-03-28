@@ -1,5 +1,6 @@
 #![feature(test)]
 #![allow(clippy::arithmetic_side_effects)]
+use frozen_collections::MapQuery;
 use jemallocator::Jemalloc;
 
 #[global_allocator]
@@ -43,6 +44,28 @@ fn bench_cluster_slots_update_original(bencher: &mut Bencher) {
 }*/
 
 #[bench]
+fn bench_cluster_slots_update_dash_map(bencher: &mut Bencher) {
+    let cs = ClusterSlots::default();
+    let stakes = generate_stakes(NUM_NODES);
+    //warmup
+    cs.generate_fill_for_tests(&stakes, 0, 1..10);
+    let mut cur_slot = 0;
+    bencher.iter(|| {
+        for _ in 0..NUM_INNER_LOOPS {
+            cs.generate_fill_for_tests(
+                &stakes,
+                cur_slot,
+                (cur_slot + 2)..(cur_slot + NUM_SLOTS_PER_EPOCH_SLOTS + 2),
+            );
+            assert!(!cs.lookup(cur_slot + 3).unwrap().is_empty());
+
+            cur_slot += 1;
+        }
+    });
+    dbg!(cur_slot);
+    //dbg!(cs.total_writes.load(Ordering::Relaxed));
+}
+#[bench]
 fn bench_cluster_slots_update_no_fp(bencher: &mut Bencher) {
     let cs = solana_core::cluster_slots_service::cluster_slots_old::ClusterSlots::default();
     let stakes = generate_stakes(NUM_NODES);
@@ -68,6 +91,7 @@ fn bench_cluster_slots_update_no_fp(bencher: &mut Bencher) {
 fn bench_cluster_slots_update_new_and_fast(bencher: &mut Bencher) {
     let cs = ClusterSlots2::default();
     let stakes = generate_stakes(NUM_NODES);
+    let fav_stake: Vec<_> = stakes.keys().take(1).collect();
     //warmup
     cs.generate_fill_for_tests(&stakes, 0, 1..10);
     let mut cur_slot = 0;
@@ -78,8 +102,11 @@ fn bench_cluster_slots_update_new_and_fast(bencher: &mut Bencher) {
                 cur_slot,
                 (cur_slot + 2)..(cur_slot + NUM_SLOTS_PER_EPOCH_SLOTS + 2),
             );
+            let rl = cs.lookup(cur_slot + 3).unwrap();
+            let rl = rl.read().unwrap();
+            //dbg!(&rl);
 
-            assert!(!cs.lookup(cur_slot + 3).unwrap().read().unwrap().is_empty());
+            assert!(rl.contains_key(fav_stake[0]));
             cur_slot += 1;
         }
     });
