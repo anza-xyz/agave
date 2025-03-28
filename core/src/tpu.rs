@@ -21,7 +21,9 @@ use {
             VerifiedVoteSender, VoteTracker,
         },
         fetch_stage::FetchStage,
-        forwarding_stage::{spawn_forwarding_stage, SpawnForwardingStageResult},
+        forwarding_stage::{
+            spawn_forwarding_stage, ForwardAddressGetter, SpawnForwardingStageResult,
+        },
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
@@ -376,7 +378,7 @@ impl Tpu {
             forward_stage_receiver,
             client,
             RootBankCache::new(bank_forks.clone()),
-            (cluster_info.clone(), poh_recorder.clone()),
+            ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
             DataBudget::default(),
         );
 
