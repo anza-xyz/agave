@@ -155,5 +155,5 @@ jobs:
         run: |
           source ci/downstream-projects/common.sh
           cd "${{ matrix.programs }}"
-          cargo clean
+          rm -rf target/deploy target/sbpf*
           $CARGO_TEST_SBF --arch v1 --manifest-path program/Cargo.toml
