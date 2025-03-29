@@ -1237,3 +1237,53 @@ fn is_zeroed(buf: &[u8]) -> bool {
             && chunks.remainder() == &ZEROS[..chunks.remainder().len()]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_instruction_accounts(n: usize) -> Vec<InstructionAccount> {
+        (0..n)
+            .map(|i| InstructionAccount {
+                index_in_transaction: i as IndexOfAccount,
+                index_in_caller: i as IndexOfAccount,
+                index_in_callee: i as IndexOfAccount,
+                is_signer: false,
+                is_writable: false,
+            })
+            .collect()
+    }
+    #[test]
+    fn test_is_instruction_account_duplicate() {
+        let mut instruction_context = InstructionContext::default();
+        instruction_context.instruction_accounts = get_instruction_accounts(2);
+
+        assert_eq!(instruction_context.is_instruction_account_duplicate(0).unwrap(), None);
+        assert_eq!(instruction_context.is_instruction_account_duplicate(1).unwrap(), None);
+
+        instruction_context.instruction_accounts[1].index_in_callee = 0;
+        assert_eq!(instruction_context.is_instruction_account_duplicate(1).unwrap(), Some(0));
+    }
+    #[test]
+    fn test_check_number_of_instruction_accounts() {
+        let mut instruction_context = InstructionContext::default();
+        instruction_context.instruction_accounts = get_instruction_accounts(2);
+
+        assert!(instruction_context.check_number_of_instruction_accounts(2).is_ok());
+        assert!(instruction_context.check_number_of_instruction_accounts(1).is_ok());
+        assert!(instruction_context.check_number_of_instruction_accounts(3).is_err());
+    }
+    #[test]
+    fn test_instruction_context_configure() {
+        let program_accounts = vec![0, 1];
+        let instruction_accounts = get_instruction_accounts(2);
+        let instruction_data = vec![1, 2, 3, 4];
+
+        let mut instruction_context = InstructionContext::default();
+        instruction_context.configure(&program_accounts, &instruction_accounts, &instruction_data);
+
+        assert_eq!(instruction_context.program_accounts, program_accounts);
+        assert_eq!(instruction_context.instruction_accounts, instruction_accounts);
+        assert_eq!(instruction_context.instruction_data, instruction_data);
+    }
+}
