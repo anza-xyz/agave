@@ -1,6 +1,6 @@
 [package]
 name = "simple-transfer-program"
-version = "2.2.6"
+version = "2.2.7"
 edition = "2021"
 
 [dependencies]
