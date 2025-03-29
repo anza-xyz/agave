@@ -538,6 +538,9 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             &instruction_data,
         );
     invoke_context.push().unwrap();
+    let rent_epoch_is_a_constant = invoke_context
+        .get_feature_set()
+        .is_active(&agave_feature_set::rent_epoch_is_a_constant_in_vm::id());
     let (_parameter_bytes, regions, account_lengths) = serialize_parameters(
         invoke_context.transaction_context,
         invoke_context
@@ -545,6 +548,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             .get_current_instruction_context()
             .unwrap(),
         true, // copy_account_data
+        rent_epoch_is_a_constant,
     )
     .unwrap();
 
