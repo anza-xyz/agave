@@ -55,7 +55,7 @@ use {
     },
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
-        transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
+        transaction_processing_result::ProcessedTransaction,
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
@@ -162,8 +162,6 @@ pub fn execute_batch<'a>(
     timings: &'a mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &'a PrioritizationFeeCache,
-    // None is meaningfully used to detect this is called from the block producing unified
-    // scheduler. If so, suppress too verbose logging for the code path.
     extra_pre_commit_callback: Option<
         impl FnOnce(&Result<ProcessedTransaction>) -> Result<Option<usize>>,
     >,
@@ -172,9 +170,15 @@ pub fn execute_batch<'a>(
         batch,
         transaction_indexes,
     } = batch;
-    let record_token_balances = transaction_status_sender.is_some();
-    let mut transaction_indexes = Cow::from(transaction_indexes);
 
+    // extra_pre_commit_callback allows for reuse of this function between the
+    // unified scheduler block production path and block verification path(s)
+    //   Some(_) => unified scheduler block production path
+    //   None    => block verification path(s)
+    let block_verification = extra_pre_commit_callback.is_none();
+    let record_token_balances = transaction_status_sender.is_some();
+
+    let mut transaction_indexes = Cow::from(transaction_indexes);
     let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
 
     let pre_token_balances = if record_token_balances {
@@ -183,11 +187,10 @@ pub fn execute_batch<'a>(
         vec![]
     };
 
-    let pre_commit_callback = |timings: &mut _, processing_results: &_| -> PreCommitResult {
+    let pre_commit_callback = |_timings: &mut _, processing_results: &_| -> PreCommitResult {
         match extra_pre_commit_callback {
             None => {
                 get_first_error(batch, processing_results)?;
-                check_block_cost_limits_if_enabled(batch, bank, timings, processing_results)?;
                 Ok(None)
             }
             Some(extra_pre_commit_callback) => {
@@ -230,6 +233,10 @@ pub fn execute_batch<'a>(
             log_messages_bytes_limit,
             pre_commit_callback,
         )?;
+
+    if block_verification {
+        check_block_cost_limits_if_enabled(batch, bank, timings, &commit_results)?;
+    }
 
     bank_utils::find_and_send_votes(
         batch.sanitized_transactions(),
@@ -278,20 +285,20 @@ pub fn execute_batch<'a>(
 // reported to metric `replay-stage-mark_dead_slot`
 fn check_block_cost_limits(
     bank: &Bank,
-    processing_results: &[TransactionProcessingResult],
+    commit_results: &[TransactionCommitResult],
     sanitized_transactions: &[impl TransactionWithMeta],
 ) -> Result<()> {
-    assert_eq!(sanitized_transactions.len(), processing_results.len());
+    assert_eq!(sanitized_transactions.len(), commit_results.len());
 
-    let tx_costs_with_actual_execution_units: Vec<_> = processing_results
+    let tx_costs_with_actual_execution_units: Vec<_> = commit_results
         .iter()
         .zip(sanitized_transactions)
-        .filter_map(|(processing_result, tx)| {
-            if let Ok(processed_tx) = processing_result {
+        .filter_map(|(commit_result, tx)| {
+            if let Ok(committed_tx) = commit_result {
                 Some(CostModel::calculate_cost_for_executed_transaction(
                     tx,
-                    processed_tx.executed_units(),
-                    processed_tx.loaded_accounts_data_size(),
+                    committed_tx.executed_units,
+                    committed_tx.loaded_account_stats.loaded_accounts_data_size,
                     &bank.feature_set,
                 ))
             } else {
@@ -315,13 +322,13 @@ fn check_block_cost_limits_if_enabled(
     batch: &TransactionBatch<impl TransactionWithMeta>,
     bank: &Bank,
     timings: &mut ExecuteTimings,
-    processing_results: &[TransactionProcessingResult],
+    commit_results: &[TransactionCommitResult],
 ) -> Result<()> {
     let (check_block_cost_limits_result, check_block_cost_limits_us) = measure_us!(if bank
         .feature_set
         .is_active(&agave_feature_set::apply_cost_tracker_during_replay::id())
     {
-        check_block_cost_limits(bank, processing_results, batch.sanitized_transactions())
+        check_block_cost_limits(bank, commit_results, batch.sanitized_transactions())
     } else {
         Ok(())
     });
@@ -2329,10 +2336,12 @@ pub mod tests {
         solana_sdk::{
             account::{AccountSharedData, WritableAccount},
             epoch_schedule::EpochSchedule,
+            fee::FeeDetails,
             hash::Hash,
             instruction::{Instruction, InstructionError},
             native_token::LAMPORTS_PER_SOL,
             pubkey::Pubkey,
+            rent_debits::RentDebits,
             signature::{Keypair, Signer},
             signer::SeedDerivable,
             system_instruction::SystemError,
@@ -2340,9 +2349,8 @@ pub mod tests {
             transaction::{Transaction, TransactionError},
         },
         solana_svm::{
-            account_loader::LoadedTransaction,
-            transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
-            transaction_processing_result::ProcessedTransaction,
+            transaction_commit_result::CommittedTransaction,
+            transaction_execution_result::TransactionLoadedAccountsStats,
             transaction_processor::ExecutionRecordingConfig,
         },
         solana_vote::{vote_account::VoteAccount, vote_transaction},
@@ -5316,31 +5324,27 @@ pub mod tests {
             .unwrap()
             .set_limits(u64::MAX, block_limit, u64::MAX);
         let txs = vec![tx.clone(), tx];
-        let processing_results = vec![
-            Ok(ProcessedTransaction::Executed(Box::new(
-                ExecutedTransaction {
-                    execution_details: TransactionExecutionDetails {
-                        status: Ok(()),
-                        log_messages: None,
-                        inner_instructions: None,
-                        return_data: None,
-                        executed_units: actual_execution_cu,
-                        accounts_data_len_delta: 0,
-                    },
-                    loaded_transaction: LoadedTransaction {
-                        loaded_accounts_data_size: actual_loaded_accounts_data_size,
-                        ..LoadedTransaction::default()
-                    },
-                    programs_modified_by_tx: HashMap::new(),
+        let commit_results = vec![
+            Ok(CommittedTransaction {
+                status: Ok(()),
+                log_messages: None,
+                inner_instructions: None,
+                return_data: None,
+                executed_units: actual_execution_cu,
+                fee_details: FeeDetails::default(),
+                rent_debits: RentDebits::default(),
+                loaded_account_stats: TransactionLoadedAccountsStats {
+                    loaded_accounts_data_size: actual_loaded_accounts_data_size,
+                    loaded_accounts_count: 2,
                 },
-            ))),
+            }),
             Err(TransactionError::AccountNotFound),
         ];
 
-        assert!(check_block_cost_limits(&bank, &processing_results, &txs).is_ok());
+        assert!(check_block_cost_limits(&bank, &commit_results, &txs).is_ok());
         assert_eq!(
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
-            check_block_cost_limits(&bank, &processing_results, &txs)
+            check_block_cost_limits(&bank, &commit_results, &txs)
         );
     }
 }
