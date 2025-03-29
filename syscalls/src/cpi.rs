@@ -1615,10 +1615,10 @@ fn account_realloc_region<'a>(
 mod tests {
     use {
         super::*,
-        crate::mock_create_vm,
         agave_feature_set::bpf_account_data_direct_mapping,
         assert_matches::assert_matches,
         solana_account::{Account, AccountSharedData, ReadableAccount},
+        solana_bpf_loader_program::mock_create_vm,
         solana_clock::Epoch,
         solana_instruction::Instruction,
         solana_program_runtime::{

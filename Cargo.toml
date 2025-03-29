@@ -91,7 +91,6 @@ members = [
     "programs/address-lookup-table-tests",
     "programs/bpf-loader-tests",
     "programs/bpf_loader",
-    "programs/bpf_loader/gen-syscall-list",
     "programs/compute-budget",
     "programs/compute-budget-bench",
     "programs/config",
@@ -128,6 +127,8 @@ members = [
     "svm-conformance",
     "svm-rent-collector",
     "svm-transaction",
+    "syscalls",
+    "syscalls/gen-syscall-list",
     "test-validator",
     "thin-client",
     "thread-manager",
@@ -185,6 +186,7 @@ agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", vers
 agave-feature-set = { path = "feature-set", version = "=2.3.0" }
 agave-precompiles = { path = "precompiles", version = "=2.3.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.3.0" }
+agave-syscalls = { path = "syscalls", version = "=2.3.0" }
 agave-transaction-view = { path = "transaction-view", version = "=2.3.0" }
 aquamarine = "0.6.0"
 aes-gcm-siv = "0.11.1"
