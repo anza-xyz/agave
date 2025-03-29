@@ -252,7 +252,6 @@ fn test_local_cluster_signature_subscribe() {
         &[&cluster.funding_keypair],
         &mut transaction,
         5,
-        0,
     )
     .unwrap();
 
@@ -2846,7 +2845,6 @@ fn test_oc_bad_signatures() {
                     &[&cluster_funding_keypair, &bad_authorized_signer_keypair],
                     &mut vote_tx,
                     5,
-                    0,
                 )
                 .unwrap();
 

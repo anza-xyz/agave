@@ -30,7 +30,7 @@ use {
     },
     solana_sdk::{
         account::{Account, AccountSharedData},
-        clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
+        clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         genesis_config::{ClusterType, GenesisConfig},
@@ -38,7 +38,7 @@ use {
         native_token::LAMPORTS_PER_SOL,
         poh_config::PohConfig,
         pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
+        signature::{Keypair, Signer},
         signers::Signers,
         stake::{
             instruction as stake_instruction,
@@ -65,7 +65,6 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
-        time::Instant,
     },
 };
 
@@ -686,6 +685,38 @@ impl LocalCluster {
         info!("{} done waiting for roots", test_name);
     }
 
+    /// Poll RPC to see if transaction was processed. Return an error if unable
+    /// determine if the transaction was processed before its blockhash expires.
+    /// Return Ok(Some(())) if the transaction was processed, Ok(None) if the
+    /// transaction was not processed.
+    pub fn poll_for_processed_transaction(
+        client: &QuicTpuClient,
+        transaction: &Transaction,
+    ) -> std::result::Result<Option<()>, TransportError> {
+        loop {
+            // Some local cluster tests create conditions where confirmation
+            // is unable to be reached. So rather than checking for confirmation,
+            // check for the transaction being processed.
+            let status = client.rpc_client().get_signature_status_with_commitment(
+                &transaction.signatures[0],
+                CommitmentConfig::processed(),
+            )?;
+
+            if status.is_some() {
+                return Ok(Some(()));
+            }
+
+            if !client.rpc_client().is_blockhash_valid(
+                &transaction.message.recent_blockhash,
+                CommitmentConfig::processed(),
+            )? {
+                return Ok(None);
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        }
+    }
+
     /// Attempt to send and confirm tx "attempts" times
     /// Wait for signature confirmation before returning
     /// Return the transaction signature
@@ -694,43 +725,25 @@ impl LocalCluster {
         keypairs: &T,
         transaction: &mut Transaction,
         attempts: usize,
-        pending_confirmations: usize,
-    ) -> std::result::Result<Signature, TransportError> {
+    ) -> std::result::Result<(), TransportError> {
         // @gregcusack: send_wire_transaction() and try_send_transaction() both fail in
         // a specific case when used in LocalCluster. They both invoke the nonblocking
         // TPUClient and both fail when calling `transfer_with_client()` multiple times.
         // I do not full understand WHY the nonblocking TPUClient fails in this specific
         // case. But the method defined below does work although it has only been tested
         // in LocalCluster integration tests
-        for attempt in 0..attempts {
-            let now = Instant::now();
-            let mut num_confirmed = 0;
-            let mut wait_time = MAX_PROCESSING_AGE;
-
-            while now.elapsed().as_secs() < wait_time as u64 {
-                if num_confirmed == 0 {
-                    client.send_transaction_to_upcoming_leaders(transaction)?;
-                }
-
-                if let Ok(confirmed_blocks) = client.rpc_client().poll_for_signature_confirmation(
-                    &transaction.signatures[0],
-                    pending_confirmations,
-                ) {
-                    num_confirmed = confirmed_blocks;
-                    if confirmed_blocks >= pending_confirmations {
-                        return Ok(transaction.signatures[0]);
-                    }
-                    // Since network has seen the transaction, wait longer to receive
-                    // all pending confirmations. Resending the transaction could result into
-                    // extra transaction fees
-                    wait_time = wait_time.max(
-                        MAX_PROCESSING_AGE * pending_confirmations.saturating_sub(num_confirmed),
-                    );
-                }
+        for attempt in 1..=attempts {
+            client.send_transaction_to_upcoming_leaders(transaction)?;
+            if Self::poll_for_processed_transaction(client, transaction)?.is_some() {
+                return Ok(());
             }
-            info!("{attempt} tries failed transfer");
-            let blockhash = client.rpc_client().get_latest_blockhash()?;
+
+            let (blockhash, _) = client
+                .rpc_client()
+                .get_latest_blockhash_with_commitment(CommitmentConfig::processed())?;
             transaction.sign(keypairs, blockhash);
+
+            warn!("Sending transaction with retries, attempt {attempt} failed");
         }
         Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -758,7 +771,7 @@ impl LocalCluster {
             *dest_pubkey
         );
 
-        LocalCluster::send_transaction_with_retries(client, &[source_keypair], &mut tx, 10, 0)
+        LocalCluster::send_transaction_with_retries(client, &[source_keypair], &mut tx, 10)
             .expect("client transfer should succeed");
     }
 
@@ -815,7 +828,6 @@ impl LocalCluster {
                 &[from_account, vote_account],
                 &mut transaction,
                 10,
-                0,
             )
             .expect("should fund vote");
             client
@@ -851,7 +863,6 @@ impl LocalCluster {
                 &[from_account.as_ref(), &stake_account_keypair],
                 &mut transaction,
                 5,
-                0,
             )
             .expect("should delegate stake");
             client
