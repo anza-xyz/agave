@@ -17,7 +17,7 @@ use {
             VerifiedVoteSender, VoteTracker,
         },
         fetch_stage::FetchStage,
-        forwarding_stage::ForwardingStage,
+        forwarding_stage::{spawn_forwarding_stage, ForwardAddressGetter},
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
@@ -280,11 +280,11 @@ impl Tpu {
             prioritization_fee_cache,
         );
 
-        let forwarding_stage = ForwardingStage::spawn(
+        let forwarding_stage = spawn_forwarding_stage(
             forward_stage_receiver,
             connection_cache.clone(),
             RootBankCache::new(bank_forks.clone()),
-            (cluster_info.clone(), poh_recorder.clone()),
+            ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
             DataBudget::default(),
         );
 
