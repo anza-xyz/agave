@@ -6394,6 +6394,7 @@ dependencies = [
  "solana-stake-program",
  "solana-storage-bigtable",
  "solana-storage-proto",
+ "solana-streamer",
  "solana-svm",
  "solana-svm-transaction",
  "solana-timings",

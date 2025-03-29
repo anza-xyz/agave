@@ -23,6 +23,7 @@ use {
         pubkey::Pubkey,
         signature::{Keypair, Signer},
     },
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     static_assertions::const_assert_eq,
     std::{
         collections::HashMap,
@@ -65,7 +66,7 @@ pub fn spawn_shred_sigverify(
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     shred_fetch_receiver: Receiver<PacketBatch>,
-    retransmit_sender: Sender<Vec<shred::Payload>>,
+    retransmit_sender: EvictingSender<Vec<shred::Payload>>,
     verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
     num_sigverify_threads: NonZeroUsize,
 ) -> JoinHandle<()> {
@@ -130,7 +131,7 @@ fn run_shred_sigverify<const K: usize>(
     recycler_cache: &RecyclerCache,
     deduper: &Deduper<K, [u8]>,
     shred_fetch_receiver: &Receiver<PacketBatch>,
-    retransmit_sender: &Sender<Vec<shred::Payload>>,
+    retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     cache: &RwLock<LruCache>,
@@ -270,9 +271,7 @@ fn run_shred_sigverify<const K: usize>(
             crossbeam_channel::TrySendError::Full(v) => {
                 stats.num_retransmit_stage_overflow += v.len();
             }
-            crossbeam_channel::TrySendError::Disconnected(_) => {
-                return Err(Error::RecvDisconnected);
-            }
+            _ => unreachable!("EvictingSender holds on to both ends of the channel"),
         }
     }
     // Send all shreds to window service to be inserted into blockstore.

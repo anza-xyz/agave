@@ -21,7 +21,7 @@ use {
         window_service::{WindowService, WindowServiceChannels},
     },
     bytes::Bytes,
-    crossbeam_channel::{bounded, unbounded, Receiver, Sender},
+    crossbeam_channel::{unbounded, Receiver, Sender},
     solana_client::connection_cache::ConnectionCache,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::{
@@ -45,6 +45,7 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
+    solana_streamer::evicting_sender::EvictingSender,
     solana_turbine::retransmit_stage::RetransmitStage,
     std::{
         collections::HashSet,
@@ -191,9 +192,10 @@ impl Tvu {
         );
 
         let (verified_sender, verified_receiver) = unbounded();
+
         // Allow for a max of 2048 batches of up to 1024 packets each (according to MAX_IOV).
         // In reality this holds about 20K shreds since most batches are not full.
-        let (retransmit_sender, retransmit_receiver) = bounded(2048);
+        let (retransmit_sender, retransmit_receiver) = EvictingSender::new_bounded(2048);
 
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),

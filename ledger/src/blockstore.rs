@@ -49,6 +49,7 @@ use {
         transaction::{SanitizedVersionedTransaction, VersionedTransaction},
     },
     solana_storage_proto::{StoredExtendedRewards, StoredTransactionStatusMeta},
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_transaction_status::{
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, Rewards,
         RewardsAndNumPartitions, TransactionStatusMeta, TransactionWithStatusMeta,
@@ -990,7 +991,7 @@ impl Blockstore {
         leader_schedule: Option<&LeaderScheduleCache>,
         reed_solomon_cache: &ReedSolomonCache,
         shred_insertion_tracker: &mut ShredInsertionTracker,
-        retransmit_sender: &Sender<Vec<shred::Payload>>,
+        retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
         is_trusted: bool,
         metrics: &mut BlockstoreInsertionMetrics,
     ) {
@@ -1024,7 +1025,7 @@ impl Blockstore {
             })
             .collect();
         if !recovered_shreds.is_empty() {
-            let _ = retransmit_sender.send(recovered_shreds);
+            let _ = retransmit_sender.try_send(recovered_shreds);
         }
         metrics.num_recovered += recovered_data_shreds.len();
         for shred in recovered_data_shreds {
@@ -1240,7 +1241,7 @@ impl Blockstore {
         // recovered shreds.
         should_recover_shreds: Option<(
             &ReedSolomonCache,
-            &Sender<Vec<shred::Payload>>, // retransmit_sender
+            &EvictingSender<Vec<shred::Payload>>, // retransmit_sender
         )>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
@@ -1321,7 +1322,7 @@ impl Blockstore {
         >,
         leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
-        retransmit_sender: &Sender<Vec<shred::Payload>>,
+        retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
         handle_duplicate: &F,
         reed_solomon_cache: &ReedSolomonCache,
         metrics: &mut BlockstoreInsertionMetrics,
@@ -10086,7 +10087,7 @@ pub mod tests {
         let (data_shreds, coding_shreds, leader_schedule_cache) =
             setup_erasure_shreds(slot, 0, 100);
 
-        let (dummy_retransmit_sender, _) = crossbeam_channel::bounded(0);
+        let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
         let coding_shreds = coding_shreds
             .into_iter()
             .map(|shred| (Cow::Owned(shred), /*is_repaired:*/ false));
