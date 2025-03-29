@@ -2,10 +2,7 @@
 //! packets to a node that is or will be leader soon.
 
 use {
-    crate::{
-        banking_stage::LikeClusterInfo,
-        next_leader::{next_leader, next_leader_tpu_vote},
-    },
+    crate::next_leader::{next_leader_tpu_vote, next_leaders},
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -13,7 +10,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_connection_cache::client_connection::ClientConnection,
     solana_cost_model::cost_model::CostModel,
-    solana_gossip::contact_info::Protocol,
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
     solana_net_utils::bind_to_unspecified,
     solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::PohRecorder,
@@ -45,95 +42,178 @@ mod packet_container;
 /// this should be evaluated with new stage.
 const FORWARD_BATCH_SIZE: usize = 128;
 
-/// Addresses to use for forwarding.
+/// [`ForwardAddressGetter`] provides helper methods for retrieving forwarding
+/// addresses for both vote and non-vote transactions.
 #[derive(Clone)]
-pub struct ForwardingAddresses {
-    /// Forwarding address for TPU (non-votes)
-    pub tpu: Option<SocketAddr>,
-    /// Forwarding address for votes
-    pub tpu_vote: Option<SocketAddr>,
+pub(crate) struct ForwardAddressGetter {
+    cluster_info: Arc<ClusterInfo>,
+    poh_recorder: Arc<RwLock<PohRecorder>>,
 }
 
-pub trait ForwardAddressGetter: Send + Sync + 'static {
-    fn get_forwarding_addresses(&self, protocol: Protocol) -> ForwardingAddresses;
-}
-
-impl<T: LikeClusterInfo> ForwardAddressGetter for (T, Arc<RwLock<PohRecorder>>) {
-    fn get_forwarding_addresses(&self, protocol: Protocol) -> ForwardingAddresses {
-        ForwardingAddresses {
-            tpu: next_leader(&self.0, &self.1, |node| node.tpu_forwards(protocol)).map(|(_, s)| s),
-            tpu_vote: next_leader_tpu_vote(&self.0, &self.1).map(|(_, s)| s),
+impl ForwardAddressGetter {
+    pub fn new(cluster_info: Arc<ClusterInfo>, poh_recorder: Arc<RwLock<PohRecorder>>) -> Self {
+        Self {
+            cluster_info,
+            poh_recorder,
         }
     }
+
+    /// Returns a list of forwarding addresses for non-vote transactions.
+    fn get_non_vote_forwarding_addresses(
+        &self,
+        max_count: u64,
+        protocol: Protocol,
+    ) -> Vec<Option<SocketAddr>> {
+        next_leaders(&self.cluster_info, &self.poh_recorder, max_count, |node| {
+            node.tpu_forwards(protocol)
+        })
+    }
+
+    /// Returns the TPU vote forwarding address of the next leader, if
+    /// available.
+    fn get_vote_forwarding_addresses(&self) -> Option<SocketAddr> {
+        next_leader_tpu_vote(&self.cluster_info, &self.poh_recorder).map(|(_, s)| s)
+    }
+}
+
+/// [`ForwardingClient`] trait defines a generic interface for clients that can
+/// forward transactions to other validators.
+trait ForwardingClient: Send + Sync + 'static {
+    /// Updates the internal forwarding address, if needed.
+    ///
+    /// Returns `true` if a valid address was set, or `false` if no forwarding
+    /// address is currently available.
+    fn update_address(&mut self) -> bool;
+
+    /// Sends a batch of serialized transactions to the currently configured
+    /// address.
+    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>);
 }
 
 struct VoteClient {
     udp_socket: UdpSocket,
+    forward_address_getter: ForwardAddressGetter,
+    current_address: Option<SocketAddr>,
 }
 
 impl VoteClient {
-    fn new() -> Self {
+    fn new(forward_address_getter: ForwardAddressGetter) -> Self {
         Self {
             udp_socket: bind_to_unspecified().unwrap(),
+            forward_address_getter,
+            current_address: None,
         }
     }
+}
 
-    fn send_batch(&self, batch: &mut Vec<(Vec<u8>, SocketAddr)>) {
-        let pkts = batch.iter().map(|(bytes, addr)| (bytes, addr));
-        let _res = batch_send(&self.udp_socket, pkts);
-        batch.clear();
+impl ForwardingClient for VoteClient {
+    fn update_address(&mut self) -> bool {
+        self.current_address = self.forward_address_getter.get_vote_forwarding_addresses();
+        self.current_address.is_some()
     }
+
+    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
+        assert!(
+            self.current_address.is_some(),
+            "current_address should be updated before send_batch call."
+        );
+        let batch_with_addresses = wire_transactions
+            .iter()
+            .map(|bytes| (bytes, self.current_address.unwrap()));
+        let _res = batch_send(&self.udp_socket, batch_with_addresses);
+    }
+}
+
+#[derive(Clone)]
+struct ConnectionCacheClient {
+    connection_cache: Arc<ConnectionCache>,
+    forward_address_getter: ForwardAddressGetter,
+    current_address: Option<SocketAddr>,
+}
+
+impl ConnectionCacheClient {
+    fn new(
+        connection_cache: Arc<ConnectionCache>,
+        forward_address_getter: ForwardAddressGetter,
+    ) -> Self {
+        Self {
+            connection_cache,
+            forward_address_getter,
+            current_address: None,
+        }
+    }
+}
+
+impl ForwardingClient for ConnectionCacheClient {
+    fn update_address(&mut self) -> bool {
+        self.current_address = self
+            .forward_address_getter
+            .get_non_vote_forwarding_addresses(1, self.connection_cache.protocol())[0];
+        self.current_address.is_some()
+    }
+
+    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
+        assert!(
+            self.current_address.is_some(),
+            "current_address should be updated before send_batch call."
+        );
+        let conn = self
+            .connection_cache
+            .get_connection(&self.current_address.unwrap());
+        let _res = conn.send_data_batch_async(wire_transactions);
+    }
+}
+
+pub(crate) fn spawn_forwarding_stage(
+    receiver: Receiver<(BankingPacketBatch, bool)>,
+    connection_cache: Arc<ConnectionCache>,
+    root_bank_cache: RootBankCache,
+    forward_address_getter: ForwardAddressGetter,
+    data_budget: DataBudget,
+) -> JoinHandle<()> {
+    let vote_client = VoteClient::new(forward_address_getter.clone());
+
+    let non_vote_client = ConnectionCacheClient::new(connection_cache, forward_address_getter);
+    let forwarding_stage = ForwardingStage::new(
+        receiver,
+        vote_client,
+        non_vote_client.clone(),
+        root_bank_cache,
+        data_budget,
+    );
+    Builder::new()
+        .name("solFwdStage".to_string())
+        .spawn(move || forwarding_stage.run())
+        .unwrap()
 }
 
 /// Forwards packets to current/next leader.
-pub struct ForwardingStage<F: ForwardAddressGetter> {
+struct ForwardingStage<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient> {
     receiver: Receiver<(BankingPacketBatch, bool)>,
     packet_container: PacketContainer,
-
     root_bank_cache: RootBankCache,
-    forward_address_getter: F,
-    connection_cache: Arc<ConnectionCache>,
     vote_client: VoteClient,
+    non_vote_client: NonVoteClient,
     data_budget: DataBudget,
-
     metrics: ForwardingStageMetrics,
 }
 
-impl<F: ForwardAddressGetter> ForwardingStage<F> {
-    pub fn spawn(
-        receiver: Receiver<(BankingPacketBatch, bool)>,
-        connection_cache: Arc<ConnectionCache>,
-        root_bank_cache: RootBankCache,
-        forward_address_getter: F,
-        data_budget: DataBudget,
-    ) -> JoinHandle<()> {
-        let forwarding_stage = Self::new(
-            receiver,
-            connection_cache,
-            root_bank_cache,
-            forward_address_getter,
-            data_budget,
-        );
-        Builder::new()
-            .name("solFwdStage".to_string())
-            .spawn(move || forwarding_stage.run())
-            .unwrap()
-    }
-
+impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
+    ForwardingStage<VoteClient, NonVoteClient>
+{
     fn new(
         receiver: Receiver<(BankingPacketBatch, bool)>,
-        connection_cache: Arc<ConnectionCache>,
+        vote_client: VoteClient,
+        non_vote_client: NonVoteClient,
         root_bank_cache: RootBankCache,
-        forward_address_getter: F,
         data_budget: DataBudget,
     ) -> Self {
         Self {
             receiver,
             packet_container: PacketContainer::with_capacity(4 * 4096),
             root_bank_cache,
-            forward_address_getter,
-            connection_cache,
-            vote_client: VoteClient::new(),
+            non_vote_client,
+            vote_client,
             data_budget,
             metrics: ForwardingStageMetrics::default(),
         }
@@ -272,13 +352,7 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
         self.refresh_data_budget();
 
         // Get forwarding addresses otherwise return now.
-        let ForwardingAddresses {
-            tpu: Some(tpu),
-            tpu_vote: Some(tpu_vote),
-        } = self
-            .forward_address_getter
-            .get_forwarding_addresses(self.connection_cache.protocol())
-        else {
+        if !self.vote_client.update_address() || !self.non_vote_client.update_address() {
             return;
         };
 
@@ -299,16 +373,22 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
             let packet_data_vec = packet.data(..).expect("packet has data").to_vec();
 
             if packet.meta().is_simple_vote_tx() {
-                vote_batch.push((packet_data_vec, tpu_vote));
+                vote_batch.push(packet_data_vec);
                 if vote_batch.len() == vote_batch.capacity() {
                     self.metrics.votes_forwarded += vote_batch.len();
-                    self.vote_client.send_batch(&mut vote_batch);
+
+                    let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
+                    core::mem::swap(&mut batch, &mut vote_batch);
+                    self.vote_client.send_transactions_in_batch(batch);
                 }
             } else {
                 non_vote_batch.push(packet_data_vec);
                 if non_vote_batch.len() == non_vote_batch.capacity() {
                     self.metrics.non_votes_forwarded += non_vote_batch.len();
-                    self.send_non_vote_batch(tpu, &mut non_vote_batch);
+
+                    let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
+                    core::mem::swap(&mut batch, &mut non_vote_batch);
+                    self.non_vote_client.send_transactions_in_batch(batch);
                 }
             }
         }
@@ -316,11 +396,12 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
         // Send out remaining packets
         if !vote_batch.is_empty() {
             self.metrics.votes_forwarded += vote_batch.len();
-            self.vote_client.send_batch(&mut vote_batch);
+            self.vote_client.send_transactions_in_batch(vote_batch);
         }
         if !non_vote_batch.is_empty() {
             self.metrics.non_votes_forwarded += non_vote_batch.len();
-            self.send_non_vote_batch(tpu, &mut non_vote_batch);
+            self.non_vote_client
+                .send_transactions_in_batch(non_vote_batch);
         }
     }
 
@@ -337,13 +418,6 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
                 MAX_BYTES_BUDGET,
             )
         });
-    }
-
-    fn send_non_vote_batch(&self, addr: SocketAddr, non_vote_batch: &mut Vec<Vec<u8>>) {
-        let conn = self.connection_cache.get_connection(&addr);
-        let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
-        core::mem::swap(&mut batch, non_vote_batch);
-        let _res = conn.send_data_batch_async(batch);
     }
 }
 
@@ -496,16 +570,37 @@ mod tests {
         super::*,
         crossbeam_channel::unbounded,
         packet::PacketFlags,
-        solana_net_utils::bind_to_unspecified,
         solana_perf::packet::{Packet, PacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::create_genesis_config,
         solana_sdk::{hash::Hash, signature::Keypair, system_transaction},
+        std::sync::{Arc, Mutex},
     };
 
-    impl ForwardAddressGetter for ForwardingAddresses {
-        fn get_forwarding_addresses(&self, _protocol: Protocol) -> ForwardingAddresses {
-            self.clone()
+    #[derive(Clone)]
+    pub struct MockClient {
+        packets: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl MockClient {
+        pub fn new() -> Self {
+            Self {
+                packets: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        pub fn get_packets(&self) -> Vec<Vec<u8>> {
+            self.packets.lock().unwrap().clone()
+        }
+    }
+
+    impl ForwardingClient for MockClient {
+        fn update_address(&mut self) -> bool {
+            true
+        }
+
+        fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
+            self.packets.lock().unwrap().extend(wire_transactions);
         }
     }
 
@@ -549,30 +644,18 @@ mod tests {
 
     #[test]
     fn test_forwarding() {
-        let vote_socket = bind_to_unspecified().unwrap();
-        vote_socket
-            .set_read_timeout(Some(Duration::from_millis(10)))
-            .unwrap();
-        let non_vote_socket = bind_to_unspecified().unwrap();
-        non_vote_socket
-            .set_read_timeout(Some(Duration::from_millis(10)))
-            .unwrap();
-
-        let forwarding_addresses = ForwardingAddresses {
-            tpu_vote: Some(vote_socket.local_addr().unwrap()),
-            tpu: Some(non_vote_socket.local_addr().unwrap()),
-        };
-
         let (packet_batch_sender, packet_batch_receiver) = unbounded();
-        let connection_cache = Arc::new(ConnectionCache::with_udp("connection_cache_test", 1));
+
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
         let root_bank_cache = RootBankCache::new(bank_forks);
+        let vote_mock_client = MockClient::new();
+        let non_vote_mock_client = MockClient::new();
         let mut forwarding_stage = ForwardingStage::new(
             packet_batch_receiver,
-            connection_cache,
+            vote_mock_client.clone(),
+            non_vote_mock_client.clone(),
             root_bank_cache,
-            forwarding_addresses,
             DataBudget::default(),
         );
 
@@ -611,19 +694,15 @@ mod tests {
         assert_eq!(forwarding_stage.metrics.non_votes_forwarded, 1);
         assert_eq!(forwarding_stage.metrics.votes_forwarded, 1);
 
-        let recv_buffer = &mut [0; 1024];
-        let (vote_packet_bytes, _) = vote_socket.recv_from(recv_buffer).unwrap();
-        assert_eq!(
-            &recv_buffer[..vote_packet_bytes],
-            vote_packets[0][0].data(..).unwrap()
-        );
-        assert!(vote_socket.recv_from(recv_buffer).is_err());
+        let vote_wired_txs = vote_mock_client.get_packets();
+        assert_eq!(vote_wired_txs.len(), 1);
+        assert_eq!(vote_wired_txs[0], vote_packets[0][0].data(..).unwrap());
 
-        let (non_vote_packet_bytes, _) = non_vote_socket.recv_from(recv_buffer).unwrap();
+        let non_vote_wired_txs = non_vote_mock_client.get_packets();
+        assert_eq!(non_vote_wired_txs.len(), 1);
         assert_eq!(
-            &recv_buffer[..non_vote_packet_bytes],
+            non_vote_wired_txs[0],
             non_vote_packets[0][0].data(..).unwrap()
         );
-        assert!(non_vote_socket.recv_from(recv_buffer).is_err());
     }
 }
