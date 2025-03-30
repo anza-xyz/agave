@@ -25,10 +25,8 @@ use {
         signature::Signature,
         sysvar::{last_restart_slot, SysvarId},
     },
-    solana_svm::{
-        program_loader, transaction_processing_callback::TransactionProcessingCallback,
-        transaction_processor::TransactionBatchProcessor,
-    },
+    solana_svm::{program_loader, transaction_processor::TransactionBatchProcessor},
+    solana_svm_callback::TransactionProcessingCallback,
     solana_svm_conformance::proto::{AcctState, InstrEffects, InstrFixture},
     solana_timings::ExecuteTimings,
     solana_transaction_context::{

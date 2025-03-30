@@ -2,12 +2,9 @@
 use qualifier_attr::field_qualifiers;
 use {
     crate::{
-        account_overrides::AccountOverrides,
-        nonce_info::NonceInfo,
-        rollback_accounts::RollbackAccounts,
-        transaction_error_metrics::TransactionErrorMetrics,
+        account_overrides::AccountOverrides, nonce_info::NonceInfo,
+        rollback_accounts::RollbackAccounts, transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::ExecutedTransaction,
-        transaction_processing_callback::{AccountState, TransactionProcessingCallback},
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     ahash::{AHashMap, AHashSet},
@@ -30,6 +27,7 @@ use {
         native_loader,
         sysvar::{self, slot_history},
     },
+    solana_svm_callback::{AccountState, TransactionProcessingCallback},
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{IndexOfAccount, TransactionAccount},
@@ -671,10 +669,7 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
 mod tests {
     use {
         super::*,
-        crate::{
-            transaction_account_state_info::TransactionAccountStateInfo,
-            transaction_processing_callback::TransactionProcessingCallback,
-        },
+        crate::transaction_account_state_info::TransactionAccountStateInfo,
         agave_feature_set::FeatureSet,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
@@ -702,6 +697,7 @@ mod tests {
         },
         solana_signature::Signature,
         solana_signer::Signer,
+        solana_svm_callback::TransactionProcessingCallback,
         solana_system_transaction::transfer,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_context::{TransactionAccount, TransactionContext},

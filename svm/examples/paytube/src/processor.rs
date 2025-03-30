@@ -11,10 +11,9 @@ use {
     },
     solana_sdk::{clock::Slot, transaction},
     solana_svm::{
-        account_loader::CheckedTransactionDetails,
-        transaction_processing_callback::TransactionProcessingCallback,
-        transaction_processor::TransactionBatchProcessor,
+        account_loader::CheckedTransactionDetails, transaction_processor::TransactionBatchProcessor,
     },
+    solana_svm_callback::TransactionProcessingCallback,
     solana_system_program::system_processor,
     std::sync::{Arc, RwLock},
 };

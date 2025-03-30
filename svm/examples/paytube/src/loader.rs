@@ -11,7 +11,7 @@ use {
         account::{AccountSharedData, ReadableAccount},
         pubkey::Pubkey,
     },
-    solana_svm::transaction_processing_callback::TransactionProcessingCallback,
+    solana_svm_callback::TransactionProcessingCallback,
     std::{collections::HashMap, sync::RwLock},
 };
 

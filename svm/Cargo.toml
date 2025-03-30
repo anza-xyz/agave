@@ -46,6 +46,7 @@ solana-rent-collector = { workspace = true }
 solana-rent-debits = { workspace = true }
 solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-svm-callback = { workspace = true }
 solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-timings = { workspace = true }

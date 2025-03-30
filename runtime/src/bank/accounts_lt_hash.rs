@@ -9,7 +9,7 @@ use {
         account::{accounts_equal, AccountSharedData},
         pubkey::Pubkey,
     },
-    solana_svm::transaction_processing_callback::AccountState,
+    solana_svm_callback::AccountState,
     std::{
         ops::AddAssign,
         sync::atomic::{AtomicU64, Ordering},

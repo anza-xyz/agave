@@ -29,10 +29,8 @@ use {
         slot_hashes::Slot,
         sysvar::SysvarId,
     },
-    solana_svm::{
-        transaction_processing_callback::{AccountState, TransactionProcessingCallback},
-        transaction_processor::TransactionBatchProcessor,
-    },
+    solana_svm::transaction_processor::TransactionBatchProcessor,
+    solana_svm_callback::{AccountState, TransactionProcessingCallback},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_type_overrides::sync::{Arc, RwLock},
     std::{

@@ -28,10 +28,10 @@ use {
         transaction::SanitizedTransaction,
     },
     solana_svm::{
-        transaction_processing_callback::TransactionProcessingCallback,
         transaction_processing_result::TransactionProcessingResult,
         transaction_processor::TransactionBatchProcessor,
     },
+    solana_svm_callback::TransactionProcessingCallback,
     std::{
         collections::HashMap,
         sync::{Arc, RwLock},

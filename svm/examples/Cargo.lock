@@ -2812,6 +2812,7 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-sdk",
  "solana-svm",
+ "solana-svm-callback",
  "solana-system-program",
  "solana-transaction-context 2.3.0",
  "solana-transaction-status",
@@ -7448,6 +7449,7 @@ dependencies = [
  "solana-sdk",
  "solana-stake-program",
  "solana-svm",
+ "solana-svm-callback",
  "solana-svm-rent-collector",
  "solana-svm-transaction",
  "solana-timings",
@@ -8002,6 +8004,7 @@ dependencies = [
  "solana-rent-debits",
  "solana-sdk",
  "solana-sdk-ids",
+ "solana-svm-callback",
  "solana-svm-rent-collector",
  "solana-svm-transaction",
  "solana-timings",
@@ -8009,6 +8012,14 @@ dependencies = [
  "solana-transaction-error",
  "solana-type-overrides",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "solana-svm-callback"
+version = "2.3.0"
+dependencies = [
+ "solana-account",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -8024,6 +8035,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-sdk",
  "solana-svm",
+ "solana-svm-callback",
  "solana-system-program",
  "solana-test-validator",
  "spl-associated-token-account",

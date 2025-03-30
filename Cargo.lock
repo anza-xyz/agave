@@ -9723,6 +9723,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-stake-program",
  "solana-svm",
+ "solana-svm-callback",
  "solana-svm-rent-collector",
  "solana-svm-transaction",
  "solana-system-program",
@@ -10376,6 +10377,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-svm",
+ "solana-svm-callback",
  "solana-svm-conformance",
  "solana-svm-rent-collector",
  "solana-svm-transaction",
@@ -10389,6 +10391,14 @@ dependencies = [
  "solana-type-overrides",
  "test-case",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "solana-svm-callback"
+version = "2.3.0"
+dependencies = [
+ "solana-account",
+ "solana-pubkey",
 ]
 
 [[package]]
