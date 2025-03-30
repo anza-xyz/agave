@@ -16,7 +16,7 @@ use {
 const LOOKUP_SLOTS_TO_SIMULATE: usize = 200;
 const NUM_SLOTS_PER_EPOCH_SLOTS: u64 = 50;
 const NUM_NODES: usize = 1000;
-//handy for running with profiler
+//handy for running with profiler like flamegraph
 const NUM_INNER_LOOPS: usize = 1;
 const STAKE_PER_NODE: u64 = 42;
 const REPAIR_THREADS: usize = 4;
@@ -26,46 +26,6 @@ fn generate_stakes(num_nodes: usize) -> HashMap<Pubkey, u64> {
     stakes
 }
 
-#[bench]
-fn bench_cluster_slots_update_original(bencher: &mut Bencher) {
-    let cs = solana_core::cluster_slots_service::cluster_slots_old::ClusterSlots::default();
-    let stakes = generate_stakes(NUM_NODES);
-    cs.generate_fill_for_tests_fp(&stakes, 0, 1..10);
-    let mut cur_slot = 0;
-    bencher.iter(|| {
-        cs.generate_fill_for_tests_fp(
-            &stakes,
-            cur_slot,
-            (cur_slot + 2)..(cur_slot + NUM_SLOTS_PER_EPOCH_SLOTS + 2),
-        );
-        assert!(!cs.lookup(cur_slot + 3).unwrap().read().unwrap().is_empty());
-        cur_slot += 1;
-    });
-    dbg!(cur_slot);
-}
-
-#[bench]
-fn bench_cluster_slots_update_no_fp(bencher: &mut Bencher) {
-    let cs = solana_core::cluster_slots_service::cluster_slots_old::ClusterSlots::default();
-    let stakes = generate_stakes(NUM_NODES);
-    //warmup
-    cs.generate_fill_for_tests(&stakes, 0, 1..10);
-    let mut cur_slot = 0;
-    bencher.iter(|| {
-        for _ in 0..NUM_INNER_LOOPS {
-            cs.generate_fill_for_tests(
-                &stakes,
-                cur_slot,
-                (cur_slot + 2)..(cur_slot + NUM_SLOTS_PER_EPOCH_SLOTS + 2),
-            );
-            assert!(!cs.lookup(cur_slot + 3).unwrap().read().unwrap().is_empty());
-
-            cur_slot += 1;
-        }
-    });
-    dbg!(cur_slot);
-    dbg!(cs.total_writes.load(Ordering::Relaxed));
-}
 #[bench]
 fn bench_cluster_slots_update_new_and_fast(bencher: &mut Bencher) {
     let cs = ClusterSlots::default();
@@ -105,18 +65,6 @@ fn bench_cluster_slots_lookup_new(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
-fn bench_cluster_slots_lookup_old(bencher: &mut Bencher) {
-    let cs = solana_core::cluster_slots_service::cluster_slots_old::ClusterSlots::default();
-    let stakes = generate_stakes(NUM_NODES);
-    cs.generate_fill_for_tests(&stakes, 0, 1..NUM_SLOTS_PER_EPOCH_SLOTS);
-    let mut cur_slot = 0;
-    bencher.iter(|| {
-        let res = cs.lookup(cur_slot);
-        black_box(res);
-        cur_slot = (cur_slot + 1) % NUM_SLOTS_PER_EPOCH_SLOTS;
-    })
-}
 
 #[bench]
 fn bench_cluster_slots_contested_lookup(bencher: &mut Bencher) {
@@ -173,54 +121,4 @@ fn bench_cluster_slots_contested_lookup(bencher: &mut Bencher) {
             }
         });
     });
-}
-
-#[bench]
-fn bench_cluster_slots_contested_lookup_old(bencher: &mut Bencher) {
-    let slot_start = std::sync::Barrier::new(REPAIR_THREADS + 1);
-    let cs = solana_core::cluster_slots_service::cluster_slots_old::ClusterSlots::default();
-    let stakes = generate_stakes(NUM_NODES);
-    println!("Initialization lookup old");
-    cs.generate_fill_for_tests(&stakes, 0, 1..NUM_SLOTS_PER_EPOCH_SLOTS);
-    println!("Initialization done, this bench takes a while to run!");
-    let cur_slot = AtomicU64::new(0);
-    bencher.iter(|| {
-        std::thread::scope(|scope| {
-            scope.spawn(|| {
-                for _ in 0..LOOKUP_SLOTS_TO_SIMULATE {
-                    slot_start.wait();
-                    let slot = cur_slot.load(std::sync::atomic::Ordering::SeqCst);
-                    cs.generate_fill_for_tests(
-                        &stakes,
-                        slot,
-                        (slot + 1)..(slot + NUM_SLOTS_PER_EPOCH_SLOTS),
-                    );
-                }
-            });
-            for _ in 0..REPAIR_THREADS {
-                scope.spawn(|| {
-                    let mut sum = 0;
-                    for _ in 0..LOOKUP_SLOTS_TO_SIMULATE {
-                        let slot = cur_slot.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        slot_start.wait();
-                        let lookup_slot = slot + 5;
-                        //assume we are repairing 100 shreds per slot
-                        for _shred in 0..100 {
-                            if let Some(res) = cs.lookup(lookup_slot) {
-                                if res.read().unwrap().len() == 0 {
-                                    dbg!(lookup_slot);
-                                    panic!();
-                                }
-                                for v in res.read().unwrap().iter() {
-                                    assert!(*v.1 > 0);
-                                    sum += v.1;
-                                }
-                            }
-                        }
-                    }
-                    black_box(sum);
-                });
-            }
-        });
-    })
 }

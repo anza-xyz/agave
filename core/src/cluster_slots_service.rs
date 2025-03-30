@@ -1,5 +1,4 @@
 pub mod cluster_slots;
-pub mod cluster_slots_old;
 use {
     cluster_slots::ClusterSlots,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
