@@ -765,7 +765,7 @@ mod tests {
                     invoke_context.transaction_context,
                     instruction_context,
                     copy_account_data,
-                    false,
+                    false, // mask_out_rent_epoch_in_vm_serialization
                 );
                 assert_eq!(
                     serialization_result.as_ref().err(),
@@ -909,7 +909,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
-                false,
+                false, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
 
@@ -1001,7 +1001,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
-                false,
+                false, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
             let mut serialized_regions = concat_regions(&regions);
