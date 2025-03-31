@@ -13,6 +13,7 @@ use {
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::TransactionAccountStateInfo,
+        transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
@@ -76,6 +77,9 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     /// could not be processed. Note processed transactions can still have a
     /// failure result meaning that the transaction will be rolled back.
     pub processing_results: Vec<TransactionProcessingResult>,
+    /// Balances accumulated for TransactionStatusSender when
+    /// transaction balance recording is enabled.
+    pub balance_collector: Option<BalanceCollector>,
 }
 
 /// Configuration of the recording capabilities for transaction execution
@@ -360,6 +364,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     processing_results: (0..sanitized_txs.len())
                         .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
                         .collect(),
+                    balance_collector: None,
                 };
             }
 
@@ -378,6 +383,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment.feature_set.clone(),
             account_keys_in_batch,
         );
+
+        // Create the transaction balance collector if recording is enabled.
+        let mut balance_collector = config
+            .recording_config
+            .enable_transaction_balance_recording
+            .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
         let (mut validate_fees_us, mut load_us, mut execution_us): (u64, u64, u64) = (0, 0, 0);
 
@@ -412,7 +423,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
-            // XXX prebals here
+            balance_collector.collect_pre_balances(&mut account_loader, tx, &load_result);
 
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
@@ -448,7 +459,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
             execution_us = execution_us.saturating_add(single_execution_us);
 
-            // XXX postbals here
+            balance_collector.collect_post_balances(&mut account_loader, tx, &processing_result);
 
             processing_results.push(processing_result);
         }
@@ -488,6 +499,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             error_metrics,
             execute_timings,
             processing_results,
+            balance_collector,
         }
     }
 
