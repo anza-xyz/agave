@@ -6638,8 +6638,6 @@ dependencies = [
  "solana-transaction-status",
  "solana-vote",
  "solana-vote-program",
- "spl-token",
- "spl-token-2022",
  "static_assertions",
  "strum",
  "strum_macros",
@@ -8681,6 +8679,7 @@ dependencies = [
  "solana-transaction-context 2.3.0",
  "solana-transaction-error",
  "solana-type-overrides",
+ "spl-generic-token",
  "thiserror 2.0.12",
 ]
 

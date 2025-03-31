@@ -51,6 +51,7 @@ solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-type-overrides = { workspace = true }
+spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 
 [lib]

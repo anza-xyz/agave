@@ -31,8 +31,8 @@ mod shredder;
 pub mod sigverify_shreds;
 pub mod slot_stats;
 mod staking_utils;
-pub mod token_balances;
 mod transaction_address_lookup_table_scanner;
+pub mod transaction_balances;
 pub mod use_snapshot_archives_at_startup;
 
 #[macro_use]
