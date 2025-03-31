@@ -8985,9 +8985,15 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-interface"
+<<<<<<< HEAD
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4507bb9d071fb81cfcf676f12fba3db4098f764524ef0b5567d671a81d41f3e"
+=======
+version = "2.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b630547b7f12ee742e1c5069951fedba0fe5cbd4786f6342a779384e2b11f71"
+>>>>>>> 135d3f8e3 (Bump solana-vote-interface to v2.2.3 (#5579))
 dependencies = [
  "bincode",
  "num-derive",
