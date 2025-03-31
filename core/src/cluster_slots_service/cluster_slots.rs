@@ -27,11 +27,15 @@ pub type Stake = u64;
 type PubkeyHasherBuilder = RandomState;
 pub(crate) type ValidatorStakesMap = HashMap<Pubkey, Stake, PubkeyHasherBuilder>;
 
-pub(crate) type SlotSupporters =
+/// Pubkey-stake map for nodes that have confirmed this slot.
+/// If stake is zero the node has not confirmed the slot.
+pub(crate) type SlotPubkeys =
     HashMap<Pubkey, AtomicU64 /* stake supporting */, PubkeyHasherBuilder>;
 
-/// amount of stake that needs to lock the slot for us to stop updating it.
-const FREEZE_THRESHOLD: f64 = 0.8;
+/// Amount of stake that needs to lock the slot for us to stop updating it.
+/// This must be above `DUPLICATE_THRESHOLD` but also high enough to not starve
+/// repair (as it will prefer nodes that have confirmed a slot)
+const FREEZE_THRESHOLD: f64 = 0.9;
 // whatever freeze threshold we should be above DUPLICATE_THRESHOLD in order to not break consensus.
 static_assertions::const_assert!(FREEZE_THRESHOLD > DUPLICATE_THRESHOLD * 1.1);
 
@@ -54,12 +58,12 @@ pub struct ClusterSlots {
 struct RowContent {
     slot: Slot,               // slot for which this row stores information
     total_support: AtomicU64, // total committed stake for this slot
-    supporters: Arc<RwLock<SlotSupporters>>,
+    supporters: Arc<RwLock<SlotPubkeys>>,
 }
 
 impl ClusterSlots {
     #[inline]
-    pub(crate) fn lookup(&self, slot: Slot) -> Option<Arc<RwLock<SlotSupporters>>> {
+    pub(crate) fn lookup(&self, slot: Slot) -> Option<Arc<RwLock<SlotPubkeys>>> {
         let cluster_slots = self.cluster_slots.read().unwrap();
         Some(
             Self::get_row_for_slot(slot, &cluster_slots)?
@@ -108,7 +112,7 @@ impl ClusterSlots {
         let mut cluster_slots = self.cluster_slots.write().unwrap();
         self.metric_write_locks.fetch_add(1, Ordering::Relaxed);
         // zero-initialize a given map
-        let zero_init_map = |map: &mut SlotSupporters| {
+        let zero_init_map = |map: &mut SlotPubkeys| {
             map.extend(
                 validator_stakes
                     .iter()

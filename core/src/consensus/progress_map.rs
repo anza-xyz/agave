@@ -1,7 +1,7 @@
 use {
     crate::{
         cluster_info_vote_listener::SlotVoteTracker,
-        cluster_slots_service::cluster_slots::SlotSupporters,
+        cluster_slots_service::cluster_slots::SlotPubkeys,
         consensus::{Stake, ThresholdDecision, VotedStakes},
         replay_stage::SUPERMINORITY_THRESHOLD,
     },
@@ -209,7 +209,7 @@ pub struct PropagatedStats {
     pub is_leader_slot: bool,
     pub prev_leader_slot: Option<Slot>,
     pub slot_vote_tracker: Option<Arc<RwLock<SlotVoteTracker>>>,
-    pub cluster_slot_pubkeys: Option<Arc<RwLock<SlotSupporters>>>,
+    pub cluster_slot_pubkeys: Option<Arc<RwLock<SlotPubkeys>>>,
     pub total_epoch_stake: u64,
 }
 

@@ -3749,7 +3749,7 @@ impl ReplayStage {
             .unwrap_or_default();
 
         let cluster_slot_pubkeys = cluster_slot_pubkeys
-            .map(|v| v.read().unwrap().iter().map(|(&key, _)| key).collect())
+            .map(|v| v.read().unwrap().keys().cloned().collect())
             .unwrap_or_default();
 
         Self::update_fork_propagated_threshold_from_votes(

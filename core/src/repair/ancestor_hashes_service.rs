@@ -868,7 +868,6 @@ impl AncestorHashesService {
             ) else {
                 continue;
             };
-            println!("Sending some repair request");
             match repair_protocol {
                 Protocol::UDP => {
                     let _ = ancestor_hashes_request_socket.send_to(&request_bytes, socket_addr);
@@ -1528,7 +1527,6 @@ mod test {
         );
         assert!(ancestor_hashes_request_statuses.is_empty());
 
-        println!("Sending repair request");
         // Send a request to generate a ping
         send_ancestor_repair_request(
             &requester_serve_repair,
