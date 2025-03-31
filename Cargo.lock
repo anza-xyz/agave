@@ -6885,7 +6885,6 @@ name = "solana-bpf-loader-program"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
- "agave-precompiles",
  "assert_matches",
  "bincode",
  "criterion",
@@ -9145,7 +9144,6 @@ name = "solana-program-runtime"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
- "agave-precompiles",
  "assert_matches",
  "base64 0.22.1",
  "bincode",
@@ -9723,6 +9721,7 @@ dependencies = [
  "solana-nohash-hasher",
  "solana-nonce-account",
  "solana-perf",
+ "solana-precompile-error",
  "solana-program",
  "solana-program-runtime",
  "solana-pubkey",
@@ -10331,7 +10330,6 @@ name = "solana-svm"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
- "agave-precompiles",
  "agave-reserved-account-keys",
  "ahash 0.8.11",
  "assert_matches",
@@ -10375,6 +10373,7 @@ dependencies = [
  "solana-native-token",
  "solana-nonce",
  "solana-nonce-account",
+ "solana-precompile-error",
  "solana-program-runtime",
  "solana-pubkey",
  "solana-rent",
@@ -10409,6 +10408,7 @@ name = "solana-svm-callback"
 version = "2.3.0"
 dependencies = [
  "solana-account",
+ "solana-precompile-error",
  "solana-pubkey",
 ]
 

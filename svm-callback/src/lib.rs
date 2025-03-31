@@ -1,4 +1,7 @@
-use {solana_account::AccountSharedData, solana_pubkey::Pubkey};
+use {
+    solana_account::AccountSharedData, solana_precompile_error::PrecompileError,
+    solana_pubkey::Pubkey,
+};
 
 /// Callback for obtaining the cluster's current epoch stake.
 pub trait EpochStakeCallback {
@@ -10,6 +13,21 @@ pub trait EpochStakeCallback {
     /// Returns the current epoch stake for the given vote account.
     fn get_epoch_stake_for_vote_account(&self, _vote_address: &Pubkey) -> u64 {
         0
+    }
+
+    /// Returns true if the program_id corresponds to a precompiled program
+    fn is_precompile(&self, _program_id: &Pubkey) -> bool {
+        false
+    }
+
+    /// Calls the precompiled program corresponding to the given program ID.
+    fn process_precompile(
+        &self,
+        _program_id: &Pubkey,
+        _data: &[u8],
+        _instruction_datas: Vec<&[u8]>,
+    ) -> Result<(), PrecompileError> {
+        Err(PrecompileError::InvalidPublicKey)
     }
 }
 

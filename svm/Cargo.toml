@@ -11,7 +11,6 @@ edition = { workspace = true }
 
 [dependencies]
 agave-feature-set = { workspace = true }
-agave-precompiles = { workspace = true }
 ahash = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -81,6 +80,7 @@ solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-native-token = { workspace = true }
+solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
@@ -97,7 +97,7 @@ solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils" ] }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [package.metadata.docs.rs]

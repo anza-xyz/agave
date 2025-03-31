@@ -71,6 +71,7 @@ solana-metrics = { workspace = true }
 solana-nohash-hasher = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-perf = { workspace = true }
+solana-precompile-error = { workspace = true }
 solana-program = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
@@ -123,7 +124,7 @@ solana-runtime-transaction = { workspace = true, features = [
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
 solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils" ] }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

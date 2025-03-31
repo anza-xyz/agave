@@ -11,7 +11,6 @@ use {
     agave_feature_set::{
         lift_cpi_caller_restriction, remove_accounts_executable_flag_checks, FeatureSet,
     },
-    agave_precompiles::Precompile,
     solana_account::{create_account_shared_data_for_test, AccountSharedData},
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
@@ -484,7 +483,7 @@ impl<'a> InvokeContext<'a> {
     /// Processes a precompile instruction
     pub fn process_precompile<'ix_data>(
         &mut self,
-        precompile: &Precompile,
+        program_id: &Pubkey,
         instruction_data: &[u8],
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
@@ -495,10 +494,10 @@ impl<'a> InvokeContext<'a> {
             .configure(program_indices, instruction_accounts, instruction_data);
         self.push()?;
 
-        let feature_set = self.get_feature_set();
         let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
-        precompile
-            .verify(instruction_data, &instruction_datas, feature_set)
+        self.environment_config
+            .epoch_stake_callback
+            .process_precompile(program_id, instruction_data, instruction_datas)
             .map_err(InstructionError::from)
             .and(self.pop())
     }
@@ -675,6 +674,12 @@ impl<'a> InvokeContext<'a> {
         self.environment_config
             .epoch_stake_callback
             .get_epoch_stake_for_vote_account(pubkey)
+    }
+
+    pub fn is_precompile(&self, pubkey: &Pubkey) -> bool {
+        self.environment_config
+            .epoch_stake_callback
+            .is_precompile(pubkey)
     }
 
     // Should alignment be enforced during user pointer translation

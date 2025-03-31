@@ -11,6 +11,7 @@ readme = false
 
 [dependencies]
 solana-account = { workspace = true }
+solana-precompile-error = { workspace = true }
 solana-pubkey = { workspace = true }
 
 [lints]
