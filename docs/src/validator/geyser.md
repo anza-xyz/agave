@@ -206,8 +206,46 @@ pub struct ReplicaAccountInfoV3<'a> {
 }
 ```
 
-The updates are sent serially for different accounts in the transaction for a
-slot. 
+The updates are sent serially for different accounts via update_slot_status
+in the transaction for a slot. After the accounts notifications are sent, the
+SlotStatus::Processed event is sent.
+
+As for transaction notifications via the notify_transaction callback and the
+SlotStatus::Processed, even though SlotStatus::Processed is sent logically
+after the transaction events, because there are intermediate threads emitting
+the notitications to the plugin, the plugin can see the transaction
+notifications and the SlotStatus::Processed for a slot in either order.
+
+A plugin can use the notify_block_metadata to know the
+executed_transaction_count for a given slot in the following structure:
+
+```
+/// Extending ReplicaBlockInfo by sending RewardsAndNumPartitions.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaBlockInfoV4<'a> {
+    pub parent_slot: Slot,
+    pub parent_blockhash: &'a str,
+    pub slot: Slot,
+    pub blockhash: &'a str,
+    pub rewards: &'a RewardsAndNumPartitions,
+    pub block_time: Option<UnixTimestamp>,
+    pub block_height: Option<u64>,
+    pub executed_transaction_count: u64,
+    pub entry_count: u64,
+}
+```
+
+The plugin can associate accounts with transactions via the txn field in the
+ReplicaAccountInfoV3 structure. It can also use ReplicaTransactionInfoV2 in
+the notify_transaction callback to get the account addresses.
+
+The SlotStatus::Confirmed and SlotStatus::Processed events can reach the plugin
+in any order as they are sent asynchronous to each other. A plugin should wait
+for both events to confirm they are processed and confirmed.
+
+The SlotStatus::Rooted is sent after SlotStatus::Processed.
+
 ## Example PostgreSQL Plugin
 
 The [`solana-accountsdb-plugin-postgres`] repository implements a plugin storing
