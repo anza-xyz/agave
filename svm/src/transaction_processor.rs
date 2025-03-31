@@ -84,6 +84,7 @@ pub struct ExecutionRecordingConfig {
     pub enable_cpi_recording: bool,
     pub enable_log_recording: bool,
     pub enable_return_data_recording: bool,
+    pub enable_transaction_balance_recording: bool,
 }
 
 impl ExecutionRecordingConfig {
@@ -92,6 +93,7 @@ impl ExecutionRecordingConfig {
             enable_return_data_recording: option,
             enable_log_recording: option,
             enable_cpi_recording: option,
+            enable_transaction_balance_recording: option,
         }
     }
 }
@@ -410,6 +412,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
+            // XXX prebals here
+
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
@@ -443,6 +447,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 }
             });
             execution_us = execution_us.saturating_add(single_execution_us);
+
+            // XXX postbals here
 
             processing_results.push(processing_result);
         }

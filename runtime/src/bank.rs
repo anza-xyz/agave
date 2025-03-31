@@ -3308,6 +3308,7 @@ impl Bank {
                     enable_cpi_recording,
                     enable_log_recording: true,
                     enable_return_data_recording: true,
+                    enable_transaction_balance_recording: false,
                 },
             },
         );
@@ -4652,6 +4653,8 @@ impl Bank {
             },
         );
 
+        // XXX get balances here and change our return type
+
         // pre_commit_callback could initiate an atomic operation (i.e. poh recording with block
         // producing unified scheduler). in that case, it returns Some(freeze_lock), which should
         // unlocked only after calling commit_transactions() immediately after calling the
@@ -4700,11 +4703,13 @@ impl Bank {
         let (mut commit_results, ..) = self.load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
+            // HANA TODO remove this param later
             false, // collect_balances
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: true,
                 enable_return_data_recording: true,
+                enable_transaction_balance_recording: false,
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
