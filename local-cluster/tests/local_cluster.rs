@@ -3771,7 +3771,6 @@ fn test_fork_choice_refresh_old_votes() {
 
 #[test]
 #[serial]
-#[ignore]
 fn test_kill_heaviest_partition() {
     // This test:
     // 1) Spins up four partitions, the heaviest being the first with more stake

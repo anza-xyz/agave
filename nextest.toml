@@ -62,6 +62,10 @@ filter = 'package(solana-local-cluster) & test(/^test_slot_hash_expiry$/)'
 slow-timeout = { period = "60s", terminate-after = 4 }
 
 [[profile.ci.overrides]]
+filter = 'package(solana-local-cluster) & test(/^test_kill_heaviest_partition$/)'
+slow-timeout = { period = "60s", terminate-after = 4 }
+
+[[profile.ci.overrides]]
 filter = 'package(solana-local-cluster) & test(/^test_boot_from_local_state$/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
