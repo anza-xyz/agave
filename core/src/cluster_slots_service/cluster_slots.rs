@@ -45,9 +45,9 @@ pub struct ClusterSlots {
     current_slot: AtomicU64, // current slot at the front of ringbuffer.
     epoch: RwLock<Option<u64>>, //current epoch.
     cursor: Mutex<Cursor>,  // cursor to read CRDS.
-    last_report: AtomicInterval, // last time statistics were reported.
-    total_allocations: AtomicU64, // total amount of memory allocations made.
-    total_writes: AtomicU64, // total amount of write locks taken outside of initialization.
+    metrics_last_report: AtomicInterval, // last time statistics were reported.
+    metric_allocations: AtomicU64, // total amount of memory allocations made.
+    metric_write_locks: AtomicU64, // total amount of write locks taken outside of initialization.
 }
 
 #[derive(Debug)]
@@ -91,7 +91,7 @@ impl ClusterSlots {
             cluster_info.get_epoch_slots(&mut cursor)
         };
         self.update_internal(root_slot, validator_stakes, epoch_slots);
-        self.report_cluster_slots_size();
+        self.report_cluster_slots_perf_stats();
     }
 
     /// Advance the cluster_slots ringbuffer, initialize if needed.
@@ -106,17 +106,21 @@ impl ClusterSlots {
         }
         let map_capacity = validator_stakes.len();
         let mut cluster_slots = self.cluster_slots.write().unwrap();
-        self.total_writes.fetch_add(1, Ordering::Relaxed);
-        // a handy closure to spawn new hashmaps with the correct parameters
-        let map_maker = || {
-            let mut map =
-                HashMap::with_capacity_and_hasher(map_capacity, PubkeyHasherBuilder::default());
+        self.metric_write_locks.fetch_add(1, Ordering::Relaxed);
+        // zero-initialize a given map
+        let zero_init_map = |map: &mut SlotSupporters| {
             map.extend(
                 validator_stakes
                     .iter()
                     .map(|(k, _v)| (*k, AtomicU64::new(0))),
             );
-            self.total_allocations.fetch_add(1, Ordering::Relaxed);
+        };
+        // a handy closure to spawn new hashmaps with the correct parameters
+        let map_maker = || {
+            let mut map =
+                HashMap::with_capacity_and_hasher(map_capacity, PubkeyHasherBuilder::default());
+            zero_init_map(&mut map);
+            self.metric_allocations.fetch_add(1, Ordering::Relaxed);
             map
         };
         //startup init, this is very slow but only ever happens once
@@ -146,12 +150,18 @@ impl ClusterSlots {
             let slot = cluster_slots.back().unwrap().slot + 1;
             let map = match Arc::try_unwrap(map) {
                 Ok(map) => {
-                    // map is free to reuse, reset all committed stakes to zero
+                    // map is free to reuse, reset its content reusing memory
                     // locking the map here is free since noone can be holding any locks
-                    map.write()
-                        .unwrap()
-                        .values_mut()
-                        .for_each(|v| v.store(0, Ordering::Relaxed));
+                    let mut wg = map.write().unwrap();
+                    if wg.capacity() > validator_stakes.len() * 2 {
+                        // map is too large for what we need currently, reallocate it
+                        *wg = map_maker();
+                    } else {
+                        // reinit the existing memory with up-to-date validator set
+                        wg.clear();
+                        zero_init_map(&mut wg);
+                    }
+                    drop(wg);
                     map
                 }
                 // if we can not reuse just allocate a new one =(
@@ -221,7 +231,7 @@ impl ClusterSlots {
                         let mut wg = map.write().unwrap();
                         wg.insert(epoch_slots.from, AtomicU64::new(sender_stake));
                     }
-                    self.total_writes.fetch_add(1, Ordering::Relaxed);
+                    self.metric_write_locks.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
@@ -236,22 +246,24 @@ impl ClusterSlots {
             .sum::<usize>()
     }
 
-    fn report_cluster_slots_size(&self) {
-        if self.last_report.should_update(10_000) {
-            let total_writes = self.total_writes.swap(0, Ordering::Relaxed);
-            let total_allocations = self.total_allocations.swap(0, Ordering::Relaxed);
+    fn report_cluster_slots_perf_stats(&self) {
+        if self.metrics_last_report.should_update(10_000) {
+            let write_locks = self.metric_write_locks.swap(0, Ordering::Relaxed);
+            let allocations = self.metric_allocations.swap(0, Ordering::Relaxed);
             datapoint_info!(
                 "cluster-slots-size",
                 ("total_entries", self.datastructure_size() as i64, i64),
-                ("total_writes", total_writes as i64, i64),
-                ("total_allocations", total_allocations as i64, i64),
+                ("write_locks", write_locks as i64, i64),
+                ("total_allocations", allocations as i64, i64),
             );
         }
     }
 
     #[cfg(test)]
     // patches the given node_id into the internal structures
-    // to pretend as if it has submitted epoch slots for a given slot etc etc
+    // to pretend as if it has submitted epoch slots for a given slot.
+    // If the node was not previosly registered in validator_stakes,
+    // an override_stake amount should be provided.
     pub(crate) fn insert_node_id(
         &self,
         slot: Slot,
@@ -301,6 +313,7 @@ impl ClusterSlots {
             *self.epoch.write().unwrap() = Some(root_epoch);
         }
     }
+
     fn update_total_stake(&self, stakes: impl IntoIterator<Item = u64>) {
         self.total_stake
             .store(stakes.into_iter().sum(), Ordering::Relaxed);
@@ -308,7 +321,7 @@ impl ClusterSlots {
 
     pub(crate) fn compute_weights(&self, slot: Slot, repair_peers: &[ContactInfo]) -> Vec<u64> {
         if repair_peers.is_empty() {
-            return Vec::default();
+            return vec![];
         }
         let stakes = {
             let validator_stakes = self.validator_stakes.read().unwrap();
@@ -339,13 +352,6 @@ impl ClusterSlots {
         slot: Slot,
         repair_peers: &[ContactInfo],
     ) -> (Vec<u64>, Vec<usize>) {
-        eprintln!("Cluster slots content:");
-        for s in slot..slot + 5 {
-            if let Some(r) = self.lookup(s) {
-                eprintln!("{s} {:?}", r);
-            }
-            eprintln!("{s} = nothing");
-        }
         let Some(slot_peers) = self.lookup(slot) else {
             return (vec![], vec![]);
         };
@@ -390,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_update_rooted() {
-        //root is 0, so it should clear out the slot
+        //root is 0, so it should be a noop
         let cs = ClusterSlots::default();
         let mut epoch_slot = EpochSlots::default();
         epoch_slot.fill(&[0], 0);
@@ -541,10 +547,10 @@ mod tests {
             ..Default::default()
         };
         epoch_slot.fill(&[1], 0);
-        let map = HashMap::from([(pk, 1)]);
+        let map = HashMap::from([(pk, 42)]);
 
         cs.update_internal(0, &map, vec![epoch_slot]);
-        assert!(cs.lookup(1).is_some());
+        assert!(cs.lookup(1).is_some(), "slot 1 should have records");
         assert_eq!(
             cs.lookup(1)
                 .unwrap()
@@ -553,7 +559,8 @@ mod tests {
                 .get(&pk)
                 .unwrap()
                 .load(Ordering::Relaxed),
-            1
+            42,
+            "the stake of the node should be commited to the slot"
         );
     }
 }
