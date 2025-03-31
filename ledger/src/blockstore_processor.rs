@@ -235,7 +235,7 @@ pub fn execute_batch<'a>(
         )?;
 
     if block_verification {
-        check_block_cost_limits_if_enabled(batch, bank, timings, &commit_results)?;
+        check_block_cost_limits_with_timing(batch, bank, timings, &commit_results)?;
     }
 
     bank_utils::find_and_send_votes(
@@ -318,20 +318,15 @@ fn check_block_cost_limits(
     Ok(())
 }
 
-fn check_block_cost_limits_if_enabled(
+fn check_block_cost_limits_with_timing(
     batch: &TransactionBatch<impl TransactionWithMeta>,
     bank: &Bank,
     timings: &mut ExecuteTimings,
     commit_results: &[TransactionCommitResult],
 ) -> Result<()> {
-    let (check_block_cost_limits_result, check_block_cost_limits_us) = measure_us!(if bank
-        .feature_set
-        .is_active(&agave_feature_set::apply_cost_tracker_during_replay::id())
-    {
+    let (check_block_cost_limits_result, check_block_cost_limits_us) = measure_us!(
         check_block_cost_limits(bank, commit_results, batch.sanitized_transactions())
-    } else {
-        Ok(())
-    });
+    );
 
     timings.saturating_add_in_place(
         ExecuteTimingType::CheckBlockLimitsUs,
