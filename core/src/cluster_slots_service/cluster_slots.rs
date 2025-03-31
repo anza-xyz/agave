@@ -105,7 +105,7 @@ impl ClusterSlots {
         self.report_cluster_slots_size();
     }
 
-    // Advance the cluster_slots ringbuffer, initialize if needed
+    /// Advance the cluster_slots ringbuffer, initialize if needed.
     fn roll_cluster_slots(
         &self,
         validator_stakes: &HashMap<Pubkey, u64>,
