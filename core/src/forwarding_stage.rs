@@ -374,7 +374,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
 
             if packet.meta().is_simple_vote_tx() {
                 vote_batch.push(packet_data_vec);
-                if vote_batch.len() == vote_batch.capacity() {
+                if vote_batch.len() == FORWARD_BATCH_SIZE {
                     self.metrics.votes_forwarded += vote_batch.len();
 
                     let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
@@ -383,7 +383,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 }
             } else {
                 non_vote_batch.push(packet_data_vec);
-                if non_vote_batch.len() == non_vote_batch.capacity() {
+                if non_vote_batch.len() == FORWARD_BATCH_SIZE {
                     self.metrics.non_votes_forwarded += non_vote_batch.len();
 
                     let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
