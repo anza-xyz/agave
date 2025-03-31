@@ -331,7 +331,16 @@ impl Consumer {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
+            balance_collector,
         } = load_and_execute_transactions_output;
+
+        // XXX get balances here and pass down to committer, get rid of balance info
+
+        // HANA TODO NEXT UP
+        // i need a function in ledger/ that turns BalanceCollector into balance sets
+        // this means transforming SvmTokenInfo into the token thing it wants
+        // then wire this through core and ledger to use its balances instead
+        // this will compile but token vecs are empty. last thing to do is fill them
 
         let transaction_counts = LeaderProcessedTransactionCounts {
             processed_count: processed_counts.processed_transactions_count,

@@ -157,6 +157,7 @@ use {
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
+        transaction_balances::BalanceCollector,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -330,6 +331,9 @@ pub struct LoadAndExecuteTransactionsOutput {
     // Processed transaction counts used to update bank transaction counts and
     // for metrics reporting.
     pub processed_counts: ProcessedTransactionCounts,
+    // Balances accumulated for TransactionStatusSender when transaction
+    // balance recording is enabled.
+    pub balance_collector: Option<BalanceCollector>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -3522,6 +3526,7 @@ impl Bank {
         LoadAndExecuteTransactionsOutput {
             processing_results: sanitized_output.processing_results,
             processed_counts,
+            balance_collector: sanitized_output.balance_collector,
         }
     }
 
@@ -4639,6 +4644,7 @@ impl Bank {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
+            balance_collector,
         } = self.load_and_execute_transactions(
             batch,
             max_age,
