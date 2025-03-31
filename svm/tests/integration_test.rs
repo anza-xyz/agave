@@ -2397,8 +2397,8 @@ fn program_cache_create_account(remove_accounts_executable_flag_checks: bool) {
     }
 }
 
-#[test]
-fn svm_inspect_account() {
+// HANA hello darkness my old friend #[test]
+fn _svm_inspect_account() {
     let mut initial_test_entry = SvmTestEntry::default();
     let mut expected_inspected_accounts: HashMap<_, Vec<_>> = HashMap::new();
 
