@@ -765,7 +765,7 @@ mod tests {
                     invoke_context.transaction_context,
                     instruction_context,
                     copy_account_data,
-                    false, // mask_out_rent_epoch_in_vm_serialization
+                    true, // mask_out_rent_epoch_in_vm_serialization
                 );
                 assert_eq!(
                     serialization_result.as_ref().err(),
@@ -805,7 +805,7 @@ mod tests {
                     assert_eq!(account.data(), &account_info.data.borrow()[..]);
                     assert_eq!(account.owner(), account_info.owner);
                     assert_eq!(account.executable(), account_info.executable);
-                    assert_eq!(account.rent_epoch(), account_info.rent_epoch);
+                    assert_eq!(u64::MAX, account_info.rent_epoch);
                 }
             }
         }
@@ -909,7 +909,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
-                false, // mask_out_rent_epoch_in_vm_serialization
+                true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
 
@@ -949,7 +949,7 @@ mod tests {
                 assert_eq!(account.data(), &account_info.data.borrow()[..]);
                 assert_eq!(account.owner(), account_info.owner);
                 assert_eq!(account.executable(), account_info.executable);
-                assert_eq!(account.rent_epoch(), account_info.rent_epoch);
+                assert_eq!(u64::MAX, account_info.rent_epoch);
 
                 assert_eq!(
                     (*account_info.lamports.borrow() as *const u64).align_offset(BPF_ALIGN_OF_U128),
@@ -1001,7 +1001,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
-                false, // mask_out_rent_epoch_in_vm_serialization
+                true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
             let mut serialized_regions = concat_regions(&regions);
@@ -1033,7 +1033,7 @@ mod tests {
                 assert_eq!(account.data(), &account_info.data.borrow()[..]);
                 assert_eq!(account.owner(), account_info.owner);
                 assert_eq!(account.executable(), account_info.executable);
-                assert_eq!(account.rent_epoch(), account_info.rent_epoch);
+                assert_eq!(u64::MAX, account_info.rent_epoch);
             }
 
             deserialize_parameters(
