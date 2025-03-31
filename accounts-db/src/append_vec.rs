@@ -235,12 +235,6 @@ enum AppendVecFileBacking {
 #[derive(Debug)]
 struct Mmap {
     mmap: MmapMut,
-    /// Flags if the mmap is dirty or not.
-    /// Since fastboot requires that all mmaps are flushed to disk, be smart about it.
-    /// AppendVecs are (almost) always write-once.  The common case is that an AppendVec
-    /// will only need to be flushed once.  This avoids unnecessary syscalls/kernel work
-    /// when nothing in the AppendVec has changed.
-    is_dirty: AtomicBool,
 }
 
 /// A thread-safe, file-backed block of memory used to store `Account` instances. Append operations
@@ -267,6 +261,13 @@ pub struct AppendVec {
 
     /// if true, remove file when dropped
     remove_file_on_drop: AtomicBool,
+
+    /// Flags if the append vec is dirty or not.
+    /// Since fastboot requires that all storages are flushed to disk, be smart about it.
+    /// AppendVecs are (almost) always write-once.  The common case is that an AppendVec
+    /// will only need to be flushed once.  This avoids unnecessary syscalls/kernel work
+    /// when nothing in the AppendVec has changed.
+    is_dirty: AtomicBool,
 }
 
 const PAGE_SIZE: u64 = 4 * 1024;
@@ -297,17 +298,17 @@ const SCAN_BUFFER_SIZE_WITHOUT_DATA: usize = 1 << 16;
 
 pub struct AppendVecStat {
     pub open_as_mmap: AtomicU64,
-    pub mmap_files_dirty: AtomicU64,
     pub open_as_file_io: AtomicU64,
     pub files_open: AtomicU64,
+    pub files_dirty: AtomicU64,
 }
 
 lazy_static! {
     pub static ref APPEND_VEC_STATS: AppendVecStat = AppendVecStat {
         open_as_mmap: AtomicU64::new(0),
-        mmap_files_dirty: AtomicU64::new(0),
         open_as_file_io: AtomicU64::new(0),
         files_open: AtomicU64::new(0),
+        files_dirty: AtomicU64::new(0),
     };
 }
 
@@ -315,17 +316,15 @@ impl Drop for AppendVec {
     fn drop(&mut self) {
         APPEND_VEC_STATS.files_open.fetch_sub(1, Ordering::Relaxed);
 
+        if *self.is_dirty.get_mut() {
+            APPEND_VEC_STATS.files_dirty.fetch_sub(1, Ordering::Relaxed);
+        }
+
         match &self.backing {
-            AppendVecFileBacking::Mmap(mmap_only) => {
+            AppendVecFileBacking::Mmap(_) => {
                 APPEND_VEC_STATS
                     .open_as_mmap
                     .fetch_sub(1, Ordering::Relaxed);
-
-                if mmap_only.is_dirty.load(Ordering::Acquire) {
-                    APPEND_VEC_STATS
-                        .mmap_files_dirty
-                        .fetch_sub(1, Ordering::Relaxed);
-                }
             }
             AppendVecFileBacking::File(_) => {
                 APPEND_VEC_STATS
@@ -399,16 +398,14 @@ impl AppendVec {
 
         AppendVec {
             path: file,
-            backing: AppendVecFileBacking::Mmap(Mmap {
-                mmap,
-                is_dirty: AtomicBool::new(false),
-            }),
+            backing: AppendVecFileBacking::Mmap(Mmap { mmap }),
             // This mutex forces append to be single threaded, but concurrent with reads
             // See UNSAFE usage in `append_ptr`
             append_lock: Mutex::new(()),
             current_len: AtomicUsize::new(initial_len),
             file_size: size as u64,
             remove_file_on_drop: AtomicBool::new(true),
+            is_dirty: AtomicBool::new(false),
         }
     }
 
@@ -438,23 +435,20 @@ impl AppendVec {
     }
 
     pub fn flush(&self) -> Result<()> {
-        match &self.backing {
-            AppendVecFileBacking::Mmap(mmap_only) => {
-                // Check to see if the mmap is actually dirty before flushing.
-                let should_flush = mmap_only.is_dirty.swap(false, Ordering::AcqRel);
-                if should_flush {
-                    mmap_only.mmap.flush()?;
-                    APPEND_VEC_STATS
-                        .mmap_files_dirty
-                        .fetch_sub(1, Ordering::Relaxed);
+        // Check to see if we're actually dirty before flushing.
+        let should_flush = self.is_dirty.swap(false, Ordering::AcqRel);
+        if should_flush {
+            match &self.backing {
+                AppendVecFileBacking::Mmap(mmap) => {
+                    mmap.mmap.flush()?;
                 }
-                Ok(())
+                AppendVecFileBacking::File(file) => {
+                    file.sync_all()?;
+                }
             }
-            AppendVecFileBacking::File(_file) => {
-                // File also means read only, so nothing to flush.
-                Ok(())
-            }
+            APPEND_VEC_STATS.files_dirty.fetch_sub(1, Ordering::Relaxed);
         }
+        Ok(())
     }
 
     pub fn reset(&self) {
@@ -474,21 +468,31 @@ impl AppendVec {
 
         #[cfg(unix)]
         match &self.backing {
-            // already a file, so already read-only
-            AppendVecFileBacking::File(_file) => None,
+            AppendVecFileBacking::File(_file) => {
+                // already a file, so already read-only
+                None
+            }
             AppendVecFileBacking::Mmap(_mmap) => {
-                // we are a map, so re-open as a file
-                self.flush().expect("flush must succeed");
+                // we are an mmap, so re-open as a file
                 // we are re-opening the file, so don't remove the file on disk when the old mmapped one is dropped
                 self.remove_file_on_drop.store(false, Ordering::Release);
 
+                // add a memory barrier to ensure the the last mmap writes
+                // happen before the first file-io reads
+                std::sync::atomic::fence(Ordering::AcqRel);
+
                 // The file should have already been sanitized. Don't need to check when we open the file again.
-                AppendVec::new_from_file_unchecked(
+                let mut new = AppendVec::new_from_file_unchecked(
                     self.path.clone(),
                     self.len(),
                     StorageAccess::File,
                 )
-                .ok()
+                .ok()?;
+                if self.is_dirty.swap(false, Ordering::AcqRel) {
+                    // *move* the dirty-ness to the new append vec
+                    *new.is_dirty.get_mut() = true;
+                }
+                Some(new)
             }
         }
     }
@@ -562,6 +566,7 @@ impl AppendVec {
                 current_len: AtomicUsize::new(current_len),
                 file_size,
                 remove_file_on_drop: AtomicBool::new(true),
+                is_dirty: AtomicBool::new(false),
             });
         }
 
@@ -582,14 +587,12 @@ impl AppendVec {
 
         Ok(AppendVec {
             path,
-            backing: AppendVecFileBacking::Mmap(Mmap {
-                mmap,
-                is_dirty: AtomicBool::new(false),
-            }),
+            backing: AppendVecFileBacking::Mmap(Mmap { mmap }),
             append_lock: Mutex::new(()),
             current_len: AtomicUsize::new(current_len),
             file_size,
             remove_file_on_drop: AtomicBool::new(true),
+            is_dirty: AtomicBool::new(false),
         })
     }
 
@@ -711,7 +714,7 @@ impl AppendVec {
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
     ) -> Option<Ret> {
         match &self.backing {
-            AppendVecFileBacking::Mmap(Mmap { mmap, .. }) => {
+            AppendVecFileBacking::Mmap(Mmap { mmap }) => {
                 let slice = self.get_valid_slice_from_mmap(mmap);
                 let (meta, next): (&StoredMeta, _) = Self::get_type(slice, offset)?;
                 let (account_meta, next): (&AccountMeta, _) = Self::get_type(slice, next)?;
@@ -935,7 +938,7 @@ impl AppendVec {
         // self.len() is an atomic load, so only do it once
         let self_len = self.len();
         match &self.backing {
-            AppendVecFileBacking::Mmap(Mmap { mmap, .. }) => {
+            AppendVecFileBacking::Mmap(Mmap { mmap }) => {
                 let mut offset = 0;
                 let slice = self.get_valid_slice_from_mmap(mmap);
                 loop {
@@ -1071,7 +1074,7 @@ impl AppendVec {
         let self_len = self.len();
         let mut account_sizes = Vec::with_capacity(sorted_offsets.len());
         match &self.backing {
-            AppendVecFileBacking::Mmap(Mmap { mmap, .. }) => {
+            AppendVecFileBacking::Mmap(Mmap { mmap }) => {
                 let slice = self.get_valid_slice_from_mmap(mmap);
                 for &offset in sorted_offsets {
                     let Some((stored_meta, _)) = Self::get_type::<StoredMeta>(slice, offset) else {
@@ -1126,7 +1129,7 @@ impl AppendVec {
         // self.len() is an atomic load, so only do it once
         let self_len = self.len();
         match &self.backing {
-            AppendVecFileBacking::Mmap(Mmap { mmap, .. }) => {
+            AppendVecFileBacking::Mmap(Mmap { mmap }) => {
                 let mut offset = 0;
                 let slice = self.get_valid_slice_from_mmap(mmap);
                 loop {
@@ -1220,23 +1223,13 @@ impl AppendVec {
             });
         }
 
-        match &self.backing {
-            AppendVecFileBacking::Mmap(mmap_only) => {
-                if !offsets.is_empty() {
-                    // If we've actually written to the AppendVec, make sure we mark it as dirty.
-                    // This ensures we properly flush it later.
-                    // As an optimization to reduce unnecessary cache line invalidations,
-                    // only write the `is_dirty` atomic if currently *not* dirty.
-                    // (This also ensures the 'dirty counter' datapoint is correct.)
-                    if !mmap_only.is_dirty.load(Ordering::Acquire) {
-                        mmap_only.is_dirty.store(true, Ordering::Release);
-                        APPEND_VEC_STATS
-                            .mmap_files_dirty
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                }
+        if !offsets.is_empty() {
+            // If we've actually written to the AppendVec, make sure we mark it as dirty.
+            // This ensures we properly flush it later.
+            let was_dirty = self.is_dirty.swap(true, Ordering::AcqRel);
+            if !was_dirty {
+                APPEND_VEC_STATS.files_dirty.fetch_add(1, Ordering::Relaxed);
             }
-            AppendVecFileBacking::File(_) => {}
         }
 
         (!offsets.is_empty()).then(|| {
@@ -1264,7 +1257,7 @@ impl AppendVec {
         match &self.backing {
             AppendVecFileBacking::File(_file) => InternalsForArchive::FileIo(self.path()),
             // note this returns the entire mmap slice, even bytes that we consider invalid
-            AppendVecFileBacking::Mmap(Mmap { mmap, .. }) => InternalsForArchive::Mmap(mmap),
+            AppendVecFileBacking::Mmap(Mmap { mmap }) => InternalsForArchive::Mmap(mmap),
         }
     }
 }
@@ -2209,5 +2202,44 @@ pub mod tests {
 
             size + mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>()
         });
+    }
+
+    // Test to make sure that `is_dirty` is tracked properly
+    // * `reopen_as_readonly()` moves `is_dirty`
+    // * `flush()` clears `is_dirty`
+    #[test_case(false)]
+    #[test_case(true)]
+    fn test_is_dirty(begins_dirty: bool) {
+        let file = get_append_vec_path("test_is_dirty");
+
+        let mut av1 = AppendVec::new(&file.path, true, 1024 * 1024);
+        // don't delete the file when the AppendVec is dropped (let TempFile do it)
+        *av1.remove_file_on_drop.get_mut() = false;
+
+        // ensure the append vec begins not dirty
+        assert!(!*av1.is_dirty.get_mut());
+
+        if begins_dirty {
+            av1.append_account_test(&create_test_account(10)).unwrap();
+        }
+        assert_eq!(*av1.is_dirty.get_mut(), begins_dirty);
+
+        let mut av2 = av1.reopen_as_readonly().unwrap();
+        // don't delete the file when the AppendVec is dropped (let TempFile do it)
+        *av2.remove_file_on_drop.get_mut() = false;
+
+        // ensure `is_dirty` is moved
+        assert!(!*av1.is_dirty.get_mut());
+        assert_eq!(*av2.is_dirty.get_mut(), begins_dirty);
+
+        // ensure we can flush the new append vec
+        assert!(av2.flush().is_ok());
+        // and now should not be dirty
+        assert!(!*av2.is_dirty.get_mut());
+
+        // ensure we can flush the old append vec too
+        assert!(av1.flush().is_ok());
+        // and now should not be dirty
+        assert!(!*av1.is_dirty.get_mut());
     }
 }
