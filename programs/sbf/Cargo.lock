@@ -6578,8 +6578,6 @@ dependencies = [
  "solana-transaction-status",
  "solana-vote",
  "solana-vote-program",
- "spl-token 8.0.0",
- "spl-token-2022 8.0.0",
  "static_assertions",
  "strum",
  "strum_macros",
@@ -8611,7 +8609,6 @@ dependencies = [
  "solana-rent",
  "solana-rent-collector",
  "solana-rent-debits",
- "solana-sdk",
  "solana-sdk-ids",
  "solana-svm-callback",
  "solana-svm-rent-collector",
@@ -8620,6 +8617,7 @@ dependencies = [
  "solana-transaction-context 2.3.0",
  "solana-transaction-error",
  "solana-type-overrides",
+ "spl-generic-token",
  "thiserror 2.0.12",
 ]
 
@@ -9492,6 +9490,16 @@ dependencies = [
  "solana-zk-sdk",
  "spl-pod",
  "spl-token-confidential-transfer-proof-extraction 0.3.0",
+]
+
+[[package]]
+name = "spl-generic-token"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "741a62a566d97c58d33f9ed32337ceedd4e35109a686e31b1866c5dfa56abddc"
+dependencies = [
+ "bytemuck",
+ "solana-pubkey",
 ]
 
 [[package]]
