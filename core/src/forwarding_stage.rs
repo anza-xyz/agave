@@ -2,7 +2,7 @@
 //! packets to a node that is or will be leader soon.
 
 use {
-    crate::next_leader::{next_leader_tpu_vote, next_leaders},
+    crate::next_leader::next_leaders,
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -42,6 +42,14 @@ mod packet_container;
 /// this should be evaluated with new stage.
 const FORWARD_BATCH_SIZE: usize = 128;
 
+/// How far ahead to look in the leader schedule when determining forwarding
+/// addresses. The unit is `NUM_CONSECUTIVE_LEADER_SLOTS`.
+///
+/// This lookahead is needed because the immediate next leader might not have
+/// shared their forwarding ports. In such cases, we skip them and attempt to
+/// forward to the next available leader (up to this limit).
+const NUM_LOOKAHEAD_LEADERS: u64 = 2;
+
 /// [`ForwardAddressGetter`] provides helper methods for retrieving forwarding
 /// addresses for both vote and non-vote transactions.
 #[derive(Clone)]
@@ -63,7 +71,7 @@ impl ForwardAddressGetter {
         &self,
         max_count: u64,
         protocol: Protocol,
-    ) -> Vec<Option<SocketAddr>> {
+    ) -> Vec<SocketAddr> {
         next_leaders(&self.cluster_info, &self.poh_recorder, max_count, |node| {
             node.tpu_forwards(protocol)
         })
@@ -71,8 +79,10 @@ impl ForwardAddressGetter {
 
     /// Returns the TPU vote forwarding address of the next leader, if
     /// available.
-    fn get_vote_forwarding_addresses(&self) -> Option<SocketAddr> {
-        next_leader_tpu_vote(&self.cluster_info, &self.poh_recorder).map(|(_, s)| s)
+    fn get_vote_forwarding_addresses(&self, max_count: u64) -> Vec<SocketAddr> {
+        next_leaders(&self.cluster_info, &self.poh_recorder, max_count, |node| {
+            node.tpu_vote(Protocol::UDP)
+        })
     }
 }
 
@@ -108,7 +118,14 @@ impl VoteClient {
 
 impl ForwardingClient for VoteClient {
     fn update_address(&mut self) -> bool {
-        self.current_address = self.forward_address_getter.get_vote_forwarding_addresses();
+        let node_addresses = self
+            .forward_address_getter
+            .get_vote_forwarding_addresses(NUM_LOOKAHEAD_LEADERS);
+        if node_addresses.is_empty() {
+            self.current_address = None;
+        } else {
+            self.current_address = Some(node_addresses[0]);
+        }
         self.current_address.is_some()
     }
 
@@ -146,9 +163,17 @@ impl ConnectionCacheClient {
 
 impl ForwardingClient for ConnectionCacheClient {
     fn update_address(&mut self) -> bool {
-        self.current_address = self
+        let node_addresses = self
             .forward_address_getter
-            .get_non_vote_forwarding_addresses(1, self.connection_cache.protocol())[0];
+            .get_non_vote_forwarding_addresses(
+                NUM_LOOKAHEAD_LEADERS,
+                self.connection_cache.protocol(),
+            );
+        if node_addresses.is_empty() {
+            self.current_address = None;
+        } else {
+            self.current_address = Some(node_addresses[0]);
+        }
         self.current_address.is_some()
     }
 
