@@ -34,7 +34,7 @@ use {
         path::{Path, PathBuf},
         ptr, slice,
         sync::{
-            atomic::{self, AtomicBool, AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Mutex,
         },
     },
@@ -477,7 +477,7 @@ impl AppendVec {
 
                 // add a memory barrier to ensure the the last mmap writes
                 // happen before the first file-io reads
-                atomic::fence(Ordering::AcqRel);
+                std::sync::atomic::fence(Ordering::AcqRel);
 
                 // The file should have already been sanitized. Don't need to check when we open the file again.
                 let mut new = AppendVec::new_from_file_unchecked(
