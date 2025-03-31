@@ -196,6 +196,7 @@ fn calculate_stake_rewards(
         }
         return None;
     }
+    #[allow(deprecated)]
     let (voter_rewards, staker_rewards, is_split) = vote_state.commission_split(rewards);
     if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
         inflation_point_calc_tracer(&InflationPointCalculationEvent::SplitRewards(
