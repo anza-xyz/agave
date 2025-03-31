@@ -1,5 +1,8 @@
 /// Partial SPL Token declarations inlined to avoid an external dependency on the spl-token crate
-use solana_pubkey::{Pubkey, PUBKEY_BYTES};
+use {
+    solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    std::mem::size_of,
+};
 
 solana_pubkey::declare_id!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
@@ -21,6 +24,7 @@ pub mod program_v3_4_0 {
 */
 pub const SPL_TOKEN_ACCOUNT_MINT_OFFSET: usize = 0;
 pub const SPL_TOKEN_ACCOUNT_OWNER_OFFSET: usize = 32;
+pub const SPL_TOKEN_ACCOUNT_AMOUNT_OFFSET: usize = 64;
 const SPL_TOKEN_ACCOUNT_LENGTH: usize = 165;
 
 pub trait GenericTokenAccount {
@@ -41,6 +45,12 @@ pub trait GenericTokenAccount {
         bytemuck::from_bytes(&account_data[offset..offset.wrapping_add(PUBKEY_BYTES)])
     }
 
+    // Call after account length has already been verified
+    fn unpack_account_amount_unchecked(account_data: &[u8]) -> u64 {
+        let offset = SPL_TOKEN_ACCOUNT_AMOUNT_OFFSET;
+        *bytemuck::from_bytes(&account_data[offset..offset.wrapping_add(size_of::<u64>())])
+    }
+
     fn unpack_account_owner(account_data: &[u8]) -> Option<&Pubkey> {
         if Self::valid_account_data(account_data) {
             Some(Self::unpack_account_owner_unchecked(account_data))
@@ -52,6 +62,14 @@ pub trait GenericTokenAccount {
     fn unpack_account_mint(account_data: &[u8]) -> Option<&Pubkey> {
         if Self::valid_account_data(account_data) {
             Some(Self::unpack_account_mint_unchecked(account_data))
+        } else {
+            None
+        }
+    }
+
+    fn unpack_account_amount(account_data: &[u8]) -> Option<u64> {
+        if Self::valid_account_data(account_data) {
+            Some(Self::unpack_account_amount_unchecked(account_data))
         } else {
             None
         }
