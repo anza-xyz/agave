@@ -642,7 +642,7 @@ pub fn signer_from_source_with_config(
     } = source;
     match kind {
         SignerSourceKind::Prompt => {
-            let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name).unwrap_or(false);
+            let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
             Ok(Box::new(keypair_from_seed_phrase(
                 keypair_name,
                 skip_validation,
@@ -681,7 +681,7 @@ pub fn signer_from_source_with_config(
             }
         }
         SignerSourceKind::Pubkey(pubkey) => {
-            let presigner = try_pubkeys_sigs_of(matches, SIGNER_ARG.name)?
+            let presigner = try_pubkeys_sigs_of(matches, SIGNER_ARG.name).ok().flatten()
                 .as_ref()
                 .and_then(|presigners| presigner_from_pubkey_sigs(pubkey, presigners));
             if let Some(presigner) = presigner {
@@ -781,9 +781,7 @@ pub fn resolve_signer_from_source(
     } = source;
     match kind {
         SignerSourceKind::Prompt => {
-            let skip_validation = matches
-                .try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
-                .unwrap_or(false);
+            let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
             // This method validates the seed phrase, but returns `None` because there is no path
             // on disk or to a device
             keypair_from_seed_phrase(
@@ -902,9 +900,7 @@ pub fn keypair_from_path(
     keypair_name: &str,
     confirm_pubkey: bool,
 ) -> Result<Keypair, Box<dyn error::Error>> {
-    let skip_validation = matches
-        .try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
-        .unwrap_or(false);
+    let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
     let keypair = encodable_key_from_path(path, keypair_name, skip_validation)?;
     if confirm_pubkey {
         confirm_encodable_keypair_pubkey(&keypair, "pubkey");
@@ -918,9 +914,7 @@ pub fn keypair_from_source(
     keypair_name: &str,
     confirm_pubkey: bool,
 ) -> Result<Keypair, Box<dyn error::Error>> {
-    let skip_validation = matches
-        .try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
-        .unwrap_or(false);
+    let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
     let keypair = encodable_key_from_source(source, keypair_name, skip_validation)?;
     if confirm_pubkey {
         confirm_encodable_keypair_pubkey(&keypair, "pubkey");
@@ -968,9 +962,7 @@ pub fn elgamal_keypair_from_path(
     elgamal_keypair_name: &str,
     confirm_pubkey: bool,
 ) -> Result<ElGamalKeypair, Box<dyn error::Error>> {
-    let skip_validation = matches
-        .try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
-        .unwrap_or(false);
+    let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
     let elgamal_keypair = encodable_key_from_path(path, elgamal_keypair_name, skip_validation)?;
     if confirm_pubkey {
         confirm_encodable_keypair_pubkey(&elgamal_keypair, "ElGamal pubkey");
@@ -984,9 +976,7 @@ pub fn elgamal_keypair_from_source(
     elgamal_keypair_name: &str,
     confirm_pubkey: bool,
 ) -> Result<ElGamalKeypair, Box<dyn error::Error>> {
-    let skip_validation = matches
-        .try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
-        .unwrap_or(false);
+    let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
     let elgamal_keypair = encodable_key_from_source(source, elgamal_keypair_name, skip_validation)?;
     if confirm_pubkey {
         confirm_encodable_keypair_pubkey(&elgamal_keypair, "ElGamal pubkey");
@@ -1041,9 +1031,7 @@ pub fn ae_key_from_path(
     path: &str,
     key_name: &str,
 ) -> Result<AeKey, Box<dyn error::Error>> {
-    let skip_validation = matches
-        .try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
-        .unwrap_or(false);
+    let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
     encodable_key_from_path(path, key_name, skip_validation)
 }
 
@@ -1052,9 +1040,7 @@ pub fn ae_key_from_source(
     source: &SignerSource,
     key_name: &str,
 ) -> Result<AeKey, Box<dyn error::Error>> {
-    let skip_validation = matches
-        .try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
-        .unwrap_or(false);
+    let skip_validation = matches.try_contains_id(SKIP_SEED_PHRASE_VALIDATION_ARG.name)?;
     encodable_key_from_source(source, key_name, skip_validation)
 }
 
@@ -1302,5 +1288,55 @@ mod tests {
         assert_eq!(keypair.pubkey(), signer.pubkey());
 
         Ok(())
+    }
+
+    #[test]
+    fn test_signer_from_source_can_parse_null_signer() {
+        let pubkey = Pubkey::new_unique();
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        // Note offline args not passes. UnknownArgument should be handled internally.
+        let clap_app = Command::new("test_app");
+        let matches = clap_app.get_matches_from(Vec::<&str>::new());
+
+        let config = SignerFromPathConfig {
+            allow_null_signer: true,
+        };
+
+        // This will be a NullSigner
+        let signer =
+            signer_from_source_with_config(&matches, &source, "test_key", &mut None, &config)
+                .unwrap();
+        assert_eq!(signer.pubkey(), pubkey);
+    }
+
+    #[test]
+    fn test_signer_from_source_pubkey_error_on_missing_sig() {
+        let pubkey = Pubkey::new_unique();
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        // Note offline args not passes. UnknownArgument should be handled internally.
+        let clap_app = Command::new("test_app");
+        let matches = clap_app.get_matches_from(Vec::<&str>::new());
+
+        // Should gracefully pass through the NullSigner conditional branch
+        // and end up in the error clause at the end.
+        let config = SignerFromPathConfig {
+            allow_null_signer: false,
+        };
+
+        let result =
+            signer_from_source_with_config(&matches, &source, "test_key", &mut None, &config);
+        assert!(result.is_err());
+        let err_string = result.err().unwrap().to_string();
+        assert!(err_string.contains(&format!("missing signature for supplied pubkey: {pubkey}")));
     }
 }

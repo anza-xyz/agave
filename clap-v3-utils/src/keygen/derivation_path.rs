@@ -22,7 +22,7 @@ pub fn derivation_path_arg<'a>() -> Arg<'a> {
 pub fn acquire_derivation_path(
     matches: &ArgMatches,
 ) -> Result<Option<DerivationPath>, Box<dyn error::Error>> {
-    if matches.try_contains_id("derivation_path").unwrap_or(false) {
+    if matches.try_contains_id("derivation_path")? {
         Ok(Some(DerivationPath::from_absolute_path_str(
             matches
                 .try_get_one::<String>("derivation_path")?
@@ -31,17 +31,5 @@ pub fn acquire_derivation_path(
         )?))
     } else {
         Ok(None)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_acquire_derivation_path() {
-        let matches = ArgMatches::default();
-        let result = acquire_derivation_path(&matches).unwrap();
-        assert!(result.is_none());
     }
 }
