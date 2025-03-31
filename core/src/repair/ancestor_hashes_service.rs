@@ -868,6 +868,7 @@ impl AncestorHashesService {
             ) else {
                 continue;
             };
+            println!("Sending some repair request");
             match repair_protocol {
                 Protocol::UDP => {
                     let _ = ancestor_hashes_request_socket.send_to(&request_bytes, socket_addr);
@@ -1215,7 +1216,7 @@ mod test {
 
         // Slot hasn't reached the threshold
         for (i, key) in (0..2).zip(vote_simulator.node_pubkeys.iter()) {
-            cluster_slots.insert_node_id(dead_slot, *key);
+            cluster_slots.insert_node_id(dead_slot, *key, Some(42));
             AncestorHashesService::find_epoch_slots_frozen_dead_slots(
                 &cluster_slots,
                 &mut dead_slot_pool,
@@ -1359,6 +1360,7 @@ mod test {
                 .root_bank()
                 .epoch_schedule()
                 .clone();
+
             let keypair = Keypair::new();
             let requester_cluster_info = Arc::new(ClusterInfo::new(
                 Node::new_localhost_with_pubkey(&keypair.pubkey()).info,
@@ -1526,6 +1528,7 @@ mod test {
         );
         assert!(ancestor_hashes_request_statuses.is_empty());
 
+        println!("Sending repair request");
         // Send a request to generate a ping
         send_ancestor_repair_request(
             &requester_serve_repair,
@@ -1537,7 +1540,7 @@ mod test {
         );
         // Should have received valid response
         let mut response_packet = response_receiver
-            .recv_timeout(Duration::from_millis(10_000))
+            .recv_timeout(Duration::from_millis(1_000))
             .unwrap();
         let packet = &mut response_packet[0];
         packet
@@ -1557,7 +1560,7 @@ mod test {
 
         // Add the responder to the eligible list for requests
         let responder_id = *responder_info.pubkey();
-        cluster_slots.insert_node_id(dead_slot, responder_id);
+        cluster_slots.insert_node_id(dead_slot, responder_id, Some(42));
         requester_cluster_info.insert_info(responder_info.clone());
         // Now the request should actually be made
         AncestorHashesService::initiate_ancestor_hashes_requests_for_duplicate_slot(
@@ -2012,7 +2015,7 @@ mod test {
 
         // Add the responder to the eligible list for requests
         let responder_id = *responder_info.pubkey();
-        cluster_slots.insert_node_id(dead_slot, responder_id);
+        cluster_slots.insert_node_id(dead_slot, responder_id, Some(42));
         requester_cluster_info.insert_info(responder_info.clone());
 
         // Send a request to generate a ping

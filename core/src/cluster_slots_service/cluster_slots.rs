@@ -20,68 +20,57 @@ use {
 // This also constraints the size of the datastructure
 // if we are really really far behind.
 const CLUSTER_SLOTS_TRIM_SIZE: usize = 50000;
-// Make hashmaps this many times bigger to reduce collisions
-const HASHMAP_OVERSIZE: usize = 2;
 
 pub type Stake = u64;
 
-//TODO: switch to solana_pubkey::PubkeyHasherBuilder
+//This is intended to be switched to solana_pubkey::PubkeyHasherBuilder
 type PubkeyHasherBuilder = RandomState;
 pub(crate) type ValidatorStakesMap = HashMap<Pubkey, Stake, PubkeyHasherBuilder>;
 
-pub fn make_epoch_slots(stakes: &HashMap<Pubkey, u64>, slots: Range<u64>) -> Vec<EpochSlots> {
-    let mut epochslots = Vec::with_capacity(stakes.len());
-    let slots_vec: Vec<u64> = slots.clone().collect();
-    if !slots_vec.is_empty() {
-        for (pk, _) in stakes.iter() {
-            let mut epoch_slot = EpochSlots {
-                from: *pk,
-                ..Default::default()
-            };
-
-            epoch_slot.fill(&slots_vec, slots.start);
-            epochslots.push(epoch_slot);
-        }
-    }
-    epochslots
-}
-
 pub(crate) type SlotSupporters =
     HashMap<Pubkey, AtomicU64 /* stake supporting */, PubkeyHasherBuilder>;
-type RowContent = (
-    Slot,
-    AtomicU64, /*total support */
-    Arc<RwLock<SlotSupporters>>,
-);
 
-/// amount of stake that needs to lock the slot for us to stop updating it
+/// amount of stake that needs to lock the slot for us to stop updating it.
 const FREEZE_THRESHOLD: f64 = 0.8;
-// whatever freeze threshold we should be above DUPLICATE_THRESHOLD in order to not break consensus
+// whatever freeze threshold we should be above DUPLICATE_THRESHOLD in order to not break consensus.
 static_assertions::const_assert!(FREEZE_THRESHOLD > DUPLICATE_THRESHOLD * 1.1);
 
 #[derive(Default)]
 pub struct ClusterSlots {
+    // ring buffer storing, per slot, which stakes were committed to a certain slot.
     cluster_slots: RwLock<VecDeque<RowContent>>,
+    // a cache of validator stakes for reuse internally, updated at epoch boundary.
     validator_stakes: RwLock<Arc<ValidatorStakesMap>>,
-    total_stake: AtomicU64,
-    pub total_writes: AtomicU64,
-    pub total_allocations: AtomicU64,
-    current_slot: AtomicU64,
-    epoch: RwLock<Option<u64>>,
-    cursor: Mutex<Cursor>,
-    last_report: AtomicInterval,
+    total_stake: AtomicU64, // total amount of stake across all validators in validator_stakes.
+    current_slot: AtomicU64, // current slot at the front of ringbuffer.
+    epoch: RwLock<Option<u64>>, //current epoch.
+    cursor: Mutex<Cursor>,  // cursor to read CRDS.
+    last_report: AtomicInterval, // last time statistics were reported.
+    total_allocations: AtomicU64, // total amount of memory allocations made.
+    total_writes: AtomicU64, // total amount of write locks taken outside of initialization.
+}
+
+#[derive(Debug)]
+struct RowContent {
+    slot: Slot,               // slot for which this row stores information
+    total_support: AtomicU64, // total committed stake for this slot
+    supporters: Arc<RwLock<SlotSupporters>>,
 }
 
 impl ClusterSlots {
     #[inline]
-    pub fn lookup(&self, slot: Slot) -> Option<Arc<RwLock<SlotSupporters>>> {
+    pub(crate) fn lookup(&self, slot: Slot) -> Option<Arc<RwLock<SlotSupporters>>> {
         let cluster_slots = self.cluster_slots.read().unwrap();
-        Some(Self::_lookup(slot, &cluster_slots)?.2.clone())
+        Some(
+            Self::get_row_for_slot(slot, &cluster_slots)?
+                .supporters
+                .clone(),
+        )
     }
 
     #[inline]
-    fn _lookup(slot: Slot, cluster_slots: &VecDeque<RowContent>) -> Option<&RowContent> {
-        let start = cluster_slots.front()?.0;
+    fn get_row_for_slot(slot: Slot, cluster_slots: &VecDeque<RowContent>) -> Option<&RowContent> {
+        let start = cluster_slots.front()?.slot;
         if slot < start {
             return None;
         }
@@ -115,7 +104,7 @@ impl ClusterSlots {
         if current_slot >= slot_range.start {
             return;
         }
-        let map_capacity = validator_stakes.len() * HASHMAP_OVERSIZE;
+        let map_capacity = validator_stakes.len();
         let mut cluster_slots = self.cluster_slots.write().unwrap();
         self.total_writes.fetch_add(1, Ordering::Relaxed);
         // a handy closure to spawn new hashmaps with the correct parameters
@@ -133,16 +122,16 @@ impl ClusterSlots {
         //startup init, this is very slow but only ever happens once
         if cluster_slots.is_empty() {
             for slot in slot_range.clone() {
-                cluster_slots.push_back((
+                cluster_slots.push_back(RowContent {
                     slot,
-                    AtomicU64::new(0),
-                    Arc::new(RwLock::new(map_maker())),
-                ));
+                    total_support: AtomicU64::new(0),
+                    supporters: Arc::new(RwLock::new(map_maker())),
+                });
             }
         }
         // discard and recycle outdated elements
         loop {
-            let (slot, _, _) = cluster_slots
+            let RowContent { slot, .. } = cluster_slots
                 .front()
                 .expect("After initialization the ring buffer can not be empty");
             // stop once we reach a slot in the valid range
@@ -150,9 +139,11 @@ impl ClusterSlots {
                 break;
             }
             // pop useless record from the front
-            let (_, _, map) = cluster_slots.pop_front().unwrap();
+            let RowContent {
+                supporters: map, ..
+            } = cluster_slots.pop_front().unwrap();
             // try to reuse its map allocation at the back of the datastructure
-            let slot = cluster_slots.back().unwrap().0 + 1;
+            let slot = cluster_slots.back().unwrap().slot + 1;
             let map = match Arc::try_unwrap(map) {
                 Ok(map) => {
                     // map is free to reuse, reset all committed stakes to zero
@@ -166,7 +157,11 @@ impl ClusterSlots {
                 // if we can not reuse just allocate a new one =(
                 Err(_) => RwLock::new(map_maker()),
             };
-            cluster_slots.push_back((slot, AtomicU64::new(0), Arc::new(map)));
+            cluster_slots.push_back(RowContent {
+                slot,
+                total_support: AtomicU64::new(0),
+                supporters: Arc::new(map),
+            });
         }
         debug_assert!(
             cluster_slots.len() == CLUSTER_SLOTS_TRIM_SIZE,
@@ -198,9 +193,14 @@ impl ClusterSlots {
                 .filter(|slot| slot_range.contains(slot));
             // figure out which entries would get updated by the new message and cache them
             for slot in updates {
-                let (s, slot_weight, map) = Self::_lookup(slot, &cluster_slots).unwrap();
+                let RowContent {
+                    slot: s,
+                    total_support,
+                    supporters: map,
+                } = Self::get_row_for_slot(slot, &cluster_slots).unwrap();
                 debug_assert_eq!(*s, slot, "Fetched slot does not match expected value!");
-                let slot_weight_f64 = slot_weight.load(std::sync::atomic::Ordering::Relaxed) as f64;
+                let slot_weight_f64 =
+                    total_support.load(std::sync::atomic::Ordering::Relaxed) as f64;
                 // once slot is confirmed beyond `DUPLICATE_THRESHOLD` we should not need
                 // to update the stakes for it anymore
                 // floats can be funny, give us a bit of margin
@@ -213,7 +213,7 @@ impl ClusterSlots {
                 if let Some(committed_stake) = committed_stake {
                     let old_stake = committed_stake.swap(sender_stake, Ordering::Relaxed);
                     if old_stake == 0 {
-                        slot_weight.fetch_add(sender_stake, Ordering::Relaxed);
+                        total_support.fetch_add(sender_stake, Ordering::Relaxed);
                     }
                 } else {
                     drop(rg);
@@ -232,23 +232,8 @@ impl ClusterSlots {
         let cluster_slots = self.cluster_slots.read().unwrap();
         cluster_slots
             .iter()
-            .map(|(_slot, _confirmed, slot_pubkeys)| slot_pubkeys.read().unwrap().len())
+            .map(|RowContent { supporters, .. }| supporters.read().unwrap().len())
             .sum::<usize>()
-    }
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn generate_fill_for_tests(
-        &self,
-        stakes: &HashMap<Pubkey, u64>,
-        root: Slot,
-        slots: Range<Slot>,
-    ) {
-        self.total_stake.store(
-            stakes.iter().map(|v| *v.1).sum(),
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        assert!(slots.start > root);
-        let epochslots = make_epoch_slots(stakes, slots);
-        self.update_internal(root, stakes, epochslots);
     }
 
     fn report_cluster_slots_size(&self) {
@@ -266,10 +251,23 @@ impl ClusterSlots {
 
     #[cfg(test)]
     // patches the given node_id into the internal structures
-    // to pretend as if it has submitted epoch slots for a given slot
-    pub(crate) fn insert_node_id(&self, slot: Slot, node_id: Pubkey) {
-        let Some(&balance) = self.validator_stakes.read().unwrap().get(&node_id) else {
-            return;
+    // to pretend as if it has submitted epoch slots for a given slot etc etc
+    pub(crate) fn insert_node_id(
+        &self,
+        slot: Slot,
+        node_id: Pubkey,
+        override_stake: Option<Stake>,
+    ) {
+        let balance = if let Some(stake) = override_stake {
+            let mut stakes = self.validator_stakes.read().unwrap().as_ref().clone();
+            stakes.insert(node_id, stake);
+            self.update_total_stake(stakes.values().cloned());
+            *self.validator_stakes.write().unwrap() = Arc::new(stakes);
+            stake
+        } else {
+            *self.validator_stakes.read().unwrap().get(&node_id).expect(
+                "If the node is not registered, override_stake should be supplied to set its stake",
+            )
         };
         if let Some(slot_pubkeys) = self.lookup(slot) {
             slot_pubkeys
@@ -280,8 +278,14 @@ impl ClusterSlots {
             let mut cluster_slots = self.cluster_slots.write().unwrap();
             let mut hm = HashMap::default();
             hm.insert(node_id, AtomicU64::new(balance));
-            cluster_slots.push_back((slot, AtomicU64::new(0), Arc::new(RwLock::new(hm))));
-            cluster_slots.make_contiguous().sort_by_key(|(k, _, _)| *k);
+            cluster_slots.push_back(RowContent {
+                slot,
+                total_support: AtomicU64::new(0),
+                supporters: Arc::new(RwLock::new(hm)),
+            });
+            cluster_slots
+                .make_contiguous()
+                .sort_by_key(|RowContent { slot, .. }| *slot);
         }
     }
 
@@ -293,12 +297,13 @@ impl ClusterSlots {
         let my_epoch = *self.epoch.read().unwrap();
         if Some(root_epoch) != my_epoch {
             *self.validator_stakes.write().unwrap() = staked_nodes.clone();
-            self.total_stake.store(
-                staked_nodes.iter().map(|v| *v.1).sum(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
+            self.update_total_stake(staked_nodes.values().cloned());
             *self.epoch.write().unwrap() = Some(root_epoch);
         }
+    }
+    fn update_total_stake(&self, stakes: impl IntoIterator<Item = u64>) {
+        self.total_stake
+            .store(stakes.into_iter().sum(), Ordering::Relaxed);
     }
 
     pub(crate) fn compute_weights(&self, slot: Slot, repair_peers: &[ContactInfo]) -> Vec<u64> {
@@ -334,6 +339,13 @@ impl ClusterSlots {
         slot: Slot,
         repair_peers: &[ContactInfo],
     ) -> (Vec<u64>, Vec<usize>) {
+        eprintln!("Cluster slots content:");
+        for s in slot..slot + 5 {
+            if let Some(r) = self.lookup(s) {
+                eprintln!("{s} {:?}", r);
+            }
+            eprintln!("{s} = nothing");
+        }
         let Some(slot_peers) = self.lookup(slot) else {
             return (vec![], vec![]);
         };
@@ -387,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn test_update_new_multiple_slots() {
+    fn test_update_multiple_slots() {
         let cs = ClusterSlots::default();
         let mut epoch_slot1 = EpochSlots {
             from: Pubkey::new_unique(),
@@ -401,25 +413,40 @@ mod tests {
         };
         epoch_slot2.fill(&[1, 3, 5], 1);
         let from2 = epoch_slot2.from;
+        cs.total_stake
+            .store(1000, std::sync::atomic::Ordering::Relaxed); //disable slot locking
         cs.update_internal(
             0,
             &HashMap::from([(from1, 10), (from2, 20)]),
             vec![epoch_slot1, epoch_slot2],
         );
-        assert!(cs.lookup(0).is_none());
-        assert!(cs.lookup(1).is_some());
+        assert!(
+            cs.lookup(0).is_none(),
+            "slot 0 should not be supported by anyone"
+        );
+        assert!(cs.lookup(1).is_some(), "slot 1 should be supported");
         assert_eq!(
             cs.lookup(1).unwrap().read().unwrap()[&from2].load(Ordering::Relaxed),
-            20
+            20,
+            "support should come from validator 2"
         );
         assert_eq!(
             cs.lookup(4).unwrap().read().unwrap()[&from1].load(Ordering::Relaxed),
-            10
+            10,
+            "validator 1 should support slot 4"
         );
         let binding = cs.lookup(5).unwrap();
         let map = binding.read().unwrap();
-        assert_eq!(map[&from1].load(Ordering::Relaxed), 10);
-        assert_eq!(map[&from2].load(Ordering::Relaxed), 20);
+        assert_eq!(
+            map[&from1].load(Ordering::Relaxed),
+            10,
+            "both should support slot 5"
+        );
+        assert_eq!(
+            map[&from2].load(Ordering::Relaxed),
+            20,
+            "both should support slot 5"
+        );
     }
 
     #[test]
@@ -437,11 +464,11 @@ mod tests {
         let k2 = Pubkey::new_unique();
         map.insert(k1, AtomicU64::new(u64::MAX / 2));
         map.insert(k2, AtomicU64::new(1));
-        cs.cluster_slots.write().unwrap().push_back((
-            0,
-            AtomicU64::new(0),
-            Arc::new(RwLock::new(map)),
-        ));
+        cs.cluster_slots.write().unwrap().push_back(RowContent {
+            slot: 0,
+            total_support: AtomicU64::new(0),
+            supporters: Arc::new(RwLock::new(map)),
+        });
         let c1 = ContactInfo::new(k1, /*wallclock:*/ 0, /*shred_version:*/ 0);
         let c2 = ContactInfo::new(k2, /*wallclock:*/ 0, /*shred_version:*/ 0);
         assert_eq!(cs.compute_weights(0, &[c1, c2]), vec![u64::MAX / 4, 1]);
@@ -454,11 +481,11 @@ mod tests {
         let k1 = solana_pubkey::new_rand();
         let k2 = solana_pubkey::new_rand();
         map.insert(k2, AtomicU64::new(1));
-        cs.cluster_slots.write().unwrap().push_back((
-            0,
-            AtomicU64::new(0),
-            Arc::new(RwLock::new(map)),
-        ));
+        cs.cluster_slots.write().unwrap().push_back(RowContent {
+            slot: 0,
+            total_support: AtomicU64::new(0),
+            supporters: Arc::new(RwLock::new(map)),
+        });
         //make sure default weights are used as well
         let validator_stakes: HashMap<_, _> = vec![(k1, u64::MAX / 2)].into_iter().collect();
         *cs.validator_stakes.write().unwrap() = Arc::new(validator_stakes);
@@ -499,7 +526,7 @@ mod tests {
         // Mark the first validator as completed slot 9, should pick that validator,
         // even though it only has minimal stake, while the other validator has
         // max stake
-        cs.insert_node_id(slot, *contact_infos[0].pubkey());
+        cs.insert_node_id(slot, *contact_infos[0].pubkey(), None);
         let (w, i) = cs.compute_weights_exclude_nonfrozen(slot, &contact_infos);
         assert_eq!(w, [43]);
         assert_eq!(i, [0]);

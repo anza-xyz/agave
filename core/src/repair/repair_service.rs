@@ -1757,7 +1757,7 @@ mod test {
         // a valid target for repair
         let dead_slot = 9;
         let cluster_slots = ClusterSlots::default();
-        cluster_slots.insert_node_id(dead_slot, *valid_repair_peer.pubkey());
+        cluster_slots.insert_node_id(dead_slot, *valid_repair_peer.pubkey(), Some(42));
         cluster_info.insert_info(valid_repair_peer);
 
         // Not enough time has passed, should not update the
