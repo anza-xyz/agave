@@ -1644,11 +1644,7 @@ fn execute<'a, 'b: 'a>(
                 Err(Box::new(error) as Box<dyn std::error::Error>)
             }
             ProgramResult::Err(mut error) => {
-                if invoke_context
-                    .get_feature_set()
-                    .is_active(&agave_feature_set::deplete_cu_meter_on_vm_failure::id())
-                    && !matches!(error, EbpfError::SyscallError(_))
-                {
+                if !matches!(error, EbpfError::SyscallError(_)) {
                     // when an exception is thrown during the execution of a
                     // Basic Block (e.g., a null memory dereference or other
                     // faults), determining the exact number of CUs consumed

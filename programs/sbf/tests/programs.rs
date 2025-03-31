@@ -4206,66 +4206,52 @@ fn test_deplete_cost_meter_with_access_violation() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for deplete_cu_meter_on_vm_failure in [false, true] {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let feature_set = Arc::make_mut(&mut bank.feature_set);
-        // by default test banks have all features enabled, so we only need to
-        // disable when needed
-        if !deplete_cu_meter_on_vm_failure {
-            feature_set.deactivate(&feature_set::deplete_cu_meter_on_vm_failure::id());
-        }
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let authority_keypair = Keypair::new();
-        let (bank, invoke_program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            bank_forks.as_ref(),
-            &mint_keypair,
-            &authority_keypair,
-            "solana_sbf_rust_invoke",
-        );
+    let bank = Bank::new_for_tests(&genesis_config);
+    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let authority_keypair = Keypair::new();
+    let (bank, invoke_program_id) = load_program_of_loader_v4(
+        &mut bank_client,
+        bank_forks.as_ref(),
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_invoke",
+    );
 
-        let account_keypair = Keypair::new();
-        let mint_pubkey = mint_keypair.pubkey();
-        let account_metas = vec![
-            AccountMeta::new(mint_pubkey, true),
-            AccountMeta::new(account_keypair.pubkey(), false),
-            AccountMeta::new_readonly(invoke_program_id, false),
-        ];
+    let account_keypair = Keypair::new();
+    let mint_pubkey = mint_keypair.pubkey();
+    let account_metas = vec![
+        AccountMeta::new(mint_pubkey, true),
+        AccountMeta::new(account_keypair.pubkey(), false),
+        AccountMeta::new_readonly(invoke_program_id, false),
+    ];
 
-        let mut instruction_data = vec![TEST_WRITE_ACCOUNT, 2];
-        instruction_data.extend_from_slice(3usize.to_le_bytes().as_ref());
-        instruction_data.push(42);
+    let mut instruction_data = vec![TEST_WRITE_ACCOUNT, 2];
+    instruction_data.extend_from_slice(3usize.to_le_bytes().as_ref());
+    instruction_data.push(42);
 
-        let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
-            &instruction_data,
-            account_metas.clone(),
-        );
+    let instruction =
+        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas.clone());
 
-        let compute_unit_limit = 10_000u32;
-        let message = Message::new(
-            &[
-                ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit),
-                instruction,
-            ],
-            Some(&mint_keypair.pubkey()),
-        );
-        let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+    let compute_unit_limit = 10_000u32;
+    let message = Message::new(
+        &[
+            ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit),
+            instruction,
+        ],
+        Some(&mint_keypair.pubkey()),
+    );
+    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
-        let result = load_execute_and_commit_transaction(&bank, tx).unwrap();
+    let result = load_execute_and_commit_transaction(&bank, tx).unwrap();
 
-        assert_eq!(
-            result.status.unwrap_err(),
-            TransactionError::InstructionError(1, InstructionError::ReadonlyDataModified)
-        );
+    assert_eq!(
+        result.status.unwrap_err(),
+        TransactionError::InstructionError(1, InstructionError::ReadonlyDataModified)
+    );
 
-        if deplete_cu_meter_on_vm_failure {
-            assert_eq!(result.executed_units, u64::from(compute_unit_limit));
-        } else {
-            assert!(result.executed_units < u64::from(compute_unit_limit));
-        }
-    }
+    // all compute unit limit should be consumed due to SBF VM error
+    assert_eq!(result.executed_units, u64::from(compute_unit_limit));
 }
 
 #[test]
@@ -4279,49 +4265,38 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
         ..
     } = create_genesis_config(50);
 
-    for deplete_cu_meter_on_vm_failure in [false, true] {
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        let feature_set = Arc::make_mut(&mut bank.feature_set);
-        // by default test banks have all features enabled, so we only need to
-        // disable when needed
-        if !deplete_cu_meter_on_vm_failure {
-            feature_set.deactivate(&feature_set::deplete_cu_meter_on_vm_failure::id());
-        }
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let mut bank_client = BankClient::new_shared(bank.clone());
-        let authority_keypair = Keypair::new();
-        let (bank, program_id) = load_program_of_loader_v4(
-            &mut bank_client,
-            bank_forks.as_ref(),
-            &mint_keypair,
-            &authority_keypair,
-            "solana_sbf_rust_divide_by_zero",
-        );
+    let bank = Bank::new_for_tests(&genesis_config);
+    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let authority_keypair = Keypair::new();
+    let (bank, program_id) = load_program_of_loader_v4(
+        &mut bank_client,
+        bank_forks.as_ref(),
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_divide_by_zero",
+    );
 
-        let instruction = Instruction::new_with_bytes(program_id, &[], vec![]);
-        let compute_unit_limit = 10_000;
-        let message = Message::new(
-            &[
-                ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit),
-                instruction,
-            ],
-            Some(&mint_keypair.pubkey()),
-        );
-        let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
+    let instruction = Instruction::new_with_bytes(program_id, &[], vec![]);
+    let compute_unit_limit = 10_000;
+    let message = Message::new(
+        &[
+            ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit),
+            instruction,
+        ],
+        Some(&mint_keypair.pubkey()),
+    );
+    let tx = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
-        let result = load_execute_and_commit_transaction(&bank, tx).unwrap();
+    let result = load_execute_and_commit_transaction(&bank, tx).unwrap();
 
-        assert_eq!(
-            result.status.unwrap_err(),
-            TransactionError::InstructionError(1, InstructionError::ProgramFailedToComplete)
-        );
+    assert_eq!(
+        result.status.unwrap_err(),
+        TransactionError::InstructionError(1, InstructionError::ProgramFailedToComplete)
+    );
 
-        if deplete_cu_meter_on_vm_failure {
-            assert_eq!(result.executed_units, u64::from(compute_unit_limit));
-        } else {
-            assert!(result.executed_units < u64::from(compute_unit_limit));
-        }
-    }
+    // all compute unit limit should be consumed due to SBF VM error
+    assert_eq!(result.executed_units, u64::from(compute_unit_limit));
 }
 
 #[test]
