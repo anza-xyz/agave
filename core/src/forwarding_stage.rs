@@ -130,13 +130,12 @@ impl ForwardingClient for VoteClient {
     }
 
     fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
-        assert!(
-            self.current_address.is_some(),
-            "current_address should be updated before send_batch call."
-        );
+        let Some(current_address) = self.current_address else {
+            panic!("current_address should be updated before send_batch call");
+        };
         let batch_with_addresses = wire_transactions
             .iter()
-            .map(|bytes| (bytes, self.current_address.unwrap()));
+            .map(|bytes| (bytes, current_address));
         let _res = batch_send(&self.udp_socket, batch_with_addresses);
     }
 }
