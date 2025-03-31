@@ -1574,7 +1574,7 @@ fn execute<'a, 'b: 'a>(
     let direct_mapping = invoke_context
         .get_feature_set()
         .is_active(&bpf_account_data_direct_mapping::id());
-    let rent_epoch_is_a_constant = invoke_context
+    let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
         .is_active(&mask_out_rent_epoch_in_vm_serialization::id());
 
@@ -1583,7 +1583,7 @@ fn execute<'a, 'b: 'a>(
         invoke_context.transaction_context,
         instruction_context,
         !direct_mapping,
-        rent_epoch_is_a_constant,
+        mask_out_rent_epoch_in_vm_serialization,
     )?;
     serialize_time.stop();
 

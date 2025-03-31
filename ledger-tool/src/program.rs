@@ -538,7 +538,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             &instruction_data,
         );
     invoke_context.push().unwrap();
-    let rent_epoch_is_a_constant = invoke_context
+    let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
         .is_active(&agave_feature_set::mask_out_rent_epoch_in_vm_serialization::id());
     let (_parameter_bytes, regions, account_lengths) = serialize_parameters(
@@ -548,7 +548,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             .get_current_instruction_context()
             .unwrap(),
         true, // copy_account_data
-        rent_epoch_is_a_constant,
+        mask_out_rent_epoch_in_vm_serialization,
     )
     .unwrap();
 

@@ -189,7 +189,7 @@ pub fn serialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
-    rent_epoch_is_a_constant: bool,
+    mask_out_rent_epoch_in_vm_serialization: bool,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -238,7 +238,7 @@ pub fn serialize_parameters(
             instruction_context.get_instruction_data(),
             &program_id,
             copy_account_data,
-            rent_epoch_is_a_constant,
+            mask_out_rent_epoch_in_vm_serialization,
         )
     } else {
         serialize_parameters_aligned(
@@ -246,7 +246,7 @@ pub fn serialize_parameters(
             instruction_context.get_instruction_data(),
             &program_id,
             copy_account_data,
-            rent_epoch_is_a_constant,
+            mask_out_rent_epoch_in_vm_serialization,
         )
     }
 }
@@ -287,7 +287,7 @@ fn serialize_parameters_unaligned(
     instruction_data: &[u8],
     program_id: &Pubkey,
     copy_account_data: bool,
-    rent_epoch_is_a_constant: bool,
+    mask_out_rent_epoch_in_vm_serialization: bool,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -342,7 +342,7 @@ fn serialize_parameters_unaligned(
                 let vm_owner_addr = s.write_all(account.get_owner().as_ref());
                 #[allow(deprecated)]
                 s.write::<u8>(account.is_executable() as u8);
-                let rent_epoch = if rent_epoch_is_a_constant {
+                let rent_epoch = if mask_out_rent_epoch_in_vm_serialization {
                     u64::MAX
                 } else {
                     account.get_rent_epoch()
@@ -426,7 +426,7 @@ fn serialize_parameters_aligned(
     instruction_data: &[u8],
     program_id: &Pubkey,
     copy_account_data: bool,
-    rent_epoch_is_a_constant: bool,
+    mask_out_rent_epoch_in_vm_serialization: bool,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -484,7 +484,7 @@ fn serialize_parameters_aligned(
                 let vm_lamports_addr = s.write::<u64>(borrowed_account.get_lamports().to_le());
                 s.write::<u64>((borrowed_account.get_data().len() as u64).to_le());
                 let vm_data_addr = s.write_account(&mut borrowed_account)?;
-                let rent_epoch = if rent_epoch_is_a_constant {
+                let rent_epoch = if mask_out_rent_epoch_in_vm_serialization {
                     u64::MAX
                 } else {
                     borrowed_account.get_rent_epoch()
@@ -1058,8 +1058,8 @@ mod tests {
     }
 
     #[test]
-    fn test_serialize_parameters_rent_epoch_is_a_constant() {
-        for rent_epoch_is_a_constant in [false, true] {
+    fn test_serialize_parameters_mask_out_rent_epoch_in_vm_serialization() {
+        for mask_out_rent_epoch_in_vm_serialization in [false, true] {
             let transaction_accounts = vec![
                 (
                     solana_pubkey::new_rand(),
@@ -1154,7 +1154,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 true,
-                rent_epoch_is_a_constant,
+                mask_out_rent_epoch_in_vm_serialization,
             )
             .unwrap();
 
@@ -1173,7 +1173,7 @@ mod tests {
                     .accounts()
                     .try_borrow(index_in_transaction)
                     .unwrap();
-                let expected_rent_epoch = if rent_epoch_is_a_constant {
+                let expected_rent_epoch = if mask_out_rent_epoch_in_vm_serialization {
                     u64::MAX
                 } else {
                     account.rent_epoch()
@@ -1198,7 +1198,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 true,
-                rent_epoch_is_a_constant,
+                mask_out_rent_epoch_in_vm_serialization,
             )
             .unwrap();
             let mut serialized_regions = concat_regions(&regions);
@@ -1218,7 +1218,7 @@ mod tests {
                     .accounts()
                     .try_borrow(index_in_transaction)
                     .unwrap();
-                let expected_rent_epoch = if rent_epoch_is_a_constant {
+                let expected_rent_epoch = if mask_out_rent_epoch_in_vm_serialization {
                     u64::MAX
                 } else {
                     account.rent_epoch()
