@@ -131,7 +131,7 @@ pub fn invoke_builtin_function(
     // Serialize entrypoint parameters with SBF ABI
     let rent_epoch_is_a_constant = invoke_context
         .get_feature_set()
-        .is_active(&agave_feature_set::rent_epoch_is_a_constant_in_vm::id());
+        .is_active(&agave_feature_set::mask_out_rent_epoch_in_vm_serialization::id());
     let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
         transaction_context,
         instruction_context,

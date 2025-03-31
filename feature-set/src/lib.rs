@@ -1024,7 +1024,7 @@ pub mod raise_block_limits_to_60m {
     solana_pubkey::declare_id!("6oMCUgfY6BzZ6jwB681J6ju5Bh6CjVXbd7NeWYqiXBSu");
 }
 
-pub mod rent_epoch_is_a_constant_in_vm {
+pub mod mask_out_rent_epoch_in_vm_serialization {
     solana_pubkey::declare_id!("RENtePQcDLrAbxAsP3k8dwVcnNYQ466hi2uKvALjnXx");
 }
 
@@ -1260,7 +1260,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (disable_partitioned_rent_collection::id(), "Disable partitioned rent collection SIMD-0175 #4562"),
         (enable_vote_address_leader_schedule::id(), "Enable vote address leader schedule SIMD-0180 #4573"),
         (raise_block_limits_to_60m::id(), "Raise block limit to 60M SIMD-0256"),
-        (rent_epoch_is_a_constant_in_vm::id(), "SIMD-0267: Sets rent_epoch to a constant in the VM"),
+        (mask_out_rent_epoch_in_vm_serialization::id(), "SIMD-0267: Sets rent_epoch to a constant in the VM"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
