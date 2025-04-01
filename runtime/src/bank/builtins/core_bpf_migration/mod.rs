@@ -20,6 +20,7 @@ use {
         instruction::InstructionError,
         pubkey::Pubkey,
     },
+    solana_svm_callback::EpochStakeCallback,
     solana_transaction_context::TransactionContext,
     source_buffer::SourceBuffer,
     std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
@@ -158,14 +159,16 @@ impl Bank {
                 compute_budget.max_instruction_trace_length,
             );
 
+            struct MockCallback {}
+            impl EpochStakeCallback for MockCallback {}
+
             let mut dummy_invoke_context = InvokeContext::new(
                 &mut dummy_transaction_context,
                 &mut program_cache_for_tx_batch,
                 EnvironmentConfig::new(
                     Hash::default(),
                     0,
-                    0,
-                    &|_| 0,
+                    &MockCallback {},
                     self.feature_set.clone(),
                     &sysvar_cache,
                 ),

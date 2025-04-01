@@ -844,8 +844,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let mut executed_units = 0u64;
         let sysvar_cache = &self.sysvar_cache.read().unwrap();
-        let epoch_vote_account_stake_callback =
-            |pubkey| callback.get_epoch_stake_for_vote_account(pubkey);
 
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
@@ -853,8 +851,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             EnvironmentConfig::new(
                 environment.blockhash,
                 environment.blockhash_lamports_per_signature,
-                environment.epoch_total_stake,
-                &epoch_vote_account_stake_callback,
+                callback,
                 Arc::clone(&environment.feature_set),
                 sysvar_cache,
             ),

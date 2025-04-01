@@ -40,6 +40,7 @@ solana-compute-budget = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-svm-callback = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-vote-program = { workspace = true, default-features = false }
 test-case = { workspace = true }

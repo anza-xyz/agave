@@ -39,6 +39,7 @@ solana-nonce-account = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk = { workspace = true }
 solana-sha256-hasher = { workspace = true }
+solana-svm-callback = { workspace = true }
 
 [lib]
 crate-type = ["lib"]

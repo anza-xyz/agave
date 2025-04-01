@@ -31,6 +31,7 @@ use {
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader, sysvar,
     },
     solana_stable_layout::stable_instruction::StableInstruction,
+    solana_svm_callback::EpochStakeCallback,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
         IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
@@ -146,8 +147,7 @@ impl BpfAllocator {
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
-    epoch_total_stake: u64,
-    get_epoch_vote_account_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
+    epoch_stake_callback: &'a dyn EpochStakeCallback,
     pub feature_set: Arc<FeatureSet>,
     sysvar_cache: &'a SysvarCache,
 }
@@ -155,16 +155,14 @@ impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
-        epoch_total_stake: u64,
-        get_epoch_vote_account_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
+        epoch_stake_callback: &'a dyn EpochStakeCallback,
         feature_set: Arc<FeatureSet>,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
             blockhash,
             blockhash_lamports_per_signature,
-            epoch_total_stake,
-            get_epoch_vote_account_stake_callback,
+            epoch_stake_callback,
             feature_set,
             sysvar_cache,
         }
@@ -666,15 +664,17 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get cached epoch total stake.
-    pub fn get_epoch_total_stake(&self) -> u64 {
-        self.environment_config.epoch_total_stake
+    pub fn get_epoch_stake(&self) -> u64 {
+        self.environment_config
+            .epoch_stake_callback
+            .get_epoch_stake()
     }
 
     /// Get cached stake for the epoch vote account.
-    pub fn get_epoch_vote_account_stake(&self, pubkey: &'a Pubkey) -> u64 {
-        (self
-            .environment_config
-            .get_epoch_vote_account_stake_callback)(pubkey)
+    pub fn get_epoch_stake_for_vote_account(&self, pubkey: &'a Pubkey) -> u64 {
+        self.environment_config
+            .epoch_stake_callback
+            .get_epoch_stake_for_vote_account(pubkey)
     }
 
     // Should alignment be enforced during user pointer translation
@@ -735,6 +735,7 @@ macro_rules! with_mock_invoke_context {
         use {
             agave_feature_set::FeatureSet,
             solana_log_collector::LogCollector,
+            solana_svm_callback::EpochStakeCallback,
             solana_type_overrides::sync::Arc,
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
@@ -744,6 +745,10 @@ macro_rules! with_mock_invoke_context {
                 sysvar_cache::SysvarCache,
             },
         };
+
+        struct MockEpochStakeCallback {}
+        impl EpochStakeCallback for MockEpochStakeCallback {}
+
         let compute_budget = SVMTransactionExecutionBudget::default();
         let mut $transaction_context = TransactionContext::new(
             $transaction_accounts,
@@ -772,8 +777,7 @@ macro_rules! with_mock_invoke_context {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0,
-            &|_| 0,
+            &MockEpochStakeCallback {},
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );

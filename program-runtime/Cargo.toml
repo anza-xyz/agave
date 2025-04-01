@@ -44,6 +44,7 @@ solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-stable-layout = { workspace = true }
+solana-svm-callback = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }

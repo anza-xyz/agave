@@ -6998,6 +6998,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-slot-hashes",
  "solana-stable-layout",
+ "solana-svm-callback",
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
