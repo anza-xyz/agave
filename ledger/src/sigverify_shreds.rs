@@ -3,7 +3,6 @@ use {
     crate::shred::{self, SignedData, SIZE_OF_MERKLE_ROOT},
     itertools::{izip, Itertools},
     rayon::{prelude::*, ThreadPool},
-    sha2::{Digest, Sha512},
     solana_metrics::inc_new_counter_debug,
     solana_perf::{
         cuda_runtime::PinnedVec,
@@ -12,21 +11,17 @@ use {
         recycler_cache::RecyclerCache,
         sigverify::{self, count_packets_in_batches, TxOffset},
     },
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
-    },
-    std::{
-        collections::HashMap,
-        iter::repeat,
-        mem::size_of,
-        ops::Range,
-        sync::{Arc, RwLock},
-    },
+    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signature},
+    std::{collections::HashMap, iter::repeat, mem::size_of, ops::Range, sync::RwLock},
+};
+#[cfg(test)]
+use {
+    sha2::{Digest, Sha512},
+    solana_sdk::signature::{Keypair, Signer},
+    std::sync::Arc,
 };
 
+#[cfg(test)]
 const SIGN_SHRED_GPU_MIN: usize = 256;
 
 pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, /*merkle root:*/ Hash), ()>;
@@ -333,6 +328,7 @@ pub fn verify_shreds_gpu(
     rvs
 }
 
+#[cfg(test)]
 fn sign_shred_cpu(keypair: &Keypair, packet: &mut Packet) {
     let sig = shred::layout::get_signature_range();
     let msg = shred::layout::get_shred(packet)
@@ -347,7 +343,8 @@ fn sign_shred_cpu(keypair: &Keypair, packet: &mut Packet) {
     packet.buffer_mut()[sig].copy_from_slice(signature.as_ref());
 }
 
-pub fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
+#[cfg(test)]
+fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
     let packet_count = count_packets_in_batches(batches);
     debug!("CPU SHRED ECDSA for {}", packet_count);
     thread_pool.install(|| {
@@ -360,7 +357,8 @@ pub fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mu
     inc_new_counter_debug!("ed25519_shred_sign_cpu", packet_count);
 }
 
-pub fn sign_shreds_gpu_pinned_keypair(keypair: &Keypair, cache: &RecyclerCache) -> PinnedVec<u8> {
+#[cfg(test)]
+fn sign_shreds_gpu_pinned_keypair(keypair: &Keypair, cache: &RecyclerCache) -> PinnedVec<u8> {
     let mut vec = cache.buffer().allocate("pinned_keypair");
     let pubkey = keypair.pubkey().to_bytes();
     let secret = keypair.secret().to_bytes();
@@ -377,7 +375,8 @@ pub fn sign_shreds_gpu_pinned_keypair(keypair: &Keypair, cache: &RecyclerCache) 
     vec
 }
 
-pub fn sign_shreds_gpu(
+#[cfg(test)]
+fn sign_shreds_gpu(
     thread_pool: &ThreadPool,
     keypair: &Keypair,
     pinned_keypair: &Option<Arc<PinnedVec<u8>>>,
