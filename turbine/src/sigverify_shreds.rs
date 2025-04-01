@@ -269,7 +269,7 @@ fn run_shred_sigverify<const K: usize>(
     if let Err(send_err) = retransmit_sender.try_send(shreds.clone()) {
         match send_err {
             crossbeam_channel::TrySendError::Full(v) => {
-                stats.num_retransmit_stage_overflow += v.len();
+                stats.num_retransmit_stage_overflow_shreds += v.len();
             }
             _ => unreachable!("EvictingSender holds on to both ends of the channel"),
         }
@@ -434,7 +434,7 @@ struct ShredSigVerifyStats {
     num_invalid_retransmitter: AtomicUsize,
     num_retranmitter_signature_skipped: AtomicUsize,
     num_retranmitter_signature_verified: AtomicUsize,
-    num_retransmit_stage_overflow: usize,
+    num_retransmit_stage_overflow_shreds: usize,
     num_retransmit_shreds: usize,
     num_unknown_slot_leader: AtomicUsize,
     num_unknown_turbine_parent: AtomicUsize,
@@ -458,7 +458,7 @@ impl ShredSigVerifyStats {
             num_invalid_retransmitter: AtomicUsize::default(),
             num_retranmitter_signature_skipped: AtomicUsize::default(),
             num_retranmitter_signature_verified: AtomicUsize::default(),
-            num_retransmit_stage_overflow: 0,
+            num_retransmit_stage_overflow_shreds: 0usize,
             num_retransmit_shreds: 0usize,
             num_unknown_slot_leader: AtomicUsize::default(),
             num_unknown_turbine_parent: AtomicUsize::default(),
@@ -498,8 +498,8 @@ impl ShredSigVerifyStats {
                 i64
             ),
             (
-                "num_retransmit_stage_overflow",
-                self.num_retransmit_stage_overflow,
+                "num_retransmit_stage_overflow_shreds",
+                self.num_retransmit_stage_overflow_shreds,
                 i64
             ),
             ("num_retransmit_shreds", self.num_retransmit_shreds, i64),

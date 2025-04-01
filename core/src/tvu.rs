@@ -57,6 +57,11 @@ use {
     tokio::sync::mpsc::Sender as AsyncSender,
 };
 
+// Allow for a max of 16k batches of up to 64 packets each (NUM_RCVMMSGS).
+// This translates to about 1 GB of RAM for packet storage in the worst case.
+// In reality this means about 200K shreds since most batches are not full.
+const CHANNEL_SIZE_SIGVERIFY_TO_RETRANSMIT: usize = 16 * 1024;
+
 pub struct Tvu {
     fetch_stage: ShredFetchStage,
     shred_sigverify: JoinHandle<()>,
@@ -193,9 +198,8 @@ impl Tvu {
 
         let (verified_sender, verified_receiver) = unbounded();
 
-        // Allow for a max of 2048 batches of up to 1024 packets each (according to MAX_IOV).
-        // In reality this holds about 20K shreds since most batches are not full.
-        let (retransmit_sender, retransmit_receiver) = EvictingSender::new_bounded(2048);
+        let (retransmit_sender, retransmit_receiver) =
+            EvictingSender::new_bounded(CHANNEL_SIZE_SIGVERIFY_TO_RETRANSMIT);
 
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),
