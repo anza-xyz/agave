@@ -10352,6 +10352,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
+ "solana-inline-spl",
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-keypair",

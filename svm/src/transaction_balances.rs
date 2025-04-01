@@ -12,6 +12,11 @@ use {
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
     solana_account::{AccountSharedData, ReadableAccount},
+    solana_inline_spl::{
+        is_known_spl_token_id,
+        token::{self, Account as TokenAccount, GenericTokenAccount},
+        token_2022::{self, Account as Token2022Account},
+    },
     solana_pubkey::Pubkey,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
 };
@@ -41,7 +46,7 @@ use {
 //   and this code has some unusual interactions with bank locking for the unified scheduler
 // * bals4: the trait object hand grenade. we package up a machine that does the work and lob into svm
 //   this was an inspired option but it is fiendish. we have a trait in svm and impl in `ledger/`
-//   but the svm trait depends on acocunt loading, and passing in the trait object is very difficult
+//   but the svm trait depends on account loading, and passing in the trait object is very difficult
 //   because the balance collector is generic over concrete impls of either a new loader trait or txpcb
 //   both of which are created below blockstore, so they cannot be unified by rustc
 //
@@ -56,19 +61,35 @@ use {
 //
 // i think for 1 and 2 i want to accept loded and processed. do not inconvenience poor txp. two simple callsites
 // theyre related because we need to know if loading failed somehow even if we dont get clever with processed
-// for 3 just pass the acocunts up for now, we could add it later
+// for 3 just pass the accounts up for now, we could add it later
 //
 // ok so that means what im doing now is:
 // * define an enum with a real balance collector or a noop empty variant
 //   alternatively, a trait and impl for Option<BalanceCollector>
 // * impl pre- and post-bal collection for it using svmtx, loaded/processed tx, loader (for mints)
-// * define a struct for token balance containing: acocunt index, owner, u64 balance, mint asd
+// * define a struct for token balance containing: account index, owner, u64 balance, mint asd
 // * store, internally to the collector, four vecvecs total of pre/post bals
 // * add Option<BalanceCollector> to the transaction return info. we need Option in case the batch aborts
 // * in blockstore/banking, parse the mint, transform to TransactionTokenBalance with uiamount
 //   and construct the TransactionBalancesSet and TransactionTokenBalancesSet
 //   there are very natural places to do this in both crates
 // and we can consider later whether to parse the mint in svm to get decimals and drop the asd
+//
+// ok i mostly finished, fairly well in-line with the above though some minor changes
+// i just need to collect SvmTokenInfo now. whats that look like. bassically like the ledger token fn
+// * do nothing for who tx if no token program
+// * skip account if invoked or is token program
+// * load account (actually we already did this for lamports, hold the account)
+// * skip account if owner not a token program
+// * parse
+// * load the mint and check its owner or else skip
+// * now we have the info we need, push the struct
+// as noted elsewhere, it could be nice to add mint parsing to inline-spl but im undecided
+
+// HANA the first one of these has an equivalent in runtime/ we could move down and export
+// the second shouldnt be exported. but i need to take a pass looking for code to delete
+type NativeBalances = Vec<Vec<u64>>;
+type TokenBalances = Vec<Vec<SvmTokenInfo>>;
 
 pub(crate) trait BalanceCollectionRoutines {
     fn collect_pre_balances<CB: TransactionProcessingCallback>(
@@ -86,11 +107,12 @@ pub(crate) trait BalanceCollectionRoutines {
     );
 }
 
+// HANA TODO maybe type aliases for these, move the vecvecu64 alias down here
 pub struct BalanceCollector {
-    native_pre: Vec<Vec<u64>>,
-    native_post: Vec<Vec<u64>>,
-    token_pre: Vec<Vec<SvmTokenInfo>>,
-    token_post: Vec<Vec<SvmTokenInfo>>,
+    native_pre: NativeBalances,
+    native_post: NativeBalances,
+    token_pre: TokenBalances,
+    token_post: TokenBalances,
 }
 
 impl BalanceCollector {
@@ -103,14 +125,9 @@ impl BalanceCollector {
         }
     }
 
-    pub fn into_vecs(
-        self,
-    ) -> (
-        Vec<Vec<u64>>,
-        Vec<Vec<u64>>,
-        Vec<Vec<SvmTokenInfo>>,
-        Vec<Vec<SvmTokenInfo>>,
-    ) {
+    // we use this pattern to prevent outside tampering
+    // with no public constructor and private fields, non-svm code can only consume
+    pub fn into_vecs(self) -> (NativeBalances, NativeBalances, TokenBalances, TokenBalances) {
         (
             self.native_pre,
             self.native_post,
@@ -130,32 +147,50 @@ impl BalanceCollectionRoutines for BalanceCollector {
         let mut native_balances = Vec::with_capacity(transaction.account_keys().len());
         let mut token_balances = vec![];
 
-        for key in transaction.account_keys().iter() {
-            let lamports = account_loader
-                .load_account(key, false)
-                .map(|loaded| loaded.account.lamports())
-                .unwrap_or(0);
-            native_balances.push(lamports);
+        let has_token_program = transaction.account_keys().iter().any(is_known_spl_token_id);
 
-            // HANA TODO token. also maybe we dont need to take load_result
-            // i was using it to skip collection for load failure
-            // it turns out tests assert balances must be produced even for failures
+        for (index, key) in transaction.account_keys().iter().enumerate() {
+            let Some(account) = account_loader
+                .load_account(key, false)
+                .map(|loaded| loaded.account)
+            else {
+                native_balances.push(0);
+                continue;
+            };
+
+            native_balances.push(account.lamports());
+
+            if has_token_program
+                && !transaction.is_invoked(index)
+                && !is_known_spl_token_id(key)
+                && is_known_spl_token_id(account.owner())
+            {
+                if let Some(token_info) =
+                    SvmTokenInfo::unpack_token_account(account_loader, &account, index)
+                {
+                    token_balances.push(token_info);
+                }
+            }
         }
 
         self.native_pre.push(native_balances);
         self.token_pre.push(token_balances);
     }
 
+    // HANA NOTE this is basically the same function as the above but they would diverge if we optimized
+    // eg, failed or fee-only we can clone the pre-bal vecs and edit fee-payer
+    // can also get bals off the result... maybe not worth it tho
+    // the other thing thats a bit odd is im not sure if we collect bals for *discarded* transactions
+    // bank tests expect to see bals for "failed" but they trigger an unrecoverable loading failure on purpose
+    // ie TransactionLoadResult::NotLoaded rather than TransactionLoadResult::FeesOnly
+    // we should debate whether the test is wrong. i dont know if discarded transactions get statussenderized
+    // they dont get written to the ledger and arent confirmed so cant be pulled by getTransaction tho
     fn collect_post_balances<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
         processing_result: &TransactionProcessingResult,
     ) {
-        // HANA NOTE these are basically the same but would diverge if we optimized
-        // eg, failed or fee-only we can clone the pre-bal vecs and edit fee-payer
-        // can also get bals off the result... maybe not worth it tho
-
         let mut native_balances = Vec::with_capacity(transaction.account_keys().len());
         let mut token_balances = vec![];
 
@@ -205,4 +240,49 @@ pub struct SvmTokenInfo {
     pub owner: Pubkey,
     pub program_id: Pubkey,
     pub mint_account: AccountSharedData,
+}
+
+impl SvmTokenInfo {
+    fn unpack_token_account<CB: TransactionProcessingCallback>(
+        account_loader: &mut AccountLoader<CB>,
+        account: &AccountSharedData,
+        index: usize,
+    ) -> Option<Self> {
+        // HANA the way inline-spl dispatch is designed is very odd
+        // maybe it should have wrappers that take program id and call the right methods
+        let program_id = *account.owner();
+        let (mint, amount, owner) = if program_id == token::id() {
+            (
+                *TokenAccount::unpack_account_mint(account.data())?,
+                TokenAccount::unpack_account_amount(account.data())?,
+                *TokenAccount::unpack_account_owner(account.data())?,
+            )
+        } else if program_id == token_2022::id() {
+            (
+                *Token2022Account::unpack_account_mint(account.data())?,
+                Token2022Account::unpack_account_amount(account.data())?,
+                *Token2022Account::unpack_account_owner(account.data())?,
+            )
+        } else {
+            // NOTE this should be unreachable, we already validated token program id
+            // if this is ever triggered, it means a new token program has been added
+            // it must be added here (HANA but we should probably do this in inline-spl instead)
+            debug_assert!(false);
+            return None;
+        };
+
+        let mint_account = account_loader.load_account(&mint, false)?.account;
+        if mint_account.owner() != account.owner() {
+            return None;
+        }
+
+        Some(Self {
+            account_index: index.try_into().ok()?,
+            mint,
+            amount,
+            owner,
+            program_id,
+            mint_account,
+        })
+    }
 }
