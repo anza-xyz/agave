@@ -301,11 +301,8 @@ impl SnapshotRequestHandler {
             // We have to use the index version here.
             // We cannot calculate the non-index way because cache
             // has not been flushed and stores don't match reality.
-            snapshot_root_bank.update_accounts_hash(
-                CalcAccountsHashDataSource::IndexForTests,
-                false,
-                false,
-            )
+            snapshot_root_bank
+                .update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false)
         });
 
         let mut flush_accounts_cache_time = Measure::start("flush_accounts_cache_time");

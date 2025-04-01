@@ -1743,7 +1743,7 @@ impl Bank {
             .accounts_db
             .epoch_accounts_hash_manager
             .set_in_flight(parent.slot());
-        let accounts_hash = parent.update_accounts_hash(data_source, false, true);
+        let accounts_hash = parent.update_accounts_hash(data_source, true);
         let epoch_accounts_hash = accounts_hash.into();
         parent
             .rc
@@ -5930,7 +5930,6 @@ impl Bank {
     pub fn update_accounts_hash(
         &self,
         data_source: CalcAccountsHashDataSource,
-        mut debug_verify: bool,
         is_startup: bool,
     ) -> AccountsHash {
         let (accounts_hash, total_lamports) = self
@@ -5939,7 +5938,7 @@ impl Bank {
             .accounts_db
             .update_accounts_hash_with_verify_from(
                 data_source,
-                debug_verify,
+                false, // debug_verify
                 self.slot(),
                 &self.ancestors,
                 Some(self.capitalization()),
@@ -5955,24 +5954,22 @@ impl Bank {
                 ("capitalization", self.capitalization(), i64),
             );
 
-            if !debug_verify {
-                // cap mismatch detected. It has been logged to metrics above.
-                // Run both versions of the calculation to attempt to get more info.
-                debug_verify = true;
-                self.rc
-                    .accounts
-                    .accounts_db
-                    .update_accounts_hash_with_verify_from(
-                        data_source,
-                        debug_verify,
-                        self.slot(),
-                        &self.ancestors,
-                        Some(self.capitalization()),
-                        self.epoch_schedule(),
-                        &self.rent_collector,
-                        is_startup,
-                    );
-            }
+            // cap mismatch detected. It has been logged to metrics above.
+            // Run both versions of the calculation to attempt to get more info.
+            let debug_verify = true;
+            self.rc
+                .accounts
+                .accounts_db
+                .update_accounts_hash_with_verify_from(
+                    data_source,
+                    debug_verify,
+                    self.slot(),
+                    &self.ancestors,
+                    Some(self.capitalization()),
+                    self.epoch_schedule(),
+                    &self.rent_collector,
+                    is_startup,
+                );
 
             panic!(
                 "capitalization_mismatch. slot: {}, calculated_lamports: {}, capitalization: {}",
@@ -7217,7 +7214,7 @@ impl Bank {
     }
 
     pub fn update_accounts_hash_for_tests(&self) -> AccountsHash {
-        self.update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false, false)
+        self.update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false)
     }
 
     pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> ProgramCacheForTxBatch {

@@ -947,7 +947,7 @@ fn bank_to_full_snapshot_archive_with(
         MerkleOrLatticeAccountsHash::Lattice
     } else {
         let calculated_accounts_hash =
-            bank.update_accounts_hash(CalcAccountsHashDataSource::Storages, false, false);
+            bank.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
         let accounts_hash = bank
             .get_accounts_hash()
             .expect("accounts hash is required for snapshot");
