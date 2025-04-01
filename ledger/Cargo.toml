@@ -120,9 +120,6 @@ crate-type = ["lib"]
 name = "solana_ledger"
 
 [[bench]]
-name = "sigverify_shreds"
-
-[[bench]]
 name = "blockstore"
 
 [[bench]]
