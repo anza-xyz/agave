@@ -43,6 +43,7 @@ use {
         MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0207, MAX_BLOCK_UNITS_SIMD_0256,
     },
     solana_inline_spl::token,
+    solana_ledger::transaction_balances::compile_collected_balances,
     solana_logger,
     solana_program_runtime::{
         declare_process_instruction,
@@ -3167,7 +3168,6 @@ fn test_interleaving_locks() {
         .load_execute_and_commit_transactions(
             &lock_result,
             MAX_PROCESSING_AGE,
-            false,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
@@ -3253,7 +3253,6 @@ fn test_load_and_execute_commit_transactions_fees_only() {
         .load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
-            true,
             ExecutionRecordingConfig::new_single_setting(true),
             &mut ExecuteTimings::default(),
             None,
@@ -5977,14 +5976,20 @@ fn test_pre_post_transaction_balances() {
     let txs = vec![tx0, tx1, tx2];
 
     let lock_result = bank0.prepare_batch_for_tests(txs);
-    let (commit_results, transaction_balances_set) = bank0.load_execute_and_commit_transactions(
+    let (commit_results, balance_collector) = bank0.load_execute_and_commit_transactions(
         &lock_result,
         MAX_PROCESSING_AGE,
-        true,
-        ExecutionRecordingConfig::new_single_setting(false),
+        ExecutionRecordingConfig {
+            enable_cpi_recording: false,
+            enable_log_recording: false,
+            enable_return_data_recording: false,
+            enable_transaction_balance_recording: true,
+        },
         &mut ExecuteTimings::default(),
         None,
     );
+
+    let (transaction_balances_set, _) = compile_collected_balances(balance_collector);
 
     assert_eq!(transaction_balances_set.pre_balances.len(), 3);
     assert_eq!(transaction_balances_set.post_balances.len(), 3);
@@ -9644,7 +9649,6 @@ fn test_tx_log_order() {
         .load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
-            false,
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: true,
@@ -9753,7 +9757,6 @@ fn test_tx_return_data() {
             .load_execute_and_commit_transactions(
                 &batch,
                 MAX_PROCESSING_AGE,
-                false,
                 ExecutionRecordingConfig {
                     enable_cpi_recording: false,
                     enable_log_recording: false,
@@ -9806,7 +9809,6 @@ fn test_load_and_execute_commit_transactions_rent_debits() {
             .load_execute_and_commit_transactions(
                 &batch,
                 MAX_PROCESSING_AGE,
-                false,
                 ExecutionRecordingConfig::new_single_setting(false),
                 &mut ExecuteTimings::default(),
                 None,
@@ -9830,7 +9832,6 @@ fn test_load_and_execute_commit_transactions_rent_debits() {
             .load_execute_and_commit_transactions(
                 &batch,
                 MAX_PROCESSING_AGE,
-                false,
                 ExecutionRecordingConfig::new_single_setting(false),
                 &mut ExecuteTimings::default(),
                 None,

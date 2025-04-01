@@ -97,7 +97,6 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
         .load_execute_and_commit_transactions(
             &tx_batch,
             MAX_PROCESSING_AGE,
-            false,
             ExecutionRecordingConfig {
                 enable_cpi_recording: true,
                 enable_log_recording: true,
@@ -5075,7 +5074,6 @@ fn test_function_call_args() {
         .load_execute_and_commit_transactions(
             &tx_batch,
             MAX_PROCESSING_AGE,
-            false,
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: false,
