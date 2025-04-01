@@ -7988,6 +7988,7 @@ dependencies = [
  "solana-clock",
  "solana-fee-structure",
  "solana-hash",
+ "solana-inline-spl",
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-loader-v3-interface",
