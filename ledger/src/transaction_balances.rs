@@ -52,7 +52,7 @@ fn collected_token_infos_to_token_balances(
         .map(|infos| {
             infos
                 .into_iter()
-                .filter_map(|info| svm_token_info_to_token_balance(info))
+                .filter_map(svm_token_info_to_token_balance)
                 .collect()
         })
         .collect()
