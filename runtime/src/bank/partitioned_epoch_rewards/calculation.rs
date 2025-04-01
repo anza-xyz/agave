@@ -177,7 +177,6 @@ impl Bank {
             let to_store = vote_account_rewards
                 .accounts_to_store
                 .iter()
-                .filter_map(|account| account.as_ref())
                 .enumerate()
                 .map(|(i, account)| (&vote_account_rewards.rewards[i].0, account))
                 .collect::<Vec<_>>();
@@ -382,10 +381,8 @@ impl Bank {
                                 commission,
                                 vote_account: vote_account.into(),
                                 vote_rewards: 0,
-                                vote_needs_store: false,
                             });
 
-                        voters_reward_entry.vote_needs_store = true;
                         voters_reward_entry.vote_rewards = voters_reward_entry
                             .vote_rewards
                             .saturating_add(voters_reward);
@@ -592,25 +589,25 @@ mod tests {
         let expected_vote_rewards_num = 100;
 
         let vote_rewards = (0..expected_vote_rewards_num)
-            .map(|_| Some((Pubkey::new_unique(), VoteReward::new_random())))
+            .map(|_| (Pubkey::new_unique(), VoteReward::new_random()))
             .collect::<Vec<_>>();
 
         let mut vote_rewards_account = VoteRewardsAccounts::default();
-        vote_rewards.iter().for_each(|e| {
-            if let Some(p) = &e {
+        vote_rewards
+            .iter()
+            .for_each(|(vote_key, vote_reward_info)| {
                 let info = RewardInfo {
                     reward_type: RewardType::Voting,
-                    lamports: p.1.vote_rewards as i64,
-                    post_balance: p.1.vote_rewards,
-                    commission: Some(p.1.commission),
+                    lamports: vote_reward_info.vote_rewards as i64,
+                    post_balance: vote_reward_info.vote_rewards,
+                    commission: Some(vote_reward_info.commission),
                 };
-                vote_rewards_account.rewards.push((p.0, info));
+                vote_rewards_account.rewards.push((*vote_key, info));
                 vote_rewards_account
                     .accounts_to_store
-                    .push(e.as_ref().map(|p| p.1.vote_account.clone()));
-                vote_rewards_account.total_vote_rewards_lamports += p.1.vote_rewards;
-            }
-        });
+                    .push(vote_reward_info.vote_account.clone());
+                vote_rewards_account.total_vote_rewards_lamports += vote_reward_info.vote_rewards;
+            });
 
         let metrics = RewardsMetrics::default();
 
@@ -621,19 +618,23 @@ mod tests {
         assert_eq!(
             vote_rewards
                 .iter()
-                .map(|e| e.as_ref().unwrap().1.vote_rewards)
+                .map(|(_, vote_reward_info)| vote_reward_info.vote_rewards)
                 .sum::<u64>(),
             total_vote_rewards
         );
 
         // load accounts to make sure they were stored correctly
-        vote_rewards.iter().for_each(|e| {
-            if let Some(p) = &e {
-                let (k, account) = (p.0, p.1.vote_account.clone());
-                let loaded_account = bank.load_slow_with_fixed_root(&bank.ancestors, &k).unwrap();
-                assert!(accounts_equal(&loaded_account.0, &account));
-            }
-        });
+        vote_rewards
+            .iter()
+            .for_each(|(vote_key, vote_reward_info)| {
+                let loaded_account = bank
+                    .load_slow_with_fixed_root(&bank.ancestors, vote_key)
+                    .unwrap();
+                assert!(accounts_equal(
+                    &loaded_account.0,
+                    &vote_reward_info.vote_account
+                ));
+            });
     }
 
     #[test]
@@ -799,11 +800,8 @@ mod tests {
         let account = &vote_rewards_accounts.accounts_to_store[0];
         let vote_rewards = 0;
         let commission = vote_state.commission;
-        assert_eq!(
-            account.as_ref().unwrap().lamports(),
-            vote_account.lamports()
-        );
-        assert!(accounts_equal(account.as_ref().unwrap(), &vote_account));
+        assert_eq!(account.lamports(), vote_account.lamports());
+        assert!(accounts_equal(account, &vote_account));
         assert_eq!(
             rewards.1,
             RewardInfo {

@@ -952,7 +952,6 @@ struct VoteReward {
     vote_account: AccountSharedData,
     commission: u8,
     vote_rewards: u64,
-    vote_needs_store: bool,
 }
 
 type VoteRewards = DashMap<Pubkey, VoteReward>;
@@ -2498,7 +2497,6 @@ impl Bank {
                     mut vote_account,
                     commission,
                     vote_rewards,
-                    vote_needs_store,
                 },
             )| {
                 if let Err(err) = vote_account.checked_add_lamports(vote_rewards) {
@@ -2515,9 +2513,7 @@ impl Bank {
                         commission: Some(commission),
                     },
                 ));
-                result
-                    .accounts_to_store
-                    .push(vote_needs_store.then_some(vote_account));
+                result.accounts_to_store.push(vote_account);
                 result.total_vote_rewards_lamports += vote_rewards;
             },
         );

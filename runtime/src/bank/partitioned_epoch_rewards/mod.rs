@@ -66,10 +66,8 @@ pub(super) struct VoteRewardsAccounts {
     /// reward info for each vote account pubkey.
     /// This type is used by `update_reward_history()`
     pub(super) rewards: Vec<(Pubkey, RewardInfo)>,
-    /// corresponds to pubkey in `rewards`
-    /// Some if account is to be stored.
-    /// None if to be skipped.
-    pub(super) accounts_to_store: Vec<Option<AccountSharedData>>,
+    /// account to be stored, corresponds to pubkey in `rewards`
+    pub(super) accounts_to_store: Vec<AccountSharedData>,
     /// total lamports across all `vote_rewards`
     pub(super) total_vote_rewards_lamports: u64,
 }
