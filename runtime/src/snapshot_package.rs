@@ -86,7 +86,8 @@ impl AccountsPackage {
                 bank_fields_to_serialize,
                 bank_hash_stats,
                 accounts_delta_hash,
-                epoch_accounts_hash: bank.get_epoch_accounts_hash_to_serialize(),
+                must_include_epoch_accounts_hash: bank
+                    .must_include_epoch_accounts_hash_in_snapshot(),
                 write_version,
             }
         };
@@ -180,7 +181,7 @@ impl AccountsPackage {
                 bank_fields_to_serialize: BankFieldsToSerialize::default_for_tests(),
                 bank_hash_stats: BankHashStats::default(),
                 accounts_delta_hash: AccountsDeltaHash(Hash::default()),
-                epoch_accounts_hash: Option::default(),
+                must_include_epoch_accounts_hash: false,
                 write_version: StoredMetaWriteVersion::default(),
             }),
             enqueued: Instant::now(),
@@ -204,7 +205,7 @@ pub struct SupplementalSnapshotInfo {
     pub bank_fields_to_serialize: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
     pub accounts_delta_hash: AccountsDeltaHash,
-    pub epoch_accounts_hash: Option<EpochAccountsHash>,
+    pub must_include_epoch_accounts_hash: bool,
     pub write_version: StoredMetaWriteVersion,
 }
 
@@ -269,13 +270,37 @@ impl SnapshotPackage {
             }
         };
 
+        let epoch_accounts_hash = snapshot_info.must_include_epoch_accounts_hash.then(|| {
+            // If we were told we must include the EAH in the snapshot, go retrieve it now.
+            // SAFETY: Snapshot handling happens sequentially, and EAH requests must be handled
+            // prior to snapshot requests for higher slots.  Therefore, a snapshot for a slot
+            // in the EAH calculation window is guaranteed to have been handled by AHV after the
+            // EAH request.  This guarantees the EAH calc has completed prior to here.
+            accounts_package
+                .accounts
+                .accounts_db
+                .epoch_accounts_hash_manager
+                .try_get_epoch_accounts_hash()
+                .unwrap()
+        });
+
         Self {
             snapshot_kind: kind,
             slot: accounts_package.slot,
             block_height: accounts_package.block_height,
             hash: SnapshotHash::new(
+<<<<<<< HEAD
                 &accounts_hash_kind,
                 snapshot_info.epoch_accounts_hash.as_ref(),
+=======
+                &merkle_or_lattice_accounts_hash,
+                epoch_accounts_hash.as_ref(),
+                snapshot_info
+                    .bank_fields_to_serialize
+                    .accounts_lt_hash
+                    .as_ref()
+                    .map(|accounts_lt_hash| accounts_lt_hash.0.checksum()),
+>>>>>>> 5cbe43448 (Moves waiting for the EpochAccountsHash from AccountsBackgroundService to AccountsHashVerifier (#5586))
             ),
             snapshot_storages: accounts_package.snapshot_storages,
             status_cache_slot_deltas: snapshot_info.status_cache_slot_deltas,
@@ -283,7 +308,7 @@ impl SnapshotPackage {
             accounts_delta_hash: snapshot_info.accounts_delta_hash,
             bank_hash_stats: snapshot_info.bank_hash_stats,
             accounts_hash,
-            epoch_accounts_hash: snapshot_info.epoch_accounts_hash,
+            epoch_accounts_hash,
             bank_incremental_snapshot_persistence,
             write_version: snapshot_info.write_version,
             enqueued: Instant::now(),
