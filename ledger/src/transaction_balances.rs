@@ -26,9 +26,14 @@ use {
 };
 
 pub fn compile_collected_balances(
-    balance_collector: BalanceCollector,
+    balance_collector: Option<BalanceCollector>,
 ) -> (TransactionBalancesSet, TransactionTokenBalancesSet) {
-    let (native_pre, native_post, token_pre, token_post) = balance_collector.into_vecs();
+    let (native_pre, native_post, token_pre, token_post) =
+        if let Some(balance_collector) = balance_collector {
+            balance_collector.into_vecs()
+        } else {
+            (vec![], vec![], vec![], vec![])
+        };
 
     let native_balances = TransactionBalancesSet::new(native_pre, native_post);
     let token_balances = TransactionTokenBalancesSet::new(

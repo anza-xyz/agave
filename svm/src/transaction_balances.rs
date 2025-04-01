@@ -103,8 +103,20 @@ impl BalanceCollector {
         }
     }
 
-    pub fn into_vecs(self) -> (Vec<Vec<u64>>, Vec<Vec<u64>>, Vec<Vec<SvmTokenInfo>>, Vec<Vec<SvmTokenInfo>>) {
-        (self.native_pre, self.native_post, self.token_pre, self.token_post)
+    pub fn into_vecs(
+        self,
+    ) -> (
+        Vec<Vec<u64>>,
+        Vec<Vec<u64>>,
+        Vec<Vec<SvmTokenInfo>>,
+        Vec<Vec<SvmTokenInfo>>,
+    ) {
+        (
+            self.native_pre,
+            self.native_post,
+            self.token_pre,
+            self.token_post,
+        )
     }
 }
 

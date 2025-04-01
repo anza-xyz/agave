@@ -5,7 +5,7 @@ use {
         blockstore_meta::SlotMeta,
         entry_notifier_service::{EntryNotification, EntryNotifierSender},
         leader_schedule_cache::LeaderScheduleCache,
-        token_balances::collect_token_balances,
+        transaction_balances::compile_collected_balances,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     chrono_humanize::{Accuracy, HumanTime, Tense},
@@ -176,16 +176,8 @@ pub fn execute_batch<'a>(
     //   Some(_) => unified scheduler block production path
     //   None    => block verification path(s)
     let block_verification = extra_pre_commit_callback.is_none();
-    let record_token_balances = transaction_status_sender.is_some();
 
     let mut transaction_indexes = Cow::from(transaction_indexes);
-    let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
-
-    let pre_token_balances = if record_token_balances {
-        collect_token_balances(bank, batch, &mut mint_decimals)
-    } else {
-        vec![]
-    };
 
     let pre_commit_callback = |_timings: &mut _, processing_results: &_| -> PreCommitResult {
         match extra_pre_commit_callback {
@@ -222,17 +214,18 @@ pub fn execute_batch<'a>(
         }
     };
 
-    let (commit_results, balances) = batch
+    let (commit_results, balance_collector) = batch
         .bank()
         .load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             MAX_PROCESSING_AGE,
-            transaction_status_sender.is_some(),
             ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
             timings,
             log_messages_bytes_limit,
             pre_commit_callback,
         )?;
+
+    let (balances, token_balances) = compile_collected_balances(balance_collector);
 
     if block_verification {
         check_block_cost_limits_with_timing(batch, bank, timings, &commit_results)?;
@@ -256,14 +249,6 @@ pub fn execute_batch<'a>(
             .iter()
             .map(|tx| tx.as_sanitized_transaction().into_owned())
             .collect();
-        let post_token_balances = if record_token_balances {
-            collect_token_balances(bank, batch, &mut mint_decimals)
-        } else {
-            vec![]
-        };
-
-        let token_balances =
-            TransactionTokenBalancesSet::new(pre_token_balances, post_token_balances);
 
         transaction_status_sender.send_transaction_status_batch(
             bank.slot(),
