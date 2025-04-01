@@ -102,6 +102,10 @@ impl BalanceCollector {
             token_post: Vec::with_capacity(transaction_count),
         }
     }
+
+    pub fn into_vecs(self) -> (Vec<Vec<u64>>, Vec<Vec<u64>>, Vec<Vec<SvmTokenInfo>>, Vec<Vec<SvmTokenInfo>>) {
+        (self.native_pre, self.native_post, self.token_pre, self.token_post)
+    }
 }
 
 impl BalanceCollectionRoutines for BalanceCollector {
@@ -189,9 +193,10 @@ impl BalanceCollectionRoutines for Option<BalanceCollector> {
 }
 
 pub struct SvmTokenInfo {
-    pub index: u8,
+    pub account_index: u8,
     pub mint: Pubkey,
     pub amount: u64,
     pub owner: Pubkey,
-    pub mint_data: AccountSharedData,
+    pub program_id: Pubkey,
+    pub mint_account: AccountSharedData,
 }
