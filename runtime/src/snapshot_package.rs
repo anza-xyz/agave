@@ -288,20 +288,7 @@ impl SnapshotPackage {
             snapshot_kind: kind,
             slot: accounts_package.slot,
             block_height: accounts_package.block_height,
-            hash: SnapshotHash::new(
-<<<<<<< HEAD
-                &accounts_hash_kind,
-                snapshot_info.epoch_accounts_hash.as_ref(),
-=======
-                &merkle_or_lattice_accounts_hash,
-                epoch_accounts_hash.as_ref(),
-                snapshot_info
-                    .bank_fields_to_serialize
-                    .accounts_lt_hash
-                    .as_ref()
-                    .map(|accounts_lt_hash| accounts_lt_hash.0.checksum()),
->>>>>>> 5cbe43448 (Moves waiting for the EpochAccountsHash from AccountsBackgroundService to AccountsHashVerifier (#5586))
-            ),
+            hash: SnapshotHash::new(&accounts_hash_kind, epoch_accounts_hash.as_ref()),
             snapshot_storages: accounts_package.snapshot_storages,
             status_cache_slot_deltas: snapshot_info.status_cache_slot_deltas,
             bank_fields_to_serialize: snapshot_info.bank_fields_to_serialize,
