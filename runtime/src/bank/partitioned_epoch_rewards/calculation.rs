@@ -180,8 +180,10 @@ impl Bank {
                 .iter()
                 .filter_map(|account| account.as_ref())
                 .enumerate()
-                .map(|(i, account)| {
+                .inspect(|(i, _account)| {
                     total_rewards += vote_account_rewards.rewards[i].1.lamports;
+                })
+                .map(|(i, account)| {
                     (&vote_account_rewards.rewards[i].0, account)
                 })
                 .collect::<Vec<_>>();
