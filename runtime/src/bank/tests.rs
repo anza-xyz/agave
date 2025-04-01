@@ -43,7 +43,6 @@ use {
         MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0207, MAX_BLOCK_UNITS_SIMD_0256,
     },
     solana_inline_spl::token,
-    solana_ledger::transaction_balances::compile_collected_balances,
     solana_logger,
     solana_program_runtime::{
         declare_process_instruction,
@@ -5989,7 +5988,8 @@ fn test_pre_post_transaction_balances() {
         None,
     );
 
-    let (transaction_balances_set, _) = compile_collected_balances(balance_collector);
+    let (native_pre, native_post, _, _) = balance_collector.unwrap().into_vecs();
+    let transaction_balances_set = TransactionBalancesSet::new(native_pre, native_post);
 
     assert_eq!(transaction_balances_set.pre_balances.len(), 3);
     assert_eq!(transaction_balances_set.post_balances.len(), 3);

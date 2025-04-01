@@ -9707,7 +9707,6 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-inline-spl",
  "solana-lattice-hash",
- "solana-ledger",
  "solana-loader-v3-interface",
  "solana-logger",
  "solana-measure",
