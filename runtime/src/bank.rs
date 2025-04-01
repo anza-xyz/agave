@@ -6779,15 +6779,19 @@ impl Bank {
         total_accounts_stats
     }
 
+    /// Must a snapshot of this bank include the EAH?
+    pub fn must_include_epoch_accounts_hash_in_snapshot(&self) -> bool {
+        epoch_accounts_hash_utils::is_enabled_this_epoch(self)
+            && epoch_accounts_hash_utils::is_in_calculation_window(self)
+    }
+
     /// Get the EAH that will be used by snapshots
     ///
     /// Since snapshots are taken on roots, if the bank is in the EAH calculation window then an
     /// EAH *must* be included.  This means if an EAH calculation is currently in-flight we will
     /// wait for it to complete.
     pub fn get_epoch_accounts_hash_to_serialize(&self) -> Option<EpochAccountsHash> {
-        let should_get_epoch_accounts_hash = epoch_accounts_hash_utils::is_enabled_this_epoch(self)
-            && epoch_accounts_hash_utils::is_in_calculation_window(self);
-        if !should_get_epoch_accounts_hash {
+        if !self.must_include_epoch_accounts_hash_in_snapshot() {
             return None;
         }
 
