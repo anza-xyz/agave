@@ -127,29 +127,23 @@ impl BalanceCollectionRoutines for BalanceCollector {
         transaction: &impl SVMTransaction,
         load_result: &TransactionLoadResult,
     ) {
-        match load_result {
-            TransactionLoadResult::NotLoaded(_) => {
-                self.native_pre.push(vec![]);
-                self.token_pre.push(vec![]);
-            }
-            _ => {
-                let mut native_balances = Vec::with_capacity(transaction.account_keys().len());
-                let mut token_balances = vec![];
+        let mut native_balances = Vec::with_capacity(transaction.account_keys().len());
+        let mut token_balances = vec![];
 
-                for key in transaction.account_keys().iter() {
-                    let lamports = account_loader
-                        .load_account(key, false)
-                        .map(|loaded| loaded.account.lamports())
-                        .unwrap_or(0);
-                    native_balances.push(lamports);
+        for key in transaction.account_keys().iter() {
+            let lamports = account_loader
+                .load_account(key, false)
+                .map(|loaded| loaded.account.lamports())
+                .unwrap_or(0);
+            native_balances.push(lamports);
 
-                    // HANA TODO token
-                }
-
-                self.native_pre.push(native_balances);
-                self.token_pre.push(token_balances);
-            }
+            // HANA TODO token. also maybe we dont need to take load_result
+            // i was using it to skip collection for load failure
+            // it turns out tests assert balances must be produced even for failures
         }
+
+        self.native_pre.push(native_balances);
+        self.token_pre.push(token_balances);
     }
 
     fn collect_post_balances<CB: TransactionProcessingCallback>(
