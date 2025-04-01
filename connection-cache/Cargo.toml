@@ -19,12 +19,12 @@ indicatif = { workspace = true, optional = true }
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
-solana-keypair = "2.2.1"
+solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
-solana-time-utils = "2.2.1"
-solana-transaction-error = "2.2.1"
+solana-time-utils = { workspace = true }
+solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 

@@ -29,7 +29,7 @@ solana-packet = "=2.2.1"
 solana-pubkey = { version = "=2.2.1", features = ["rand"] }
 solana-signer = "=2.2.1"
 solana-system-interface = "=1.0"
-solana-system-transaction = "2.2.1"
+solana-system-transaction = "=2.2.1"
 solana-transaction = "=2.2.2"
 solana-version = { workspace = true }
 spl-memo = { workspace = true, features = ["no-entrypoint"] }
