@@ -105,14 +105,14 @@ pub(crate) trait BalanceCollectionRoutines {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
-        load_result: &TransactionLoadResult,
+        _load_result: &TransactionLoadResult,
     );
 
     fn collect_post_balances<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
-        processing_result: &TransactionProcessingResult,
+        _processing_result: &TransactionProcessingResult,
     );
 }
 
@@ -150,7 +150,7 @@ impl BalanceCollectionRoutines for BalanceCollector {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
-        load_result: &TransactionLoadResult,
+        _load_result: &TransactionLoadResult,
     ) {
         let mut native_balances = Vec::with_capacity(transaction.account_keys().len());
         let mut token_balances = vec![];
@@ -193,7 +193,7 @@ impl BalanceCollectionRoutines for BalanceCollector {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
-        processing_result: &TransactionProcessingResult,
+        _processing_result: &TransactionProcessingResult,
     ) {
         let mut native_balances = Vec::with_capacity(transaction.account_keys().len());
         let mut token_balances = vec![];
