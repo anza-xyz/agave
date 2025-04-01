@@ -5124,6 +5124,7 @@ dependencies = [
  "solana-config-program",
  "solana-epoch-schedule",
  "solana-fee-calculator",
+ "solana-inline-spl",
  "solana-instruction",
  "solana-nonce",
  "solana-program",
