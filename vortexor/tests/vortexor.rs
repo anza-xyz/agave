@@ -1,17 +1,26 @@
 use {
     crossbeam_channel::unbounded,
+    log::info,
+    solana_core::validator::ValidatorConfig,
+    solana_local_cluster::local_cluster::{ClusterConfig, LocalCluster},
     solana_net_utils::VALIDATOR_PORT_RANGE,
-    solana_sdk::{net::DEFAULT_TPU_COALESCE, pubkey::Pubkey, signature::Keypair, signer::Signer},
+    solana_sdk::{
+        native_token::LAMPORTS_PER_SOL, net::DEFAULT_TPU_COALESCE, pubkey::Pubkey,
+        signature::Keypair, signer::Signer,
+    },
     solana_streamer::{
         nonblocking::testing_utilities::check_multiple_streams,
         quic::{
             DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
         },
+        socket::SocketAddrSpace,
         streamer::StakedNodes,
     },
     solana_vortexor::{
         cli::{DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER, DEFAULT_NUM_QUIC_ENDPOINTS},
+        rpc_load_balancer,
+        stake_updater::StakeUpdater,
         vortexor::Vortexor,
     },
     std::{
@@ -21,6 +30,7 @@ use {
             Arc, RwLock,
         },
     },
+    url::Url,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -70,4 +80,64 @@ async fn test_vortexor() {
 
     exit.store(true, Ordering::Relaxed);
     vortexor.join().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_stake_update() {
+    solana_logger::setup();
+    let validator_config = ValidatorConfig::default_for_test();
+
+    let default_node_stake = 10 * LAMPORTS_PER_SOL; // Define a default value for node stake
+    let mut config = ClusterConfig {
+        node_stakes: vec![default_node_stake],
+        validator_configs: vec![validator_config],
+        ..ClusterConfig::default()
+    };
+
+    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
+    assert_eq!(cluster.validators.len(), 1);
+
+    let pubkey = cluster.entry_point_info.pubkey();
+    let validator = &cluster.validators[pubkey];
+    let rpc_addr = validator.info.contact_info.rpc().unwrap();
+    let rpc_pubsub_addr = validator.info.contact_info.rpc_pubsub().unwrap();
+    let rpc_url = Url::parse(format!("http://{}", rpc_addr.to_string()).as_str()).unwrap();
+    let ws_url = Url::parse(format!("ws://{}", rpc_pubsub_addr.to_string()).as_str()).unwrap();
+    let exit = Arc::new(AtomicBool::new(false));
+
+    let (rpc_load_balancer, slot_receiver) =
+        rpc_load_balancer::RpcLoadBalancer::new(&vec![(rpc_url, ws_url)], &exit);
+
+    // receive 2 slots
+    let mut i = 0;
+    while i < 2 {
+        let slot = slot_receiver.recv().unwrap();
+        i += 1;
+        info!("Received slot: {}", slot);
+    }
+
+    let rpc_load_balancer = Arc::new(rpc_load_balancer);
+    // Now create a stake updater service
+    let shared_staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+    let staked_nodes_updater_service = StakeUpdater::new(
+        exit.clone(),
+        rpc_load_balancer.clone(),
+        shared_staked_nodes.clone(),
+    );
+
+    loop {
+        let stakes = shared_staked_nodes.read().unwrap();
+        if let Some(stake) = stakes.get_node_stake(pubkey) {
+            info!("Stake for {}: {}", pubkey, stake);
+            let total_stake = stakes.total_stake();
+            assert_eq!(total_stake, default_node_stake);
+            break;
+        }
+        info!("Waiting for stake map to be populated for {pubkey:?}...");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    exit.store(true, Ordering::Relaxed);
+    staked_nodes_updater_service.join().unwrap();
+    cluster.exit();
+    info!("Cluster exited and joined successfully");
 }
