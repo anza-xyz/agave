@@ -376,6 +376,10 @@ impl StakedNodes {
     }
 
     pub fn get_node_stake(&self, pubkey: &Pubkey) -> Option<u64> {
+        debug!(
+            "get_node_stake: {} stake: {:?} overrides: {:?}",
+            pubkey, self.stakes, self.overrides
+        );
         self.overrides
             .get(pubkey)
             .or_else(|| self.stakes.get(pubkey))

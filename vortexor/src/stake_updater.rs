@@ -3,7 +3,7 @@
 
 use {
     crate::rpc_load_balancer::RpcLoadBalancer,
-    log::warn,
+    log::{debug, info, warn},
     solana_client::client_error,
     solana_sdk::pubkey::Pubkey,
     solana_streamer::streamer::StakedNodes,
@@ -39,10 +39,11 @@ impl StakeUpdater {
         rpc_load_balancer: Arc<RpcLoadBalancer>,
         shared_staked_nodes: Arc<RwLock<StakedNodes>>,
     ) -> Self {
+        info!("Starting stake updater thread");
         let thread_hdl = Builder::new()
             .name("stkUpdtr".to_string())
             .spawn(move || {
-                let mut last_stakes = Instant::now();
+                let mut last_stakes = None;
                 while !exit.load(Ordering::Relaxed) {
                     if let Err(err) = Self::try_refresh_stake_info(
                         &mut last_stakes,
@@ -62,13 +63,18 @@ impl StakeUpdater {
     /// Update the stake info when it has elapsed more than the
     /// STAKE_REFRESH_INTERVAL since the last time it was refreshed.
     fn try_refresh_stake_info(
-        last_refresh: &mut Instant,
+        last_refresh: &mut Option<Instant>,
         shared_staked_nodes: &Arc<RwLock<StakedNodes>>,
         rpc_load_balancer: &Arc<RpcLoadBalancer>,
     ) -> client_error::Result<()> {
-        if last_refresh.elapsed() > STAKE_REFRESH_INTERVAL {
+        if last_refresh.is_none() || last_refresh.unwrap().elapsed() > STAKE_REFRESH_INTERVAL {
             let client = rpc_load_balancer.rpc_client();
             let vote_accounts = client.get_vote_accounts()?;
+            debug!(
+                "try_refresh_stake_info: len: {} staked nodes: {:?}",
+                vote_accounts.current.len() + vote_accounts.delinquent.len(),
+                vote_accounts
+            );
 
             let stake_map = Arc::new(
                 vote_accounts
@@ -84,7 +90,12 @@ impl StakeUpdater {
                     .collect::<HashMap<Pubkey, u64>>(),
             );
 
-            *last_refresh = Instant::now();
+            *last_refresh = Some(Instant::now());
+            debug!(
+                "try_refresh_stake_info: {} staked nodes: {:?}",
+                stake_map.len(),
+                stake_map
+            );
             shared_staked_nodes
                 .write()
                 .unwrap()
