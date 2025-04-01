@@ -48,7 +48,10 @@ const FORWARD_BATCH_SIZE: usize = 128;
 /// This lookahead is needed because the immediate next leader might not have
 /// shared their forwarding ports. In such cases, we skip them and attempt to
 /// forward to the next available leader (up to this limit).
-const NUM_LOOKAHEAD_LEADERS: u64 = 2;
+///
+/// The value is chosen to ensure that the likelihood of the same leader occupying
+/// all lookahead slots is negligible.
+const NUM_LOOKAHEAD_LEADERS: u64 = 3;
 
 /// [`ForwardAddressGetter`] provides helper methods for retrieving forwarding
 /// addresses for both vote and non-vote transactions.
