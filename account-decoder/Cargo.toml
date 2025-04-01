@@ -25,6 +25,7 @@ solana-clock = { workspace = true }
 solana-config-program = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
+solana-inline-spl = { workspace = true }
 solana-instruction = { workspace = true }
 solana-nonce = { workspace = true }
 solana-program = { workspace = true }
