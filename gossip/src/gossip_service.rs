@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        cluster_info::{ClusterInfo, EvictingSender, GOSSIP_CHANNEL_CAPACITY},
+        cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
         cluster_info_metrics::submit_gossip_stats,
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
@@ -18,6 +18,7 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
+        evicting_sender::EvictingSender,
         socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
     },
