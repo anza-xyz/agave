@@ -641,6 +641,10 @@ impl AccountsBackgroundService {
                             // as any later snapshots that are taken are of
                             // slots >= bank.slot()
                             bank.flush_accounts_cache_if_needed();
+                            if bank.is_startup_verification_complete() {
+                                // See justification above for why we skip 'shrink' here.
+                                bank.shrink_candidate_slots();
+                            }
                         }
                         stats.record_and_maybe_submit(start_time.elapsed());
                         sleep(Duration::from_millis(INTERVAL_MS));
