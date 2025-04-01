@@ -108,8 +108,8 @@ impl Bank {
             thread_pool,
             metrics,
         );
-        let (vote_rewards, total_vote_rewards) =
-            self.store_vote_accounts_partitioned(vote_account_rewards, metrics);
+        let total_vote_rewards = vote_account_rewards.total_vote_rewards_lamports;
+        let vote_rewards = self.store_vote_accounts_partitioned(vote_account_rewards, metrics);
 
         // update reward history of JUST vote_rewards, stake_rewards is vec![] here
         self.update_reward_history(vec![], vote_rewards);
@@ -169,8 +169,7 @@ impl Bank {
         &self,
         vote_account_rewards: VoteRewardsAccounts,
         metrics: &RewardsMetrics,
-    ) -> (Vec<(Pubkey, RewardInfo)>, u64) {
-        let mut total_rewards = 0;
+    ) -> Vec<(Pubkey, RewardInfo)> {
         let (_, measure_us) = measure_us!({
             // reformat data to make it not sparse.
             // `StorableAccounts` does not efficiently handle sparse data.
@@ -180,12 +179,7 @@ impl Bank {
                 .iter()
                 .filter_map(|account| account.as_ref())
                 .enumerate()
-                .inspect(|(i, _account)| {
-                    total_rewards += vote_account_rewards.rewards[i].1.lamports;
-                })
-                .map(|(i, account)| {
-                    (&vote_account_rewards.rewards[i].0, account)
-                })
+                .map(|(i, account)| (&vote_account_rewards.rewards[i].0, account))
                 .collect::<Vec<_>>();
             self.store_accounts((self.slot(), &to_store[..]));
         });
@@ -194,7 +188,7 @@ impl Bank {
             .store_vote_accounts_us
             .fetch_add(measure_us, Relaxed);
 
-        (vote_account_rewards.rewards, total_rewards as u64)
+        vote_account_rewards.rewards
     }
 
     /// Calculate rewards from previous epoch to prepare for partitioned distribution.
@@ -614,12 +608,14 @@ mod tests {
                 vote_rewards_account
                     .accounts_to_store
                     .push(e.as_ref().map(|p| p.1.vote_account.clone()));
+                vote_rewards_account.total_vote_rewards_lamports += p.1.vote_rewards;
             }
         });
 
         let metrics = RewardsMetrics::default();
 
-        let (stored_vote_accounts, total_vote_rewards) =
+        let total_vote_rewards = vote_rewards_account.total_vote_rewards_lamports;
+        let stored_vote_accounts =
             bank.store_vote_accounts_partitioned(vote_rewards_account, &metrics);
         assert_eq!(expected_vote_rewards_num, stored_vote_accounts.len());
         assert_eq!(
@@ -648,9 +644,9 @@ mod tests {
         let expected = 0;
         let vote_rewards = VoteRewardsAccounts::default();
         let metrics = RewardsMetrics::default();
+        let total_vote_rewards = vote_rewards.total_vote_rewards_lamports;
 
-        let (stored_vote_accounts, total_vote_rewards) =
-            bank.store_vote_accounts_partitioned(vote_rewards, &metrics);
+        let stored_vote_accounts = bank.store_vote_accounts_partitioned(vote_rewards, &metrics);
         assert_eq!(expected, stored_vote_accounts.len());
         assert_eq!(0, total_vote_rewards);
     }

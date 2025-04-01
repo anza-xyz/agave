@@ -70,6 +70,8 @@ pub(super) struct VoteRewardsAccounts {
     /// Some if account is to be stored.
     /// None if to be skipped.
     pub(super) accounts_to_store: Vec<Option<AccountSharedData>>,
+    /// total lamports across all `vote_rewards`
+    pub(super) total_vote_rewards_lamports: u64,
 }
 
 #[derive(Debug, Default)]

@@ -2409,6 +2409,7 @@ impl Bank {
         let mut result = VoteRewardsAccounts {
             rewards: Vec::with_capacity(len),
             accounts_to_store: Vec::with_capacity(len),
+            total_vote_rewards_lamports: 0,
         };
         vote_account_rewards.into_iter().for_each(
             |(
@@ -2437,6 +2438,7 @@ impl Bank {
                 result
                     .accounts_to_store
                     .push(vote_needs_store.then_some(vote_account));
+                result.total_vote_rewards_lamports += vote_rewards;
             },
         );
         result
