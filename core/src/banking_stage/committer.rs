@@ -156,7 +156,6 @@ impl Committer {
                     }
                 })
                 .collect();
-            // TODO: pass costs along here
             transaction_status_sender.send_transaction_status_batch(
                 bank.slot(),
                 txs,
@@ -169,6 +168,7 @@ impl Committer {
                     std::mem::take(&mut pre_balance_info.token),
                     post_token_balances,
                 ),
+                vec![], // TODO: get actual costs here
                 batch_transaction_indexes,
             );
         }
