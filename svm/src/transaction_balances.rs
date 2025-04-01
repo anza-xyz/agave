@@ -145,6 +145,9 @@ impl BalanceCollector {
     }
 }
 
+// HANA we probably want to capture the balance timings in txp
+// make sure to delete any writes to those timings that might exist in runtime/ledger/core
+// in any event our version should be much faster than the existing one since we use AccountLoader
 impl BalanceCollectionRoutines for BalanceCollector {
     fn collect_pre_balances<CB: TransactionProcessingCallback>(
         &mut self,
@@ -253,6 +256,7 @@ impl BalanceCollectionRoutines for Option<BalanceCollector> {
     }
 }
 
+// HANA if we add mints to inline-spl we could parse the mint here instead of holding it
 pub struct SvmTokenInfo {
     pub account_index: u8,
     pub mint: Pubkey,
