@@ -85,9 +85,18 @@ use {
 // * load the mint and check its owner or else skip
 // * now we have the info we need, push the struct
 // as noted elsewhere, it could be nice to add mint parsing to inline-spl but im undecided
+//
+// HANA UPDATE first draft is done, this should work
+// should because i dont know if the token balances are tested anywhere. bank tests lamport balances
+// one thing thats a bit odd is im not sure if we should collect bals for *discarded* transactions
+// bank tests expect to see bals for "failed" but they trigger an unrecoverable loading failure on purpose
+// ie TransactionLoadResult::NotLoaded rather than TransactionLoadResult::FeesOnly
+// we should debate whether the test is wrong. i dont know if discarded transactions get statussenderized
+// they dont get written to the ledger and arent confirmed so cant be pulled by getTransaction tho
 
-// HANA the first one of these has an equivalent in runtime/ we could move down and export
-// the second shouldnt be exported. but i need to take a pass looking for code to delete
+// HANA the native one of these has an equivalent in runtime/ we could move down here and export
+// the token one shouldnt be exported. but i need to take a pass looking for code to delete
+// im pretty sure i can delete the entire token balance module in ledger/
 type NativeBalances = Vec<Vec<u64>>;
 type TokenBalances = Vec<Vec<SvmTokenInfo>>;
 
@@ -107,7 +116,6 @@ pub(crate) trait BalanceCollectionRoutines {
     );
 }
 
-// HANA TODO maybe type aliases for these, move the vecvecu64 alias down here
 pub struct BalanceCollector {
     native_pre: NativeBalances,
     native_post: NativeBalances,
@@ -177,14 +185,10 @@ impl BalanceCollectionRoutines for BalanceCollector {
         self.token_pre.push(token_balances);
     }
 
-    // HANA NOTE this is basically the same function as the above but they would diverge if we optimized
+    // HANA NOTE this is identical to the above function, but i left it as-is in case we want to optimize
     // eg, failed or fee-only we can clone the pre-bal vecs and edit fee-payer
-    // can also get bals off the result... maybe not worth it tho
-    // the other thing thats a bit odd is im not sure if we collect bals for *discarded* transactions
-    // bank tests expect to see bals for "failed" but they trigger an unrecoverable loading failure on purpose
-    // ie TransactionLoadResult::NotLoaded rather than TransactionLoadResult::FeesOnly
-    // we should debate whether the test is wrong. i dont know if discarded transactions get statussenderized
-    // they dont get written to the ledger and arent confirmed so cant be pulled by getTransaction tho
+    // can also get bals off the result... maybe not worth it tho. loader is cheap
+    // and we cannot clone the token accounts because the mints might have changed
     fn collect_post_balances<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
@@ -194,14 +198,30 @@ impl BalanceCollectionRoutines for BalanceCollector {
         let mut native_balances = Vec::with_capacity(transaction.account_keys().len());
         let mut token_balances = vec![];
 
-        for key in transaction.account_keys().iter() {
-            let lamports = account_loader
-                .load_account(key, false)
-                .map(|loaded| loaded.account.lamports())
-                .unwrap_or(0);
-            native_balances.push(lamports);
+        let has_token_program = transaction.account_keys().iter().any(is_known_spl_token_id);
 
-            // HANA TODO token
+        for (index, key) in transaction.account_keys().iter().enumerate() {
+            let Some(account) = account_loader
+                .load_account(key, false)
+                .map(|loaded| loaded.account)
+            else {
+                native_balances.push(0);
+                continue;
+            };
+
+            native_balances.push(account.lamports());
+
+            if has_token_program
+                && !transaction.is_invoked(index)
+                && !is_known_spl_token_id(key)
+                && is_known_spl_token_id(account.owner())
+            {
+                if let Some(token_info) =
+                    SvmTokenInfo::unpack_token_account(account_loader, &account, index)
+                {
+                    token_balances.push(token_info);
+                }
+            }
         }
 
         self.native_post.push(native_balances);
