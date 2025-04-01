@@ -247,8 +247,8 @@ pub fn execute_batch<'a>(
     let committed_transactions = commit_results
         .iter()
         .zip(batch.sanitized_transactions())
-        .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx))
-        .collect_vec();
+        .map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
+    prioritization_fee_cache.update(bank, committed_transactions);
 
     if let Some(transaction_status_sender) = transaction_status_sender {
         let transactions: Vec<SanitizedTransaction> = batch
@@ -274,8 +274,6 @@ pub fn execute_batch<'a>(
             transaction_indexes.into_owned(),
         );
     }
-
-    prioritization_fee_cache.update(bank, committed_transactions.into_iter());
 
     Ok(())
 }

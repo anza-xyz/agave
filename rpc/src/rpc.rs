@@ -4916,12 +4916,15 @@ pub mod tests {
 
         fn update_prioritization_fee_cache(&self, transactions: Vec<Transaction>) {
             let bank = self.working_bank();
-            let prioritization_fee_cache = &self.meta.prioritization_fee_cache;
+
             let transactions: Vec<_> = transactions
                 .into_iter()
                 .map(RuntimeTransaction::from_transaction_for_tests)
                 .collect();
-            prioritization_fee_cache.update(&bank, transactions.iter());
+            let transactions_iter = transactions.iter().map(Some);
+
+            let prioritization_fee_cache = &self.meta.prioritization_fee_cache;
+            prioritization_fee_cache.update(&bank, transactions_iter);
         }
 
         fn get_prioritization_fee_cache(&self) -> &PrioritizationFeeCache {

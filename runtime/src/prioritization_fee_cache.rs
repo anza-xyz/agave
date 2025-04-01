@@ -197,10 +197,14 @@ impl PrioritizationFeeCache {
     pub fn update<'a, Tx: TransactionWithMeta + 'a>(
         &self,
         bank: &Bank,
-        txs: impl Iterator<Item = &'a Tx>,
+        txs: impl Iterator<Item = Option<&'a Tx>>,
     ) {
         let (_, send_updates_us) = measure_us!({
             for sanitized_transaction in txs {
+                let Some(sanitized_transaction) = sanitized_transaction else {
+                    continue;
+                };
+
                 // Vote transactions are not prioritized, therefore they are excluded from
                 // updating fee_cache.
                 if sanitized_transaction.is_simple_vote_transaction() {
@@ -478,7 +482,7 @@ mod tests {
             .load(Ordering::Relaxed)
             .saturating_add(txs.len() as u64);
 
-        prioritization_fee_cache.update(&bank, txs);
+        prioritization_fee_cache.update(&bank, txs.map(Some));
 
         // wait till expected number of transaction updates have occurred...
         while prioritization_fee_cache

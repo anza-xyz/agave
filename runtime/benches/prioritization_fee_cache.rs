@@ -60,7 +60,7 @@ fn bench_process_transactions_single_slot(bencher: &mut Bencher) {
         .collect();
 
     bencher.iter(|| {
-        prioritization_fee_cache.update(&bank, transactions.iter());
+        prioritization_fee_cache.update(&bank, transactions.iter().map(Some));
     });
 }
 
@@ -88,7 +88,7 @@ fn process_transactions_multiple_slots(banks: &[Arc<Bank>], num_slots: usize, nu
 
             let index = thread_rng().gen_range(0..num_slots);
 
-            prioritization_fee_cache.update(&banks[index], transactions.iter());
+            prioritization_fee_cache.update(&banks[index], transactions.iter().map(Some));
         })
     }
 }
