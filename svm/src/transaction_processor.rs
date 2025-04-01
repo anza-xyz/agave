@@ -845,7 +845,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut executed_units = 0u64;
         let sysvar_cache = &self.sysvar_cache.read().unwrap();
         let epoch_vote_account_stake_callback =
-            |pubkey| callback.get_current_epoch_vote_account_stake(pubkey);
+            |pubkey| callback.get_epoch_stake_for_vote_account(pubkey);
 
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
@@ -1094,7 +1094,7 @@ mod tests {
         solana_rent_debits::RentDebits,
         solana_sdk_ids::{bpf_loader, system_program, sysvar},
         solana_signature::Signature,
-        solana_svm_callback::AccountState,
+        solana_svm_callback::{AccountState, EpochStakeCallback},
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_context::TransactionContext,
         solana_transaction_error::{TransactionError, TransactionError::DuplicateInstruction},
@@ -1123,6 +1123,8 @@ mod tests {
         inspected_accounts:
             Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
     }
+
+    impl EpochStakeCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {

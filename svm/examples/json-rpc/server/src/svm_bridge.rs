@@ -31,7 +31,7 @@ use {
         transaction_processing_result::TransactionProcessingResult,
         transaction_processor::TransactionBatchProcessor,
     },
-    solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_callback::{EpochStakeCallback, TransactionProcessingCallback},
     std::{
         collections::HashMap,
         sync::{Arc, RwLock},
@@ -58,6 +58,8 @@ pub struct MockBankCallback {
     pub feature_set: Arc<FeatureSet>,
     pub account_shared_data: RwLock<HashMap<Pubkey, AccountSharedData>>,
 }
+
+impl EpochStakeCallback for MockBankCallback {}
 
 impl TransactionProcessingCallback for MockBankCallback {
     fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {

@@ -171,7 +171,7 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
-    solana_svm_callback::{AccountState, TransactionProcessingCallback},
+    solana_svm_callback::{AccountState, EpochStakeCallback, TransactionProcessingCallback},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_transaction_context::{TransactionAccount, TransactionReturnData},
@@ -6962,6 +6962,19 @@ impl Bank {
     }
 }
 
+impl EpochStakeCallback for Bank {
+    fn get_epoch_stake(&self) -> u64 {
+        self.get_current_epoch_total_stake()
+    }
+
+    fn get_epoch_stake_for_vote_account(&self, vote_address: &Pubkey) -> u64 {
+        self.get_current_epoch_vote_accounts()
+            .get(vote_address)
+            .map(|(stake, _)| (*stake))
+            .unwrap_or(0)
+    }
+}
+
 impl TransactionProcessingCallback for Bank {
     fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
         self.rc
@@ -7021,13 +7034,6 @@ impl TransactionProcessingCallback for Bank {
         if self.is_accounts_lt_hash_enabled() {
             self.inspect_account_for_accounts_lt_hash(address, &account_state, is_writable);
         }
-    }
-
-    fn get_current_epoch_vote_account_stake(&self, vote_address: &Pubkey) -> u64 {
-        self.get_current_epoch_vote_accounts()
-            .get(vote_address)
-            .map(|(stake, _)| (*stake))
-            .unwrap_or(0)
     }
 }
 

@@ -30,7 +30,7 @@ use {
         sysvar::SysvarId,
     },
     solana_svm::transaction_processor::TransactionBatchProcessor,
-    solana_svm_callback::{AccountState, TransactionProcessingCallback},
+    solana_svm_callback::{AccountState, EpochStakeCallback, TransactionProcessingCallback},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_type_overrides::sync::{Arc, RwLock},
     std::{
@@ -66,6 +66,8 @@ pub struct MockBankCallback {
     pub inspected_accounts:
         Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
 }
+
+impl EpochStakeCallback for MockBankCallback {}
 
 impl TransactionProcessingCallback for MockBankCallback {
     fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {

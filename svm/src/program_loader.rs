@@ -257,6 +257,7 @@ mod tests {
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
+        solana_svm_callback::EpochStakeCallback,
         std::{
             cell::RefCell,
             collections::HashMap,
@@ -278,6 +279,8 @@ mod tests {
     pub(crate) struct MockBankCallback {
         pub(crate) account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
     }
+
+    impl EpochStakeCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
