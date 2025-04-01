@@ -1,13 +1,12 @@
 use {
     super::{
-        committer::{CommitTransactionDetails, Committer, PreBalanceInfo},
+        committer::{CommitTransactionDetails, Committer},
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
     itertools::Itertools,
     solana_fee::FeeFeatures,
-    solana_ledger::token_balances::collect_token_balances,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -247,18 +246,6 @@ impl Consumer {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
 
-        let mut pre_balance_info = PreBalanceInfo::default();
-        let (_, collect_balances_us) = measure_us!({
-            // If the extra meta-data services are enabled for RPC, collect the
-            // pre-balances for native and token programs.
-            if transaction_status_sender_enabled {
-                pre_balance_info.native = bank.collect_balances(batch);
-                pre_balance_info.token =
-                    collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals)
-            }
-        });
-        execute_and_commit_timings.collect_balances_us = collect_balances_us;
-
         let min_max = batch
             .sanitized_transactions()
             .iter()
@@ -334,14 +321,6 @@ impl Consumer {
             balance_collector,
         } = load_and_execute_transactions_output;
 
-        // XXX get balances here and pass down to committer, get rid of balance info
-
-        // HANA TODO NEXT UP
-        // i need a function in ledger/ that turns BalanceCollector into balance sets
-        // this means transforming SvmTokenInfo into the token thing it wants
-        // then wire this through core and ledger to use its balances instead
-        // this will compile but token vecs are empty. last thing to do is fill them
-
         let transaction_counts = LeaderProcessedTransactionCounts {
             processed_count: processed_counts.processed_transactions_count,
             processed_with_successful_result_count: processed_counts
@@ -405,7 +384,7 @@ impl Consumer {
                     processing_results,
                     starting_transaction_index,
                     bank,
-                    &mut pre_balance_info,
+                    balance_collector,
                     &mut execute_and_commit_timings,
                     &processed_counts,
                 )
