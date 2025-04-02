@@ -848,7 +848,6 @@ pub fn process_deploy_program(
         initial_messages,
         write_messages,
         final_messages,
-        upload_signer_index,
         lamports_required.saturating_sub(existing_lamports),
         config.output_format.formatted_string(&CliProgramId {
             program_id: program_address.to_string(),
@@ -897,7 +896,6 @@ fn process_retract_program(
         vec![instructions],
         Vec::default(),
         Vec::default(),
-        None,
         0,
         config.output_format.formatted_string(&CliProgramId {
             program_id: program_address.to_string(),
@@ -931,7 +929,6 @@ fn process_transfer_authority_of_program(
         messages,
         Vec::default(),
         Vec::default(),
-        Some(new_auth_signer_index),
         0,
         config.output_format.formatted_string(&CliProgramId {
             program_id: program_address.to_string(),
@@ -965,7 +962,6 @@ fn process_finalize_program(
         messages,
         Vec::default(),
         Vec::default(),
-        None,
         0,
         config.output_format.formatted_string(&CliProgramId {
             program_id: program_address.to_string(),
@@ -1055,12 +1051,10 @@ fn send_messages(
     initial_messages: Vec<Vec<Instruction>>,
     write_messages: Vec<Vec<Instruction>>,
     final_messages: Vec<Vec<Instruction>>,
-    extra_signer_index: Option<&SignerIndex>,
     balance_needed: u64,
     ok_result: String,
 ) -> ProcessResult {
     let payer_pubkey = config.signers[0].pubkey();
-    let extra_signer = extra_signer_index.map(|index| config.signers[*index]);
     let blockhash = additional_cli_config
         .blockhash_query
         .get_blockhash(&rpc_client, config.commitment)?;
@@ -1110,9 +1104,19 @@ fn send_messages(
         config.commitment,
     )?;
 
-    let send_or_return_message = |message: Message, signers: &[&dyn Signer]| {
+    let send_or_return_message = |message: Message| {
+        let signers = (0..message.header.num_required_signatures)
+            .map(|signer_index| {
+                let key = message.account_keys[signer_index as usize];
+                config
+                    .signers
+                    .iter()
+                    .find(|signer| signer.pubkey() == key)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
         let mut tx = Transaction::new_unsigned(message);
-        tx.try_sign(signers, blockhash)?;
+        tx.try_sign(&signers, blockhash)?;
         if additional_cli_config.sign_only {
             return_signers_with_config(
                 &tx,
@@ -1134,25 +1138,7 @@ fn send_messages(
     };
 
     for message in initial_messages.into_iter() {
-        let use_extra_signer = extra_signer
-            .and_then(|keypair| {
-                message
-                    .account_keys
-                    .iter()
-                    .position(|pubkey| pubkey == &keypair.pubkey())
-            })
-            .map(|index_in_message| message.is_signer(index_in_message))
-            .unwrap_or(false);
-        let signers: &[_] = if use_extra_signer {
-            &[
-                config.signers[0],
-                config.signers[*auth_signer_index],
-                extra_signer.unwrap(),
-            ]
-        } else {
-            &[config.signers[0], config.signers[*auth_signer_index]]
-        };
-        let result = send_or_return_message(message, signers)?;
+        let result = send_or_return_message(message)?;
         if additional_cli_config.sign_only {
             return Ok(result);
         }
@@ -1217,10 +1203,7 @@ fn send_messages(
     }
 
     for message in final_messages.into_iter() {
-        let result = send_or_return_message(
-            message,
-            &[config.signers[0], config.signers[*auth_signer_index]],
-        )?;
+        let result = send_or_return_message(message)?;
         if additional_cli_config.sign_only {
             return Ok(result);
         }
