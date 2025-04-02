@@ -460,7 +460,7 @@ solana-log-collector = { path = "log-collector", version = "=2.3.0" }
 solana-logger = "2.3.1"
 solana-measure = { path = "measure", version = "=2.3.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=2.3.0" }
-solana-message = "2.2.1"
+solana-message = "2.3.0"
 solana-metrics = { path = "metrics", version = "=2.3.0" }
 solana-msg = "2.2.1"
 solana-native-token = "2.2.1"
