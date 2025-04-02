@@ -108,7 +108,7 @@ impl Committer {
             let committed_transactions = commit_results
                 .iter()
                 .zip(batch.sanitized_transactions())
-                .map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
+                .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
             self.prioritization_fee_cache
                 .update(bank, committed_transactions);
 

@@ -247,7 +247,7 @@ pub fn execute_batch<'a>(
     let committed_transactions = commit_results
         .iter()
         .zip(batch.sanitized_transactions())
-        .map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
+        .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
     prioritization_fee_cache.update(bank, committed_transactions);
 
     if let Some(transaction_status_sender) = transaction_status_sender {
