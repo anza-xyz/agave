@@ -129,7 +129,7 @@ impl VoteStorage {
     // returns `true` if the end of slot is reached
     pub fn process_packets<F>(
         &mut self,
-        bank: Arc<Bank>,
+        bank: &Bank,
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
         mut processing_function: F,
@@ -149,9 +149,7 @@ impl VoteStorage {
         // Based on the stake distribution present in the supplied bank, drain the unprocessed votes
         // from each validator using a weighted random ordering. Votes from validators with
         // 0 stake are ignored.
-        let all_vote_packets = self
-            .latest_unprocessed_votes
-            .drain_unprocessed(bank.clone());
+        let all_vote_packets = self.latest_unprocessed_votes.drain_unprocessed(bank);
 
         let deprecate_legacy_vote_ixs = self
             .latest_unprocessed_votes
@@ -169,7 +167,7 @@ impl VoteStorage {
             vote_packets.clear();
             chunk.iter().for_each(|packet| {
                 if consume_scan_should_process_packet(
-                    &bank,
+                    bank,
                     banking_stage_stats,
                     packet,
                     reached_end_of_slot,
@@ -282,7 +280,7 @@ mod tests {
         // When processing packets, return all packets as retryable so that they
         // are reinserted into storage
         let _ = transaction_storage.process_packets(
-            bank.clone(),
+            &bank,
             &BankingStageStats::default(),
             &mut LeaderSlotMetricsTracker::new(0),
             |packets_to_process_len,
