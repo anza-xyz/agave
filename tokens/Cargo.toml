@@ -26,7 +26,7 @@ solana-cli-config = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
-solana-sdk = { workspace = true }
+solana-sdk = "=2.2.2"
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-associated-token-account = { workspace = true }

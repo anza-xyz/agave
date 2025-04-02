@@ -35,26 +35,26 @@ solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-frozen-abi = { version = "=2.2.1", optional = true, features = [
     "frozen-abi",
 ] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+solana-frozen-abi-macro = { version = "=2.2.1", optional = true, features = [
     "frozen-abi",
 ] }
 solana-ledger = { workspace = true }
-solana-logger = { workspace = true }
+solana-logger = "=2.3.1"
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { version = "=2.2.1", features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sanitize = { workspace = true }
-solana-sdk = { workspace = true }
-solana-serde-varint = { workspace = true }
-solana-short-vec = { workspace = true }
+solana-sanitize = "=2.2.1"
+solana-sdk = "=2.2.2"
+solana-serde-varint = "=2.2.1"
+solana-short-vec = "=2.2.1"
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-version = { workspace = true }

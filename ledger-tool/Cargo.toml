@@ -42,14 +42,14 @@ solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-log-collector = { workspace = true }
-solana-logger = { workspace = true }
+solana-logger = "=2.3.1"
 solana-measure = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true }
 solana-sbpf = { workspace = true, features = ["debugger"] }
-solana-sdk = { workspace = true, features = ["openssl-vendored"] }
+solana-sdk = { version = "=2.2.2", features = ["openssl-vendored"] }
 solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
