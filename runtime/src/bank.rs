@@ -2513,7 +2513,7 @@ impl Bank {
                         commission: Some(commission),
                     },
                 ));
-                result.accounts_to_store.push(vote_account);
+                result.accounts_to_store.push((vote_pubkey, vote_account));
                 result.total_vote_rewards_lamports += vote_rewards;
             },
         );

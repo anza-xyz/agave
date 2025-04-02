@@ -12983,7 +12983,7 @@ fn test_calc_vote_accounts_to_store_normal() {
             assert_eq!(result.rewards.len(), result.accounts_to_store.len());
             assert_eq!(result.rewards.len(), 1);
             let rewards = &result.rewards[0];
-            let account = &result.accounts_to_store[0];
+            let account = &result.accounts_to_store[0].1;
             _ = vote_account.checked_add_lamports(vote_rewards);
             assert!(accounts_equal(account, &vote_account));
             assert_eq!(

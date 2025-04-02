@@ -171,16 +171,7 @@ impl Bank {
         metrics: &RewardsMetrics,
     ) -> Vec<(Pubkey, RewardInfo)> {
         let (_, measure_us) = measure_us!({
-            // reformat data to make it not sparse.
-            // `StorableAccounts` does not efficiently handle sparse data.
-            // Not all entries in `vote_account_rewards.accounts_to_store` have a Some(account) to store.
-            let to_store = vote_account_rewards
-                .accounts_to_store
-                .iter()
-                .enumerate()
-                .map(|(i, account)| (&vote_account_rewards.rewards[i].0, account))
-                .collect::<Vec<_>>();
-            self.store_accounts((self.slot(), &to_store[..]));
+            self.store_accounts((self.slot(), &vote_account_rewards.accounts_to_store[..]));
         });
 
         metrics
@@ -605,7 +596,7 @@ mod tests {
                 vote_rewards_account.rewards.push((*vote_key, info));
                 vote_rewards_account
                     .accounts_to_store
-                    .push(vote_reward_info.vote_account.clone());
+                    .push((*vote_key, vote_reward_info.vote_account.clone()));
                 vote_rewards_account.total_vote_rewards_lamports += vote_reward_info.vote_rewards;
             });
 
@@ -797,7 +788,7 @@ mod tests {
         );
         assert_eq!(vote_rewards_accounts.rewards.len(), 1);
         let rewards = &vote_rewards_accounts.rewards[0];
-        let account = &vote_rewards_accounts.accounts_to_store[0];
+        let account = &vote_rewards_accounts.accounts_to_store[0].1;
         let vote_rewards = 0;
         let commission = vote_state.commission;
         assert_eq!(account.lamports(), vote_account.lamports());
