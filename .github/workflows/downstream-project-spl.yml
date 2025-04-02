@@ -61,9 +61,9 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.5
+      - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.9.1"
+          version: "v0.10.0"
 
       - shell: bash
         run: |
@@ -89,9 +89,9 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.5
+      - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.9.1"
+          version: "v0.10.0"
 
       - shell: bash
         run: |
@@ -127,9 +127,9 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.5
+      - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.9.1"
+          version: "v0.10.0"
 
       - shell: bash
         run: |

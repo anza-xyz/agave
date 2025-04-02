@@ -40,9 +40,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mozilla-actions/sccache-action@v0.0.5
+      - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.9.1"
+          version: "v0.10.0"
 
       # took the workaround from https://github.com/sfackler/rust-openssl/issues/2149
       - name: Set Perl environment variables
