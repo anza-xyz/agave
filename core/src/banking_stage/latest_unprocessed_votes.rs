@@ -461,7 +461,7 @@ impl LatestUnprocessedVotes {
             });
     }
 
-    pub(super) fn should_deprecate_legacy_vote_ixs(&self) -> bool {
+    pub fn should_deprecate_legacy_vote_ixs(&self) -> bool {
         self.deprecate_legacy_vote_ixs.load(Ordering::Relaxed)
     }
 }
