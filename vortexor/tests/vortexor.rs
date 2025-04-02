@@ -134,6 +134,7 @@ async fn test_stake_update() {
             break;
         }
         info!("Waiting for stake map to be populated for {pubkey:?}...");
+        drop(stakes); // Drop the read lock before sleeping
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
     exit.store(true, Ordering::Relaxed);
