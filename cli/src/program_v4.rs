@@ -652,6 +652,13 @@ pub fn process_deploy_program(
     let program_account = rpc_client
         .get_account_with_commitment(program_address, config.commitment)?
         .value;
+    let buffer_account = if let Some(buffer_address) = buffer_address {
+        rpc_client
+            .get_account_with_commitment(buffer_address, config.commitment)?
+            .value
+    } else {
+        None
+    };
     let program_account_exists = program_account.is_some();
     if upload_signer_index
         .map(|index| &config.signers[*index].pubkey() == program_address)
@@ -665,6 +672,16 @@ pub fn process_deploy_program(
         // Redeploy an existing program
         if !program_account_exists {
             return Err("Program account does not exist. Did you perhaps intent to deploy a new program instead? Then use --program-keypair instead of --program-id.".into());
+        }
+    }
+    if let Some(program_account) = program_account.as_ref() {
+        if !loader_v4::check_id(&program_account.owner) {
+            return Err(format!("{program_address} is not owned by loader-v4").into());
+        }
+    }
+    if let Some(buffer_account) = buffer_account.as_ref() {
+        if !loader_v4::check_id(&buffer_account.owner) {
+            return Err(format!("{} is not owned by loader-v4", buffer_address.unwrap()).into());
         }
     }
 
@@ -889,6 +906,9 @@ fn process_retract_program(
     else {
         return Err("Program account does not exist".into());
     };
+    if !loader_v4::check_id(&program_account.owner) {
+        return Err(format!("{program_address} is not owned by loader-v4").into());
+    }
 
     let mut instructions = Vec::default();
     let retract_instruction =
@@ -928,6 +948,17 @@ fn process_transfer_authority_of_program(
     new_auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
 ) -> ProcessResult {
+    if let Some(program_account) = rpc_client
+        .get_account_with_commitment(program_address, config.commitment)?
+        .value
+    {
+        if !loader_v4::check_id(&program_account.owner) {
+            return Err(format!("{program_address} is not owned by loader-v4").into());
+        }
+    } else {
+        return Err(format!("Unable to find the account {program_address}").into());
+    }
+
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
     let new_authority_pubkey = config.signers[*new_auth_signer_index].pubkey();
 
@@ -961,6 +992,17 @@ fn process_finalize_program(
     next_version_signer_index: &SignerIndex,
     program_address: &Pubkey,
 ) -> ProcessResult {
+    if let Some(program_account) = rpc_client
+        .get_account_with_commitment(program_address, config.commitment)?
+        .value
+    {
+        if !loader_v4::check_id(&program_account.owner) {
+            return Err(format!("{program_address} is not owned by loader-v4").into());
+        }
+    } else {
+        return Err(format!("Unable to find the account {program_address}").into());
+    }
+
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
     let next_version_pubkey = config.signers[*next_version_signer_index].pubkey();
 
@@ -1017,10 +1059,10 @@ fn process_show(
                         status: status.to_string(),
                     }))
                 } else {
-                    Err(format!("{program_address} SBF program state is invalid").into())
+                    Err(format!("{program_address} program state is invalid").into())
                 }
             } else {
-                Err(format!("{program_address} is not an SBF program").into())
+                Err(format!("{program_address} is not owned by loader-v4").into())
             }
         } else {
             Err(format!("Unable to find the account {program_address}").into())
@@ -1048,7 +1090,7 @@ pub fn process_dump(
                 f.write_all(&account.data[LoaderV4State::program_data_offset()..])?;
                 Ok(format!("Wrote program to {output_location}"))
             } else {
-                Err(format!("{account_pubkey} is not an SBF program").into())
+                Err(format!("{account_pubkey} is not owned by loader-v4").into())
             }
         } else {
             Err(format!("Unable to find the account {account_pubkey}").into())
@@ -1234,7 +1276,7 @@ fn build_retract_instruction(
     authority: &Pubkey,
 ) -> Result<Option<Instruction>, Box<dyn std::error::Error>> {
     if !loader_v4::check_id(&account.owner) {
-        return Err("Buffer account passed is already in use by another program".into());
+        return Ok(None);
     }
 
     if let Ok(LoaderV4State {
@@ -1267,12 +1309,17 @@ fn build_set_program_length_instructions(
     buffer_address: &Pubkey,
     program_data_length: u32,
 ) -> Result<(Vec<Instruction>, u64), Box<dyn std::error::Error>> {
-    if !loader_v4::check_id(&account.owner) {
-        return Err("Buffer account passed is already in use by another program".into());
-    }
-
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
+    let expected_account_data_len =
+        LoaderV4State::program_data_offset().saturating_add(program_data_length as usize);
+
+    let lamports_required =
+        rpc_client.get_minimum_balance_for_rent_exemption(expected_account_data_len)?;
+
+    if !loader_v4::check_id(&account.owner) {
+        return Ok((Vec::default(), lamports_required));
+    }
 
     if !account.data.is_empty() {
         if let Ok(LoaderV4State {
