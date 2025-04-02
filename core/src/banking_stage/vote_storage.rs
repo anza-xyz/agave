@@ -126,6 +126,10 @@ impl VoteStorage {
         )
     }
 
+    pub fn drain_unprocessed(&self, bank: &Bank) -> Vec<Arc<ImmutableDeserializedPacket>> {
+        self.latest_unprocessed_votes.drain_unprocessed(bank)
+    }
+
     // returns `true` if the end of slot is reached
     pub fn process_packets<F>(
         &mut self,
