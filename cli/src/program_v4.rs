@@ -325,8 +325,8 @@ impl ProgramV4SubCommands for App<'_, '_> {
                         )),
                 )
                 .subcommand(
-                    SubCommand::with_name("dump")
-                        .about("Write the program data to a file")
+                    SubCommand::with_name("download")
+                        .about("Download the executable of a program to a file")
                         .arg(
                             Arg::with_name("path-to-elf")
                                 .index(1)
@@ -513,7 +513,7 @@ pub fn parse_program_v4_subcommand(
                 all: matches.is_present("all"),
             }))
         }
-        ("dump", Some(matches)) => {
+        ("download", Some(matches)) => {
             CliCommandInfo::without_signers(CliCommand::ProgramV4(ProgramV4CliCommand::Dump {
                 account_pubkey: pubkey_of(matches, "program-id"),
                 output_location: matches.value_of("path-to-elf").unwrap().to_string(),
