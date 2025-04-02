@@ -753,7 +753,7 @@ pub fn process_deploy_program(
         .map_err(|err| format!("ELF error: {err}"))?;
 
     // Create and add retract message
-    let mut initial_messages = Vec::default();
+    let mut initial_instructions = Vec::default();
     let mut retract_instruction = None;
     if let Some(program_account) = program_account.as_ref() {
         retract_instruction =
@@ -773,7 +773,7 @@ pub fn process_deploy_program(
     // Create and add create_buffer message
     if let Some(upload_account) = upload_account.as_ref() {
         if system_program::check_id(&upload_account.owner) {
-            initial_messages.push(vec![
+            initial_instructions.append(&mut vec![
                 system_instruction::transfer(&payer_pubkey, upload_address, lamports_required),
                 system_instruction::assign(upload_address, &loader_v4::id()),
                 instruction::set_program_length(
@@ -785,7 +785,7 @@ pub fn process_deploy_program(
             ]);
         }
     } else {
-        initial_messages.push(instruction::create_buffer(
+        initial_instructions.append(&mut instruction::create_buffer(
             &payer_pubkey,
             upload_address,
             lamports_required,
@@ -811,7 +811,7 @@ pub fn process_deploy_program(
 
         // Create and add set_program_length message
         if let Some(upload_account) = upload_account.as_ref() {
-            let (set_program_length_instructions, _lamports_required) =
+            let (mut set_program_length_instructions, _lamports_required) =
                 build_set_program_length_instructions(
                     rpc_client.clone(),
                     config,
@@ -821,7 +821,7 @@ pub fn process_deploy_program(
                     program_data.len() as u32,
                 )?;
             if !set_program_length_instructions.is_empty() {
-                initial_messages.push(set_program_length_instructions);
+                initial_instructions.append(&mut set_program_length_instructions);
             }
         }
 
@@ -850,16 +850,15 @@ pub fn process_deploy_program(
     }
 
     // Create and add deploy messages
-    let final_messages = if buffer_address == Some(program_address) {
+    let mut final_instructions = Vec::default();
+    if buffer_address == Some(program_address) {
         // Upload to buffer only and skip actual deployment
-        Vec::new()
     } else if buffer_address.is_some() {
         // Redeploy with a buffer account
-        let mut instructions = Vec::default();
         if let Some(retract_instruction) = retract_instruction {
-            instructions.push(retract_instruction);
+            final_instructions.push(retract_instruction);
         }
-        instructions.push(instruction::deploy_from_source(
+        final_instructions.push(instruction::deploy_from_source(
             program_address,
             &authority_pubkey,
             upload_address,
@@ -871,31 +870,35 @@ pub fn process_deploy_program(
         if upload_signer_index.is_some() {
             lamports_to_retrive = lamports_to_retrive.saturating_add(lamports_required);
         }
-        instructions.push(system_instruction::transfer(
+        final_instructions.push(system_instruction::transfer(
             upload_address,
             &payer_pubkey,
             lamports_to_retrive,
         ));
-        vec![instructions]
     } else {
         // Deploy new program or redeploy without a buffer account
         if let Some(retract_instruction) = retract_instruction {
-            initial_messages.insert(0, vec![retract_instruction]);
+            initial_instructions.insert(0, retract_instruction);
         }
-        vec![vec![instruction::deploy(
-            program_address,
-            &authority_pubkey,
-        )]]
-    };
+        final_instructions.push(instruction::deploy(program_address, &authority_pubkey));
+    }
 
     send_messages(
         rpc_client,
         config,
         additional_cli_config,
         auth_signer_index,
-        initial_messages,
+        if initial_instructions.is_empty() {
+            Vec::default()
+        } else {
+            vec![initial_instructions]
+        },
         write_messages,
-        final_messages,
+        if final_instructions.is_empty() {
+            Vec::default()
+        } else {
+            vec![final_instructions]
+        },
         lamports_required.saturating_sub(existing_lamports),
         config.output_format.formatted_string(&CliProgramId {
             program_id: program_address.to_string(),
