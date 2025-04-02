@@ -156,7 +156,7 @@ impl VoteWorker {
         let num_packets_to_process = vote_storage.len();
 
         let reached_end_of_slot = vote_storage.process_packets(
-            bank_start.working_bank.clone(),
+            &bank_start.working_bank,
             banking_stage_stats,
             slot_metrics_tracker,
             |packets_to_process_len,
