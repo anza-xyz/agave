@@ -52,7 +52,7 @@ use {
     },
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
-    solana_sdk_ids::loader_v4,
+    solana_sdk_ids::{loader_v4, system_program},
     solana_signer::Signer,
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction::Transaction,
@@ -659,7 +659,13 @@ pub fn process_deploy_program(
     } else {
         None
     };
-    let program_account_exists = program_account.is_some();
+    let lamports_required = rpc_client.get_minimum_balance_for_rent_exemption(
+        LoaderV4State::program_data_offset().saturating_add(program_data.len()),
+    )?;
+    let program_account_exists = program_account
+        .as_ref()
+        .map(|account| loader_v4::check_id(&account.owner))
+        .unwrap_or(false);
     if upload_signer_index
         .map(|index| &config.signers[*index].pubkey() == program_address)
         .unwrap_or(false)
@@ -675,12 +681,16 @@ pub fn process_deploy_program(
         }
     }
     if let Some(program_account) = program_account.as_ref() {
-        if !loader_v4::check_id(&program_account.owner) {
+        if !system_program::check_id(&program_account.owner)
+            && !loader_v4::check_id(&program_account.owner)
+        {
             return Err(format!("{program_address} is not owned by loader-v4").into());
         }
     }
     if let Some(buffer_account) = buffer_account.as_ref() {
-        if !loader_v4::check_id(&buffer_account.owner) {
+        if !system_program::check_id(&buffer_account.owner)
+            && !loader_v4::check_id(&buffer_account.owner)
+        {
             return Err(format!("{} is not owned by loader-v4", buffer_address.unwrap()).into());
         }
     }
@@ -750,26 +760,31 @@ pub fn process_deploy_program(
             build_retract_instruction(program_account, program_address, &authority_pubkey)?;
     }
 
-    let lamports_required = rpc_client.get_minimum_balance_for_rent_exemption(
-        LoaderV4State::program_data_offset().saturating_add(program_data.len()),
-    )?;
     let upload_address = buffer_address.unwrap_or(program_address);
-    let (existing_lamports, upload_account) = if let Some(buffer_address) = buffer_address {
-        let buffer_account = rpc_client
-            .get_account_with_commitment(buffer_address, config.commitment)?
-            .value;
-        (0, buffer_account)
+    let upload_account = if buffer_address.is_some() {
+        buffer_account
     } else {
-        (
-            program_account
-                .as_ref()
-                .map(|account| account.lamports)
-                .unwrap_or(0),
-            program_account,
-        )
+        program_account
     };
-    if upload_account.is_none() {
-        // Create and add create_buffer message
+    let existing_lamports = upload_account
+        .as_ref()
+        .map(|account| account.lamports)
+        .unwrap_or(0);
+    // Create and add create_buffer message
+    if let Some(upload_account) = upload_account.as_ref() {
+        if system_program::check_id(&upload_account.owner) {
+            initial_messages.push(vec![
+                system_instruction::transfer(&payer_pubkey, upload_address, lamports_required),
+                system_instruction::assign(upload_address, &loader_v4::id()),
+                instruction::set_program_length(
+                    upload_address,
+                    &authority_pubkey,
+                    program_data.len() as u32,
+                    &payer_pubkey,
+                ),
+            ]);
+        }
+    } else {
         initial_messages.push(instruction::create_buffer(
             &payer_pubkey,
             upload_address,
@@ -1309,6 +1324,16 @@ fn build_set_program_length_instructions(
     buffer_address: &Pubkey,
     program_data_length: u32,
 ) -> Result<(Vec<Instruction>, u64), Box<dyn std::error::Error>> {
+    let expected_account_data_len =
+        LoaderV4State::program_data_offset().saturating_add(program_data_length as usize);
+
+    let lamports_required =
+        rpc_client.get_minimum_balance_for_rent_exemption(expected_account_data_len)?;
+
+    if !loader_v4::check_id(&account.owner) {
+        return Ok((Vec::default(), lamports_required));
+    }
+
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
     let expected_account_data_len =
@@ -1348,12 +1373,6 @@ fn build_set_program_length_instructions(
         program_data_length,
         &payer_pubkey,
     );
-
-    let expected_account_data_len =
-        LoaderV4State::program_data_offset().saturating_add(program_data_length as usize);
-
-    let lamports_required =
-        rpc_client.get_minimum_balance_for_rent_exemption(expected_account_data_len)?;
 
     match account.data.len().cmp(&expected_account_data_len) {
         Ordering::Less => {

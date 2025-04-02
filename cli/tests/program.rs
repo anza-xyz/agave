@@ -3116,6 +3116,11 @@ fn test_cli_program_v4() {
         lamports: 10000000,
     };
     process_command(&config).unwrap();
+    config.command = CliCommand::Airdrop {
+        pubkey: Some(program_keypair.pubkey()),
+        lamports: 1000,
+    };
+    process_command(&config).unwrap();
 
     // Initial deployment
     config.output_format = OutputFormat::JsonCompact;
