@@ -64,7 +64,7 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.9.1"
+          version: "v0.10.0"
 
       - shell: bash
         run: |
@@ -93,7 +93,7 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.9.1"
+          version: "v0.10.0"
 
       - shell: bash
         run: |
@@ -132,7 +132,7 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.9.1"
+          version: "v0.10.0"
 
       - name: Install dependencies
         shell: bash
