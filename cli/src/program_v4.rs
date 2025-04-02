@@ -410,7 +410,7 @@ pub fn parse_program_v4_subcommand(
                     additional_cli_config: AdditionalCliConfig::from_matches(matches),
                     program_address: program_address.or(program_pubkey).unwrap(),
                     buffer_address: buffer_pubkey,
-                    upload_signer_index,
+                    upload_signer_index: path_to_elf.as_ref().and(upload_signer_index),
                     authority_signer_index,
                     path_to_elf,
                     upload_range: value_t!(matches, "start-offset", usize).ok()
@@ -764,7 +764,7 @@ pub fn process_deploy_program(
     }
 
     let mut write_messages = vec![];
-    if upload_range.is_empty() {
+    if upload_signer_index.is_none() {
         if upload_account.is_none() {
             return Err(format!(
                 "No ELF was provided or uploaded to the account {:?}",
@@ -773,6 +773,10 @@ pub fn process_deploy_program(
             .into());
         }
     } else {
+        if upload_range.is_empty() {
+            return Err(format!("Attempting to upload empty range {:?}", upload_range).into());
+        }
+
         // Create and add set_program_length message
         if let Some(upload_account) = upload_account.as_ref() {
             let (set_program_length_instructions, _lamports_required) =
@@ -2061,7 +2065,7 @@ mod tests {
                     additional_cli_config: AdditionalCliConfig::default(),
                     program_address: program_keypair.pubkey(),
                     buffer_address: Some(buffer_keypair.pubkey()),
-                    upload_signer_index: Some(1),
+                    upload_signer_index: None,
                     authority_signer_index: 2,
                     path_to_elf: None,
                     upload_range: None..None,
