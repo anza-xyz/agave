@@ -3218,10 +3218,11 @@ fn test_cli_program_v4() {
     assert!(program_account.executable);
 
     // Close program
-    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Close {
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Retract {
         additional_cli_config: AdditionalCliConfig::default(),
         program_address: program_keypair.pubkey(),
         authority_signer_index: 2,
+        close_program_entirely: true,
     });
     assert!(process_command(&config).is_ok());
     let _error = rpc_client
