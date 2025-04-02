@@ -368,7 +368,7 @@ pub fn parse_program_v4_subcommand(
                 .map(|location| location.to_string());
 
             let program_address = pubkey_of(matches, "program-id");
-            let program_pubkey = if let Ok((program_signer, Some(program_pubkey))) =
+            let mut program_pubkey = if let Ok((program_signer, Some(program_pubkey))) =
                 signer_of(matches, "program-keypair", wallet_manager)
             {
                 bulk_signers.push(program_signer);
@@ -380,6 +380,9 @@ pub fn parse_program_v4_subcommand(
             let buffer_pubkey = if let Ok((buffer_signer, Some(buffer_pubkey))) =
                 signer_of(matches, "buffer", wallet_manager)
             {
+                if program_address.is_none() && program_pubkey.is_none() {
+                    program_pubkey = Some(buffer_pubkey);
+                }
                 bulk_signers.push(buffer_signer);
                 Some(buffer_pubkey)
             } else {
@@ -1903,8 +1906,6 @@ mod tests {
             "program-v4",
             "deploy",
             "/Users/test/program.so",
-            "--program-id",
-            &program_keypair_file,
             "--buffer",
             &program_keypair_file,
         ]);
@@ -1923,6 +1924,35 @@ mod tests {
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
                     Box::new(read_keypair_file(&program_keypair_file).unwrap()),
+                ],
+            }
+        );
+
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program-v4",
+            "deploy",
+            "/Users/test/program.so",
+            "--program-id",
+            &program_keypair_file,
+            "--buffer",
+            &buffer_keypair_file,
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
+                    additional_cli_config: AdditionalCliConfig::default(),
+                    program_address: program_keypair.pubkey(),
+                    buffer_address: Some(buffer_keypair.pubkey()),
+                    upload_signer_index: Some(1),
+                    authority_signer_index: 0,
+                    path_to_elf: Some("/Users/test/program.so".to_string()),
+                    upload_range: None..None,
+                }),
+                signers: vec![
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&buffer_keypair_file).unwrap()),
                 ],
             }
         );
