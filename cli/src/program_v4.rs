@@ -147,7 +147,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .index(1)
                                 .value_name("PATH-TO-ELF")
                                 .takes_value(true)
-                                .help("/path/to/program.so"),
+                                .help("./target/deploy/program.so"),
                         )
                         .arg(
                             Arg::with_name("start-offset")
@@ -214,6 +214,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .long("program-id")
                                 .value_name("PROGRAM_ID")
                                 .takes_value(true)
+                                .required(true)
                                 .help("Executable program's address"),
                         )
                         .arg(
@@ -237,6 +238,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .long("program-id")
                                 .value_name("PROGRAM_ID")
                                 .takes_value(true)
+                                .required(true)
                                 .help("Executable program's address"),
                         )
                         .arg(
@@ -271,6 +273,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .long("program-id")
                                 .value_name("PROGRAM_ID")
                                 .takes_value(true)
+                                .required(true)
                                 .help("Executable program's address"),
                         )
                         .arg(
@@ -300,16 +303,16 @@ impl ProgramV4SubCommands for App<'_, '_> {
                     SubCommand::with_name("show")
                         .about("Display information about a buffer or program")
                         .arg(
-                            Arg::with_name("account")
-                                .index(1)
-                                .value_name("ACCOUNT_ADDRESS")
+                            Arg::with_name("program-id")
+                                .long("program-id")
+                                .value_name("PROGRAM_ID")
                                 .takes_value(true)
-                                .help("Address of the program to show"),
+                                .help("Executable program's address"),
                         )
                         .arg(
                             Arg::with_name("all")
                                 .long("all")
-                                .conflicts_with("account")
+                                .conflicts_with("program-id")
                                 .conflicts_with("authority")
                                 .help("Show accounts for all authorities"),
                         )
@@ -325,20 +328,18 @@ impl ProgramV4SubCommands for App<'_, '_> {
                     SubCommand::with_name("dump")
                         .about("Write the program data to a file")
                         .arg(
-                            Arg::with_name("account")
+                            Arg::with_name("path-to-elf")
                                 .index(1)
-                                .value_name("ACCOUNT_ADDRESS")
+                                .value_name("PATH-TO-ELF")
                                 .takes_value(true)
-                                .required(true)
-                                .help("Address of the buffer or program"),
+                                .help("./target/deploy/program.so"),
                         )
                         .arg(
-                            Arg::with_name("output_location")
-                                .index(2)
-                                .value_name("OUTPUT_FILEPATH")
+                            Arg::with_name("program-id")
+                                .long("program-id")
+                                .value_name("PROGRAM_ID")
                                 .takes_value(true)
-                                .required(true)
-                                .help("/path/to/program.so"),
+                                .help("Executable program's address"),
                         ),
                 ),
         )
@@ -458,7 +459,7 @@ pub fn parse_program_v4_subcommand(
                         .expect("Authority signer is missing"),
                     new_authority_signer_index: signer_info
                         .index_of(new_authority_pubkey)
-                        .expect("Authority signer is missing"),
+                        .expect("New authority signer is missing"),
                 }),
                 signers: signer_info.signers,
             }
@@ -507,15 +508,15 @@ pub fn parse_program_v4_subcommand(
                 };
 
             CliCommandInfo::without_signers(CliCommand::ProgramV4(ProgramV4CliCommand::Show {
-                account_pubkey: pubkey_of(matches, "account"),
+                account_pubkey: pubkey_of(matches, "program-id"),
                 authority,
                 all: matches.is_present("all"),
             }))
         }
         ("dump", Some(matches)) => {
             CliCommandInfo::without_signers(CliCommand::ProgramV4(ProgramV4CliCommand::Dump {
-                account_pubkey: pubkey_of(matches, "account"),
-                output_location: matches.value_of("output_location").unwrap().to_string(),
+                account_pubkey: pubkey_of(matches, "program-id"),
+                output_location: matches.value_of("path-to-elf").unwrap().to_string(),
             }))
         }
         _ => unreachable!(),
