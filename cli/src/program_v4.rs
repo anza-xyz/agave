@@ -828,6 +828,18 @@ pub fn process_deploy_program(
             &authority_pubkey,
             upload_address,
         ));
+        let mut lamports_to_retrive = upload_account
+            .as_ref()
+            .map(|account| account.lamports)
+            .unwrap_or(0);
+        if upload_signer_index.is_some() {
+            lamports_to_retrive = lamports_to_retrive.saturating_add(lamports_required);
+        }
+        instructions.push(system_instruction::transfer(
+            upload_address,
+            &payer_pubkey,
+            lamports_to_retrive,
+        ));
         vec![instructions]
     } else {
         // Deploy new program or redeploy without a buffer account

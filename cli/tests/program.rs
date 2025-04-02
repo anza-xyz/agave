@@ -16,7 +16,6 @@ use {
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet,
-    solana_message::Message,
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
     solana_rpc_client_api::config::RpcTransactionConfig,
@@ -31,7 +30,7 @@ use {
         pubkey::Pubkey,
         rent::Rent,
         signature::{Keypair, NullSigner, Signature, Signer},
-        system_instruction, system_program,
+        system_program,
         transaction::Transaction,
     },
     solana_sdk_ids::loader_v4,
@@ -3163,19 +3162,9 @@ fn test_cli_program_v4() {
     let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
-    let response = rpc_client.send_and_confirm_transaction(&Transaction::new(
-        &[&payer_keypair, &buffer_keypair],
-        Message::new(
-            &[system_instruction::transfer(
-                &buffer_keypair.pubkey(),
-                &payer_keypair.pubkey(),
-                program_account.lamports,
-            )],
-            Some(&payer_keypair.pubkey()),
-        ),
-        rpc_client.get_latest_blockhash().unwrap(),
-    ));
-    assert!(response.is_ok());
+    let _error = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .unwrap_err();
 
     // Two-step redeployment with buffer
     config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
@@ -3204,6 +3193,9 @@ fn test_cli_program_v4() {
     let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
+    let _error = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .unwrap_err();
 
     // Transfer authority over program
     config.command = CliCommand::ProgramV4(ProgramV4CliCommand::TransferAuthority {
