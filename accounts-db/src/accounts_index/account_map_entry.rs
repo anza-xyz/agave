@@ -1,5 +1,5 @@
 use {
-    super::{DiskIndexValue, IndexValue, RefCount, SlotList},
+    super::{AtomicRefCount, DiskIndexValue, IndexValue, RefCount, SlotList},
     crate::{
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         is_zero_lamport::IsZeroLamport,
@@ -7,7 +7,7 @@ use {
     log::*,
     solana_clock::Slot,
     std::sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, RwLock,
     },
 };
@@ -18,7 +18,7 @@ use {
 pub struct AccountMapEntry<T> {
     /// number of alive slots that contain >= 1 instances of account data for this pubkey
     /// where alive represents a slot that has not yet been removed by clean via AccountsDB::clean_stored_dead_slots() for containing no up to date account information
-    ref_count: AtomicU64,
+    ref_count: AtomicRefCount,
     /// list of slots in which this pubkey was updated
     /// Note that 'clean' removes outdated entries (ie. older roots) from this slot_list
     /// purge_slot() also removes non-rooted slots from this list
@@ -31,7 +31,7 @@ impl<T: IndexValue> AccountMapEntry<T> {
     pub fn new(slot_list: SlotList<T>, ref_count: RefCount, meta: AccountMapEntryMeta) -> Self {
         Self {
             slot_list: RwLock::new(slot_list),
-            ref_count: AtomicU64::new(ref_count),
+            ref_count: AtomicRefCount::new(ref_count),
             meta,
         }
     }
@@ -172,7 +172,7 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
         storage: &Arc<BucketMapHolder<T, U>>,
     ) -> Arc<AccountMapEntry<T>> {
         let is_cached = account_info.is_cached();
-        let ref_count = u64::from(!is_cached);
+        let ref_count = RefCount::from(!is_cached);
         let meta = AccountMapEntryMeta::new_dirty(storage, is_cached);
         Arc::new(AccountMapEntry::new(
             vec![(slot, account_info)],

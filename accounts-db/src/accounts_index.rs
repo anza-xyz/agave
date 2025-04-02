@@ -73,6 +73,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
 pub type ScanResult<T> = Result<T, ScanError>;
 pub type SlotList<T> = Vec<(Slot, T)>;
 pub type RefCount = u64;
+pub type AtomicRefCount = AtomicU64;
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub(crate) struct GenerateIndexResult<T: IndexValue> {
