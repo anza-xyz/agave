@@ -145,10 +145,10 @@ impl Default for TestValidatorGenesis {
     fn default() -> Self {
         Self {
             fee_rate_governor: FeeRateGovernor::default(),
-            rent: Rent::default(),
-            rpc_config: JsonRpcConfig::default_for_test(),
             ledger_path: Option::<PathBuf>::default(),
             tower_storage: Option::<Arc<dyn TowerStorage>>::default(),
+            rent: Rent::default(),
+            rpc_config: JsonRpcConfig::default_for_test(),
             pubsub_config: PubSubConfig::default(),
             rpc_ports: Option::<(u16, u16)>::default(),
             warp_slot: Option::<Slot>::default(),
@@ -177,7 +177,15 @@ impl Default for TestValidatorGenesis {
 
 impl std::fmt::Debug for TestValidatorGenesis {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TestValidatorGenesis").finish()
+        f.debug_struct("TestValidatorGenesis")
+            .field("ledger_path", &self.ledger_path)
+            .field("rpc_ports", &self.rpc_ports)
+            .field("warp_slot", &self.warp_slot)
+            .field("deactivated_features", &self.deactivate_feature_set.len())
+            .field("account_count", &self.accounts.len())
+            .field("upgradeable_programs", &self.upgradeable_programs.len())
+            .field("tpu_enable_udp", &self.tpu_enable_udp)
+            .finish()
     }
 }
 
@@ -707,11 +715,17 @@ impl TestValidatorGenesis {
     }
 
     /// Clone state from a running validator
-    pub fn clone_state(&mut self, rpc_url: &str, accounts: &[Pubkey]) -> Result<&mut Self, String> {
+    pub fn clone_state(
+        &mut self, 
+        rpc_url: &str, 
+        accounts: &[Pubkey],
+        chunk_size: Option<usize>,
+    ) -> Result<&mut Self, String> {
         let rpc_client = RpcClient::new(rpc_url.to_string());
+        let chunk_size = chunk_size.unwrap_or(MAX_MULTIPLE_ACCOUNTS);
         
         // Fetch all accounts in chunks to respect RPC limits
-        for chunk in accounts.chunks(MAX_MULTIPLE_ACCOUNTS) {
+        for chunk in accounts.chunks(chunk_size) {
             let fetched_accounts = rpc_client
                 .get_multiple_accounts(chunk)
                 .map_err(|err| format!("Failed to fetch accounts: {}", err))?;
@@ -1428,6 +1442,7 @@ mod test {
         target.clone_state(
             &source_validator.rpc_url(),
             &[source_account.pubkey()],
+            None,
         )
         .expect("Failed to clone state");
 
@@ -1456,7 +1471,7 @@ mod test {
 
         // Store the instance instead of using a temporary
         let mut target = TestValidatorGenesis::default();
-        let result = target.clone_state(&source_validator.rpc_url(), &[nonexistent]);
+        let result = target.clone_state(&source_validator.rpc_url(), &[nonexistent], None);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
@@ -1485,6 +1500,7 @@ mod test {
         target.clone_state(
             &source_validator.rpc_url(),
             &[account1.pubkey(), account2.pubkey()],
+            Some(1),  // Test with small chunk size
         )
         .expect("Failed to clone state");
 
