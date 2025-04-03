@@ -739,13 +739,53 @@ impl TaskHandler for DefaultTaskHandler {
         task: &Task,
         handler_context: &HandlerContext,
     ) {
-        // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
-        // responsible for locking.
         let bank = scheduling_context.bank().unwrap();
         let transaction = task.transaction();
         let index = task.task_index();
 
-        let batch = bank.prepare_unlocked_batch_from_single_tx(transaction);
+        let batch = match scheduling_context.mode() {
+            BlockVerification => {
+                // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
+                // responsible for locking.
+                bank.prepare_unlocked_batch_from_single_tx(transaction)
+            }
+            BlockProduction => {
+                // Due to the probable presence of an independent banking thread (like the jito
+                // thread), we are forced to lock the addresses unlike block verification. The
+                // scheduling thread isn't appropriate for these kinds of work; so, instead do that
+                // by one of handler threads.
+                //
+                // Assuming the banking thread isn't tightly integrated and thus it's rather opaque
+                // to the unified scheduler, there's no proper way to be race-free other than
+                // actually locking the accounts.
+                //
+                // That means there's also no proper signalling mechanism among them after
+                // unlocking as well. So, we resort to spin lock here with mercy of slight
+                // humbleness (100us sleep per retry).
+                //
+                // Note that this is quite coarse/suboptimal solution to the above problem.
+                // Ideally, this should be handled more gracefully. As for the worst case analysis,
+                // this will indeed create a rather noisy lock contention. However, this is already
+                // the case as well for the other block producing method (CentralScheduler). So,
+                // this could be justified here, hopefully...
+                let mut batch;
+                let started = Instant::now();
+                loop {
+                    batch = bank.prepare_locked_batch_from_single_tx(transaction);
+                    let lock_result = &batch.lock_results()[0];
+                    if let Ok(()) = lock_result {
+                        break;
+                    }
+                    assert_matches!(lock_result, Err(TransactionError::AccountInUse));
+                    if started.elapsed() > Duration::from_millis(400) {
+                        *result = Err(TransactionError::CommitCancelled);
+                        return;
+                    }
+                    sleep(Duration::from_micros(100));
+                }
+                batch
+            }
+        };
         let transaction_indexes = match scheduling_context.mode() {
             BlockVerification => vec![index],
             BlockProduction => {
@@ -1384,7 +1424,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         );
                     }
                     // This should never be observed because the scheduler thread makes all running
-                    // tasks are conflict-free
+                    // tasks are conflict-free; Furthermore, block producing scheduler should be
+                    // prepared for the probable presence of an independent banking thread (like
+                    // the jito thread). This is addressed by the TaskHandler::handle().
                     Err(TransactionError::AccountInUse)
                     // These should have been validated by banking_packet_handler by now
                     | Err(TransactionError::AccountLoadedTwice)
