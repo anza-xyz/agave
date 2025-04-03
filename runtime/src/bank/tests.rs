@@ -13633,11 +13633,14 @@ fn test_loader_v3_to_v4_migration() {
         .unwrap()
         .copy_from_slice(&elf);
     let message = Message::new(
-        &[solana_loader_v3_interface::instruction::migrate_program(
-            &programdata_address,
-            &program_keypair.pubkey(),
-            &program_keypair.pubkey(),
-        )],
+        &[
+            solana_loader_v3_interface::instruction::migrate_program(
+                &programdata_address,
+                &program_keypair.pubkey(),
+                &program_keypair.pubkey(),
+            ),
+            ComputeBudgetInstruction::set_compute_unit_limit(12_000),
+        ],
         Some(&payer_keypair.pubkey()),
     );
     let signers = &[&payer_keypair, &program_keypair];
@@ -13664,11 +13667,14 @@ fn test_loader_v3_to_v4_migration() {
         .unwrap()
         .copy_from_slice(&elf);
     let message = Message::new(
-        &[solana_loader_v3_interface::instruction::migrate_program(
-            &programdata_address,
-            &program_keypair.pubkey(),
-            &upgrade_authority_keypair.pubkey(),
-        )],
+        &[
+            solana_loader_v3_interface::instruction::migrate_program(
+                &programdata_address,
+                &program_keypair.pubkey(),
+                &upgrade_authority_keypair.pubkey(),
+            ),
+            ComputeBudgetInstruction::set_compute_unit_limit(10_000),
+        ],
         Some(&payer_keypair.pubkey()),
     );
     let signers = &[&payer_keypair, &upgrade_authority_keypair];
