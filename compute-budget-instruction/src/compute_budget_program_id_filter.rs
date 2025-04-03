@@ -11,6 +11,12 @@ pub(crate) struct ComputeBudgetProgramIdFilter {
     flags: [Option<bool>; FILTER_SIZE as usize],
 }
 
+impl Default for ComputeBudgetProgramIdFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ComputeBudgetProgramIdFilter {
     pub(crate) fn new() -> Self {
         ComputeBudgetProgramIdFilter {

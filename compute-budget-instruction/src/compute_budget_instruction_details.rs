@@ -50,6 +50,64 @@ pub struct ComputeBudgetInstructionDetails {
     migrating_builtin_feature_counters: MigrationBuiltinFeatureCounter,
 }
 
+#[derive(Default)]
+pub struct ComputeBudgetInstructionDetailsBuilder {
+    compute_budget_instruction_details: ComputeBudgetInstructionDetails,
+    compute_budget_program_id_filter: ComputeBudgetProgramIdFilter,
+    builtin_programs_filter: BuiltinProgramsFilter,
+}
+
+impl ComputeBudgetInstructionDetailsBuilder {
+    pub fn process_instruction(
+        &mut self,
+        program_id: &Pubkey,
+        instruction: &SVMInstruction,
+    ) -> Result<()> {
+        if self
+            .compute_budget_program_id_filter
+            .is_compute_budget_program(usize::from(instruction.program_id_index), program_id)
+        {
+            self.compute_budget_instruction_details
+                .process_instruction(instruction.program_id_index, instruction)?;
+            // If it is a compute budget program, which is a non-migratable builtin program,
+            // we can skip the builtin program filter.
+            self.compute_budget_instruction_details
+                .num_non_migratable_builtin_instructions += 1;
+            return Ok(());
+        } else {
+            self.compute_budget_instruction_details
+                .num_non_compute_budget_instructions += 1;
+        }
+
+        match self
+            .builtin_programs_filter
+            .get_program_kind(usize::from(instruction.program_id_index), program_id)
+        {
+            ProgramKind::Builtin => {
+                self.compute_budget_instruction_details
+                    .num_non_migratable_builtin_instructions += 1;
+            }
+            ProgramKind::NotBuiltin => {
+                self.compute_budget_instruction_details
+                    .num_non_builtin_instructions += 1;
+            }
+            ProgramKind::MigratingBuiltin {
+                core_bpf_migration_feature_index,
+            } => {
+                self.compute_budget_instruction_details
+                    .migrating_builtin_feature_counters
+                    .migrating_builtin[core_bpf_migration_feature_index] += 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn build(self) -> ComputeBudgetInstructionDetails {
+        self.compute_budget_instruction_details
+    }
+}
+
 impl ComputeBudgetInstructionDetails {
     pub fn try_from<'a>(
         instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
