@@ -25,7 +25,7 @@ use {
 const STAKE_REFRESH_INTERVAL: Duration = Duration::from_secs(1800);
 
 // The interval to to sleep to check for exit condition and/or refresh condition.
-const STAKE_REFRESH_SLEEP_DURATION: Duration = Duration::from_secs(5);
+pub const STAKE_REFRESH_SLEEP_DURATION: Duration = Duration::from_secs(5);
 
 /// This service is responsible for periodically refresh the stake information
 /// from the network with the assistance of the RpcLoaderBalancer.
@@ -38,6 +38,7 @@ impl StakeUpdater {
         exit: Arc<AtomicBool>,
         rpc_load_balancer: Arc<RpcLoadBalancer>,
         shared_staked_nodes: Arc<RwLock<StakedNodes>>,
+        refresh_sleep_duration: Duration,
     ) -> Self {
         info!("Starting stake updater thread");
         let thread_hdl = Builder::new()
@@ -49,9 +50,10 @@ impl StakeUpdater {
                         &mut last_stakes,
                         &shared_staked_nodes,
                         &rpc_load_balancer,
+                        &refresh_sleep_duration,
                     ) {
                         warn!("Failed to refresh pubkey to stake map! Error: {:?}", err);
-                        sleep(STAKE_REFRESH_SLEEP_DURATION);
+                        sleep(refresh_sleep_duration);
                     }
                 }
             })
@@ -66,6 +68,7 @@ impl StakeUpdater {
         last_refresh: &mut Option<Instant>,
         shared_staked_nodes: &Arc<RwLock<StakedNodes>>,
         rpc_load_balancer: &Arc<RpcLoadBalancer>,
+        refresh_sleep_duration: &Duration,
     ) -> client_error::Result<()> {
         if last_refresh.is_none() || last_refresh.unwrap().elapsed() > STAKE_REFRESH_INTERVAL {
             let client = rpc_load_balancer.rpc_client();
@@ -101,7 +104,7 @@ impl StakeUpdater {
                 .unwrap()
                 .update_stake_map(stake_map);
         } else {
-            sleep(STAKE_REFRESH_SLEEP_DURATION);
+            sleep(*refresh_sleep_duration);
         }
         Ok(())
     }

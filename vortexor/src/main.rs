@@ -14,7 +14,7 @@ use {
             PacketBatchSender, DEFAULT_BATCH_SIZE, DEFAULT_RECV_TIMEOUT,
             DEFAULT_SENDER_THREADS_COUNT,
         },
-        stake_updater::StakeUpdater,
+        stake_updater::{StakeUpdater, STAKE_REFRESH_SLEEP_DURATION},
         vortexor::Vortexor,
     },
     std::{
@@ -147,6 +147,7 @@ pub fn main() {
         exit.clone(),
         rpc_load_balancer.clone(),
         staked_nodes.clone(),
+        STAKE_REFRESH_SLEEP_DURATION,
     );
 
     info!(

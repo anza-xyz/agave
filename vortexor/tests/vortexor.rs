@@ -31,6 +31,7 @@ use {
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
         },
+        time::Duration,
     },
     url::Url,
 };
@@ -139,6 +140,7 @@ async fn test_stake_update() {
         exit.clone(),
         rpc_load_balancer.clone(),
         shared_staked_nodes.clone(),
+        Duration::from_millis(100), // short sleep to speed up the test for service exit
     );
 
     // Waiting for the stake map to be populated by the stake updater service
@@ -152,10 +154,12 @@ async fn test_stake_update() {
         }
         info!("Waiting for stake map to be populated for {pubkey:?}...");
         drop(stakes); // Drop the read lock before sleeping so the writer side can proceed
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
+    info!("Test done, exiting stake updater service");
     exit.store(true, Ordering::Relaxed);
     staked_nodes_updater_service.join().unwrap();
+    info!("Stake updater service exited successfully, shutting down cluster");
     cluster.exit();
     info!("Cluster exited successfully");
 }
