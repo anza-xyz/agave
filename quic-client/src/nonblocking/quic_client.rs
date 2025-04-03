@@ -77,7 +77,9 @@ impl QuicLazyInitializedEndpoint {
         let mut endpoint = if let Some(endpoint) = &self.client_endpoint {
             endpoint.clone()
         } else {
-            let config = SocketConfig::default();
+            // The `quic-client` primarily sends data and only receives control traffic
+            // Set a 4 MB buffer size for the minimally used side of the socket for QUIC control traffic
+            let config = SocketConfig::default().recv_buffer_size(4 * 1024 * 1024);
             let client_socket = solana_net_utils::bind_in_range_with_config(
                 IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 VALIDATOR_PORT_RANGE,
