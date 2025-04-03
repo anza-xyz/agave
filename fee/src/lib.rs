@@ -23,31 +23,16 @@ impl From<&FeatureSet> for FeeFeatures {
     }
 }
 
-/// Calculate fee for `SanitizedMessage`
-pub fn calculate_fee(
-    message: &impl SVMMessage,
+pub fn calculate_fee_details<'a, T>(
+    message: &'a T,
     zero_fees_for_test: bool,
     lamports_per_signature: u64,
     prioritization_fee: u64,
     fee_features: FeeFeatures,
-) -> u64 {
-    calculate_fee_details(
-        message,
-        zero_fees_for_test,
-        lamports_per_signature,
-        prioritization_fee,
-        fee_features,
-    )
-    .total_fee()
-}
-
-pub fn calculate_fee_details(
-    message: &impl SVMMessage,
-    zero_fees_for_test: bool,
-    lamports_per_signature: u64,
-    prioritization_fee: u64,
-    fee_features: FeeFeatures,
-) -> FeeDetails {
+) -> FeeDetails
+where
+    SignatureCounts: From<&'a T>,
+{
     if zero_fees_for_test {
         return FeeDetails::default();
     }
@@ -82,11 +67,11 @@ fn calculate_signature_fee(
     signature_count.saturating_mul(lamports_per_signature)
 }
 
-struct SignatureCounts {
-    pub num_transaction_signatures: u64,
-    pub num_ed25519_signatures: u64,
-    pub num_secp256k1_signatures: u64,
-    pub num_secp256r1_signatures: u64,
+pub struct SignatureCounts {
+    num_transaction_signatures: u64,
+    num_ed25519_signatures: u64,
+    num_secp256k1_signatures: u64,
+    num_secp256r1_signatures: u64,
 }
 
 impl<Tx: SVMMessage> From<&Tx> for SignatureCounts {
