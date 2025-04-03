@@ -6,7 +6,7 @@
 
 use {
     crate::{
-        account_storage::meta::{AccountMeta, StoredAccountMeta, StoredMeta},
+        account_storage::meta::{AccountMeta, StoredAccountHeader, StoredAccountMeta, StoredMeta},
         accounts_file::{
             AccountsFileError, InternalsForArchive, MatchAccountOwnerError, Result, StorageAccess,
             StoredAccountsInfo, ALIGN_BOUNDARY_OFFSET,
@@ -146,6 +146,63 @@ impl<'append_vec> AppendVecStoredAccountMeta<'append_vec> {
     pub fn meta(&self) -> &StoredMeta {
         self.meta
     }
+}
+
+/// [`AppendVecStoredAccountMeta`] _without_ account data.
+///
+/// Retrieving [`AppendVecStoredAccountMeta`] can entail significant overhead due to the need to
+/// read the variable, and potentially large, sized account data from disk. This is a lightweight
+/// alternative that only reads the fixed sized fields of the account. This should be preferred
+/// where possible when file-io is enabled.
+#[derive(PartialEq, Eq, Debug)]
+pub struct AppendVecStoredAccountHeader<'append_vec> {
+    pub meta: &'append_vec StoredMeta,
+    pub account_meta: &'append_vec AccountMeta,
+    pub(crate) hash: &'append_vec AccountHash,
+    pub(crate) offset: usize,
+    pub(crate) stored_size: usize,
+}
+
+impl<'append_vec> AppendVecStoredAccountHeader<'append_vec> {
+    pub fn lamports(&self) -> u64 {
+        self.account_meta.lamports
+    }
+
+    pub fn stored_size(&self) -> usize {
+        self.stored_size
+    }
+
+    pub fn data_len(&self) -> u64 {
+        self.meta.data_len
+    }
+
+    pub fn pubkey(&self) -> &'append_vec Pubkey {
+        &self.meta.pubkey
+    }
+
+    pub fn hash(&self) -> &'append_vec AccountHash {
+        self.hash
+    }
+
+    pub fn owner(&self) -> &'append_vec Pubkey {
+        &self.account_meta.owner
+    }
+
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    pub fn meta(&self) -> &StoredMeta {
+        self.meta
+    }
+
+    pub fn executable(&self) -> bool {
+        self.account_meta.executable
+    }
+
+    pub fn rent_epoch(&self) -> Epoch {
+        self.account_meta.rent_epoch
+    }
 
     pub(crate) fn sanitize(&self) -> bool {
         self.sanitize_executable() && self.sanitize_lamports()
@@ -156,10 +213,17 @@ impl<'append_vec> AppendVecStoredAccountMeta<'append_vec> {
         self.ref_executable_byte() & !1 == 0
     }
 
+    fn is_default_account(&self) -> bool {
+        self.account_meta.lamports == 0
+            && self.meta.data_len == 0
+            && !self.account_meta.executable
+            && self.account_meta.rent_epoch == Epoch::default()
+            && self.account_meta.owner == Pubkey::default()
+    }
+
     fn sanitize_lamports(&self) -> bool {
         // Sanitize 0 lamports to ensure to be same as AccountSharedData::default()
-        self.account_meta.lamports != 0
-            || self.to_account_shared_data() == AccountSharedData::default()
+        self.account_meta.lamports != 0 || self.is_default_account()
     }
 
     fn ref_executable_byte(&self) -> &u8 {
@@ -606,12 +670,12 @@ impl AppendVec {
         let mut num_accounts = 0;
         let mut matches = true;
         let mut last_offset = 0;
-        self.scan_accounts(|account| {
-            if !matches || !account.sanitize() {
+        self.scan_account_headers(|header| {
+            if !matches || !header.sanitize() {
                 matches = false;
                 return;
             }
-            last_offset = account.offset() + account.stored_size();
+            last_offset = header.offset() + header.stored_size();
             num_accounts += 1;
         });
         if !matches {
@@ -787,6 +851,57 @@ impl AppendVec {
         }
     }
 
+    pub fn get_stored_account_header_callback<Ret>(
+        &self,
+        offset: usize,
+        mut callback: impl for<'local> FnMut(StoredAccountHeader<'local>) -> Ret,
+    ) -> Option<Ret> {
+        match &self.backing {
+            AppendVecFileBacking::Mmap(Mmap { mmap }) => {
+                let slice = self.get_valid_slice_from_mmap(mmap);
+                let (meta, next): (&StoredMeta, _) = Self::get_type(slice, offset)?;
+                let (account_meta, next): (&AccountMeta, _) = Self::get_type(slice, next)?;
+                let (hash, next): (&AccountHash, _) = Self::get_type(slice, next)?;
+                let stored_size = u64_align!(next.checked_add(meta.data_len as usize)?) - offset;
+                Some(callback(StoredAccountHeader::AppendVec(
+                    AppendVecStoredAccountHeader {
+                        meta,
+                        account_meta,
+                        hash,
+                        offset,
+                        stored_size,
+                    },
+                )))
+            }
+            AppendVecFileBacking::File(file) => {
+                let mut buf = [MaybeUninit::<u8>::uninit(); STORE_META_OVERHEAD];
+                // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+                let bytes_read = read_into_buffer(file, self.len(), offset, unsafe {
+                    slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len())
+                })
+                .ok()?;
+                // SAFETY: we only read the initialized portion.
+                let valid_bytes = ValidSlice(unsafe {
+                    slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read)
+                });
+                let (meta, next): (&StoredMeta, _) = Self::get_type(valid_bytes, 0)?;
+                let (account_meta, next): (&AccountMeta, _) = Self::get_type(valid_bytes, next)?;
+                let (hash, next): (&AccountHash, _) = Self::get_type(valid_bytes, next)?;
+                let stored_size = u64_align!(next.checked_add(meta.data_len as usize)?) - offset;
+
+                Some(callback(StoredAccountHeader::AppendVec(
+                    AppendVecStoredAccountHeader {
+                        meta,
+                        account_meta,
+                        hash,
+                        offset,
+                        stored_size,
+                    },
+                )))
+            }
+        }
+    }
+
     /// return an `AccountSharedData` for an account at `offset`.
     /// This fn can efficiently return exactly what is needed by a caller.
     /// This is on the critical path of tx processing for accounts not in the read or write caches.
@@ -862,7 +977,7 @@ impl AppendVec {
         offset: usize,
         owners: &[Pubkey],
     ) -> std::result::Result<usize, MatchAccountOwnerError> {
-        self.get_stored_account_meta_callback(offset, |stored_account_meta| {
+        self.get_stored_account_header_callback(offset, |stored_account_meta| {
             if stored_account_meta.lamports() == 0 {
                 Err(MatchAccountOwnerError::NoMatch)
             } else {
@@ -1167,6 +1282,61 @@ impl AppendVec {
         }
     }
 
+    pub fn scan_account_headers(&self, mut callback: impl FnMut(StoredAccountHeader)) {
+        let self_len = self.len();
+        match &self.backing {
+            AppendVecFileBacking::Mmap(_mmap) => {
+                let mut offset = 0;
+                while self
+                    .get_stored_account_header_callback(offset, |header| {
+                        offset += header.stored_size();
+                        if header.is_zero_lamport() && header.pubkey() == &Pubkey::default() {
+                            // we passed the last useful account
+                            return false;
+                        }
+
+                        callback(header);
+                        true
+                    })
+                    .unwrap_or_default()
+                {}
+            }
+            AppendVecFileBacking::File(file) => {
+                const BUFFER_SIZE: usize = PAGE_SIZE * 16;
+                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(
+                    self_len,
+                    file,
+                    STORE_META_OVERHEAD,
+                );
+                while let Ok(BufferedReaderStatus::Success) = reader.read() {
+                    let (offset, bytes) = reader.get_offset_and_data();
+                    let (stored_meta, next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
+                    let (account_meta, next) = Self::get_type::<AccountMeta>(bytes, next).unwrap();
+                    let (hash, _) = Self::get_type::<AccountHash>(bytes, next).unwrap();
+                    let Some(stored_size) =
+                        STORE_META_OVERHEAD.checked_add(stored_meta.data_len as usize)
+                    else {
+                        break;
+                    };
+                    if offset + stored_size > self_len {
+                        break;
+                    }
+                    let stored_size = u64_align!(stored_size);
+                    callback(StoredAccountHeader::AppendVec(
+                        AppendVecStoredAccountHeader {
+                            meta: stored_meta,
+                            account_meta,
+                            hash,
+                            offset,
+                            stored_size,
+                        },
+                    ));
+                    reader.advance_offset(stored_size);
+                }
+            }
+        }
+    }
+
     /// Copy each account metadata, account and hash to the internal buffer.
     /// If there is no room to write the first entry, None is returned.
     /// Otherwise, returns the starting offset of each account metadata.
@@ -1292,7 +1462,7 @@ pub mod tests {
         }
     }
 
-    impl StoredAccountMeta<'_> {
+    impl StoredAccountHeader<'_> {
         pub(crate) fn ref_executable_byte(&self) -> &u8 {
             match self {
                 Self::AppendVec(av) => av.ref_executable_byte(),
@@ -1551,6 +1721,14 @@ pub mod tests {
             });
             count
         }
+
+        fn accounts_header_count(&self) -> usize {
+            let mut count = 0;
+            self.scan_account_headers(|_| {
+                count += 1;
+            });
+            count
+        }
     }
 
     #[test]
@@ -1586,6 +1764,7 @@ pub mod tests {
         assert_eq!(indexes[0], 0);
         let mut sample = 0;
         assert_eq!(av.accounts_count(), size);
+        assert_eq!(av.accounts_header_count(), size);
         av.scan_accounts(|v| {
             let account = create_test_account(sample + 1);
             let recovered = v.to_account_shared_data();
@@ -1810,11 +1989,11 @@ pub mod tests {
 
             // reload accounts
             // ensure false is 0u8 and true is 1u8 actually
-            av.get_stored_account_meta_callback(0, |account| {
+            av.get_stored_account_header_callback(0, |account| {
                 assert_eq!(*account.ref_executable_byte(), 0);
             })
             .unwrap();
-            av.get_stored_account_meta_callback(offset_1, |account| {
+            av.get_stored_account_header_callback(offset_1, |account| {
                 assert_eq!(*account.ref_executable_byte(), 1);
             })
             .unwrap();

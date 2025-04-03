@@ -2,7 +2,7 @@ use {
     crate::{
         account_info::AccountInfo,
         accounts_hash::AccountHash,
-        append_vec::AppendVecStoredAccountMeta,
+        append_vec::{AppendVecStoredAccountHeader, AppendVecStoredAccountMeta},
         tiered_storage::hot::{HotAccount, HotAccountMeta},
     },
     solana_account::ReadableAccount,
@@ -22,6 +22,21 @@ lazy_static! {
 #[derive(PartialEq, Eq, Debug)]
 pub enum StoredAccountMeta<'storage> {
     AppendVec(AppendVecStoredAccountMeta<'storage>),
+    Hot(HotAccount<'storage, HotAccountMeta>),
+}
+
+/// [`StoredAccountMeta`] _without_ account data.
+///
+/// Retrieving [`StoredAccountMeta`] can entail significant overhead due to the need to
+/// read the variable, and potentially large, sized account data from disk. This is a lightweight
+/// alternative that only reads the fixed sized fields of the account. This should be preferred
+/// where possible when file-io is enabled.
+///
+/// Note that the `Hot` variant is the same as [`StoredAccountMeta`], as it is in-memory, and as such
+/// does not incur the overhead of reading from disk.
+#[derive(PartialEq, Eq, Debug)]
+pub enum StoredAccountHeader<'storage> {
+    AppendVec(AppendVecStoredAccountHeader<'storage>),
     Hot(HotAccount<'storage, HotAccountMeta>),
 }
 
@@ -75,6 +90,81 @@ impl<'storage> StoredAccountMeta<'storage> {
             // Hot account does not support this API as it does not
             // use the same in-memory layout as StoredMeta.
             Self::Hot(_) => unreachable!(),
+        }
+    }
+}
+
+impl<'storage> StoredAccountHeader<'storage> {
+    pub fn pubkey(&self) -> &'storage Pubkey {
+        match self {
+            Self::AppendVec(av) => av.pubkey(),
+            Self::Hot(hot) => hot.address(),
+        }
+    }
+
+    pub fn hash(&self) -> &'storage AccountHash {
+        match self {
+            Self::AppendVec(av) => av.hash(),
+            // tiered-storage has deprecated the use of AccountHash
+            Self::Hot(_) => &DEFAULT_ACCOUNT_HASH,
+        }
+    }
+
+    pub fn stored_size(&self) -> usize {
+        match self {
+            Self::AppendVec(av) => av.stored_size(),
+            Self::Hot(hot) => hot.stored_size(),
+        }
+    }
+
+    pub fn offset(&self) -> usize {
+        match self {
+            Self::AppendVec(av) => av.offset(),
+            Self::Hot(hot) => AccountInfo::reduced_offset_to_offset(hot.index().0),
+        }
+    }
+
+    pub fn data_len(&self) -> usize {
+        match self {
+            Self::AppendVec(av) => av.data_len() as usize,
+            Self::Hot(hot) => hot.data().len(),
+        }
+    }
+
+    pub fn meta(&self) -> &StoredMeta {
+        match self {
+            Self::AppendVec(av) => av.meta(),
+            // Hot account does not support this API as it does not
+            // use the same in-memory layout as StoredMeta.
+            Self::Hot(_) => unreachable!(),
+        }
+    }
+
+    pub fn lamports(&self) -> u64 {
+        match self {
+            Self::AppendVec(av) => av.lamports(),
+            Self::Hot(hot) => hot.lamports(),
+        }
+    }
+
+    pub fn owner(&self) -> &Pubkey {
+        match self {
+            Self::AppendVec(av) => av.owner(),
+            Self::Hot(hot) => hot.owner(),
+        }
+    }
+
+    pub fn executable(&self) -> bool {
+        match self {
+            Self::AppendVec(av) => av.executable(),
+            Self::Hot(hot) => hot.executable(),
+        }
+    }
+
+    pub fn rent_epoch(&self) -> Epoch {
+        match self {
+            Self::AppendVec(av) => av.rent_epoch(),
+            Self::Hot(hot) => hot.rent_epoch(),
         }
     }
 

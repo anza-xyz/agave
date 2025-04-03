@@ -1,7 +1,7 @@
 use {
     crate::{
         account_info::AccountInfo,
-        account_storage::meta::StoredAccountMeta,
+        account_storage::meta::{StoredAccountHeader, StoredAccountMeta},
         accounts_db::AccountsFileId,
         accounts_update_notifier_interface::AccountForGeyser,
         append_vec::{AppendVec, AppendVecError, IndexInfo},
@@ -178,6 +178,26 @@ impl AccountsFile {
         }
     }
 
+    pub fn get_stored_account_header_callback<Ret>(
+        &self,
+        offset: usize,
+        callback: impl for<'local> FnMut(StoredAccountHeader<'local>) -> Ret,
+    ) -> Option<Ret> {
+        match self {
+            Self::AppendVec(av) => av.get_stored_account_header_callback(offset, callback),
+            // Note: The conversion here is needed as the AccountsDB currently
+            // assumes all offsets are multiple of 8 while TieredStorage uses
+            // IndexOffset that is equivalent to AccountInfo::reduced_offset.
+            Self::TieredStorage(ts) => ts
+                .reader()?
+                .get_stored_account_header_callback(
+                    IndexOffset(AccountInfo::get_reduced_offset(offset)),
+                    callback,
+                )
+                .ok()?,
+        }
+    }
+
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
     pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
         match self {
@@ -229,6 +249,21 @@ impl AccountsFile {
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
                     _ = reader.scan_accounts(callback);
+                }
+            }
+        }
+    }
+
+    /// Iterate over all accounts and call `callback` with each fixed size account portion.
+    pub fn scan_account_headers(
+        &self,
+        callback: impl for<'local> FnMut(StoredAccountHeader<'local>),
+    ) {
+        match self {
+            Self::AppendVec(av) => av.scan_account_headers(callback),
+            Self::TieredStorage(ts) => {
+                if let Some(reader) = ts.reader() {
+                    _ = reader.scan_account_headers(callback);
                 }
             }
         }

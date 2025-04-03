@@ -1,6 +1,6 @@
 use {
     crate::{
-        account_storage::meta::StoredAccountMeta,
+        account_storage::meta::{StoredAccountHeader, StoredAccountMeta},
         accounts_file::MatchAccountOwnerError,
         append_vec::IndexInfo,
         tiered_storage::{
@@ -87,6 +87,23 @@ impl TieredStorageReader {
         }
     }
 
+    /// calls `callback` with the account header located at the specified index offset.
+    pub fn get_stored_account_header_callback<Ret>(
+        &self,
+        index_offset: IndexOffset,
+        mut callback: impl for<'local> FnMut(StoredAccountHeader<'local>) -> Ret,
+    ) -> TieredStorageResult<Option<Ret>> {
+        match self {
+            Self::Hot(hot) => hot.get_stored_account_meta_callback(index_offset, |meta| {
+                let header = match meta {
+                    StoredAccountMeta::Hot(hot) => hot,
+                    StoredAccountMeta::AppendVec(_) => unreachable!(),
+                };
+                callback(StoredAccountHeader::Hot(header))
+            }),
+        }
+    }
+
     /// Returns Ok(index_of_matching_owner) if the account owner at
     /// `account_offset` is one of the pubkeys in `owners`.
     ///
@@ -132,6 +149,19 @@ impl TieredStorageReader {
     ) -> TieredStorageResult<()> {
         match self {
             Self::Hot(hot) => hot.scan_accounts(callback),
+        }
+    }
+
+    /// Iterate over all accounts and call `callback` with each account header.
+    pub(crate) fn scan_account_headers(
+        &self,
+        mut callback: impl for<'local> FnMut(StoredAccountHeader<'local>),
+    ) -> TieredStorageResult<()> {
+        match self {
+            Self::Hot(hot) => hot.scan_accounts(|meta| match meta {
+                StoredAccountMeta::Hot(hot) => callback(StoredAccountHeader::Hot(hot)),
+                StoredAccountMeta::AppendVec(_) => unreachable!(),
+            }),
         }
     }
 

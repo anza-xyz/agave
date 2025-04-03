@@ -29,7 +29,8 @@ use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
-            meta::StoredAccountMeta, AccountStorage, AccountStorageStatus, ShrinkInProgress,
+            meta::{StoredAccountHeader, StoredAccountMeta},
+            AccountStorage, AccountStorageStatus, ShrinkInProgress,
         },
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
@@ -1879,6 +1880,12 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
 }
 
 impl IsZeroLamport for StoredAccountMeta<'_> {
+    fn is_zero_lamport(&self) -> bool {
+        self.lamports() == 0
+    }
+}
+
+impl IsZeroLamport for StoredAccountHeader<'_> {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
     }
