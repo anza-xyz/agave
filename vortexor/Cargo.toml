@@ -56,8 +56,8 @@ x509-parser = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
 solana-local-cluster = { workspace = true}
+solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
 
 [lib]
 crate-type = ["lib"]
