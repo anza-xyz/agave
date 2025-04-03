@@ -88,9 +88,9 @@ async fn test_vortexor() {
 fn get_server_urls(validator: &ClusterValidatorInfo) -> (Url, Url) {
     let rpc_addr = validator.info.contact_info.rpc().unwrap();
     let rpc_pubsub_addr = validator.info.contact_info.rpc_pubsub().unwrap();
-    let rpc_url = Url::parse(format!("http://{}", rpc_addr.to_string()).as_str()).unwrap();
-    let ws_url = Url::parse(format!("ws://{}", rpc_pubsub_addr.to_string()).as_str()).unwrap();
-    return (rpc_url, ws_url);
+    let rpc_url = Url::parse(format!("http://{}", rpc_addr).as_str()).unwrap();
+    let ws_url = Url::parse(format!("ws://{}", rpc_pubsub_addr).as_str()).unwrap();
+    (rpc_url, ws_url)
 }
 
 #[tokio::test(flavor = "multi_thread")]
