@@ -73,6 +73,7 @@ use {
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
     solana_poh::{
+        poh_controller::PohController,
         poh_recorder::PohRecorder,
         poh_service::{self, PohService},
         transaction_recorder::TransactionRecorder,
@@ -965,6 +966,7 @@ impl Validator {
         let (record_sender, record_receiver) = unbounded();
         let transaction_recorder =
             TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
+        let (poh_controller, bank_message_receiver) = PohController::new();
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (banking_tracer, tracer_thread) =
@@ -1338,6 +1340,8 @@ impl Validator {
             config.poh_pinned_cpu_core,
             config.poh_hashes_per_batch,
             record_receiver,
+            bank_message_receiver,
+            poh_controller.pending_message(),
         );
         assert_eq!(
             blockstore.get_new_shred_signals_len(),
@@ -1493,6 +1497,7 @@ impl Validator {
             ledger_signal_receiver,
             &rpc_subscriptions,
             &poh_recorder,
+            poh_controller,
             tower,
             config.tower_storage.clone(),
             &leader_schedule_cache,
