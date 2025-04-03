@@ -26,7 +26,6 @@ impl StakedNodesUpdaterService {
         staked_nodes: Arc<RwLock<StakedNodes>>,
         staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     ) -> Self {
-        info!("Starting StakedNodesUpdaterService thread");
         let thread_hdl = Builder::new()
             .name("solStakedNodeUd".to_string())
             .spawn(move || {
@@ -36,11 +35,6 @@ impl StakedNodesUpdaterService {
                         root_bank.current_epoch_staked_nodes()
                     };
                     let overrides = staked_nodes_overrides.read().unwrap().clone();
-                    debug!(
-                        "StakedNodesUpdaterService: {} staked nodes: {:?}",
-                        overrides.len(),
-                        stakes
-                    );
                     *staked_nodes.write().unwrap() = StakedNodes::new(stakes, overrides);
                     std::thread::sleep(STAKE_REFRESH_CYCLE);
                 }

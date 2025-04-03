@@ -73,11 +73,6 @@ impl StakeUpdater {
         if last_refresh.is_none() || last_refresh.unwrap().elapsed() > STAKE_REFRESH_INTERVAL {
             let client = rpc_load_balancer.rpc_client();
             let vote_accounts = client.get_vote_accounts()?;
-            debug!(
-                "try_refresh_stake_info: len: {} staked nodes: {:?}",
-                vote_accounts.current.len() + vote_accounts.delinquent.len(),
-                vote_accounts
-            );
 
             let stake_map = Arc::new(
                 vote_accounts
@@ -94,11 +89,6 @@ impl StakeUpdater {
             );
 
             *last_refresh = Some(Instant::now());
-            debug!(
-                "try_refresh_stake_info: {} staked nodes: {:?}",
-                stake_map.len(),
-                stake_map
-            );
             shared_staked_nodes
                 .write()
                 .unwrap()
