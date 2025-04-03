@@ -115,7 +115,7 @@ use {
         marker::PhantomData,
         net::TcpStream,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         thread::{sleep, JoinHandle},
@@ -124,6 +124,11 @@ use {
     tungstenite::{connect, stream::MaybeTlsStream, Message, WebSocket},
     url::Url,
 };
+
+/// The interval between pings measured in seconds
+pub const DEFAULT_PING_DURATION_SECONDS: u64 = 10;
+/// The maximum number of consecutive failed pings before considering the connection stale
+pub const DEFAULT_MAX_FAILED_PINGS: usize = 3;
 
 /// A subscription.
 ///
@@ -211,24 +216,29 @@ where
     fn read_message(
         writable_socket: &Arc<RwLock<WebSocket<MaybeTlsStream<TcpStream>>>>,
     ) -> Result<Option<T>, PubsubClientError> {
-        let message = writable_socket.write().unwrap().read()?;
-        if message.is_ping() {
-            return Ok(None);
-        }
-        let message_text = &message.into_text()?;
-        if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text) {
-            if let Some(Object(params)) = json_msg.get("params") {
-                if let Some(result) = params.get("result") {
-                    if let Ok(x) = serde_json::from_value::<T>(result.clone()) {
-                        return Ok(Some(x));
+        match writable_socket.write().unwrap().read() {
+            Ok(message) => {
+                if message.is_ping() || message.is_pong() {
+                    return Ok(None);
+                }
+
+                let message_text = &message.into_text()?;
+                if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text) {
+                    if let Some(Object(params)) = json_msg.get("params") {
+                        if let Some(result) = params.get("result") {
+                            if let Ok(x) = serde_json::from_value::<T>(result.clone()) {
+                                return Ok(Some(x));
+                            }
+                        }
                     }
                 }
-            }
-        }
 
-        Err(PubsubClientError::UnexpectedMessageError(format!(
-            "msg={message_text}"
-        )))
+                Err(PubsubClientError::UnexpectedMessageError(format!(
+                    "msg={message_text}"
+                )))
+            }
+            Err(err) => Err(PubsubClientError::WsError(err)),
+        }
     }
 
     /// Shutdown the internel message receiver and wait for its thread to exit.
@@ -794,15 +804,60 @@ impl PubsubClient {
         T: DeserializeOwned,
         F: Fn(T) + Send + 'static,
     {
+        let ping_interval: Duration = Duration::from_secs(DEFAULT_PING_DURATION_SECONDS);
+        let max_failed_pings: usize = DEFAULT_MAX_FAILED_PINGS;
+        let mut last_ping_time: std::time::Instant = std::time::Instant::now();
+        let elapsed_pings: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+
         loop {
             if exit.load(Ordering::Relaxed) {
                 break;
             }
 
+            // Send ping if the interval has passed
+            if last_ping_time.elapsed() >= ping_interval {
+                if let Err(err) = socket.write().unwrap().send(Message::Ping(vec![])) {
+                    info!("Error sending ping: {:?}", err);
+                    break;
+                }
+
+                last_ping_time = std::time::Instant::now();
+                let pings = elapsed_pings.fetch_add(1, Ordering::Relaxed) + 1;
+
+                // Check if max_failed_pings has been exceeded
+                if pings > max_failed_pings {
+                    info!(
+                        "No pong received after {} pings. Closing connection...",
+                        max_failed_pings
+                    );
+
+                    let _ = socket.write().unwrap().close(None);
+                    break;
+                }
+            }
+
+            let mut ws = socket.write().unwrap();
+            let maybe_tls_stream = ws.get_mut();
+
+            // We can only set a read time out safely if it's a plain TCP connection
+            if let MaybeTlsStream::Plain(tcp_stream) = maybe_tls_stream {
+                if let Err(e) = tcp_stream.set_read_timeout(Some(Duration::from_millis(500))) {
+                    info!("Failed to set read timeout on TcpStream: {:?}", e);
+                }
+            }
+
             match PubsubClientSubscription::read_message(socket) {
-                Ok(Some(message)) => handler(message),
+                Ok(Some(message)) => {
+                    elapsed_pings.store(0, Ordering::Relaxed);
+                    handler(message)
+                }
                 Ok(None) => {
                     // Nothing useful, means we received a ping message
+                    elapsed_pings.store(0, Ordering::Relaxed);
+                }
+                Err(ref err) if err.is_timeout() => {
+                    // Read timed out - continue the loop
+                    continue;
                 }
                 Err(err) => {
                     info!("receive error: {:?}", err);
