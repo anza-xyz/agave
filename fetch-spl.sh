@@ -14,6 +14,7 @@ fetch_program() {
   declare address=$3
   declare loader=$4
 
+<<<<<<< HEAD
   declare so=spl_$name-$version.so
 
   if [[ $loader == "$upgradeableLoader" ]]; then
@@ -41,15 +42,28 @@ fetch_program() {
     mkdir -p ~/.cache/solana-spl
     cp "$so" ~/.cache/solana-spl/"$so"
   fi
+=======
+  so_name="${PREFIX}_${name//-/_}.so"
+  download_url="https://github.com/solana-program/$name/releases/download/program@v$version/$so_name"
+>>>>>>> 597947830 (spl: Update to newest token-2022 binary on mainnet (#5628))
 
 }
 
+<<<<<<< HEAD
 fetch_program token 3.5.0 TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA BPFLoader2111111111111111111111111111111111
 fetch_program token-2022 5.0.2 TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb BPFLoaderUpgradeab1e11111111111111111111111
 fetch_program memo  1.0.0 Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo BPFLoader1111111111111111111111111111111111
 fetch_program memo  3.0.0 MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr BPFLoader2111111111111111111111111111111111
 fetch_program associated-token-account 1.1.2 ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL BPFLoader2111111111111111111111111111111111
 fetch_program feature-proposal 1.0.0 Feat1YXHhH6t1juaWF74WLcfv4XoNocjXA6sPWHNgAse BPFLoader2111111111111111111111111111111111
+=======
+add_spl_program_to_fetch token 3.5.0 TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA BPFLoader2111111111111111111111111111111111
+add_spl_program_to_fetch token-2022 8.0.0 TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb BPFLoaderUpgradeab1e11111111111111111111111
+add_spl_program_to_fetch memo  1.0.0 Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo BPFLoader1111111111111111111111111111111111
+add_spl_program_to_fetch memo  3.0.0 MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr BPFLoader2111111111111111111111111111111111
+add_spl_program_to_fetch associated-token-account 1.1.2 ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL BPFLoader2111111111111111111111111111111111
+add_spl_program_to_fetch feature-proposal 1.0.0 Feat1YXHhH6t1juaWF74WLcfv4XoNocjXA6sPWHNgAse BPFLoader2111111111111111111111111111111111
+>>>>>>> 597947830 (spl: Update to newest token-2022 binary on mainnet (#5628))
 
 echo "${genesis_args[@]}" > spl-genesis-args.sh
 
