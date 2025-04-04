@@ -52,8 +52,7 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
-        ops::ControlFlow,
-        ops::DerefMut,
+        ops::{ControlFlow, DerefMut},
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
             Arc, Mutex, MutexGuard, OnceLock, Weak,

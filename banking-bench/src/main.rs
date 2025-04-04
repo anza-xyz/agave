@@ -471,7 +471,14 @@ fn main() {
             prioritization_fee_cache.clone(),
         );
         let channels = banking_tracer.create_channels_for_scheduler_pool(&pool);
-        ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info, &poh_recorder, transaction_recorder.clone());
+        ensure_banking_stage_setup(
+            &pool,
+            &bank_forks,
+            &channels,
+            &cluster_info,
+            &poh_recorder,
+            transaction_recorder.clone(),
+        );
         bank_forks.write().unwrap().install_scheduler_pool(pool);
         channels
     } else {
