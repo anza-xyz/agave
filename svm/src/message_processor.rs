@@ -140,13 +140,13 @@ mod tests {
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
         solana_secp256k1_program::new_secp256k1_instruction,
         solana_secp256r1_program::new_secp256r1_instruction,
-        solana_svm_callback::EpochStakeCallback,
+        solana_svm_callback::InvokeContextCallback,
         solana_transaction_context::TransactionContext,
         std::sync::Arc,
     };
 
     struct MockCallback {}
-    impl EpochStakeCallback for MockCallback {}
+    impl InvokeContextCallback for MockCallback {}
 
     fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
         let (lamports, rent_epoch) = DUMMY_INHERITABLE_ACCOUNT_FIELDS;
@@ -666,7 +666,7 @@ mod tests {
         );
 
         struct MockCallback {}
-        impl EpochStakeCallback for MockCallback {
+        impl InvokeContextCallback for MockCallback {
             fn is_precompile(&self, program_id: &Pubkey) -> bool {
                 program_id == &secp256k1_program::id()
                     || program_id == &ed25519_program::id()

@@ -1091,7 +1091,7 @@ mod tests {
         solana_rent_debits::RentDebits,
         solana_sdk_ids::{bpf_loader, system_program, sysvar},
         solana_signature::Signature,
-        solana_svm_callback::{AccountState, EpochStakeCallback},
+        solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_context::TransactionContext,
         solana_transaction_error::{TransactionError, TransactionError::DuplicateInstruction},
@@ -1121,7 +1121,7 @@ mod tests {
             Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
     }
 
-    impl EpochStakeCallback for MockBankCallback {}
+    impl InvokeContextCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {

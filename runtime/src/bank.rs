@@ -172,7 +172,7 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
-    solana_svm_callback::{AccountState, EpochStakeCallback, TransactionProcessingCallback},
+    solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_transaction_context::{TransactionAccount, TransactionReturnData},
@@ -6941,7 +6941,7 @@ impl Bank {
     }
 }
 
-impl EpochStakeCallback for Bank {
+impl InvokeContextCallback for Bank {
     fn get_epoch_stake(&self) -> u64 {
         self.get_current_epoch_total_stake()
     }
