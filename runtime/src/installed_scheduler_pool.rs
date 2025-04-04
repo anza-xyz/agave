@@ -558,13 +558,6 @@ impl BankWithScheduler {
         Ok(())
     }
 
-    pub fn unpause_new_block_production_scheduler(&self) {
-        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
-            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
-            scheduler.unpause_after_taken();
-        }
-    }
-
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn create_timeout_listener(&self) -> TimeoutListener {
         self.inner.do_create_timeout_listener()
@@ -574,6 +567,13 @@ impl BankWithScheduler {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn drop_scheduler(&mut self) {
         self.inner.drop_scheduler();
+    }
+
+    pub fn unpause_new_block_production_scheduler(&self) {
+        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
+            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
+            scheduler.unpause_after_taken();
+        }
     }
 
     pub(crate) fn wait_for_paused_scheduler(bank: &Bank, scheduler: &InstalledSchedulerRwLock) {

@@ -56,8 +56,8 @@ pub(crate) fn ensure_banking_stage_setup(
 
     let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
     let unified_receiver = channels.unified_receiver().clone();
+    let thread_count = BankingStage::num_threads() as usize;
     let mut decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
-    let block_producing_scheduler_handler_threads = BankingStage::num_threads() as usize;
     let banking_stage_monitor = Box::new(decision_maker.clone());
 
     let banking_packet_handler = Box::new(
@@ -95,7 +95,7 @@ pub(crate) fn ensure_banking_stage_setup(
 
     pool.register_banking_stage(
         unified_receiver,
-        block_producing_scheduler_handler_threads,
+        thread_count,
         banking_stage_monitor,
         banking_packet_handler,
         transaction_recorder,
