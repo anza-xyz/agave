@@ -2885,23 +2885,15 @@ fn check_pull_request_shred_version(self_shred_version: u16, caller: &CrdsValue)
 
 // Discards CrdsValues in PushMessages and PullResponses from nodes with
 // different shred-version.
-// ContactInfos are always exempted from shred-version check in order to:
-// * Allow nodes to update their shred-version.
-// * Prevent two running instances of the same identity key from
-//   cross-contaminating gossip across clusters; see check_duplicate_instance.
 fn discard_different_shred_version(
     msg: &mut Protocol,
     self_shred_version: u16,
     crds: &Crds,
     stats: &GossipStats,
 ) {
-    let (from, values, skip_shred_version_counter) = match msg {
-        Protocol::PullResponse(from, values) => {
-            (from, values, &stats.skip_pull_response_shred_version)
-        }
-        Protocol::PushMessage(from, values) => {
-            (from, values, &stats.skip_push_message_shred_version)
-        }
+    let (values, skip_shred_version_counter) = match msg {
+        Protocol::PullResponse(_, values) => (values, &stats.skip_pull_response_shred_version),
+        Protocol::PushMessage(_, values) => (values, &stats.skip_push_message_shred_version),
         // Shred-version on pull-request callers can be checked without a lock
         // on CRDS table and is so verified separately (by
         // check_pull_request_shred_version).
@@ -2912,16 +2904,19 @@ fn discard_different_shred_version(
         }
     };
     let num_values = values.len();
-    if crds.get_shred_version(from) == Some(self_shred_version) {
-        // Retain ContactInfos or values with the same shred version.
-        values.retain(|value| {
-            matches!(value.data(), CrdsData::ContactInfo(_))
-                || crds.get_shred_version(&value.pubkey()) == Some(self_shred_version)
-        })
-    } else {
-        // Only retain ContactInfos.
-        values.retain(|value| matches!(value.data(), CrdsData::ContactInfo(_)));
-    }
+    values.retain(|value| {
+        // Accept gossip messages if the shred versions match.
+        // For wen-restart support, we also need to accept gossip messages
+        // with `shred_version = current shred_version + 1`
+        // see: https://github.com/solana-foundation/solana-improvement-documents/pull/46/files
+        let shred_version = match value.data() {
+            CrdsData::ContactInfo(ci) => Some(ci.shred_version()),
+            _ => crds.get_shred_version(&value.pubkey()),
+        };
+        matches!(shred_version, Some(v) if
+            v == self_shred_version || v == self_shred_version.saturating_add(1)
+        )
+    });
     let num_skipped = num_values - values.len();
     if num_skipped != 0 {
         skip_shred_version_counter.add_relaxed(num_skipped as u64);
