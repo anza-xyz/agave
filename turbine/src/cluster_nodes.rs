@@ -403,6 +403,9 @@ fn cmp_nodes_stake(a: &Node, b: &Node) -> Ordering {
 // same TVU socket-addr, we only send shreds to one of them.
 // Additionally limits number of nodes at the same IP address to
 // MAX_NUM_NODES_PER_IP_ADDRESS.
+//
+// This assumes that `sort_and_dedup_nodes(nodes);` was called to sort the
+// nodes array in descending order of stake
 fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
     const TVU_PROTOCOLS: [Protocol; 2] = [Protocol::UDP, Protocol::QUIC];
     let capacity = nodes.len().saturating_mul(2);
@@ -415,30 +418,36 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
         let Some(node) = node.contact_info_mut() else {
             // Need to keep staked identities without gossip ContactInfo for
             // deterministic shuffle.
-            return node_stake > 0u64;
+            return node_stake > 0;
         };
         // Dedup socket addresses and limit nodes at same IP address.
         for protocol in TVU_PROTOCOLS {
             let Some(addr) = node.tvu(protocol) else {
                 continue;
             };
-            let count: usize = *counts
-                .entry((protocol, addr.ip()))
-                .and_modify(|count| *count += 1)
-                .or_insert(1);
-            if !addrs.insert((protocol, addr)) || count > MAX_NUM_NODES_PER_IP_ADDRESS {
-                // Remove the respective TVU address so that no more shreds are
-                // sent to this socket address.
+            // Check if someone with more stake has claimed the same
+            // TVU port before. If so, remove TVU address.
+            if !addrs.insert(addr) {
                 node.remove_tvu_addr(protocol);
+            } else {
+                let count: usize = *counts
+                    .entry(addr.ip())
+                    .and_modify(|count| *count += 1)
+                    .or_insert(1);
+                if count > MAX_NUM_NODES_PER_IP_ADDRESS {
+                    // Remove the respective TVU address so that no more shreds are
+                    // sent to the problematic IP
+                    node.remove_tvu_addr(protocol);
+                }
             }
         }
         // Always keep staked nodes for deterministic shuffle,
         // but drop non-staked nodes if they have no valid TVU address.
-        node_stake > 0u64
+        node_stake > 0
             || TVU_PROTOCOLS
                 .into_iter()
                 .any(|protocol| node.tvu(protocol).is_some())
-    })
+    });
 }
 
 fn get_seeded_rng(leader: &Pubkey, shred: &ShredId) -> ChaChaRng {
@@ -728,9 +737,124 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        std::{fmt::Debug, hash::Hash},
+        std::{collections::HashSet, fmt::Debug, hash::Hash},
         test_case::test_case,
     };
+    #[test]
+    fn test_dedup_tvu_addrs_across_protocols() {
+        let mut nodes = vec![
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 10,
+                    tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
+                    tvu_quic: Some("1.1.1.1:2".parse().unwrap()),
+                }),
+                stake: 1,
+            },
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 20,
+                    tvu_udp: Some("1.1.1.1:2".parse().unwrap()),
+                    tvu_quic: Some("1.1.1.1:1".parse().unwrap()),
+                }),
+                stake: 2,
+            },
+        ];
+        sort_and_dedup_nodes(&mut nodes);
+        dedup_tvu_addrs(&mut nodes);
+        assert_eq!(nodes.len(), 2, "No staked identities should be removed");
+        assert!(tvu_deduped(&nodes), "TVU addresses should be deduped");
+    }
+
+    /// checks if provided nodes do not have duplicate TVU records
+    fn tvu_deduped(nodes: &[Node]) -> bool {
+        let mut sockets = vec![];
+        for n in nodes {
+            match n.node {
+                NodeId::ContactInfo(ref contact_info) => {
+                    if let Some(addr) = contact_info.tvu_quic {
+                        sockets.push(addr)
+                    }
+                    if let Some(addr) = contact_info.tvu_udp {
+                        sockets.push(addr)
+                    }
+                }
+                NodeId::Pubkey(_pubkey) => panic!(),
+            };
+        }
+        sockets.iter().unique().count() == sockets.len()
+    }
+    #[test]
+    fn test_dedup_tvu_addrs() {
+        let mut nodes = vec![
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 10,
+                    tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
+                    tvu_quic: None,
+                }),
+                stake: 1,
+            },
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 20,
+                    tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
+                    tvu_quic: None,
+                }),
+                stake: 2,
+            },
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 30,
+                    tvu_udp: Some("2.2.2.2:2".parse().unwrap()),
+                    tvu_quic: None,
+                }),
+                stake: 3,
+            },
+        ];
+        sort_and_dedup_nodes(&mut nodes);
+        dedup_tvu_addrs(&mut nodes);
+        assert_eq!(nodes.len(), 3, "No staked identities should be removed");
+        assert!(tvu_deduped( &nodes),
+            "dedup should have removed the TVU address from identity reusing the same socket, but only one of the two!");
+    }
+    #[test]
+    fn test_dedup_tvu_addrs_wipes_unstaked_id() {
+        let pk = Pubkey::new_unique();
+        let mut nodes = vec![
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: pk,
+                    wallclock: 10,
+                    tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
+                    tvu_quic: None,
+                }),
+                stake: 0,
+            },
+            Node {
+                node: NodeId::ContactInfo(ContactInfo {
+                    pubkey: Pubkey::new_unique(),
+                    wallclock: 20,
+                    tvu_udp: Some("1.1.1.1:1".parse().unwrap()),
+                    tvu_quic: None,
+                }),
+                stake: 2,
+            },
+        ];
+        sort_and_dedup_nodes(&mut nodes);
+        dedup_tvu_addrs(&mut nodes);
+        assert_eq!(
+            nodes.len(),
+            1,
+            "unstaked identities should be purged from the list"
+        );
+        assert_eq!(nodes[0].stake, 2);
+    }
 
     #[test]
     fn test_cluster_nodes_retransmit() {
