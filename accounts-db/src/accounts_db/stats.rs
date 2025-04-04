@@ -151,6 +151,10 @@ pub struct FlushStats {
     pub num_bytes_purged: Saturating<u64>,
     pub store_accounts_timing: StoreAccountsTiming,
     pub store_accounts_total_us: Saturating<u64>,
+    pub unref_time: Saturating<u64>,
+    pub zero_lamport_find_time: Saturating<u64>,
+    pub reclaim_time: Saturating<u64>,
+    pub collect_accounts_time: Saturating<u64>,
 }
 
 impl FlushStats {
@@ -164,6 +168,10 @@ impl FlushStats {
         self.store_accounts_timing
             .accumulate(&other.store_accounts_timing);
         self.store_accounts_total_us += other.store_accounts_total_us;
+        self.unref_time += other.unref_time;
+        self.zero_lamport_find_time += other.zero_lamport_find_time;
+        self.reclaim_time += other.reclaim_time;
+        self.collect_accounts_time += other.collect_accounts_time;
     }
 }
 

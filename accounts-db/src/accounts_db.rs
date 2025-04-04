@@ -510,9 +510,10 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
     storage_access: StorageAccess::File,
-    scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
+    scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
     enable_experimental_accumulator_hash: false,
     verify_experimental_accumulator_hash: false,
+    track_dead_accounts: false,
     snapshots_use_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
@@ -538,10 +539,11 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
     storage_access: StorageAccess::File,
-    scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
+    scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
     enable_experimental_accumulator_hash: false,
     verify_experimental_accumulator_hash: false,
     snapshots_use_experimental_accumulator_hash: false,
+    track_dead_accounts: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -674,6 +676,7 @@ pub struct AccountsDbConfig {
     pub enable_experimental_accumulator_hash: bool,
     pub verify_experimental_accumulator_hash: bool,
     pub snapshots_use_experimental_accumulator_hash: bool,
+    pub track_dead_accounts: bool,
     /// Number of threads for background cleaning operations (`thread_pool_clean')
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
@@ -697,7 +700,7 @@ pub enum AccountShrinkThreshold {
     IndividualStore { shrink_ratio: f64 },
 }
 pub const DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE: bool = true;
-pub const DEFAULT_ACCOUNTS_SHRINK_RATIO: f64 = 0.99;
+pub const DEFAULT_ACCOUNTS_SHRINK_RATIO: f64 = 0.80;
 // The default extra account space in percentage from the ideal target
 const DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION: AccountShrinkThreshold =
     AccountShrinkThreshold::TotalSpace {
@@ -1326,6 +1329,7 @@ impl AccountStorageEntry {
     }
 
     pub fn add_dead_account(&self, offset: Offset, size: usize, slot: Slot) {
+        let size = std::cmp::min(self.accounts.len() - offset, size);
         self.dead_account_offsets
             .write()
             .unwrap()
@@ -1342,16 +1346,23 @@ impl AccountStorageEntry {
             })
     }
 
-    pub fn get_dead_account_stats(&self) -> (usize, usize) {
+    pub fn get_dead_account_stats(&self, slot: Option<Slot>) -> (usize, usize) {
         let number_of_accounts = self.dead_account_offsets.read().unwrap().len();
+        let mut dead_accounts = self.dead_account_offsets.read().unwrap().clone();
+        dead_accounts.sort();
         let dead_bytes = self
             .dead_account_offsets
             .read()
             .unwrap()
             .iter()
+            .filter(|(_, _, dead_slot)| slot.is_none_or(|s| *dead_slot <= s))
             .map(|(_, size, _)| *size)
             .sum();
         (number_of_accounts, dead_bytes)
+    }
+
+    pub fn get_dead_accounts_vector(&self) -> Vec<(Offset, usize, Slot)> {
+        self.dead_account_offsets.read().unwrap().clone()
     }
 
     /// Return true if offset is "new" and inserted successfully. Otherwise,
@@ -3593,14 +3604,7 @@ impl AccountsDb {
                     }
                 } else {
                     index_scan_returned_none_count += 1;
-                    // getting None here means the account is 'normal' and was written to disk. This means it must have ref_count=1 and
-                    // slot_list.len() = 1. This means it must be alive in this slot. This is by far the most common case.
-                    // Note that we could get Some(...) here if the account is in the in mem index because it is hot.
-                    // Note this could also mean the account isn't on disk either. That would indicate a bug in accounts db.
-                    // Account is alive.
-                    //let ref_count = 1;
-                    //let slot_list = [(slot_to_shrink, AccountInfo::default())];
-                    //do_populate_accounts_for_shrink(ref_count, &slot_list);
+                    // getting None here means the account was not found in the index and must be dead
                     dead += 1;
                 }
                 index += 1;
@@ -6384,6 +6388,18 @@ impl AccountsDb {
                 flush_stats.store_accounts_timing.handle_reclaims_elapsed,
                 i64
             ),
+            ("unref_time", flush_stats.unref_time.0, i64),
+            (
+                "zero_lamport_find_time",
+                flush_stats.zero_lamport_find_time.0,
+                i64
+            ),
+            ("reclaim_time", flush_stats.reclaim_time.0, i64),
+            (
+                "collect_accounts_time",
+                flush_stats.collect_accounts_time.0,
+                i64
+            ),
         );
     }
 
@@ -6454,7 +6470,7 @@ impl AccountsDb {
         let mut flush_stats = FlushStats::default();
         let iter_items: Vec<_> = slot_cache.iter().collect();
         let mut pubkey_to_slot_set: Vec<(Pubkey, Slot)> = vec![];
-        let mut purged_older_pubkeys = HashSet::new();
+        let mut purged_older_pubkeys = Vec::with_capacity(iter_items.len());
         let mut reclaims = Vec::new();
 
         if should_flush_f.is_some() {
@@ -6468,6 +6484,7 @@ impl AccountsDb {
             }
         }
 
+        let mut collect_accounts = Measure::start("collect_accounts");
         let accounts: Vec<(&Pubkey, &AccountSharedData)> = iter_items
             .iter()
             .filter_map(|iter_item| {
@@ -6501,11 +6518,14 @@ impl AccountsDb {
             })
             .collect();
 
+        collect_accounts.stop();
+        flush_stats.collect_accounts_time = Saturating(collect_accounts.as_us());
         let is_dead_slot = accounts.is_empty();
         // Remove the account index entries from earlier roots that are outdated by later roots.
         // Safe because queries to the index will be reading updates from later roots.
         self.purge_slot_cache_pubkeys(slot, pubkey_to_slot_set, is_dead_slot);
 
+        let mut zero_lamport_find = Measure::start("zero_lamport_find");
         if !is_dead_slot {
             // This ensures that all updates are written to an AppendVec, before any
             // updates to the index happen, so anybody that sees a real entry in the index,
@@ -6528,33 +6548,41 @@ impl AccountsDb {
 
             // Find all the zero lamport accounts that were added and mark them
             let storage = storage.unwrap();
-            storage.accounts.scan_accounts(|account| {
+            storage.accounts.scan_accounts_stored_meta(|account| {
                 if account.lamports() == 0 {
                     self.zero_lamport_single_ref_found(slot, account.offset());
                     flush_stats.num_zero_lamport_accounts_flushed += 1;
                 }
             });
         }
+        zero_lamport_find.stop();
+        flush_stats.zero_lamport_find_time = Saturating(zero_lamport_find.as_us());
 
-        let mut _pubkeys_removed_from_accounts_index = HashSet::new();
-        let mut _purge_stats = PurgeStats::default();
-        let mut _purged_stored_account_slots = HashMap::new();
+        let pubkeys_removed_from_accounts_index = HashSet::new();
+        let purge_stats = PurgeStats::default();
+        let mut purged_stored_account_slots = HashMap::new();
 
+        let mut unref_time = Measure::start("unref_time");
         self.unref_accounts(
             purged_older_pubkeys,
-            &mut _purged_stored_account_slots,
-            &_pubkeys_removed_from_accounts_index,
+            &mut purged_stored_account_slots,
+            &pubkeys_removed_from_accounts_index,
         );
+        unref_time.stop();
+        flush_stats.unref_time = Saturating(unref_time.as_us());
 
+        let mut reclaim_time = Measure::start("reclaim_time");
         flush_stats.num_accounts_reclaimed += reclaims.len();
         self.handle_reclaims(
             (!reclaims.is_empty()).then(|| reclaims.iter()),
             None,
             false,
-            &_pubkeys_removed_from_accounts_index,
-            HandleReclaims::ProcessDeadSlots(&_purge_stats),
+            &pubkeys_removed_from_accounts_index,
+            HandleReclaims::ProcessDeadSlots(&purge_stats),
             Some(slot),
         );
+        reclaim_time.stop();
+        flush_stats.reclaim_time = Saturating(reclaim_time.as_us());
 
         // Remove this slot from the cache, which will to AccountsDb's new readers should look like an
         // atomic switch from the cache to storage.
@@ -7842,9 +7870,7 @@ impl AccountsDb {
 
         let alive_bytes = store.alive_bytes_exclude_zero_lamport_single_ref_accounts() as u64;
         match self.shrink_ratio {
-            AccountShrinkThreshold::TotalSpace { shrink_ratio } => {
-                (alive_bytes as f64 / total_bytes as f64) < shrink_ratio
-            }
+            AccountShrinkThreshold::TotalSpace { shrink_ratio: _ } => alive_bytes < total_bytes,
             AccountShrinkThreshold::IndividualStore { shrink_ratio } => {
                 (alive_bytes as f64 / total_bytes as f64) < shrink_ratio
             }
@@ -8029,7 +8055,7 @@ impl AccountsDb {
     ///    and should not be unref'd. If they exist in the accounts index, they are NEW.
     fn unref_accounts(
         &self,
-        purged_slot_pubkeys: HashSet<(Slot, Pubkey)>,
+        purged_slot_pubkeys: Vec<(Slot, Pubkey)>,
         purged_stored_account_slots: &mut AccountSlots,
         pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
     ) {

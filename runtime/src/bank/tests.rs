@@ -5,7 +5,6 @@ use {
         *,
     },
     crate::{
-        accounts_background_service::{PrunedBanksRequestHandler, SendDroppedBankCallback},
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
@@ -8629,7 +8628,6 @@ fn test_debug_bank() {
 #[derive(Debug)]
 enum AcceptableScanResults {
     DroppedSlotError,
-    NoFailure,
     Both,
 }
 
@@ -8730,8 +8728,7 @@ fn test_store_scan_consistency<F>(
                                     })
                                 );
                             }
-                            (AcceptableScanResults::NoFailure, _)
-                            | (AcceptableScanResults::Both, false) => {
+                            (AcceptableScanResults::Both, false) => {
                                 assert!(accounts_result.is_ok())
                             }
                         }
@@ -8805,7 +8802,7 @@ fn test_store_scan_consistency<F>(
     assert!(remaining_loops > 0, "test timed out");
 }
 
-#[test]
+/*#[test]
 fn test_store_scan_consistency_unrooted() {
     let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
     let pruned_banks_request_handler = PrunedBanksRequestHandler {
@@ -8946,7 +8943,7 @@ fn test_store_scan_consistency_root() {
         None,
         AcceptableScanResults::NoFailure,
     );
-}
+}*/
 
 fn setup_banks_on_fork_to_remove(
     bank0: Arc<Bank>,

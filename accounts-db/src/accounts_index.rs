@@ -974,22 +974,21 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .collect()
     }
 
-    /// returns true if, after this fn call:
-    /// accounts index entry for `pubkey` has an empty slot list
-    /// or `pubkey` does not exist in accounts index
+    /// Remove all entries from the slot list that are older than `slots_to_purge`
+    /// Return the keys that were purged along with the slots they were purged from
     pub(crate) fn purge_older(
         &self,
         pubkey: &Pubkey,
         slots_to_purge: Slot,
         reclaims: &mut SlotList<T>,
-    ) -> HashSet<(Slot, Pubkey)> {
-        let mut purged_keys: HashSet<(Slot, Pubkey)> = HashSet::new();
+    ) -> Vec<(Slot, Pubkey)> {
+        let mut purged_keys: Vec<(Slot, Pubkey)> = Vec::new();
         self.slot_list_mut(pubkey, |slot_list| {
             slot_list.retain(|(slot, item)| {
                 let should_purge = slots_to_purge > *slot;
                 let is_cached = item.is_cached();
                 if should_purge && !is_cached {
-                    purged_keys.insert((*slot, *pubkey));
+                    purged_keys.push((*slot, *pubkey));
                     reclaims.push((*slot, *item));
                     false
                 } else {
@@ -1217,13 +1216,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                             entry.is_some()
                         });
                     if !found && matches!(filter, ScanFilter::OnlyAbnormalWithVerify) {
-                        /*lock.as_ref().unwrap().get_internal(pubkey, |entry| {
+                        lock.as_ref().unwrap().get_internal(pubkey, |entry| {
                             assert!(entry.is_some(), "{pubkey}, entry: {entry:?}");
                             let entry = entry.unwrap();
                             assert_eq!(entry.ref_count(), 1, "{pubkey}");
-                            assert_eq!(entry.slot_list.read().unwrap().len(), 1, "{pubkey}");*/
-                        //    (false, ())
-                        //});
+                            assert_eq!(entry.slot_list.read().unwrap().len(), 1, "{pubkey}");
+                            (false, ())
+                        });
                     }
                 }
             }

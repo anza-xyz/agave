@@ -545,7 +545,9 @@ mod serde_snapshot_tests {
             .unwrap();
     }
 
-    /*#[test_case(StorageAccess::Mmap)]
+    //TODO This test seems useful, but can't pass in its current form.
+    // It doesn't use the custom serializer for data. Need to abstract so it can use it or figure out something else
+    /*  #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_purge_chained_purge_before_snapshot_restore(storage_access: StorageAccess) {
         solana_logger::setup();
