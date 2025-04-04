@@ -36,7 +36,6 @@ use {
     solana_poh::poh_recorder::PohRecorder,
     solana_rpc::{
         block_meta_service::BlockMetaSender, max_slots::MaxSlots,
-        optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
         rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
@@ -139,7 +138,6 @@ impl Tvu {
         verified_vote_receiver: VerifiedVoteReceiver,
         replay_vote_sender: ReplayVoteSender,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
-        bank_notification_sender: Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slots_receiver: DuplicateConfirmedSlotsReceiver,
         tvu_config: TvuConfig,
         max_slots: &Arc<MaxSlots>,
@@ -285,7 +283,6 @@ impl Tvu {
             transaction_status_sender,
             block_meta_sender,
             entry_notification_sender,
-            bank_notification_sender,
             ancestor_hashes_replay_update_sender,
             retransmit_slots_sender,
             replay_vote_sender,
@@ -567,7 +564,6 @@ pub mod tests {
             verified_vote_receiver,
             replay_vote_sender,
             /*completed_data_sets_sender:*/ None,
-            None,
             gossip_confirmed_slots_receiver,
             TvuConfig::default(),
             &Arc::new(MaxSlots::default()),

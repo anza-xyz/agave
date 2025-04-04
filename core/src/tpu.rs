@@ -37,12 +37,10 @@ use {
         poh_recorder::{PohRecorder, WorkingBankEntry},
         transaction_recorder::TransactionRecorder,
     },
-    solana_rpc::{
-        optimistically_confirmed_bank_tracker::BankNotificationSender,
-        rpc_subscriptions::RpcSubscriptions,
-    },
+    solana_rpc::rpc_subscriptions::RpcSubscriptions,
     solana_runtime::{
         bank_forks::BankForks,
+        bank_notification::BankNotificationSender,
         prioritization_fee_cache::PrioritizationFeeCache,
         root_bank_cache::RootBankCache,
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},

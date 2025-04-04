@@ -29,6 +29,7 @@ use {
         accounts_background_service::SnapshotRequestKind,
         bank::{Bank, PreCommitResult, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
+        bank_notification::BankNotification,
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
         installed_scheduler_pool::BankWithScheduler,
@@ -2201,6 +2202,7 @@ pub fn process_single_slot(
 pub enum TransactionStatusMessage {
     Batch(TransactionStatusBatch),
     Freeze(Slot),
+    BankEvent(BankNotification),
 }
 
 #[derive(Debug)]
@@ -2216,9 +2218,35 @@ pub struct TransactionStatusBatch {
 #[derive(Clone, Debug)]
 pub struct TransactionStatusSender {
     pub sender: Sender<TransactionStatusMessage>,
+    /// controling if to send parents in case of BankNotification
+    pub should_send_parents: bool,
+    /// indicating if to send bank notifications
+    pub should_send_bank_notifications: bool,
 }
 
 impl TransactionStatusSender {
+    /// Create a new TransactionStatusSender with default bank notifications turned off
+    pub fn new(sender: Sender<TransactionStatusMessage>) -> Self {
+        Self {
+            sender,
+            should_send_parents: false,
+            should_send_bank_notifications: false,
+        }
+    }
+
+    /// Create a new TransactionStatusSender with default bank notifications turned off
+    pub fn new_with_options(
+        sender: Sender<TransactionStatusMessage>,
+        should_send_parents: bool,
+        should_send_bank_notifications: bool,
+    ) -> Self {
+        Self {
+            sender,
+            should_send_parents,
+            should_send_bank_notifications,
+        }
+    }
+
     pub fn send_transaction_status_batch(
         &self,
         slot: Slot,
@@ -4849,9 +4877,7 @@ pub mod tests {
 
         let (transaction_status_sender, transaction_status_receiver) =
             crossbeam_channel::unbounded();
-        let transaction_status_sender = TransactionStatusSender {
-            sender: transaction_status_sender,
-        };
+        let transaction_status_sender = TransactionStatusSender::new(transaction_status_sender);
 
         let blockhash = bank.last_blockhash();
         let tx1 = system_transaction::transfer(
@@ -5109,7 +5135,7 @@ pub mod tests {
         let result = execute_batch(
             &batch,
             &bank,
-            Some(&TransactionStatusSender { sender }),
+            Some(&TransactionStatusSender::new(sender)),
             None,
             &mut timing,
             None,

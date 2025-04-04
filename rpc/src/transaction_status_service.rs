@@ -1,11 +1,12 @@
 use {
     crate::transaction_notifier_interface::TransactionNotifierArc,
-    crossbeam_channel::{Receiver, RecvTimeoutError},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     itertools::izip,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError},
         blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
     },
+    solana_runtime::bank_notification::BankNotification,
     solana_svm::transaction_commit_result::CommittedTransaction,
     solana_transaction_status::{
         extract_and_fmt_memos, map_inner_instructions, Reward, TransactionStatusMeta,
@@ -40,6 +41,7 @@ impl TransactionStatusService {
         transaction_notifier: Option<TransactionNotifierArc>,
         blockstore: Arc<Blockstore>,
         enable_extended_tx_metadata_storage: bool,
+        bank_notification_sender: Option<Sender<BankNotification>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let transaction_status_receiver = Arc::new(write_transaction_status_receiver);
@@ -71,6 +73,7 @@ impl TransactionStatusService {
                         &max_complete_transaction_status_slot,
                         enable_rpc_transaction_history,
                         transaction_notifier.clone(),
+                        &bank_notification_sender,
                         &blockstore,
                         enable_extended_tx_metadata_storage,
                     ) {
@@ -97,6 +100,7 @@ impl TransactionStatusService {
         max_complete_transaction_status_slot: &Arc<AtomicU64>,
         enable_rpc_transaction_history: bool,
         transaction_notifier: Option<TransactionNotifierArc>,
+        bank_notification_sender: &Option<Sender<BankNotification>>,
         blockstore: &Blockstore,
         enable_extended_tx_metadata_storage: bool,
     ) -> Result<(), BlockstoreError> {
@@ -228,6 +232,11 @@ impl TransactionStatusService {
             }
             TransactionStatusMessage::Freeze(slot) => {
                 max_complete_transaction_status_slot.fetch_max(slot, Ordering::SeqCst);
+            }
+            TransactionStatusMessage::BankEvent(bank_notification) => {
+                if let Some(bank_notification_sender) = bank_notification_sender {
+                    let _ = bank_notification_sender.send(bank_notification);
+                }
             }
         }
         Ok(())
@@ -451,6 +460,7 @@ pub(crate) mod tests {
             Some(test_notifier.clone()),
             blockstore,
             false,
+            None, // No bank notification sender
             exit.clone(),
         );
 
@@ -554,6 +564,7 @@ pub(crate) mod tests {
             Some(test_notifier.clone()),
             blockstore,
             false,
+            None, // No bank notification sender
             exit.clone(),
         );
 
