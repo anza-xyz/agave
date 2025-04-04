@@ -2482,8 +2482,8 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         // That's because the unified scheduler is the ultimate consumer of session ending signal
         // in block production, while a certain external system (= the replay stage) is the
         // ultimate consumer of session ending signal in block verification. In the later case, the
-        // semantics of session ending should be defined in terms of the external system; i.e. the
-        // completion of all scheduled task inside the unified scheduler. So, it can't be
+        // semantics of session ending should be defined from the external system's perspective;
+        // i.e. the completion of all scheduled task inside the unified scheduler. So, it can't be
         // nonblocking there.
         let nonblocking = matches!(self.context().mode(), BlockProduction);
         self.inner.thread_manager.do_end_session(nonblocking);
