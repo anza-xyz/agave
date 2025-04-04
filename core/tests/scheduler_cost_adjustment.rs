@@ -10,6 +10,7 @@ use {
     solana_sdk::{
         account::Account,
         bpf_loader,
+        bpf_loader_upgradeable::UpgradeableLoaderState,
         clock::{Slot, MAX_PROCESSING_AGE},
         compute_budget::ComputeBudgetInstruction,
         genesis_config::{create_genesis_config, GenesisConfig},
@@ -26,6 +27,8 @@ use {
     solana_timings::ExecuteTimings,
     std::sync::{Arc, RwLock},
 };
+
+const MEMO_PROGRAM_ELF: &[u8] = include_bytes!("../../program-test/src/programs/spl_memo-3.0.0.so");
 
 fn new_bank_from_parent_with_bank_forks(
     bank_forks: &RwLock<BankForks>,
@@ -72,7 +75,7 @@ impl TestSetup {
             Account {
                 lamports: u64::MAX,
                 // borrows memo elf for executing memo ix in order to set up test condition
-                data: include_bytes!("../../program-test/src/programs/spl_memo-3.0.0.so").to_vec(),
+                data: MEMO_PROGRAM_ELF.to_vec(),
                 owner: bpf_loader::id(),
                 executable: true,
                 rent_epoch: 0,
@@ -170,15 +173,68 @@ impl TestSetup {
         (memo_ix, memo_ix_cost)
     }
 
-    fn create_lookup_table_ix(&self) -> Instruction {
-        let (create_lookup_table_ix, _lookup_table_address) =
-            solana_sdk::address_lookup_table::instruction::create_lookup_table(
-                Pubkey::new_unique(),
-                self.mint_keypair.pubkey(),
-                0,
-            );
+    #[allow(deprecated)]
+    fn deploy_with_max_data_len_ix(&mut self) -> Instruction {
+        let buffer_address = Pubkey::new_unique();
+        let program_address = Pubkey::new_unique();
+        let payer_address = self.mint_keypair.pubkey();
+        let upgrade_authority_address = payer_address;
 
-        create_lookup_table_ix
+        // Stash a valid buffer account before attempting a deployment.
+        {
+            let metadata_offset = UpgradeableLoaderState::size_of_buffer_metadata();
+            let space = UpgradeableLoaderState::size_of_buffer(MEMO_PROGRAM_ELF.len());
+            let lamports = self.genesis_config.rent.minimum_balance(space);
+
+            let mut data = vec![0; space];
+            bincode::serialize_into(
+                &mut data[..metadata_offset],
+                &UpgradeableLoaderState::Buffer {
+                    authority_address: Some(upgrade_authority_address),
+                },
+            )
+            .unwrap();
+            data[metadata_offset..].copy_from_slice(MEMO_PROGRAM_ELF);
+
+            self.genesis_config.accounts.insert(
+                buffer_address,
+                Account {
+                    lamports,
+                    data,
+                    owner: solana_sdk::bpf_loader_upgradeable::id(),
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Now stash the uninitialized program account. We're just going to
+        // invoke the loader directly.
+        {
+            let space = UpgradeableLoaderState::size_of_program();
+            let lamports = self.genesis_config.rent.minimum_balance(space);
+
+            self.genesis_config.accounts.insert(
+                program_address,
+                Account {
+                    lamports,
+                    data: vec![0; space],
+                    owner: solana_sdk::bpf_loader_upgradeable::id(),
+                    ..Default::default()
+                },
+            );
+        }
+
+        solana_sdk::bpf_loader_upgradeable::deploy_with_max_program_len(
+            &payer_address,
+            &program_address,
+            &buffer_address,
+            &upgrade_authority_address,
+            /* program_lamports */ 0, // Doesn't matter here.
+            /* max_data_len */ MEMO_PROGRAM_ELF.len().saturating_mul(2),
+        )
+        .unwrap()
+        .pop()
+        .unwrap()
     }
 }
 
@@ -382,64 +438,60 @@ fn test_builtin_ix_cost_adjustment_with_memo_and_cu_limit() {
 }
 
 #[test]
-fn test_builtin_ix_cost_adjustment_with_alt_no_cu_limit() {
-    let mut test_setup = TestSetup::new();
-
-    // A address-lookup-table ix only, that CPIs into System instructions
+fn test_builtin_ix_cost_adjustment_with_bpf_v3_no_cu_limit() {
+    // A System & BPF Loader v3 ix. The latter CPIs into System.
     for (is_simd_170_enabled, expected) in [
         // post #3799:
         // Cost model & Compute budget: reserve/allocate default CU for 1 builtin
-        // VM Execution: consume CUs for 1 ATL and 3 System (CPI-ed 3 times), then succeed
-        // Result: adjustment = 3_000 - 750 - 3 * 150 = 1,800
+        // VM Execution: consume CUs for 1 BPF_L and 1 System (CPI-ed 1 time), then succeed
+        // Result: adjustment = 3_000 - 2_370 - 150 = 480
         (
             true,
             TestResult {
                 cost_adjustment: MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT as i64
-                    - solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS as i64
-                    - 3 * solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as i64,
+                    - solana_bpf_loader_program::UPGRADEABLE_LOADER_COMPUTE_UNITS as i64
+                    - solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as i64,
                 execution_status: Ok(()),
             },
         ),
         // pre #3799:
-        // Cost model: reserve 750 CU for ATL instruction,
+        // Cost model: reserve 2_370 CU for 1 BPF_L instruction,
         // Compute budget: allocate 200K CU for one non-compute-budget instruction
-        // VM Execution: consumeed CU for 1 ATL and 3 System, then succeed,
-        // Result: adjustment = 750 - (750 + 3 * 150) = -450
+        // VM Execution: consumeed CU for 1 BPF_L and 1 System, then succeed,
+        // Result: adjustment = 2370 - (2370 + 150) = -150
         //   Note negative adjustment means adjust-up
         (
             false,
             TestResult {
-                cost_adjustment: -3
-                    * solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as i64,
+                cost_adjustment: -(solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS
+                    as i64),
                 execution_status: Ok(()),
             },
         ),
     ] {
+        let mut test_setup = TestSetup::new();
+        let ix = test_setup.deploy_with_max_data_len_ix();
         assert_eq!(
             expected,
-            test_setup.execute_test_transaction(
-                &[test_setup.create_lookup_table_ix(),],
-                is_simd_170_enabled
-            )
+            test_setup.execute_test_transaction(&[ix], is_simd_170_enabled)
         );
     }
 }
 
 #[test]
-fn test_builtin_ix_cost_adjustment_with_alt_and_cu_limit_high() {
-    let mut test_setup = TestSetup::new();
+fn test_builtin_ix_cost_adjustment_with_bpf_v3_and_cu_limit_high() {
     let cu_limit = 500_000;
-    let tx_execution_cost = solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS
-        + 3 * solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS
+    let tx_execution_cost = solana_bpf_loader_program::UPGRADEABLE_LOADER_COMPUTE_UNITS
+        + solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS
         + solana_compute_budget_program::DEFAULT_COMPUTE_UNITS;
 
-    // A address-lookup-table ix only, that CPIs into System instructions; and a compute-budget
+    // A BPF Loader v3 ix only, that CPIs into System instructions; and a compute-budget
     // instruction requests enough CU Limit
     for (is_simd_170_enabled, expected) in [
         // post #3799:
         // Cost model & Compute budget: reserve/allocate requested CUs
-        // VM Execution: consume CUs for 1 ATL and 3 System (CPI-ed 3 times) and 1 Compute Budget, then succeed
-        // Result: adjustment = 500_000 - 750 - 3 * 150 -150 = 498_650
+        // VM Execution: consume CUs for 1 BPF_L and 1 System (CPI-ed 1 time) and 1 Compute Budget, then succeed
+        // Result: adjustment = 500_000 - 2_370 - 150 - 150 = 497_330
         (
             true,
             TestResult {
@@ -449,29 +501,28 @@ fn test_builtin_ix_cost_adjustment_with_alt_and_cu_limit_high() {
         ),
         // pre #3799:
         // Cost model: ignores requested CU limit because no bpf instruction, instead
-        //   reserve CUs for 1 ATL instruction and 1 Compute Budget instruction,
+        //   reserve CUs for 1 BPF_L instruction and 1 Compute Budget instruction,
         // Compute budget: allocate reuested CUs,
-        // VM Execution: consume CUs for 1 ATL and 3 System (CPI-ed 3 times) and 1 Compute Budget, then succeed
-        // Result: adjustment = (ATL + CB) - (ATL + 3 * System + CB) = -3 * 150 = -450
+        // VM Execution: consume CUs for 1 BPF_L and 1 System (CPI-ed 1 time) and 1 Compute Budget, then succeed
+        // Result: adjustment = (BPF_L + CB) - (BPF_L + System + CB) = -150
         //   Note negative adjustment means adjust-up
         (
             false,
             TestResult {
-                cost_adjustment: -3
-                    * solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as i64,
+                cost_adjustment: -(solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS
+                    as i64),
                 execution_status: Ok(()),
             },
         ),
     ] {
+        let mut test_setup = TestSetup::new();
+        let ixs = [
+            test_setup.deploy_with_max_data_len_ix(),
+            test_setup.set_cu_limit_ix(cu_limit),
+        ];
         assert_eq!(
             expected,
-            test_setup.execute_test_transaction(
-                &[
-                    test_setup.create_lookup_table_ix(),
-                    test_setup.set_cu_limit_ix(cu_limit),
-                ],
-                is_simd_170_enabled
-            )
+            test_setup.execute_test_transaction(&ixs, is_simd_170_enabled)
         );
     }
 }
