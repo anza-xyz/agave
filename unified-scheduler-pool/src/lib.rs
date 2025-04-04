@@ -2473,9 +2473,9 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         // try to lock the poh to commit transactions. Actually, just nonblocking signaling is
         // enough for block production unlike block verification.
         //
-        // That's because task handlers (= we, the unified scheduler) are what session ending
-        // signal is delivered to in block production, while the replay stage (= it, an external
-        // system) is what session ending signal is delivered to in block verification. In the
+        // That's because task handlers (= we, the unified scheduler) are the ultimate consumer of
+        // session ending signal in block production, while the replay stage (= it, an external
+        // system) is the ultimate consumer of session ending signal in block verification. In the
         // later case, the semantics of session ending should be defined in terms of the external
         // system; i.e. the completion of all scheduled task inside the unified scheduler. So, it
         // can't be nonblocking there.
