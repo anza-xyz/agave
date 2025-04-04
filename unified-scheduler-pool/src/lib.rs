@@ -2468,8 +2468,15 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     }
 
     fn pause_for_recent_blockhash(&mut self) {
-        // this fn is called from poh thread, while it's being locked. so, we can't wait scheduler
-        // termination here to avoid deadlock. just async signaling is enough
+        // This fn is called from poh thread for block production, while poh lock is held. So, we
+        // can't wait for session ending here to avoid deadlock with handler threads, which also
+        // try to lock the poh to commit transactions. Actually, just async signaling is enough for
+        // block production unlike block verification.
+        //
+        // That's because handlers are what session ending signal is delivered to in block
+        // production while the replay stage is what session ending signal is delivered to in block
+        // verification. In the later case, the semantics of session ending is the completion of
+        // all scheduled task. So, it can't be async there.
         let nonblocking = matches!(self.context().mode(), BlockProduction);
         self.inner.thread_manager.do_end_session(nonblocking);
     }
