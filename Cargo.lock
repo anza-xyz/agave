@@ -6989,7 +6989,6 @@ name = "solana-builtins"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
- "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
  "solana-loader-v4-program",
@@ -7012,7 +7011,6 @@ dependencies = [
  "lazy_static",
  "log",
  "rand 0.8.5",
- "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
  "solana-frozen-abi",
