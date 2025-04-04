@@ -1024,6 +1024,12 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      already exists then this parameter is silently ignored",
                 ),
         )
+        .arg(
+            Arg::with_name("enable-test-features")
+                .long("enable-test-features")
+                .takes_value(false)
+                .help("Enable test validator specific RPC features and endpoints"),
+        )
 }
 
 pub struct DefaultTestArgs {

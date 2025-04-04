@@ -49,7 +49,7 @@ use {
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_rpc::{
-        rpc::{JsonRpcConfig, RpcBigtableConfig},
+        rpc::{JsonRpcConfig, ProcessorType, RpcBigtableConfig},
         rpc_pubsub_service::PubSubConfig,
     },
     solana_runtime::{
@@ -667,6 +667,7 @@ pub fn execute(
                 usize
             )),
             skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
+            rpc_processor_type: Some(ProcessorType::Standard),
         },
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),
