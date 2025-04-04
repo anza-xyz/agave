@@ -2297,12 +2297,18 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .send(NewTaskPayload::CloseSubchannel)
             .is_err();
 
-        if abort_detected {
-            self.ensure_join_threads_after_abort(true);
+        // In addition to the later session_result receiving, also skip thread joining as part of
+        // normal bookkeeping on scheduler abortion even if detected; Otherwise, we could be
+        // dead-locked around poh because we technically would wait on handler thread before
+        // joining. Nonblocking session ending is guaranteed to be followed by blocking session
+        // ending because it's special-cased only for block production poh. that real session
+        // ending will properly all the remaining clean up.
+        if nonblocking {
             return;
         }
 
-        if nonblocking {
+        if abort_detected {
+            self.ensure_join_threads_after_abort(true);
             return;
         }
 
@@ -2473,12 +2479,12 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         // try to lock the poh to commit transactions. Actually, just nonblocking signaling is
         // enough for block production unlike block verification.
         //
-        // That's because task handlers (= we, the unified scheduler) are the ultimate consumer of
-        // session ending signal in block production, while the replay stage (= it, an external
-        // system) is the ultimate consumer of session ending signal in block verification. In the
-        // later case, the semantics of session ending should be defined in terms of the external
-        // system; i.e. the completion of all scheduled task inside the unified scheduler. So, it
-        // can't be nonblocking there.
+        // That's because the unified scheduler is the ultimate consumer of session ending signal
+        // in block production, while a certain external system (= the replay stage) is the
+        // ultimate consumer of session ending signal in block verification. In the later case, the
+        // semantics of session ending should be defined in terms of the external system; i.e. the
+        // completion of all scheduled task inside the unified scheduler. So, it can't be
+        // nonblocking there.
         let nonblocking = matches!(self.context().mode(), BlockProduction);
         self.inner.thread_manager.do_end_session(nonblocking);
     }
