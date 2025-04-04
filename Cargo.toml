@@ -154,6 +154,7 @@ members = [
     "vote",
     "watchtower",
     "wen-restart",
+    "xdp",
     "zk-keygen",
     "zk-sdk",
     "zk-token-sdk",
@@ -191,11 +192,13 @@ used_underscore_binding = "deny"
 [workspace.dependencies]
 Inflector = "0.11.4"
 axum = "0.7.9"
+aya = "0.13"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.3.0" }
 agave-feature-set = { path = "feature-set", version = "=2.3.0" }
 agave-precompiles = { path = "precompiles", version = "=2.3.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.3.0" }
 agave-transaction-view = { path = "transaction-view", version = "=2.3.0" }
+agave-xdp = { path = "xdp", version = "=2.3.0" }
 aquamarine = "0.6.0"
 aes-gcm-siv = "0.11.1"
 ahash = "0.8.11"
