@@ -4,6 +4,7 @@ use {
     crate::{
         addr_cache::AddrCache,
         cluster_nodes::{self, ClusterNodes, ClusterNodesCache, Error, MAX_NUM_TURBINE_HOPS},
+        xdp::{XdpConfig, XdpRetransmitter, XdpSender},
     },
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvError, TryRecvError},
@@ -95,6 +96,7 @@ struct RetransmitStats {
     addr_cache_miss: AtomicUsize,
     num_nodes: AtomicUsize,
     num_addrs_failed: AtomicUsize,
+    num_shreds_dropped_xdp_full: AtomicUsize,
     num_loopback_errs: AtomicUsize,
     num_shreds: usize,
     num_shreds_skipped: AtomicUsize,
@@ -133,6 +135,11 @@ impl RetransmitStats {
             ("num_small_batches", self.num_small_batches, i64),
             ("num_nodes", *self.num_nodes.get_mut(), i64),
             ("num_addrs_failed", *self.num_addrs_failed.get_mut(), i64),
+            (
+                "num_shreds_dropped_xdp_full",
+                *self.num_shreds_dropped_xdp_full.get_mut(),
+                i64
+            ),
             ("num_loopback_errs", *self.num_loopback_errs.get_mut(), i64),
             ("num_shreds", self.num_shreds, i64),
             (
@@ -205,6 +212,11 @@ impl<const K: usize> ShredDeduper<K> {
     }
 }
 
+enum RetransmitSocket<'a> {
+    Socket(&'a UdpSocket),
+    Xdp(&'a XdpSender),
+}
+
 // pull the shreds from the shreds_receiver until empty, then retransmit them.
 // uses a thread_pool to parallelize work if there are enough shreds to justify that
 #[allow(clippy::too_many_arguments)]
@@ -216,6 +228,7 @@ fn retransmit(
     retransmit_receiver: &Receiver<Vec<shred::Payload>>,
     retransmit_sockets: &[UdpSocket],
     quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
+    xdp_sender: Option<&XdpSender>,
     stats: &mut RetransmitStats,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     addr_cache: &mut AddrCache,
@@ -310,29 +323,37 @@ fn retransmit(
             stats,
         )
     };
+
+    let retransmit_socket = |index| {
+        let socket = xdp_sender.map(RetransmitSocket::Xdp).unwrap_or_else(|| {
+            RetransmitSocket::Socket(&retransmit_sockets[index % retransmit_sockets.len()])
+        });
+        socket
+    };
+
     let slot_stats = if shreds.len() < PAR_ITER_MIN_NUM_SHREDS {
         stats.num_small_batches += 1;
         shreds
             .into_iter()
             .enumerate()
-            .filter_map(|(index, shred)| {
-                let socket = &retransmit_sockets[index % retransmit_sockets.len()];
-                retransmit_shred(shred, socket, stats)
-            })
+            .filter_map(|(index, shred)| retransmit_shred(shred, retransmit_socket(index), stats))
             .fold(HashMap::new(), record)
     } else {
         thread_pool.install(|| {
             shreds
                 .into_par_iter()
                 .filter_map(|shred| {
-                    let index = thread_pool.current_thread_index().unwrap();
-                    let socket = &retransmit_sockets[index % retransmit_sockets.len()];
-                    retransmit_shred(shred, socket, stats)
+                    retransmit_shred(
+                        shred,
+                        retransmit_socket(thread_pool.current_thread_index().unwrap()),
+                        stats,
+                    )
                 })
                 .fold(HashMap::new, record)
                 .reduce(HashMap::new, RetransmitSlotStats::merge)
         })
     };
+
     stats.upsert_slot_stats(
         slot_stats,
         root_bank.slot(),
@@ -354,7 +375,7 @@ fn retransmit_shred(
     cache: &HashMap<Slot, (/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
     addr_cache: &AddrCache,
     socket_addr_space: &SocketAddrSpace,
-    socket: &UdpSocket,
+    socket: RetransmitSocket<'_>,
     quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     stats: &RetransmitStats,
 ) -> Option<RetransmitShredOutput> {
@@ -385,15 +406,27 @@ fn retransmit_shred(
                 .filter_map(|&addr| quic_endpoint_sender.try_send((addr, shred.clone())).ok())
                 .count()
         }
-        Protocol::UDP => match multi_target_send(socket, shred, &addrs) {
-            Ok(()) => addrs.len(),
-            Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                error!(
-                    "retransmit_to multi_target_send error: {ioerr:?}, {num_failed}/{} packets failed",
-                    addrs.len(),
-                );
-                addrs.len() - num_failed
+        Protocol::UDP => match socket {
+            RetransmitSocket::Xdp(sender) => {
+                let mut sent = num_addrs;
+                if num_addrs > 0 {
+                    if let Err(e) = sender.try_send(key.index(), addrs.to_vec(), shred) {
+                        log::warn!("xdp channel full: {e:?}");
+                        stats
+                            .num_shreds_dropped_xdp_full
+                            .fetch_add(num_addrs, Ordering::Relaxed);
+                        sent = 0;
+                    }
+                }
+                sent
             }
+            RetransmitSocket::Socket(socket) => match multi_target_send(socket, shred, &addrs) {
+                Ok(()) => num_addrs,
+                Err(SendPktsError::IoError(ioerr, num_failed)) => {
+                    error!("retransmit_to multi_target_send error: {ioerr:?}, {num_failed}/{} packets failed", num_addrs);
+                    num_addrs - num_failed
+                }
+            },
         },
     };
     retransmit_time.stop();
@@ -509,6 +542,7 @@ fn cache_retransmit_addrs(
 /// Service to retransmit messages received from other peers in turbine.
 pub struct RetransmitStage {
     retransmit_thread_handle: JoinHandle<()>,
+    xdp_retransmitter: Option<XdpRetransmitter>,
 }
 
 impl RetransmitStage {
@@ -521,6 +555,7 @@ impl RetransmitStage {
     /// * `leader_schedule_cache` - The leader schedule to verify shreds
     /// * `cluster_info` - This structure needs to be updated and populated by the bank and via gossip.
     /// * `retransmit_receiver` - Receive channel for batches of shreds to be retransmitted.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         bank_forks: Arc<RwLock<BankForks>>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -531,6 +566,7 @@ impl RetransmitStage {
         max_slots: Arc<MaxSlots>,
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
+        xdp_config: Option<XdpConfig>,
     ) -> Self {
         let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
@@ -550,36 +586,55 @@ impl RetransmitStage {
                 .unwrap()
         };
 
+        let (xdp_retransmitter, xdp_sender) = if let Some(xdp_config) = xdp_config {
+            let src_port = retransmit_sockets[0]
+                .local_addr()
+                .expect("failed to get local address")
+                .port();
+            let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port)
+                .expect("failed to create xdp retransmitter");
+            (Some(rtx), Some(sender))
+        } else {
+            (None, None)
+        };
+
         let retransmit_thread_handle = Builder::new()
             .name("solRetransmittr".to_string())
-            .spawn(move || {
-                while retransmit(
-                    &thread_pool,
-                    &bank_forks,
-                    &leader_schedule_cache,
-                    &cluster_info,
-                    &retransmit_receiver,
-                    &retransmit_sockets,
-                    &quic_endpoint_sender,
-                    &mut stats,
-                    &cluster_nodes_cache,
-                    &mut addr_cache,
-                    &mut shred_deduper,
-                    &max_slots,
-                    rpc_subscriptions.as_deref(),
-                    slot_status_notifier.as_ref(),
-                )
-                .is_ok()
-                {}
+            .spawn({
+                move || {
+                    while retransmit(
+                        &thread_pool,
+                        &bank_forks,
+                        &leader_schedule_cache,
+                        &cluster_info,
+                        &retransmit_receiver,
+                        &retransmit_sockets,
+                        &quic_endpoint_sender,
+                        xdp_sender.as_ref(),
+                        &mut stats,
+                        &cluster_nodes_cache,
+                        &mut addr_cache,
+                        &mut shred_deduper,
+                        &max_slots,
+                        rpc_subscriptions.as_deref(),
+                        slot_status_notifier.as_ref(),
+                    )
+                    .is_ok()
+                    {}
+                }
             })
             .unwrap();
 
         Self {
             retransmit_thread_handle,
+            xdp_retransmitter,
         }
     }
 
     pub fn join(self) -> thread::Result<()> {
+        if let Some(rtx) = self.xdp_retransmitter {
+            rtx.join()?;
+        }
         self.retransmit_thread_handle.join()
     }
 }
@@ -626,6 +681,7 @@ impl RetransmitStats {
             addr_cache_miss: AtomicUsize::default(),
             num_nodes: AtomicUsize::default(),
             num_addrs_failed: AtomicUsize::default(),
+            num_shreds_dropped_xdp_full: AtomicUsize::default(),
             num_loopback_errs: AtomicUsize::default(),
             num_shreds: 0usize,
             num_shreds_skipped: AtomicUsize::default(),

@@ -5,7 +5,8 @@ use {
         hidden_unless_forced,
         input_validators::{
             is_keypair_or_ask_keyword, is_parsable, is_pow2, is_pubkey, is_pubkey_or_keypair,
-            is_slot, is_within_range, validate_maximum_full_snapshot_archives_to_retain,
+            is_slot, is_within_range, validate_cpu_ranges,
+            validate_maximum_full_snapshot_archives_to_retain,
             validate_maximum_incremental_snapshot_archives_to_retain,
         },
         keypair::SKIP_SEED_PHRASE_VALIDATION_ARG,
@@ -1648,5 +1649,33 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "Specifies the pubkey of the leader used in wen restart. \
                 May get stuck if the leader used is different from others.",
             ),
+    )
+    .arg(
+        Arg::with_name("retransmit_xdp_interface")
+            .hidden(hidden_unless_forced())
+            .long("experimental-retransmit-xdp-interface")
+            .takes_value(true)
+            .value_name("INTERFACE")
+            .requires("retransmit_xdp_cpu_cores")
+            .help("EXPERIMENTAL: The network interface to use for XDP retransmit"),
+    )
+    .arg(
+        Arg::with_name("retransmit_xdp_cpu_cores")
+            .hidden(hidden_unless_forced())
+            .long("experimental-retransmit-xdp-cpu-cores")
+            .takes_value(true)
+            .value_name("CPU_LIST")
+            .validator(|value| {
+                validate_cpu_ranges(value, "--experimental-retransmit-xdp-cpu-cores")
+            })
+            .help("EXPERIMENTAL: Enable XDP retransmit on the specified CPU cores"),
+    )
+    .arg(
+        Arg::with_name("retransmit_xdp_zero_copy")
+            .hidden(hidden_unless_forced())
+            .long("experimental-retransmit-xdp-zero-copy")
+            .takes_value(false)
+            .requires("retransmit_xdp_cpu_cores")
+            .help("EXPERIMENTAL: Enable XDP zero copy. Requires hardware support"),
     )
 }

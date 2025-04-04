@@ -434,6 +434,7 @@ dependencies = [
  "solana-streamer",
  "solana-test-validator",
  "solana-tpu-client",
+ "solana-turbine",
  "solana-unified-scheduler-pool",
  "solana-version",
  "solana-vote-program",
@@ -11015,10 +11016,12 @@ name = "solana-turbine"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
+ "agave-xdp",
  "assert_matches",
  "bincode",
  "bs58",
  "bytes",
+ "caps",
  "crossbeam-channel",
  "futures 0.3.31",
  "itertools 0.12.1",
