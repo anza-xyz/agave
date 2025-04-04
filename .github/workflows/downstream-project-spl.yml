@@ -62,9 +62,9 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.5
+      - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.9.1"
+          version: "v0.10.0"
 
       - shell: bash
         run: |
@@ -91,9 +91,9 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.5
+      - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.9.1"
+          version: "v0.10.0"
 
       - shell: bash
         run: |
@@ -130,15 +130,30 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.5
+      - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.9.1"
+          version: "v0.10.0"
 
-      - shell: bash
+      - name: Install dependencies
+        shell: bash
         run: |
           source .github/scripts/downstream-project-spl-install-deps.sh
           source .github/scripts/downstream-project-spl-common.sh "${{ matrix.programs }}"
           if [ -n "$SKIP_SPL_DOWNSTREAM_PROJECT_TEST" ]; then
             exit 0
           fi
-          $CARGO_TEST_SBF --manifest-path program/Cargo.toml
+
+      - name: Test SBPFv0
+        shell: bash
+        run: |
+          source ci/downstream-projects/common.sh
+          cd "${{ matrix.programs }}"
+          $CARGO_TEST_SBF --arch v0 --manifest-path program/Cargo.toml
+
+      - name: Test SBPFv1
+        shell: bash
+        run: |
+          source ci/downstream-projects/common.sh
+          cd "${{ matrix.programs }}"
+          rm -rf target/deploy target/sbpf*
+          $CARGO_TEST_SBF --arch v1 --manifest-path program/Cargo.toml

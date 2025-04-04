@@ -354,7 +354,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
-        solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        solana_poh::poh_recorder::PohRecorder,
         solana_runtime::bank::Bank,
         solana_runtime_transaction::transaction_meta::StaticMeta,
         solana_sdk::{
@@ -377,8 +377,6 @@ mod tests {
         bank: Arc<Bank>,
         mint_keypair: Keypair,
         _ledger_path: TempDir,
-        _entry_receiver: Receiver<WorkingBankEntry>,
-        _record_receiver: Receiver<Record>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
 
@@ -422,7 +420,7 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
             bank.tick_height(),
             bank.last_blockhash(),
             bank.clone(),
@@ -447,8 +445,6 @@ mod tests {
             bank,
             mint_keypair,
             _ledger_path: ledger_path,
-            _entry_receiver: entry_receiver,
-            _record_receiver: record_receiver,
             poh_recorder,
             banking_packet_sender,
             consume_work_receivers,

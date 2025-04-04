@@ -12,8 +12,26 @@ pub mod set_public_address;
 pub mod staked_nodes_overrides;
 pub mod wait_for_restart_window;
 
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("admin rpc error: {0}")]
+    AdminRpc(#[from] jsonrpc_core_client::RpcError),
+
+    #[error(transparent)]
+    Clap(#[from] clap::Error),
+
+    #[error(transparent)]
+    Dynamic(#[from] Box<dyn std::error::Error>),
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+pub type Result<T> = std::result::Result<T, Error>;
+
 pub trait FromClapArgMatches {
-    fn from_clap_arg_match(matches: &clap::ArgMatches) -> Result<Self, String>
+    fn from_clap_arg_match(matches: &clap::ArgMatches) -> Result<Self>
     where
         Self: Sized;
 }

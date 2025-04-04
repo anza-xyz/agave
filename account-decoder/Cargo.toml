@@ -22,12 +22,13 @@ serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder-client-types = { workspace = true, features = ["zstd"] }
 solana-clock = { workspace = true }
-solana-config-program = { workspace = true }
+solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
 solana-nonce = { workspace = true }
 solana-program = { workspace = true }
+solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
@@ -44,6 +45,7 @@ zstd = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-hash = { workspace = true }
 solana-program = { workspace = true, default-features = false }
 solana-pubkey = { workspace = true, features = ["rand"] }

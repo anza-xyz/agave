@@ -10,5 +10,14 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-solana-sdk = { workspace = true }
+solana-account = { workspace = true }
+solana-clock = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-rent-collector = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-transaction-context = { workspace = true }
+solana-transaction-error = { workspace = true }
+
+[dev-dependencies]
+solana-epoch-schedule = { workspace = true }

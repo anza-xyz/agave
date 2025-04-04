@@ -375,7 +375,10 @@ async fn handle_connection(
         protocol: None,
     };
     server.send_response(&accept).await?;
-    let (mut sender, mut receiver) = server.into_builder().finish();
+    let mut builder = server.into_builder();
+    builder.set_max_message_size(4_096);
+    builder.set_max_frame_size(4_096);
+    let (mut sender, mut receiver) = builder.finish();
 
     let mut broadcast_receiver = subscription_control.broadcast_receiver();
     let mut data = Vec::new();

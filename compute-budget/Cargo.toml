@@ -15,7 +15,7 @@ solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-program-entrypoint = { workspace = true }
+solana-program-runtime = { workspace = true }
 
 [features]
 dev-context-only-utils = ["dep:qualifier_attr"]

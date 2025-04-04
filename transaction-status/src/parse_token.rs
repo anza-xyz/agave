@@ -14,10 +14,11 @@ use {
         parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
     },
     solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
+    solana_program_option::COption,
+    solana_pubkey::Pubkey,
     spl_token_2022::{
         extension::ExtensionType,
         instruction::{AuthorityType, TokenInstruction},
-        solana_program::{program_option::COption, pubkey::Pubkey},
     },
     spl_token_group_interface::instruction::TokenGroupInstruction,
     spl_token_metadata_interface::instruction::TokenMetadataInstruction,

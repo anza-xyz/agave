@@ -7,6 +7,7 @@
 
 use {
     crate::{block_cost_limits::*, transaction_cost::*},
+    agave_feature_set::{self as feature_set, FeatureSet},
     solana_bincode::limited_deserialize,
     solana_borsh::v1::try_from_slice_unchecked,
     solana_builtins_default_costs::get_builtin_instruction_cost,
@@ -14,7 +15,6 @@ use {
         DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT,
     },
     solana_compute_budget_interface::ComputeBudgetInstruction,
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_fee_structure::FeeStructure,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::{

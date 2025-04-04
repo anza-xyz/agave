@@ -7,11 +7,9 @@ use {
             VoteSource,
         },
         leader_slot_metrics::LeaderSlotMetricsTracker,
-        multi_iterator_scanner::{MultiIteratorScanner, ProcessingDecision},
-        read_write_account_set::ReadWriteAccountSet,
         BankingStageStats,
     },
-    itertools::Itertools,
+    arrayvec::ArrayVec,
     solana_accounts_db::account_locks::validate_account_locks,
     solana_measure::measure_us,
     solana_runtime::bank::Bank,
@@ -21,9 +19,7 @@ use {
     std::sync::{atomic::Ordering, Arc},
 };
 
-// Step-size set to be 64, equal to the maximum batch/entry size. With the
-// multi-iterator change, there's no point in getting larger batches of
-// non-conflicting transactions.
+// Step-size set to be 64, equal to the maximum batch/entry size.
 pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 64;
 /// Maximum number of votes a single receive call will accept
 const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
@@ -34,25 +30,18 @@ pub struct VoteStorage {
     vote_source: VoteSource,
 }
 
-/// Convenient wrapper for shared-state between banking stage processing and the
-/// multi-iterator checking function.
-pub struct ConsumeScannerPayload<'a> {
-    pub reached_end_of_slot: bool,
-    pub account_locks: ReadWriteAccountSet,
-    pub sanitized_transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
-    pub slot_metrics_tracker: &'a mut LeaderSlotMetricsTracker,
-    pub error_counters: TransactionErrorMetrics,
-}
-
 fn consume_scan_should_process_packet(
     bank: &Bank,
     banking_stage_stats: &BankingStageStats,
     packet: &ImmutableDeserializedPacket,
-    payload: &mut ConsumeScannerPayload,
-) -> ProcessingDecision {
+    reached_end_of_slot: bool,
+    error_counters: &mut TransactionErrorMetrics,
+    sanitized_transactions: &mut Vec<RuntimeTransaction<SanitizedTransaction>>,
+    slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
+) -> bool {
     // If end of the slot, return should process (quick loop after reached end of slot)
-    if payload.reached_end_of_slot {
-        return ProcessingDecision::Now;
+    if reached_end_of_slot {
+        return true;
     }
 
     // Try to sanitize the packet. Ignore deactivation slot since we are
@@ -65,9 +54,7 @@ fn consume_scan_should_process_packet(
         )
         .map(|(tx, _deactivation_slot)| tx));
 
-    payload
-        .slot_metrics_tracker
-        .increment_transactions_from_packets_us(sanitization_time_us);
+    slot_metrics_tracker.increment_transactions_from_packets_us(sanitization_time_us);
     banking_stage_stats
         .packet_conversion_elapsed
         .fetch_add(sanitization_time_us, Ordering::Relaxed);
@@ -82,70 +69,18 @@ fn consume_scan_should_process_packet(
         )
         .is_err()
         {
-            return ProcessingDecision::Never;
+            return false;
         }
 
-        // Only check fee-payer if we can actually take locks
-        // We do not immediately discard on check lock failures here,
-        // because the priority guard requires that we always take locks
-        // except in the cases of discarding transactions (i.e. `Never`).
-        if payload.account_locks.check_locks(message)
-            && Consumer::check_fee_payer_unlocked(
-                bank,
-                &sanitized_transaction,
-                &mut payload.error_counters,
-            )
-            .is_err()
+        if Consumer::check_fee_payer_unlocked(bank, &sanitized_transaction, error_counters).is_err()
         {
-            return ProcessingDecision::Never;
+            return false;
         }
-
-        // NOTE:
-        //   This must be the last operation before adding the transaction to the
-        //   sanitized_transactions vector. Otherwise, a transaction could
-        //   be blocked by a transaction that did not take batch locks. This
-        //   will lead to some transactions never being processed, and a
-        //   mismatch in the priority-queue and hash map sizes.
-        //
-        // Always take locks during batch creation.
-        // This prevents lower-priority transactions from taking locks
-        // needed by higher-priority txs that were skipped by this check.
-        if !payload.account_locks.take_locks(message) {
-            return ProcessingDecision::Later;
-        }
-
-        payload.sanitized_transactions.push(sanitized_transaction);
-        ProcessingDecision::Now
+        sanitized_transactions.push(sanitized_transaction);
+        true
     } else {
-        ProcessingDecision::Never
+        false
     }
-}
-
-fn create_consume_multi_iterator<'a, 'b, F>(
-    packets: &'a [Arc<ImmutableDeserializedPacket>],
-    slot_metrics_tracker: &'b mut LeaderSlotMetricsTracker,
-    should_process_packet: F,
-) -> MultiIteratorScanner<'a, Arc<ImmutableDeserializedPacket>, ConsumeScannerPayload<'b>, F>
-where
-    F: FnMut(
-        &Arc<ImmutableDeserializedPacket>,
-        &mut ConsumeScannerPayload<'b>,
-    ) -> ProcessingDecision,
-    'b: 'a,
-{
-    let payload = ConsumeScannerPayload {
-        reached_end_of_slot: false,
-        account_locks: ReadWriteAccountSet::default(),
-        sanitized_transactions: Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE),
-        slot_metrics_tracker,
-        error_counters: TransactionErrorMetrics::default(),
-    };
-    MultiIteratorScanner::new(
-        packets,
-        UNPROCESSED_BUFFER_STEP_SIZE,
-        payload,
-        should_process_packet,
-    )
 }
 
 impl VoteStorage {
@@ -201,18 +136,15 @@ impl VoteStorage {
     ) -> bool
     where
         F: FnMut(
-            &Vec<Arc<ImmutableDeserializedPacket>>,
-            &mut ConsumeScannerPayload,
+            usize,
+            &mut bool,
+            &mut Vec<RuntimeTransaction<SanitizedTransaction>>,
+            &mut LeaderSlotMetricsTracker,
         ) -> Option<Vec<usize>>,
     {
         if matches!(self.vote_source, VoteSource::Gossip) {
             panic!("Gossip vote thread should not be processing transactions");
         }
-
-        let should_process_packet =
-            |packet: &Arc<ImmutableDeserializedPacket>, payload: &mut ConsumeScannerPayload| {
-                consume_scan_should_process_packet(&bank, banking_stage_stats, packet, payload)
-            };
 
         // Based on the stake distribution present in the supplied bank, drain the unprocessed votes
         // from each validator using a weighted random ordering. Votes from validators with
@@ -221,20 +153,40 @@ impl VoteStorage {
             .latest_unprocessed_votes
             .drain_unprocessed(bank.clone());
 
-        let mut scanner = create_consume_multi_iterator(
-            &all_vote_packets,
-            slot_metrics_tracker,
-            should_process_packet,
-        );
-
         let deprecate_legacy_vote_ixs = self
             .latest_unprocessed_votes
             .should_deprecate_legacy_vote_ixs();
 
-        while let Some((packets, payload)) = scanner.iterate() {
-            let vote_packets = packets.iter().map(|p| (*p).clone()).collect_vec();
+        let mut reached_end_of_slot = false;
 
-            if let Some(retryable_vote_indices) = processing_function(&vote_packets, payload) {
+        let mut sanitized_transactions = Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
+
+        let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
+
+        let mut vote_packets =
+            ArrayVec::<Arc<ImmutableDeserializedPacket>, UNPROCESSED_BUFFER_STEP_SIZE>::new();
+        for chunk in all_vote_packets.chunks(UNPROCESSED_BUFFER_STEP_SIZE) {
+            vote_packets.clear();
+            chunk.iter().for_each(|packet| {
+                if consume_scan_should_process_packet(
+                    &bank,
+                    banking_stage_stats,
+                    packet,
+                    reached_end_of_slot,
+                    &mut error_counters,
+                    &mut sanitized_transactions,
+                    slot_metrics_tracker,
+                ) {
+                    vote_packets.push(packet.clone());
+                }
+            });
+
+            if let Some(retryable_vote_indices) = processing_function(
+                vote_packets.len(),
+                &mut reached_end_of_slot,
+                &mut sanitized_transactions,
+                slot_metrics_tracker,
+            ) {
                 self.latest_unprocessed_votes.insert_batch(
                     retryable_vote_indices.iter().filter_map(|i| {
                         LatestValidatorVotePacket::new_from_immutable(
@@ -248,7 +200,7 @@ impl VoteStorage {
                 );
             } else {
                 self.latest_unprocessed_votes.insert_batch(
-                    vote_packets.into_iter().filter_map(|packet| {
+                    vote_packets.drain(..).filter_map(|packet| {
                         LatestValidatorVotePacket::new_from_immutable(
                             packet,
                             self.vote_source,
@@ -261,7 +213,7 @@ impl VoteStorage {
             }
         }
 
-        scanner.finalize().payload.reached_end_of_slot
+        reached_end_of_slot
     }
 
     pub fn clear(&mut self) {
@@ -324,7 +276,7 @@ mod tests {
         let mut transaction_storage =
             VoteStorage::new(Arc::new(latest_unprocessed_votes), VoteSource::Tpu);
 
-        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(vote.clone())?]);
+        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(&vote)?]);
         assert_eq!(1, transaction_storage.len());
 
         // When processing packets, return all packets as retryable so that they
@@ -333,15 +285,12 @@ mod tests {
             bank.clone(),
             &BankingStageStats::default(),
             &mut LeaderSlotMetricsTracker::new(0),
-            |packets, _payload| {
+            |packets_to_process_len,
+             _reached_end_of_slot,
+             _sanitized_transactions,
+             _slot_metrics_tracker| {
                 // Return all packets indexes as retryable
-                Some(
-                    packets
-                        .iter()
-                        .enumerate()
-                        .map(|(index, _packet)| index)
-                        .collect_vec(),
-                )
+                Some((0..packets_to_process_len).collect())
             },
         );
 

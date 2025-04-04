@@ -4,6 +4,7 @@ use {
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
     },
+    agave_feature_set as feature_set,
     log::*,
     solana_accounts_db::{
         account_storage::meta::StoredMetaWriteVersion,
@@ -15,7 +16,7 @@ use {
         epoch_accounts_hash::EpochAccountsHash,
     },
     solana_sdk::{
-        clock::Slot, feature_set, hash::Hash, rent_collector::RentCollector,
+        clock::Slot, hash::Hash, rent_collector::RentCollector,
         sysvar::epoch_schedule::EpochSchedule,
     },
     std::{
@@ -95,7 +96,8 @@ impl AccountsPackage {
                 bank_fields_to_serialize,
                 bank_hash_stats,
                 accounts_delta_hash,
-                epoch_accounts_hash: bank.get_epoch_accounts_hash_to_serialize(),
+                must_include_epoch_accounts_hash: bank
+                    .must_include_epoch_accounts_hash_in_snapshot(),
                 write_version,
             }
         };
@@ -112,25 +114,6 @@ impl AccountsPackage {
             accounts_hash_for_testing,
             accounts_hash_algorithm,
             Some(snapshot_info),
-        )
-    }
-
-    /// Package up fields needed to verify an accounts hash
-    #[must_use]
-    pub fn new_for_accounts_hash_verifier(
-        package_kind: AccountsPackageKind,
-        bank: &Bank,
-        snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-        accounts_hash_for_testing: Option<AccountsHash>,
-    ) -> Self {
-        assert_eq!(package_kind, AccountsPackageKind::AccountsHashVerifier);
-        Self::_new(
-            package_kind,
-            bank,
-            snapshot_storages,
-            accounts_hash_for_testing,
-            AccountsHashAlgorithm::Merkle,
-            None,
         )
     }
 
@@ -185,7 +168,7 @@ impl AccountsPackage {
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         Self {
-            package_kind: AccountsPackageKind::AccountsHashVerifier,
+            package_kind: AccountsPackageKind::EpochAccountsHash,
             slot: Slot::default(),
             block_height: Slot::default(),
             snapshot_storages: Vec::default(),
@@ -200,7 +183,7 @@ impl AccountsPackage {
                 bank_fields_to_serialize: BankFieldsToSerialize::default_for_tests(),
                 bank_hash_stats: BankHashStats::default(),
                 accounts_delta_hash: AccountsDeltaHash(Hash::default()),
-                epoch_accounts_hash: Option::default(),
+                must_include_epoch_accounts_hash: false,
                 write_version: StoredMetaWriteVersion::default(),
             }),
             enqueued: Instant::now(),
@@ -225,7 +208,7 @@ pub struct SupplementalSnapshotInfo {
     pub bank_fields_to_serialize: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
     pub accounts_delta_hash: AccountsDeltaHash,
-    pub epoch_accounts_hash: Option<EpochAccountsHash>,
+    pub must_include_epoch_accounts_hash: bool,
     pub write_version: StoredMetaWriteVersion,
 }
 
@@ -234,7 +217,6 @@ pub struct SupplementalSnapshotInfo {
 /// packages do share some processing: such as calculating the accounts hash.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AccountsPackageKind {
-    AccountsHashVerifier,
     Snapshot(SnapshotKind),
     EpochAccountsHash,
 }
@@ -299,13 +281,27 @@ impl SnapshotPackage {
             }
         };
 
+        let epoch_accounts_hash = snapshot_info.must_include_epoch_accounts_hash.then(|| {
+            // If we were told we must include the EAH in the snapshot, go retrieve it now.
+            // SAFETY: Snapshot handling happens sequentially, and EAH requests must be handled
+            // prior to snapshot requests for higher slots.  Therefore, a snapshot for a slot
+            // in the EAH calculation window is guaranteed to have been handled by AHV after the
+            // EAH request.  This guarantees the EAH calc has completed prior to here.
+            accounts_package
+                .accounts
+                .accounts_db
+                .epoch_accounts_hash_manager
+                .try_get_epoch_accounts_hash()
+                .unwrap()
+        });
+
         Self {
             snapshot_kind: kind,
             slot: accounts_package.slot,
             block_height: accounts_package.block_height,
             hash: SnapshotHash::new(
                 &merkle_or_lattice_accounts_hash,
-                snapshot_info.epoch_accounts_hash.as_ref(),
+                epoch_accounts_hash.as_ref(),
                 snapshot_info
                     .bank_fields_to_serialize
                     .accounts_lt_hash
@@ -318,7 +314,7 @@ impl SnapshotPackage {
             accounts_delta_hash: snapshot_info.accounts_delta_hash,
             bank_hash_stats: snapshot_info.bank_hash_stats,
             accounts_hash,
-            epoch_accounts_hash: snapshot_info.epoch_accounts_hash,
+            epoch_accounts_hash,
             bank_incremental_snapshot_persistence,
             write_version: snapshot_info.write_version,
             enqueued: Instant::now(),

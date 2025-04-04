@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
 clap = { workspace = true }
@@ -28,60 +29,59 @@ semver = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
-solana-account = { workspace = true }
+solana-account = "=2.2.1"
 solana-account-decoder = { workspace = true }
-solana-borsh = { workspace = true }
+solana-borsh = "=2.2.1"
 solana-bpf-loader-program = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-client = { workspace = true }
-solana-clock = { workspace = true }
-solana-cluster-type = { workspace = true }
-solana-commitment-config = { workspace = true }
+solana-clock = "=2.2.1"
+solana-cluster-type = "=2.2.1"
+solana-commitment-config = "=2.2.1"
 solana-compute-budget = { workspace = true }
-solana-compute-budget-interface = { workspace = true, features = ["borsh"] }
-solana-config-program = { workspace = true }
+solana-compute-budget-interface = { version = "=2.2.1", features = ["borsh"] }
+solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-connection-cache = { workspace = true }
-solana-decode-error = { workspace = true }
-solana-epoch-schedule = { workspace = true }
-solana-feature-gate-client = { workspace = true }
-solana-feature-gate-interface = { workspace = true }
-solana-feature-set = { workspace = true }
-solana-hash = { workspace = true }
-solana-instruction = { workspace = true }
-solana-keypair = { workspace = true }
-solana-loader-v3-interface = { workspace = true }
-solana-loader-v4-interface = { workspace = true }
+solana-decode-error = "=2.2.1"
+solana-epoch-schedule = "=2.2.1"
+solana-feature-gate-client = "=0.0.2"
+solana-feature-gate-interface = "=2.2.1"
+solana-hash = "=2.2.1"
+solana-instruction = "=2.2.1"
+solana-keypair = "=2.2.1"
+solana-loader-v3-interface = "=3.0.0"
+solana-loader-v4-interface = "=2.2.1"
 solana-loader-v4-program = { workspace = true }
-solana-logger = { workspace = true }
-solana-message = { workspace = true }
-solana-native-token = { workspace = true }
-solana-nonce = { workspace = true }
-solana-offchain-message = { workspace = true, features = ["verify"] }
-solana-packet = { workspace = true }
-solana-program = { workspace = true }
+solana-logger = "=2.3.1"
+solana-message = "=2.3.0"
+solana-native-token = "=2.2.1"
+solana-nonce = "=2.2.1"
+solana-offchain-message = { version = "=2.2.1", features = ["verify"] }
+solana-packet = "=2.2.1"
+solana-program = { version = "=2.2.1", default-features = false }
 solana-program-runtime = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { version = "=2.2.1", default-features = false }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
-solana-rent = { workspace = true }
+solana-rent = "=2.2.1"
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true, features = ["clap"] }
 solana-sbpf = { workspace = true }
-solana-sdk-ids = { workspace = true }
-solana-signature = { workspace = true }
-solana-signer = { workspace = true }
-solana-slot-history = { workspace = true }
+solana-sdk-ids = "=2.2.1"
+solana-signature = { version = "=2.2.1", default-features = false }
+solana-signer = "=2.2.1"
+solana-slot-history = "=2.2.1"
 solana-streamer = { workspace = true }
-solana-system-interface = { workspace = true, features = ["bincode"] }
-solana-sysvar = { workspace = true }
+solana-system-interface = { version = "=1.0", features = ["bincode"] }
+solana-sysvar = "=2.2.1"
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
-solana-transaction = { workspace = true }
-solana-transaction-error = { workspace = true }
+solana-transaction = "=2.2.2"
+solana-transaction-error = "=2.2.1"
 solana-transaction-status = { workspace = true }
 solana-udp-client = { workspace = true }
 solana-version = { workspace = true }

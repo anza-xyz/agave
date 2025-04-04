@@ -6,6 +6,8 @@ edition = { workspace = true }
 publish = false
 
 [dependencies]
+agave-feature-set = { workspace = true }
+agave-reserved-account-keys = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -27,6 +29,7 @@ solana-program-runtime = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-sdk = { workspace = true }
 solana-svm = { workspace = true }
+solana-svm-callback = { workspace = true }
 solana-system-program = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }

@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 clap = { workspace = true }
@@ -17,35 +18,34 @@ itertools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-solana-account = { workspace = true }
+solana-account = "=2.2.1"
 solana-accounts-db = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-clock = { workspace = true }
-solana-commitment-config = { workspace = true }
+solana-clock = "=2.2.1"
+solana-commitment-config = "=2.2.1"
 solana-entry = { workspace = true }
-solana-epoch-schedule = { workspace = true }
-solana-feature-gate-interface = { workspace = true }
-solana-feature-set = { workspace = true }
-solana-fee-calculator = { workspace = true }
-solana-genesis-config = { workspace = true }
-solana-inflation = { workspace = true }
-solana-keypair = { workspace = true }
+solana-epoch-schedule = "=2.2.1"
+solana-feature-gate-interface = "=2.2.1"
+solana-fee-calculator = "=2.2.1"
+solana-genesis-config = "=2.2.1"
+solana-inflation = "=2.2.1"
+solana-keypair = "=2.2.1"
 solana-ledger = { workspace = true }
-solana-loader-v3-interface = { workspace = true }
-solana-logger = { workspace = true }
-solana-native-token = { workspace = true }
-solana-poh-config = { workspace = true }
-solana-pubkey = { workspace = true }
-solana-rent = { workspace = true }
+solana-loader-v3-interface = "=3.0.0"
+solana-logger = "=2.3.1"
+solana-native-token = "=2.2.1"
+solana-poh-config = "=2.2.1"
+solana-pubkey = { version = "=2.2.1", default-features = false }
+solana-rent = "=2.2.1"
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk-ids = { workspace = true }
-solana-signer = { workspace = true }
-solana-stake-interface = { workspace = true }
+solana-sdk-ids = "=2.2.1"
+solana-signer = "=2.2.1"
+solana-stake-interface = "=1.2.1"
 solana-stake-program = { workspace = true }
-solana-time-utils = { workspace = true }
+solana-time-utils = "2.2.1"
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 tempfile = { workspace = true }

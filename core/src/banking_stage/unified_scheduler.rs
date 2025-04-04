@@ -34,7 +34,7 @@ use {
     },
     crate::{banking_stage::BankingStage, banking_trace::Channels},
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    solana_poh::poh_recorder::PohRecorder,
+    solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::sync::{Arc, RwLock},
@@ -48,6 +48,7 @@ pub(crate) fn ensure_banking_stage_setup(
     channels: &Channels,
     cluster_info: &impl LikeClusterInfo,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
+    transaction_recorder: TransactionRecorder,
 ) {
     if !pool.block_production_supported() {
         return;
@@ -58,7 +59,6 @@ pub(crate) fn ensure_banking_stage_setup(
     let mut decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
     let block_producing_scheduler_handler_threads = BankingStage::num_threads() as usize;
     let banking_stage_monitor = Box::new(decision_maker.clone());
-    let transaction_recorder = poh_recorder.read().unwrap().new_recorder();
 
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {

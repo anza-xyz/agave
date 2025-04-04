@@ -16,9 +16,7 @@ use {
     solana_sdk::{pubkey::Pubkey, saturating_add_assign},
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
-        transaction_processing_result::{
-            TransactionProcessingResult, TransactionProcessingResultExtensions,
-        },
+        transaction_processing_result::TransactionProcessingResult,
     },
     solana_transaction_status::{
         token_balances::TransactionTokenBalancesSet, TransactionTokenBalance,
@@ -76,12 +74,6 @@ impl Committer {
         execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
         processed_counts: &ProcessedTransactionCounts,
     ) -> (u64, Vec<CommitTransactionDetails>) {
-        let processed_transactions = processing_results
-            .iter()
-            .zip(batch.sanitized_transactions())
-            .filter_map(|(processing_result, tx)| processing_result.was_processed().then_some(tx))
-            .collect_vec();
-
         let (commit_results, commit_time_us) = measure_us!(bank.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
@@ -112,6 +104,14 @@ impl Committer {
                 &commit_results,
                 Some(&self.replay_vote_sender),
             );
+
+            let committed_transactions = commit_results
+                .iter()
+                .zip(batch.sanitized_transactions())
+                .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
+            self.prioritization_fee_cache
+                .update(bank, committed_transactions);
+
             self.collect_balances_and_send_status_batch(
                 commit_results,
                 bank,
@@ -119,8 +119,6 @@ impl Committer {
                 pre_balance_info,
                 starting_transaction_index,
             );
-            self.prioritization_fee_cache
-                .update(bank, processed_transactions.into_iter());
         });
         execute_and_commit_timings.find_and_send_votes_us = find_and_send_votes_us;
         (commit_time_us, commit_transaction_statuses)

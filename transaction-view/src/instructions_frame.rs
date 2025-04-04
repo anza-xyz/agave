@@ -2,7 +2,7 @@ use {
     crate::{
         bytes::{
             advance_offset_for_array, check_remaining, optimized_read_compressed_u16, read_byte,
-            read_slice_data,
+            unchecked_read_byte, unchecked_read_slice_data,
         },
         result::Result,
     },
@@ -17,6 +17,15 @@ pub(crate) struct InstructionsFrame {
     pub(crate) num_instructions: u16,
     /// The offset to the first instruction in the transaction.
     pub(crate) offset: u16,
+    pub(crate) frames: Vec<InstructionFrame>,
+}
+
+#[derive(Debug)]
+pub(crate) struct InstructionFrame {
+    num_accounts: u16,
+    data_len: u16,
+    num_accounts_len: u8, // either 1 or 2
+    data_len_len: u8,     // either 1 or 2
 }
 
 impl InstructionsFrame {
@@ -42,6 +51,9 @@ impl InstructionsFrame {
         // length is less than u16::MAX, so we can safely cast to u16.
         let instructions_offset = *offset as u16;
 
+        // Pre-allocate buffer for frames.
+        let mut frames = Vec::with_capacity(usize::from(num_instructions));
+
         // The instructions do not have a fixed size. So we must iterate over
         // each instruction to find the total size of the instructions,
         // and check for any malformed instructions or buffer overflows.
@@ -56,18 +68,30 @@ impl InstructionsFrame {
 
             // Read the number of account indexes, and then update the offset
             // to skip over the account indexes.
+            let num_accounts_offset = *offset;
             let num_accounts = optimized_read_compressed_u16(bytes, offset)?;
+            let num_accounts_len = offset.wrapping_sub(num_accounts_offset) as u8;
             advance_offset_for_array::<u8>(bytes, offset, num_accounts)?;
 
             // Read the length of the data, and then update the offset to skip
             // over the data.
+            let data_len_offset = *offset;
             let data_len = optimized_read_compressed_u16(bytes, offset)?;
-            advance_offset_for_array::<u8>(bytes, offset, data_len)?
+            let data_len_len = offset.wrapping_sub(data_len_offset) as u8;
+            advance_offset_for_array::<u8>(bytes, offset, data_len)?;
+
+            frames.push(InstructionFrame {
+                num_accounts,
+                num_accounts_len,
+                data_len,
+                data_len_len,
+            });
         }
 
         Ok(Self {
             num_instructions,
             offset: instructions_offset,
+            frames,
         })
     }
 }
@@ -78,6 +102,7 @@ pub struct InstructionsIterator<'a> {
     pub(crate) offset: usize,
     pub(crate) num_instructions: u16,
     pub(crate) index: u16,
+    pub(crate) frames: &'a [InstructionFrame],
 }
 
 impl<'a> Iterator for InstructionsIterator<'a> {
@@ -86,6 +111,13 @@ impl<'a> Iterator for InstructionsIterator<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.num_instructions {
+            let InstructionFrame {
+                num_accounts,
+                num_accounts_len,
+                data_len,
+                data_len_len,
+            } = self.frames[usize::from(self.index)];
+
             self.index = self.index.wrapping_add(1);
 
             // Each instruction has 3 pieces:
@@ -94,34 +126,33 @@ impl<'a> Iterator for InstructionsIterator<'a> {
             // 3. Data ([u8])
 
             // Read the program ID index.
-            let program_id_index = read_byte(self.bytes, &mut self.offset).ok()?;
+            // SAFETY: Offset and length checks have been done in the initial parsing.
+            let program_id_index = unsafe { unchecked_read_byte(self.bytes, &mut self.offset) };
 
-            // Read the number of account indexes, and then update the offset
-            // to skip over the account indexes.
-            let num_accounts = optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
-
+            // Move offset to accounts offset - do not re-parse u16.
+            self.offset = self.offset.wrapping_add(usize::from(num_accounts_len));
             const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
             // SAFETY:
             // - The offset is checked to be valid in the byte slice.
             // - The alignment of u8 is 1.
             // - The slice length is checked to be valid.
             // - `u8` cannot be improperly initialized.
-            let accounts =
-                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, num_accounts) }
-                    .ok()?;
+            // - Offset and length checks have been done in the initial parsing.
+            let accounts = unsafe {
+                unchecked_read_slice_data::<u8>(self.bytes, &mut self.offset, num_accounts)
+            };
 
-            // Read the length of the data, and then update the offset to skip
-            // over the data.
-            let data_len = optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
-
+            // Move offset to accounts offset - do not re-parse u16.
+            self.offset = self.offset.wrapping_add(usize::from(data_len_len));
             const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
             // SAFETY:
             // - The offset is checked to be valid in the byte slice.
             // - The alignment of u8 is 1.
             // - The slice length is checked to be valid.
             // - `u8` cannot be improperly initialized.
+            // - Offset and length checks have been done in the initial parsing.
             let data =
-                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, data_len) }.ok()?;
+                unsafe { unchecked_read_slice_data::<u8>(self.bytes, &mut self.offset, data_len) };
 
             Some(SVMInstruction {
                 program_id_index,

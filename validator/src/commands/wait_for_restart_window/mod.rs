@@ -1,7 +1,8 @@
 use {
     crate::{
-        admin_rpc_service, commands::FromClapArgMatches, new_spinner_progress_bar,
-        println_name_value,
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+        new_spinner_progress_bar, println_name_value,
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     console::style,
@@ -38,7 +39,7 @@ pub struct WaitForRestartWindowArgs {
 }
 
 impl FromClapArgMatches for WaitForRestartWindowArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(WaitForRestartWindowArgs {
             min_idle_time: value_t_or_exit!(matches, "min_idle_time", usize),
             identity: pubkey_of(matches, "identity"),
@@ -95,7 +96,7 @@ pub(crate) fn command<'a>() -> App<'a, 'a> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let wait_for_restart_window_args = WaitForRestartWindowArgs::from_clap_arg_match(matches)?;
 
     wait_for_restart_window(
@@ -105,8 +106,9 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
         wait_for_restart_window_args.max_delinquent_stake,
         wait_for_restart_window_args.skip_new_snapshot_check,
         wait_for_restart_window_args.skip_health_check,
-    )
-    .map_err(|err| format!("failed to wait for restart window: {err}"))
+    )?;
+
+    Ok(())
 }
 
 pub fn wait_for_restart_window(
@@ -116,7 +118,7 @@ pub fn wait_for_restart_window(
     max_delinquency_percentage: u8,
     skip_new_snapshot_check: bool,
     skip_health_check: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let sleep_interval = Duration::from_secs(5);
 
     let min_idle_slots = (min_idle_time_in_minutes as f64 * 60. / DEFAULT_S_PER_SLOT) as Slot;

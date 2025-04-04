@@ -9,13 +9,16 @@ use {
     solana_streamer::streamer::StakedNodes,
     solana_vortexor::{
         cli::Cli,
+        rpc_load_balancer::RpcLoadBalancer,
         sender::{
             PacketBatchSender, DEFAULT_BATCH_SIZE, DEFAULT_RECV_TIMEOUT,
             DEFAULT_SENDER_THREADS_COUNT,
         },
+        stake_updater::StakeUpdater,
         vortexor::Vortexor,
     },
     std::{
+        collections::HashMap,
         env,
         net::IpAddr,
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -95,8 +98,22 @@ pub fn main() {
 
     // The non_vote_receiver will forward the verified transactions to its configured validator
     let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-
     let destinations = args.destination;
+
+    let rpc_servers = args.rpc_servers;
+    let websocket_servers = args.websocket_servers;
+
+    if rpc_servers.len() != websocket_servers.len() {
+        clap::Error::raw(
+            clap::error::ErrorKind::InvalidValue,
+            "There must be equal number of rpc-server(s) and websocket-server(s).",
+        )
+        .exit();
+    }
+    let servers = rpc_servers
+        .into_iter()
+        .zip(websocket_servers)
+        .collect::<Vec<_>>();
 
     info!("Creating the PacketBatchSender: at address: {:?} for the following initial destinations: {destinations:?}",
         sender_socket.1.local_addr());
@@ -115,7 +132,22 @@ pub fn main() {
     let sigverify_stage = Vortexor::create_sigverify_stage(tpu_receiver, non_vote_sender);
 
     // To be linked with StakedNodes service.
-    let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+    let stake_map = Arc::new(HashMap::new());
+    let staked_nodes_overrides = HashMap::new();
+
+    let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
+        stake_map,
+        staked_nodes_overrides,
+    )));
+
+    let (rpc_load_balancer, _slot_receiver) = RpcLoadBalancer::new(&servers, &exit);
+    let rpc_load_balancer = Arc::new(rpc_load_balancer);
+
+    let staked_nodes_updater_service = StakeUpdater::new(
+        exit.clone(),
+        rpc_load_balancer.clone(),
+        staked_nodes.clone(),
+    );
 
     info!(
         "Creating the Vortexor. The tpu socket is: {:?}, tpu_fwd: {:?}",
@@ -142,4 +174,5 @@ pub fn main() {
     vortexor.join().unwrap();
     sigverify_stage.join().unwrap();
     packet_sender.join().unwrap();
+    staked_nodes_updater_service.join().unwrap();
 }

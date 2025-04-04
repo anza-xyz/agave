@@ -12,6 +12,8 @@ license = "Apache-2.0"
 edition = "2021"
 
 [workspace.dependencies]
+agave-feature-set = { path = "../../feature-set" }
+agave-reserved-account-keys = { path = "../../reserved-account-keys" }
 base64 = "0.22.1"
 bincode = "1.3.3"
 borsh = { version = "1.5.2", features = ["derive"] }
@@ -35,16 +37,17 @@ solana-logger = "=2.3.1"
 solana-perf = { path = "../../perf" }
 solana-program-runtime = { path = "../../program-runtime" }
 solana-rpc-client-api = { path = "../../rpc-client-api" }
-solana-sdk = "=2.2.1"
+solana-sdk = "=2.2.2"
 solana-svm = { path = "../" }
+solana-svm-callback = { path = "../../svm-callback" }
 solana-system-program = { path = "../../programs/system" }
 solana-version = { path = "../../version" }
 solana-test-validator = { path = "../../test-validator" }
 solana-transaction-context = { path = "../../transaction-context" }
 solana-transaction-status = { path = "../../transaction-status" }
 spl-associated-token-account = "=6.0.0"
-spl-token = "=7.0.0"
-spl-token-2022 = "=7.0.0"
+spl-token = "=8.0.0"
+spl-token-2022 = "=8.0.0"
 termcolor = "1.4.1"
 thiserror = "1.0.68"
 tokio = "1.29.1"

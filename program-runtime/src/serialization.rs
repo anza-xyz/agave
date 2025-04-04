@@ -636,6 +636,31 @@ mod tests {
         },
     };
 
+    fn deduplicated_instruction_accounts(
+        transaction_indexes: &[IndexOfAccount],
+        is_writable: fn(usize) -> bool,
+    ) -> Vec<InstructionAccount> {
+        transaction_indexes
+            .iter()
+            .enumerate()
+            .map(|(index_in_instruction, index_in_transaction)| {
+                let index_in_callee = transaction_indexes
+                    .get(0..index_in_instruction)
+                    .unwrap()
+                    .iter()
+                    .position(|account_index| account_index == index_in_transaction)
+                    .unwrap_or(index_in_instruction);
+                InstructionAccount {
+                    index_in_transaction: *index_in_transaction,
+                    index_in_caller: *index_in_transaction,
+                    index_in_callee: index_in_callee as IndexOfAccount,
+                    is_signer: false,
+                    is_writable: is_writable(index_in_instruction),
+                }
+            })
+            .collect()
+    }
+
     #[test]
     fn test_serialize_parameters_with_many_accounts() {
         struct TestCase {
@@ -694,15 +719,11 @@ mod tests {
                         }),
                     ));
                 }
-                let mut instruction_accounts: Vec<_> = (0..num_ix_accounts as IndexOfAccount)
-                    .map(|index_in_callee| InstructionAccount {
-                        index_in_transaction: index_in_callee + 1,
-                        index_in_caller: index_in_callee + 1,
-                        index_in_callee,
-                        is_signer: false,
-                        is_writable: false,
-                    })
-                    .collect();
+
+                let transaction_accounts_indexes: Vec<IndexOfAccount> =
+                    (1..(num_ix_accounts + 1) as u16).collect();
+                let mut instruction_accounts =
+                    deduplicated_instruction_accounts(&transaction_accounts_indexes, |_| false);
                 if append_dup_account {
                     instruction_accounts.push(instruction_accounts.last().cloned().unwrap());
                 }
@@ -850,19 +871,8 @@ mod tests {
                     }),
                 ),
             ];
-            let instruction_accounts: Vec<InstructionAccount> = [1, 1, 2, 3, 4, 4, 5, 6]
-                .into_iter()
-                .enumerate()
-                .map(
-                    |(index_in_instruction, index_in_transaction)| InstructionAccount {
-                        index_in_transaction,
-                        index_in_caller: index_in_transaction,
-                        index_in_callee: index_in_transaction - 1,
-                        is_signer: false,
-                        is_writable: index_in_instruction >= 4,
-                    },
-                )
-                .collect();
+            let instruction_accounts =
+                deduplicated_instruction_accounts(&[1, 1, 2, 3, 4, 4, 5, 6], |index| index >= 4);
             let instruction_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
             let program_indices = [0];
             let mut original_accounts = transaction_accounts.clone();

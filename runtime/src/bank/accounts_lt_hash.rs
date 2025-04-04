@@ -1,15 +1,15 @@
 use {
     super::Bank,
+    agave_feature_set as feature_set,
     rayon::prelude::*,
     solana_accounts_db::accounts_db::AccountsDb,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure},
     solana_sdk::{
         account::{accounts_equal, AccountSharedData},
-        feature_set,
         pubkey::Pubkey,
     },
-    solana_svm::transaction_processing_callback::AccountState,
+    solana_svm_callback::AccountState,
     std::{
         ops::AddAssign,
         sync::atomic::{AtomicU64, Ordering},

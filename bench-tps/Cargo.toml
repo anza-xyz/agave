@@ -27,7 +27,7 @@ solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-faucet = { workspace = true }
 solana-genesis = { workspace = true }
 solana-gossip = { workspace = true }
-solana-logger = { workspace = true }
+solana-logger = "=2.3.1"
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
@@ -37,7 +37,7 @@ solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-sdk = { workspace = true }
+solana-sdk = "=2.2.2"
 solana-streamer = { workspace = true }
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true }
@@ -47,8 +47,8 @@ spl-instruction-padding = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+agave-feature-set = { workspace = true }
 serial_test = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-local-cluster = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-test-validator = { workspace = true }

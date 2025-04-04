@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 Inflector = { workspace = true }
+agave-reserved-account-keys = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 borsh = { workspace = true }
@@ -21,21 +22,24 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true }
 solana-clock = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v2-interface = { workspace = true, features = ["bincode"] }
+solana-loader-v3-interface = { workspace = true }
 solana-message = { workspace = true }
-solana-program = { workspace = true }
+solana-program-option = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-reserved-account-keys = { workspace = true }
 solana-reward-info = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
+solana-stake-interface = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
+solana-vote-interface = { workspace = true }
 spl-associated-token-account = { workspace = true, features = ["no-entrypoint"] }
 spl-memo = { workspace = true, features = ["no-entrypoint"] }
 spl-token = { workspace = true, features = ["no-entrypoint"] }

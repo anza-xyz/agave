@@ -1,4 +1,6 @@
 use crate::banking_stage::scheduler_messages::MaxAge;
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 
 /// TransactionState is used to track the state of a transaction in the transaction scheduler
 /// and banking stage as a whole.
@@ -8,6 +10,7 @@ use crate::banking_stage::scheduler_messages::MaxAge;
 /// When a transaction finishes processing it may be retryable. If it is
 /// retryable, the transaction is added back into the Option. If it si not
 /// retryable, the state is dropped.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct TransactionState<Tx> {
     /// If `Some`, the transaction is available for scheduling.
     /// If `None`, the transaction is currently scheduled or being processed.

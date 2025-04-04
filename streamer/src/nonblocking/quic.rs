@@ -967,7 +967,8 @@ async fn packet_batch_sender(
                 }
 
                 unsafe {
-                    packet_batch.set_len(packet_batch.len() + 1);
+                    let new_len = packet_batch.len() + 1;
+                    packet_batch.set_len(new_len);
                 }
 
                 let i = packet_batch.len() - 1;

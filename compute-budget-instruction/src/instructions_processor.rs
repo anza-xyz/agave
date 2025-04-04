@@ -1,6 +1,6 @@
 use {
-    crate::compute_budget_instruction_details::*, solana_compute_budget::compute_budget_limits::*,
-    solana_feature_set::FeatureSet, solana_pubkey::Pubkey,
+    crate::compute_budget_instruction_details::*, agave_feature_set::FeatureSet,
+    solana_compute_budget::compute_budget_limits::*, solana_pubkey::Pubkey,
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction_error::TransactionError,
 };
@@ -277,6 +277,14 @@ mod tests {
                 ComputeBudgetInstruction::set_compute_unit_limit(MAX_COMPUTE_UNIT_LIMIT - 1),
             ],
             Err(TransactionError::DuplicateInstruction(2))
+        );
+
+        test!(
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(2000u32),
+                ComputeBudgetInstruction::set_compute_unit_limit(42u32),
+            ],
+            Err(TransactionError::DuplicateInstruction(1))
         );
 
         test!(

@@ -1,4 +1,4 @@
-use solana_config_program::ConfigState;
+use solana_config_program_client::instructions_bincode::ConfigState;
 
 pub const MAX_SHORT_FIELD_LENGTH: usize = 80;
 pub const MAX_LONG_FIELD_LENGTH: usize = 300;

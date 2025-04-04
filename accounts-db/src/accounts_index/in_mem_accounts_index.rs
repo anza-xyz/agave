@@ -1,11 +1,14 @@
 use {
     crate::{
         accounts_index::{
-            AccountMapEntry, AccountMapEntryInner, AccountMapEntryMeta, DiskIndexValue, IndexValue,
-            PreAllocatedAccountMapEntry, RefCount, SlotList, UpsertReclaim, ZeroLamport,
+            account_map_entry::{
+                AccountMapEntry, AccountMapEntryMeta, PreAllocatedAccountMapEntry,
+            },
+            DiskIndexValue, IndexValue, RefCount, SlotList, UpsertReclaim,
         },
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         bucket_map_holder_stats::BucketMapHolderStats,
+        is_zero_lamport::IsZeroLamport,
         pubkey_bins::PubkeyBinCalculator24,
         waitable_condvar::WaitableCondvar,
     },
@@ -24,10 +27,6 @@ use {
         },
     },
 };
-type K = Pubkey;
-type CacheRangesHeld = RwLock<Vec<RangeInclusive<Pubkey>>>;
-
-type InMemMap<T> = HashMap<Pubkey, AccountMapEntry<T>, ahash::RandomState>;
 
 #[derive(Debug, Default)]
 pub struct StartupStats {
@@ -77,7 +76,13 @@ impl<T: IndexValue> PossibleEvictions<T> {
     }
 
     /// insert 'entry' at 'relative_age' in the future into 'possible_evictions'
-    fn insert(&mut self, relative_age: Age, key: Pubkey, entry: AccountMapEntry<T>, random: bool) {
+    fn insert(
+        &mut self,
+        relative_age: Age,
+        key: Pubkey,
+        entry: Arc<AccountMapEntry<T>>,
+        random: bool,
+    ) {
         let index = self.index + (relative_age as usize);
         let list = &mut self.possible_evictions[index];
         if random {
@@ -94,16 +99,16 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     last_age_flushed: AtomicAge,
 
     // backing store
-    map_internal: RwLock<InMemMap<T>>,
+    map_internal: RwLock<HashMap<Pubkey, Arc<AccountMapEntry<T>>, ahash::RandomState>>,
     storage: Arc<BucketMapHolder<T, U>>,
     bin: usize,
-    lowest_pubkey: Pubkey,
-    highest_pubkey: Pubkey,
+    pub(crate) lowest_pubkey: Pubkey,
+    pub(crate) highest_pubkey: Pubkey,
 
     bucket: Option<Arc<BucketApi<(Slot, U)>>>,
 
     // pubkey ranges that this bin must hold in the cache while the range is present in this vec
-    pub cache_ranges_held: CacheRangesHeld,
+    pub cache_ranges_held: RwLock<Vec<RangeInclusive<Pubkey>>>,
     // incremented each time stop_evictions is changed
     stop_evictions_changes: AtomicU64,
     // true while ranges are being manipulated. Used to keep an async flush from removing things while a range is being held.
@@ -168,9 +173,9 @@ struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 /// result from scanning in-mem index during flush
 struct FlushScanResult<T> {
     /// pubkeys whose age indicates they may be evicted now, pending further checks.
-    evictions_age_possible: Vec<(Pubkey, AccountMapEntry<T>)>,
+    evictions_age_possible: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
     /// pubkeys chosen to evict based on random eviction
-    evictions_random: Vec<(Pubkey, AccountMapEntry<T>)>,
+    evictions_random: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T, U> {
@@ -190,7 +195,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 .as_ref()
                 .map(|disk| disk.get_bucket_from_index(bin))
                 .cloned(),
-            cache_ranges_held: CacheRangesHeld::default(),
+            cache_ranges_held: RwLock::new(Vec::default()),
             stop_evictions_changes: AtomicU64::default(),
             stop_evictions: AtomicU64::default(),
             flushing_active: AtomicBool::default(),
@@ -235,7 +240,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    pub fn items<R>(&self, range: &R) -> Vec<(K, AccountMapEntry<T>)>
+    pub fn items<R>(&self, range: &R) -> Vec<(Pubkey, Arc<AccountMapEntry<T>>)>
     where
         R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
@@ -312,7 +317,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// lookup 'pubkey' in disk map.
     /// If it is found, convert it to a cache entry and return the cache entry.
     /// Cache entries from this function will always not be dirty.
-    fn load_account_entry_from_disk(&self, pubkey: &Pubkey) -> Option<AccountMapEntry<T>> {
+    fn load_account_entry_from_disk(&self, pubkey: &Pubkey) -> Option<Arc<AccountMapEntry<T>>> {
         let entry_disk = self.load_from_disk(pubkey)?; // returns None if not on disk
         let entry_cache = self.disk_to_cache_entry(entry_disk.0, entry_disk.1);
         debug_assert!(!entry_cache.dirty());
@@ -323,9 +328,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// callback is called whether pubkey is found or not
     pub(super) fn get_only_in_mem<RT>(
         &self,
-        pubkey: &K,
+        pubkey: &Pubkey,
         update_age: bool,
-        callback: impl for<'a> FnOnce(Option<&'a AccountMapEntry<T>>) -> RT,
+        callback: impl for<'a> FnOnce(Option<&'a Arc<AccountMapEntry<T>>>) -> RT,
     ) -> RT {
         let mut found = true;
         let mut m = Measure::start("get");
@@ -368,9 +373,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// call 'callback' whether found or not
     pub(super) fn get_internal_inner<RT>(
         &self,
-        pubkey: &K,
+        pubkey: &Pubkey,
         // return true if item should be added to in_mem cache
-        callback: impl for<'a> FnOnce(Option<&AccountMapEntryInner<T>>) -> (bool, RT),
+        callback: impl for<'a> FnOnce(Option<&AccountMapEntry<T>>) -> (bool, RT),
     ) -> RT {
         // SAFETY: The entry Arc is not passed to `callback`, so
         // it cannot live beyond this function call.
@@ -381,8 +386,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// call 'callback' whether found or not
     pub(super) fn get_internal_cloned<RT>(
         &self,
-        pubkey: &K,
-        callback: impl for<'a> FnOnce(Option<AccountMapEntry<T>>) -> RT,
+        pubkey: &Pubkey,
+        callback: impl for<'a> FnOnce(Option<Arc<AccountMapEntry<T>>>) -> RT,
     ) -> RT {
         // SAFETY: Since we're passing the entry Arc clone to `callback`, we must
         // also add the entry to the in-mem cache.
@@ -401,9 +406,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// Prefer `get_internal_inner()` or `get_internal_cloned()` for safe alternatives.
     pub(super) fn get_internal<RT>(
         &self,
-        pubkey: &K,
+        pubkey: &Pubkey,
         // return true if item should be added to in_mem cache
-        callback: impl for<'a> FnOnce(Option<&AccountMapEntry<T>>) -> (bool, RT),
+        callback: impl for<'a> FnOnce(Option<&Arc<AccountMapEntry<T>>>) -> (bool, RT),
     ) -> RT {
         self.get_only_in_mem(pubkey, true, |entry| {
             if let Some(entry) = entry {
@@ -454,7 +459,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// return false if the entry is in the index (disk or memory) and has a slot list len > 0
     /// return true in all other cases, including if the entry is NOT in the index at all
-    fn remove_if_slot_list_empty_entry(&self, entry: Entry<K, AccountMapEntry<T>>) -> bool {
+    fn remove_if_slot_list_empty_entry(
+        &self,
+        entry: Entry<Pubkey, Arc<AccountMapEntry<T>>>,
+    ) -> bool {
         match entry {
             Entry::Occupied(occupied) => {
                 let result = self.remove_if_slot_list_empty_value(
@@ -533,7 +541,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// update 'entry' with 'new_value'
     fn update_slot_list_entry(
         &self,
-        entry: &AccountMapEntry<T>,
+        entry: &Arc<AccountMapEntry<T>>,
         new_value: PreAllocatedAccountMapEntry<T>,
         other_slot: Option<Slot>,
         reclaims: &mut SlotList<T>,
@@ -627,7 +635,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// if 'other_slot' is some, then also remove any entries in the slot list that are at 'other_slot'
     /// return resulting len of slot list
     pub fn lock_and_update_slot_list(
-        current: &AccountMapEntryInner<T>,
+        current: &AccountMapEntry<T>,
         new_value: (Slot, T),
         other_slot: Option<Slot>,
         reclaims: &mut SlotList<T>,
@@ -736,8 +744,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         &self,
         slot_list: SlotList<U>,
         ref_count: RefCount,
-    ) -> AccountMapEntry<T> {
-        Arc::new(AccountMapEntryInner::new(
+    ) -> Arc<AccountMapEntry<T>> {
+        Arc::new(AccountMapEntry::new(
             slot_list
                 .into_iter()
                 .map(|(slot, info)| (slot, info.into()))
@@ -850,8 +858,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     )
                 } else {
                     // not on disk, so insert new thing and we're done
-                    let new_entry: AccountMapEntry<T> =
-                        new_entry.into_account_map_entry(&self.storage);
+                    let new_entry = new_entry.into_account_map_entry(&self.storage);
                     assert!(new_entry.dirty());
                     vacant.insert(new_entry);
                     (false, false)
@@ -1057,9 +1064,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// assumes 1 entry in the slot list. Ignores overhead of the HashMap and such
     pub const fn approx_size_of_one_entry() -> usize {
-        std::mem::size_of::<T>()
-            + std::mem::size_of::<Pubkey>()
-            + std::mem::size_of::<AccountMapEntry<T>>()
+        size_of::<(Slot, T)>() + size_of::<Pubkey>() + size_of::<AccountMapEntry<T>>()
     }
 
     fn should_evict_based_on_age(
@@ -1075,7 +1080,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     fn should_evict_from_mem<'a>(
         &self,
         current_age: Age,
-        entry: &'a AccountMapEntry<T>,
+        entry: &'a Arc<AccountMapEntry<T>>,
         startup: bool,
         update_stats: bool,
         ages_flushing_now: Age,
@@ -1110,7 +1115,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// fill in `possible_evictions` from `iter` by checking age
     fn gather_possible_evictions<'a>(
-        iter: impl Iterator<Item = (&'a Pubkey, &'a Arc<AccountMapEntryInner<T>>)>,
+        iter: impl Iterator<Item = (&'a Pubkey, &'a Arc<AccountMapEntry<T>>)>,
         possible_evictions: &mut PossibleEvictions<T>,
         startup: bool,
         current_age: Age,
@@ -1657,7 +1662,7 @@ mod tests {
             let startup = false;
             let current_age = 0;
             let one_element_slot_list = vec![(0, 0)];
-            let one_element_slot_list_entry = Arc::new(AccountMapEntryInner::new(
+            let one_element_slot_list_entry = Arc::new(AccountMapEntry::new(
                 one_element_slot_list,
                 ref_count,
                 AccountMapEntryMeta::default(),
@@ -1690,7 +1695,7 @@ mod tests {
         let accounts = (0..=255)
             .map(|age| {
                 let one_element_slot_list = vec![(0, 0)];
-                let one_element_slot_list_entry = Arc::new(AccountMapEntryInner::new(
+                let one_element_slot_list_entry = Arc::new(AccountMapEntry::new(
                     one_element_slot_list,
                     ref_count,
                     AccountMapEntryMeta::default(),
@@ -1744,7 +1749,7 @@ mod tests {
         let mut current_age = 0;
         let ref_count = 1;
         let one_element_slot_list = vec![(0, 0)];
-        let one_element_slot_list_entry = Arc::new(AccountMapEntryInner::new(
+        let one_element_slot_list_entry = Arc::new(AccountMapEntry::new(
             one_element_slot_list,
             ref_count,
             AccountMapEntryMeta::default(),
@@ -1755,7 +1760,7 @@ mod tests {
             !bucket
                 .should_evict_from_mem(
                     current_age,
-                    &Arc::new(AccountMapEntryInner::new(
+                    &Arc::new(AccountMapEntry::new(
                         vec![],
                         ref_count,
                         AccountMapEntryMeta::default()
@@ -1783,7 +1788,7 @@ mod tests {
             !bucket
                 .should_evict_from_mem(
                     current_age,
-                    &Arc::new(AccountMapEntryInner::new(
+                    &Arc::new(AccountMapEntry::new(
                         vec![(0, 0), (1, 1)],
                         ref_count,
                         AccountMapEntryMeta::default()
@@ -1802,7 +1807,7 @@ mod tests {
                 !bucket
                     .should_evict_from_mem(
                         current_age,
-                        &Arc::new(AccountMapEntryInner::new(
+                        &Arc::new(AccountMapEntry::new(
                             vec![(0, 0.0)],
                             ref_count,
                             AccountMapEntryMeta::default()
@@ -2167,7 +2172,7 @@ mod tests {
 
         {
             // add an entry with an empty slot list
-            let val = Arc::new(AccountMapEntryInner::<u64>::default());
+            let val = Arc::new(AccountMapEntry::<u64>::default());
             map.insert(key, val);
             let entry = map.entry(key);
             assert_matches!(entry, Entry::Occupied(_));
@@ -2181,7 +2186,7 @@ mod tests {
 
         {
             // add an entry with a NON empty slot list - it will NOT get removed
-            let val = Arc::new(AccountMapEntryInner::<u64>::default());
+            let val = Arc::new(AccountMapEntry::<u64>::default());
             val.slot_list.write().unwrap().push((1, 1));
             map.insert(key, val);
             // does NOT remove it since it has a non-empty slot list
@@ -2194,7 +2199,7 @@ mod tests {
 
     #[test]
     fn test_lock_and_update_slot_list() {
-        let test = AccountMapEntryInner::<u64>::default();
+        let test = AccountMapEntry::<u64>::default();
         let info = 65;
         let mut reclaims = Vec::default();
         // first upsert, should increase

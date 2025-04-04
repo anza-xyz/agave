@@ -1,10 +1,12 @@
-use solana_sdk::{
-    account::{Account, AccountSharedData},
-    bpf_loader,
-    bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
-    feature_set,
-    pubkey::Pubkey,
-    rent::Rent,
+use {
+    agave_feature_set as feature_set,
+    solana_sdk::{
+        account::{Account, AccountSharedData},
+        bpf_loader,
+        bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
+        pubkey::Pubkey,
+        rent::Rent,
+    },
 };
 
 mod spl_memo_1_0 {
@@ -23,7 +25,7 @@ static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
     (
         solana_inline_spl::token_2022::ID,
         solana_sdk_ids::bpf_loader_upgradeable::ID,
-        include_bytes!("programs/spl_token_2022-5.0.2.so"),
+        include_bytes!("programs/spl_token_2022-8.0.0.so"),
     ),
     (
         spl_memo_1_0::ID,
@@ -44,21 +46,22 @@ static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
 
 // Programs that were previously builtins but have been migrated to Core BPF.
 // All Core BPF programs are owned by BPF loader v3.
-// Note the second pubkey is the migration feature ID.
-static CORE_BPF_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
+// Note the second pubkey is the migration feature ID. A `None` value denotes
+// activation on all clusters, therefore no feature gate.
+static CORE_BPF_PROGRAMS: &[(Pubkey, Option<Pubkey>, &[u8])] = &[
     (
         solana_sdk_ids::address_lookup_table::ID,
-        feature_set::migrate_address_lookup_table_program_to_core_bpf::ID,
+        Some(feature_set::migrate_address_lookup_table_program_to_core_bpf::ID),
         include_bytes!("programs/core_bpf_address_lookup_table-3.0.0.so"),
     ),
     (
         solana_sdk_ids::config::ID,
-        feature_set::migrate_config_program_to_core_bpf::ID,
+        None,
         include_bytes!("programs/core_bpf_config-3.0.0.so"),
     ),
     (
         solana_sdk_ids::feature::ID,
-        feature_set::migrate_feature_gate_program_to_core_bpf::ID,
+        None,
         include_bytes!("programs/core_bpf_feature_gate-0.0.1.so"),
     ),
     // Add more programs here post-migration...
@@ -157,7 +160,7 @@ where
         .iter()
         .flat_map(|(program_id, feature_id, elf)| {
             let mut accounts = vec![];
-            if is_feature_active(feature_id) {
+            if feature_id.is_none() || feature_id.is_some_and(|f| is_feature_active(&f)) {
                 for (key, account) in bpf_loader_upgradeable_program_accounts(program_id, elf, rent)
                 {
                     accounts.push((key, AccountSharedData::from(account)));

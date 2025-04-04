@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_feature_set::{FeatureSet, FEATURE_NAMES},
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -15,7 +16,6 @@ use {
         consensus::tower_storage::TowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
-    solana_feature_set::FEATURE_NAMES,
     solana_geyser_plugin_manager::{
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
@@ -46,7 +46,6 @@ use {
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         exit::Exit,
-        feature_set::FeatureSet,
         fee_calculator::FeeRateGovernor,
         instruction::{AccountMeta, Instruction},
         message::Message,
@@ -788,7 +787,7 @@ impl TestValidator {
         let mint_lamports = sol_to_lamports(500_000_000.);
 
         // Only activate features which are not explicitly deactivated.
-        let mut feature_set = FeatureSet::default().inactive;
+        let mut feature_set = FeatureSet::default().inactive().clone();
         for feature in &config.deactivate_feature_set {
             if feature_set.remove(feature) {
                 info!("Feature for {:?} deactivated", feature)
@@ -978,10 +977,7 @@ impl TestValidator {
         }
 
         let accounts_db_config = Some(AccountsDbConfig {
-            index: Some(AccountsIndexConfig {
-                started_from_validator: true,
-                ..AccountsIndexConfig::default()
-            }),
+            index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
             ..AccountsDbConfig::default()
         });
@@ -1011,7 +1007,6 @@ impl TestValidator {
             )),
             rpc_config: config.rpc_config.clone(),
             pubsub_config: config.pubsub_config.clone(),
-            accounts_hash_interval_slots: 100,
             account_paths: vec![
                 create_accounts_run_and_snapshot_dirs(ledger_path.join("accounts"))
                     .unwrap()
@@ -1224,7 +1219,7 @@ mod test {
 
     #[tokio::test]
     async fn test_deactivate_features() {
-        let mut control = FeatureSet::default().inactive;
+        let mut control = FeatureSet::default().inactive().clone();
         let mut deactivate_features = Vec::new();
         [
             solana_sdk::feature_set::deprecate_rewards_sysvar::id(),
@@ -1308,8 +1303,8 @@ mod test {
     async fn test_core_bpf_programs() {
         let (test_validator, _payer) = TestValidatorGenesis::default()
             .deactivate_features(&[
-                // Don't migrate the config program.
-                solana_sdk::feature_set::migrate_config_program_to_core_bpf::id(),
+                // Don't migrate the lookup table program.
+                solana_sdk::feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
             ])
             .start_async()
             .await;
@@ -1325,14 +1320,14 @@ mod test {
             .await
             .unwrap();
 
-        // Address lookup table is a BPF program.
+        // Address lookup table is builtin.
         let account = fetched_programs[0].as_ref().unwrap();
-        assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
+        assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
         assert!(account.executable);
 
-        // Config is a builtin.
+        // Config is a a BPF program.
         let account = fetched_programs[1].as_ref().unwrap();
-        assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
+        assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
         assert!(account.executable);
 
         // Feature Gate is a BPF program.

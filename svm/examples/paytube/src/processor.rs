@@ -1,17 +1,19 @@
 //! A helper to initialize Solana SVM API's `TransactionBatchProcessor`.
 
 use {
+    agave_feature_set::FeatureSet,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
-    solana_compute_budget::{
-        compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+    solana_fee_structure::FeeDetails,
+    solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionBudget,
+        loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
     },
-    solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
-    solana_sdk::{clock::Slot, feature_set::FeatureSet, transaction},
+    solana_sdk::{clock::Slot, transaction},
     solana_svm::{
-        account_loader::CheckedTransactionDetails,
-        transaction_processing_callback::TransactionProcessingCallback,
-        transaction_processor::TransactionBatchProcessor,
+        account_loader::CheckedTransactionDetails, transaction_processor::TransactionBatchProcessor,
     },
+    solana_svm_callback::TransactionProcessingCallback,
     solana_system_program::system_processor,
     std::sync::{Arc, RwLock},
 };
@@ -37,7 +39,7 @@ impl ForkGraph for PayTubeForkGraph {
 pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     feature_set: &FeatureSet,
-    compute_budget: &ComputeBudget,
+    compute_budget: &SVMTransactionExecutionBudget,
     fork_graph: Arc<RwLock<PayTubeForkGraph>>,
 ) -> TransactionBatchProcessor<PayTubeForkGraph> {
     // Create a new transaction batch processor.
@@ -92,13 +94,15 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
 /// PayTube, since we don't need to perform such pre-checks.
 pub(crate) fn get_transaction_check_results(
     len: usize,
-    lamports_per_signature: u64,
 ) -> Vec<transaction::Result<CheckedTransactionDetails>> {
+    let compute_budget_limit = ComputeBudgetLimits::default();
     vec![
         transaction::Result::Ok(CheckedTransactionDetails::new(
             None,
-            lamports_per_signature,
-            Ok(ComputeBudgetLimits::default())
+            Ok(compute_budget_limit.get_compute_budget_and_limits(
+                compute_budget_limit.loaded_accounts_bytes,
+                FeeDetails::default()
+            )),
         ));
         len
     ]

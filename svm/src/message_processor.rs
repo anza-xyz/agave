@@ -1,8 +1,8 @@
 use {
+    agave_precompiles::get_precompile,
     solana_account::WritableAccount,
     solana_instructions_sysvar as instructions,
     solana_measure::measure_us,
-    solana_precompiles::get_precompile,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
@@ -116,34 +116,50 @@ pub(crate) fn process_message(
 mod tests {
     use {
         super::*,
+        agave_feature_set::FeatureSet,
+        agave_reserved_account_keys::ReservedAccountKeys,
         openssl::{
             ec::{EcGroup, EcKey},
             nid::Nid,
         },
         rand0_7::thread_rng,
-        solana_account::{AccountSharedData, ReadableAccount},
-        solana_compute_budget::compute_budget::ComputeBudget,
+        solana_account::{
+            Account, AccountSharedData, ReadableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+        },
         solana_ed25519_program::new_ed25519_instruction,
-        solana_feature_set::FeatureSet,
         solana_hash::Hash,
         solana_instruction::{error::InstructionError, AccountMeta, Instruction},
         solana_message::{AccountKeys, Message, SanitizedMessage},
         solana_program_runtime::{
             declare_process_instruction,
+            execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
             invoke_context::EnvironmentConfig,
             loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
             sysvar_cache::SysvarCache,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_reserved_account_keys::ReservedAccountKeys,
-        solana_sdk::native_loader::create_loadable_account_for_test,
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
         solana_secp256k1_program::new_secp256k1_instruction,
         solana_secp256r1_program::new_secp256r1_instruction,
+        solana_svm_callback::EpochStakeCallback,
         solana_transaction_context::TransactionContext,
         std::sync::Arc,
     };
+
+    struct MockCallback {}
+    impl EpochStakeCallback for MockCallback {}
+
+    fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
+        let (lamports, rent_epoch) = DUMMY_INHERITABLE_ACCOUNT_FIELDS;
+        AccountSharedData::from(Account {
+            lamports,
+            owner: native_loader::id(),
+            data: name.as_bytes().to_vec(),
+            executable: true,
+            rent_epoch,
+        })
+    }
 
     fn new_sanitized_message(message: Message) -> SanitizedMessage {
         SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
@@ -242,8 +258,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0,
-            &|_| 0,
+            &MockCallback {},
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -252,7 +267,8 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -296,8 +312,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0,
-            &|_| 0,
+            &MockCallback {},
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -306,7 +321,8 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -340,8 +356,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0,
-            &|_| 0,
+            &MockCallback {},
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -350,7 +365,8 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -475,8 +491,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0,
-            &|_| 0,
+            &MockCallback {},
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -485,7 +500,8 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -514,8 +530,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0,
-            &|_| 0,
+            &MockCallback {},
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -524,7 +539,8 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -550,8 +566,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0,
-            &|_| 0,
+            &MockCallback {},
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -560,7 +575,8 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,
@@ -653,8 +669,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0,
-            &|_| 0,
+            &MockCallback {},
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -663,7 +678,8 @@ mod tests {
             &mut program_cache_for_tx_batch,
             environment_config,
             None,
-            ComputeBudget::default(),
+            SVMTransactionExecutionBudget::default(),
+            SVMTransactionExecutionCost::default(),
         );
         let result = process_message(
             &message,

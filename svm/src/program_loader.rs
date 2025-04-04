@@ -1,18 +1,16 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
-    crate::transaction_processing_callback::TransactionProcessingCallback,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_instruction::error::InstructionError,
-    solana_program::bpf_loader_upgradeable::{self, UpgradeableLoaderState},
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::loaded_programs::{
         LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
         ProgramRuntimeEnvironment, ProgramRuntimeEnvironments, DELAY_VISIBILITY_SLOT_OFFSET,
     },
     solana_pubkey::Pubkey,
-    solana_sdk::loader_v4::{self, LoaderV4State, LoaderV4Status},
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
+    solana_svm_callback::TransactionProcessingCallback,
     solana_timings::ExecuteTimings,
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_type_overrides::sync::Arc,
@@ -118,8 +116,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
 /// If the account doesn't exist it returns `None`. If the account does exist, it must be a program
 /// account (belong to one of the program loaders). Returns `Some(InvalidAccountData)` if the program
 /// account is `Closed`, contains invalid data or any of the programdata accounts are invalid.
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
+pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     environments: &ProgramRuntimeEnvironments,
     pubkey: &Pubkey,
@@ -260,6 +257,7 @@ mod tests {
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
+        solana_svm_callback::EpochStakeCallback,
         std::{
             cell::RefCell,
             collections::HashMap,
@@ -281,6 +279,8 @@ mod tests {
     pub(crate) struct MockBankCallback {
         pub(crate) account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
     }
+
+    impl EpochStakeCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {

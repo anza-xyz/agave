@@ -1,0 +1,37 @@
+[package]
+name = "solana-rpc-client-types"
+description = "Solana RPC Client Types"
+documentation = "https://docs.rs/solana-rpc-client-types"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+base64 = { workspace = true }
+bs58 = { workspace = true, features = ["std"] }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true }
+solana-account = { workspace = true }
+solana-account-decoder-client-types = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true, features = ["serde"] }
+solana-fee-calculator = { workspace = true, features = ["serde"] }
+solana-inflation = { workspace = true }
+solana-inline-spl = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-transaction-error = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
+solana-version = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+const_format = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

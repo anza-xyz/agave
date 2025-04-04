@@ -2,32 +2,32 @@
 use qualifier_attr::field_qualifiers;
 use {
     crate::{
-        account_overrides::AccountOverrides,
-        nonce_info::NonceInfo,
-        rollback_accounts::RollbackAccounts,
-        transaction_error_metrics::TransactionErrorMetrics,
+        account_overrides::AccountOverrides, nonce_info::NonceInfo,
+        rollback_accounts::RollbackAccounts, transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::ExecutedTransaction,
-        transaction_processing_callback::{AccountState, TransactionProcessingCallback},
     },
+    agave_feature_set::{self as feature_set, FeatureSet},
     ahash::{AHashMap, AHashSet},
     solana_account::{
         Account, AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS,
     },
-    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_fee_structure::FeeDetails,
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
     solana_instructions_sysvar::construct_instructions_data,
     solana_nonce::state::State as NonceState,
     solana_nonce_account::{get_system_account_kind, SystemAccountKind},
+    solana_program_runtime::execution_budget::{
+        SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
+    },
     solana_pubkey::Pubkey,
     solana_rent::RentDue,
+    solana_rent_collector::{CollectedInfo, RENT_EXEMPT_RENT_EPOCH},
     solana_rent_debits::RentDebits,
-    solana_sdk::rent_collector::{CollectedInfo, RENT_EXEMPT_RENT_EPOCH},
     solana_sdk_ids::{
         native_loader,
         sysvar::{self, slot_history},
     },
+    solana_svm_callback::{AccountState, TransactionProcessingCallback},
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{IndexOfAccount, TransactionAccount},
@@ -58,14 +58,10 @@ pub(crate) enum TransactionLoadResult {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-#[cfg_attr(
-    feature = "svm-internal",
-    field_qualifiers(nonce(pub), lamports_per_signature(pub),)
-)]
+#[cfg_attr(feature = "svm-internal", field_qualifiers(nonce(pub)))]
 pub struct CheckedTransactionDetails {
     pub(crate) nonce: Option<NonceInfo>,
-    pub(crate) lamports_per_signature: u64,
-    pub(crate) compute_budget_limits: Result<ComputeBudgetLimits>,
+    pub(crate) compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -73,8 +69,12 @@ impl Default for CheckedTransactionDetails {
     fn default() -> Self {
         Self {
             nonce: None,
-            lamports_per_signature: 0,
-            compute_budget_limits: Ok(ComputeBudgetLimits::default()),
+            compute_budget_and_limits: Ok(SVMTransactionExecutionAndFeeBudgetLimits {
+                budget: SVMTransactionExecutionBudget::default(),
+                loaded_accounts_data_size_limit: NonZeroU32::new(32)
+                    .expect("Failed to set loaded_accounts_bytes"),
+                fee_details: FeeDetails::default(),
+            }),
         }
     }
 }
@@ -82,24 +82,36 @@ impl Default for CheckedTransactionDetails {
 impl CheckedTransactionDetails {
     pub fn new(
         nonce: Option<NonceInfo>,
-        lamports_per_signature: u64,
-        compute_budget_limits: Result<ComputeBudgetLimits>,
+        compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
     ) -> Self {
         Self {
             nonce,
-            lamports_per_signature,
-            compute_budget_limits,
+            compute_budget_and_limits,
         }
     }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-#[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 pub(crate) struct ValidatedTransactionDetails {
     pub(crate) rollback_accounts: RollbackAccounts,
-    pub(crate) compute_budget_limits: ComputeBudgetLimits,
+    pub(crate) compute_budget: SVMTransactionExecutionBudget,
+    pub(crate) loaded_accounts_bytes_limit: NonZeroU32,
     pub(crate) fee_details: FeeDetails,
     pub(crate) loaded_fee_payer_account: LoadedTransactionAccount,
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl Default for ValidatedTransactionDetails {
+    fn default() -> Self {
+        Self {
+            rollback_accounts: RollbackAccounts::default(),
+            compute_budget: SVMTransactionExecutionBudget::default(),
+            loaded_accounts_bytes_limit:
+                solana_program_runtime::execution_budget::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            fee_details: FeeDetails::default(),
+            loaded_fee_payer_account: LoadedTransactionAccount::default(),
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -116,8 +128,8 @@ pub(crate) struct LoadedTransactionAccount {
     feature = "dev-context-only-utils",
     field_qualifiers(
         program_indices(pub),
-        compute_budget_limits(pub),
-        loaded_accounts_data_size(pub)
+        loaded_accounts_data_size(pub),
+        compute_budget(pub)
     )
 )]
 pub struct LoadedTransaction {
@@ -125,7 +137,7 @@ pub struct LoadedTransaction {
     pub(crate) program_indices: TransactionProgramIndices,
     pub fee_details: FeeDetails,
     pub rollback_accounts: RollbackAccounts,
-    pub(crate) compute_budget_limits: ComputeBudgetLimits,
+    pub(crate) compute_budget: SVMTransactionExecutionBudget,
     pub rent: TransactionRent,
     pub rent_debits: RentDebits,
     pub(crate) loaded_accounts_data_size: u32,
@@ -375,7 +387,7 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
                 account_loader,
                 message,
                 tx_details.loaded_fee_payer_account,
-                &tx_details.compute_budget_limits,
+                tx_details.loaded_accounts_bytes_limit,
                 error_metrics,
                 rent_collector,
             );
@@ -388,7 +400,7 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
                     rent: loaded_tx_accounts.rent,
                     rent_debits: loaded_tx_accounts.rent_debits,
                     rollback_accounts: tx_details.rollback_accounts,
-                    compute_budget_limits: tx_details.compute_budget_limits,
+                    compute_budget: tx_details.compute_budget,
                     loaded_accounts_data_size: loaded_tx_accounts.loaded_accounts_data_size,
                 }),
                 Err(err) => TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
@@ -414,7 +426,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
-    compute_budget_limits: &ComputeBudgetLimits,
+    loaded_accounts_bytes_limit: NonZeroU32,
     error_metrics: &mut TransactionErrorMetrics,
     rent_collector: &dyn SVMRentCollector,
 ) -> Result<LoadedTransactionAccounts> {
@@ -435,7 +447,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         accumulate_and_check_loaded_account_data_size(
             &mut accumulated_accounts_data_size,
             loaded_size,
-            compute_budget_limits.loaded_accounts_bytes,
+            loaded_accounts_bytes_limit,
             error_metrics,
         )?;
 
@@ -531,7 +543,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     accumulate_and_check_loaded_account_data_size(
                         &mut accumulated_accounts_data_size,
                         owner_size,
-                        compute_budget_limits.loaded_accounts_bytes,
+                        loaded_accounts_bytes_limit,
                         error_metrics,
                     )?;
                     validated_loaders.insert(*owner_id);
@@ -657,17 +669,15 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
 mod tests {
     use {
         super::*,
-        crate::{
-            transaction_account_state_info::TransactionAccountStateInfo,
-            transaction_processing_callback::TransactionProcessingCallback,
-        },
+        crate::transaction_account_state_info::TransactionAccountStateInfo,
+        agave_feature_set::FeatureSet,
+        agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-        solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_limits},
         solana_epoch_schedule::EpochSchedule,
-        solana_feature_set::FeatureSet,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
+        solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_message::{
             compiled_instruction::CompiledInstruction,
             v0::{LoadedAddresses, LoadedMessage},
@@ -675,17 +685,19 @@ mod tests {
         },
         solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
         solana_nonce::{self as nonce, versions::Versions as NonceVersions},
-        solana_program::bpf_loader_upgradeable::UpgradeableLoaderState,
+        solana_program_runtime::execution_budget::{
+            DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+        },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
+        solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_rent_debits::RentDebits,
-        solana_reserved_account_keys::ReservedAccountKeys,
-        solana_sdk::rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_sdk_ids::{
             bpf_loader, bpf_loader_upgradeable, native_loader, system_program, sysvar,
         },
         solana_signature::Signature,
         solana_signer::Signer,
+        solana_svm_callback::{EpochStakeCallback, TransactionProcessingCallback},
         solana_system_transaction::transfer,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_context::{TransactionAccount, TransactionContext},
@@ -700,6 +712,8 @@ mod tests {
         inspected_accounts:
             RefCell<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>,
     }
+
+    impl EpochStakeCallback for TestCallbacks {}
 
     impl TransactionProcessingCallback for TestCallbacks {
         fn account_matches_owners(&self, _account: &Pubkey, _owners: &[Pubkey]) -> Option<usize> {
@@ -779,7 +793,7 @@ mod tests {
     fn all_features_except(exclude: Option<&[Pubkey]>) -> FeatureSet {
         let mut features = FeatureSet::all_enabled();
         if let Some(exclude) = exclude {
-            features.active.retain(|k, _v| !exclude.contains(k));
+            features.active_mut().retain(|k, _v| !exclude.contains(k));
         }
         features
     }
@@ -1350,7 +1364,7 @@ mod tests {
                 account: fee_payer_account.clone(),
                 rent_collected: fee_payer_rent_debit,
             },
-            &ComputeBudgetLimits::default(),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
@@ -1412,7 +1426,7 @@ mod tests {
                 account: fee_payer_account.clone(),
                 ..LoadedTransactionAccount::default()
             },
-            &ComputeBudgetLimits::default(),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
@@ -1469,7 +1483,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-            &ComputeBudgetLimits::default(),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
@@ -1511,7 +1525,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-            &ComputeBudgetLimits::default(),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
@@ -1567,7 +1581,7 @@ mod tests {
                 account: fee_payer_account.clone(),
                 ..LoadedTransactionAccount::default()
             },
-            &ComputeBudgetLimits::default(),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
@@ -1628,7 +1642,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-            &ComputeBudgetLimits::default(),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
@@ -1680,7 +1694,7 @@ mod tests {
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
-            &ComputeBudgetLimits::default(),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
@@ -1743,7 +1757,7 @@ mod tests {
                 account: fee_payer_account.clone(),
                 ..LoadedTransactionAccount::default()
             },
-            &ComputeBudgetLimits::default(),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
@@ -1826,7 +1840,7 @@ mod tests {
                 account: fee_payer_account.clone(),
                 ..LoadedTransactionAccount::default()
             },
-            &ComputeBudgetLimits::default(),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
@@ -1894,9 +1908,10 @@ mod tests {
             panic!("transaction loading failed");
         };
 
-        let compute_budget = ComputeBudget::new(u64::from(
-            compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
-        ));
+        let compute_budget = SVMTransactionExecutionBudget {
+            compute_unit_limit: u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
+            ..SVMTransactionExecutionBudget::default()
+        };
         let rent_collector = RentCollector::default();
         let transaction_context = TransactionContext::new(
             loaded_transaction.accounts,
@@ -2008,7 +2023,7 @@ mod tests {
                 program_indices: vec![vec![1], vec![1]],
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
-                compute_budget_limits: ComputeBudgetLimits::default(),
+                compute_budget: SVMTransactionExecutionBudget::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -2340,7 +2355,7 @@ mod tests {
                     loaded_size: fee_payer_size as usize,
                     rent_collected: 0,
                 },
-                &ComputeBudgetLimits::default(),
+                MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
                 &mut TransactionErrorMetrics::default(),
                 &RentCollector::default(),
             )

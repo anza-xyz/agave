@@ -16,12 +16,12 @@ log = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
-solana-hash = { workspace = true }
-solana-logger = { workspace = true }
+solana-hash = "=2.2.1"
+solana-logger = "=2.3.1"
 solana-metrics = { workspace = true }
-solana-native-token = { workspace = true }
+solana-native-token = "=2.2.1"
 solana-notifier = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { version = "=2.2.1", default-features = false }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-version = { workspace = true }

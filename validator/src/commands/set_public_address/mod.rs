@@ -1,5 +1,8 @@
 use {
-    crate::{admin_rpc_service, commands::FromClapArgMatches},
+    crate::{
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{App, Arg, ArgGroup, ArgMatches, SubCommand},
     std::{net::SocketAddr, path::Path},
 };
@@ -13,18 +16,21 @@ pub struct SetPublicAddressArgs {
 }
 
 impl FromClapArgMatches for SetPublicAddressArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         let parse_arg_addr = |arg_name: &str,
                               arg_long: &str|
-         -> Result<Option<SocketAddr>, String> {
-            matches.value_of(arg_name).map(|host_port| {
+         -> std::result::Result<
+            Option<SocketAddr>,
+            Box<dyn std::error::Error>,
+        > {
+            Ok(matches.value_of(arg_name).map(|host_port| {
                 solana_net_utils::parse_host_port(host_port).map_err(|err| {
                     format!(
                         "failed to parse --{arg_long} address. It must be in the HOST:PORT format. {err}"
                     )
                 })
             })
-            .transpose()
+            .transpose()?)
         };
         Ok(SetPublicAddressArgs {
             tpu_addr: parse_arg_addr("tpu_addr", "tpu")?,
@@ -61,18 +67,16 @@ pub fn command<'a>() -> App<'a, 'a> {
         .after_help("Note: At least one arg must be used. Using multiple is ok")
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let set_public_address_args = SetPublicAddressArgs::from_clap_arg_match(matches)?;
 
     macro_rules! set_public_address {
         ($public_addr:expr, $set_public_address:ident, $request:literal) => {
             if let Some(public_addr) = $public_addr {
                 let admin_client = admin_rpc_service::connect(ledger_path);
-                admin_rpc_service::runtime()
-                    .block_on(
-                        async move { admin_client.await?.$set_public_address(public_addr).await },
-                    )
-                    .map_err(|err| format!("{} request failed: {err}", $request))
+                admin_rpc_service::runtime().block_on(async move {
+                    admin_client.await?.$set_public_address(public_addr).await
+                })
             } else {
                 Ok(())
             }

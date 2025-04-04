@@ -32,6 +32,21 @@ pub fn read_byte(bytes: &[u8], offset: &mut usize) -> Result<u8> {
     value
 }
 
+/// Read a byte and advance the offset without any bounds checks.
+///
+/// * `bytes` - Slice of bytes to read from.
+/// * `offset` - Current offset into `bytes`.
+///
+/// # Safety
+/// 1. `bytes` must be a valid slice of bytes.
+/// 2. `offset` must be a valid offset into `bytes`.
+#[inline(always)]
+pub unsafe fn unchecked_read_byte(bytes: &[u8], offset: &mut usize) -> u8 {
+    let value = *bytes.get_unchecked(*offset);
+    *offset = offset.wrapping_add(1);
+    value
+}
+
 /// Read a compressed u16 from `bytes` starting at `offset`.
 /// If the buffer is too short or the encoding is invalid, return Err.
 /// `offset` is updated to point to the byte after the compressed u16.
@@ -113,7 +128,7 @@ pub fn optimized_read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result
 /// of type `T`. If the buffer is too short, return Err.
 ///
 /// * `bytes` - Slice of bytes to read from.
-/// * `offset` - Curernt offset into `bytes`.
+/// * `offset` - Current offset into `bytes`.
 /// * `num_elements` - Number of `T` elements in the array.
 ///
 /// Assumptions:
@@ -136,7 +151,7 @@ pub fn advance_offset_for_array<T: Sized>(
 /// If the buffer is too short, return Err.
 ///
 /// * `bytes` - Slice of bytes to read from.
-/// * `offset` - Curernt offset into `bytes`.
+/// * `offset` - Current offset into `bytes`.
 ///
 /// Assumptions:
 /// 1. The current offset is not greater than `bytes.len()`.
@@ -154,7 +169,7 @@ pub fn advance_offset_for_type<T: Sized>(bytes: &[u8], offset: &mut usize) -> Re
 /// If the buffer is too short, return Err.
 ///
 /// * `bytes` - Slice of bytes to read from.
-/// * `offset` - Curernt offset into `bytes`.
+/// * `offset` - Current offset into `bytes`.
 /// * `num_elements` - Number of `T` elements in the slice.
 ///
 /// # Safety
@@ -170,9 +185,35 @@ pub unsafe fn read_slice_data<'a, T: Sized>(
     offset: &mut usize,
     num_elements: u16,
 ) -> Result<&'a [T]> {
-    let current_ptr = bytes.as_ptr().wrapping_add(*offset);
+    let current_ptr = bytes.as_ptr().add(*offset);
     advance_offset_for_array::<T>(bytes, offset, num_elements)?;
     Ok(unsafe { core::slice::from_raw_parts(current_ptr as *const T, usize::from(num_elements)) })
+}
+
+/// Return a reference to the next slice of `T` in the buffer,
+/// and advancing the offset.
+///
+/// * `bytes` - Slice of bytes to read from.
+/// * `offset` - Current offset into `bytes`.
+/// * `num_elements` - Number of `T` elements in the slice.
+///
+/// # Safety
+/// 1. `bytes` must be a valid slice of bytes.
+/// 2. `offset` must be a valid offset into `bytes`.
+/// 3. `bytes + offset` must be properly aligned for `T`.
+/// 4. `T` slice must be validly initialized.
+/// 5. The size of `T` is small enough such that a usize will not overflow if
+///    given the maximum slice size (u16::MAX).
+#[inline(always)]
+pub unsafe fn unchecked_read_slice_data<'a, T: Sized>(
+    bytes: &'a [u8],
+    offset: &mut usize,
+    num_elements: u16,
+) -> &'a [T] {
+    let current_ptr = bytes.as_ptr().add(*offset);
+    let array_len_bytes = usize::from(num_elements).wrapping_mul(core::mem::size_of::<T>());
+    *offset = offset.wrapping_add(array_len_bytes);
+    unsafe { core::slice::from_raw_parts(current_ptr as *const T, usize::from(num_elements)) }
 }
 
 /// Return a reference to the next `T` in the buffer, checking bounds and
@@ -180,7 +221,7 @@ pub unsafe fn read_slice_data<'a, T: Sized>(
 /// If the buffer is too short, return Err.
 ///
 /// * `bytes` - Slice of bytes to read from.
-/// * `offset` - Curernt offset into `bytes`.
+/// * `offset` - Current offset into `bytes`.
 ///
 /// # Safety
 /// 1. `bytes` must be a valid slice of bytes.
@@ -189,7 +230,7 @@ pub unsafe fn read_slice_data<'a, T: Sized>(
 /// 4. `T` must be validly initialized.
 #[inline(always)]
 pub unsafe fn read_type<'a, T: Sized>(bytes: &'a [u8], offset: &mut usize) -> Result<&'a T> {
-    let current_ptr = bytes.as_ptr().wrapping_add(*offset);
+    let current_ptr = bytes.as_ptr().add(*offset);
     advance_offset_for_type::<T>(bytes, offset)?;
     Ok(unsafe { &*(current_ptr as *const T) })
 }

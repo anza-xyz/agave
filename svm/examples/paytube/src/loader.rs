@@ -11,7 +11,7 @@ use {
         account::{AccountSharedData, ReadableAccount},
         pubkey::Pubkey,
     },
-    solana_svm::transaction_processing_callback::TransactionProcessingCallback,
+    solana_svm_callback::{EpochStakeCallback, TransactionProcessingCallback},
     std::{collections::HashMap, sync::RwLock},
 };
 
@@ -39,6 +39,7 @@ impl<'a> PayTubeAccountLoader<'a> {
 /// ability to load accounts.
 ///
 /// In the Agave validator, this implementation is Bank, powered by AccountsDB.
+impl EpochStakeCallback for PayTubeAccountLoader<'_> {}
 impl TransactionProcessingCallback for PayTubeAccountLoader<'_> {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         if let Some(account) = self.cache.read().unwrap().get(pubkey) {

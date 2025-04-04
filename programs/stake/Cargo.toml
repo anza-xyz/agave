@@ -10,13 +10,13 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
-solana-config-program = { workspace = true }
-solana-feature-set = { workspace = true }
+solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-genesis-config = { workspace = true }
 solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
@@ -40,6 +40,7 @@ solana-compute-budget = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-svm-callback = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-vote-program = { workspace = true, default-features = false }
 test-case = { workspace = true }

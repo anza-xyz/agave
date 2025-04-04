@@ -3,10 +3,10 @@ use {
         cluster_nodes::{self, check_feature_activation, ClusterNodesCache},
         retransmit_stage::RetransmitStage,
     },
+    agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     itertools::{Either, Itertools},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
-    solana_feature_set as feature_set,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
@@ -144,7 +144,7 @@ fn run_shred_sigverify<const K: usize>(
     let now = Instant::now();
     stats.num_iters += 1;
     stats.num_batches += packets.len();
-    stats.num_packets += packets.iter().map(PacketBatch::len).sum::<usize>();
+    stats.num_packets += packets.iter().map(|batch| batch.len()).sum::<usize>();
     stats.num_discards_pre += count_discards(&packets);
     // Repair shreds include a randomly generated u32 nonce, so it does not
     // make sense to deduplicate the entire packet payload (i.e. they are not
@@ -246,7 +246,7 @@ fn run_shred_sigverify<const K: usize>(
     // Extract shred payload from packets, and separate out repaired shreds.
     let (shreds, repairs): (Vec<_>, Vec<_>) = packets
         .iter()
-        .flat_map(PacketBatch::iter)
+        .flat_map(|batch| batch.iter())
         .filter(|packet| !packet.meta().discard())
         .filter_map(|packet| {
             let shred = shred::layout::get_shred(packet)?.to_vec();
@@ -358,7 +358,7 @@ fn get_slot_leaders(
     let mut leaders = HashMap::<Slot, Option<Pubkey>>::new();
     batches
         .iter_mut()
-        .flat_map(PacketBatch::iter_mut)
+        .flat_map(|batch| batch.iter_mut())
         .filter(|packet| !packet.meta().discard())
         .filter(|packet| {
             let shred = shred::layout::get_shred(packet);
@@ -382,7 +382,7 @@ fn get_slot_leaders(
 fn count_discards(packets: &[PacketBatch]) -> usize {
     packets
         .iter()
-        .flat_map(PacketBatch::iter)
+        .flat_map(|batch| batch.iter())
         .filter(|packet| packet.meta().discard())
         .count()
 }

@@ -3,13 +3,13 @@ use {
         mock_bank::{MockBankCallback, MockForkGraph},
         transaction_builder::SanitizedTransactionBuilder,
     },
+    agave_feature_set::{FeatureSet, FEATURE_NAMES},
     lazy_static::lazy_static,
     prost::Message,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
-    solana_compute_budget::compute_budget::ComputeBudget,
-    solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_log_collector::LogCollector,
     solana_program_runtime::{
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     },
@@ -25,10 +25,8 @@ use {
         signature::Signature,
         sysvar::{last_restart_slot, SysvarId},
     },
-    solana_svm::{
-        program_loader, transaction_processing_callback::TransactionProcessingCallback,
-        transaction_processor::TransactionBatchProcessor,
-    },
+    solana_svm::{program_loader, transaction_processor::TransactionBatchProcessor},
+    solana_svm_callback::TransactionProcessingCallback,
     solana_svm_conformance::proto::{AcctState, InstrEffects, InstrFixture},
     solana_timings::ExecuteTimings,
     solana_transaction_context::{
@@ -215,9 +213,9 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
 
     let transactions = vec![transaction];
 
-    let compute_budget = ComputeBudget {
+    let compute_budget = SVMTransactionExecutionBudget {
         compute_unit_limit: input.cu_avail,
-        ..ComputeBudget::default()
+        ..SVMTransactionExecutionBudget::default()
     };
 
     let v1_environment =
@@ -278,7 +276,7 @@ fn execute_fixture_as_instr(
     mock_bank: &MockBankCallback,
     batch_processor: &TransactionBatchProcessor<MockForkGraph>,
     sanitized_message: &SanitizedMessage,
-    compute_budget: ComputeBudget,
+    compute_budget: SVMTransactionExecutionBudget,
     output: &InstrEffects,
     filename: OsString,
     cu_avail: u64,
@@ -353,8 +351,7 @@ fn execute_fixture_as_instr(
     let env_config = EnvironmentConfig::new(
         blockhash,
         lamports_per_signature,
-        0,
-        &|_| 0,
+        mock_bank,
         mock_bank.feature_set.clone(),
         sysvar_cache,
     );
@@ -365,6 +362,7 @@ fn execute_fixture_as_instr(
         env_config,
         Some(log_collector.clone()),
         compute_budget,
+        SVMTransactionExecutionCost::default(),
     );
 
     let mut instruction_accounts: Vec<InstructionAccount> =

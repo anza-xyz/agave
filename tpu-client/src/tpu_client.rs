@@ -14,7 +14,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_signature::Signature,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
-    solana_transaction_error::TransportResult,
+    solana_transaction_error::{TransportError, TransportResult},
     std::{
         collections::VecDeque,
         net::UdpSocket,
@@ -104,11 +104,11 @@ where
         self.invoke(self.tpu_client.try_send_transaction(transaction))
     }
 
-    /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
-    /// NOTE: send_wire_transaction() and try_send_transaction() above both fail in a specific case when used in LocalCluster
-    /// They both invoke the nonblocking TPUClient and both fail when calling "transfer_with_client()" multiple times
-    /// I do not full understand WHY the nonblocking TPUClient fails in this specific case. But the method defined below
-    /// does work although it has only been tested in LocalCluster integration tests
+    /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout.
+    ///
+    /// Returns an error if:
+    /// 1. there are no known tpu sockets to send to
+    /// 2. any of the sends fail, even if other sends succeeded.
     pub fn send_transaction_to_upcoming_leaders(
         &self,
         transaction: &Transaction,
@@ -121,13 +121,25 @@ where
             .get_leader_tpu_service()
             .unique_leader_tpu_sockets(self.tpu_client.get_fanout_slots());
 
+        let mut last_error: Option<TransportError> = None;
+        let mut some_success = false;
         for tpu_address in &leaders {
             let cache = self.tpu_client.get_connection_cache();
             let conn = cache.get_connection(tpu_address);
-            conn.send_data_async(wire_transaction.clone())?;
+            if let Err(err) = conn.send_data_async(wire_transaction.clone()) {
+                last_error = Some(err);
+            } else {
+                some_success = true;
+            }
         }
 
-        Ok(())
+        if let Some(err) = last_error {
+            Err(err)
+        } else if !some_success {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "No sends attempted").into())
+        } else {
+            Ok(())
+        }
     }
 
     /// Serialize and send a batch of transactions to the current and upcoming leader TPUs according

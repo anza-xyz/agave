@@ -97,7 +97,6 @@ impl Bank {
         let PartitionedRewardsCalculation {
             vote_account_rewards,
             stake_rewards_by_partition,
-            old_vote_balance_and_staked,
             validator_rate,
             foundation_rate,
             prev_epoch_duration_in_years,
@@ -109,6 +108,7 @@ impl Bank {
             thread_pool,
             metrics,
         );
+        let total_vote_rewards = vote_account_rewards.total_vote_rewards_lamports;
         let vote_rewards = self.store_vote_accounts_partitioned(vote_account_rewards, metrics);
 
         // update reward history of JUST vote_rewards, stake_rewards is vec![] here
@@ -119,20 +119,11 @@ impl Bank {
             total_stake_rewards_lamports,
         } = stake_rewards_by_partition;
 
-        // the remaining code mirrors `update_rewards_with_thread_pool()`
-
-        let new_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
-
-        // This is for vote rewards only.
-        let validator_rewards_paid = new_vote_balance_and_staked - old_vote_balance_and_staked;
-        self.assert_validator_rewards_paid(validator_rewards_paid);
-
         // verify that we didn't pay any more than we expected to
-        assert!(point_value.rewards >= validator_rewards_paid + total_stake_rewards_lamports);
-
+        assert!(point_value.rewards >= total_vote_rewards + total_stake_rewards_lamports);
         info!(
             "distributed vote rewards: {} out of {}, remaining {}",
-            validator_rewards_paid, point_value.rewards, total_stake_rewards_lamports
+            total_vote_rewards, point_value.rewards, total_stake_rewards_lamports
         );
 
         let (num_stake_accounts, num_vote_accounts) = {
@@ -142,8 +133,7 @@ impl Bank {
                 stakes.vote_accounts().len(),
             )
         };
-        self.capitalization
-            .fetch_add(validator_rewards_paid, Relaxed);
+        self.capitalization.fetch_add(total_vote_rewards, Relaxed);
 
         let active_stake = if let Some(stake_history_entry) =
             self.stakes_cache.stakes().history().get(prev_epoch)
@@ -160,7 +150,7 @@ impl Bank {
             ("validator_rate", validator_rate, f64),
             ("foundation_rate", foundation_rate, f64),
             ("epoch_duration_in_years", prev_epoch_duration_in_years, f64),
-            ("validator_rewards", validator_rewards_paid, i64),
+            ("validator_rewards", total_vote_rewards, i64),
             ("active_stake", active_stake, i64),
             ("pre_capitalization", capitalization, i64),
             ("post_capitalization", self.capitalization(), i64),
@@ -169,7 +159,7 @@ impl Bank {
         );
 
         CalculateRewardsAndDistributeVoteRewardsResult {
-            distributed_rewards: validator_rewards_paid,
+            distributed_rewards: total_vote_rewards,
             point_value,
             stake_rewards_by_partition,
         }
@@ -181,17 +171,7 @@ impl Bank {
         metrics: &RewardsMetrics,
     ) -> Vec<(Pubkey, RewardInfo)> {
         let (_, measure_us) = measure_us!({
-            // reformat data to make it not sparse.
-            // `StorableAccounts` does not efficiently handle sparse data.
-            // Not all entries in `vote_account_rewards.accounts_to_store` have a Some(account) to store.
-            let to_store = vote_account_rewards
-                .accounts_to_store
-                .iter()
-                .filter_map(|account| account.as_ref())
-                .enumerate()
-                .map(|(i, account)| (&vote_account_rewards.rewards[i].0, account))
-                .collect::<Vec<_>>();
-            self.store_accounts((self.slot(), &to_store[..]));
+            self.store_accounts((self.slot(), &vote_account_rewards.accounts_to_store[..]));
         });
 
         metrics
@@ -216,8 +196,6 @@ impl Bank {
             validator_rate,
             foundation_rate,
         } = self.calculate_previous_epoch_inflation_rewards(capitalization, prev_epoch);
-
-        let old_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
 
         let CalculateValidatorRewardsResult {
             vote_rewards_accounts: vote_account_rewards,
@@ -251,7 +229,6 @@ impl Bank {
                 stake_rewards_by_partition,
                 total_stake_rewards_lamports: stake_rewards.total_stake_rewards_lamports,
             },
-            old_vote_balance_and_staked,
             validator_rate,
             foundation_rate,
             prev_epoch_duration_in_years,
@@ -372,13 +349,13 @@ impl Bank {
                     if vote_account.owner() != &solana_vote_program {
                         return None;
                     }
-                    let vote_state = vote_account.vote_state();
+                    let vote_state_view = vote_account.vote_state_view();
                     let mut stake_state = *stake_account.stake_state();
 
                     let redeemed = redeem_rewards(
                         rewarded_epoch,
                         &mut stake_state,
-                        vote_state,
+                        vote_state_view,
                         &point_value,
                         stake_history,
                         reward_calc_tracer.as_ref(),
@@ -386,7 +363,7 @@ impl Bank {
                     );
 
                     if let Ok((stakers_reward, voters_reward)) = redeemed {
-                        let commission = vote_state.commission;
+                        let commission = vote_state_view.commission();
 
                         // track voter rewards
                         let mut voters_reward_entry = vote_account_rewards
@@ -395,10 +372,8 @@ impl Bank {
                                 commission,
                                 vote_account: vote_account.into(),
                                 vote_rewards: 0,
-                                vote_needs_store: false,
                             });
 
-                        voters_reward_entry.vote_needs_store = true;
                         voters_reward_entry.vote_rewards = voters_reward_entry
                             .vote_rewards
                             .saturating_add(voters_reward);
@@ -484,7 +459,7 @@ impl Bank {
 
                     calculate_points(
                         stake_account.stake_state(),
-                        vote_account.vote_state(),
+                        vote_account.vote_state_view(),
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
                     )
@@ -605,39 +580,52 @@ mod tests {
         let expected_vote_rewards_num = 100;
 
         let vote_rewards = (0..expected_vote_rewards_num)
-            .map(|_| Some((Pubkey::new_unique(), VoteReward::new_random())))
+            .map(|_| (Pubkey::new_unique(), VoteReward::new_random()))
             .collect::<Vec<_>>();
 
         let mut vote_rewards_account = VoteRewardsAccounts::default();
-        vote_rewards.iter().for_each(|e| {
-            if let Some(p) = &e {
+        vote_rewards
+            .iter()
+            .for_each(|(vote_key, vote_reward_info)| {
                 let info = RewardInfo {
                     reward_type: RewardType::Voting,
-                    lamports: p.1.vote_rewards as i64,
-                    post_balance: p.1.vote_rewards,
-                    commission: Some(p.1.commission),
+                    lamports: vote_reward_info.vote_rewards as i64,
+                    post_balance: vote_reward_info.vote_rewards,
+                    commission: Some(vote_reward_info.commission),
                 };
-                vote_rewards_account.rewards.push((p.0, info));
+                vote_rewards_account.rewards.push((*vote_key, info));
                 vote_rewards_account
                     .accounts_to_store
-                    .push(e.as_ref().map(|p| p.1.vote_account.clone()));
-            }
-        });
+                    .push((*vote_key, vote_reward_info.vote_account.clone()));
+                vote_rewards_account.total_vote_rewards_lamports += vote_reward_info.vote_rewards;
+            });
 
         let metrics = RewardsMetrics::default();
 
+        let total_vote_rewards = vote_rewards_account.total_vote_rewards_lamports;
         let stored_vote_accounts =
             bank.store_vote_accounts_partitioned(vote_rewards_account, &metrics);
         assert_eq!(expected_vote_rewards_num, stored_vote_accounts.len());
+        assert_eq!(
+            vote_rewards
+                .iter()
+                .map(|(_, vote_reward_info)| vote_reward_info.vote_rewards)
+                .sum::<u64>(),
+            total_vote_rewards
+        );
 
         // load accounts to make sure they were stored correctly
-        vote_rewards.iter().for_each(|e| {
-            if let Some(p) = &e {
-                let (k, account) = (p.0, p.1.vote_account.clone());
-                let loaded_account = bank.load_slow_with_fixed_root(&bank.ancestors, &k).unwrap();
-                assert!(accounts_equal(&loaded_account.0, &account));
-            }
-        });
+        vote_rewards
+            .iter()
+            .for_each(|(vote_key, vote_reward_info)| {
+                let loaded_account = bank
+                    .load_slow_with_fixed_root(&bank.ancestors, vote_key)
+                    .unwrap();
+                assert!(accounts_equal(
+                    &loaded_account.0,
+                    &vote_reward_info.vote_account
+                ));
+            });
     }
 
     #[test]
@@ -648,9 +636,11 @@ mod tests {
         let expected = 0;
         let vote_rewards = VoteRewardsAccounts::default();
         let metrics = RewardsMetrics::default();
+        let total_vote_rewards = vote_rewards.total_vote_rewards_lamports;
 
         let stored_vote_accounts = bank.store_vote_accounts_partitioned(vote_rewards, &metrics);
         assert_eq!(expected, stored_vote_accounts.len());
+        assert_eq!(0, total_vote_rewards);
     }
 
     #[test]
@@ -798,14 +788,11 @@ mod tests {
         );
         assert_eq!(vote_rewards_accounts.rewards.len(), 1);
         let rewards = &vote_rewards_accounts.rewards[0];
-        let account = &vote_rewards_accounts.accounts_to_store[0];
+        let account = &vote_rewards_accounts.accounts_to_store[0].1;
         let vote_rewards = 0;
         let commission = vote_state.commission;
-        assert_eq!(
-            account.as_ref().unwrap().lamports(),
-            vote_account.lamports()
-        );
-        assert!(accounts_equal(account.as_ref().unwrap(), &vote_account));
+        assert_eq!(account.lamports(), vote_account.lamports());
+        assert!(accounts_equal(account, &vote_account));
         assert_eq!(
             rewards.1,
             RewardInfo {

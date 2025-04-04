@@ -17,7 +17,7 @@ use {
             VerifiedVoteSender, VoteTracker,
         },
         fetch_stage::FetchStage,
-        forwarding_stage::ForwardingStage,
+        forwarding_stage::{spawn_forwarding_stage, ForwardAddressGetter},
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
@@ -33,7 +33,10 @@ use {
         entry_notifier_service::EntryNotifierSender,
     },
     solana_perf::data_budget::DataBudget,
-    solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
+    solana_poh::{
+        poh_recorder::{PohRecorder, WorkingBankEntry},
+        transaction_recorder::TransactionRecorder,
+    },
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotificationSender,
         rpc_subscriptions::RpcSubscriptions,
@@ -91,6 +94,7 @@ impl Tpu {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        transaction_recorder: TransactionRecorder,
         entry_receiver: Receiver<WorkingBankEntry>,
         retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
@@ -265,6 +269,7 @@ impl Tpu {
             transaction_struct,
             cluster_info,
             poh_recorder,
+            transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
@@ -275,11 +280,11 @@ impl Tpu {
             prioritization_fee_cache,
         );
 
-        let forwarding_stage = ForwardingStage::spawn(
+        let forwarding_stage = spawn_forwarding_stage(
             forward_stage_receiver,
             connection_cache.clone(),
             RootBankCache::new(bank_forks.clone()),
-            (cluster_info.clone(), poh_recorder.clone()),
+            ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
             DataBudget::default(),
         );
 

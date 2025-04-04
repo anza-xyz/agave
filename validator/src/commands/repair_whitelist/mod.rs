@@ -1,5 +1,8 @@
 use {
-    crate::{admin_rpc_service, commands::FromClapArgMatches},
+    crate::{
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{values_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     itertools::Itertools,
     solana_clap_utils::input_validators::is_pubkey,
@@ -16,7 +19,7 @@ pub struct RepairWhitelistGetArgs {
 }
 
 impl FromClapArgMatches for RepairWhitelistGetArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(RepairWhitelistGetArgs {
             output: OutputFormat::from_matches(matches, "output", false),
         })
@@ -29,9 +32,8 @@ pub struct RepairWhitelistSetArgs {
 }
 
 impl FromClapArgMatches for RepairWhitelistSetArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
-        let whitelist = values_t!(matches, "whitelist", Pubkey)
-            .map_err(|err| err.to_string())?
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        let whitelist = values_t!(matches, "whitelist", Pubkey)?
             .into_iter()
             .unique()
             .collect::<Vec<_>>();
@@ -83,7 +85,7 @@ pub fn command<'a>() -> App<'a, 'a> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     match matches.subcommand() {
         ("get", Some(subcommand_matches)) => {
             let repair_whitelist_get_args =
@@ -91,8 +93,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
 
             let admin_client = admin_rpc_service::connect(ledger_path);
             let repair_whitelist = admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.repair_whitelist().await })
-                .map_err(|err| format!("get repair whitelist request failed: {err}"))?;
+                .block_on(async move { admin_client.await?.repair_whitelist().await })?;
 
             println!(
                 "{}",
@@ -120,11 +121,12 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn set_repair_whitelist(ledger_path: &Path, whitelist: Vec<Pubkey>) -> Result<(), String> {
+fn set_repair_whitelist(ledger_path: &Path, whitelist: Vec<Pubkey>) -> Result<()> {
     let admin_client = admin_rpc_service::connect(ledger_path);
     admin_rpc_service::runtime()
-        .block_on(async move { admin_client.await?.set_repair_whitelist(whitelist).await })
-        .map_err(|err| format!("set repair whitelist request failed: {err}"))
+        .block_on(async move { admin_client.await?.set_repair_whitelist(whitelist).await })?;
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -13,18 +13,7 @@ pub use self::{
 #[allow(deprecated)]
 use {
     crate::syscalls::mem_ops::is_nonoverlapping,
-    solana_account_info::AccountInfo,
-    solana_big_mod_exp::{big_mod_exp, BigModExpParams},
-    solana_blake3_hasher as blake3,
-    solana_bn254::prelude::{
-        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_multiplication_128,
-        alt_bn128_pairing, AltBn128Error, ALT_BN128_ADDITION_OUTPUT_LEN,
-        ALT_BN128_MULTIPLICATION_OUTPUT_LEN, ALT_BN128_PAIRING_ELEMENT_LEN,
-        ALT_BN128_PAIRING_OUTPUT_LEN,
-    },
-    solana_compute_budget::compute_budget::ComputeBudget,
-    solana_cpi::MAX_RETURN_DATA,
-    solana_feature_set::{
+    agave_feature_set::{
         self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
         bpf_account_data_direct_mapping, curve25519_syscall_enabled,
         disable_deploy_of_alloc_free_syscall, disable_fees_sysvar, disable_sbpf_v0_execution,
@@ -35,14 +24,28 @@ use {
         last_restart_slot_sysvar, reenable_sbpf_v0_execution,
         remaining_compute_units_syscall_enabled, FeatureSet,
     },
+    agave_precompiles::is_precompile,
+    solana_account_info::AccountInfo,
+    solana_big_mod_exp::{big_mod_exp, BigModExpParams},
+    solana_blake3_hasher as blake3,
+    solana_bn254::prelude::{
+        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_multiplication_128,
+        alt_bn128_pairing, AltBn128Error, ALT_BN128_ADDITION_OUTPUT_LEN,
+        ALT_BN128_MULTIPLICATION_OUTPUT_LEN, ALT_BN128_PAIRING_ELEMENT_LEN,
+        ALT_BN128_PAIRING_OUTPUT_LEN,
+    },
+    solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
     solana_keccak_hasher as keccak,
     solana_log_collector::{ic_logger_msg, ic_msg},
     solana_poseidon as poseidon,
-    solana_precompiles::is_precompile,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-    solana_program_runtime::{invoke_context::InvokeContext, stable_log},
+    solana_program_runtime::{
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
+        invoke_context::InvokeContext,
+        stable_log,
+    },
     solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
     solana_sbpf::{
         declare_builtin_function,
@@ -140,9 +143,9 @@ trait HasherImpl {
     fn create_hasher() -> Self;
     fn hash(&mut self, val: &[u8]);
     fn result(self) -> Self::Output;
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64;
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64;
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64;
+    fn get_base_cost(compute_cost: &SVMTransactionExecutionCost) -> u64;
+    fn get_byte_cost(compute_cost: &SVMTransactionExecutionCost) -> u64;
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64;
 }
 
 struct Sha256Hasher(Hasher);
@@ -165,13 +168,13 @@ impl HasherImpl for Sha256Hasher {
         self.0.result()
     }
 
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_base_cost
+    fn get_base_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_base_cost
     }
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_byte_cost
+    fn get_byte_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_byte_cost
     }
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64 {
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
     }
 }
@@ -192,13 +195,13 @@ impl HasherImpl for Blake3Hasher {
         self.0.result()
     }
 
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_base_cost
+    fn get_base_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_base_cost
     }
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_byte_cost
+    fn get_byte_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_byte_cost
     }
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64 {
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
     }
 }
@@ -219,13 +222,13 @@ impl HasherImpl for Keccak256Hasher {
         self.0.result()
     }
 
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_base_cost
+    fn get_base_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_base_cost
     }
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_byte_cost
+    fn get_byte_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_byte_cost
     }
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64 {
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
     }
 }
@@ -331,7 +334,7 @@ pub(crate) fn morph_into_deployment_environment_v1(
 
 pub fn create_program_runtime_environment_v1<'a>(
     feature_set: &FeatureSet,
-    compute_budget: &ComputeBudget,
+    compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
 ) -> Result<BuiltinProgram<InvokeContext<'a>>, Error> {
@@ -568,7 +571,7 @@ pub fn create_program_runtime_environment_v1<'a>(
 }
 
 pub fn create_program_runtime_environment_v2<'a>(
-    compute_budget: &ComputeBudget,
+    compute_budget: &SVMTransactionExecutionBudget,
     debugging_features: bool,
 ) -> BuiltinProgram<InvokeContext<'a>> {
     let config = Config {
@@ -886,7 +889,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let cost = invoke_context
-            .get_compute_budget()
+            .get_execution_cost()
             .create_program_address_units;
         consume_compute_meter(invoke_context, cost)?;
 
@@ -925,7 +928,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let cost = invoke_context
-            .get_compute_budget()
+            .get_execution_cost()
             .create_program_address_units;
         consume_compute_meter(invoke_context, cost)?;
 
@@ -989,7 +992,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let cost = invoke_context.get_compute_budget().secp256k1_recover_cost;
+        let cost = invoke_context.get_execution_cost().secp256k1_recover_cost;
         consume_compute_meter(invoke_context, cost)?;
 
         let hash = translate_slice::<u8>(
@@ -1054,7 +1057,7 @@ declare_builtin_function!(
         match curve_id {
             CURVE25519_EDWARDS => {
                 let cost = invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_edwards_validate_point_cost;
                 consume_compute_meter(invoke_context, cost)?;
 
@@ -1072,7 +1075,7 @@ declare_builtin_function!(
             }
             CURVE25519_RISTRETTO => {
                 let cost = invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_validate_point_cost;
                 consume_compute_meter(invoke_context, cost)?;
 
@@ -1121,7 +1124,7 @@ declare_builtin_function!(
             CURVE25519_EDWARDS => match group_op {
                 ADD => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_edwards_add_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1149,7 +1152,7 @@ declare_builtin_function!(
                 }
                 SUB => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_edwards_subtract_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1177,7 +1180,7 @@ declare_builtin_function!(
                 }
                 MUL => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_edwards_multiply_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1218,7 +1221,7 @@ declare_builtin_function!(
             CURVE25519_RISTRETTO => match group_op {
                 ADD => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_ristretto_add_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1246,7 +1249,7 @@ declare_builtin_function!(
                 }
                 SUB => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_ristretto_subtract_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1276,7 +1279,7 @@ declare_builtin_function!(
                 }
                 MUL => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_ristretto_multiply_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1351,11 +1354,11 @@ declare_builtin_function!(
         match curve_id {
             CURVE25519_EDWARDS => {
                 let cost = invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_edwards_msm_base_cost
                     .saturating_add(
                         invoke_context
-                            .get_compute_budget()
+                            .get_execution_cost()
                             .curve25519_edwards_msm_incremental_cost
                             .saturating_mul(points_len.saturating_sub(1)),
                     );
@@ -1389,11 +1392,11 @@ declare_builtin_function!(
 
             CURVE25519_RISTRETTO => {
                 let cost = invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_msm_base_cost
                     .saturating_add(
                         invoke_context
-                            .get_compute_budget()
+                            .get_execution_cost()
                             .curve25519_ristretto_msm_incremental_cost
                             .saturating_mul(points_len.saturating_sub(1)),
                     );
@@ -1453,12 +1456,12 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
 
         let cost = len
-            .checked_div(budget.cpi_bytes_per_unit)
+            .checked_div(execution_cost.cpi_bytes_per_unit)
             .unwrap_or(u64::MAX)
-            .saturating_add(budget.syscall_base_cost);
+            .saturating_add(execution_cost.syscall_base_cost);
         consume_compute_meter(invoke_context, cost)?;
 
         if len > MAX_RETURN_DATA as u64 {
@@ -1501,16 +1504,16 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
 
-        consume_compute_meter(invoke_context, budget.syscall_base_cost)?;
+        consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
         let (program_id, return_data) = invoke_context.transaction_context.get_return_data();
         let length = length.min(return_data.len() as u64);
         if length != 0 {
             let cost = length
                 .saturating_add(size_of::<Pubkey>() as u64)
-                .checked_div(budget.cpi_bytes_per_unit)
+                .checked_div(execution_cost.cpi_bytes_per_unit)
                 .unwrap_or(u64::MAX);
             consume_compute_meter(invoke_context, cost)?;
 
@@ -1565,9 +1568,9 @@ declare_builtin_function!(
         accounts_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
 
-        consume_compute_meter(invoke_context, budget.syscall_base_cost)?;
+        consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
         // Reverse iterate through the instruction trace,
         // ignoring anything except instructions on the same level
@@ -1703,9 +1706,9 @@ declare_builtin_function!(
         _arg5: u64,
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
 
-        consume_compute_meter(invoke_context, budget.syscall_base_cost)?;
+        consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
         Ok(invoke_context.get_stack_height() as u64)
     }
@@ -1724,28 +1727,28 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         use solana_bn254::prelude::{ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING};
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
         let (cost, output): (u64, usize) = match group_op {
             ALT_BN128_ADD => (
-                budget.alt_bn128_addition_cost,
+                execution_cost.alt_bn128_addition_cost,
                 ALT_BN128_ADDITION_OUTPUT_LEN,
             ),
             ALT_BN128_MUL => (
-                budget.alt_bn128_multiplication_cost,
+                execution_cost.alt_bn128_multiplication_cost,
                 ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
             ),
             ALT_BN128_PAIRING => {
                 let ele_len = input_size
                     .checked_div(ALT_BN128_PAIRING_ELEMENT_LEN as u64)
                     .expect("div by non-zero constant");
-                let cost = budget
+                let cost = execution_cost
                     .alt_bn128_pairing_one_pair_cost_first
                     .saturating_add(
-                        budget
+                        execution_cost
                             .alt_bn128_pairing_one_pair_cost_other
                             .saturating_mul(ele_len.saturating_sub(1)),
                     )
-                    .saturating_add(budget.sha256_base_cost)
+                    .saturating_add(execution_cost.sha256_base_cost)
                     .saturating_add(input_size)
                     .saturating_add(ALT_BN128_PAIRING_OUTPUT_LEN as u64);
                 (cost, ALT_BN128_PAIRING_OUTPUT_LEN)
@@ -1843,16 +1846,16 @@ declare_builtin_function!(
         let input_len: u64 = std::cmp::max(params.base_len, params.exponent_len);
         let input_len: u64 = std::cmp::max(input_len, params.modulus_len);
 
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
         // the compute units are calculated by the quadratic equation `0.5 input_len^2 + 190`
         consume_compute_meter(
             invoke_context,
-            budget.syscall_base_cost.saturating_add(
+            execution_cost.syscall_base_cost.saturating_add(
                 input_len
                     .saturating_mul(input_len)
-                    .checked_div(budget.big_modular_exponentiation_cost_divisor)
+                    .checked_div(execution_cost.big_modular_exponentiation_cost_divisor)
                     .unwrap_or(u64::MAX)
-                    .saturating_add(budget.big_modular_exponentiation_base_cost),
+                    .saturating_add(execution_cost.big_modular_exponentiation_base_cost),
             ),
         )?;
 
@@ -1915,8 +1918,8 @@ declare_builtin_function!(
             return Err(SyscallError::InvalidLength.into());
         }
 
-        let budget = invoke_context.get_compute_budget();
-        let Some(cost) = budget.poseidon_cost(vals_len) else {
+        let execution_cost = invoke_context.get_execution_cost();
+        let Some(cost) = execution_cost.poseidon_cost(vals_len) else {
             ic_msg!(
                 invoke_context,
                 "Overflow while calculating the compute cost"
@@ -1974,8 +1977,8 @@ declare_builtin_function!(
         _arg5: u64,
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
-        consume_compute_meter(invoke_context, budget.syscall_base_cost)?;
+        let execution_cost = invoke_context.get_execution_cost();
+        consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
         use solana_sbpf::vm::ContextObject;
         Ok(invoke_context.get_remaining())
@@ -1999,22 +2002,22 @@ declare_builtin_function!(
             alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
             ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS, G1, G1_COMPRESSED, G2, G2_COMPRESSED,
         };
-        let budget = invoke_context.get_compute_budget();
-        let base_cost = budget.syscall_base_cost;
+        let execution_cost = invoke_context.get_execution_cost();
+        let base_cost = execution_cost.syscall_base_cost;
         let (cost, output): (u64, usize) = match op {
             ALT_BN128_G1_COMPRESS => (
-                base_cost.saturating_add(budget.alt_bn128_g1_compress),
+                base_cost.saturating_add(execution_cost.alt_bn128_g1_compress),
                 G1_COMPRESSED,
             ),
             ALT_BN128_G1_DECOMPRESS => {
-                (base_cost.saturating_add(budget.alt_bn128_g1_decompress), G1)
+                (base_cost.saturating_add(execution_cost.alt_bn128_g1_decompress), G1)
             }
             ALT_BN128_G2_COMPRESS => (
-                base_cost.saturating_add(budget.alt_bn128_g2_compress),
+                base_cost.saturating_add(execution_cost.alt_bn128_g2_compress),
                 G2_COMPRESSED,
             ),
             ALT_BN128_G2_DECOMPRESS => {
-                (base_cost.saturating_add(budget.alt_bn128_g2_decompress), G2)
+                (base_cost.saturating_add(execution_cost.alt_bn128_g2_decompress), G2)
             }
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
@@ -2116,8 +2119,9 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let compute_budget = invoke_context.get_compute_budget();
-        let hash_base_cost = H::get_base_cost(compute_budget);
-        let hash_byte_cost = H::get_byte_cost(compute_budget);
+        let compute_cost = invoke_context.get_execution_cost();
+        let hash_base_cost = H::get_base_cost(compute_cost);
+        let hash_byte_cost = H::get_byte_cost(compute_cost);
         let hash_max_slices = H::get_max_slices(compute_budget);
         if hash_max_slices < vals_len {
             ic_msg!(
@@ -2149,7 +2153,7 @@ declare_builtin_function!(
 
             for val in vals.iter() {
                 let bytes = val.translate(memory_mapping, invoke_context.get_check_aligned())?;
-                let cost = compute_budget.mem_op_base_cost.max(
+                let cost = compute_cost.mem_op_base_cost.max(
                     hash_byte_cost.saturating_mul(
                         val.len()
                             .checked_div(2)
@@ -2177,7 +2181,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let compute_budget = invoke_context.get_compute_budget();
+        let compute_cost = invoke_context.get_execution_cost();
 
         if var_addr == 0 {
             // As specified by SIMD-0133: If `var_addr` is a null pointer:
@@ -2187,7 +2191,7 @@ declare_builtin_function!(
             // ```
             // syscall_base
             // ```
-            let compute_units = compute_budget.syscall_base_cost;
+            let compute_units = compute_cost.syscall_base_cost;
             consume_compute_meter(invoke_context, compute_units)?;
             //
             // Control flow:
@@ -2196,7 +2200,7 @@ declare_builtin_function!(
             //     - Compute budget is exceeded.
             // - Otherwise, the syscall returns a `u64` integer representing the total active
             //   stake on the cluster for the current epoch.
-            Ok(invoke_context.get_epoch_total_stake())
+            Ok(invoke_context.get_epoch_stake())
         } else {
             // As specified by SIMD-0133: If `var_addr` is _not_ a null pointer:
             //
@@ -2205,14 +2209,14 @@ declare_builtin_function!(
             // ```
             // syscall_base + floor(PUBKEY_BYTES/cpi_bytes_per_unit) + mem_op_base
             // ```
-            let compute_units = compute_budget
+            let compute_units = compute_cost
                 .syscall_base_cost
                 .saturating_add(
                     (PUBKEY_BYTES as u64)
-                        .checked_div(compute_budget.cpi_bytes_per_unit)
+                        .checked_div(compute_cost.cpi_bytes_per_unit)
                         .unwrap_or(u64::MAX),
                 )
-                .saturating_add(compute_budget.mem_op_base_cost);
+                .saturating_add(compute_cost.mem_op_base_cost);
             consume_compute_meter(invoke_context, compute_units)?;
             //
             // Control flow:
@@ -2228,7 +2232,7 @@ declare_builtin_function!(
             let check_aligned = invoke_context.get_check_aligned();
             let vote_address = translate_type::<Pubkey>(memory_mapping, var_addr, check_aligned)?;
 
-            Ok(invoke_context.get_epoch_vote_account_stake(vote_address))
+            Ok(invoke_context.get_epoch_stake_for_vote_account(vote_address))
         }
     }
 );
@@ -2613,7 +2617,7 @@ mod tests {
     #[test]
     fn test_syscall_sol_log_u64() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-        let cost = invoke_context.get_compute_budget().log_64_units;
+        let cost = invoke_context.get_execution_cost().log_64_units;
 
         invoke_context.mock_set_remaining(cost);
         let config = Config::default();
@@ -2634,7 +2638,7 @@ mod tests {
     #[test]
     fn test_syscall_sol_pubkey() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-        let cost = invoke_context.get_compute_budget().log_pubkey_units;
+        let cost = invoke_context.get_execution_cost().log_pubkey_units;
 
         let pubkey = Pubkey::from_str("MoqiU1vryuCGQSxFKA1SZ316JdLEFFhoAu6cKUNk7dN").unwrap();
         let config = Config::default();
@@ -2829,10 +2833,10 @@ mod tests {
         .unwrap();
 
         invoke_context.mock_set_remaining(
-            (invoke_context.get_compute_budget().sha256_base_cost
-                + invoke_context.get_compute_budget().mem_op_base_cost.max(
+            (invoke_context.get_execution_cost().sha256_base_cost
+                + invoke_context.get_execution_cost().mem_op_base_cost.max(
                     invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .sha256_byte_cost
                         .saturating_mul((bytes1.len() + bytes2.len()) as u64 / 2),
                 ))
@@ -2928,7 +2932,7 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_budget()
+                .get_execution_cost()
                 .curve25519_edwards_validate_point_cost)
                 * 2,
         );
@@ -3001,7 +3005,7 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_budget()
+                .get_execution_cost()
                 .curve25519_ristretto_validate_point_cost)
                 * 2,
         );
@@ -3088,13 +3092,13 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_budget()
+                .get_execution_cost()
                 .curve25519_edwards_add_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_edwards_subtract_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_edwards_multiply_cost)
                 * 2,
         );
@@ -3243,13 +3247,13 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_budget()
+                .get_execution_cost()
                 .curve25519_ristretto_add_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_subtract_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_multiply_cost)
                 * 2,
         );
@@ -3413,16 +3417,16 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             invoke_context
-                .get_compute_budget()
+                .get_execution_cost()
                 .curve25519_edwards_msm_base_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_edwards_msm_incremental_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_msm_base_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_msm_incremental_cost,
         );
 
@@ -4511,7 +4515,7 @@ mod tests {
             }
         }
 
-        let syscall_base_cost = invoke_context.get_compute_budget().syscall_base_cost;
+        let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
 
         const VM_BASE_ADDRESS: u64 = 0x100000000;
         const META_OFFSET: usize = 0;
@@ -4722,7 +4726,7 @@ mod tests {
     fn test_find_program_address() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let cost = invoke_context
-            .get_compute_budget()
+            .get_execution_cost()
             .create_program_address_units;
         let address = bpf_loader_upgradeable::id();
         let max_tries = 256; // one per seed
@@ -4835,7 +4839,7 @@ mod tests {
             )
             .unwrap();
 
-            let budget = invoke_context.get_compute_budget();
+            let budget = invoke_context.get_execution_cost();
             invoke_context.mock_set_remaining(
                 budget.syscall_base_cost
                     + (MAX_LEN * MAX_LEN) / budget.big_modular_exponentiation_cost_divisor
@@ -4877,7 +4881,7 @@ mod tests {
             )
             .unwrap();
 
-            let budget = invoke_context.get_compute_budget();
+            let budget = invoke_context.get_execution_cost();
             invoke_context.mock_set_remaining(
                 budget.syscall_base_cost
                     + (INV_LEN * INV_LEN) / budget.big_modular_exponentiation_cost_divisor
@@ -4904,13 +4908,23 @@ mod tests {
     #[test]
     fn test_syscall_get_epoch_stake_total_stake() {
         let config = Config::default();
-        let mut compute_budget = ComputeBudget::default();
+        let compute_cost = SVMTransactionExecutionCost::default();
+        let mut compute_budget = SVMTransactionExecutionBudget::default();
         let sysvar_cache = Arc::<SysvarCache>::default();
 
-        let expected_total_stake = 200_000_000_000_000u64;
+        const EXPECTED_TOTAL_STAKE: u64 = 200_000_000_000_000;
+
+        struct MockCallback {}
+        impl EpochStakeCallback for MockCallback {
+            fn get_epoch_stake(&self) -> u64 {
+                EXPECTED_TOTAL_STAKE
+            }
+            // Vote accounts are not needed for this test.
+        }
+
         // Compute units, as specified by SIMD-0133.
         // cu = syscall_base_cost
-        let expected_cus = compute_budget.syscall_base_cost;
+        let expected_cus = compute_cost.syscall_base_cost;
 
         // Set the compute budget to the expected CUs to ensure the syscall
         // doesn't exceed the expected usage.
@@ -4920,8 +4934,7 @@ mod tests {
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            expected_total_stake,
-            &|_| 0, // Vote accounts are not needed for this test.
+            &MockCallback {},
             Arc::<FeatureSet>::default(),
             &sysvar_cache,
         );
@@ -4941,42 +4954,48 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result, expected_total_stake);
+        assert_eq!(result, EXPECTED_TOTAL_STAKE);
     }
 
     #[test]
     fn test_syscall_get_epoch_stake_vote_account_stake() {
         let config = Config::default();
-        let mut compute_budget = ComputeBudget::default();
+        let mut compute_budget = SVMTransactionExecutionBudget::default();
+        let compute_cost = SVMTransactionExecutionCost::default();
         let sysvar_cache = Arc::<SysvarCache>::default();
 
-        let expected_epoch_stake = 55_000_000_000u64;
+        const TARGET_VOTE_ADDRESS: Pubkey = Pubkey::new_from_array([2; 32]);
+        const EXPECTED_EPOCH_STAKE: u64 = 55_000_000_000;
+
+        struct MockCallback {}
+        impl EpochStakeCallback for MockCallback {
+            // Total stake is not needed for this test.
+            fn get_epoch_stake_for_vote_account(&self, vote_address: &Pubkey) -> u64 {
+                if *vote_address == TARGET_VOTE_ADDRESS {
+                    EXPECTED_EPOCH_STAKE
+                } else {
+                    0
+                }
+            }
+        }
+
         // Compute units, as specified by SIMD-0133.
         // cu = syscall_base_cost
         //     + floor(32/cpi_bytes_per_unit)
         //     + mem_op_base_cost
-        let expected_cus = compute_budget.syscall_base_cost
-            + (PUBKEY_BYTES as u64) / compute_budget.cpi_bytes_per_unit
-            + compute_budget.mem_op_base_cost;
+        let expected_cus = compute_cost.syscall_base_cost
+            + (PUBKEY_BYTES as u64) / compute_cost.cpi_bytes_per_unit
+            + compute_cost.mem_op_base_cost;
 
         // Set the compute budget to the expected CUs to ensure the syscall
         // doesn't exceed the expected usage.
         compute_budget.compute_unit_limit = expected_cus;
 
-        let vote_address = Pubkey::new_unique();
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
-        let callback = |pubkey: &Pubkey| {
-            if *pubkey == vote_address {
-                expected_epoch_stake
-            } else {
-                0
-            }
-        };
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0, // Total stake is not needed for this test.
-            &callback,
+            &MockCallback {},
             Arc::<FeatureSet>::default(),
             &sysvar_cache,
         );
@@ -5018,7 +5037,7 @@ mod tests {
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![MemoryRegion::new_readonly(
-                    bytes_of(&vote_address),
+                    bytes_of(&TARGET_VOTE_ADDRESS),
                     vote_address_var,
                 )],
                 &config,
@@ -5037,7 +5056,7 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(result, expected_epoch_stake);
+            assert_eq!(result, EXPECTED_EPOCH_STAKE);
         }
 
         invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);

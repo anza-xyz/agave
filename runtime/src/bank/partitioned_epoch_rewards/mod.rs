@@ -66,10 +66,10 @@ pub(super) struct VoteRewardsAccounts {
     /// reward info for each vote account pubkey.
     /// This type is used by `update_reward_history()`
     pub(super) rewards: Vec<(Pubkey, RewardInfo)>,
-    /// corresponds to pubkey in `rewards`
-    /// Some if account is to be stored.
-    /// None if to be skipped.
-    pub(super) accounts_to_store: Vec<Option<AccountSharedData>>,
+    /// account to be stored, corresponds to pubkey in `rewards`
+    pub(super) accounts_to_store: Vec<(Pubkey, AccountSharedData)>,
+    /// total lamports across all `vote_rewards`
+    pub(super) total_vote_rewards_lamports: u64,
 }
 
 #[derive(Debug, Default)]
@@ -114,7 +114,6 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 pub(super) struct PartitionedRewardsCalculation {
     pub(super) vote_account_rewards: VoteRewardsAccounts,
     pub(super) stake_rewards_by_partition: StakeRewardCalculationPartitioned,
-    pub(super) old_vote_balance_and_staked: u64,
     pub(super) validator_rate: f64,
     pub(super) foundation_rate: f64,
     pub(super) prev_epoch_duration_in_years: f64,

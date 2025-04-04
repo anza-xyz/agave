@@ -143,18 +143,20 @@ impl StoreAccountsTiming {
 
 #[derive(Debug, Default)]
 pub struct FlushStats {
-    pub num_flushed: Saturating<usize>,
-    pub num_purged: Saturating<usize>,
-    pub total_size: Saturating<u64>,
+    pub num_accounts_flushed: Saturating<usize>,
+    pub num_bytes_flushed: Saturating<u64>,
+    pub num_accounts_purged: Saturating<usize>,
+    pub num_bytes_purged: Saturating<u64>,
     pub store_accounts_timing: StoreAccountsTiming,
     pub store_accounts_total_us: Saturating<u64>,
 }
 
 impl FlushStats {
     pub fn accumulate(&mut self, other: &Self) {
-        self.num_flushed += other.num_flushed;
-        self.num_purged += other.num_purged;
-        self.total_size += other.total_size;
+        self.num_accounts_flushed += other.num_accounts_flushed;
+        self.num_bytes_flushed += other.num_bytes_flushed;
+        self.num_accounts_purged += other.num_accounts_purged;
+        self.num_bytes_purged += other.num_bytes_purged;
         self.store_accounts_timing
             .accumulate(&other.store_accounts_timing);
         self.store_accounts_total_us += other.store_accounts_total_us;
@@ -242,7 +244,7 @@ impl LatestAccountsIndexRootsStats {
             ),
             (
                 "append_vecs_dirty",
-                APPEND_VEC_STATS.mmap_files_dirty.load(Ordering::Relaxed),
+                APPEND_VEC_STATS.files_dirty.load(Ordering::Relaxed),
                 i64
             ),
             (

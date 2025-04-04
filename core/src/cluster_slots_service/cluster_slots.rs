@@ -200,17 +200,21 @@ impl ClusterSlots {
         &self,
         slot: Slot,
         repair_peers: &[ContactInfo],
-    ) -> Vec<(u64, usize)> {
-        self.lookup(slot)
-            .map(|slot_peers| {
-                let slot_peers = slot_peers.read().unwrap();
-                repair_peers
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, ci)| Some((slot_peers.get(ci.pubkey())? + 1, i)))
-                    .collect()
-            })
-            .unwrap_or_default()
+    ) -> (Vec<u64>, Vec<usize>) {
+        let mut weights = Vec::with_capacity(repair_peers.len());
+        let mut indices = Vec::with_capacity(repair_peers.len());
+
+        let Some(slot_peers) = self.lookup(slot) else {
+            return (weights, indices);
+        };
+        let slot_peers = slot_peers.read().unwrap();
+        for (index, peer) in repair_peers.iter().enumerate() {
+            if let Some(stake) = slot_peers.get(peer.pubkey()) {
+                weights.push(stake + 1);
+                indices.push(index);
+            }
+        }
+        (weights, indices)
     }
 }
 
@@ -334,9 +338,9 @@ mod tests {
 
         // None of these validators have completed slot 9, so should
         // return nothing
-        assert!(cs
-            .compute_weights_exclude_nonfrozen(slot, &contact_infos)
-            .is_empty());
+        let (w, i) = cs.compute_weights_exclude_nonfrozen(slot, &contact_infos);
+        assert!(w.is_empty());
+        assert!(i.is_empty());
 
         // Give second validator max stake
         let validator_stakes: HashMap<_, _> = vec![(
@@ -354,10 +358,9 @@ mod tests {
         // even though it only has default stake, while the other validator has
         // max stake
         cs.insert_node_id(slot, *contact_infos[0].pubkey());
-        assert_eq!(
-            cs.compute_weights_exclude_nonfrozen(slot, &contact_infos),
-            vec![(1, 0)]
-        );
+        let (w, i) = cs.compute_weights_exclude_nonfrozen(slot, &contact_infos);
+        assert_eq!(w, [1]);
+        assert_eq!(i, [0]);
     }
 
     #[test]

@@ -29,6 +29,7 @@ use {
     solana_poh::{
         poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
+        transaction_recorder::TransactionRecorder,
     },
     solana_runtime::{
         bank::{Bank, HashOverrides},
@@ -729,7 +730,7 @@ impl BankingSimulator {
 
         info!("Poh is starting!");
 
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new_with_clear_signal(
+        let (poh_recorder, entry_receiver) = PohRecorder::new_with_clear_signal(
             bank.tick_height(),
             bank.last_blockhash(),
             bank.clone(),
@@ -740,10 +741,11 @@ impl BankingSimulator {
             blockstore.get_new_shred_signal(0),
             &leader_schedule_cache,
             &genesis_config.poh_config,
-            None,
             exit.clone(),
         );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let (record_sender, record_receiver) = unbounded();
+        let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
@@ -788,6 +790,7 @@ impl BankingSimulator {
                 &channels,
                 &cluster_info_for_banking,
                 &poh_recorder,
+                transaction_recorder.clone(),
             );
             channels
         } else {
@@ -840,6 +843,7 @@ impl BankingSimulator {
             transaction_struct.clone(),
             &cluster_info_for_banking,
             &poh_recorder,
+            transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,

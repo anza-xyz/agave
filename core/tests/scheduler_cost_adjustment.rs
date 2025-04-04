@@ -1,10 +1,10 @@
 #![cfg(test)]
 use {
+    agave_feature_set as feature_set,
     solana_compute_budget::compute_budget_limits::{
         DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
     },
     solana_cost_model::cost_model::CostModel,
-    solana_feature_set::{self as feature_set},
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
@@ -13,7 +13,7 @@ use {
         clock::MAX_PROCESSING_AGE,
         compute_budget::ComputeBudgetInstruction,
         genesis_config::{create_genesis_config, GenesisConfig},
-        instruction::{Instruction, InstructionError},
+        instruction::{AccountMeta, Instruction, InstructionError},
         message::Message,
         native_token::sol_to_lamports,
         pubkey::Pubkey,
@@ -512,12 +512,9 @@ fn test_builtin_ix_set_cu_price_only() {
     }
 }
 
-#[allow(clippy::explicit_counter_loop)]
 #[test]
 fn test_builtin_ix_precompiled() {
     let mut test_setup = TestSetup::new();
-    let data = [0_u8, 1_u8];
-    let mut index = 0;
 
     // single precompiled instruction
     for (is_simd_170_enabled, expected) in [
@@ -550,12 +547,12 @@ fn test_builtin_ix_precompiled() {
             test_setup.execute_test_transaction(
                 &[Instruction::new_with_bincode(
                     solana_sdk::secp256k1_program::id(),
-                    &data[index],
-                    vec![]
+                    &[0u8],
+                    // Add a dummy account to generate a unique transaction
+                    vec![AccountMeta::new_readonly(Pubkey::new_unique(), false)]
                 )],
                 is_simd_170_enabled
             )
         );
-        index += 1;
     }
 }

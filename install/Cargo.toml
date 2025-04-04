@@ -30,17 +30,17 @@ serde_derive = { workspace = true }
 serde_yaml = { workspace = true }
 serde_yaml_08 = { package = "serde_yaml", version = "0.8.26" }
 solana-clap-utils = { workspace = true }
-solana-config-program = { workspace = true }
-solana-hash = { workspace = true }
-solana-keypair = { workspace = true }
-solana-logger = { workspace = true }
-solana-message = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-config-program-client = { workspace = true, features = ["serde"] }
+solana-hash = "=2.2.1"
+solana-keypair = "=2.2.1"
+solana-logger = "=2.3.1"
+solana-message = "=2.3.0"
+solana-pubkey = { version = "=2.2.1", default-features = false }
 solana-rpc-client = { workspace = true }
 solana-sha256-hasher = { workspace = true }
-solana-signature = { workspace = true }
-solana-signer = { workspace = true }
-solana-transaction = { workspace = true }
+solana-signature = { version = "=2.2.1", default-features = false }
+solana-signer = "=2.2.1"
+solana-transaction = "=2.2.2"
 solana-version = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }

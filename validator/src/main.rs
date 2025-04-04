@@ -33,7 +33,8 @@ pub fn main() {
             &ledger_path,
             commands::run::execute::Operation::Initialize,
         )
-        .inspect_err(|err| error!("Failed to initialize validator: {err}")),
+        .inspect_err(|err| error!("Failed to initialize validator: {err}"))
+        .map_err(commands::Error::Dynamic),
         ("", _) | ("run", _) => commands::run::execute(
             &matches,
             solana_version,
@@ -41,7 +42,8 @@ pub fn main() {
             &ledger_path,
             commands::run::execute::Operation::Run,
         )
-        .inspect_err(|err| error!("Failed to start validator: {err}")),
+        .inspect_err(|err| error!("Failed to start validator: {err}"))
+        .map_err(commands::Error::Dynamic),
         ("authorized-voter", Some(authorized_voter_subcommand_matches)) => {
             commands::authorized_voter::execute(authorized_voter_subcommand_matches, &ledger_path)
         }

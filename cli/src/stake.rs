@@ -2662,7 +2662,7 @@ pub fn get_account_stake_state(
             })?;
             let new_rate_activation_epoch = get_feature_activation_epoch(
                 rpc_client,
-                &solana_feature_set::reduce_stake_warmup_cooldown::id(),
+                &agave_feature_set::reduce_stake_warmup_cooldown::id(),
             )?;
 
             let mut state = build_stake_state(

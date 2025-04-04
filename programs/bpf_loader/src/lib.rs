@@ -6,15 +6,13 @@ pub mod syscalls;
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
+    agave_feature_set::{
+        bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
+        enable_loader_v4, remove_accounts_executable_flag_checks,
+    },
     solana_account::WritableAccount,
     solana_bincode::limited_deserialize,
     solana_clock::Slot,
-    solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
-    solana_feature_set::{
-        bpf_account_data_direct_mapping, disable_new_loader_v3_deployments,
-        enable_bpf_loader_set_authority_checked_ix, enable_loader_v4,
-        remove_accounts_executable_flag_checks,
-    },
     solana_instruction::{error::InstructionError, AccountMeta},
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
@@ -23,6 +21,7 @@ use {
     solana_measure::measure::Measure,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
+        execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
@@ -299,7 +298,7 @@ macro_rules! create_vm {
         let heap_size = invoke_context.get_compute_budget().heap_size;
         let heap_cost_result = invoke_context.consume_checked($crate::calculate_heap_cost(
             heap_size,
-            invoke_context.get_compute_budget().heap_cost,
+            invoke_context.get_execution_cost().heap_cost,
         ));
         let $vm = heap_cost_result.and_then(|_| {
             let (mut stack, mut heap) = $crate::MEMORY_POOL
@@ -568,14 +567,6 @@ fn process_loader_upgradeable_instruction(
             )?;
         }
         UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
-            if invoke_context
-                .get_feature_set()
-                .is_active(&disable_new_loader_v3_deployments::id())
-            {
-                ic_logger_msg!(log_collector, "Unsupported instruction");
-                return Err(InstructionError::InvalidInstructionData);
-            }
-
             instruction_context.check_number_of_instruction_accounts(4)?;
             let payer_key = *transaction_context.get_key_of_account_at_index(
                 instruction_context.get_index_of_instruction_account_in_transaction(0)?,
@@ -1653,11 +1644,7 @@ fn execute<'a, 'b: 'a>(
                 Err(Box::new(error) as Box<dyn std::error::Error>)
             }
             ProgramResult::Err(mut error) => {
-                if invoke_context
-                    .get_feature_set()
-                    .is_active(&solana_feature_set::deplete_cu_meter_on_vm_failure::id())
-                    && !matches!(error, EbpfError::SyscallError(_))
-                {
+                if !matches!(error, EbpfError::SyscallError(_)) {
                     // when an exception is thrown during the execution of a
                     // Basic Block (e.g., a null memory dereference or other
                     // faults), determining the exact number of CUs consumed
@@ -1867,9 +1854,6 @@ mod tests {
             expected_result,
             Entrypoint::vm,
             |invoke_context| {
-                let mut feature_set = invoke_context.get_feature_set().clone();
-                feature_set.deactivate(&disable_new_loader_v3_deployments::id());
-                invoke_context.mock_set_feature_set(Arc::new(feature_set));
                 test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},

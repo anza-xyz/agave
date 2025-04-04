@@ -681,12 +681,12 @@ pub fn signer_from_source_with_config(
             }
         }
         SignerSourceKind::Pubkey(pubkey) => {
-            let presigner = try_pubkeys_sigs_of(matches, SIGNER_ARG.name)?
+            let presigner = try_pubkeys_sigs_of(matches, SIGNER_ARG.name).ok().flatten()
                 .as_ref()
                 .and_then(|presigners| presigner_from_pubkey_sigs(pubkey, presigners));
             if let Some(presigner) = presigner {
                 Ok(Box::new(presigner))
-            } else if config.allow_null_signer || matches.try_contains_id(SIGN_ONLY_ARG.name)? {
+            } else if config.allow_null_signer || matches.try_contains_id(SIGN_ONLY_ARG.name).unwrap_or(false) {
                 Ok(Box::new(NullSigner::new(pubkey)))
             } else {
                 Err(std::io::Error::new(
@@ -1288,5 +1288,169 @@ mod tests {
         assert_eq!(keypair.pubkey(), signer.pubkey());
 
         Ok(())
+    }
+
+    #[test]
+    fn test_signer_from_source_can_parse_null_signer() {
+        let pubkey = Pubkey::new_unique();
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        // Note offline args not passes. UnknownArgument should be handled internally.
+        let clap_app = Command::new("test_app");
+        let matches = clap_app.get_matches_from(Vec::<&str>::new());
+
+        let config = SignerFromPathConfig {
+            allow_null_signer: true,
+        };
+
+        // This will be a NullSigner
+        let signer =
+            signer_from_source_with_config(&matches, &source, "test_key", &mut None, &config)
+                .unwrap();
+        assert_eq!(signer.pubkey(), pubkey);
+    }
+
+    #[test]
+    fn test_signer_from_source_pubkey_error_on_missing_sig() {
+        let pubkey = Pubkey::new_unique();
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        // Note offline args not passes. UnknownArgument should be handled internally.
+        let clap_app = Command::new("test_app");
+        let matches = clap_app.get_matches_from(Vec::<&str>::new());
+
+        // Should gracefully pass through the NullSigner conditional branch
+        // and end up in the error clause at the end.
+        let config = SignerFromPathConfig {
+            allow_null_signer: false,
+        };
+
+        let result =
+            signer_from_source_with_config(&matches, &source, "test_key", &mut None, &config);
+        assert!(result.is_err());
+        let err_string = result.err().unwrap().to_string();
+        assert!(err_string.contains(&format!("missing signature for supplied pubkey: {pubkey}")));
+    }
+    #[test]
+    fn test_signer_from_source_pubkey_presigner_match() {
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        let message = b"test message for presigner match";
+        let signature = keypair.sign_message(message);
+
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        let signer_arg = format!("{}={}", pubkey, signature);
+
+        let clap_app = Command::new("test").arg(
+            Arg::new(SIGNER_ARG.name)
+                .long(SIGNER_ARG.long)
+                .value_name("PUBKEY=SIGNATURE"),
+        );
+        let matches = clap_app.get_matches_from(vec!["test", "--signer", &signer_arg]);
+
+        let config = SignerFromPathConfig {
+            allow_null_signer: false,
+        };
+
+        // Should have matched to a Presigner
+        let signer = signer_from_source_with_config(
+            &matches,
+            &source,
+            "test_key_presigner",
+            &mut None,
+            &config,
+        )
+        .unwrap();
+
+        assert_eq!(signer.pubkey(), pubkey);
+    }
+
+    #[test]
+    fn test_signer_from_source_pubkey_presigner_no_match() {
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        let message = b"test message for presigner match";
+        let signature = keypair.sign_message(message);
+
+        // In this case, should not match a presigner
+        let unrelated_pubkey = Pubkey::new_unique();
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(unrelated_pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        let signer_arg = format!("{}={}", pubkey, signature);
+
+        let clap_app = Command::new("test").arg(
+            Arg::new(SIGNER_ARG.name)
+                .long(SIGNER_ARG.long)
+                .value_name("PUBKEY=SIGNATURE"),
+        );
+        let matches = clap_app.get_matches_from(vec!["test", "--signer", &signer_arg]);
+
+        let config = SignerFromPathConfig {
+            allow_null_signer: false,
+        };
+
+        let result = signer_from_source_with_config(
+            &matches,
+            &source,
+            "test_key_presigner",
+            &mut None,
+            &config,
+        );
+        assert!(result.is_err());
+        let err_string = result.err().unwrap().to_string();
+        assert!(err_string.contains(&format!(
+            "missing signature for supplied pubkey: {unrelated_pubkey}"
+        )));
+    }
+
+    #[test]
+    fn test_signer_from_source_pubkey_sign_only_match() {
+        let pubkey = Pubkey::new_unique();
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        let clap_app = Command::new("test_sign_only_match").offline_args();
+        let matches = clap_app.get_matches_from(vec![
+            "test_sign_only_match",
+            "--sign-only",
+            "--blockhash",
+            &Hash::new_unique().to_string(),
+        ]);
+
+        // Given this is false, should check for sign-only arg
+        let config = SignerFromPathConfig {
+            allow_null_signer: false,
+        };
+
+        // Result should be a NullSigner
+        let signer = signer_from_source_with_config(
+            &matches,
+            &source,
+            "test_key_sign_only",
+            &mut None,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(signer.pubkey(), pubkey);
     }
 }

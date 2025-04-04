@@ -1,5 +1,5 @@
 use {
-    clap::{crate_description, crate_name, ArgAction, ColorChoice, Parser},
+    clap::{builder::ValueParser, crate_description, crate_name, ArgAction, ColorChoice, Parser},
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_sdk::{net::DEFAULT_TPU_COALESCE, quic::QUIC_PORT_OFFSET},
     solana_streamer::quic::{
@@ -10,6 +10,7 @@ use {
         net::{IpAddr, SocketAddr},
         path::PathBuf,
     },
+    url::Url,
 };
 
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
@@ -49,6 +50,26 @@ fn get_default_tpu_coalesce_ms() -> &'static str {
     let coalesce = DEFAULT_TPU_COALESCE.as_millis().to_string();
     let coalesce: &'static str = Box::leak(coalesce.into_boxed_str());
     coalesce
+}
+
+/// returns a parser which can validate input URL based on specified schemes.
+fn parse_url_with_scheme(expected_schemes: &'static [&'static str]) -> ValueParser {
+    ValueParser::from(move |input: &str| {
+        // Attempt to parse the input as a URL
+        let parsed_url =
+            Url::parse(input).map_err(|e| format!("Invalid URL '{}': {}", input, e))?;
+
+        // Check the scheme of the URL
+        if expected_schemes.contains(&parsed_url.scheme()) {
+            Ok(parsed_url)
+        } else {
+            Err(format!(
+                "Invalid scheme: {}. Must be one of: {}.",
+                parsed_url.scheme(),
+                expected_schemes.join(", ")
+            ))
+        }
+    })
 }
 
 #[derive(Parser)]
@@ -113,4 +134,14 @@ pub struct Cli {
     /// SIGUSR1 signal to the vortexor process will cause it to re-open the log file.
     #[arg(long="log", value_name = "FILE", value_parser = clap::value_parser!(String))]
     pub logfile: Option<String>,
+
+    /// The address(es) of RPC server that the vortexor will connect to obtain stake and slot info.
+    #[arg(long="rpc-server", value_parser = parse_url_with_scheme(&["http", "https"]), value_name = "URL")]
+    pub rpc_servers: Vec<Url>,
+
+    /// The address (es) of websocket server to which the vortexor will connect to obtain stake and slot info.
+    /// If multiple rpc servers are set, the count of websocket servers must
+    /// match that of the rpc servers.
+    #[arg(long="websocket-server", value_parser = parse_url_with_scheme(&["ws", "wss"]), value_name = "URL")]
+    pub websocket_servers: Vec<Url>,
 }

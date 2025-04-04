@@ -209,6 +209,10 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
         core::iter::empty()
     }
 
+    fn static_account_keys(&self) -> &[Pubkey] {
+        &self.0
+    }
+
     fn account_keys(&self) -> solana_message::AccountKeys {
         solana_message::AccountKeys::new(&self.0, None)
     }
@@ -295,11 +299,11 @@ mod tests {
     use {
         super::*,
         crate::cost_model::CostModel,
-        solana_feature_set::FeatureSet,
+        agave_feature_set::FeatureSet,
+        agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::SimpleAddressLoader,
-        solana_reserved_account_keys::ReservedAccountKeys,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
         solana_vote::vote_transaction,

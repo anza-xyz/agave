@@ -1,0 +1,44 @@
+[package]
+name = "agave-precompiles"
+description = "Solana precompiled programs."
+documentation = "https://docs.rs/agave-precompiles"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+agave-feature-set = { workspace = true }
+bincode = { workspace = true }
+bytemuck = { workspace = true }
+digest = { workspace = true }
+ed25519-dalek = { workspace = true }
+lazy_static = { workspace = true }
+libsecp256k1 = { workspace = true }
+openssl = { workspace = true }
+sha3 = { workspace = true }
+solana-ed25519-program = { workspace = true }
+solana-message = { workspace = true }
+solana-precompile-error = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-secp256k1-program = { workspace = true, features = ["serde"] }
+solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
+
+[dev-dependencies]
+hex = { workspace = true }
+rand0-7 = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keccak-hasher = { workspace = true }
+solana-logger = { workspace = true }
+solana-secp256k1-program = { workspace = true, features = ["bincode"] }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[lints]
+workspace = true

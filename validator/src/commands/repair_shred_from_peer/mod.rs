@@ -1,5 +1,8 @@
 use {
-    crate::{admin_rpc_service, commands::FromClapArgMatches},
+    crate::{
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{value_t, App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::{is_parsable, is_pubkey},
     solana_sdk::pubkey::Pubkey,
@@ -16,11 +19,11 @@ pub struct RepairShredFromPeerArgs {
 }
 
 impl FromClapArgMatches for RepairShredFromPeerArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(RepairShredFromPeerArgs {
             pubkey: value_t!(matches, "pubkey", Pubkey).ok(),
-            slot: value_t!(matches, "slot", u64).map_err(|_| "slot is not a valid number")?,
-            shred: value_t!(matches, "shred", u64).map_err(|_| "shred is not a valid number")?,
+            slot: value_t!(matches, "slot", u64)?,
+            shred: value_t!(matches, "shred", u64)?,
         })
     }
 }
@@ -41,6 +44,7 @@ pub fn command<'a>() -> App<'a, 'a> {
             Arg::with_name("slot")
                 .long("slot")
                 .value_name("SLOT")
+                .required(true)
                 .takes_value(true)
                 .validator(is_parsable::<u64>)
                 .help("Slot to repair"),
@@ -49,13 +53,14 @@ pub fn command<'a>() -> App<'a, 'a> {
             Arg::with_name("shred")
                 .long("shred")
                 .value_name("SHRED")
+                .required(true)
                 .takes_value(true)
                 .validator(is_parsable::<u64>)
                 .help("Shred to repair"),
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let RepairShredFromPeerArgs {
         pubkey,
         slot,
@@ -63,34 +68,37 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
     } = RepairShredFromPeerArgs::from_clap_arg_match(matches)?;
 
     let admin_client = admin_rpc_service::connect(ledger_path);
-    admin_rpc_service::runtime()
-        .block_on(async move {
-            admin_client
-                .await?
-                .repair_shred_from_peer(pubkey, slot, shred)
-                .await
-        })
-        .map_err(|err| format!("repair shred from peer request failed: {err}"))
+    admin_rpc_service::runtime().block_on(async move {
+        admin_client
+            .await?
+            .repair_shred_from_peer(pubkey, slot, shred)
+            .await
+    })?;
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::commands::tests::verify_args_struct_by_command, std::str::FromStr};
+    use {
+        super::*,
+        crate::commands::tests::{
+            verify_args_struct_by_command, verify_args_struct_by_command_is_error,
+        },
+        std::str::FromStr,
+    };
 
     #[test]
-    fn verify_args_struct_by_command_repair_shred_from_peer_missing_slot() {
-        let app = command();
-        let matches = app.get_matches_from(vec![COMMAND]);
-        let args = RepairShredFromPeerArgs::from_clap_arg_match(&matches);
-        assert_eq!(args, Err("slot is not a valid number".to_string()));
-    }
-
-    #[test]
-    fn verify_args_struct_by_command_repair_shred_from_peer_missing_shred() {
-        let app = command();
-        let matches = app.get_matches_from(vec![COMMAND, "--slot", "1"]);
-        let args = RepairShredFromPeerArgs::from_clap_arg_match(&matches);
-        assert_eq!(args, Err("shred is not a valid number".to_string()));
+    fn verify_args_struct_by_command_repair_shred_from_peer_missing_slot_and_shred() {
+        verify_args_struct_by_command_is_error::<RepairShredFromPeerArgs>(command(), vec![COMMAND]);
+        verify_args_struct_by_command_is_error::<RepairShredFromPeerArgs>(
+            command(),
+            vec![COMMAND, "--slot", "1"],
+        );
+        verify_args_struct_by_command_is_error::<RepairShredFromPeerArgs>(
+            command(),
+            vec![COMMAND, "--shred", "2"],
+        );
     }
 
     #[test]

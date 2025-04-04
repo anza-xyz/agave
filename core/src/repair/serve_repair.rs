@@ -1127,10 +1127,7 @@ impl ServeRepair {
         if repair_peers.is_empty() {
             return Err(ClusterInfoError::NoPeers.into());
         }
-        let (weights, index): (Vec<_>, Vec<_>) = cluster_slots
-            .compute_weights_exclude_nonfrozen(slot, &repair_peers)
-            .into_iter()
-            .unzip();
+        let (weights, index) = cluster_slots.compute_weights_exclude_nonfrozen(slot, &repair_peers);
         let peers = WeightedShuffle::new("repair_request_ancestor_hashes", weights)
             .shuffle(&mut rand::thread_rng())
             .map(|i| index[i])
@@ -1154,10 +1151,7 @@ impl ServeRepair {
         if repair_peers.is_empty() {
             return None;
         }
-        let (weights, index): (Vec<_>, Vec<_>) = cluster_slots
-            .compute_weights_exclude_nonfrozen(slot, &repair_peers)
-            .into_iter()
-            .unzip();
+        let (weights, index) = cluster_slots.compute_weights_exclude_nonfrozen(slot, &repair_peers);
         let k = WeightedIndex::new(weights)
             .ok()?
             .sample(&mut rand::thread_rng());
@@ -1448,7 +1442,7 @@ mod tests {
     use {
         super::*,
         crate::repair::repair_response,
-        solana_feature_set::FeatureSet,
+        agave_feature_set::FeatureSet,
         solana_gossip::{contact_info::ContactInfo, socketaddr, socketaddr_any},
         solana_ledger::{
             blockstore::make_many_slot_entries,

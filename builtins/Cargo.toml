@@ -13,11 +13,10 @@ edition = { workspace = true }
 dev-context-only-utils = []
 
 [dependencies]
+agave-feature-set = { workspace = true }
 solana-address-lookup-table-program = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-compute-budget-program = { workspace = true }
-solana-config-program = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }

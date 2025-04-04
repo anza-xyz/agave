@@ -30,15 +30,16 @@ solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-type-overrides = { workspace = true }
 
 [dev-dependencies]
+agave-feature-set = { workspace = true }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 solana-compute-budget = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-hash = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk = { workspace = true }
 solana-sha256-hasher = { workspace = true }
+solana-svm-callback = { workspace = true }
 
 [lib]
 crate-type = ["lib"]

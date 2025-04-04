@@ -17,14 +17,14 @@ num_cpus = { workspace = true }
 serde_json = { workspace = true }
 solana-clap-v3-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-derivation-path = { workspace = true }
-solana-instruction = { workspace = true }
-solana-keypair = { workspace = true }
-solana-message = { workspace = true, features = ["bincode"] }
-solana-pubkey = { workspace = true }
+solana-derivation-path = "=2.2.1"
+solana-instruction = { version = "=2.2.1", features = ["bincode"] }
+solana-keypair = "=2.2.1"
+solana-message = { version = "=2.3.0", features = ["bincode"] }
+solana-pubkey = { version = "=2.2.1", default-features = false }
 solana-remote-wallet = { workspace = true, features = ["default"] }
-solana-seed-derivable = { workspace = true }
-solana-signer = { workspace = true }
+solana-seed-derivable = "=2.2.1"
+solana-signer = "=2.2.1"
 solana-version = { workspace = true }
 tiny-bip39 = { workspace = true }
 

@@ -598,12 +598,12 @@ mod test {
         super::*,
         bytemuck::Zeroable,
         solana_instruction::{AccountMeta, Instruction},
+        solana_message::Message,
         solana_pubkey::Pubkey,
         spl_token_2022::{
             extension::confidential_transfer::instruction::{
                 initialize_mint, inner_configure_account, inner_empty_account, update_mint,
             },
-            solana_program::message::Message,
             solana_zk_sdk::{
                 encryption::pod::{
                     auth_encryption::PodAeCiphertext, elgamal::PodElGamalCiphertext,

@@ -138,7 +138,7 @@ impl PacketReceiver {
             *newly_buffered_packets_count += deserialized_packets.len();
             *newly_buffered_forwarded_packets_count += deserialized_packets
                 .iter()
-                .filter(|p| p.original_packet().meta().forwarded())
+                .filter(|p| p.forwarded())
                 .count();
             slot_metrics_tracker
                 .increment_newly_buffered_packets_count(deserialized_packets.len() as u64);

@@ -23,6 +23,7 @@ use {
         },
         status_cache,
     },
+    agave_feature_set as feature_set,
     bincode::{config::Options, serialize_into},
     log::*,
     solana_accounts_db::{
@@ -39,7 +40,6 @@ use {
     solana_measure::{measure::Measure, measure_time},
     solana_sdk::{
         clock::{Epoch, Slot},
-        feature_set,
         genesis_config::GenesisConfig,
         pubkey::Pubkey,
         slot_history::{Check, SlotHistory},
@@ -947,7 +947,7 @@ fn bank_to_full_snapshot_archive_with(
         MerkleOrLatticeAccountsHash::Lattice
     } else {
         let calculated_accounts_hash =
-            bank.update_accounts_hash(CalcAccountsHashDataSource::Storages, false, false);
+            bank.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
         let accounts_hash = bank
             .get_accounts_hash()
             .expect("accounts hash is required for snapshot");
@@ -1106,13 +1106,13 @@ mod tests {
             },
             status_cache::Status,
         },
+        agave_feature_set as feature_set,
         solana_accounts_db::{
             accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
             accounts_hash::{CalcAccountsHashConfig, HashStats},
             sorted_storages::SortedStorages,
         },
         solana_sdk::{
-            feature_set,
             genesis_config::create_genesis_config,
             native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
             signature::{Keypair, Signer},

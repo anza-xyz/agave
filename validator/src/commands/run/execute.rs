@@ -94,7 +94,7 @@ pub fn execute(
     socket_addr_space: SocketAddrSpace,
     ledger_path: &Path,
     operation: Operation,
-) -> Result<(), String> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let cli::thread_args::NumThreadConfig {
         accounts_db_clean_threads,
         accounts_db_foreground_threads,
@@ -397,7 +397,6 @@ pub fn execute(
         };
 
     let mut accounts_index_config = AccountsIndexConfig {
-        started_from_validator: true, // this is the only place this is set
         num_flush_threads: Some(accounts_index_flush_threads),
         ..AccountsIndexConfig::default()
     };
@@ -978,27 +977,20 @@ pub fn execute(
         snapshot_version,
         maximum_full_snapshot_archives_to_retain,
         maximum_incremental_snapshot_archives_to_retain,
-        accounts_hash_debug_verify: validator_config.accounts_db_test_hash_calculation,
         packager_thread_niceness_adj: snapshot_packager_niceness_adj,
     };
 
-    // The accounts hash interval shall match the snapshot interval
-    validator_config.accounts_hash_interval_slots = std::cmp::min(
-        full_snapshot_archive_interval_slots,
-        incremental_snapshot_archive_interval_slots,
-    );
-
     info!(
-        "Snapshot configuration: full snapshot interval: {} slots, incremental snapshot interval: {} slots",
+        "Snapshot configuration: full snapshot interval: {}, incremental snapshot interval: {}",
         if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
             "disabled".to_string()
         } else {
-            full_snapshot_archive_interval_slots.to_string()
+            format!("{full_snapshot_archive_interval_slots} slots")
         },
         if incremental_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
             "disabled".to_string()
         } else {
-            incremental_snapshot_archive_interval_slots.to_string()
+            format!("{incremental_snapshot_archive_interval_slots} slots")
         },
     );
 
@@ -1014,14 +1006,9 @@ pub fn execute(
         );
     }
 
-    if !is_snapshot_config_valid(
-        &validator_config.snapshot_config,
-        validator_config.accounts_hash_interval_slots,
-    ) {
+    if !is_snapshot_config_valid(&validator_config.snapshot_config) {
         Err(
             "invalid snapshot configuration provided: snapshot intervals are incompatible. \
-             \n\t- full snapshot interval MUST be a multiple of incremental snapshot interval \
-             (if enabled) \
              \n\t- full snapshot interval MUST be larger than incremental snapshot interval \
              (if enabled)"
                 .to_string(),

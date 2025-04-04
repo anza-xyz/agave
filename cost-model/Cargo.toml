@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 ahash = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
@@ -20,7 +21,6 @@ solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -48,6 +48,7 @@ crate-type = ["lib"]
 name = "solana_cost_model"
 
 [dev-dependencies]
+agave-reserved-account-keys = { workspace = true }
 itertools = { workspace = true }
 rand = "0.8.5"
 # See order-crates-for-publishing.py for using this unusual `path = "."`
@@ -61,7 +62,6 @@ solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-reserved-account-keys = { workspace = true }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }

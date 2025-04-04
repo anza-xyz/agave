@@ -437,12 +437,13 @@ fn main() {
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-    let (exit, poh_recorder, poh_service, signal_receiver) = create_test_recorder(
-        bank.clone(),
-        blockstore.clone(),
-        None,
-        Some(leader_schedule_cache),
-    );
+    let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
+        create_test_recorder(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
     let (banking_tracer, tracer_thread) =
         BankingTracer::new(matches.is_present("trace_banking").then_some((
             &blockstore.banking_trace_path(),
@@ -470,7 +471,7 @@ fn main() {
             prioritization_fee_cache.clone(),
         );
         let channels = banking_tracer.create_channels_for_scheduler_pool(&pool);
-        ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info, &poh_recorder);
+        ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info, &poh_recorder, transaction_recorder.clone());
         bank_forks.write().unwrap().install_scheduler_pool(pool);
         channels
     } else {
@@ -489,6 +490,7 @@ fn main() {
         transaction_struct,
         &cluster_info,
         &poh_recorder,
+        transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,
         gossip_vote_receiver,
