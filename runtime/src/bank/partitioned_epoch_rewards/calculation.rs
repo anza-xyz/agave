@@ -319,6 +319,7 @@ impl Bank {
             estimated_num_vote_accounts,
             AHashRandomState::default(),
         );
+
         let total_stake_rewards = AtomicU64::default();
         let (stake_rewards, measure_stake_rewards_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
