@@ -696,8 +696,9 @@ pub mod delay_visibility_of_program_deployment {
 pub mod apply_cost_tracker_during_replay {
     solana_pubkey::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
 }
+
 pub mod bpf_account_data_direct_mapping {
-    solana_pubkey::declare_id!("AjX3A4Nv2rzUuATEUWLP4rrBaBropyUnHxEvFDj1dKbx");
+    solana_pubkey::declare_id!("1ncomp1ete111111111111111111111111111111111");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
