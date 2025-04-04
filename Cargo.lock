@@ -435,6 +435,7 @@ dependencies = [
  "solana-streamer",
  "solana-test-validator",
  "solana-tpu-client",
+ "solana-turbine",
  "solana-unified-scheduler-pool",
  "solana-version",
  "solana-vote-program",
@@ -4571,7 +4572,7 @@ checksum = "62948e14d923ea95ea2c7c86c71013138b66525b86bdc08d2dcc262bdb497b87"
 dependencies = [
  "crc32fast",
  "hashbrown 0.15.1",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "memchr",
 ]
 
@@ -11022,10 +11023,12 @@ name = "solana-turbine"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
+ "agave-xdp",
  "assert_matches",
  "bincode",
  "bs58",
  "bytes",
+ "caps",
  "crossbeam-channel",
  "futures 0.3.31",
  "itertools 0.12.1",

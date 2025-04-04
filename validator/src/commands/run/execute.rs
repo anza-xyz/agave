@@ -21,7 +21,9 @@ use {
             create_and_canonicalize_directory,
         },
     },
-    solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
+    solana_clap_utils::input_parsers::{
+        keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
+    },
     solana_core::{
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
@@ -67,6 +69,7 @@ use {
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
+    solana_turbine::xdp::{set_cpu_affinity, XdpConfig},
     std::{
         collections::HashSet,
         fs::{self, File},
@@ -625,6 +628,16 @@ pub fn execute(
 
     let full_api = matches.is_present("full_rpc_api");
 
+    let xdp_interface = matches.value_of("retransmit_xdp_interface");
+    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
+    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
+        XdpConfig::new(
+            xdp_interface,
+            parse_cpu_ranges(cpus).unwrap(),
+            xdp_zero_copy,
+        )
+    });
+
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
         tower_storage,
@@ -773,8 +786,25 @@ pub fn execute(
             .is_present("delay_leader_block_for_pending_fork"),
         wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
         wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
+        retransmit_xdp,
         ..ValidatorConfig::default()
     };
+
+    let available = core_affinity::get_core_ids()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|core_id| core_id.id)
+        .collect::<HashSet<_>>();
+    let reserved = validator_config
+        .retransmit_xdp
+        .as_ref()
+        .map(|xdp| xdp.cpus.clone())
+        .unwrap_or_default()
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let available = available.difference(&reserved);
+    set_cpu_affinity(available.into_iter().copied()).unwrap();
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
         if !validator_config.voting_disabled {

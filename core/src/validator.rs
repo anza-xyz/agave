@@ -127,7 +127,7 @@ use {
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
     },
-    solana_turbine::{self, broadcast_stage::BroadcastStageType},
+    solana_turbine::{self, broadcast_stage::BroadcastStageType, xdp::XdpConfig},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
@@ -314,6 +314,7 @@ pub struct ValidatorConfig {
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
     pub use_tpu_client_next: bool,
+    pub retransmit_xdp: Option<XdpConfig>,
 }
 
 impl Default for ValidatorConfig {
@@ -387,6 +388,7 @@ impl Default for ValidatorConfig {
             tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
             use_tpu_client_next: false,
+            retransmit_xdp: None,
         }
     }
 }
@@ -1522,6 +1524,7 @@ impl Validator {
                 replay_forks_threads: config.replay_forks_threads,
                 replay_transactions_threads: config.replay_transactions_threads,
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
+                retransmit_xdp: config.retransmit_xdp.clone(),
             },
             &max_slots,
             block_metadata_notifier,
