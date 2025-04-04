@@ -137,7 +137,7 @@ pub struct TransactionProcessingEnvironment<'a> {
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(
     feature = "dev-context-only-utils",
-    field_qualifiers(slot(pub), epoch(pub))
+    field_qualifiers(slot(pub), epoch(pub), sysvar_cache(pub))
 )]
 pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// Bank slot (i.e. block)
