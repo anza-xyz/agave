@@ -947,12 +947,14 @@ impl RepairService {
             warn!("No repair peers have frozen slot: {slot}");
             return vec![];
         };
-        let peers_with_slot = peers_with_slot.read().unwrap();
 
         // Filter out any peers that don't have a valid repair socket.
         let repair_peers: Vec<(Pubkey, SocketAddr, u32)> = peers_with_slot
+            .read()
+            .unwrap()
             .iter()
             .filter_map(|(pubkey, stake)| {
+                let stake = stake.load(Ordering::Relaxed);
                 let peer_repair_addr = cluster_info
                     .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
                 if let Some(Some(peer_repair_addr)) = peer_repair_addr {
@@ -960,7 +962,7 @@ impl RepairService {
                     Some((
                         *pubkey,
                         peer_repair_addr,
-                        (*stake / solana_sdk::native_token::LAMPORTS_PER_SOL) as u32,
+                        (stake / solana_sdk::native_token::LAMPORTS_PER_SOL) as u32,
                     ))
                 } else {
                     None
@@ -1755,7 +1757,7 @@ mod test {
         // a valid target for repair
         let dead_slot = 9;
         let cluster_slots = ClusterSlots::default();
-        cluster_slots.insert_node_id(dead_slot, *valid_repair_peer.pubkey());
+        cluster_slots.insert_node_id(dead_slot, *valid_repair_peer.pubkey(), Some(42));
         cluster_info.insert_info(valid_repair_peer);
 
         // Not enough time has passed, should not update the

@@ -119,7 +119,12 @@ impl ClusterSlotsService {
                 }
             }
             let root_bank = bank_forks.read().unwrap().root_bank();
-            cluster_slots.update(&root_bank, &cluster_info);
+            cluster_slots.update(
+                root_bank.slot(),
+                epoch_specs.current_epoch_staked_nodes(),
+                &cluster_info,
+                root_bank.epoch(),
+            );
             process_cluster_slots_updates_elapsed.stop();
 
             cluster_slots_service_timing.update(
