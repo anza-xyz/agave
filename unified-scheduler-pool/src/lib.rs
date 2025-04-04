@@ -21,6 +21,7 @@ use {
     dyn_clone::{clone_trait_object, DynClone},
     log::*,
     scopeguard::defer,
+    solana_clock::Slot,
     solana_cost_model::cost_model::CostModel,
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
@@ -38,7 +39,6 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::clock::Slot,
     solana_svm::transaction_processing_result::ProcessedTransaction,
     solana_timings::ExecuteTimings,
     solana_transaction::sanitized::SanitizedTransaction,
@@ -52,7 +52,7 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
-        ops::{ControlFlow, DerefMut},
+        ops::DerefMut,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
             Arc, Mutex, MutexGuard, OnceLock, Weak,
@@ -936,13 +936,53 @@ impl TaskHandler for DefaultTaskHandler {
         task: &Task,
         handler_context: &HandlerContext,
     ) {
-        // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
-        // responsible for locking.
         let bank = scheduling_context.bank().unwrap();
         let transaction = task.transaction();
         let index = task.task_index();
 
-        let batch = bank.prepare_unlocked_batch_from_single_tx(transaction);
+        let batch = match scheduling_context.mode() {
+            BlockVerification => {
+                // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
+                // responsible for locking.
+                bank.prepare_unlocked_batch_from_single_tx(transaction)
+            }
+            BlockProduction => {
+                // Due to the probable presence of an independent banking thread (like the jito
+                // thread), we are forced to lock the addresses unlike block verification. The
+                // scheduling thread isn't appropriate for these kinds of work; so, instead do that
+                // by one of handler threads.
+                //
+                // Assuming the banking thread isn't tightly integrated and thus it's rather opaque
+                // to the unified scheduler, there's no proper way to be race-free other than
+                // actually locking the accounts.
+                //
+                // That means there's also no proper signalling mechanism among them after
+                // unlocking as well. So, we resort to spin lock here with mercy of slight
+                // humbleness (100us sleep per retry).
+                //
+                // Note that this is quite coarse/suboptimal solution to the above problem.
+                // Ideally, this should be handled more gracefully. As for the worst case analysis,
+                // this will indeed create a rather noisy lock contention. However, this is already
+                // the case as well for the other block producing method (CentralScheduler). So,
+                // this could be justified here, hopefully...
+                let mut batch;
+                let started = Instant::now();
+                loop {
+                    batch = bank.prepare_locked_batch_from_single_tx(transaction);
+                    let lock_result = &batch.lock_results()[0];
+                    if let Ok(()) = lock_result {
+                        break;
+                    }
+                    assert_matches!(lock_result, Err(TransactionError::AccountInUse));
+                    if started.elapsed() > Duration::from_millis(400) {
+                        *result = Err(TransactionError::CommitCancelled);
+                        return;
+                    }
+                    sleep(Duration::from_micros(100));
+                }
+                batch
+            }
+        };
         let transaction_indexes = match scheduling_context.mode() {
             BlockVerification => vec![index],
             BlockProduction => {
@@ -1551,15 +1591,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
     }
 
+    /// Returns `true` if the caller should abort.
     #[must_use]
-    fn accumulate_result_with_timings(
+    fn abort_or_accumulate_result_with_timings(
         mode: SchedulingMode,
         (result, timings): &mut ResultWithTimings,
         executed_task: Box<ExecutedTask>,
         state_machine: &mut SchedulingStateMachine,
         session_ending: &mut bool,
         handler_context: &HandlerContext,
-    ) -> ControlFlow<(), ()> {
+    ) -> bool {
         sleepless_testing::at(CheckPoint::TaskAccumulated(
             executed_task.task.task_index(),
             &executed_task.result_with_timings.0,
@@ -1570,12 +1611,22 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             BlockVerification => match executed_task.result_with_timings.0 {
                 Ok(()) => {
                     // The most normal case
-                    ControlFlow::Continue(())
+                    false
+                }
+                // This should never be observed because the scheduler thread makes all running
+                // tasks are conflict-free
+                Err(TransactionError::AccountInUse)
+                // These should have been validated by blockstore by now
+                | Err(TransactionError::AccountLoadedTwice)
+                | Err(TransactionError::TooManyAccountLocks)
+                // Block verification should never see this:
+                | Err(TransactionError::CommitCancelled) => {
+                    unreachable!()
                 }
                 Err(error) => {
                     error!("error is detected while accumulating....: {error:?}");
                     *result = Err(error);
-                    ControlFlow::Break(())
+                    true
                 }
             },
             BlockProduction => {
@@ -1597,6 +1648,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             handler_context,
                         );
                     }
+                    // This should never be observed because the scheduler thread makes all running
+                    // tasks are conflict-free; Furthermore, block producing scheduler should be
+                    // prepared for the probable presence of an independent banking thread (like
+                    // the jito thread). This is addressed by the TaskHandler::handle().
+                    Err(TransactionError::AccountInUse)
+                    // These should have been validated by banking_packet_handler by now
+                    | Err(TransactionError::AccountLoadedTwice)
+                    | Err(TransactionError::TooManyAccountLocks) => {
+                        unreachable!();
+                    }
                     Err(ref error) => {
                         // The other errors; just discard tasks. These are permanently
                         // not-committable worthless tasks.
@@ -1604,7 +1665,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     }
                 };
                 // Don't abort at all in block production unlike block verification
-                ControlFlow::Continue(())
+                false
             }
         }
     }
@@ -1754,6 +1815,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // 5. the handler thread reply back to the scheduler thread as an executed task.
         // 6. the scheduler thread post-processes the executed task.
         let scheduler_main_loop = {
+            let handler_context = handler_context.clone();
             let session_result_sender = self.session_result_sender.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
             // this way, the replay stage will get .send() failures reliably, after this scheduler
@@ -1763,7 +1825,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 .take()
                 .expect("no 2nd start_threads()");
 
-            let handler_context = handler_context.clone();
             let mut session_resetting = false;
 
             // Now, this is the main loop for the scheduler thread, which is a special beast.
@@ -1850,18 +1911,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // into busy looping to seek lowest latency eventually. However, not now,
                         // to measure _actual_ cpu usage easily with the select approach.
                         select_biased! {
-                            recv(finished_blocked_task_receiver) -> executed_task => {
-                                let Ok(executed_task) = executed_task else {
+                            recv(finished_blocked_task_receiver) -> receiver_result => {
+                                let Ok(handler_result) = receiver_result else {
                                     assert_matches!(scheduling_mode, BlockProduction);
                                     break 'nonaborted_main_loop;
                                 };
-
-                                let Ok(executed_task) = executed_task else {
+                                let Ok(executed_task) = handler_result else {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
 
-                                if let ControlFlow::Break(()) = Self::accumulate_result_with_timings(
+                                if Self::abort_or_accumulate_result_with_timings(
                                     scheduling_mode,
                                     &mut result_with_timings,
                                     executed_task,
@@ -1914,17 +1974,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     }
                                 }
                             },
-                            recv(finished_idle_task_receiver) -> executed_task => {
+                            recv(finished_idle_task_receiver) -> receiver_result => {
                                 // finished_idle_task_sender won't be disconnected
                                 // unlike finished_blocked_task_sender???
-                                let executed_task = executed_task.expect("alive handler");
-
-                                let Ok(executed_task) = executed_task else {
+                                let handler_result = receiver_result.expect("alive handler");
+                                let Ok(executed_task) = handler_result else {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
 
-                                if let ControlFlow::Break(()) = Self::accumulate_result_with_timings(
+                                if Self::abort_or_accumulate_result_with_timings(
                                     scheduling_mode,
                                     &mut result_with_timings,
                                     executed_task,
@@ -2555,6 +2614,7 @@ mod tests {
         AfterNewBufferedTask,
         AfterBufferedTask,
         AfterTaskHandled,
+        AfterTaskAccumulated,
         AfterSessionEnding,
         AfterSessionFinished,
         AfterSchedulerThreadAborted,
@@ -3811,17 +3871,21 @@ mod tests {
     fn test_block_production_scheduler_schedule_execution_retry() {
         solana_logger::setup();
 
-        const TRANSACTION_INDEX: usize = 0;
+        const ORIGINAL_TRANSACTION_INDEX: usize = 999;
+        // This is 0 because it's the first task id assigned internally by BankingStageHelper
+        const RETRIED_TRANSACTION_INDEX: usize = 0;
         const FULL_BLOCK_SLOT: Slot = 1;
 
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::TaskAccumulated(
-                TRANSACTION_INDEX,
+                ORIGINAL_TRANSACTION_INDEX,
                 &Err(TransactionError::WouldExceedMaxBlockCostLimit),
             ),
             &CheckPoint::SessionFinished(Some(FULL_BLOCK_SLOT)),
             &TestCheckPoint::AfterSessionFinished,
             &TestCheckPoint::AfterSession,
+            &CheckPoint::TaskAccumulated(RETRIED_TRANSACTION_INDEX, &Ok(())),
+            &TestCheckPoint::AfterTaskAccumulated,
         ]);
 
         let GenesisConfigInfo {
@@ -3888,10 +3952,12 @@ mod tests {
             .write()
             .unwrap()
             .set_bank(bank.clone_with_scheduler(), true);
-        bank.schedule_transaction_executions([(tx, TRANSACTION_INDEX)].into_iter())
+        bank.schedule_transaction_executions([(tx, ORIGINAL_TRANSACTION_INDEX)].into_iter())
             .unwrap();
         bank.unblock_block_production();
 
+        // Calling wait_for_completed_scheduler() for block production scheduler causes it to be
+        // interrupted immediately; so need to wait for failed landing of the original task.
         sleepless_testing::at(&TestCheckPoint::AfterSessionFinished);
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         sleepless_testing::at(&TestCheckPoint::AfterSession);
@@ -3924,6 +3990,9 @@ mod tests {
             .set_bank(bank.clone_with_scheduler(), true);
         bank.unblock_block_production();
 
+        // Calling wait_for_completed_scheduler() for block production scheduler causes it to be
+        // interrupted immediately; so need to wait for successful landing of the retried task.
+        sleepless_testing::at(&TestCheckPoint::AfterTaskAccumulated);
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         // Block production scheduler should carry over the temporarily-failed transaction itself
         // and the transaction should now have been executed.

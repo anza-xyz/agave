@@ -24,9 +24,9 @@ use {
     crate::bank::Bank,
     assert_matches::assert_matches,
     log::*,
+    solana_clock::Slot,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
-        clock::Slot,
         hash::Hash,
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
