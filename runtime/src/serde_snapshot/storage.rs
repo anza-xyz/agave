@@ -31,7 +31,7 @@ impl From<&AccountStorageEntry> for SerializableAccountStorageEntry {
     fn from(rhs: &AccountStorageEntry) -> Self {
         Self {
             id: rhs.id() as SerializedAccountsFileId,
-            accounts_current_len: rhs.accounts.len(),
+            accounts_current_len: rhs.accounts.len() - rhs.get_dead_account_stats().1,
         }
     }
 }

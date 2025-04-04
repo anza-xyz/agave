@@ -2184,6 +2184,169 @@ mod tests {
         assert_eq!(other_incremental_accounts_hash, incremental_accounts_hash);
     }
 
+
+    /// Test that snapshots are loaded correctly when some slots only contain
+    /// zero lamport accounts
+    ///
+    /// slot 1:
+    ///     - send some lamports to Account1 (from Account2) to bring it to life
+    ///     - Send some lamports to Account3 (from mint) to preserve this slot
+    ///     - take a full snapshot to allow zero lamport in slot1 to shrink
+    /// slot 2:
+    ///     - make Account1 have zero lamports (send back to Account2)
+    ///     - Flush to ensure that it is not purged when slot3 is flushed      
+    /// slot 3:
+    ///     - remove Account2's reference back to slot 2 by transferring from the mint to Account2
+    ///     - take a full snap shot
+    ///     - verify that the full snap shot does not bring account1 back to life
+    #[test]
+    fn test_snapshots_handle_zero_lamport_accounts() {
+        let collector = Pubkey::new_unique();
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+        let key3 = Keypair::new();
+
+        let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_archive_format = ArchiveFormat::Tar;
+
+        let (mut genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        // test expects 0 transaction fee
+        genesis_config.fee_rate_governor = solana_sdk::fee_calculator::FeeRateGovernor::new(0, 0);
+
+        let lamports_to_transfer = sol_to_lamports(123_456.);
+        let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
+            &genesis_config,
+            Arc::<RuntimeConfig>::default(),
+            BankTestConfig::default(),
+            vec![accounts_dir.clone()],
+        )
+        .wrap_with_bank_forks_for_tests();
+        bank0
+            .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
+            .unwrap();
+        while !bank0.is_complete() {
+            bank0.register_unique_tick();
+        }
+
+        let slot = 1;
+        let bank1 =
+            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        bank1
+            .transfer(lamports_to_transfer, &key2, &key1.pubkey())
+            .unwrap();
+        bank1
+            .transfer(lamports_to_transfer, &mint_keypair, &key3.pubkey())
+            .unwrap();
+        while !bank1.is_complete() {
+            bank1.register_unique_tick();
+        }
+
+        let _full_snapshot_slot = slot;
+        let _full_snapshot_archive_info = bank_to_full_snapshot_archive(
+            bank_snapshots_dir.path(),
+            &bank1,
+            None,
+            full_snapshot_archives_dir.path(),
+            incremental_snapshot_archives_dir.path(),
+            snapshot_archive_format,
+        )
+        .unwrap();
+
+        let slot = slot + 1;
+        let bank2 =
+            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
+        let blockhash = bank2.last_blockhash();
+        let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &key1,
+            &key2.pubkey(),
+            lamports_to_transfer,
+            blockhash,
+        ));
+
+        let fee = bank2.get_fee_for_message(tx.message()).unwrap();
+        let tx = system_transaction::transfer(
+            &key1,
+            &key2.pubkey(),
+            lamports_to_transfer - fee,
+            blockhash,
+        );
+        bank2.process_transaction(&tx).unwrap();
+        assert_eq!(
+            bank2.get_balance(&key1.pubkey()),
+            0,
+            "Ensure Account1's balance is zero"
+        );
+        while !bank2.is_complete() {
+            bank2.register_unique_tick();
+        }
+        bank2.force_flush_accounts_cache();   
+
+        let slot = slot + 1;
+        let bank3 =
+            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
+        // Update Account2 so that it no longer holds a reference to slot2
+        bank3
+            .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
+            .unwrap();
+        while !bank3.is_complete() {
+            bank3.register_unique_tick();
+        }
+
+        // Ensure account1 has been cleaned/purged from everywhere        
+        bank3.force_flush_accounts_cache();
+        assert!(
+            bank3.get_account_modified_slot(&key1.pubkey()).is_none(),
+            "Ensure Account1 has been cleaned and purged from AccountsDb"
+        );
+
+        // Take an incremental snapshot and then do a roundtrip on the bank and ensure it
+        // deserializes correctly
+        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
+            bank_snapshots_dir.path(),
+            &bank3,
+            None,
+            full_snapshot_archives_dir.path(),
+            incremental_snapshot_archives_dir.path(),
+            snapshot_archive_format,
+        )
+        .unwrap();
+
+        // Cleanup the run directory TODO: Check if needed
+        fs::remove_dir_all(&accounts_dir).unwrap();
+
+        let (deserialized_bank, _) = bank_from_snapshot_archives(
+            &[accounts_dir.clone()],
+            bank_snapshots_dir.path(),
+            &full_snapshot_archive_info,
+            None,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            None,
+            Arc::default(),
+        )
+        .unwrap_or_else(|err| panic!("Failed to deserialize bank: {:?}", err));
+
+        deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
+
+        assert!(
+            deserialized_bank
+                .get_account_modified_slot(&key1.pubkey())
+                .is_none(),
+            "Ensure Account1 has not been brought back from the dead"
+        );        
+    }
+
     #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_bank_from_snapshot_dir(storage_access: StorageAccess) {
