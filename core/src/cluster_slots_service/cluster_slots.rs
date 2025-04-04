@@ -37,6 +37,7 @@ pub(crate) type SlotPubkeys =
 /// repair (as it will prefer nodes that have confirmed a slot)
 const FREEZE_THRESHOLD: f64 = 0.9;
 // whatever freeze threshold we should be above DUPLICATE_THRESHOLD in order to not break consensus.
+// 1.1 margin is due to us not properly tracking epoch boundaries
 static_assertions::const_assert!(FREEZE_THRESHOLD > DUPLICATE_THRESHOLD * 1.1);
 
 #[derive(Default)]
@@ -89,6 +90,11 @@ impl ClusterSlots {
         cluster_info: &ClusterInfo,
         root_epoch: u64,
     ) {
+        let current_slot = self.current_slot.load(Ordering::Relaxed);
+        if current_slot > root_slot {
+            error!("Invalid update call to ClusterSlots, can not roll time backwards!");
+            return;
+        }
         self.maybe_update_validator_stakes(validator_stakes, root_epoch);
         let epoch_slots = {
             let mut cursor = self.cursor.lock().unwrap();
@@ -99,15 +105,22 @@ impl ClusterSlots {
     }
 
     /// Advance the cluster_slots ringbuffer, initialize if needed.
+    /// We will discard slots at or before current root or too far ahead.
     fn roll_cluster_slots(
         &self,
         validator_stakes: &HashMap<Pubkey, u64>,
-        slot_range: &Range<Slot>,
-    ) {
+        root: Slot,
+    ) -> Range<Slot> {
+        let slot_range = (root + 1)..root.saturating_add(CLUSTER_SLOTS_TRIM_SIZE as u64 + 1);
         let current_slot = self.current_slot.swap(slot_range.start, Ordering::Relaxed);
-        if current_slot >= slot_range.start {
-            return;
+        // early-return if no slot change happened
+        if current_slot == slot_range.start {
+            return slot_range;
         }
+        assert!(
+            slot_range.start > current_slot,
+            "Can not roll cluster slots backwards!"
+        );
         let map_capacity = validator_stakes.len();
         let mut cluster_slots = self.cluster_slots.write().unwrap();
         self.metric_write_locks.fetch_add(1, Ordering::Relaxed);
@@ -181,6 +194,7 @@ impl ClusterSlots {
             cluster_slots.len() == CLUSTER_SLOTS_TRIM_SIZE,
             "Ring buffer should be exactly the intended size"
         );
+        slot_range
     }
 
     fn update_internal(
@@ -190,11 +204,9 @@ impl ClusterSlots {
         epoch_slots_list: Vec<EpochSlots>,
     ) {
         let total_stake = self.total_stake.load(std::sync::atomic::Ordering::Relaxed);
-        // Prepare a range of slots we will store in the datastructure
-        // We will discard slots at or before current root or too far ahead.
-        let slot_range = (root + 1)..root.saturating_add(CLUSTER_SLOTS_TRIM_SIZE as u64 + 1);
-        // ensure the datastructure has the correct window in scope
-        self.roll_cluster_slots(validator_stakes, &slot_range);
+        // Adjust the range of slots we can store in the datastructure to the
+        // current rooted slot, ensure the datastructure has the correct window in scope
+        let slot_range = self.roll_cluster_slots(validator_stakes, root);
 
         let cluster_slots = self.cluster_slots.read().unwrap();
         for epoch_slots in epoch_slots_list {
@@ -215,10 +227,9 @@ impl ClusterSlots {
                 debug_assert_eq!(*s, slot, "Fetched slot does not match expected value!");
                 let slot_weight_f64 =
                     total_support.load(std::sync::atomic::Ordering::Relaxed) as f64;
-                // once slot is confirmed beyond `DUPLICATE_THRESHOLD` we should not need
+                // once slot is confirmed beyond `FREEZE_THRESHOLD` we should not need
                 // to update the stakes for it anymore
-                // floats can be funny, give us a bit of margin
-                if slot_weight_f64 / total_stake as f64 > FREEZE_THRESHOLD * 1.1 {
+                if slot_weight_f64 / total_stake as f64 > FREEZE_THRESHOLD {
                     continue;
                 }
                 let rg = map.read().unwrap();
@@ -383,6 +394,78 @@ mod tests {
     }
 
     #[test]
+    fn test_roll_cluster_slots() {
+        let cs = ClusterSlots::default();
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
+
+        let trimsize = CLUSTER_SLOTS_TRIM_SIZE as u64;
+        let validator_stakes = HashMap::from([(pk1, 10), (pk2, 20)]);
+        assert_eq!(
+            cs.cluster_slots.read().unwrap().len(),
+            0,
+            "ring should be initially empty"
+        );
+        cs.roll_cluster_slots(&validator_stakes, 0);
+        {
+            let rg = cs.cluster_slots.read().unwrap();
+            assert_eq!(
+                rg.len(),
+                CLUSTER_SLOTS_TRIM_SIZE,
+                "ring should have exactly {} elements",
+                CLUSTER_SLOTS_TRIM_SIZE
+            );
+            assert_eq!(rg.front().unwrap().slot, 1, "first slot should be root + 1");
+            assert_eq!(
+                rg.back().unwrap().slot - rg.front().unwrap().slot,
+                trimsize - 1,
+                "ring should have the right size"
+            );
+        }
+        //step 1 slot
+        cs.roll_cluster_slots(&validator_stakes, 1);
+        {
+            let rg = cs.cluster_slots.read().unwrap();
+            assert_eq!(rg.front().unwrap().slot, 2, "first slot should be root + 1");
+            assert_eq!(
+                rg.back().unwrap().slot - rg.front().unwrap().slot,
+                trimsize - 1,
+                "ring should have the right size"
+            );
+        }
+        let allocs = cs.metric_allocations.load(Ordering::Relaxed);
+        // make 1 full loop
+        cs.roll_cluster_slots(&validator_stakes, trimsize);
+        {
+            let rg = cs.cluster_slots.read().unwrap();
+            assert_eq!(
+                rg.front().unwrap().slot,
+                trimsize + 1,
+                "first slot should be root + 1"
+            );
+            let allocs = cs.metric_allocations.load(Ordering::Relaxed) - allocs;
+            assert_eq!(allocs, 0, "No need to allocate when rolling ringbuf");
+            assert_eq!(
+                rg.back().unwrap().slot - rg.front().unwrap().slot,
+                trimsize - 1,
+                "ring should have the right size"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_roll_cluster_slots_backwards() {
+        let cs = ClusterSlots::default();
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
+
+        let validator_stakes = HashMap::from([(pk1, 10), (pk2, 20)]);
+        cs.roll_cluster_slots(&validator_stakes, 10);
+        cs.roll_cluster_slots(&validator_stakes, 5);
+    }
+
+    #[test]
     fn test_update_noop() {
         let cs = ClusterSlots::default();
         cs.update_internal(0, &HashMap::new(), vec![]);
@@ -423,8 +506,7 @@ mod tests {
         };
         epoch_slot2.fill(&[1, 3, 5], 1);
         let from2 = epoch_slot2.from;
-        cs.total_stake
-            .store(1000, std::sync::atomic::Ordering::Relaxed); //disable slot locking
+        cs.update_total_stake([1000]); //disable slot locking
         cs.update_internal(
             0,
             &HashMap::from([(from1, 10), (from2, 20)]),
