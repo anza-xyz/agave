@@ -157,7 +157,6 @@ mod tests_core_bpf_migration {
     #[test_case(TestPrototype::Builtin(&BUILTINS[2]); "stake")]
     #[test_case(TestPrototype::Builtin(&BUILTINS[3]); "bpf_loader_deprecated")]
     #[test_case(TestPrototype::Builtin(&BUILTINS[4]); "bpf_loader")]
-    #[test_case(TestPrototype::Builtin(&BUILTINS[7]); "address_lookup_table")]
     fn test_core_bpf_migration(prototype: TestPrototype) {
         let (mut genesis_config, mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
