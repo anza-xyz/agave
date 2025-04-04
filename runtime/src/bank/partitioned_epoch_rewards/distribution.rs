@@ -3,7 +3,10 @@ use {
         Bank, EpochRewardStatus, PartitionedStakeReward, PartitionedStakeRewards, StakeRewards,
     },
     crate::{
-        bank::metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
+        bank::{
+            metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
+            partitioned_epoch_rewards::StartBlockHeightAndPartitionedRewards,
+        },
         stake_account::StakeAccount,
     },
     log::error,
@@ -42,25 +45,79 @@ struct DistributionResults {
 impl Bank {
     /// Process reward distribution for the block if it is inside reward interval.
     pub(in crate::bank) fn distribute_partitioned_epoch_rewards(&mut self) {
-        let EpochRewardStatus::Active(status) = &self.epoch_reward_status else {
-            return;
+        let distribution_starting_block_height = match &self.epoch_reward_status {
+            EpochRewardStatus::Inactive => {
+                // epoch rewards is inactive, no rewards to distribute
+                return;
+            }
+            EpochRewardStatus::Calculated(status) => status.distribution_starting_block_height,
+            EpochRewardStatus::Partitioned(status) => status.distribution_starting_block_height,
         };
 
         let height = self.block_height();
-        let distribution_starting_block_height = status.distribution_starting_block_height;
+        if height < distribution_starting_block_height {
+            return;
+        }
+
+        let (stake_rewards_by_partition, update_to_partitioned) = match &self.epoch_reward_status {
+            EpochRewardStatus::Inactive => {
+                // epoch rewards is inactive, no rewards to distribute
+                unreachable!("shouldn't reach here");
+            }
+            EpochRewardStatus::Calculated(status) => {
+                // epoch rewards have been calculated, but not yet partitioned.
+                // so partition them now.
+                // This should happen only once immediately on the first rewards distribution block, after reward calculation block.
+                let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
+                let (stake_rewards_by_partition, partition_us) = measure_us!(status.do_partition(
+                    &epoch_rewards_sysvar.parent_blockhash,
+                    epoch_rewards_sysvar.num_partitions as usize,
+                ));
+                datapoint_info!(
+                    "epoch-rewards-status-update",
+                    ("slot", self.slot(), i64),
+                    ("block_height", height, i64),
+                    ("partition_us", partition_us, i64),
+                    (
+                        "distribution_starting_block_height",
+                        distribution_starting_block_height,
+                        i64
+                    ),
+                );
+
+                (stake_rewards_by_partition, true)
+            }
+            EpochRewardStatus::Partitioned(status) => (
+                // epoch rewards have been partitioned, so use the partitioned rewards
+                status.stake_rewards_by_partition.clone(),
+                false,
+            ),
+        };
+
         let distribution_end_exclusive =
-            distribution_starting_block_height + status.stake_rewards_by_partition.len() as u64;
+            distribution_starting_block_height + stake_rewards_by_partition.len() as u64;
+
         assert!(
             self.epoch_schedule.get_slots_in_epoch(self.epoch)
-                > status.stake_rewards_by_partition.len() as u64
+                > stake_rewards_by_partition.len() as u64
         );
 
         if height >= distribution_starting_block_height && height < distribution_end_exclusive {
             let partition_index = height - distribution_starting_block_height;
+
             self.distribute_epoch_rewards_in_partition(
-                &status.stake_rewards_by_partition,
+                &stake_rewards_by_partition,
                 partition_index,
             );
+        }
+
+        if update_to_partitioned {
+            // update epoch reward status to partitioned
+            self.epoch_reward_status =
+                EpochRewardStatus::Partitioned(StartBlockHeightAndPartitionedRewards {
+                    distribution_starting_block_height,
+                    stake_rewards_by_partition,
+                });
         }
 
         if height.saturating_add(1) >= distribution_end_exclusive {
@@ -78,7 +135,7 @@ impl Bank {
 
             assert!(matches!(
                 self.epoch_reward_status,
-                EpochRewardStatus::Active(_)
+                EpochRewardStatus::Partitioned(_)
             ));
             self.epoch_reward_status = EpochRewardStatus::Inactive;
             self.set_epoch_rewards_sysvar_to_inactive();
@@ -280,7 +337,7 @@ mod tests {
         let stake_rewards =
             hash_rewards_into_partitions(stake_rewards, &Hash::new_from_array([1; 32]), 2);
 
-        bank.set_epoch_reward_status_active(
+        bank.set_epoch_reward_status_partitioned(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
             stake_rewards,
         );
@@ -306,10 +363,7 @@ mod tests {
             bank.epoch_schedule().slots_per_epoch as usize + 1,
         );
 
-        bank.set_epoch_reward_status_active(
-            bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
-            stake_rewards,
-        );
+        bank.set_epoch_reward_status_partitioned(bank.block_height(), stake_rewards);
 
         bank.distribute_partitioned_epoch_rewards();
     }
@@ -319,7 +373,7 @@ mod tests {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let mut bank = Bank::new_for_tests(&genesis_config);
 
-        bank.set_epoch_reward_status_active(
+        bank.set_epoch_reward_status_partitioned(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
             vec![],
         );
@@ -437,7 +491,7 @@ mod tests {
 
         let stake_rewards_bucket =
             hash_rewards_into_partitions(stake_rewards, &Hash::new_from_array([1; 32]), 100);
-        bank.set_epoch_reward_status_active(
+        bank.set_epoch_reward_status_partitioned(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
             stake_rewards_bucket.clone(),
         );
