@@ -40,7 +40,6 @@ update_solana_dependencies() {
     solana-poh
     solana-program-runtime
     solana-program-test
-    solana-address-lookup-table-program
     solana-bpf-loader-program
     solana-compute-budget-program
     solana-stake-program
@@ -130,7 +129,6 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-poh poh")
   crates_map+=("solana-program-runtime program-runtime")
   crates_map+=("solana-program-test program-test")
-  crates_map+=("solana-address-lookup-table-program programs/address-lookup-table")
   crates_map+=("solana-bpf-loader-program programs/bpf_loader")
   crates_map+=("solana-compute-budget-program programs/compute-budget")
   crates_map+=("solana-stake-program programs/stake")
