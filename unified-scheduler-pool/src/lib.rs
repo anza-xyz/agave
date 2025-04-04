@@ -2297,12 +2297,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .send(NewTaskPayload::CloseSubchannel)
             .is_err();
 
-        // In addition to the later session_result receiving, also skip thread joining as part of
-        // normal bookkeeping on scheduler abortion even if detected; Otherwise, we could be
-        // dead-locked around poh because we technically would wait on handler thread before
+        // In addition to the later session_result receiving, also skip thread joining, which is
+        // part of normal bookkeeping on scheduler abortion, even if detected; Otherwise, we could
+        // be dead-locked around poh, because we would technically wait on handler thread before
         // joining. Nonblocking session ending is guaranteed to be followed by blocking session
-        // ending because it's special-cased only for block production poh. that real session
-        // ending will properly all the remaining clean up.
+        // ending, because it's special-cased only for block production poh. that real session
+        // ending will properly manage all the remaining clean up.
         if nonblocking {
             return;
         }
