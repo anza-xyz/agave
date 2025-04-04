@@ -6277,6 +6277,11 @@ impl AccountsDb {
                 flush_stats.num_accounts_flushed.0,
                 i64
             ),
+            (
+                "slots_not_cleaned_due_to_scans",
+                flush_stats.slots_not_cleaned_due_to_scans.0,
+                i64
+            ),
             ("account_bytes_saved", flush_stats.num_bytes_purged.0, i64),
             ("num_accounts_saved", flush_stats.num_accounts_purged.0, i64),
             (
@@ -6372,6 +6377,7 @@ impl AccountsDb {
         if should_flush_f.is_some() {
             if let Some(max_clean_root) = max_clean_root {
                 if slot > max_clean_root {
+                    flush_stats.slots_not_cleaned_due_to_scans += 1;
                     // Only if the root is greater than the `max_clean_root` do we
                     // have to prevent cleaning, otherwise, just default to `should_flush_f`
                     // for any slots <= `max_clean_root`
