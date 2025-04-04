@@ -2051,7 +2051,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         handler_context.thread_count,
                                     )
                                     .unwrap();
-                                // As for block production, poh aren't guaranteed to be updated to
+                                // As for block production, poh isn't guaranteed to be updated to
                                 // the new BankWithScheduler. So, only break from this loop for
                                 // block verification.
                                 if matches!(scheduling_mode, BlockVerification) {
@@ -2274,6 +2274,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
     }
 
+    fn end_session(&mut self) {
+        self.do_end_session(false)
+    }
+
     fn do_end_session(&mut self, nonblocking: bool) {
         if self.are_threads_joined() {
             assert!(self.session_result_with_timings.is_some());
@@ -2311,10 +2315,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             self.ensure_join_threads_after_abort(false);
         }
         debug!("end_session(): ended session at {:?}...", thread::current());
-    }
-
-    fn end_session(&mut self) {
-        self.do_end_session(false)
     }
 
     fn unpause_started_session(&self) {
@@ -2445,10 +2445,6 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         self.inner.thread_manager.send_task(task)
     }
 
-    fn unpause_after_taken(&self) {
-        self.inner.thread_manager.unpause_started_session();
-    }
-
     fn recover_error_after_abort(&mut self) -> TransactionError {
         self.inner
             .thread_manager
@@ -2476,6 +2472,10 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         // termination here to avoid deadlock. just async signaling is enough
         let nonblocking = matches!(self.context().mode(), BlockProduction);
         self.inner.thread_manager.do_end_session(nonblocking);
+    }
+
+    fn unpause_after_taken(&self) {
+        self.inner.thread_manager.unpause_started_session();
     }
 }
 
