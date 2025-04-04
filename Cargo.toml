@@ -87,8 +87,6 @@ members = [
     "precompiles",
     "program-runtime",
     "program-test",
-    "programs/address-lookup-table",
-    "programs/address-lookup-table-tests",
     "programs/bpf-loader-tests",
     "programs/bpf_loader",
     "programs/bpf_loader/gen-syscall-list",
@@ -383,7 +381,6 @@ solana-account-decoder-client-types = { path = "account-decoder-client-types", v
 solana-account-info = "2.2.1"
 solana-accounts-db = { path = "accounts-db", version = "=2.3.0" }
 solana-address-lookup-table-interface = "2.2.2"
-solana-address-lookup-table-program = { path = "programs/address-lookup-table", version = "=2.3.0" }
 solana-atomic-u64 = "2.2.1"
 solana-banks-client = { path = "banks-client", version = "=2.3.0" }
 solana-banks-interface = { path = "banks-interface", version = "=2.3.0" }
