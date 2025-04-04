@@ -240,6 +240,7 @@ export PATH=$PWD/bin:$PATH
 You can then run the following command to obtain the same result as with
 prebuilt binaries:
 
+> NOTE: this is only to install the `test` or `prod` versions, and expects you to download a source archive from the **[Releases](https://github.com/anza-xyz/agave/releases/latest)** page, it will not help you build the `debug` version of agave. It is possible to instead switch to a tagged release on the repo though.
 ```bash
 agave-install init
 ```
