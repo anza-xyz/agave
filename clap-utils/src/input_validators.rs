@@ -1,5 +1,8 @@
 use {
-    crate::keypair::{parse_signer_source, SignerSourceKind, ASK_KEYWORD},
+    crate::{
+        input_parsers::parse_cpu_ranges,
+        keypair::{parse_signer_source, SignerSourceKind, ASK_KEYWORD},
+    },
     chrono::DateTime,
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
@@ -435,6 +438,15 @@ where
     } else {
         Ok(())
     }
+}
+
+pub fn validate_cpu_ranges<T>(value: T, err_prefix: &str) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    parse_cpu_ranges(value.as_ref())
+        .map(|_| ())
+        .map_err(|e| format!("{err_prefix} {e}"))
 }
 
 #[cfg(test)]
