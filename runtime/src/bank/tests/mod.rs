@@ -12418,7 +12418,8 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
 
     // Program Setup
     let program_keypair = Keypair::new();
-    let program_data = include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
+    let program_data =
+        include_bytes!("../../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
     let program_account = AccountSharedData::from(Account {
         lamports: Rent::default().minimum_balance(program_data.len()).min(1),
         data: program_data.to_vec(),
@@ -12527,7 +12528,8 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
 
     // Program Setup
     let program_keypair = Keypair::new();
-    let program_data = include_bytes!("../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
+    let program_data =
+        include_bytes!("../../../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
     let program_account = AccountSharedData::from(Account {
         lamports: Rent::default().minimum_balance(program_data.len()).min(1),
         data: program_data.to_vec(),
