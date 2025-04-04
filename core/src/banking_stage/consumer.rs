@@ -1550,14 +1550,13 @@ mod tests {
             None,
             blockstore.clone(),
             false,
+            None, // no bank notifications interested
             tss_exit.clone(),
         );
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
-            Some(TransactionStatusSender {
-                sender: transaction_status_sender,
-            }),
+            Some(TransactionStatusSender::new(transaction_status_sender)),
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
@@ -1695,14 +1694,13 @@ mod tests {
             None,
             blockstore.clone(),
             false,
+            None, // no bank notifications interested
             tss_exit.clone(),
         );
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let committer = Committer::new(
-            Some(TransactionStatusSender {
-                sender: transaction_status_sender,
-            }),
+            Some(TransactionStatusSender::new(transaction_status_sender)),
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
