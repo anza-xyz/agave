@@ -646,7 +646,7 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
         .write()
         .unwrap()
         .set_bank(tpu_bank.clone_with_scheduler(), track_transaction_indexes);
-    tpu_bank.unblock_block_production();
+    tpu_bank.unpause_new_block_production_scheduler();
 }
 
 #[cfg(test)]

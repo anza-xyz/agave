@@ -179,8 +179,6 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
         index: usize,
     ) -> ScheduleResult;
 
-    fn unblock_scheduling(&self);
-
     /// Return the error which caused the scheduler to abort.
     ///
     /// Note that this must not be called until it's observed that `schedule_execution()` has
@@ -215,6 +213,17 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// `ResultWithTimings` internally until it's `wait_for_termination()`-ed to collect the result
     /// later.
     fn pause_for_recent_blockhash(&mut self);
+
+    /// Unpause a block production scheduler, immediately after it's taken from the scheduler pool.
+    ///
+    /// This is rather a special-purposed method. Such a scheduler is initially paused due to a
+    /// race condition between the poh thread and handler threads. So, it needs to be unpaused in
+    /// order to start processing transactions by calling this.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a block verification scheduler.
+    fn unpause_after_taken(&self);
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", automock)]
@@ -549,10 +558,10 @@ impl BankWithScheduler {
         Ok(())
     }
 
-    pub fn unblock_block_production(&self) {
+    pub fn unpause_new_block_production_scheduler(&self) {
         if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
             assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
-            scheduler.unblock_scheduling();
+            scheduler.unpause_after_taken();
         }
     }
 
