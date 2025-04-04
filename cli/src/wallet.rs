@@ -452,7 +452,6 @@ pub fn parse_balance(
 pub fn parse_decode_transaction(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     let blob = value_t_or_exit!(matches, "transaction", String);
     let binary_encoding = match matches.value_of("encoding").unwrap() {
-        "base58" => TransactionBinaryEncoding::Base58,
         "base64" => TransactionBinaryEncoding::Base64,
         _ => unreachable!(),
     };
