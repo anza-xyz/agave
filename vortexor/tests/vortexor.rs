@@ -148,8 +148,10 @@ async fn test_stake_update() {
         let stakes = shared_staked_nodes.read().unwrap();
         if let Some(stake) = stakes.get_node_stake(pubkey) {
             info!("Stake for {}: {}", pubkey, stake);
+            assert_eq!(stake, default_node_stake);
             let total_stake = stakes.total_stake();
             info!("total_stake: {}", total_stake);
+            assert!(total_stake >= default_node_stake);
             break;
         }
         info!("Waiting for stake map to be populated for {pubkey:?}...");
