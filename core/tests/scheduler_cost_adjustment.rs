@@ -8,9 +8,9 @@ use {
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
-        account::{Account, AccountSharedData},
+        account::Account,
         bpf_loader,
-        clock::MAX_PROCESSING_AGE,
+        clock::{Slot, MAX_PROCESSING_AGE},
         compute_budget::ComputeBudgetInstruction,
         genesis_config::{create_genesis_config, GenesisConfig},
         instruction::{AccountMeta, Instruction, InstructionError},
@@ -27,6 +27,20 @@ use {
     std::sync::{Arc, RwLock},
 };
 
+fn new_bank_from_parent_with_bank_forks(
+    bank_forks: &RwLock<BankForks>,
+    parent: Arc<Bank>,
+    collector_id: &Pubkey,
+    slot: Slot,
+) -> Arc<Bank> {
+    let bank = Bank::new_from_parent(parent, collector_id, slot);
+    bank_forks
+        .write()
+        .unwrap()
+        .insert(bank)
+        .clone_without_scheduler()
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct TestResult {
     // execution cost adjustment (eg estimated_execution_cost -
@@ -40,44 +54,29 @@ struct TestResult {
 struct TestSetup {
     genesis_config: GenesisConfig,
     mint_keypair: Keypair,
-    bank: Bank,
-    bank_forks: Arc<RwLock<BankForks>>,
-    amount: u64,
 }
 
 impl TestSetup {
     fn new() -> Self {
         let (mut genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1.));
         genesis_config.rent = Rent::default();
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let bank = Bank::new_from_parent(
-            bank,
-            &Pubkey::new_unique(),
-            genesis_config.epoch_schedule.get_first_slot_in_epoch(1),
-        );
-
-        let amount = genesis_config.rent.minimum_balance(0);
-
         Self {
             genesis_config,
             mint_keypair,
-            bank,
-            bank_forks,
-            amount,
         }
     }
 
     fn install_memo_program_account(&mut self) {
-        self.bank.store_account(
-            &spl_memo::id(),
-            &AccountSharedData::from(Account {
+        self.genesis_config.accounts.insert(
+            spl_memo::id(),
+            Account {
                 lamports: u64::MAX,
                 // borrows memo elf for executing memo ix in order to set up test condition
                 data: include_bytes!("../../program-test/src/programs/spl_memo-3.0.0.so").to_vec(),
                 owner: bpf_loader::id(),
                 executable: true,
                 rent_epoch: 0,
-            }),
+            },
         );
     }
 
@@ -86,14 +85,26 @@ impl TestSetup {
         ixs: &[Instruction],
         is_simd_170_enabled: bool,
     ) -> TestResult {
+        let mut root_bank = Bank::new_for_tests(&self.genesis_config);
+
         if is_simd_170_enabled {
-            self.bank
+            root_bank
                 .activate_feature(&feature_set::reserve_minimal_cus_for_builtin_instructions::id());
         } else {
-            self.bank.deactivate_feature(
+            root_bank.deactivate_feature(
                 &feature_set::reserve_minimal_cus_for_builtin_instructions::id(),
             );
         }
+
+        let (bank, bank_forks) = root_bank.wrap_with_bank_forks_for_tests();
+        let bank = new_bank_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            &Pubkey::default(),
+            self.genesis_config
+                .epoch_schedule
+                .get_first_slot_in_epoch(1),
+        );
 
         let tx = Transaction::new(
             &[&self.mint_keypair],
@@ -103,13 +114,12 @@ impl TestSetup {
 
         let estimated_execution_cost = CostModel::calculate_cost(
             &RuntimeTransaction::from_transaction_for_tests(tx.clone()),
-            &self.bank.feature_set,
+            &bank.feature_set,
         )
         .programs_execution_cost();
 
-        let batch = self.bank.prepare_batch_for_tests(vec![tx]);
-        let commit_result = self
-            .bank
+        let batch = bank.prepare_batch_for_tests(vec![tx]);
+        let commit_result = bank
             .load_execute_and_commit_transactions(
                 &batch,
                 MAX_PROCESSING_AGE,
@@ -139,7 +149,7 @@ impl TestSetup {
         system_instruction::transfer(
             &self.mint_keypair.pubkey(),
             &Pubkey::new_unique(),
-            self.amount,
+            self.genesis_config.rent.minimum_balance(0),
         )
     }
 
