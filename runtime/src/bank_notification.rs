@@ -1,5 +1,8 @@
 use {
-    crate::bank::Bank,
+    crate::{
+        bank::Bank,
+        transaction_notification::{TransactionStatusMessage, TransactionStatusSender},
+    },
     crossbeam_channel::{Receiver, Sender},
     solana_sdk::clock::Slot,
     std::sync::Arc,
@@ -28,10 +31,58 @@ impl std::fmt::Debug for BankNotification {
 }
 
 pub type BankNotificationReceiver = Receiver<BankNotification>;
-pub type BankNotificationSender = Sender<BankNotification>;
+pub type BankNotificationSenderDirect = Sender<BankNotification>;
+
+#[derive(Clone)]
+pub enum BankNotificationSenderType {
+    DirectSender(Sender<BankNotification>),
+    TransactionStatusSender(TransactionStatusSender),
+}
+
+#[derive(Clone)]
+pub struct BankNotificationSender(BankNotificationSenderType);
 
 #[derive(Clone)]
 pub struct BankNotificationSenderConfig {
     pub sender: BankNotificationSender,
     pub should_send_parents: bool,
+}
+
+impl BankNotificationSender {
+    pub fn send(&self, notitifcation: BankNotification) -> core::result::Result<(), String> {
+        match &self.0 {
+            BankNotificationSenderType::DirectSender(sender) => sender
+                .send(notitifcation)
+                .map_err(|e| format!("Error {e}").to_string()),
+            BankNotificationSenderType::TransactionStatusSender(sender) => sender
+                .sender
+                .send(TransactionStatusMessage::BankEvent(notitifcation))
+                .map_err(|e| format!("Error {e}").to_string()),
+        }
+    }
+}
+
+impl BankNotificationSenderConfig {
+    pub fn new_direct_sender(
+        sender: BankNotificationSenderDirect,
+        should_send_parents: bool,
+    ) -> Self {
+        Self {
+            sender: BankNotificationSender(BankNotificationSenderType::DirectSender(sender)),
+            should_send_parents,
+        }
+    }
+
+    pub fn new_indirect_sender(sender: TransactionStatusSender, should_send_parents: bool) -> Self {
+        Self {
+            sender: BankNotificationSender(BankNotificationSenderType::TransactionStatusSender(
+                sender,
+            )),
+            should_send_parents,
+        }
+    }
+
+    pub fn send(&self, notitifcation: BankNotification) -> core::result::Result<(), String> {
+        self.sender.send(notitifcation)
+    }
 }
