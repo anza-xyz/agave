@@ -4790,7 +4790,9 @@ pub mod tests {
 
         let (transaction_status_sender, transaction_status_receiver) =
             crossbeam_channel::unbounded();
-        let transaction_status_sender = TransactionStatusSender::new(transaction_status_sender);
+        let transaction_status_sender = TransactionStatusSender {
+            sender: transaction_status_sender,
+        };
 
         let blockhash = bank.last_blockhash();
         let tx1 = system_transaction::transfer(
@@ -5048,7 +5050,7 @@ pub mod tests {
         let result = execute_batch(
             &batch,
             &bank,
-            Some(&TransactionStatusSender::new(sender)),
+            Some(&TransactionStatusSender { sender }),
             None,
             &mut timing,
             None,

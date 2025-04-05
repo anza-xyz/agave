@@ -35,11 +35,6 @@ pub struct TransactionStatusSender {
 }
 
 impl TransactionStatusSender {
-    /// Create a new TransactionStatusSender with default bank notifications turned off
-    pub fn new(sender: Sender<TransactionStatusMessage>) -> Self {
-        Self { sender }
-    }
-
     pub fn send_transaction_status_batch(
         &self,
         slot: Slot,

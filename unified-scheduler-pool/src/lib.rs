@@ -3977,7 +3977,7 @@ mod tests {
             );
         let handler_context = &HandlerContext {
             log_messages_bytes_limit: None,
-            transaction_status_sender: Some(TransactionStatusSender::new(sender)),
+            transaction_status_sender: Some(TransactionStatusSender { sender }),
             replay_vote_sender: None,
             prioritization_fee_cache,
             banking_packet_receiver: never(),
