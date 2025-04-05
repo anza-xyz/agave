@@ -793,15 +793,12 @@ impl Validator {
             },
         ));
 
-        let (bank_notification_sender, bank_notification_receiver) = if config.rpc_addrs.is_some() {
-            let (bank_notification_sender, bank_notification_receiver) = unbounded();
-            (
-                Some(bank_notification_sender),
-                Some(bank_notification_receiver),
-            )
-        } else {
-            (None, None)
-        };
+        let (bank_notification_sender, bank_notification_receiver) = config
+            .rpc_addrs
+            .is_some()
+            .then(unbounded)
+            .map(|(s, r)| (Some(s), Some(r)))
+            .unwrap_or((None, None));
 
         let (
             bank_forks,
