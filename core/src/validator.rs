@@ -99,7 +99,7 @@ use {
         },
         bank::Bank,
         bank_forks::BankForks,
-        bank_notification::BankNotificationSenderConfig,
+        bank_notification::{BankNotificationSenderConfig, BankNotificationSenderDirect},
         commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
@@ -783,20 +783,6 @@ impl Validator {
             entry_notifier.is_some()
         );
 
-        let (bank_notification_sender_config, bank_notification_receiver) =
-            if config.rpc_addrs.is_some() {
-                let (bank_notification_sender, bank_notification_receiver) = unbounded();
-                (
-                    Some(BankNotificationSenderConfig {
-                        sender: bank_notification_sender,
-                        should_send_parents: geyser_plugin_service.is_some(),
-                    }),
-                    Some(bank_notification_receiver),
-                )
-            } else {
-                (None, None)
-            };
-
         let system_monitor_service = Some(SystemMonitorService::new(
             exit.clone(),
             SystemMonitorStatsReportConfig {
@@ -806,6 +792,16 @@ impl Validator {
                 report_os_disk_stats: !config.no_os_disk_stats_reporting,
             },
         ));
+
+        let (bank_notification_sender, bank_notification_receiver) = if config.rpc_addrs.is_some() {
+            let (bank_notification_sender, bank_notification_receiver) = unbounded();
+            (
+                Some(bank_notification_sender),
+                Some(bank_notification_receiver),
+            )
+        } else {
+            (None, None)
+        };
 
         let (
             bank_forks,
@@ -835,7 +831,7 @@ impl Validator {
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
-            bank_notification_sender_config.clone(),
+            bank_notification_sender.clone(),
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1258,7 +1254,8 @@ impl Validator {
 
             let optimistically_confirmed_bank_tracker =
                 Some(OptimisticallyConfirmedBankTracker::new(
-                    bank_notification_receiver.unwrap(),
+                    bank_notification_receiver
+                        .expect("Exected bank notification receiver to be created for this case!"),
                     exit.clone(),
                     bank_forks.clone(),
                     optimistically_confirmed_bank,
@@ -1267,6 +1264,21 @@ impl Validator {
                     prioritization_fee_cache.clone(),
                 ));
 
+            let bank_notification_sender_config = if let Some(transaction_status_sender) =
+                &transaction_status_sender
+            {
+                BankNotificationSenderConfig::new_indirect_sender(
+                    transaction_status_sender.clone(),
+                    geyser_plugin_service.is_some(),
+                )
+            } else {
+                BankNotificationSenderConfig::new_direct_sender(
+                    bank_notification_sender
+                        .expect("Expected bank notification sender to be created for this case!"),
+                    geyser_plugin_service.is_some(),
+                )
+            };
+
             (
                 Some(json_rpc_service),
                 pubsub_service,
@@ -1274,7 +1286,7 @@ impl Validator {
                 completed_data_sets_service,
                 rpc_completed_slots_service,
                 optimistically_confirmed_bank_tracker,
-                bank_notification_sender_config,
+                Some(bank_notification_sender_config),
             )
         } else {
             (None, None, None, None, None, None, None)
@@ -1519,6 +1531,7 @@ impl Validator {
             verified_vote_receiver,
             replay_vote_sender.clone(),
             completed_data_sets_sender,
+            bank_notification_sender.clone(),
             duplicate_confirmed_slots_receiver,
             TvuConfig {
                 max_ledger_shreds: config.max_ledger_shreds,
@@ -2013,7 +2026,7 @@ fn load_blockstore(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
-    bank_notification_sender: Option<BankNotificationSenderConfig>,
+    bank_notification_sender: Option<BankNotificationSenderDirect>,
 ) -> Result<
     (
         Arc<RwLock<BankForks>>,
@@ -2498,16 +2511,12 @@ fn initialize_rpc_transaction_history_services(
     enable_rpc_transaction_history: bool,
     enable_extended_tx_metadata_storage: bool,
     transaction_notifier: Option<TransactionNotifierArc>,
-    bank_notification_sender: Option<BankNotificationSenderConfig>,
+    bank_notification_sender: Option<BankNotificationSenderDirect>,
 ) -> TransactionHistoryServices {
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
     let transaction_status_sender = Some(TransactionStatusSender {
         sender: transaction_status_sender,
-        should_send_bank_notifications: bank_notification_sender.is_some(),
-        should_send_parents: bank_notification_sender
-            .as_ref()
-            .is_some_and(|sender| sender.should_send_parents),
     });
     let transaction_status_service = Some(TransactionStatusService::new(
         transaction_status_receiver,
@@ -2516,7 +2525,7 @@ fn initialize_rpc_transaction_history_services(
         transaction_notifier,
         blockstore.clone(),
         enable_extended_tx_metadata_storage,
-        bank_notification_sender.map(|sender| sender.sender),
+        bank_notification_sender,
         exit.clone(),
     ));
 

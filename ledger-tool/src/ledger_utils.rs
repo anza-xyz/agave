@@ -338,8 +338,6 @@ pub fn load_and_process_ledger(
         (
             Some(TransactionStatusSender {
                 sender: transaction_status_sender,
-                should_send_bank_notifications: false,
-                should_send_parents: false,
             }),
             Some(transaction_status_service),
             Some(block_meta_sender),

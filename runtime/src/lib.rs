@@ -40,6 +40,7 @@ pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
 pub mod transaction_batch;
+pub mod transaction_notification;
 pub mod vote_sender_types;
 
 #[macro_use]

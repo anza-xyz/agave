@@ -659,11 +659,7 @@ fn setup_slot_recording(
                 }));
 
                 (
-                    Some(TransactionStatusSender {
-                        sender,
-                        should_send_bank_notifications: false,
-                        should_send_parents: false,
-                    }),
+                    Some(TransactionStatusSender { sender }),
                     transaction_recorder,
                 )
             } else {

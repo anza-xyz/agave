@@ -43,7 +43,7 @@ use {
         blockstore::Blockstore,
         blockstore_processor::{
             self, BlockstoreProcessorError, ConfirmationProgress, ExecuteBatchesInternalMetrics,
-            ReplaySlotStats, TransactionStatusMessage, TransactionStatusSender,
+            ReplaySlotStats, TransactionStatusSender,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -59,7 +59,7 @@ use {
     solana_runtime::{
         bank::{bank_hash_details, Bank, NewBankOptions},
         bank_forks::{BankForks, SetRootError, MAX_ROOT_DISTANCE_FOR_VOTE_ONLY},
-        bank_notification::BankNotification,
+        bank_notification::{BankNotification, BankNotificationSenderConfig},
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -283,6 +283,7 @@ pub struct ReplaySenders {
     pub transaction_status_sender: Option<TransactionStatusSender>,
     pub block_meta_sender: Option<BlockMetaSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
+    pub bank_notification_sender: Option<BankNotificationSenderConfig>,
     pub ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
     pub retransmit_slots_sender: Sender<u64>,
     pub replay_vote_sender: ReplayVoteSender,
@@ -573,6 +574,7 @@ impl ReplayStage {
             transaction_status_sender,
             block_meta_sender,
             entry_notification_sender,
+            bank_notification_sender,
             ancestor_hashes_replay_update_sender,
             retransmit_slots_sender,
             replay_vote_sender,
@@ -733,6 +735,7 @@ impl ReplayStage {
                     &verify_recyclers,
                     &mut heaviest_subtree_fork_choice,
                     &replay_vote_sender,
+                    &bank_notification_sender,
                     &rpc_subscriptions,
                     &slot_status_notifier,
                     &mut duplicate_slots_tracker,
@@ -998,7 +1001,7 @@ impl ReplayStage {
                         &rpc_subscriptions,
                         &block_commitment_cache,
                         &mut heaviest_subtree_fork_choice,
-                        &transaction_status_sender,
+                        &bank_notification_sender,
                         &mut duplicate_slots_tracker,
                         &mut duplicate_confirmed_slots,
                         &mut unfrozen_gossip_verified_vote_hashes,
@@ -2389,7 +2392,7 @@ impl ReplayStage {
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
-        bank_notification_sender: &Option<TransactionStatusSender>,
+        bank_notification_sender: &Option<BankNotificationSenderConfig>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         duplicate_confirmed_slots: &mut DuplicateConfirmedSlots,
         unfrozen_gossip_verified_vote_hashes: &mut UnfrozenGossipVerifiedVoteHashes,
@@ -3060,6 +3063,7 @@ impl ReplayStage {
         transaction_status_sender: Option<&TransactionStatusSender>,
         block_meta_sender: Option<&BlockMetaSender>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
+        bank_notification_sender: &Option<BankNotificationSenderConfig>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
@@ -3284,18 +3288,10 @@ impl ReplayStage {
                         SlotStateUpdate::Duplicate(duplicate_state),
                     );
                 }
-                if let Some(sender) = transaction_status_sender {
-                    if sender.should_send_bank_notifications {
-                        // Send the bank notification to the transaction status sender
-                        sender
-                            .sender
-                            .send(TransactionStatusMessage::BankEvent(
-                                BankNotification::Frozen(bank.clone_without_scheduler()),
-                            ))
-                            .unwrap_or_else(|err| {
-                                warn!("bank_notification_sender failed: {:?}", err)
-                            });
-                    }
+                if let Some(sender) = bank_notification_sender {
+                    sender
+                        .send(BankNotification::Frozen(bank.clone_without_scheduler()))
+                        .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
                 }
                 blockstore_processor::send_block_meta(bank, block_meta_sender);
 
@@ -3367,6 +3363,7 @@ impl ReplayStage {
         verify_recyclers: &VerifyRecyclers,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         replay_vote_sender: &ReplayVoteSender,
+        bank_notification_sender: &Option<BankNotificationSenderConfig>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
@@ -3448,6 +3445,7 @@ impl ReplayStage {
             transaction_status_sender,
             block_meta_sender,
             heaviest_subtree_fork_choice,
+            bank_notification_sender,
             rpc_subscriptions,
             slot_status_notifier,
             duplicate_slots_tracker,
@@ -4001,7 +3999,7 @@ impl ReplayStage {
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
-        bank_notification_sender: &Option<TransactionStatusSender>,
+        bank_notification_sender: &Option<BankNotificationSenderConfig>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         duplicate_confirmed_slots: &mut DuplicateConfirmedSlots,
         unfrozen_gossip_verified_vote_hashes: &mut UnfrozenGossipVerifiedVoteHashes,
@@ -4063,18 +4061,12 @@ impl ReplayStage {
         rpc_subscriptions.notify_roots(rooted_slots);
         if let Some(sender) = bank_notification_sender {
             sender
-                .sender
-                .send(TransactionStatusMessage::BankEvent(
-                    BankNotification::NewRootBank(root_bank),
-                ))
+                .send(BankNotification::NewRootBank(root_bank))
                 .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
 
             if let Some(new_chain) = rooted_slots_with_parents {
                 sender
-                    .sender
-                    .send(TransactionStatusMessage::BankEvent(
-                        BankNotification::NewRootedChain(new_chain),
-                    ))
+                    .send(BankNotification::NewRootedChain(new_chain))
                     .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
             }
         }
