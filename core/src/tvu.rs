@@ -45,6 +45,7 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
+    solana_streamer::evicting_sender::EvictingSender,
     solana_turbine::retransmit_stage::RetransmitStage,
     std::{
         collections::HashSet,
@@ -55,6 +56,13 @@ use {
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
+
+/// Sets the upper bound on the number of batches stored in the retransmit
+/// stage ingress channel.
+/// Allows for a max of 16k batches of up to 64 packets each (NUM_RCVMMSGS).
+/// This translates to about 1 GB of RAM for packet storage in the worst case.
+/// In reality this means about 200K shreds since most batches are not full.
+const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
 
 pub struct Tvu {
     fetch_stage: ShredFetchStage,
@@ -191,7 +199,10 @@ impl Tvu {
         );
 
         let (verified_sender, verified_receiver) = unbounded();
-        let (retransmit_sender, retransmit_receiver) = unbounded();
+
+        let (retransmit_sender, retransmit_receiver) =
+            EvictingSender::new_bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
+
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),
             bank_forks.clone(),

@@ -23,6 +23,7 @@ use {
         pubkey::Pubkey,
         signature::{Keypair, Signer},
     },
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     static_assertions::const_assert_eq,
     std::{
         collections::HashMap,
@@ -65,7 +66,7 @@ pub fn spawn_shred_sigverify(
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     shred_fetch_receiver: Receiver<PacketBatch>,
-    retransmit_sender: Sender<Vec<shred::Payload>>,
+    retransmit_sender: EvictingSender<Vec<shred::Payload>>,
     verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
     num_sigverify_threads: NonZeroUsize,
 ) -> JoinHandle<()> {
@@ -130,7 +131,7 @@ fn run_shred_sigverify<const K: usize>(
     recycler_cache: &RecyclerCache,
     deduper: &Deduper<K, [u8]>,
     shred_fetch_receiver: &Receiver<PacketBatch>,
-    retransmit_sender: &Sender<Vec<shred::Payload>>,
+    retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     cache: &RwLock<LruCache>,
@@ -265,7 +266,14 @@ fn run_shred_sigverify<const K: usize>(
         });
     // Repaired shreds are not retransmitted.
     stats.num_retransmit_shreds += shreds.len();
-    retransmit_sender.send(shreds.clone())?;
+    if let Err(send_err) = retransmit_sender.try_send(shreds.clone()) {
+        match send_err {
+            crossbeam_channel::TrySendError::Full(v) => {
+                stats.num_retransmit_stage_overflow_shreds += v.len();
+            }
+            _ => unreachable!("EvictingSender holds on to both ends of the channel"),
+        }
+    }
     // Send all shreds to window service to be inserted into blockstore.
     let shreds = shreds
         .into_iter()
@@ -412,6 +420,7 @@ struct ShredSigVerifyStats {
     num_discards_pre: usize,
     num_duplicates: usize,
     num_invalid_retransmitter: AtomicUsize,
+    num_retransmit_stage_overflow_shreds: usize,
     num_retransmit_shreds: usize,
     num_unknown_slot_leader: AtomicUsize,
     num_unknown_turbine_parent: AtomicUsize,
@@ -433,6 +442,7 @@ impl ShredSigVerifyStats {
             num_discards_post: 0usize,
             num_duplicates: 0usize,
             num_invalid_retransmitter: AtomicUsize::default(),
+            num_retransmit_stage_overflow_shreds: 0usize,
             num_retransmit_shreds: 0usize,
             num_unknown_slot_leader: AtomicUsize::default(),
             num_unknown_turbine_parent: AtomicUsize::default(),
@@ -457,6 +467,11 @@ impl ShredSigVerifyStats {
             (
                 "num_invalid_retransmitter",
                 self.num_invalid_retransmitter.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_retransmit_stage_overflow_shreds",
+                self.num_retransmit_stage_overflow_shreds,
                 i64
             ),
             ("num_retransmit_shreds", self.num_retransmit_shreds, i64),
