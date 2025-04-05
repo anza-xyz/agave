@@ -21,13 +21,17 @@ serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder-client-types = { workspace = true, features = ["zstd"] }
+solana-address-lookup-table-interface = { workspace = true, features = [
+    "bincode",
+    "bytemuck",
+] }
 solana-clock = { workspace = true }
 solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
-solana-nonce = { workspace = true }
-solana-program = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["serde"] }
+solana-nonce = { workspace = true, features = ["serde"] }
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -35,7 +39,9 @@ solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-slot-history = { workspace = true }
+solana-stake-interface = { workspace = true }
 solana-sysvar = { workspace = true }
+solana-vote-interface = { workspace = true, features = ["bincode"] }
 spl-token = { workspace = true, features = ["no-entrypoint"] }
 spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 spl-token-group-interface = { workspace = true }
@@ -47,7 +53,6 @@ zstd = { workspace = true }
 assert_matches = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-hash = { workspace = true }
-solana-program = { workspace = true, default-features = false }
 solana-pubkey = { workspace = true, features = ["rand"] }
 spl-pod = { workspace = true }
 

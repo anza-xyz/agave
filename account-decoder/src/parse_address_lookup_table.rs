@@ -1,7 +1,7 @@
 use {
     crate::parse_account_data::{ParsableAccount, ParseAccountError},
+    solana_address_lookup_table_interface::state::AddressLookupTable,
     solana_instruction::error::InstructionError,
-    solana_program::address_lookup_table::state::AddressLookupTable,
 };
 
 pub fn parse_address_lookup_table(
@@ -62,7 +62,7 @@ impl From<AddressLookupTable<'_>> for UiLookupTable {
 mod test {
     use {
         super::*,
-        solana_program::address_lookup_table::state::{LookupTableMeta, LOOKUP_TABLE_META_SIZE},
+        solana_address_lookup_table_interface::state::{LookupTableMeta, LOOKUP_TABLE_META_SIZE},
         solana_pubkey::Pubkey,
         std::borrow::Cow,
     };
