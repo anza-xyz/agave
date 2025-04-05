@@ -4459,6 +4459,7 @@ pub fn populate_blockstore_for_tests(
             None,
             blockstore,
             false,
+            None,
             tss_exit.clone(),
         );
 

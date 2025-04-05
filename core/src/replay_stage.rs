@@ -52,15 +52,14 @@ use {
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::{PohLeaderStatus, PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
     solana_rpc::{
-        block_meta_service::BlockMetaSender,
-        optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
-        rpc_subscriptions::RpcSubscriptions,
+        block_meta_service::BlockMetaSender, rpc_subscriptions::RpcSubscriptions,
         slot_status_notifier::SlotStatusNotifier,
     },
     solana_rpc_client_api::response::SlotUpdate,
     solana_runtime::{
         bank::{bank_hash_details, Bank, NewBankOptions},
         bank_forks::{BankForks, SetRootError, MAX_ROOT_DISTANCE_FOR_VOTE_ONLY},
+        bank_notification::{BankNotification, BankNotificationSenderConfig},
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -3291,7 +3290,6 @@ impl ReplayStage {
                 }
                 if let Some(sender) = bank_notification_sender {
                     sender
-                        .sender
                         .send(BankNotification::Frozen(bank.clone_without_scheduler()))
                         .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
                 }
@@ -4063,13 +4061,11 @@ impl ReplayStage {
         rpc_subscriptions.notify_roots(rooted_slots);
         if let Some(sender) = bank_notification_sender {
             sender
-                .sender
                 .send(BankNotification::NewRootBank(root_bank))
                 .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
 
             if let Some(new_chain) = rooted_slots_with_parents {
                 sender
-                    .sender
                     .send(BankNotification::NewRootedChain(new_chain))
                     .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
             }
