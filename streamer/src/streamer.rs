@@ -361,6 +361,10 @@ impl StakedNodes {
             .filter(|&stake| stake > 0);
         let total_stake = values.clone().sum();
         let (min_stake, max_stake) = values.minmax().into_option().unwrap_or_default();
+        info!(
+            "StakedNodes: total_stake: {}, min_stake: {}, max_stake: {}",
+            total_stake, min_stake, max_stake
+        );
         (total_stake, min_stake, max_stake)
     }
 
