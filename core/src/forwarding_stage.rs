@@ -590,15 +590,8 @@ impl ForwardingStageMetrics {
                     i64
                 ),
                 (
-                    "votes_dropped_on_data_budget",
-                    metrics.votes_dropped_on_data_budget,
-                    i64
-                ),
-                ("votes_forwarded", metrics.votes_forwarded, i64),
-                ("votes_forwarded", metrics.votes_forwarded, i64),
-                (
-                    "votes_dropped_on_receive",
-                    metrics.votes_dropped_on_receive,
+                    "votes_dropped_on_capacity",
+                    metrics.votes_dropped_on_capacity,
                     i64
                 ),
                 (
@@ -615,14 +608,8 @@ impl ForwardingStageMetrics {
                     i64
                 ),
                 (
-                    "non_votes_dropped_on_data_budget",
-                    metrics.non_votes_dropped_on_data_budget,
-                    i64
-                ),
-                ("non_votes_forwarded", metrics.non_votes_forwarded, i64),
-                (
-                    "non_votes_dropped_on_receive",
-                    metrics.non_votes_dropped_on_receive,
+                    "non_votes_dropped_on_capacity",
+                    metrics.non_votes_dropped_on_capacity,
                     i64
                 ),
                 (
