@@ -33,9 +33,10 @@ fn do_bench_dedup_packets(bencher: &mut Bencher, mut batches: Vec<PacketBatch>) 
             0.001,                  // false_positive_rate
             Duration::from_secs(2), // reset_cycle
         );
-        batches
-            .iter_mut()
-            .for_each(|b| b.iter_mut().for_each(|p| p.meta_mut().set_discard(false)));
+        batches.iter_mut().for_each(|b| {
+            b.iter_mut()
+                .for_each(|mut p| p.meta_mut().set_discard(false))
+        });
     });
 }
 

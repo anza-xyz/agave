@@ -62,7 +62,7 @@ pub struct BankingTracer {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "DAdZnX6ijBWaxKAyksq4nJa6PAZqT4RShZqLWTtNvyAM")
+    frozen_abi(digest = "91baCBT3aY2nXSAuzY3S5dnMhWabVsHowgWqYPLjfyg7")
 )]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);

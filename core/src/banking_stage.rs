@@ -888,7 +888,11 @@ mod tests {
 
         // send 'em over
         let mut packet_batches = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3);
-        packet_batches[0][0].meta_mut().set_discard(true); // set discard on `tx_no_ver`
+        packet_batches[0]
+            .first_mut()
+            .unwrap()
+            .meta_mut()
+            .set_discard(true); // set discard on `tx_no_ver`
 
         // glad they all fit
         assert_eq!(packet_batches.len(), 1);

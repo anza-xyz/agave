@@ -222,7 +222,7 @@ fn bench_banking(
     let vote_packets = vote_txs.map(|vote_txs| {
         let mut packet_batches = to_packet_batches(&vote_txs, PACKETS_PER_BATCH);
         for batch in packet_batches.iter_mut() {
-            for packet in batch.iter_mut() {
+            for mut packet in batch.iter_mut() {
                 packet.meta_mut().set_simple_vote(true);
             }
         }

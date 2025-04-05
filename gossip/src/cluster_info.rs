@@ -58,7 +58,7 @@ use {
     },
     solana_perf::{
         data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler},
+        packet::{Packet, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch},
     },
     solana_pubkey::Pubkey,
     solana_quic_definitions::QUIC_PORT_OFFSET,
@@ -1350,7 +1350,8 @@ impl ClusterInfo {
         generate_pull_requests: bool,
     ) -> Result<(), GossipError> {
         let _st = ScopedTimer::from(&self.stats.gossip_transmit_loop_time);
-        let mut packet_batch = PacketBatch::new_unpinned_with_recycler(recycler, 0, "run_gossip");
+        let mut packet_batch =
+            PinnedPacketBatch::new_unpinned_with_recycler(recycler, 0, "run_gossip");
         self.generate_new_gossip_requests(
             thread_pool,
             gossip_validators,
@@ -1360,7 +1361,7 @@ impl ClusterInfo {
         .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
         .for_each(|pkt| packet_batch.push(pkt));
         if !packet_batch.is_empty() {
-            if let Err(TrySendError::Full(packet_batch)) = sender.try_send(packet_batch) {
+            if let Err(TrySendError::Full(packet_batch)) = sender.try_send(packet_batch.into()) {
                 self.stats
                     .gossip_transmit_packets_dropped_count
                     .add_relaxed(packet_batch.len() as u64);
@@ -1606,7 +1607,8 @@ impl ClusterInfo {
         if !requests.is_empty() {
             let response = self.handle_pull_requests(thread_pool, recycler, requests, stakes);
             if !response.is_empty() {
-                if let Err(TrySendError::Full(response)) = response_sender.try_send(response) {
+                if let Err(TrySendError::Full(response)) = response_sender.try_send(response.into())
+                {
                     self.stats
                         .gossip_packets_dropped_count
                         .add_relaxed(response.len() as u64);
@@ -1637,7 +1639,7 @@ impl ClusterInfo {
         &'a self,
         now: Instant,
         rng: &'a mut R,
-        packet_batch: &'a mut PacketBatch,
+        packet_batch: &'a mut PinnedPacketBatch,
     ) -> impl FnMut(&PullRequest) -> bool + 'a
     where
         R: Rng + CryptoRng,
@@ -1678,12 +1680,12 @@ impl ClusterInfo {
         recycler: &PacketBatchRecycler,
         mut requests: Vec<PullRequest>,
         stakes: &HashMap<Pubkey, u64>,
-    ) -> PacketBatch {
+    ) -> PinnedPacketBatch {
         const DEFAULT_EPOCH_DURATION_MS: u64 = DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT;
         let output_size_limit =
             self.update_data_budget(stakes.len()) / PULL_RESPONSE_MIN_SERIALIZED_SIZE;
         let mut packet_batch =
-            PacketBatch::new_unpinned_with_recycler(recycler, 64, "handle_pull_requests");
+            PinnedPacketBatch::new_unpinned_with_recycler(recycler, 64, "handle_pull_requests");
         let mut rng = rand::thread_rng();
         requests.retain({
             let now = Instant::now();
@@ -1885,7 +1887,9 @@ impl ClusterInfo {
             .filter_map(|(addr, data)| make_gossip_packet(addr, &data, &self.stats))
             .for_each(|pkt| packet_batch.push(pkt));
         if !packet_batch.is_empty() {
-            if let Err(TrySendError::Full(packet_batch)) = response_sender.try_send(packet_batch) {
+            if let Err(TrySendError::Full(packet_batch)) =
+                response_sender.try_send(packet_batch.into())
+            {
                 self.stats
                     .gossip_packets_dropped_count
                     .add_relaxed(packet_batch.len() as u64);
@@ -2126,7 +2130,7 @@ impl ClusterInfo {
             .packets_received_count
             .add_relaxed(num_packets as u64);
         fn verify_packet(
-            packet: &Packet,
+            packet: &PacketRef,
             stakes: &HashMap<Pubkey, u64>,
             stats: &GossipStats,
         ) -> Option<(SocketAddr, Protocol)> {
@@ -2160,13 +2164,13 @@ impl ClusterInfo {
                 if packet_buf.len() == 1 {
                     packet_buf[0]
                         .par_iter()
-                        .filter_map(|packet| verify_packet(packet, &stakes, &self.stats))
+                        .filter_map(|packet| verify_packet(&packet, &stakes, &self.stats))
                         .collect()
                 } else {
                     packet_buf
                         .par_iter()
                         .flatten()
-                        .filter_map(|packet| verify_packet(packet, &stakes, &self.stats))
+                        .filter_map(|packet| verify_packet(&packet, &stakes, &self.stats))
                         .collect()
                 }
             })
@@ -2985,7 +2989,7 @@ fn send_gossip_packets<S: Borrow<SocketAddr>>(
     let pkts = pkts.into_iter();
     if pkts.len() != 0 {
         let pkts = make_gossip_packet_batch(pkts, recycler, stats);
-        if let Err(TrySendError::Full(pkts)) = sender.try_send(pkts) {
+        if let Err(TrySendError::Full(pkts)) = sender.try_send(pkts.into()) {
             stats
                 .gossip_packets_dropped_count
                 .add_relaxed(pkts.len() as u64);
@@ -2997,10 +3001,14 @@ fn make_gossip_packet_batch<S: Borrow<SocketAddr>>(
     pkts: impl IntoIterator<Item = (S, Protocol), IntoIter: ExactSizeIterator>,
     recycler: &PacketBatchRecycler,
     stats: &GossipStats,
-) -> PacketBatch {
+) -> PinnedPacketBatch {
     let record_gossip_packet = |(_, pkt): &(_, Protocol)| stats.record_gossip_packet(pkt);
     let pkts = pkts.into_iter().inspect(record_gossip_packet);
-    PacketBatch::new_unpinned_with_recycler_data_and_dests(recycler, "gossip_packet_batch", pkts)
+    PinnedPacketBatch::new_unpinned_with_recycler_data_and_dests(
+        recycler,
+        "gossip_packet_batch",
+        pkts,
+    )
 }
 
 #[inline]

@@ -5,7 +5,7 @@ use {
     crossbeam_channel::unbounded,
     solana_net_utils::{bind_to_unspecified, SocketConfig},
     solana_streamer::{
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PACKET_DATA_SIZE},
+        packet::{Packet, PacketBatchRecycler, PinnedPacketBatch, PACKET_DATA_SIZE},
         streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
     },
     std::{
@@ -23,7 +23,7 @@ use {
 fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<()> {
     let send = bind_to_unspecified().unwrap();
     let batch_size = 10;
-    let mut packet_batch = PacketBatch::with_capacity(batch_size);
+    let mut packet_batch = PinnedPacketBatch::with_capacity(batch_size);
     packet_batch.resize(batch_size, Packet::default());
     for w in packet_batch.iter_mut() {
         w.meta_mut().size = PACKET_DATA_SIZE;

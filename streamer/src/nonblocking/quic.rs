@@ -11,7 +11,7 @@ use {
         streamer::StakedNodes,
     },
     async_channel::{bounded as async_bounded, Receiver as AsyncReceiver, Sender as AsyncSender},
-    bytes::Bytes,
+    bytes::{BufMut, Bytes, BytesMut},
     crossbeam_channel::Sender,
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
@@ -23,7 +23,7 @@ use {
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
+    solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
     solana_quic_definitions::{
         QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_MAX_STAKED_CONCURRENT_STREAMS,
@@ -897,12 +897,10 @@ async fn packet_batch_sender(
     coalesce: Duration,
 ) {
     trace!("enter packet_batch_sender");
-    let recycler = PacketBatchRecycler::default();
     let mut batch_start_time = Instant::now();
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
-        let mut packet_batch =
-            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "quic_packet_coalescer");
+        let mut packet_batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
         let mut total_bytes: usize = 0;
 
         stats
@@ -923,7 +921,7 @@ async fn packet_batch_sender(
                 let len = packet_batch.len();
                 track_streamer_fetch_packet_performance(&packet_perf_measure, &stats);
 
-                if let Err(e) = packet_sender.send(packet_batch) {
+                if let Err(e) = packet_sender.send(packet_batch.into()) {
                     stats
                         .total_packet_batch_send_err
                         .fetch_add(1, Ordering::Relaxed);
@@ -960,37 +958,69 @@ async fn packet_batch_sender(
                 Ok(packet_receiver.recv().await)
             };
 
-            if let Ok(Ok(packet_accumulator)) = timeout_res {
+            if let Ok(Ok(mut packet_accumulator)) = timeout_res {
                 // Start the timeout from when the packet batch first becomes non-empty
                 if packet_batch.is_empty() {
                     batch_start_time = Instant::now();
                 }
 
-                unsafe {
-                    let new_len = packet_batch.len() + 1;
-                    packet_batch.set_len(new_len);
-                }
-
-                let i = packet_batch.len() - 1;
-                *packet_batch[i].meta_mut() = packet_accumulator.meta;
+                // 86% of transactions/packets come in one chunk. In that case,
+                // we can just move the chunk to the `Packet` and no copy is
+                // made.
+                // 14% of them come in multiple chunks. In that case, we copy
+                // them into one `Bytes` buffer. We make a copy once, with
+                // intention to not do it again.
+                // We could try to avoid copying even in the second case by
+                // using some kind of chain or rope view over multiple `Bytes`
+                // buffers. The reasons it wasn't done so far are:
+                //
+                // * `bytes::Chain`[0] doesn't really work for our use case.
+                //   * It's designed to work with exactly two `Buffers`. It's
+                //     possible to chain `Chain` with `Bytes`, but then the
+                //     type signature becomes different
+                //     (`Chain<Chain<Bytes, Bytes>, Bytes>`) and the more
+                //     chunks you chain, the wilder that type becomes.
+                //   * It doesn't provide any method for retrieving a slice.
+                //     The only way to consume it is using `copy_to_bytes` or
+                //     `reader`, which always copies data. If we wanted to
+                //     avoid copies when possible (when the range fits in one
+                //     chunk), we would need to write our own wrapper.
+                // * If any component of Agave (be it sigverify or ledger)
+                //   requests the full packet data or data shared across
+                //   multiple chunks, we need to make a copy anyway. How do we
+                //   prevent making it multiple times? One idea would be
+                //   merging the packet internally once that happens, but
+                //   designing such abstraction is not trivial and retrieving a
+                //   subslice would become an operation requiring `&mut self`.
+                // * So far, we couldn't find any good rope crates which work
+                //   with the `bytes` crate and aren't designed specifically
+                //   for UTF-8-related use cases.
+                // * We would need to make sure such mechanism doesn't regress
+                //   the performance of single-chunk packets.
+                //
+                // [0] https://docs.rs/bytes/1.10.0/bytes/buf/struct.Chain.html
                 let num_chunks = packet_accumulator.chunks.len();
-                let mut offset = 0;
-                for chunk in packet_accumulator.chunks {
-                    packet_batch[i].buffer_mut()[offset..offset + chunk.len()]
-                        .copy_from_slice(&chunk);
-                    offset += chunk.len();
-                }
+                let mut packet = if packet_accumulator.chunks.len() == 1 {
+                    BytesPacket::new(
+                        packet_accumulator.chunks.pop().expect("expected one chunk"),
+                        packet_accumulator.meta,
+                    )
+                } else {
+                    let mut buf = BytesMut::with_capacity(PACKET_DATA_SIZE);
+                    for chunk in packet_accumulator.chunks {
+                        buf.put_slice(&chunk);
+                    }
+                    BytesPacket::new(buf.freeze(), packet_accumulator.meta)
+                };
 
-                total_bytes += packet_batch[i].meta().size;
+                total_bytes += packet.size();
 
-                if let Some(signature) = signature_if_should_track_packet(&packet_batch[i])
-                    .ok()
-                    .flatten()
-                {
+                if let Some(signature) = signature_if_should_track_packet(&packet).ok().flatten() {
                     packet_perf_measure.push((*signature, packet_accumulator.start_time));
                     // we set the PERF_TRACK_PACKET on
-                    packet_batch[i].meta_mut().set_track_performance(true);
+                    packet.meta_mut().set_track_performance(true);
                 }
+                packet_batch.push(packet);
                 stats
                     .total_chunks_processed_by_batcher
                     .fetch_add(num_chunks, Ordering::Relaxed);
