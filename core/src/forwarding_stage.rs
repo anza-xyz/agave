@@ -407,30 +407,20 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
 
             if packet.meta().is_simple_vote_tx() {
                 vote_batch.push(packet_data_vec);
-                if vote_batch.len() == FORWARD_BATCH_SIZE {
-                    self.metrics.votes_forwarded += vote_batch.len();
-
-                    let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
-                    core::mem::swap(&mut batch, &mut vote_batch);
-                    if self.vote_client.send_transactions_in_batch(batch).is_err() {
-                        self.metrics.votes_dropped_on_send += FORWARD_BATCH_SIZE;
-                    }
-                }
+                send_batch_if_full(
+                    &mut vote_batch,
+                    &self.vote_client,
+                    &mut self.metrics.votes_forwarded,
+                    &mut self.metrics.votes_dropped_on_send,
+                );
             } else {
                 non_vote_batch.push(packet_data_vec);
-                if non_vote_batch.len() == FORWARD_BATCH_SIZE {
-                    self.metrics.non_votes_forwarded += non_vote_batch.len();
-
-                    let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
-                    core::mem::swap(&mut batch, &mut non_vote_batch);
-                    if self
-                        .non_vote_client
-                        .send_transactions_in_batch(batch)
-                        .is_err()
-                    {
-                        self.metrics.non_votes_dropped_on_send += FORWARD_BATCH_SIZE;
-                    }
-                }
+                send_batch_if_full(
+                    &mut non_vote_batch,
+                    &self.non_vote_client,
+                    &mut self.metrics.non_votes_forwarded,
+                    &mut self.metrics.non_votes_dropped_on_send,
+                );
             }
         }
 
@@ -529,6 +519,24 @@ fn calculate_priority(
             .saturating_mul(reward)
             .wrapping_div(cost.sum().saturating_add(1)),
     )
+}
+
+fn send_batch_if_full(
+    batch: &mut Vec<Vec<u8>>,
+    client: &impl ForwardingClient,
+    forwarded_counter: &mut usize,
+    dropped_counter: &mut usize,
+) {
+    if batch.len() == FORWARD_BATCH_SIZE {
+        *forwarded_counter += batch.len();
+
+        let mut swap_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
+        std::mem::swap(batch, &mut swap_batch);
+
+        if client.send_transactions_in_batch(swap_batch).is_err() {
+            *dropped_counter += FORWARD_BATCH_SIZE;
+        }
+    }
 }
 
 struct ForwardingStageMetrics {
