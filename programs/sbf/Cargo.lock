@@ -5932,6 +5932,7 @@ dependencies = [
  "bytes",
  "chrono",
  "conditional-mod",
+ "core_affinity",
  "crossbeam-channel",
  "dashmap",
  "etcd-client",
