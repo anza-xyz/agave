@@ -1303,8 +1303,8 @@ mod test {
     async fn test_core_bpf_programs() {
         let (test_validator, _payer) = TestValidatorGenesis::default()
             .deactivate_features(&[
-                // Don't migrate the lookup table program.
-                solana_sdk::feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
+                // Don't migrate the stake program.
+                solana_sdk::feature_set::migrate_stake_program_to_core_bpf::id(),
             ])
             .start_async()
             .await;
@@ -1316,16 +1316,17 @@ mod test {
                 solana_sdk_ids::address_lookup_table::id(),
                 solana_sdk_ids::config::id(),
                 solana_sdk_ids::feature::id(),
+                solana_sdk_ids::stake::id(),
             ])
             .await
             .unwrap();
 
-        // Address lookup table is builtin.
+        // Address lookup table is a BPF program.
         let account = fetched_programs[0].as_ref().unwrap();
-        assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
+        assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
         assert!(account.executable);
 
-        // Config is a a BPF program.
+        // Config is a BPF program.
         let account = fetched_programs[1].as_ref().unwrap();
         assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
         assert!(account.executable);
@@ -1333,6 +1334,11 @@ mod test {
         // Feature Gate is a BPF program.
         let account = fetched_programs[2].as_ref().unwrap();
         assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
+        assert!(account.executable);
+
+        // Stake is a builtin.
+        let account = fetched_programs[3].as_ref().unwrap();
+        assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
         assert!(account.executable);
     }
 }
