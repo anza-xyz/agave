@@ -94,6 +94,7 @@ impl ForwardAddressGetter {
 /// over the network.
 #[derive(Debug)]
 enum ForwardingClientError {
+    /// Failed to send transaction to the provided host.
     Failed,
     /// Failed to send the transaction because no contact information was found
     /// for any of the next `NUM_LOOKAHEAD_LEADERS` scheduled leaders.
@@ -599,6 +600,34 @@ impl ForwardingStageMetrics {
                 ),
                 ("votes_forwarded", metrics.votes_forwarded, i64),
                 ("votes_dropped_on_send", metrics.votes_dropped_on_send, i64),
+                ("non_votes_received", metrics.non_votes_received, i64),
+                (
+                    "non_votes_dropped_on_receive",
+                    metrics.non_votes_dropped_on_receive,
+                    i64
+                ),
+                (
+                    "non_votes_dropped_on_data_budget",
+                    metrics.non_votes_dropped_on_data_budget,
+                    i64
+                ),
+                ("non_votes_forwarded", metrics.non_votes_forwarded, i64),
+                (
+                    "non_votes_dropped_on_receive",
+                    metrics.non_votes_dropped_on_receive,
+                    i64
+                ),
+                (
+                    "non_votes_dropped_on_data_budget",
+                    metrics.non_votes_dropped_on_data_budget,
+                    i64
+                ),
+                ("non_votes_forwarded", metrics.non_votes_forwarded, i64),
+                (
+                    "non_votes_dropped_on_send",
+                    metrics.non_votes_dropped_on_send,
+                    i64
+                ),
             );
         }
     }
