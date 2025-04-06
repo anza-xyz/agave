@@ -182,7 +182,7 @@ impl RunLengthEncoding {
             .iter()
             .map(|bit_count| usize::from(bit_count.0))
             .zip([1, 0].iter().cycle())
-            .flat_map(|(bit_count, bit)| std::iter::repeat(bit).take(bit_count))
+            .flat_map(|(bit_count, bit)| std::iter::repeat_n(bit, bit_count))
             .enumerate()
             .filter(|(_, bit)| **bit == 1)
             .map_while(|(offset, _)| {
