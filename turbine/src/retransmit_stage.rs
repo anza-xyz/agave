@@ -404,13 +404,14 @@ fn retransmit_shred(
         }
         Protocol::UDP => match socket {
             RetransmitSocket::Xdp(sender) => {
-                let count = addrs.len();
-                if count > 0 {
+                let mut sent = num_addrs;
+                if num_addrs > 0 {
                     if let Err(e) = sender.try_send(key.index(), addrs.to_vec(), shred) {
                         log::warn!("xdp channel full: {e:?}");
+                        sent = 0;
                     }
                 }
-                count
+                sent
             }
             RetransmitSocket::Socket(socket) => match multi_target_send(socket, shred, &addrs) {
                 Ok(()) => addrs.len(),
