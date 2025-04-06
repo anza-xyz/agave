@@ -97,7 +97,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     }
 
     // How long we sleep waiting to receive shreds from the channel.
-    const RECV_TIMEOUT: Duration = Duration::from_nanos(100);
+    const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);
 
     const MAX_TIMEOUTS: usize = 500;
 
