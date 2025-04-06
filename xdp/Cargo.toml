@@ -17,8 +17,3 @@ thiserror = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { workspace = true }
 caps = { workspace = true }
-
-[dev-dependencies]
-clap = { version = "4.3.0", features = ["derive"] }
-core_affinity = { workspace = true }
-ctrlc = "3.2.0"
