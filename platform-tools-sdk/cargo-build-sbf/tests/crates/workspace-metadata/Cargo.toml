@@ -1,6 +1,6 @@
 [package]
 name = "workspace-metadata"
-version = "2.2.7"
+version = "2.2.8"
 description = "Solana SBF test program with tools version in workspace metadata"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/agave"
