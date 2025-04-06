@@ -313,7 +313,12 @@ fn verify_retransmitter_signature(
     let data_plane_fanout = cluster_nodes::get_data_plane_fanout(shred.slot(), root_bank);
     let parent = match cluster_nodes.get_retransmit_parent(&leader, &shred, data_plane_fanout) {
         Ok(Some(parent)) => parent,
-        Ok(None) => return true,
+        Ok(None) => {
+            stats
+                .num_retranmitter_signature_skipped
+                .fetch_add(1, Ordering::Relaxed);
+            return true;
+        }
         Err(err) => {
             error!("get_retransmit_parent: {err:?}");
             stats
@@ -322,7 +327,14 @@ fn verify_retransmitter_signature(
             return false;
         }
     };
-    signature.verify(parent.as_ref(), merkle_root.as_ref())
+    if signature.verify(parent.as_ref(), merkle_root.as_ref()) {
+        stats
+            .num_retranmitter_signature_verified
+            .fetch_add(1, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
 }
 
 fn verify_packets(
@@ -412,6 +424,8 @@ struct ShredSigVerifyStats {
     num_discards_pre: usize,
     num_duplicates: usize,
     num_invalid_retransmitter: AtomicUsize,
+    num_retranmitter_signature_skipped: AtomicUsize,
+    num_retranmitter_signature_verified: AtomicUsize,
     num_retransmit_shreds: usize,
     num_unknown_slot_leader: AtomicUsize,
     num_unknown_turbine_parent: AtomicUsize,
@@ -433,6 +447,8 @@ impl ShredSigVerifyStats {
             num_discards_post: 0usize,
             num_duplicates: 0usize,
             num_invalid_retransmitter: AtomicUsize::default(),
+            num_retranmitter_signature_skipped: AtomicUsize::default(),
+            num_retranmitter_signature_verified: AtomicUsize::default(),
             num_retransmit_shreds: 0usize,
             num_unknown_slot_leader: AtomicUsize::default(),
             num_unknown_turbine_parent: AtomicUsize::default(),
@@ -457,6 +473,18 @@ impl ShredSigVerifyStats {
             (
                 "num_invalid_retransmitter",
                 self.num_invalid_retransmitter.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_retranmitter_signature_skipped",
+                self.num_retranmitter_signature_skipped
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_retranmitter_signature_verified",
+                self.num_retranmitter_signature_verified
+                    .load(Ordering::Relaxed),
                 i64
             ),
             ("num_retransmit_shreds", self.num_retransmit_shreds, i64),
