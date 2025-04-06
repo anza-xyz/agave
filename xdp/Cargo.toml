@@ -6,6 +6,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = "2021"
+publish = false
 
 [dependencies]
 crossbeam-channel = { workspace = true }
