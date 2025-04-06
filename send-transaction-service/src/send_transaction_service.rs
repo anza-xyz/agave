@@ -239,6 +239,8 @@ impl SendTransactionService {
             batch_send_rate_ms,
             batch_size,
             retry_pool_max_size,
+            default_max_retries,
+            service_max_retries,
             ..
         }: Config,
         stats_report: Arc<SendTransactionServiceStatsReport>,
@@ -304,6 +306,16 @@ impl SendTransactionService {
                         let transactions_to_retry = transactions.len();
                         let mut transactions_added_to_retry: usize = 0;
                         for (signature, mut transaction_info) in transactions.drain() {
+                            // drop transactions with 0 max retries
+                            if resolve_max_retries(
+                                transaction_info.max_retries,
+                                default_max_retries,
+                                service_max_retries,
+                            ) == Some(0)
+                            {
+                                continue;
+                            }
+
                             let retry_len = retry_transactions.len();
                             let entry = retry_transactions.entry(signature);
                             if let Entry::Vacant(_) = entry {
@@ -431,12 +443,11 @@ impl SendTransactionService {
                 return false;
             }
 
-            let max_retries = transaction_info
-                .max_retries
-                .or(default_max_retries)
-                .map(|max_retries| max_retries.min(service_max_retries));
-
-            if let Some(max_retries) = max_retries {
+            if let Some(max_retries) = resolve_max_retries(
+                transaction_info.max_retries,
+                default_max_retries,
+                service_max_retries,
+            ) {
                 if transaction_info.retries >= max_retries {
                     info!("Dropping transaction due to max retries: {}", signature);
                     result.max_retries_elapsed += 1;
@@ -506,6 +517,24 @@ impl SendTransactionService {
         self.retry_thread.join()
     }
 }
+
+/// Determines the effective number of retries based on:
+/// * `request_max_retries` – the maximum number of retries specified in the request,
+/// * `default_max_retries` – the fallback value used when the request doesn't specify one,
+/// * `retry_cap` – the system-wide maximum number of allowed retries.
+///
+/// Returns `Some(number_of_retries)` if retrying is configured,
+/// or `None` if the transaction should be retried until expiration.
+fn resolve_max_retries(
+    request_max_retries: Option<usize>,
+    default_max_retries: Option<usize>,
+    retry_cap: usize,
+) -> Option<usize> {
+    request_max_retries
+        .or(default_max_retries)
+        .map(|retries| retries.min(retry_cap))
+}
+
 #[cfg(test)]
 mod test {
     use {
