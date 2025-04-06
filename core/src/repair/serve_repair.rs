@@ -649,7 +649,7 @@ impl ServeRepair {
         let identity_keypair = self.cluster_info.keypair().clone();
         let my_id = identity_keypair.pubkey();
 
-        let max_buffered_packets = if self.repair_whitelist.read().unwrap().len() > 0 {
+        let max_buffered_packets = if !self.repair_whitelist.read().unwrap().is_empty() {
             4 * MAX_REQUESTS_PER_ITERATION
         } else {
             2 * MAX_REQUESTS_PER_ITERATION
