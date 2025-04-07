@@ -5,6 +5,7 @@ use {
     crate::next_leader::next_leaders,
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
+    async_trait::async_trait,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
     solana_client::connection_cache::ConnectionCache,
@@ -23,19 +24,39 @@ use {
     solana_sdk::{
         fee::{FeeBudgetLimits, FeeDetails},
         packet,
+        signer::keypair::Keypair,
         transaction::MessageHash,
         transport::TransportError,
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
+    solana_tpu_client_next::{
+        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
+        leader_updater::LeaderUpdater,
+        transaction_batch::TransactionBatch,
+        ConnectionWorkersScheduler,
+    },
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::{Ipv4Addr, SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    tokio::{runtime::Handle as RuntimeHandle, sync::mpsc},
+    tokio_util::sync::CancellationToken,
 };
 
 mod packet_container;
+
+/// [`ForwardingClientOption`] enum represents the available client types for TPU
+/// communication:
+/// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
+///       connections efficiently.
+/// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate and
+///       requires a reference to a [`Keypair`].
+pub enum ForwardingClientOption<'a> {
+    ConnectionCache(Arc<ConnectionCache>),
+    TpuClientNext((&'a Keypair, RuntimeHandle)),
+}
 
 /// Value chosen because it was used historically, at some point
 /// was found to be optimal. If we need to improve performance
@@ -203,29 +224,50 @@ impl ForwardingClient for ConnectionCacheClient {
 
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
-    connection_cache: Arc<ConnectionCache>,
+    client: ForwardingClientOption<'_>,
     vote_client_udp_socket: UdpSocket,
     root_bank_cache: RootBankCache,
     forward_address_getter: ForwardAddressGetter,
     data_budget: DataBudget,
 ) -> JoinHandle<()> {
     let vote_client = VoteClient::new(vote_client_udp_socket, forward_address_getter.clone());
-
-    let non_vote_client = ConnectionCacheClient::new(connection_cache, forward_address_getter);
-    let forwarding_stage = ForwardingStage::new(
-        receiver,
-        vote_client,
-        non_vote_client.clone(),
-        root_bank_cache,
-        data_budget,
-    );
-    Builder::new()
-        .name("solFwdStage".to_string())
-        .spawn(move || forwarding_stage.run())
-        .unwrap()
+    match client {
+        ForwardingClientOption::ConnectionCache(connection_cache) => {
+            let non_vote_client =
+                ConnectionCacheClient::new(connection_cache, forward_address_getter);
+            let forwarding_stage = ForwardingStage::new(
+                receiver,
+                vote_client,
+                non_vote_client.clone(),
+                root_bank_cache,
+                data_budget,
+            );
+            Builder::new()
+                .name("solFwdStage".to_string())
+                .spawn(move || forwarding_stage.run())
+                .unwrap()
+        }
+        ForwardingClientOption::TpuClientNext((stake_identity, runtime_handle)) => {
+            let non_vote_client = TpuClientNextClient::new(
+                runtime_handle,
+                forward_address_getter,
+                Some(stake_identity),
+            );
+            let forwarding_stage = ForwardingStage::new(
+                receiver,
+                vote_client,
+                non_vote_client.clone(),
+                root_bank_cache,
+                data_budget,
+            );
+            Builder::new()
+                .name("solFwdStage".to_string())
+                .spawn(move || forwarding_stage.run())
+                .unwrap()
+        }
+    }
 }
 
-/// Forwards packets to current/next leader.
 struct ForwardingStage<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient> {
     receiver: Receiver<(BankingPacketBatch, bool)>,
     packet_container: PacketContainer,
@@ -462,6 +504,86 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 MAX_BYTES_BUDGET,
             )
         });
+    }
+}
+
+#[async_trait]
+impl LeaderUpdater for ForwardAddressGetter {
+    fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {
+        self.get_non_vote_forwarding_addresses(lookahead_slots as u64, Protocol::QUIC)
+    }
+
+    async fn stop(&mut self) {}
+}
+
+#[derive(Clone)]
+struct TpuClientNextClient {
+    runtime_handle: RuntimeHandle,
+    sender: mpsc::Sender<TransactionBatch>,
+}
+
+const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
+
+impl TpuClientNextClient {
+    fn new(
+        runtime_handle: tokio::runtime::Handle,
+        forward_address_getter: ForwardAddressGetter,
+        stake_identity: Option<&Keypair>,
+    ) -> Self {
+        // TODO(klykov): find the best channel size
+        let (sender, receiver) = mpsc::channel(16);
+        let cancel = CancellationToken::new();
+        let leader_updater = forward_address_getter.clone();
+
+        let config = Self::create_config(stake_identity, 1);
+        let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
+        // leaking handle to this task, as it will run until the cancel signal is received
+        runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
+            "forwarding-stage-tpu-client",
+            METRICS_REPORTING_INTERVAL,
+            cancel.clone(),
+        ));
+        let _handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
+        Self {
+            runtime_handle,
+            sender,
+        }
+    }
+
+    fn create_config(
+        stake_identity: Option<&Keypair>,
+        leader_forward_count: usize,
+    ) -> ConnectionWorkersSchedulerConfig {
+        ConnectionWorkersSchedulerConfig {
+            bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
+            stake_identity: stake_identity.map(Into::into),
+            num_connections: 1,
+            skip_check_transaction_age: true,
+            worker_channel_size: 2,
+            max_reconnect_attempts: 4,
+            leaders_fanout: Fanout {
+                send: leader_forward_count,
+                connect: 4 * leader_forward_count,
+            },
+        }
+    }
+}
+
+impl ForwardingClient for TpuClientNextClient {
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+    ) -> Result<(), ForwardingClientError> {
+        self.runtime_handle.spawn({
+            let sender = self.sender.clone();
+            async move {
+                let res = sender.send(TransactionBatch::new(wire_transactions)).await;
+                if res.is_err() {
+                    warn!("Failed to send transaction to channel: it is closed.");
+                }
+            }
+        });
+        Ok(())
     }
 }
 
