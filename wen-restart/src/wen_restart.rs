@@ -3295,7 +3295,7 @@ mod tests {
             generated_record
                 .path
                 .split('-')
-                .last()
+                .next_back()
                 .unwrap()
                 .split('.')
                 .next()

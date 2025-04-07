@@ -1,5 +1,4 @@
 use {
-    agave_precompiles::get_precompile,
     solana_account::WritableAccount,
     solana_instructions_sysvar as instructions,
     solana_measure::measure_us,
@@ -69,11 +68,9 @@ pub(crate) fn process_message(
 
         let mut compute_units_consumed = 0;
         let (result, process_instruction_us) = measure_us!({
-            if let Some(precompile) = get_precompile(program_id, |feature_id| {
-                invoke_context.get_feature_set().is_active(feature_id)
-            }) {
+            if invoke_context.is_precompile(program_id) {
                 invoke_context.process_precompile(
-                    precompile,
+                    program_id,
                     instruction.data,
                     &instruction_accounts,
                     program_indices,
@@ -130,6 +127,7 @@ mod tests {
         solana_hash::Hash,
         solana_instruction::{error::InstructionError, AccountMeta, Instruction},
         solana_message::{AccountKeys, Message, SanitizedMessage},
+        solana_precompile_error::PrecompileError,
         solana_program_runtime::{
             declare_process_instruction,
             execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
@@ -142,13 +140,13 @@ mod tests {
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
         solana_secp256k1_program::new_secp256k1_instruction,
         solana_secp256r1_program::new_secp256r1_instruction,
-        solana_svm_callback::EpochStakeCallback,
+        solana_svm_callback::InvokeContextCallback,
         solana_transaction_context::TransactionContext,
         std::sync::Arc,
     };
 
     struct MockCallback {}
-    impl EpochStakeCallback for MockCallback {}
+    impl InvokeContextCallback for MockCallback {}
 
     fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
         let (lamports, rent_epoch) = DUMMY_INHERITABLE_ACCOUNT_FIELDS;
@@ -666,6 +664,29 @@ mod tests {
             mock_program_id,
             Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
         );
+
+        struct MockCallback {}
+        impl InvokeContextCallback for MockCallback {
+            fn is_precompile(&self, program_id: &Pubkey) -> bool {
+                program_id == &secp256k1_program::id()
+                    || program_id == &ed25519_program::id()
+                    || program_id == &solana_secp256r1_program::id()
+            }
+
+            fn process_precompile(
+                &self,
+                program_id: &Pubkey,
+                _data: &[u8],
+                _instruction_datas: Vec<&[u8]>,
+            ) -> std::result::Result<(), PrecompileError> {
+                if self.is_precompile(program_id) {
+                    Ok(())
+                } else {
+                    Err(PrecompileError::InvalidPublicKey)
+                }
+            }
+        }
+
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,

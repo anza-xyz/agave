@@ -127,7 +127,7 @@ mod tests {
         let tx = test_tx();
 
         let mut batches =
-            to_packet_batches(&std::iter::repeat(tx).take(1024).collect::<Vec<_>>(), 128);
+            to_packet_batches(&std::iter::repeat_n(tx, 1024).collect::<Vec<_>>(), 128);
         let packet_count = sigverify::count_packets_in_batches(&batches);
         let mut rng = rand::thread_rng();
         let filter = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);

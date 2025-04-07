@@ -526,7 +526,7 @@ fn get_fec_set_offsets(
         }
         let num_chunks = (num_shreds / min_chunk_size).max(1);
         let chunk_size = num_shreds.div_ceil(num_chunks);
-        let offsets = std::iter::repeat(offset).take(chunk_size);
+        let offsets = std::iter::repeat_n(offset, chunk_size);
         num_shreds -= chunk_size;
         offset += chunk_size;
         Some(offsets)

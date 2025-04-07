@@ -697,7 +697,7 @@ mod tests {
         },
         solana_signature::Signature,
         solana_signer::Signer,
-        solana_svm_callback::{EpochStakeCallback, TransactionProcessingCallback},
+        solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
         solana_system_transaction::transfer,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_context::{TransactionAccount, TransactionContext},
@@ -713,7 +713,7 @@ mod tests {
             RefCell<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>,
     }
 
-    impl EpochStakeCallback for TestCallbacks {}
+    impl InvokeContextCallback for TestCallbacks {}
 
     impl TransactionProcessingCallback for TestCallbacks {
         fn account_matches_owners(&self, _account: &Pubkey, _owners: &[Pubkey]) -> Option<usize> {

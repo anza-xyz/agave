@@ -1069,9 +1069,7 @@ fn check_authorized_program(
                         instruction_data,
                     ))
                 || bpf_loader_upgradeable::is_close_instruction(instruction_data)))
-        || is_precompile(program_id, |feature_id: &Pubkey| {
-            invoke_context.get_feature_set().is_active(feature_id)
-        })
+        || invoke_context.is_precompile(program_id)
     {
         return Err(Box::new(SyscallError::ProgramNotSupported(*program_id)));
     }

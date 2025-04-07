@@ -203,7 +203,7 @@ mod tests {
                     None
                 }
             })
-            .last()
+            .next_back()
             .unwrap()
             .unwrap();
 

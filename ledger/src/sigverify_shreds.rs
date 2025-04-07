@@ -12,7 +12,13 @@ use {
         sigverify::{self, count_packets_in_batches, TxOffset},
     },
     solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signature},
-    std::{collections::HashMap, iter::repeat, mem::size_of, ops::Range, sync::RwLock},
+    std::{
+        collections::HashMap,
+        iter::{self, repeat},
+        mem::size_of,
+        ops::Range,
+        sync::RwLock,
+    },
 };
 #[cfg(test)]
 use {
@@ -320,7 +326,9 @@ pub fn verify_shreds_gpu(
     trace!("out buf {:?}", out);
 
     // Each shred has exactly one signature.
-    let v_sig_lens = batches.iter().map(|batch| repeat(1u32).take(batch.len()));
+    let v_sig_lens = batches
+        .iter()
+        .map(|batch| iter::repeat_n(1u32, batch.len()));
     let mut rvs: Vec<_> = batches.iter().map(|batch| vec![0u8; batch.len()]).collect();
     sigverify::copy_return_values(v_sig_lens, &out, &mut rvs);
 

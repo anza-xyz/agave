@@ -101,6 +101,7 @@ solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 solana-wen-restart = { workspace = true }
+static_assertions ={ workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 sys-info = { workspace = true }
@@ -116,7 +117,7 @@ fs_extra = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-address-lookup-table-program = { workspace = true }
+solana-bpf-loader-program = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-core = { path = ".", features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true, features = ["dev-context-only-utils"] }

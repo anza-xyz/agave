@@ -11,7 +11,6 @@ use {
     agave_feature_set::{
         lift_cpi_caller_restriction, remove_accounts_executable_flag_checks, FeatureSet,
     },
-    agave_precompiles::Precompile,
     solana_account::{create_account_shared_data_for_test, AccountSharedData},
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
@@ -31,7 +30,7 @@ use {
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader, sysvar,
     },
     solana_stable_layout::stable_instruction::StableInstruction,
-    solana_svm_callback::EpochStakeCallback,
+    solana_svm_callback::InvokeContextCallback,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
         IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
@@ -147,7 +146,7 @@ impl BpfAllocator {
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
-    epoch_stake_callback: &'a dyn EpochStakeCallback,
+    epoch_stake_callback: &'a dyn InvokeContextCallback,
     pub feature_set: Arc<FeatureSet>,
     sysvar_cache: &'a SysvarCache,
 }
@@ -155,7 +154,7 @@ impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
-        epoch_stake_callback: &'a dyn EpochStakeCallback,
+        epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: Arc<FeatureSet>,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
@@ -484,7 +483,7 @@ impl<'a> InvokeContext<'a> {
     /// Processes a precompile instruction
     pub fn process_precompile<'ix_data>(
         &mut self,
-        precompile: &Precompile,
+        program_id: &Pubkey,
         instruction_data: &[u8],
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
@@ -495,10 +494,10 @@ impl<'a> InvokeContext<'a> {
             .configure(program_indices, instruction_accounts, instruction_data);
         self.push()?;
 
-        let feature_set = self.get_feature_set();
         let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
-        precompile
-            .verify(instruction_data, &instruction_datas, feature_set)
+        self.environment_config
+            .epoch_stake_callback
+            .process_precompile(program_id, instruction_data, instruction_datas)
             .map_err(InstructionError::from)
             .and(self.pop())
     }
@@ -677,6 +676,12 @@ impl<'a> InvokeContext<'a> {
             .get_epoch_stake_for_vote_account(pubkey)
     }
 
+    pub fn is_precompile(&self, pubkey: &Pubkey) -> bool {
+        self.environment_config
+            .epoch_stake_callback
+            .is_precompile(pubkey)
+    }
+
     // Should alignment be enforced during user pointer translation
     pub fn get_check_aligned(&self) -> bool {
         self.transaction_context
@@ -735,7 +740,7 @@ macro_rules! with_mock_invoke_context {
         use {
             agave_feature_set::FeatureSet,
             solana_log_collector::LogCollector,
-            solana_svm_callback::EpochStakeCallback,
+            solana_svm_callback::InvokeContextCallback,
             solana_type_overrides::sync::Arc,
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
@@ -746,8 +751,8 @@ macro_rules! with_mock_invoke_context {
             },
         };
 
-        struct MockEpochStakeCallback {}
-        impl EpochStakeCallback for MockEpochStakeCallback {}
+        struct MockInvokeContextCallback {}
+        impl InvokeContextCallback for MockInvokeContextCallback {}
 
         let compute_budget = SVMTransactionExecutionBudget::default();
         let mut $transaction_context = TransactionContext::new(
@@ -777,7 +782,7 @@ macro_rules! with_mock_invoke_context {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            &MockEpochStakeCallback {},
+            &MockInvokeContextCallback {},
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );

@@ -8904,7 +8904,7 @@ pub(crate) mod tests {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
                 .into_iter()
-                .zip(iter::once(vec![0, 1, 3, 5, 6]).chain(iter::repeat(vec![0, 1, 2, 4]).take(2)))
+                .zip(iter::once(vec![0, 1, 3, 5, 6]).chain(iter::repeat_n(vec![0, 1, 2, 4], 2)))
                 .collect()
         };
         let (mut vote_simulator, _blockstore) =
@@ -8986,7 +8986,7 @@ pub(crate) mod tests {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
                 .into_iter()
-                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat(vec![0, 1, 3, 4]).take(2)))
+                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat_n(vec![0, 1, 3, 4], 2)))
                 .collect()
         };
         let tree = tr(0) / (tr(1) / (tr(3) / (tr(4))) / (tr(2) / (tr(5) / (tr(6)))));
@@ -9052,7 +9052,7 @@ pub(crate) mod tests {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
                 .into_iter()
-                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat(vec![0, 1, 3, 4]).take(2)))
+                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat_n(vec![0, 1, 3, 4], 2)))
                 .collect()
         };
         let tree = tr(0) / (tr(1) / (tr(3) / (tr(4))) / (tr(2) / (tr(5) / (tr(6)))));
@@ -9119,7 +9119,7 @@ pub(crate) mod tests {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
                 .into_iter()
-                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat(vec![0, 1, 3, 4]).take(2)))
+                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat_n(vec![0, 1, 3, 4], 2)))
                 .collect()
         };
         let (vote_simulator, _blockstore) =
@@ -9145,7 +9145,7 @@ pub(crate) mod tests {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
                 .into_iter()
-                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat(vec![0, 1, 3, 4]).take(2)))
+                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat_n(vec![0, 1, 3, 4], 2)))
                 .collect()
         };
         let (vote_simulator, _blockstore) =
@@ -9414,7 +9414,7 @@ pub(crate) mod tests {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
                 .into_iter()
-                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat(vec![0, 1, 3, 4]).take(2)))
+                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat_n(vec![0, 1, 3, 4], 2)))
                 .collect()
         };
         let tree = tr(0) / (tr(1) / (tr(3) / (tr(4))) / (tr(2) / (tr(5) / (tr(6)))));
@@ -9524,7 +9524,7 @@ pub(crate) mod tests {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
                 .into_iter()
-                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat(vec![0, 1, 3, 4]).take(2)))
+                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat_n(vec![0, 1, 3, 4], 2)))
                 .collect()
         };
         let tree = tr(0) / (tr(1) / (tr(3) / (tr(4))) / (tr(2) / (tr(5) / (tr(6)))));

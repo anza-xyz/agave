@@ -38,6 +38,7 @@ use {
 
 const INTERVAL_MS: u64 = 100;
 const CLEAN_INTERVAL_BLOCKS: u64 = 100;
+const SHRINK_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type SnapshotRequestSender = Sender<SnapshotRequest>;
 pub type SnapshotRequestReceiver = Receiver<SnapshotRequest>;
@@ -533,6 +534,7 @@ impl AccountsBackgroundService {
                     info!("AccountsBackgroundService has started");
                     let mut stats = StatsManager::new();
                     let mut last_snapshot_end_time = None;
+                    let mut previous_shrink_time = Instant::now();
 
                     loop {
                         if exit.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed) {
@@ -638,9 +640,14 @@ impl AccountsBackgroundService {
                             // as any later snapshots that are taken are of
                             // slots >= bank.slot()
                             bank.flush_accounts_cache_if_needed();
+
+                            // See justification above for why we skip 'shrink' here.
                             if bank.is_startup_verification_complete() {
-                                // See justification above for why we skip 'shrink' here.
-                                bank.shrink_candidate_slots();
+                                let duration_since_previous_shrink = previous_shrink_time.elapsed();
+                                if duration_since_previous_shrink > SHRINK_INTERVAL {
+                                    previous_shrink_time = Instant::now();
+                                    bank.shrink_candidate_slots();
+                                }
                             }
                         }
                         stats.record_and_maybe_submit(start_time.elapsed());

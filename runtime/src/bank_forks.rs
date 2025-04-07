@@ -651,8 +651,8 @@ impl BankForks {
 impl ForkGraph for BankForks {
     fn relationship(&self, a: Slot, b: Slot) -> BlockRelation {
         let known_slot_range = self.root()..=self.highest_slot();
-        (known_slot_range.contains(&a) && known_slot_range.contains(&b))
-            .then(|| {
+        if known_slot_range.contains(&a) && known_slot_range.contains(&b) {
+            {
                 (a == b)
                     .then_some(BlockRelation::Equal)
                     .or_else(|| {
@@ -668,8 +668,10 @@ impl ForkGraph for BankForks {
                         })
                     })
                     .unwrap_or(BlockRelation::Unrelated)
-            })
-            .unwrap_or(BlockRelation::Unknown)
+            }
+        } else {
+            BlockRelation::Unknown
+        }
     }
 }
 

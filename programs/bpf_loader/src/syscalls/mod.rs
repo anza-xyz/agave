@@ -24,7 +24,6 @@ use {
         last_restart_slot_sysvar, reenable_sbpf_v0_execution,
         remaining_compute_units_syscall_enabled, FeatureSet,
     },
-    agave_precompiles::is_precompile,
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
@@ -4915,7 +4914,7 @@ mod tests {
         const EXPECTED_TOTAL_STAKE: u64 = 200_000_000_000_000;
 
         struct MockCallback {}
-        impl EpochStakeCallback for MockCallback {
+        impl InvokeContextCallback for MockCallback {
             fn get_epoch_stake(&self) -> u64 {
                 EXPECTED_TOTAL_STAKE
             }
@@ -4968,7 +4967,7 @@ mod tests {
         const EXPECTED_EPOCH_STAKE: u64 = 55_000_000_000;
 
         struct MockCallback {}
-        impl EpochStakeCallback for MockCallback {
+        impl InvokeContextCallback for MockCallback {
             // Total stake is not needed for this test.
             fn get_epoch_stake_for_vote_account(&self, vote_address: &Pubkey) -> u64 {
                 if *vote_address == TARGET_VOTE_ADDRESS {

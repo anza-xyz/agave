@@ -1,7 +1,10 @@
-use {solana_account::AccountSharedData, solana_pubkey::Pubkey};
+use {
+    solana_account::AccountSharedData, solana_precompile_error::PrecompileError,
+    solana_pubkey::Pubkey,
+};
 
-/// Callback for obtaining the cluster's current epoch stake.
-pub trait EpochStakeCallback {
+/// Callback used by InvokeContext in SVM
+pub trait InvokeContextCallback {
     /// Returns the total current epoch stake for the network.
     fn get_epoch_stake(&self) -> u64 {
         0
@@ -11,10 +14,25 @@ pub trait EpochStakeCallback {
     fn get_epoch_stake_for_vote_account(&self, _vote_address: &Pubkey) -> u64 {
         0
     }
+
+    /// Returns true if the program_id corresponds to a precompiled program
+    fn is_precompile(&self, _program_id: &Pubkey) -> bool {
+        false
+    }
+
+    /// Calls the precompiled program corresponding to the given program ID.
+    fn process_precompile(
+        &self,
+        _program_id: &Pubkey,
+        _data: &[u8],
+        _instruction_datas: Vec<&[u8]>,
+    ) -> Result<(), PrecompileError> {
+        Err(PrecompileError::InvalidPublicKey)
+    }
 }
 
 /// Runtime callbacks for transaction processing.
-pub trait TransactionProcessingCallback: EpochStakeCallback {
+pub trait TransactionProcessingCallback: InvokeContextCallback {
     fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize>;
 
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData>;
@@ -26,7 +44,7 @@ pub trait TransactionProcessingCallback: EpochStakeCallback {
 
     #[deprecated(
         since = "2.3.0",
-        note = "Use `get_epoch_stake_for_vote_account` on the `EpochStakeCallback` trait instead"
+        note = "Use `get_epoch_stake_for_vote_account` on the `InvokeContextCallback` trait instead"
     )]
     fn get_current_epoch_vote_account_stake(&self, vote_address: &Pubkey) -> u64 {
         Self::get_epoch_stake_for_vote_account(self, vote_address)

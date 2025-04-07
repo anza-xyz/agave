@@ -135,9 +135,10 @@ const MIN_STAKE_FOR_GOSSIP: u64 = solana_native_token::LAMPORTS_PER_SOL;
 const MIN_NUM_STAKED_NODES: usize = 500;
 
 // Must have at least one socket to monitor the TVU port
-// The unsafes are safe because we're using fixed, known non-zero values
-pub const MINIMUM_NUM_TVU_SOCKETS: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(1) };
-pub const DEFAULT_NUM_TVU_SOCKETS: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(8) };
+pub const MINIMUM_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
+pub const DEFAULT_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = NonZeroUsize::new(8).unwrap();
+pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
+pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
 
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum ClusterInfoError {
@@ -2386,8 +2387,10 @@ pub struct NodeConfig {
     pub bind_ip_addr: IpAddr,
     pub public_tpu_addr: Option<SocketAddr>,
     pub public_tpu_forwards_addr: Option<SocketAddr>,
-    /// The number of TVU sockets to create
-    pub num_tvu_sockets: NonZeroUsize,
+    /// The number of TVU receive sockets to create
+    pub num_tvu_receive_sockets: NonZeroUsize,
+    /// The number of TVU retransmit sockets to create
+    pub num_tvu_retransmit_sockets: NonZeroUsize,
     /// The number of QUIC tpu endpoints
     pub num_quic_endpoints: NonZeroUsize,
 }
@@ -2711,7 +2714,8 @@ impl Node {
             bind_ip_addr,
             public_tpu_addr,
             public_tpu_forwards_addr,
-            num_tvu_sockets,
+            num_tvu_receive_sockets,
+            num_tvu_retransmit_sockets,
             num_quic_endpoints,
         } = config;
 
@@ -2725,7 +2729,7 @@ impl Node {
             bind_ip_addr,
             port_range,
             socket_config_reuseport,
-            num_tvu_sockets.get(),
+            num_tvu_receive_sockets.get(),
         )
         .expect("tvu multi_bind");
 
@@ -2778,9 +2782,13 @@ impl Node {
         )
         .unwrap();
 
-        let (_, retransmit_sockets) =
-            multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config_reuseport, 8)
-                .expect("retransmit multi_bind");
+        let (_, retransmit_sockets) = multi_bind_in_range_with_config(
+            bind_ip_addr,
+            port_range,
+            socket_config_reuseport,
+            num_tvu_retransmit_sockets.get(),
+        )
+        .expect("retransmit multi_bind");
 
         let (_, repair) = Self::bind_with_config(bind_ip_addr, port_range, socket_config);
         let (_, repair_quic) = Self::bind_with_config(bind_ip_addr, port_range, socket_config);
@@ -3316,7 +3324,8 @@ mod tests {
             bind_ip_addr: IpAddr::V4(ip),
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
-            num_tvu_sockets: MINIMUM_NUM_TVU_SOCKETS,
+            num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
+            num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
         };
 
@@ -3339,7 +3348,8 @@ mod tests {
             bind_ip_addr: ip,
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
-            num_tvu_sockets: MINIMUM_NUM_TVU_SOCKETS,
+            num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
+            num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
         };
 

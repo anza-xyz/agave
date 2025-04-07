@@ -59,7 +59,7 @@ use {
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
     agave_feature_set::{self as feature_set, FeatureSet},
-    agave_precompiles::get_precompiles,
+    agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     ahash::AHashSet,
     dashmap::{DashMap, DashSet},
@@ -137,6 +137,7 @@ use {
         native_loader,
         native_token::LAMPORTS_PER_SOL,
         packet::PACKET_DATA_SIZE,
+        precompiles::PrecompileError,
         pubkey::Pubkey,
         rent_collector::{CollectedInfo, RentCollector},
         rent_debits::RentDebits,
@@ -171,7 +172,7 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
-    solana_svm_callback::{AccountState, EpochStakeCallback, TransactionProcessingCallback},
+    solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_transaction_context::{TransactionAccount, TransactionReturnData},
@@ -6948,7 +6949,7 @@ impl Bank {
     }
 }
 
-impl EpochStakeCallback for Bank {
+impl InvokeContextCallback for Bank {
     fn get_epoch_stake(&self) -> u64 {
         self.get_current_epoch_total_stake()
     }
@@ -6958,6 +6959,27 @@ impl EpochStakeCallback for Bank {
             .get(vote_address)
             .map(|(stake, _)| (*stake))
             .unwrap_or(0)
+    }
+
+    fn is_precompile(&self, program_id: &Pubkey) -> bool {
+        is_precompile(program_id, |feature_id: &Pubkey| {
+            self.feature_set.is_active(feature_id)
+        })
+    }
+
+    fn process_precompile(
+        &self,
+        program_id: &Pubkey,
+        data: &[u8],
+        instruction_datas: Vec<&[u8]>,
+    ) -> std::result::Result<(), PrecompileError> {
+        if let Some(precompile) = get_precompile(program_id, |feature_id: &Pubkey| {
+            self.feature_set.is_active(feature_id)
+        }) {
+            precompile.verify(data, &instruction_datas, &self.feature_set)
+        } else {
+            Err(PrecompileError::InvalidPublicKey)
+        }
     }
 }
 
