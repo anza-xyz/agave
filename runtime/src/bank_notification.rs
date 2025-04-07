@@ -33,9 +33,14 @@ impl std::fmt::Debug for BankNotification {
 pub type BankNotificationReceiver = Receiver<BankNotification>;
 pub type BankNotificationSenderDirect = Sender<BankNotification>;
 
+/// Two types of senders for sending bank notifications:
 #[derive(Clone)]
 pub enum BankNotificationSenderType {
+    /// Directly sending bank notfications
     DirectSender(Sender<BankNotification>),
+    /// Via the intermdiate transaction status sender so that the
+    /// bank notifications can be ordered related to the transaction status
+    /// notifcations.
     TransactionStatusSender(TransactionStatusSender),
 }
 

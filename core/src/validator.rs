@@ -1266,13 +1266,13 @@ impl Validator {
             {
                 BankNotificationSenderConfig::new_indirect_sender(
                     transaction_status_sender.clone(),
-                    geyser_plugin_service.is_some(),
+                    geyser_plugin_service.is_some(), // should_send_parents?
                 )
             } else {
                 BankNotificationSenderConfig::new_direct_sender(
                     bank_notification_sender
                         .expect("Expected bank notification sender to be created for this case!"),
-                    geyser_plugin_service.is_some(),
+                    geyser_plugin_service.is_some(), // should_send_parents?
                 )
             };
 

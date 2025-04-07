@@ -16,6 +16,10 @@ use {
 pub enum TransactionStatusMessage {
     Batch(TransactionStatusBatch),
     Freeze(Slot),
+    /// The message sent to transaction status service so that bank notifications
+    /// can be ordered related to the transaction status notifications.
+    /// TransactionStatusBatch is first sent, and then the BankNotification such
+    /// as Frozen.
     BankEvent(BankNotification),
 }
 
