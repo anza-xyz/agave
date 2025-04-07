@@ -897,6 +897,7 @@ impl ExecutedTask {
 enum SubchanneledPayload<P1, P2> {
     Payload(P1),
     OpenSubchannel(P2),
+    UnpauseOpenedSubchannel,
     CloseSubchannel,
 }
 
@@ -1730,7 +1731,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         sleepless_testing::at(CheckPoint::SessionEnding);
                                         session_ending = true;
                                     }
-                                    Ok(NewTaskPayload::OpenSubchannel(_context_and_result_with_timings)) =>
+                                    Ok(NewTaskPayload::OpenSubchannel(_) | NewTaskPayload::UnpauseOpenedSubchannel) =>
                                         unreachable!(),
                                     Err(RecvError) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
@@ -1779,6 +1780,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     }
                     assert!(mem::replace(&mut session_ending, false));
 
+                    // This variable is hoisted from OpenSubchannel match arm to pass the rustc
+                    // borrow checker because it can't tell the control-flow diverging
+                    // UnpauseOpenedSubchannel won't be used by itself, which would leave
+                    // `result_with_timings` uninitialized after sending it via
+                    // session_result_sender just above
+                    let mut new_result_with_timings = initialized_result_with_timings();
+
                     loop {
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
@@ -1790,7 +1798,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 state_machine.buffer_task(task);
                             }
                             Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
-                                let (new_context, new_result_with_timings) =
+                                let new_context;
+                                (new_context, new_result_with_timings) =
                                     *context_and_result_with_timings;
                                 // We just received subsequent (= not initial) session and about to
                                 // enter into the preceding `while(!is_finished) {...}` loop again.
@@ -1801,7 +1810,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 runnable_task_sender
                                     .send_chained_channel(&new_context, handler_count)
                                     .unwrap();
-                                result_with_timings = new_result_with_timings;
+                                // As for block production, poh isn't guaranteed to be updated to
+                                // the new BankWithScheduler. So, only break from this loop for
+                                // block verification.
+                                if matches!(scheduling_mode, BlockVerification) {
+                                    break;
+                                }
+                            }
+                            Ok(NewTaskPayload::UnpauseOpenedSubchannel) => {
+                                assert_matches!(scheduling_mode, BlockProduction);
+                                // poh update is guaranteed now; time to crunch on tasks!
                                 break;
                             }
                             Ok(NewTaskPayload::CloseSubchannel) => {
@@ -1815,6 +1833,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                         }
                     }
+                    result_with_timings = new_result_with_timings;
                 }
 
                 // There are several code-path reaching here out of the preceding unconditional
@@ -2057,6 +2076,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         debug!("end_session(): ended session at {:?}...", thread::current());
     }
 
+    fn unpause_started_session(&self) {
+        self.new_task_sender
+            .send(NewTaskPayload::UnpauseOpenedSubchannel)
+            .unwrap();
+    }
+
     fn start_session(
         &mut self,
         context: SchedulingContext,
@@ -2187,6 +2212,10 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         // nonblocking there.
         let nonblocking = matches!(self.context().mode(), BlockProduction);
         self.inner.thread_manager.do_end_session(nonblocking);
+    }
+
+    fn unpause_after_taken(&self) {
+        self.inner.thread_manager.unpause_started_session();
     }
 }
 
@@ -3409,6 +3438,9 @@ mod tests {
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
         let scheduler = pool.take_scheduler(context);
         let old_scheduler_id = scheduler.id();
+        if matches!(scheduling_mode, BlockProduction) {
+            scheduler.unpause_after_taken();
+        }
 
         scheduler
             .schedule_execution(tx0, STALLED_TRANSACTION_INDEX)
@@ -3444,6 +3476,9 @@ mod tests {
         // make sure the same scheduler is used to test its internal cross-session behavior
         // regardless scheduling_mode.
         assert_eq!(scheduler.id(), old_scheduler_id);
+        if matches!(scheduling_mode, BlockProduction) {
+            scheduler.unpause_after_taken();
+        }
 
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
@@ -3538,6 +3573,7 @@ mod tests {
             .set_bank(bank.clone_with_scheduler(), true);
         bank.schedule_transaction_executions([(tx, ORIGINAL_TRANSACTION_INDEX)].into_iter())
             .unwrap();
+        bank.unpause_new_block_production_scheduler();
 
         // Calling wait_for_completed_scheduler() for block production scheduler causes it to be
         // interrupted immediately; so need to wait for failed landing of the original task.
@@ -3562,18 +3598,16 @@ mod tests {
             .unwrap()
             .set_limits(u64::MAX, u64::MAX, u64::MAX);
 
-        // Taking poh_recorder is needed to avoid race conditions between poh and scheduler, which
-        // already has readily-runnable tx in the buffer, unlike the previous bank;
-        // This will be addressed in the next pr...
-        let mut poh_recorder = poh_recorder.write().unwrap();
-
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context);
         // Make sure the same scheduler is used to test its internal cross-session behavior
         assert_eq!(scheduler.id(), old_scheduler_id);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        poh_recorder.set_bank(bank.clone_with_scheduler(), true);
-        drop(poh_recorder);
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank(bank.clone_with_scheduler(), true);
+        bank.unpause_new_block_production_scheduler();
 
         // Calling wait_for_completed_scheduler() for block production scheduler causes it to be
         // interrupted immediately; so need to wait for successful landing of the retried task.
@@ -3724,6 +3758,10 @@ mod tests {
             }));
 
             Ok(())
+        }
+
+        fn unpause_after_taken(&self) {
+            unimplemented!();
         }
 
         fn recover_error_after_abort(&mut self) -> TransactionError {
@@ -4110,6 +4148,7 @@ mod tests {
         assert_eq!(bank.transaction_count(), 0);
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context);
+        scheduler.unpause_after_taken();
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
@@ -4188,6 +4227,7 @@ mod tests {
         assert_eq!(bank.transaction_count(), 0);
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context);
+        scheduler.unpause_after_taken();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         assert_eq!(bank.transaction_count(), 1);
@@ -4251,6 +4291,7 @@ mod tests {
         // waiting for new session...
         let context = SchedulingContext::for_production(bank.clone());
         let scheduler = pool.take_scheduler(context.clone());
+        scheduler.unpause_after_taken();
         let bank_tmp = BankWithScheduler::new(bank.clone(), Some(scheduler));
         assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
 
@@ -4266,6 +4307,7 @@ mod tests {
 
         assert_eq!(bank.transaction_count(), 0);
         let scheduler = pool.take_scheduler(context);
+        scheduler.unpause_after_taken();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         assert_eq!(bank.transaction_count(), 1);
@@ -4373,6 +4415,7 @@ mod tests {
 
         let context = SchedulingContext::for_production(bank);
         let scheduler = pool.do_take_scheduler(context.clone());
+        scheduler.unpause_after_taken();
         let trashed_old_scheduler_id = scheduler.id();
 
         // Make scheduler overgrown and trash it by returning
@@ -4384,6 +4427,7 @@ mod tests {
 
         // Re-take a brand-new one
         let scheduler = pool.do_take_scheduler(context);
+        scheduler.unpause_after_taken();
         let respawned_new_scheduler_id = scheduler.id();
         Box::new(scheduler.into_inner().1).return_to_pool();
 
