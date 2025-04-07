@@ -267,7 +267,10 @@ impl TransactionContext {
     }
 
     /// Searches for an account by its key
-    #[cfg(not(target_os = "solana"))]
+    #[cfg(all(
+        not(target_os = "solana"),
+        any(test, feature = "dev-context-only-utils")
+    ))]
     pub fn get_account_at_index(
         &self,
         index_in_transaction: IndexOfAccount,
@@ -412,8 +415,10 @@ impl TransactionContext {
             self.get_current_instruction_context()
                 .and_then(|instruction_context| {
                     // Verify all executable accounts have no outstanding refs
-                    for account_index in instruction_context.program_accounts.iter() {
-                        self.get_account_at_index(*account_index)?
+                    for index_in_transaction in instruction_context.program_accounts.iter() {
+                        self.accounts
+                            .get(*index_in_transaction)
+                            .ok_or(InstructionError::NotEnoughAccountKeys)?
                             .try_borrow_mut()
                             .map_err(|_| InstructionError::AccountBorrowOutstanding)?;
                     }
@@ -465,7 +470,9 @@ impl TransactionContext {
             let index_in_transaction = instruction_context
                 .get_index_of_instruction_account_in_transaction(instruction_account_index)?;
             instruction_accounts_lamport_sum = (self
-                .get_account_at_index(index_in_transaction)?
+                .accounts
+                .get(index_in_transaction)
+                .ok_or(InstructionError::NotEnoughAccountKeys)?
                 .try_borrow()
                 .map_err(|_| InstructionError::AccountBorrowOutstanding)?
                 .lamports() as u128)
