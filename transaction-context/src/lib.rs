@@ -507,6 +507,32 @@ impl TransactionContext {
             .map_err(|_| InstructionError::GenericError)
             .map(|value_ref| *value_ref)
     }
+
+    /// Returns a new account data write access handler
+    pub fn account_data_write_access_handler(&self) -> Box<dyn Fn(u64) -> Result<u64, ()>> {
+        let accounts = Rc::clone(&self.accounts);
+        Box::new(move |index_in_transaction| {
+            // The two calls below can't really fail. If they fail because of a bug,
+            // whatever is writing will trigger an EbpfError::AccessViolation like
+            // if the region was readonly, and the transaction will fail gracefully.
+            let mut account = accounts
+                .accounts
+                .get(index_in_transaction as usize)
+                .ok_or(())?
+                .try_borrow_mut()
+                .map_err(|_| ())?;
+            accounts
+                .touch(index_in_transaction as IndexOfAccount)
+                .map_err(|_| ())?;
+
+            if account.is_shared() {
+                // See BorrowedAccount::make_data_mut() as to why we reserve extra
+                // MAX_PERMITTED_DATA_INCREASE bytes here.
+                account.reserve(MAX_PERMITTED_DATA_INCREASE);
+            }
+            Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
+        })
+    }
 }
 
 /// Return data at the end of a transaction
