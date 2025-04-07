@@ -132,17 +132,6 @@ impl TransactionAccounts {
             .map_err(|_| InstructionError::AccountBorrowFailed)
     }
 
-    pub fn try_borrow_mut(
-        &self,
-        index: IndexOfAccount,
-    ) -> Result<RefMut<'_, AccountSharedData>, InstructionError> {
-        self.accounts
-            .get(index as usize)
-            .ok_or(InstructionError::MissingAccount)?
-            .try_borrow_mut()
-            .map_err(|_| InstructionError::AccountBorrowFailed)
-    }
-
     pub fn into_accounts(self) -> Vec<AccountSharedData> {
         self.accounts
             .into_iter()
