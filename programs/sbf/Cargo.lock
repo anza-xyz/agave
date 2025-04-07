@@ -8963,6 +8963,7 @@ dependencies = [
  "serde_derive",
  "solana-account",
  "solana-instruction",
+ "solana-instructions-sysvar",
  "solana-pubkey",
  "solana-rent",
  "solana-signature",

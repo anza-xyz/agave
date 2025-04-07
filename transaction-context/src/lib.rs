@@ -13,6 +13,7 @@ use {solana_account::WritableAccount, solana_rent::Rent, std::mem::MaybeUninit};
 use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
+    solana_instructions_sysvar as instructions,
     solana_pubkey::Pubkey,
     std::{
         cell::{Ref, RefCell, RefMut},
@@ -161,6 +162,7 @@ pub struct TransactionContext {
     instruction_trace_capacity: usize,
     instruction_stack: Vec<usize>,
     instruction_trace: Vec<InstructionContext>,
+    top_level_instruction_index: usize,
     return_data: TransactionReturnData,
     accounts_resize_delta: RefCell<i64>,
     #[cfg(not(target_os = "solana"))]
@@ -196,6 +198,7 @@ impl TransactionContext {
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
             instruction_trace: vec![InstructionContext::default()],
+            top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
             accounts_resize_delta: RefCell::new(0),
             remove_accounts_executable_flag_checks: true,
@@ -401,6 +404,18 @@ impl TransactionContext {
             return Err(InstructionError::CallDepth);
         }
         self.instruction_stack.push(index_in_trace);
+        if let Some(index_in_transaction) = self.find_index_of_account(&instructions::id()) {
+            let mut mut_account_ref = self
+                .accounts
+                .get(index_in_transaction)
+                .ok_or(InstructionError::NotEnoughAccountKeys)?
+                .try_borrow_mut()
+                .map_err(|_| InstructionError::AccountBorrowFailed)?;
+            instructions::store_current_index(
+                mut_account_ref.data_as_mut_slice(),
+                self.top_level_instruction_index as u16,
+            );
+        }
         Ok(())
     }
 
@@ -430,6 +445,9 @@ impl TransactionContext {
                 });
         // Always pop, even if we `detected_an_unbalanced_instruction`
         self.instruction_stack.pop();
+        if self.instruction_stack.is_empty() {
+            self.top_level_instruction_index = self.top_level_instruction_index.saturating_add(1);
+        }
         if detected_an_unbalanced_instruction? {
             Err(InstructionError::UnbalancedInstruction)
         } else {
