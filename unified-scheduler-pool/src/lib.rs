@@ -135,7 +135,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     common_handler_context: CommonHandlerContext,
-    block_verification_handler_count: usize,
+    block_verification_handler_count: Option<usize>,
     banking_stage_handler_context: Mutex<Option<BankingStageHandlerContext>>,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
@@ -294,7 +294,7 @@ impl CommonHandlerContext {
 
 #[derive(derive_more::Debug)]
 struct BankingStageHandlerContext {
-    banking_thread_count: usize,
+    banking_thread_count: Option<usize>,
     banking_packet_receiver: BankingPacketReceiver,
     banking_stage_monitor: Box<dyn BankingStageMonitor>,
     #[debug("{banking_packet_handler:p}")]
@@ -465,9 +465,6 @@ where
         max_usage_queue_count: usize,
         timeout_duration: Duration,
     ) -> Arc<Self> {
-        let block_verification_handler_count =
-            block_verification_handler_count.unwrap_or(Self::default_handler_count());
-
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
             supported_scheduling_mode,
             scheduler_inners: Mutex::default(),
@@ -746,7 +743,7 @@ where
 
     pub fn register_banking_stage(
         &self,
-        banking_thread_count: usize,
+        banking_thread_count: Option<usize>,
         banking_packet_receiver: BankingPacketReceiver,
         banking_stage_monitor: Box<dyn BankingStageMonitor>,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
@@ -831,6 +828,7 @@ where
                 )
             }
         };
+        let thread_count = thread_count.unwrap_or(Self::default_handler_count());
         assert!(thread_count >= 1);
         self.common_handler_context.clone().into_handler_context(
             thread_count,
@@ -3823,7 +3821,7 @@ mod tests {
 
         if matches!(scheduling_mode, BlockProduction) {
             pool.register_banking_stage(
-                DefaultSchedulerPool::default_handler_count(),
+                None,
                 banking_packet_receiver,
                 Box::new(DummyBankingMinitor),
                 Box::new(|_, _| unreachable!()),
@@ -3956,7 +3954,7 @@ mod tests {
             .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
 
         pool.register_banking_stage(
-            DefaultSchedulerPool::default_handler_count(),
+            None,
             banking_packet_receiver,
             Box::new(DummyBankingMinitor),
             Box::new(|_, _| unreachable!()),
@@ -4578,7 +4576,7 @@ mod tests {
                 Some(leader_schedule_cache),
             );
         pool.register_banking_stage(
-            DefaultSchedulerPool::default_handler_count(),
+            None,
             banking_packet_receiver,
             Box::new(DummyBankingMinitor),
             // we don't use the banking packet channel in this test. so, pass panicking handler.
@@ -4661,7 +4659,7 @@ mod tests {
                 helper.send_new_task(helper.create_new_task(tx0.clone(), 17))
             });
         pool.register_banking_stage(
-            DefaultSchedulerPool::default_handler_count(),
+            None,
             banking_packet_receiver,
             Box::new(DummyBankingMinitor),
             fixed_banking_packet_handler,
@@ -4735,7 +4733,7 @@ mod tests {
 
         let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
-            DefaultSchedulerPool::default_handler_count(),
+            None,
             banking_packet_receiver,
             Box::new(DummyBankingMinitor),
             fixed_banking_packet_handler,
@@ -4821,7 +4819,7 @@ mod tests {
             );
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
-            DefaultSchedulerPool::default_handler_count(),
+            None,
             banking_packet_receiver,
             Box::new(DummyBankingMinitor),
             Box::new(|_, _| unreachable!()),
@@ -4876,7 +4874,7 @@ mod tests {
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
-            DefaultSchedulerPool::default_handler_count(),
+            None,
             banking_packet_receiver,
             Box::new(DummyBankingMinitor),
             Box::new(|_, _| unreachable!()),
@@ -4939,7 +4937,7 @@ mod tests {
                 Some(leader_schedule_cache),
             );
         pool.register_banking_stage(
-            DefaultSchedulerPool::default_handler_count(),
+            None,
             banking_packet_receiver,
             Box::new(DummyBankingMinitor),
             Box::new(|_, _| unreachable!()),
