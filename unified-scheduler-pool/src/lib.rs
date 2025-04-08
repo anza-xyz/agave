@@ -86,6 +86,7 @@ enum CheckPoint<'a> {
     TimeoutListenerTriggered(usize),
 }
 
+type CountOrDefault = Option<usize>;
 type AtomicSchedulerId = AtomicU64;
 
 /// A pool of idling schedulers (usually [`PooledScheduler`]), ready to be taken by bank.
@@ -108,8 +109,8 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     block_production_scheduler_inner: Mutex<BlockProductionSchedulerInner<S, TH>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
-    handler_count: usize,
     common_handler_context: CommonHandlerContext,
+    block_verification_handler_count: CountOrDefault,
     banking_stage_handler_context: Mutex<Option<BankingStageHandlerContext>>,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
@@ -185,6 +186,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
 
 #[derive(derive_more::Debug, Clone)]
 pub struct HandlerContext {
+    thread_count: usize,
     log_messages_bytes_limit: Option<usize>,
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<ReplayVoteSender>,
@@ -213,6 +215,7 @@ struct CommonHandlerContext {
 impl CommonHandlerContext {
     fn into_handler_context(
         self,
+        thread_count: usize,
         banking_packet_receiver: BankingPacketReceiver,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
         banking_stage_helper: Option<Arc<BankingStageHelper>>,
@@ -226,6 +229,7 @@ impl CommonHandlerContext {
         } = self;
 
         HandlerContext {
+            thread_count,
             log_messages_bytes_limit,
             transaction_status_sender,
             replay_vote_sender,
@@ -240,6 +244,7 @@ impl CommonHandlerContext {
 
 #[derive(derive_more::Debug)]
 struct BankingStageHandlerContext {
+    banking_thread_count: CountOrDefault,
     banking_packet_receiver: BankingPacketReceiver,
     #[debug("{banking_packet_handler:p}")]
     banking_packet_handler: Box<dyn BankingPacketHandler>,
@@ -327,14 +332,14 @@ where
     // `dyn InstalledSchedulerPool`. So don't merge this into `Self::new_dyn()`.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn new(
-        handler_count: Option<usize>,
+        block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     ) -> Arc<Self> {
         Self::do_new(
-            handler_count,
+            block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
             replay_vote_sender,
@@ -347,7 +352,7 @@ where
     }
 
     fn do_new(
-        handler_count: Option<usize>,
+        block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -357,21 +362,18 @@ where
         max_usage_queue_count: usize,
         timeout_duration: Duration,
     ) -> Arc<Self> {
-        let handler_count = handler_count.unwrap_or(Self::default_handler_count());
-        assert!(handler_count >= 1);
-
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
             scheduler_inners: Mutex::default(),
             block_production_scheduler_inner: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
-            handler_count,
             common_handler_context: CommonHandlerContext {
                 log_messages_bytes_limit,
                 transaction_status_sender,
                 replay_vote_sender,
                 prioritization_fee_cache,
             },
+            block_verification_handler_count,
             banking_stage_handler_context: Mutex::default(),
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
@@ -596,11 +598,13 @@ where
 
     pub fn register_banking_stage(
         &self,
+        banking_thread_count: CountOrDefault,
         banking_packet_receiver: BankingPacketReceiver,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
         transaction_recorder: TransactionRecorder,
     ) {
         *self.banking_stage_handler_context.lock().unwrap() = Some(BankingStageHandlerContext {
+            banking_thread_count,
             banking_packet_receiver,
             banking_packet_handler,
             transaction_recorder,
@@ -618,25 +622,34 @@ where
         new_task_sender: &Sender<NewTaskPayload>,
     ) -> HandlerContext {
         let (
+            thread_count,
             banking_packet_receiver,
             banking_packet_handler,
             banking_stage_helper,
             transaction_recorder,
         ): (
             _,
+            _,
             Box<dyn BankingPacketHandler>, /* to aid type inference */
             _,
             _,
         ) = match mode {
             BlockVerification => {
-                // Return various type-specific no-op values.
-                (never(), Box::new(|_, _| {}), None, None)
+                (
+                    self.block_verification_handler_count,
+                    // Return various type-specific no-op values.
+                    never(),
+                    Box::new(|_, _| {}),
+                    None,
+                    None,
+                )
             }
             BlockProduction => {
                 let handler_context = self.banking_stage_handler_context.lock().unwrap();
                 let handler_context = handler_context.as_ref().unwrap();
 
                 (
+                    handler_context.banking_thread_count,
                     handler_context.banking_packet_receiver.clone(),
                     handler_context.banking_packet_handler.clone(),
                     Some(Arc::new(BankingStageHelper::new(new_task_sender.clone()))),
@@ -644,7 +657,10 @@ where
                 )
             }
         };
+        let thread_count = thread_count.unwrap_or(Self::default_handler_count());
+        assert!(thread_count >= 1);
         self.common_handler_context.clone().into_handler_context(
+            thread_count,
             banking_packet_receiver,
             banking_packet_handler,
             banking_stage_helper,
@@ -674,7 +690,7 @@ where
         )
     }
 
-    pub fn calculate_default_handler_count(detected_cpu_core_count: Option<usize>) -> usize {
+    pub fn calculate_default_handler_count(detected_cpu_core_count: CountOrDefault) -> usize {
         // Divide by 4 just not to consume all available CPUs just with handler threads, sparing for
         // other active forks and other subsystems.
         // Also, if available_parallelism fails (which should be very rare), use 4 threads,
@@ -1283,7 +1299,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         );
     }
 
-    fn max_running_task_count(mode: SchedulingMode, handler_count: usize) -> Option<usize> {
+    fn max_running_task_count(mode: SchedulingMode, thread_count: usize) -> Option<usize> {
         match mode {
             BlockVerification => {
                 // Unlike block production, there is no agony for block verification with regards
@@ -1300,7 +1316,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 // all needs to be descheduled before finishing session.
                 //
                 // That said, max_running_task_count shouldn't naively be matched to
-                // handler_count (i.e. the number of handler threads). Actually, it should account
+                // thread_count (i.e. the number of handler threads). Actually, it should account
                 // for some extra queue depth to avoid depletions at the runnable task channel.
                 // Otherwise, handler thread could be busy-looping at best or stalled on syscall at
                 // worst for the next runnable task to be scheduled by the scheduler thread even
@@ -1320,7 +1336,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 const MAX_RUNNING_TASK_COUNT_FACTOR: usize = 2;
 
                 Some(
-                    handler_count
+                    thread_count
                         .checked_mul(MAX_RUNNING_TASK_COUNT_FACTOR)
                         .unwrap(),
                 )
@@ -1593,7 +1609,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // 6. the scheduler thread post-processes the executed task.
         let scheduler_main_loop = {
             let handler_context = handler_context.clone();
-            let handler_count = self.pool.handler_count;
             let session_result_sender = self.session_result_sender.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
             // this way, the replay stage will get .send() failures reliably, after this scheduler
@@ -1653,7 +1668,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 let mut state_machine = unsafe {
                     SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
-                        Self::max_running_task_count(scheduling_mode, handler_count),
+                        Self::max_running_task_count(scheduling_mode, handler_context.thread_count),
                     )
                 };
 
@@ -1808,7 +1823,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 assert!(!new_context.is_preallocated());
                                 current_slot = new_context.slot();
                                 runnable_task_sender
-                                    .send_chained_channel(&new_context, handler_count)
+                                    .send_chained_channel(
+                                        &new_context,
+                                        handler_context.thread_count,
+                                    )
                                     .unwrap();
                                 // As for block production, poh isn't guaranteed to be updated to
                                 // the new BankWithScheduler. So, only break from this loop for
@@ -1946,7 +1964,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 .unwrap(),
         );
 
-        self.handler_threads = (0..self.pool.handler_count)
+        self.handler_threads = (0..handler_context.thread_count)
             .map({
                 |thx| {
                     thread::Builder::new()
@@ -3424,6 +3442,7 @@ mod tests {
 
         if matches!(scheduling_mode, BlockProduction) {
             pool.register_banking_stage(
+                None,
                 banking_packet_receiver,
                 Box::new(|_, _| unreachable!()),
                 transaction_recorder,
@@ -3550,6 +3569,7 @@ mod tests {
             .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
 
         pool.register_banking_stage(
+            None,
             banking_packet_receiver,
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
@@ -3957,6 +3977,7 @@ mod tests {
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let scheduling_context = &SchedulingContext::for_verification(bank.clone());
         let handler_context = &HandlerContext {
+            thread_count: 0,
             log_messages_bytes_limit: None,
             transaction_status_sender: None,
             replay_vote_sender: None,
@@ -4041,6 +4062,7 @@ mod tests {
                 Some(leader_schedule_cache),
             );
         let handler_context = &HandlerContext {
+            thread_count: 0,
             log_messages_bytes_limit: None,
             transaction_status_sender: Some(TransactionStatusSender { sender }),
             replay_vote_sender: None,
@@ -4139,6 +4161,7 @@ mod tests {
                 Some(leader_schedule_cache),
             );
         pool.register_banking_stage(
+            None,
             banking_packet_receiver,
             // we don't use the banking packet channel in this test. so, pass panicking handler.
             Box::new(|_, _| unreachable!()),
@@ -4215,6 +4238,7 @@ mod tests {
                 helper.send_new_task(helper.create_new_task(tx0.clone(), 17))
             });
         pool.register_banking_stage(
+            None,
             banking_packet_receiver,
             fixed_banking_packet_handler,
             transaction_recorder,
@@ -4282,6 +4306,7 @@ mod tests {
 
         let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
+            None,
             banking_packet_receiver,
             fixed_banking_packet_handler,
             transaction_recorder,
@@ -4356,6 +4381,7 @@ mod tests {
             );
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
+            None,
             banking_packet_receiver,
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
@@ -4408,6 +4434,7 @@ mod tests {
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
+            None,
             banking_packet_receiver,
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
@@ -4463,6 +4490,7 @@ mod tests {
                 Some(leader_schedule_cache),
             );
         pool.register_banking_stage(
+            None,
             banking_packet_receiver,
             Box::new(|_, _| unreachable!()),
             transaction_recorder,

@@ -49,6 +49,7 @@ pub(crate) fn ensure_banking_stage_setup(
     cluster_info: &impl LikeClusterInfo,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
     transaction_recorder: TransactionRecorder,
+    num_threads: u32,
 ) {
     let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
     let unified_receiver = channels.unified_receiver().clone();
@@ -87,6 +88,7 @@ pub(crate) fn ensure_banking_stage_setup(
     );
 
     pool.register_banking_stage(
+        Some(num_threads.try_into().unwrap()),
         unified_receiver,
         banking_packet_handler,
         transaction_recorder,
