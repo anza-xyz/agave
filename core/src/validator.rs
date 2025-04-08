@@ -5,7 +5,7 @@ use {
     crate::{
         accounts_hash_verifier::AccountsHashVerifier,
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
-        banking_stage::unified_scheduler::ensure_banking_stage_setup,
+        banking_stage::{unified_scheduler::ensure_banking_stage_setup, BankingStage},
         banking_trace::{self, BankingTracer, TraceError},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
@@ -1026,6 +1026,7 @@ impl Validator {
                     &cluster_info,
                     &poh_recorder,
                     transaction_recorder.clone(),
+                    BankingStage::num_threads(),
                 );
                 bank_forks
                     .write()

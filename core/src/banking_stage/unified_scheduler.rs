@@ -32,7 +32,7 @@ use {
         packet_deserializer::PacketDeserializer,
         LikeClusterInfo,
     },
-    crate::{banking_stage::BankingStage, banking_trace::Channels},
+    crate::banking_trace::Channels,
     agave_banking_stage_ingress_types::BankingPacketBatch,
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
@@ -49,12 +49,12 @@ pub(crate) fn ensure_banking_stage_setup(
     cluster_info: &impl LikeClusterInfo,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
     transaction_recorder: TransactionRecorder,
+    num_threads: u32,
 ) {
     if !pool.block_production_supported() {
         return;
     }
 
-    let thread_count = BankingStage::num_threads() as usize;
     let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
     let unified_receiver = channels.unified_receiver().clone();
     let mut decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
@@ -94,7 +94,7 @@ pub(crate) fn ensure_banking_stage_setup(
     );
 
     pool.register_banking_stage(
-        Some(thread_count),
+        Some(num_threads).map(|c| c.try_into().unwrap()),
         unified_receiver,
         banking_stage_monitor,
         banking_packet_handler,

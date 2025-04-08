@@ -113,6 +113,8 @@ impl SupportedSchedulingMode {
     }
 }
 
+type CountOrDefault = Option<usize>;
+
 /// A pool of idling schedulers (usually [`PooledScheduler`]), ready to be taken by bank.
 ///
 /// Also, the pool runs a _cleaner_ thread named as `solScCleaner`. its jobs include:
@@ -135,7 +137,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     common_handler_context: CommonHandlerContext,
-    block_verification_handler_count: Option<usize>,
+    block_verification_handler_count: CountOrDefault,
     banking_stage_handler_context: Mutex<Option<BankingStageHandlerContext>>,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
@@ -294,7 +296,7 @@ impl CommonHandlerContext {
 
 #[derive(derive_more::Debug)]
 struct BankingStageHandlerContext {
-    banking_thread_count: Option<usize>,
+    banking_thread_count: CountOrDefault,
     banking_packet_receiver: BankingPacketReceiver,
     banking_stage_monitor: Box<dyn BankingStageMonitor>,
     #[debug("{banking_packet_handler:p}")]
@@ -396,7 +398,7 @@ where
 {
     pub fn new(
         supported_scheduling_mode: SupportedSchedulingMode,
-        block_verification_handler_count: Option<usize>,
+        block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -418,7 +420,7 @@ where
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_verification(
-        block_verification_handler_count: Option<usize>,
+        block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -436,7 +438,7 @@ where
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_production(
-        block_verification_handler_count: Option<usize>,
+        block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -455,7 +457,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn do_new(
         supported_scheduling_mode: SupportedSchedulingMode,
-        block_verification_handler_count: Option<usize>,
+        block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -743,7 +745,7 @@ where
 
     pub fn register_banking_stage(
         &self,
-        banking_thread_count: Option<usize>,
+        banking_thread_count: CountOrDefault,
         banking_packet_receiver: BankingPacketReceiver,
         banking_stage_monitor: Box<dyn BankingStageMonitor>,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
@@ -863,7 +865,7 @@ where
         )
     }
 
-    pub fn calculate_default_handler_count(detected_cpu_core_count: Option<usize>) -> usize {
+    pub fn calculate_default_handler_count(detected_cpu_core_count: CountOrDefault) -> usize {
         // Divide by 4 just not to consume all available CPUs just with handler threads, sparing for
         // other active forks and other subsystems.
         // Also, if available_parallelism fails (which should be very rare), use 4 threads,
@@ -2589,7 +2591,7 @@ mod tests {
         TH: TaskHandler,
     {
         fn do_new_for_verification(
-            block_verification_handler_count: Option<usize>,
+            block_verification_handler_count: CountOrDefault,
             log_messages_bytes_limit: Option<usize>,
             transaction_status_sender: Option<TransactionStatusSender>,
             replay_vote_sender: Option<ReplayVoteSender>,
@@ -2616,7 +2618,7 @@ mod tests {
         // This apparently-meaningless wrapper is handy, because some callers explicitly want
         // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
         fn new_dyn_for_verification(
-            block_verification_handler_count: Option<usize>,
+            block_verification_handler_count: CountOrDefault,
             log_messages_bytes_limit: Option<usize>,
             transaction_status_sender: Option<TransactionStatusSender>,
             replay_vote_sender: Option<ReplayVoteSender>,

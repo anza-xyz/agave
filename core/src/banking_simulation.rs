@@ -782,6 +782,7 @@ impl BankingSimulator {
         let cluster_info_for_banking = Arc::new(DummyClusterInfo {
             id: simulated_leader.into(),
         });
+        let num_banking_threads = BankingStage::num_threads();
         let banking_tracer_channels = if let Some(pool) = unified_scheduler_pool {
             let channels = retracer.create_channels_for_scheduler_pool(&pool);
             ensure_banking_stage_setup(
@@ -791,6 +792,7 @@ impl BankingSimulator {
                 &cluster_info_for_banking,
                 &poh_recorder,
                 transaction_recorder.clone(),
+                num_banking_threads,
             );
             channels
         } else {
@@ -847,7 +849,7 @@ impl BankingSimulator {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
-            BankingStage::num_threads(),
+            num_banking_threads,
             None,
             replay_vote_sender,
             None,
