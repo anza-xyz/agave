@@ -134,8 +134,8 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     block_production_scheduler_inner: Mutex<BlockProductionSchedulerInner<S, TH>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
-    block_verification_handler_count: usize,
     common_handler_context: CommonHandlerContext,
+    block_verification_handler_count: usize,
     banking_stage_handler_context: Mutex<Option<BankingStageHandlerContext>>,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
@@ -294,7 +294,7 @@ impl CommonHandlerContext {
 
 #[derive(derive_more::Debug)]
 struct BankingStageHandlerContext {
-    handler_count: usize,
+    banking_thread_count: usize,
     banking_packet_receiver: BankingPacketReceiver,
     banking_stage_monitor: Box<dyn BankingStageMonitor>,
     #[debug("{banking_packet_handler:p}")]
@@ -474,13 +474,13 @@ where
             block_production_scheduler_inner: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
-            block_verification_handler_count,
             common_handler_context: CommonHandlerContext {
                 log_messages_bytes_limit,
                 transaction_status_sender,
                 replay_vote_sender,
                 prioritization_fee_cache,
             },
+            block_verification_handler_count,
             banking_stage_handler_context: Mutex::default(),
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
@@ -746,14 +746,14 @@ where
 
     pub fn register_banking_stage(
         &self,
-        handler_count: usize,
+        banking_thread_count: usize,
         banking_packet_receiver: BankingPacketReceiver,
         banking_stage_monitor: Box<dyn BankingStageMonitor>,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
         transaction_recorder: TransactionRecorder,
     ) {
         *self.banking_stage_handler_context.lock().unwrap() = Some(BankingStageHandlerContext {
-            handler_count,
+            banking_thread_count,
             banking_packet_receiver,
             banking_stage_monitor,
             banking_packet_handler,
@@ -823,7 +823,7 @@ where
                 let handler_context = handler_context.as_ref().unwrap();
 
                 (
-                    handler_context.handler_count,
+                    handler_context.banking_thread_count,
                     handler_context.banking_packet_receiver.clone(),
                     handler_context.banking_packet_handler.clone(),
                     Some(Arc::new(BankingStageHelper::new(new_task_sender))),
