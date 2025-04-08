@@ -12,7 +12,7 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
-<<<<<<< HEAD
+    crate::syscalls::mem_ops::is_nonoverlapping,
     agave_feature_set::{
         self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
         bpf_account_data_direct_mapping, curve25519_syscall_enabled,
@@ -25,9 +25,6 @@ use {
         remaining_compute_units_syscall_enabled, FeatureSet,
     },
     agave_precompiles::is_precompile,
-=======
-    crate::syscalls::mem_ops::is_nonoverlapping,
->>>>>>> ccbf3f25f (define is_nonverlapping function in solana-bpf-loader-program (#4888))
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
