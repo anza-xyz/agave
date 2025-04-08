@@ -294,7 +294,7 @@ impl CommonHandlerContext {
 
 #[derive(derive_more::Debug)]
 struct BankingStageHandlerContext {
-    block_production_handler_count: usize,
+    handler_count: usize,
     banking_packet_receiver: BankingPacketReceiver,
     banking_stage_monitor: Box<dyn BankingStageMonitor>,
     #[debug("{banking_packet_handler:p}")]
@@ -396,7 +396,7 @@ where
 {
     pub fn new(
         supported_scheduling_mode: SupportedSchedulingMode,
-        handler_count: Option<usize>,
+        block_verification_handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -404,7 +404,7 @@ where
     ) -> Arc<Self> {
         Self::do_new(
             supported_scheduling_mode,
-            handler_count,
+            block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
             replay_vote_sender,
@@ -418,7 +418,7 @@ where
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_verification(
-        handler_count: Option<usize>,
+        block_verification_handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -426,7 +426,7 @@ where
     ) -> Arc<Self> {
         Self::new(
             SupportedSchedulingMode::block_verification_only(),
-            handler_count,
+            block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
             replay_vote_sender,
@@ -436,7 +436,7 @@ where
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_production(
-        handler_count: Option<usize>,
+        block_verification_handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -444,7 +444,7 @@ where
     ) -> Arc<Self> {
         Self::new(
             SupportedSchedulingMode::block_production_only(),
-            handler_count,
+            block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
             replay_vote_sender,
@@ -455,7 +455,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn do_new(
         supported_scheduling_mode: SupportedSchedulingMode,
-        handler_count: Option<usize>,
+        block_verification_handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
@@ -465,7 +465,8 @@ where
         max_usage_queue_count: usize,
         timeout_duration: Duration,
     ) -> Arc<Self> {
-        let handler_count = handler_count.unwrap_or(Self::default_handler_count());
+        let block_verification_handler_count =
+            block_verification_handler_count.unwrap_or(Self::default_handler_count());
 
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
             supported_scheduling_mode,
@@ -473,7 +474,7 @@ where
             block_production_scheduler_inner: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
-            block_verification_handler_count: handler_count,
+            block_verification_handler_count,
             common_handler_context: CommonHandlerContext {
                 log_messages_bytes_limit,
                 transaction_status_sender,
@@ -745,14 +746,14 @@ where
 
     pub fn register_banking_stage(
         &self,
-        block_production_handler_count: usize,
+        handler_count: usize,
         banking_packet_receiver: BankingPacketReceiver,
         banking_stage_monitor: Box<dyn BankingStageMonitor>,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
         transaction_recorder: TransactionRecorder,
     ) {
         *self.banking_stage_handler_context.lock().unwrap() = Some(BankingStageHandlerContext {
-            block_production_handler_count,
+            handler_count,
             banking_packet_receiver,
             banking_stage_monitor,
             banking_packet_handler,
@@ -822,7 +823,7 @@ where
                 let handler_context = handler_context.as_ref().unwrap();
 
                 (
-                    handler_context.block_production_handler_count,
+                    handler_context.handler_count,
                     handler_context.banking_packet_receiver.clone(),
                     handler_context.banking_packet_handler.clone(),
                     Some(Arc::new(BankingStageHelper::new(new_task_sender))),
@@ -1506,7 +1507,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         );
     }
 
-    fn max_running_task_count(mode: SchedulingMode, handler_count: usize) -> Option<usize> {
+    fn max_running_task_count(mode: SchedulingMode, thread_count: usize) -> Option<usize> {
         match mode {
             BlockVerification => {
                 // Unlike block production, there is no agony for block verification with regards
@@ -1523,7 +1524,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 // all needs to be descheduled before finishing session.
                 //
                 // That said, max_running_task_count shouldn't naively be matched to
-                // handler_count (i.e. the number of handler threads). Actually, it should account
+                // thread_count (i.e. the number of handler threads). Actually, it should account
                 // for some extra queue depth to avoid depletions at the runnable task channel.
                 // Otherwise, handler thread could be busy-looping at best or stalled on syscall at
                 // worst for the next runnable task to be scheduled by the scheduler thread even
@@ -1543,7 +1544,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 const MAX_RUNNING_TASK_COUNT_FACTOR: usize = 2;
 
                 Some(
-                    handler_count
+                    thread_count
                         .checked_mul(MAX_RUNNING_TASK_COUNT_FACTOR)
                         .unwrap(),
                 )
@@ -2590,7 +2591,7 @@ mod tests {
         TH: TaskHandler,
     {
         fn do_new_for_verification(
-            handler_count: Option<usize>,
+            block_verification_handler_count: Option<usize>,
             log_messages_bytes_limit: Option<usize>,
             transaction_status_sender: Option<TransactionStatusSender>,
             replay_vote_sender: Option<ReplayVoteSender>,
@@ -2602,7 +2603,7 @@ mod tests {
         ) -> Arc<Self> {
             Self::do_new(
                 SupportedSchedulingMode::block_verification_only(),
-                handler_count,
+                block_verification_handler_count,
                 log_messages_bytes_limit,
                 transaction_status_sender,
                 replay_vote_sender,
@@ -2617,7 +2618,7 @@ mod tests {
         // This apparently-meaningless wrapper is handy, because some callers explicitly want
         // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
         fn new_dyn_for_verification(
-            handler_count: Option<usize>,
+            block_verification_handler_count: Option<usize>,
             log_messages_bytes_limit: Option<usize>,
             transaction_status_sender: Option<TransactionStatusSender>,
             replay_vote_sender: Option<ReplayVoteSender>,
@@ -2625,7 +2626,7 @@ mod tests {
         ) -> InstalledSchedulerPoolArc {
             Self::new(
                 SupportedSchedulingMode::block_verification_only(),
-                handler_count,
+                block_verification_handler_count,
                 log_messages_bytes_limit,
                 transaction_status_sender,
                 replay_vote_sender,
