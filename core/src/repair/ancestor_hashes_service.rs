@@ -781,26 +781,15 @@ impl AncestorHashesService {
     ) {
         dead_slot_pool.retain(|dead_slot| {
             let epoch = root_bank.get_epoch_and_slot_index(*dead_slot).0;
-            if let Some(epoch_stakes) = root_bank.epoch_stakes(epoch) {
+            //TODO: figure out if we even need to make this check
+            if let Some(_epoch_stakes) = root_bank.epoch_stakes(epoch) {
                 let status = cluster_slots.lookup(*dead_slot);
-                if let Some(completed_dead_slot_pubkeys) = status {
-                    let total_stake = epoch_stakes.total_stake();
-                    let node_id_to_vote_accounts = epoch_stakes.node_id_to_vote_accounts();
-                    let total_completed_slot_stake: u64 = completed_dead_slot_pubkeys
-                        .read()
-                        .unwrap()
-                        .iter()
-                        .map(|(key, _v)| {
-                            node_id_to_vote_accounts
-                                .get(key)
-                                .map(|v| v.total_stake)
-                                .unwrap_or(0)
-                        })
-                        .sum();
+                if let Some(completed_dead_slot_supporters) = status {
+                    let total_stake = completed_dead_slot_supporters.total_stake();
                     // If sufficient number of validators froze this slot, then there's a chance
                     // this dead slot was duplicate confirmed and will make it into in the main fork.
                     // This means it's worth asking the cluster to get the correct version.
-                    if total_completed_slot_stake as f64 / total_stake as f64 > DUPLICATE_THRESHOLD
+                    if completed_dead_slot_supporters.total_support() as f64 / total_stake as f64 > DUPLICATE_THRESHOLD
                     {
                         repairable_dead_slot_pool.insert(*dead_slot);
                         false

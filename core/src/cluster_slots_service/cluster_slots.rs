@@ -1,6 +1,6 @@
 use {
-    crate::replay_stage::DUPLICATE_THRESHOLD,
-    solana_clock::Slot,
+    crate::cluster_slots_service::slot_supporters::SlotSupporters,
+    crate::consensus::Stake,
     solana_gossip::{
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
@@ -28,99 +28,9 @@ use {
 // if we are really really far behind.
 const CLUSTER_SLOTS_TRIM_SIZE: usize = 50000;
 
-pub type Stake = u64;
-
 //This is intended to be switched to solana_pubkey::PubkeyHasherBuilder
 type PubkeyHasherBuilder = RandomState;
 pub(crate) type ValidatorStakesMap = HashMap<Pubkey, Stake, PubkeyHasherBuilder>;
-
-/// Pubkey-stake map for nodes that have confirmed this slot.
-/// If stake is zero the node has not confirmed the slot.
-pub(crate) type SlotPubkeys =
-    HashMap<Pubkey, AtomicU64 /* stake supporting */, PubkeyHasherBuilder>;
-
-/// Amount of stake that needs to lock the slot for us to stop updating it.
-/// This must be above `DUPLICATE_THRESHOLD` but also high enough to not starve
-/// repair (as it will prefer nodes that have confirmed a slot)
-const FREEZE_THRESHOLD: f64 = 0.9;
-// whatever freeze threshold we should be above DUPLICATE_THRESHOLD in order to not break consensus.
-// 1.1 margin is due to us not properly tracking epoch boundaries
-static_assertions::const_assert!(FREEZE_THRESHOLD > DUPLICATE_THRESHOLD * 1.1);
-
-type IndexMap = HashMap</*node:*/ Pubkey, /*index*/ usize, PubkeyHasherBuilder>;
-
-#[derive(Debug)]
-pub(crate) struct SlotSupporters {
-    total_support: AtomicU64, // total support for this slot = supported_stakes.sum()
-    total_stake: u64,         // total staked amount at this slot
-    supporting_stakes: Vec<AtomicU64>, // amount of stake per validator that has confirmed this slot
-    pubkey_to_index_map: Arc<IndexMap>, // map from pubkey to node index in supporting_stakes vector
-}
-
-fn repeat_atomic_u64(count: usize) -> impl Iterator<Item = AtomicU64> {
-    std::iter::repeat_with(|| AtomicU64::new(0)).take(count)
-}
-
-impl SlotSupporters {
-    #[inline]
-    fn set_stake_by_index(&self, index: usize, stake: Stake) {
-        let old = self.supporting_stakes[index].swap(stake, Ordering::Relaxed);
-        if stake > old {
-            self.total_support.fetch_add(stake - old, Ordering::Relaxed);
-        }
-    }
-    #[inline]
-    fn get_stake_by_index(&self, index: usize) -> Option<Stake> {
-        Some(self.supporting_stakes.get(index)?.load(Ordering::Relaxed))
-    }
-
-    fn get_stake_by_pubkey(&self, key: &Pubkey) -> Option<Stake> {
-        let index = self.pubkey_to_index_map.get(key)?;
-        self.get_stake_by_index(*index)
-    }
-
-    fn new(total_stake: Stake, index_map: Arc<IndexMap>) -> Self {
-        Self {
-            total_support: AtomicU64::new(0),
-            total_stake,
-            supporting_stakes: Vec::from_iter(repeat_atomic_u64(index_map.len())),
-            pubkey_to_index_map: index_map,
-        }
-    }
-    // recycles the object for new slot. If index_map is not provided,
-    // the old one will be reused (which is fine within the epoch)
-    fn recycle(mut self, total_stake: Stake, index_map: &Arc<IndexMap>) -> Self {
-        self.total_stake = total_stake;
-        self.total_support.store(0, Ordering::Relaxed);
-        let same_epoch = Arc::as_ptr(index_map) == Arc::as_ptr(&self.pubkey_to_index_map);
-        if !same_epoch {
-            let old_len = self.supporting_stakes.len();
-            let new_len = index_map.len();
-            if new_len < old_len * 2 {
-                // if new length is much less than allocation, reallocate
-                self.supporting_stakes = Vec::from_iter(repeat_atomic_u64(new_len));
-            } else {
-                // cut vec to length if needed
-                self.supporting_stakes.truncate(new_len);
-                // reset all old elements to zero
-                self.supporting_stakes
-                    .iter_mut()
-                    .for_each(|v| v.store(0, Ordering::Relaxed));
-                if self.supporting_stakes.len() < new_len {
-                    let num_missing = new_len - self.supporting_stakes.len();
-                    self.supporting_stakes
-                        .extend(repeat_atomic_u64(num_missing));
-                }
-            }
-            self.pubkey_to_index_map = index_map.clone();
-        } else {
-            self.supporting_stakes
-                .iter_mut()
-                .for_each(|v| v.store(0, Ordering::Relaxed));
-        }
-        self
-    }
-}
 
 ///Static snapshot of the information about a given epoch's stake distribution
 struct EpochStakeInfo {
@@ -156,6 +66,7 @@ impl EpochStakeInfo {
     }
 }
 
+/// Holds schedule of the epoch where root bank currently sits
 struct RootEpoch {
     number: Epoch,
     schedule: EpochSchedule,
@@ -182,14 +93,13 @@ struct RowContent {
 
 impl ClusterSlots {
     #[inline]
-    pub(crate) fn lookup(&self, slot: Slot) -> Option<Arc<RwLock<SlotPubkeys>>> {
+    pub(crate) fn lookup(&self, slot: Slot) -> Option<Arc<SlotSupporters>> {
         let cluster_slots = self.cluster_slots.read().unwrap();
-        /*Some(
+        Some(
             Self::get_row_for_slot(slot, &cluster_slots)?
                 .supporters
                 .clone(),
-        )*/
-        todo!()
+        )        
     }
 
     #[inline]
@@ -224,7 +134,8 @@ impl ClusterSlots {
     }
 
     fn need_to_update_epoch(&self, root_epoch: Epoch) -> bool {
-        let my_epoch = self.get_epoch_for_slot(self.get_current_slot());
+        let rg = self.root_epoch.read().unwrap();
+        let my_epoch =rg.as_ref().map(|v|v.number);
         let root_epoch = root_epoch;
         Some(root_epoch) != my_epoch
     }
@@ -372,18 +283,16 @@ impl ClusterSlots {
                     supporters: map,
                 } = Self::get_row_for_slot(slot, &cluster_slots).unwrap();
                 debug_assert_eq!(*s, slot, "Fetched slot does not match expected value!");
-                let slot_weight_f64 =
-                    map.total_support.load(std::sync::atomic::Ordering::Relaxed) as f64;
-
-                // once slot is confirmed beyond `FREEZE_THRESHOLD` we should not need
-                // to update the stakes for it anymore
-                if slot_weight_f64 / map.total_stake as f64 > FREEZE_THRESHOLD {
+                if map.is_frozen() {
                     continue;
                 }
-                let Some(idx) = map.pubkey_to_index_map.get(&epoch_slots.from) else {
+                if map
+                    .set_support_by_pubkey(&epoch_slots.from, sender_stake)
+                    .is_err()
+                {
+                    error!("Unexpected pubkey {} for slot {}!", &epoch_slots.from, slot);
                     break;
-                };
-                map.set_stake_by_index(*idx, sender_stake);
+                }
             }
         }
     }
@@ -393,7 +302,7 @@ impl ClusterSlots {
         let cluster_slots = self.cluster_slots.read().unwrap();
         cluster_slots
             .iter()
-            .map(|RowContent { supporters, .. }| supporters.supporting_stakes.len())
+            .map(|RowContent { supporters, .. }| supporters.memory_usage())
             .sum::<usize>()
     }
 
@@ -421,12 +330,7 @@ impl ClusterSlots {
     fn get_epoch_for_slot(&self, slot: Slot) -> Option<u64> {
         self.with_root_epoch(|b| b.schedule.get_epoch_and_slot_index(slot).0)
     }
-    fn get_stake(&self, id: &Pubkey, slot: Slot) -> Option<Stake> {
-        let epoch = self.get_epoch_for_slot(slot)?;
-        let epoch_metadata = self.epoch_metadata.read().unwrap();
-        let stakeinfo = epoch_metadata.get(&epoch)?;
-        stakeinfo.validator_stakes.get(id).cloned()
-    }
+
 
     #[cfg(test)]
     // patches the given node_id into the internal structures
@@ -472,11 +376,20 @@ impl ClusterSlots {
     }
 
     pub(crate) fn compute_weights(&self, slot: Slot, repair_peers: &[ContactInfo]) -> Vec<u64> {
-        /*if repair_peers.is_empty() {
+        if repair_peers.is_empty() {
             return vec![];
         }
         let stakes = {
-            let validator_stakes = self.validator_stakes.read().unwrap();
+            let Some(epoch) = self.get_epoch_for_slot(slot) else{
+                error!("No epoch info for slot {slot}");
+                return vec![];
+            };
+            let epoch_metadata = self.epoch_metadata.read().unwrap();
+            let Some(stakeinfo) = epoch_metadata.get(&epoch) else {
+                error!("No epoch_metadata record for epoch {epoch}");
+                return vec![];
+            };
+            let validator_stakes = stakeinfo.validator_stakes.as_ref();
             repair_peers
                 .iter()
                 .map(|peer| validator_stakes.get(peer.pubkey()).cloned().unwrap_or(0) + 1)
@@ -485,20 +398,18 @@ impl ClusterSlots {
         let Some(slot_peers) = self.lookup(slot) else {
             return stakes;
         };
-        let slot_peers = slot_peers.read().unwrap();
+     
         repair_peers
             .iter()
             .map(|peer| {
-                slot_peers
-                    .get(peer.pubkey())
-                    .map(|v| v.load(Ordering::Relaxed))
+                slot_peers.get_support_by_pubkey(peer.pubkey())                    
                     .unwrap_or(0)
             })
             .zip(stakes)
             .map(|(a, b)| (a / 2 + b / 2).max(1u64))
             .collect()
-            */
-        todo!()
+            
+   
     }
 
     pub(crate) fn compute_weights_exclude_nonfrozen(
@@ -506,20 +417,20 @@ impl ClusterSlots {
         slot: Slot,
         repair_peers: &[ContactInfo],
     ) -> (Vec<u64>, Vec<usize>) {
-        /*let Some(slot_peers) = self.lookup(slot) else {
+        let Some(slot_peers) = self.lookup(slot) else {
             return (vec![], vec![]);
         };
         let mut weights = Vec::with_capacity(repair_peers.len());
         let mut indices = Vec::with_capacity(repair_peers.len());
-        let slot_peers = slot_peers.read().unwrap();
+        
         for (index, peer) in repair_peers.iter().enumerate() {
-            if let Some(stake) = slot_peers.get(peer.pubkey()) {
-                weights.push(stake.load(Ordering::Relaxed) + 1);
+            if let Some(stake) = slot_peers.get_support_by_pubkey(peer.pubkey()) {
+                weights.push(stake + 1);
                 indices.push(index);
             }
         }
-        (weights, indices)*/
-        todo!()
+        (weights, indices)
+        
     }
 }
 
