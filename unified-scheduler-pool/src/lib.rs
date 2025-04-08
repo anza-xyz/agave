@@ -2015,7 +2015,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     }
                     assert!(mem::replace(&mut session_ending, false));
 
+                    // This variable is hoisted from OpenSubchannel match arm to pass the rustc
+                    // borrow checker because it can't tell the control-flow diverging
+                    // UnpauseOpenedSubchannel won't be used by itself, which would leave
+                    // `result_with_timings` uninitialized after sending it via
+                    // session_result_sender just above
                     let mut new_result_with_timings = initialized_result_with_timings();
+
                     loop {
                         if session_resetting {
                             assert_matches!(scheduling_mode, BlockProduction);
@@ -2055,14 +2061,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // the new BankWithScheduler. So, only break from this loop for
                                 // block verification.
                                 if matches!(scheduling_mode, BlockVerification) {
-                                    result_with_timings = new_result_with_timings;
                                     break;
                                 }
                             }
                             Ok(NewTaskPayload::UnpauseOpenedSubchannel) => {
                                 assert_matches!(scheduling_mode, BlockProduction);
                                 // poh update is guaranteed now; time to crunch on tasks!
-                                result_with_timings = new_result_with_timings;
                                 break;
                             }
                             Ok(NewTaskPayload::CloseSubchannel) => {
@@ -2082,6 +2086,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                         }
                     }
+                    result_with_timings = new_result_with_timings;
                 }
 
                 // There are several code-path reaching here out of the preceding unconditional
