@@ -181,12 +181,12 @@ impl ClusterSlots {
 
     /// Advance the cluster_slots ringbuffer, initialize if needed.
     /// We will discard slots at or before current root or too far ahead.
-    fn roll_cluster_slots(&self, root: Slot) -> Option<Range<Slot>> {
+    fn roll_cluster_slots(&self, root: Slot) -> Range<Slot> {
         let slot_range = (root + 1)..root.saturating_add(CLUSTER_SLOTS_TRIM_SIZE as u64 + 1);
         let current_slot = self.current_slot.load(Ordering::Relaxed);
         // early-return if no slot change happened
         if current_slot == slot_range.start {
-            return Some(slot_range);
+            return slot_range;
         }
         assert!(
             slot_range.start > current_slot,
@@ -199,9 +199,13 @@ impl ClusterSlots {
         if cluster_slots.is_empty() {
             for slot in slot_range.clone() {
                 // Epoch should be defined for all slots in the window
-                let epoch = self.get_epoch_for_slot(slot)?;
+                let epoch = self
+                    .get_epoch_for_slot(slot)
+                    .expect("Epoch should be defined for all slots");
                 //Data for current epoch should exist
-                let epoch_data = epoch_metadata.get(&epoch)?;
+                let epoch_data = epoch_metadata
+                    .get(&epoch)
+                    .expect("Epoch stake information should be available for all slots");
                 let supporters =
                     SlotSupporters::new(epoch_data.total_stake, epoch_data.pubkey_to_index.clone());
                 self.metric_allocations.fetch_add(1, Ordering::Relaxed);
@@ -250,16 +254,13 @@ impl ClusterSlots {
             "Ring buffer should be exactly the intended size"
         );
         self.current_slot.store(slot_range.start, Ordering::Relaxed);
-        Some(slot_range)
+        slot_range
     }
 
     fn update_internal(&self, root: Slot, epoch_slots_list: Vec<EpochSlots>) {
         // Adjust the range of slots we can store in the datastructure to the
         // current rooted slot, ensure the datastructure has the correct window in scope
-        let Some(slot_range) = self.roll_cluster_slots(root) else {
-            error!("Can not update ClusterSlots, missing epoch info!");
-            return;
-        };
+        let slot_range = self.roll_cluster_slots(root);
 
         let epoch_metadata = self.epoch_metadata.read().unwrap();
         let cluster_slots = self.cluster_slots.read().unwrap();
@@ -500,13 +501,6 @@ mod tests {
         cs.fake_epoch_info_for_tests(validator_stakes);
         cs.roll_cluster_slots(10);
         cs.roll_cluster_slots(5);
-    }
-    #[test]
-    fn test_update_noop() {
-        let cs = ClusterSlots::default();
-        cs.update_internal(0, vec![]);
-        let stored_slots = cs.datastructure_size();
-        assert_eq!(stored_slots, 0);
     }
 
     #[test]
