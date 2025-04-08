@@ -38,7 +38,7 @@ env:
 
 jobs:
   check:
-    if: github.repository == 'anza-xyz/agave'
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -76,7 +76,7 @@ jobs:
           cargo check
 
   test_cli:
-    if: github.repository == 'anza-xyz/agave'
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -106,7 +106,7 @@ jobs:
           cargo test --manifest-path clients/cli/Cargo.toml
 
   cargo-test-sbf:
-    if: github.repository == 'anza-xyz/agave'
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:

@@ -84,6 +84,7 @@ enum CheckPoint<'a> {
     TimeoutListenerTriggered(usize),
 }
 
+type CountOrDefault = Option<usize>;
 type AtomicSchedulerId = AtomicU64;
 
 #[derive(Debug)]
@@ -112,8 +113,6 @@ impl SupportedSchedulingMode {
         Self::Both
     }
 }
-
-type CountOrDefault = Option<usize>;
 
 /// A pool of idling schedulers (usually [`PooledScheduler`]), ready to be taken by bank.
 ///
