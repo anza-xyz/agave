@@ -17,8 +17,8 @@ fi
 
 
 profile=debug
-if [[ -n $NDEBUG ]]; then
-  profile=release
+if [[ -n $CARGO_BUILD_PROFILE ]]; then
+  profile=$CARGO_BUILD_PROFILE
 fi
 PATH=$PWD/target/$profile:$PATH
 
