@@ -13,6 +13,7 @@ use {solana_account::WritableAccount, solana_rent::Rent, std::mem::MaybeUninit};
 use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
+    solana_instructions_sysvar as instructions,
     solana_pubkey::Pubkey,
     std::{
         cell::{Ref, RefCell, RefMut},
@@ -131,17 +132,6 @@ impl TransactionAccounts {
             .map_err(|_| InstructionError::AccountBorrowFailed)
     }
 
-    pub fn try_borrow_mut(
-        &self,
-        index: IndexOfAccount,
-    ) -> Result<RefMut<'_, AccountSharedData>, InstructionError> {
-        self.accounts
-            .get(index as usize)
-            .ok_or(InstructionError::MissingAccount)?
-            .try_borrow_mut()
-            .map_err(|_| InstructionError::AccountBorrowFailed)
-    }
-
     pub fn into_accounts(self) -> Vec<AccountSharedData> {
         self.accounts
             .into_iter()
@@ -161,6 +151,7 @@ pub struct TransactionContext {
     instruction_trace_capacity: usize,
     instruction_stack: Vec<usize>,
     instruction_trace: Vec<InstructionContext>,
+    top_level_instruction_index: usize,
     return_data: TransactionReturnData,
     accounts_resize_delta: RefCell<i64>,
     #[cfg(not(target_os = "solana"))]
@@ -196,6 +187,7 @@ impl TransactionContext {
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
             instruction_trace: vec![InstructionContext::default()],
+            top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
             accounts_resize_delta: RefCell::new(0),
             remove_accounts_executable_flag_checks: true,
@@ -267,7 +259,10 @@ impl TransactionContext {
     }
 
     /// Searches for an account by its key
-    #[cfg(not(target_os = "solana"))]
+    #[cfg(all(
+        not(target_os = "solana"),
+        any(test, feature = "dev-context-only-utils")
+    ))]
     pub fn get_account_at_index(
         &self,
         index_in_transaction: IndexOfAccount,
@@ -398,6 +393,18 @@ impl TransactionContext {
             return Err(InstructionError::CallDepth);
         }
         self.instruction_stack.push(index_in_trace);
+        if let Some(index_in_transaction) = self.find_index_of_account(&instructions::id()) {
+            let mut mut_account_ref = self
+                .accounts
+                .get(index_in_transaction)
+                .ok_or(InstructionError::NotEnoughAccountKeys)?
+                .try_borrow_mut()
+                .map_err(|_| InstructionError::AccountBorrowFailed)?;
+            instructions::store_current_index(
+                mut_account_ref.data_as_mut_slice(),
+                self.top_level_instruction_index as u16,
+            );
+        }
         Ok(())
     }
 
@@ -412,8 +419,10 @@ impl TransactionContext {
             self.get_current_instruction_context()
                 .and_then(|instruction_context| {
                     // Verify all executable accounts have no outstanding refs
-                    for account_index in instruction_context.program_accounts.iter() {
-                        self.get_account_at_index(*account_index)?
+                    for index_in_transaction in instruction_context.program_accounts.iter() {
+                        self.accounts
+                            .get(*index_in_transaction)
+                            .ok_or(InstructionError::NotEnoughAccountKeys)?
                             .try_borrow_mut()
                             .map_err(|_| InstructionError::AccountBorrowOutstanding)?;
                     }
@@ -425,6 +434,9 @@ impl TransactionContext {
                 });
         // Always pop, even if we `detected_an_unbalanced_instruction`
         self.instruction_stack.pop();
+        if self.instruction_stack.is_empty() {
+            self.top_level_instruction_index = self.top_level_instruction_index.saturating_add(1);
+        }
         if detected_an_unbalanced_instruction? {
             Err(InstructionError::UnbalancedInstruction)
         } else {
@@ -465,7 +477,9 @@ impl TransactionContext {
             let index_in_transaction = instruction_context
                 .get_index_of_instruction_account_in_transaction(instruction_account_index)?;
             instruction_accounts_lamport_sum = (self
-                .get_account_at_index(index_in_transaction)?
+                .accounts
+                .get(index_in_transaction)
+                .ok_or(InstructionError::NotEnoughAccountKeys)?
                 .try_borrow()
                 .map_err(|_| InstructionError::AccountBorrowOutstanding)?
                 .lamports() as u128)
@@ -481,6 +495,32 @@ impl TransactionContext {
             .try_borrow()
             .map_err(|_| InstructionError::GenericError)
             .map(|value_ref| *value_ref)
+    }
+
+    /// Returns a new account data write access handler
+    pub fn account_data_write_access_handler(&self) -> Box<dyn Fn(u64) -> Result<u64, ()>> {
+        let accounts = Rc::clone(&self.accounts);
+        Box::new(move |index_in_transaction| {
+            // The two calls below can't really fail. If they fail because of a bug,
+            // whatever is writing will trigger an EbpfError::AccessViolation like
+            // if the region was readonly, and the transaction will fail gracefully.
+            let mut account = accounts
+                .accounts
+                .get(index_in_transaction as usize)
+                .ok_or(())?
+                .try_borrow_mut()
+                .map_err(|_| ())?;
+            accounts
+                .touch(index_in_transaction as IndexOfAccount)
+                .map_err(|_| ())?;
+
+            if account.is_shared() {
+                // See BorrowedAccount::make_data_mut() as to why we reserve extra
+                // MAX_PERMITTED_DATA_INCREASE bytes here.
+                account.reserve(MAX_PERMITTED_DATA_INCREASE);
+            }
+            Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
+        })
     }
 }
 

@@ -10492,6 +10492,7 @@ dependencies = [
  "solana-account",
  "solana-account-info",
  "solana-instruction",
+ "solana-instructions-sysvar",
  "solana-pubkey",
  "solana-rent",
  "solana-signature",
