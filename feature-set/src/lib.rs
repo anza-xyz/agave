@@ -654,7 +654,7 @@ pub mod enable_turbine_fanout_experiments {
 }
 
 pub mod disable_turbine_fanout_experiments {
-    solana_pubkey::declare_id!("Gz1aLrbeQ4Q6PTSafCZcGWZXz91yVRi7ASFzFEr1U4sa");
+    solana_pubkey::declare_id!("turbnbNRp22nwZCmgVVXFSshz7H7V23zMzQgA46YpmQ");
 }
 
 pub mod move_serialized_len_ptr_in_cpi {
@@ -933,7 +933,7 @@ pub mod enable_transaction_loading_failure_fees {
 }
 
 pub mod enable_turbine_extended_fanout_experiments {
-    solana_pubkey::declare_id!("BZn14Liea52wtBwrXUxTv6vojuTTmfc7XGEDTXrvMD7b");
+    solana_pubkey::declare_id!("turbRpTzBzDU6PJmWvRTbcJXXGxUs19CvQamUrRD9bN");
 }
 
 pub mod deprecate_legacy_vote_ixs {
