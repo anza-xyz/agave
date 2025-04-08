@@ -789,7 +789,8 @@ impl AncestorHashesService {
                     // If sufficient number of validators froze this slot, then there's a chance
                     // this dead slot was duplicate confirmed and will make it into in the main fork.
                     // This means it's worth asking the cluster to get the correct version.
-                    if completed_dead_slot_supporters.total_support() as f64 / total_stake as f64 > DUPLICATE_THRESHOLD
+                    if completed_dead_slot_supporters.total_support() as f64 / total_stake as f64
+                        > DUPLICATE_THRESHOLD
                     {
                         repairable_dead_slot_pool.insert(*dead_slot);
                         false
@@ -889,6 +890,7 @@ mod test {
     use {
         super::*,
         crate::{
+            cluster_slots_service::cluster_slots::ValidatorStakesMap,
             repair::{
                 cluster_slot_state_verifier::{DuplicateSlotsToRepair, PurgeRepairSlotCounter},
                 duplicate_repair_status::DuplicateAncestorDecision,
@@ -1198,9 +1200,14 @@ mod test {
         assert!(dead_slot_pool.contains(&dead_slot));
         assert!(repairable_dead_slot_pool.is_empty());
 
+        let validator_stakes: ValidatorStakesMap = (0..2)
+            .zip(vote_simulator.node_pubkeys.iter())
+            .map(|(_i, pk)| (*pk, 42))
+            .collect();
+        cluster_slots.fake_epoch_info_for_tests(validator_stakes);
         // Slot hasn't reached the threshold
         for (i, key) in (0..2).zip(vote_simulator.node_pubkeys.iter()) {
-            cluster_slots.insert_node_id(dead_slot, *key, Some(42));
+            cluster_slots.insert_node_id(dead_slot, *key);
             AncestorHashesService::find_epoch_slots_frozen_dead_slots(
                 &cluster_slots,
                 &mut dead_slot_pool,
@@ -1543,7 +1550,9 @@ mod test {
 
         // Add the responder to the eligible list for requests
         let responder_id = *responder_info.pubkey();
-        cluster_slots.insert_node_id(dead_slot, responder_id, Some(42));
+        let validator_stakes = ValidatorStakesMap::from([(responder_id, 42)]);
+        cluster_slots.fake_epoch_info_for_tests(validator_stakes);
+        cluster_slots.insert_node_id(dead_slot, responder_id);
         requester_cluster_info.insert_info(responder_info.clone());
         // Now the request should actually be made
         AncestorHashesService::initiate_ancestor_hashes_requests_for_duplicate_slot(
@@ -1998,7 +2007,9 @@ mod test {
 
         // Add the responder to the eligible list for requests
         let responder_id = *responder_info.pubkey();
-        cluster_slots.insert_node_id(dead_slot, responder_id, Some(42));
+        let validator_stakes = ValidatorStakesMap::from([(responder_id, 42)]);
+        cluster_slots.fake_epoch_info_for_tests(validator_stakes);
+        cluster_slots.insert_node_id(dead_slot, responder_id);
         requester_cluster_info.insert_info(responder_info.clone());
 
         // Send a request to generate a ping

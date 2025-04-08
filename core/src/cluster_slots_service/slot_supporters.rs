@@ -1,9 +1,6 @@
 use {
-    crate::consensus::Stake,
-    crate::replay_stage::DUPLICATE_THRESHOLD,
-    solana_sdk::
-        pubkey::Pubkey
-    ,
+    crate::{consensus::Stake, replay_stage::DUPLICATE_THRESHOLD},
+    solana_sdk::pubkey::Pubkey,
     std::{
         collections::HashMap,
         hash::RandomState,
@@ -29,8 +26,8 @@ const FREEZE_THRESHOLD: f64 = 0.9;
 static_assertions::const_assert!(FREEZE_THRESHOLD > DUPLICATE_THRESHOLD * 1.1);
 
 /// Pubkey-stake map for nodes that have confirmed this slot.
-/// Internally, this uses an index array that is shared for all instances 
-/// within an epoch. 
+/// Internally, this uses an index array that is shared for all instances
+/// within an epoch.
 #[derive(Debug)]
 pub struct SlotSupporters {
     total_support: AtomicU64, // total support for this slot = supported_stakes.sum()
@@ -56,19 +53,17 @@ impl SlotSupporters {
         }
     }
     /// Current support for this slot (sum of supporting stakes)
-      #[inline]
-    pub(crate) fn total_support(&self)->Stake{
-        self
-        .total_support
-        .load(std::sync::atomic::Ordering::Relaxed)
+    #[inline]
+    pub(crate) fn total_support(&self) -> Stake {
+        self.total_support
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
     /// Total staked amount for this slot
     ///   #[inline]
-    pub(crate) fn total_stake(&self)->Stake{
-        self
-        .total_stake
-    } 
-     #[inline]
+    pub(crate) fn total_stake(&self) -> Stake {
+        self.total_stake
+    }
+    #[inline]
     pub(crate) fn is_frozen(&self) -> bool {
         let slot_weight_f64 = self.total_support() as f64;
 
@@ -138,13 +133,13 @@ impl SlotSupporters {
         self
     }
 
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a Pubkey, Stake)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Pubkey, Stake)> {
         self.pubkey_to_index_map
             .iter()
             .map(|(pk, &idx)| (pk, self.get_support_by_index(idx).unwrap()))
     }
 
-    pub fn keys<'a>(&'a self) -> impl Iterator<Item = &'a Pubkey> {
+    pub fn keys(&self) -> impl Iterator<Item = &Pubkey> {
         self.pubkey_to_index_map.iter().filter_map(|(pk, &idx)| {
             if self.get_support_by_index(idx).unwrap() > 0 {
                 Some(pk)
