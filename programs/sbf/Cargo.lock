@@ -6846,7 +6846,6 @@ dependencies = [
  "bincode",
  "bv",
  "caps",
- "crossbeam-channel",
  "curve25519-dalek 4.1.3",
  "dlopen2",
  "fnv",
@@ -9163,6 +9162,7 @@ dependencies = [
  "solana-unified-scheduler-logic",
  "static_assertions",
  "trait-set",
+ "unwrap_none",
  "vec_extract_if_polyfill",
 ]
 

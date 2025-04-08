@@ -61,6 +61,7 @@ use {
         time::{Duration, Instant},
     },
     trait_set::trait_set,
+    unwrap_none::UnwrapNone,
     vec_extract_if_polyfill::MakeExtractIf,
 };
 
@@ -571,19 +572,23 @@ where
                 };
 
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
-                    let mut id_and_inner = scheduler_pool
+                    let mut inner = scheduler_pool
                         .block_production_scheduler_inner
                         .lock()
                         .unwrap();
-                    if let Some(pooled) = id_and_inner.peek_pooled() {
+                    if let Some(pooled) = inner.peek_pooled() {
                         if pooled.is_overgrown() {
-                            let pooled = id_and_inner.take_pooled();
-                            //assert_eq!(Some(pooled.id()), id_and_inner.0.take());
-                            scheduler_pool.spawn_block_production_scheduler(&mut id_and_inner);
-                            drop(id_and_inner);
+                            let pooled = inner.take_pooled();
+                            //assert_eq!(Some(pooled.id()), inner.0.take());
+                            scheduler_pool.spawn_block_production_scheduler(&mut inner);
+                            drop(inner);
                             drop(pooled);
                         } else {
-                            pooled.reset();
+                            pooled.discard_buffered_tasks();
+                            // Prevent replay stage's OpenSubchannel from winning the race by
+                            // holding the inner lock for extended duration. Reset must be sent
+                            // only during gaps of subchannels.
+                            drop(inner);
                         }
                     }
                 }
@@ -602,14 +607,14 @@ where
                     // Wait a bit to ensure the replay stage has gone.
                     sleep(Duration::from_secs(1));
 
-                    let mut id_and_inner = scheduler_pool
+                    let mut inner = scheduler_pool
                         .block_production_scheduler_inner
                         .lock()
                         .unwrap();
-                    if id_and_inner.can_take() {
+                    if inner.can_take() {
                         // assert that block production scheduler isn't taken anymore and has been
                         // returned to the pool
-                        id_and_inner.take_pooled();
+                        inner.take_pooled();
                     }
                     break;
                 }
@@ -1691,11 +1696,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 
     fn put_session_result_with_timings(&mut self, result_with_timings: ResultWithTimings) {
-        assert_matches!(
-            self.session_result_with_timings
-                .replace(result_with_timings),
-            None
-        );
+        self.session_result_with_timings
+            .replace(result_with_timings)
+            .unwrap_none();
     }
 
     // This method must take same set of session-related arguments as start_session() to avoid
@@ -1824,8 +1827,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 .new_task_receiver
                 .take()
                 .expect("no 2nd start_threads()");
-
-            let mut session_resetting = false;
 
             // Now, this is the main loop for the scheduler thread, which is a special beast.
             //
@@ -1958,19 +1959,15 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         sleepless_testing::at(CheckPoint::SessionEnding);
                                         session_ending = true;
                                     }
-                                    Ok(NewTaskPayload::OpenSubchannel(_) | NewTaskPayload::UnpauseOpenedSubchannel) =>
+                                    Ok(NewTaskPayload::OpenSubchannel(_)
+                                       | NewTaskPayload::UnpauseOpenedSubchannel
+                                       | NewTaskPayload::Reset) =>
                                         unreachable!(),
                                     Ok(NewTaskPayload::Disconnect) | Err(RecvError) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
                                         // abandoned forks...
                                         // This short-circuiting is tested with test_scheduler_drop_short_circuiting.
                                         break 'nonaborted_main_loop;
-                                    }
-                                    Ok(NewTaskPayload::Reset) => {
-                                        assert_matches!(scheduling_mode, BlockProduction);
-                                        sleepless_testing::at(CheckPoint::SessionEnding);
-                                        session_ending = true;
-                                        session_resetting = true;
                                     }
                                 }
                             },
@@ -2020,17 +2017,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     // UnpauseOpenedSubchannel won't be used by itself, which would leave
                     // `result_with_timings` uninitialized after sending it via
                     // session_result_sender just above
-                    let mut new_result_with_timings = initialized_result_with_timings();
+                    let mut new_result_with_timings = None;
 
+                    let mut discard_on_reset = false;
                     loop {
-                        if session_resetting {
-                            assert_matches!(scheduling_mode, BlockProduction);
+                        if discard_on_reset {
+                            discard_on_reset = false;
                             while let Some(task) = state_machine.schedule_next_unblocked_task() {
                                 state_machine.deschedule_task(&task);
-                                drop(task);
                             }
-                            // should call state_machine.reinitialize()???
-                            session_resetting = false;
+                            state_machine.reinitialize();
                         }
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
@@ -2042,9 +2038,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 state_machine.buffer_task(task);
                             }
                             Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
-                                let new_context;
-                                (new_context, new_result_with_timings) =
-                                    *context_and_result_with_timings;
+                                let new_context = context_and_result_with_timings.0;
+                                new_result_with_timings
+                                    .replace(context_and_result_with_timings.1)
+                                    .unwrap_none();
                                 // We just received subsequent (= not initial) session and about to
                                 // enter into the preceding `while(!is_finished) {...}` loop again.
                                 // Before that, propagate new SchedulingContext to handler threads
@@ -2082,11 +2079,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             Ok(NewTaskPayload::Reset) => {
                                 assert_matches!(scheduling_mode, BlockProduction);
-                                session_resetting = true;
+                                discard_on_reset = true;
                             }
                         }
                     }
-                    result_with_timings = new_result_with_timings;
+                    result_with_timings = new_result_with_timings.unwrap();
                 }
 
                 // There are several code-path reaching here out of the preceding unconditional
@@ -2359,7 +2356,7 @@ pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_trashed(&self) -> bool;
     fn is_overgrown(&self) -> bool;
-    fn reset(&self);
+    fn discard_buffered_tasks(&self);
     fn ensure_abort(&mut self);
 }
 
@@ -2518,7 +2515,7 @@ where
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count)
     }
 
-    fn reset(&self) {
+    fn discard_buffered_tasks(&self) {
         if let Err(a) = self
             .thread_manager
             .new_task_sender
@@ -4213,7 +4210,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn reset(&self) {
+        fn discard_buffered_tasks(&self) {
             unimplemented!()
         }
 
