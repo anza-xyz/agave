@@ -949,9 +949,9 @@ impl RepairService {
         // Filter out any peers that don't have a valid repair socket.
         let repair_peers: Vec<(Pubkey, SocketAddr, u32)> = peers_with_slot
             .iter()
-            .filter_map(|(pubkey, stake)| {                
+            .filter_map(|(pubkey, stake)| {
                 let peer_repair_addr = cluster_info
-                    .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
+                    .lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP));
                 if let Some(Some(peer_repair_addr)) = peer_repair_addr {
                     trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
                     Some((

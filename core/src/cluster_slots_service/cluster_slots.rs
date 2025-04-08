@@ -99,13 +99,14 @@ impl ClusterSlots {
             Self::get_row_for_slot(slot, &cluster_slots)?
                 .supporters
                 .clone(),
-        )        
+        )
     }
 
     #[inline]
     fn get_row_for_slot(slot: Slot, cluster_slots: &VecDeque<RowContent>) -> Option<&RowContent> {
         let start = cluster_slots.front()?.slot;
         if slot < start {
+            dbg!("Slot in the past", slot, cluster_slots.front()?.slot);
             return None;
         }
         let idx = slot - start;
@@ -135,7 +136,7 @@ impl ClusterSlots {
 
     fn need_to_update_epoch(&self, root_epoch: Epoch) -> bool {
         let rg = self.root_epoch.read().unwrap();
-        let my_epoch =rg.as_ref().map(|v|v.number);
+        let my_epoch = rg.as_ref().map(|v| v.number);
         let root_epoch = root_epoch;
         Some(root_epoch) != my_epoch
     }
@@ -179,12 +180,12 @@ impl ClusterSlots {
 
     /// Advance the cluster_slots ringbuffer, initialize if needed.
     /// We will discard slots at or before current root or too far ahead.
-    fn roll_cluster_slots(&self, root: Slot) -> Range<Slot> {
+    fn roll_cluster_slots(&self, root: Slot) -> Option<Range<Slot>> {
         let slot_range = (root + 1)..root.saturating_add(CLUSTER_SLOTS_TRIM_SIZE as u64 + 1);
-        let current_slot = self.current_slot.swap(slot_range.start, Ordering::Relaxed);
+        let current_slot = self.current_slot.load(Ordering::Relaxed);
         // early-return if no slot change happened
         if current_slot == slot_range.start {
-            return slot_range;
+            return Some(slot_range);
         }
         assert!(
             slot_range.start > current_slot,
@@ -196,12 +197,10 @@ impl ClusterSlots {
         //startup init, this is very slow but only ever happens once
         if cluster_slots.is_empty() {
             for slot in slot_range.clone() {
-                let epoch = self
-                    .get_epoch_for_slot(slot)
-                    .expect("Epoch should be defined for all slots in the window");
-                let epoch_data = epoch_metadata
-                    .get(&epoch)
-                    .expect("Data for current epoch should exist");
+                // Epoch should be defined for all slots in the window
+                let epoch = self.get_epoch_for_slot(slot)?;
+                //Data for current epoch should exist
+                let epoch_data = epoch_metadata.get(&epoch)?;
                 let supporters =
                     SlotSupporters::new(epoch_data.total_stake, epoch_data.pubkey_to_index.clone());
                 self.metric_allocations.fetch_add(1, Ordering::Relaxed);
@@ -249,28 +248,37 @@ impl ClusterSlots {
             cluster_slots.len() == CLUSTER_SLOTS_TRIM_SIZE,
             "Ring buffer should be exactly the intended size"
         );
-        slot_range
+        self.current_slot.store(slot_range.start, Ordering::Relaxed);
+        Some(slot_range)
     }
 
     fn update_internal(&self, root: Slot, epoch_slots_list: Vec<EpochSlots>) {
         // Adjust the range of slots we can store in the datastructure to the
         // current rooted slot, ensure the datastructure has the correct window in scope
-        let slot_range = self.roll_cluster_slots(root);
+        let Some(slot_range) = self.roll_cluster_slots(root) else {
+            error!("Can not update ClusterSlots, missing epoch info!");
+            return;
+        };
 
         let epoch_metadata = self.epoch_metadata.read().unwrap();
         let cluster_slots = self.cluster_slots.read().unwrap();
         for epoch_slots in epoch_slots_list {
+            dbg!(&epoch_slots);
             let Some(first_slot) = epoch_slots.first_slot() else {
+                dbg!(1);
                 continue;
             };
             let Some(epoch) = self.get_epoch_for_slot(first_slot) else {
+                dbg!(2);
                 continue;
             };
             let Some(epoch_meta) = epoch_metadata.get(&epoch) else {
+                dbg!(3);
                 continue;
             };
             //filter out unstaked nodes
             let Some(&sender_stake) = epoch_meta.validator_stakes.get(&epoch_slots.from) else {
+                dbg!(4);
                 continue;
             };
             let updates = epoch_slots
@@ -284,6 +292,7 @@ impl ClusterSlots {
                 } = Self::get_row_for_slot(slot, &cluster_slots).unwrap();
                 debug_assert_eq!(*s, slot, "Fetched slot does not match expected value!");
                 if map.is_frozen() {
+                    dbg!("Map is frozen, no more updates!");
                     continue;
                 }
                 if map
@@ -330,7 +339,6 @@ impl ClusterSlots {
     fn get_epoch_for_slot(&self, slot: Slot) -> Option<u64> {
         self.with_root_epoch(|b| b.schedule.get_epoch_and_slot_index(slot).0)
     }
-
 
     #[cfg(test)]
     // patches the given node_id into the internal structures
@@ -380,36 +388,39 @@ impl ClusterSlots {
             return vec![];
         }
         let stakes = {
-            let Some(epoch) = self.get_epoch_for_slot(slot) else{
+            let failsafe = std::iter::repeat_n(1, repair_peers.len());
+            let Some(epoch) = self.get_epoch_for_slot(slot) else {
                 error!("No epoch info for slot {slot}");
-                return vec![];
+                return Vec::from_iter(failsafe);
             };
             let epoch_metadata = self.epoch_metadata.read().unwrap();
             let Some(stakeinfo) = epoch_metadata.get(&epoch) else {
                 error!("No epoch_metadata record for epoch {epoch}");
-                return vec![];
+                return Vec::from_iter(failsafe);
             };
             let validator_stakes = stakeinfo.validator_stakes.as_ref();
             repair_peers
                 .iter()
-                .map(|peer| validator_stakes.get(peer.pubkey()).cloned().unwrap_or(0) + 1)
+                .map(|peer| {
+                    validator_stakes
+                        .get(peer.pubkey())
+                        .cloned()
+                        .unwrap_or(1)
+                        .max(1)
+                })
                 .collect()
         };
         let Some(slot_peers) = self.lookup(slot) else {
+            dbg!("No confirmed stuff found");
             return stakes;
         };
-     
+
         repair_peers
             .iter()
-            .map(|peer| {
-                slot_peers.get_support_by_pubkey(peer.pubkey())                    
-                    .unwrap_or(0)
-            })
+            .map(|peer| slot_peers.get_support_by_pubkey(peer.pubkey()).unwrap_or(0))
             .zip(stakes)
             .map(|(a, b)| (a / 2 + b / 2).max(1u64))
             .collect()
-            
-   
     }
 
     pub(crate) fn compute_weights_exclude_nonfrozen(
@@ -422,15 +433,14 @@ impl ClusterSlots {
         };
         let mut weights = Vec::with_capacity(repair_peers.len());
         let mut indices = Vec::with_capacity(repair_peers.len());
-        
+
         for (index, peer) in repair_peers.iter().enumerate() {
             if let Some(stake) = slot_peers.get_support_by_pubkey(peer.pubkey()) {
-                weights.push(stake + 1);
+                weights.push(stake.max(1));
                 indices.push(index);
             }
         }
         (weights, indices)
-        
     }
 }
 
@@ -443,86 +453,90 @@ mod tests {
         let cs = ClusterSlots::default();
         assert!(cs.cluster_slots.read().unwrap().is_empty());
     }
-}
 
-#[test]
-fn test_roll_cluster_slots() {
-    let cs = ClusterSlots::default();
-    let pk1 = Pubkey::new_unique();
-    let pk2 = Pubkey::new_unique();
+    #[test]
+    fn test_roll_cluster_slots() {
+        let cs = ClusterSlots::default();
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
 
-    let trimsize = CLUSTER_SLOTS_TRIM_SIZE as u64;
-    let validator_stakes = HashMap::from([(pk1, 10), (pk2, 20)]);
-    assert_eq!(
-        cs.cluster_slots.read().unwrap().len(),
-        0,
-        "ring should be initially empty"
-    );
-    cs.fake_epoch_info(validator_stakes);
-    cs.roll_cluster_slots(0);
-    {
-        let rg = cs.cluster_slots.read().unwrap();
+        let trimsize = CLUSTER_SLOTS_TRIM_SIZE as u64;
+        let validator_stakes = HashMap::from([(pk1, 10), (pk2, 20)]);
         assert_eq!(
-            rg.len(),
-            CLUSTER_SLOTS_TRIM_SIZE,
-            "ring should have exactly {} elements",
-            CLUSTER_SLOTS_TRIM_SIZE
+            cs.cluster_slots.read().unwrap().len(),
+            0,
+            "ring should be initially empty"
         );
-        assert_eq!(rg.front().unwrap().slot, 1, "first slot should be root + 1");
-        assert_eq!(
-            rg.back().unwrap().slot - rg.front().unwrap().slot,
-            trimsize - 1,
-            "ring should have the right size"
-        );
+        cs.fake_epoch_info(validator_stakes);
+        cs.roll_cluster_slots(0);
+        {
+            let rg = cs.cluster_slots.read().unwrap();
+            assert_eq!(
+                rg.len(),
+                CLUSTER_SLOTS_TRIM_SIZE,
+                "ring should have exactly {} elements",
+                CLUSTER_SLOTS_TRIM_SIZE
+            );
+            assert_eq!(rg.front().unwrap().slot, 1, "first slot should be root + 1");
+            assert_eq!(
+                rg.back().unwrap().slot - rg.front().unwrap().slot,
+                trimsize - 1,
+                "ring should have the right size"
+            );
+        }
+        //step 1 slot
+        cs.roll_cluster_slots(1);
+        {
+            let rg = cs.cluster_slots.read().unwrap();
+            assert_eq!(rg.front().unwrap().slot, 2, "first slot should be root + 1");
+            assert_eq!(
+                rg.back().unwrap().slot - rg.front().unwrap().slot,
+                trimsize - 1,
+                "ring should have the right size"
+            );
+        }
+        let allocs = cs.metric_allocations.load(Ordering::Relaxed);
+        // make 1 full loop
+        cs.roll_cluster_slots(trimsize);
+        {
+            let rg = cs.cluster_slots.read().unwrap();
+            assert_eq!(
+                rg.front().unwrap().slot,
+                trimsize + 1,
+                "first slot should be root + 1"
+            );
+            let allocs = cs.metric_allocations.load(Ordering::Relaxed) - allocs;
+            assert_eq!(allocs, 0, "No need to allocate when rolling ringbuf");
+            assert_eq!(
+                rg.back().unwrap().slot - rg.front().unwrap().slot,
+                trimsize - 1,
+                "ring should have the right size"
+            );
+        }
     }
-    //step 1 slot
-    cs.roll_cluster_slots(1);
-    {
-        let rg = cs.cluster_slots.read().unwrap();
-        assert_eq!(rg.front().unwrap().slot, 2, "first slot should be root + 1");
-        assert_eq!(
-            rg.back().unwrap().slot - rg.front().unwrap().slot,
-            trimsize - 1,
-            "ring should have the right size"
-        );
-    }
-    let allocs = cs.metric_allocations.load(Ordering::Relaxed);
-    // make 1 full loop
-    cs.roll_cluster_slots(trimsize);
-    {
-        let rg = cs.cluster_slots.read().unwrap();
-        assert_eq!(
-            rg.front().unwrap().slot,
-            trimsize + 1,
-            "first slot should be root + 1"
-        );
-        let allocs = cs.metric_allocations.load(Ordering::Relaxed) - allocs;
-        assert_eq!(allocs, 0, "No need to allocate when rolling ringbuf");
-        assert_eq!(
-            rg.back().unwrap().slot - rg.front().unwrap().slot,
-            trimsize - 1,
-            "ring should have the right size"
-        );
-    }
-}
 
-#[test]
-#[should_panic]
-fn test_roll_cluster_slots_backwards() {
-    let cs = ClusterSlots::default();
-    let pk1 = Pubkey::new_unique();
-    let pk2 = Pubkey::new_unique();
+    fn fake_stakes() -> (Pubkey, Pubkey, ValidatorStakesMap) {
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
 
-    let validator_stakes = HashMap::from([(pk1, 10), (pk2, 20)]);
-    cs.fake_epoch_info(validator_stakes);
-    cs.roll_cluster_slots(10);
-    cs.roll_cluster_slots(5);
-}
-/*
+        let validator_stakes = HashMap::from([(pk1, 10), (pk2, 20)]);
+        (pk1, pk2, validator_stakes)
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_roll_cluster_slots_backwards() {
+        let cs = ClusterSlots::default();
+        let (_, _, validator_stakes) = fake_stakes();
+
+        cs.fake_epoch_info(validator_stakes);
+        cs.roll_cluster_slots(10);
+        cs.roll_cluster_slots(5);
+    }
     #[test]
     fn test_update_noop() {
         let cs = ClusterSlots::default();
-        cs.update_internal(0, &HashMap::new(), vec![]);
+        cs.update_internal(0, vec![]);
         let stored_slots = cs.datastructure_size();
         assert_eq!(stored_slots, 0);
     }
@@ -530,8 +544,13 @@ fn test_roll_cluster_slots_backwards() {
     #[test]
     fn test_update_empty() {
         let cs = ClusterSlots::default();
-        let epoch_slot = EpochSlots::default();
-        cs.update_internal(0, &HashMap::new(), vec![epoch_slot]);
+        let (pk1, _, validator_stakes) = fake_stakes();
+        cs.fake_epoch_info(validator_stakes);
+        let epoch_slot = EpochSlots {
+            from: pk1,
+            ..Default::default()
+        };
+        cs.update_internal(0, vec![epoch_slot]);
         assert!(cs.lookup(0).is_none());
     }
 
@@ -539,113 +558,141 @@ fn test_roll_cluster_slots_backwards() {
     fn test_update_rooted() {
         //root is 0, so it should be a noop
         let cs = ClusterSlots::default();
-        let mut epoch_slot = EpochSlots::default();
+        let (pk1, _, validator_stakes) = fake_stakes();
+        cs.fake_epoch_info(validator_stakes);
+        let mut epoch_slot = EpochSlots {
+            from: pk1,
+            ..Default::default()
+        };
         epoch_slot.fill(&[0], 0);
-        cs.update_internal(0, &HashMap::new(), vec![epoch_slot]);
+        cs.update_internal(0, vec![epoch_slot]);
         assert!(cs.lookup(0).is_none());
     }
 
     #[test]
     fn test_update_multiple_slots() {
         let cs = ClusterSlots::default();
+        let (pk1, pk2, validator_stakes) = fake_stakes();
+        cs.fake_epoch_info(validator_stakes);
+
         let mut epoch_slot1 = EpochSlots {
-            from: Pubkey::new_unique(),
+            from: pk1,
             ..Default::default()
         };
         epoch_slot1.fill(&[2, 4, 5], 0);
-        let from1 = epoch_slot1.from;
         let mut epoch_slot2 = EpochSlots {
-            from: Pubkey::new_unique(),
+            from: pk2,
             ..Default::default()
         };
         epoch_slot2.fill(&[1, 3, 5], 1);
-        let from2 = epoch_slot2.from;
-        cs.update_total_stake([1000]); //disable slot locking
-        cs.update_internal(
-            0,
-            &HashMap::from([(from1, 10), (from2, 20)]),
-            vec![epoch_slot1, epoch_slot2],
-        );
+        cs.update_internal(0, vec![epoch_slot1, epoch_slot2]);
         assert!(
             cs.lookup(0).is_none(),
             "slot 0 should not be supported by anyone"
         );
         assert!(cs.lookup(1).is_some(), "slot 1 should be supported");
         assert_eq!(
-            cs.lookup(1).unwrap().read().unwrap()[&from2].load(Ordering::Relaxed),
-            20,
+            cs.lookup(1).unwrap().get_support_by_pubkey(&pk2),
+            Some(20),
             "support should come from validator 2"
         );
         assert_eq!(
-            cs.lookup(4).unwrap().read().unwrap()[&from1].load(Ordering::Relaxed),
-            10,
+            cs.lookup(4).unwrap().get_support_by_pubkey(&pk1),
+            Some(10),
             "validator 1 should support slot 4"
         );
-        let binding = cs.lookup(5).unwrap();
-        let map = binding.read().unwrap();
+        let map = cs.lookup(5).unwrap();
         assert_eq!(
-            map[&from1].load(Ordering::Relaxed),
-            10,
+            map.get_support_by_pubkey(&pk1),
+            Some(10),
             "both should support slot 5"
         );
         assert_eq!(
-            map[&from2].load(Ordering::Relaxed),
-            20,
+            map.get_support_by_pubkey(&pk2),
+            Some(20),
             "both should support slot 5"
         );
     }
 
     #[test]
-    fn test_compute_weights() {
+    fn test_compute_weights_failsafes() {
         let cs = ClusterSlots::default();
+        let ci = ContactInfo::default();
+        assert_eq!(cs.compute_weights(0, &[ci]), vec![1]);
+
+        let (_, _, validator_stakes) = fake_stakes();
+        cs.fake_epoch_info(validator_stakes);
         let ci = ContactInfo::default();
         assert_eq!(cs.compute_weights(0, &[ci]), vec![1]);
     }
 
     #[test]
     fn test_best_peer_2() {
+        dbg!("Test starting");
         let cs = ClusterSlots::default();
         let mut map = HashMap::default();
-        let k1 = Pubkey::new_unique();
-        let k2 = Pubkey::new_unique();
-        map.insert(k1, AtomicU64::new(u64::MAX / 2));
-        map.insert(k2, AtomicU64::new(1));
-        cs.cluster_slots.write().unwrap().push_back(RowContent {
-            slot: 0,
-            total_support: AtomicU64::new(0),
-            supporters: Arc::new(RwLock::new(map)),
-        });
-        let c1 = ContactInfo::new(k1, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        let c2 = ContactInfo::new(k2, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        assert_eq!(cs.compute_weights(0, &[c1, c2]), vec![u64::MAX / 4, 1]);
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
+        map.insert(pk1, 1000);
+        map.insert(pk2, 10);
+        map.insert(Pubkey::new_unique(), u64::MAX / 2);
+        cs.fake_epoch_info(map);
+
+        let mut epoch_slot1 = EpochSlots {
+            from: pk1,
+            ..Default::default()
+        };
+        epoch_slot1.fill(&[1, 2, 3, 4], 0);
+        let mut epoch_slot2 = EpochSlots {
+            from: pk2,
+            ..Default::default()
+        };
+        epoch_slot2.fill(&[1, 2, 3, 4], 0);
+        // both peers have slot 1 confirmed
+        cs.update_internal(1, vec![epoch_slot1, epoch_slot2]);
+        let ci1 = ContactInfo::new(pk1, /*wallclock:*/ 0, /*shred_version:*/ 0);
+        let ci2 = ContactInfo::new(pk2, /*wallclock:*/ 0, /*shred_version:*/ 0);
+
+        assert_eq!(
+            cs.compute_weights(1, &[ci1, ci2]),
+            vec![1000, 10],
+            "weights should match the stakes"
+        );
     }
 
     #[test]
     fn test_best_peer_3() {
+        solana_logger::setup_with_default("info");
         let cs = ClusterSlots::default();
-        let mut map = HashMap::default();
-        let k1 = solana_pubkey::new_rand();
-        let k2 = solana_pubkey::new_rand();
-        map.insert(k2, AtomicU64::new(1));
-        cs.cluster_slots.write().unwrap().push_back(RowContent {
-            slot: 0,
-            total_support: AtomicU64::new(0),
-            supporters: Arc::new(RwLock::new(map)),
-        });
-        //make sure default weights are used as well
-        let validator_stakes: HashMap<_, _> = vec![(k1, u64::MAX / 2)].into_iter().collect();
-        *cs.validator_stakes.write().unwrap() = Arc::new(validator_stakes);
-        let c1 = ContactInfo::new(k1, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        let c2 = ContactInfo::new(k2, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        assert_eq!(cs.compute_weights(0, &[c1, c2]), vec![u64::MAX / 4 + 1, 1]);
+        let pk1 = Pubkey::new_unique();
+        let pk2 = Pubkey::new_unique();
+        let pk_other = Pubkey::new_unique();
+        //set stakes of pk1 high and pk2 to unstaked
+        let validator_stakes: HashMap<_, _> =
+            [(pk1, 42), (pk_other, u64::MAX / 2)].into_iter().collect();
+        cs.fake_epoch_info(validator_stakes);
+        let mut epoch_slot = EpochSlots {
+            from: pk_other,
+            ..Default::default()
+        };
+        epoch_slot.fill(&[1, 2, 3, 4], 0);
+        // neither pk1 or pk2 has any confirmed slots
+        cs.update_internal(0, vec![epoch_slot]);
+        let c1 = ContactInfo::new(pk1, /*wallclock:*/ 0, /*shred_version:*/ 0);
+        let c2 = ContactInfo::new(pk2, /*wallclock:*/ 0, /*shred_version:*/ 0);
+        assert_eq!(
+            cs.compute_weights(1, &[c1, c2]),
+            vec![42 / 2, 1],
+            "weights should be halved, but never zero"
+        );
     }
-
+    /*
     #[test]
     fn test_best_completed_slot_peer() {
         let cs = ClusterSlots::default();
         let contact_infos: Vec<_> = std::iter::repeat_with(|| {
             ContactInfo::new(
-                solana_pubkey::new_rand(),
+                Pubkey::new_unique(),
                 0, // wallclock
                 0, // shred_version
             )
@@ -703,5 +750,5 @@ fn test_roll_cluster_slots_backwards() {
             "the stake of the node should be commited to the slot"
         );
     }
+    */
 }
-*/
