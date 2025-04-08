@@ -178,6 +178,16 @@ check-cfg = [
     'cfg(feature, values("frozen-abi", "no-entrypoint"))',
 ]
 
+[workspace.lints.rust]
+warnings = "deny"
+
+# Clippy lint configuration that can not be applied in clippy.toml
+[workspace.lints.clippy]
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+used_underscore_binding = "deny"
+
 [workspace.dependencies]
 Inflector = "0.11.4"
 axum = "0.7.9"

@@ -1,1 +1,7 @@
-deny-attributes = ["warnings", "clippy::default_trait_access", "clippy::arithmetic_side_effects", "clippy::manual_let_else", "clippy::used_underscore_bindings"]
+too-many-arguments-threshold = 9
+
+# Disallow specific methods from being used
+disallowed-methods = [
+    { path = "std::net::UdpSocket::bind", reason = "Use solana_net_utils::bind_with_config, bind_to, etc instead for proper socket configuration." },
+    { path = "tokio::net::UdpSocket::bind", reason = "Use solana_net_utils::bind_to_async or bind_to_with_config_non_blocking instead for proper socket configuration." },
+]
