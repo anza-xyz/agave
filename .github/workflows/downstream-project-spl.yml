@@ -48,11 +48,7 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-<<<<<<< HEAD
-          version: "v0.8.1"
-=======
           version: "v0.10.0"
->>>>>>> d2809e824 (ci: bump sccache version in Github Actions (#5614))
 
       - shell: bash
         run: |
@@ -105,11 +101,7 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-<<<<<<< HEAD
-          version: "v0.8.1"
-=======
           version: "v0.10.0"
->>>>>>> d2809e824 (ci: bump sccache version in Github Actions (#5614))
 
       - shell: bash
         run: |
@@ -163,11 +155,7 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.9
         with:
-<<<<<<< HEAD
-          version: "v0.8.1"
-=======
           version: "v0.10.0"
->>>>>>> d2809e824 (ci: bump sccache version in Github Actions (#5614))
 
       - shell: bash
         run: |
