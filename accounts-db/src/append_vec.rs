@@ -317,16 +317,10 @@ struct AccountOffsets {
 #[derive(Debug)]
 enum AppendVecFileBacking {
     /// A file-backed block of memory that is used to store the data for each appended item.
-    Mmap(Mmap),
+    Mmap(MmapMut),
     /// This was opened as a read only file
     #[cfg_attr(not(unix), allow(dead_code))]
     File(File),
-}
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug)]
-struct Mmap {
-    mmap: MmapMut,
 }
 
 /// A thread-safe, file-backed block of memory used to store `Account` instances. Append operations
@@ -468,7 +462,7 @@ impl AppendVec {
 
         AppendVec {
             path: file,
-            backing: AppendVecFileBacking::Mmap(Mmap { mmap }),
+            backing: AppendVecFileBacking::Mmap(mmap),
             // This mutex forces append to be single threaded, but concurrent with reads
             // See UNSAFE usage in `append_ptr`
             append_lock: Mutex::new(()),
@@ -510,7 +504,7 @@ impl AppendVec {
         if should_flush {
             match &self.backing {
                 AppendVecFileBacking::Mmap(mmap) => {
-                    mmap.mmap.flush()?;
+                    mmap.flush()?;
                 }
                 AppendVecFileBacking::File(file) => {
                     file.sync_all()?;
@@ -657,7 +651,7 @@ impl AppendVec {
 
         Ok(AppendVec {
             path,
-            backing: AppendVecFileBacking::Mmap(Mmap { mmap }),
+            backing: AppendVecFileBacking::Mmap(mmap),
             append_lock: Mutex::new(()),
             current_len: AtomicUsize::new(current_len),
             file_size,
@@ -718,8 +712,8 @@ impl AppendVec {
     fn append_ptr(&self, offset: &mut usize, src: *const u8, len: usize) {
         let pos = u64_align!(*offset);
         match &self.backing {
-            AppendVecFileBacking::Mmap(mmap_only) => {
-                let data = &mmap_only.mmap[pos..(pos + len)];
+            AppendVecFileBacking::Mmap(mmap) => {
+                let data = &mmap[pos..(pos + len)];
                 //UNSAFE: This mut append is safe because only 1 thread can append at a time
                 //Mutex<()> guarantees exclusive write access to the memory occupied in
                 //the range.
@@ -784,7 +778,7 @@ impl AppendVec {
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
     ) -> Option<Ret> {
         match &self.backing {
-            AppendVecFileBacking::Mmap(Mmap { mmap }) => {
+            AppendVecFileBacking::Mmap(mmap) => {
                 let slice = self.get_valid_slice_from_mmap(mmap);
                 let (meta, next): (&StoredMeta, _) = Self::get_type(slice, offset)?;
                 let (account_meta, next): (&AccountMeta, _) = Self::get_type(slice, next)?;
@@ -872,7 +866,7 @@ impl AppendVec {
         mut callback: impl for<'local> FnMut(StoredAccountNoData<'local>) -> Ret,
     ) -> Option<Ret> {
         match &self.backing {
-            AppendVecFileBacking::Mmap(Mmap { mmap }) => {
+            AppendVecFileBacking::Mmap(mmap) => {
                 let slice = self.get_valid_slice_from_mmap(mmap);
                 let (meta, next): (&StoredMeta, _) = Self::get_type(slice, offset)?;
                 let (account_meta, _): (&AccountMeta, _) = Self::get_type(slice, next)?;
@@ -1130,7 +1124,7 @@ impl AppendVec {
         let self_len = self.len();
         let mut account_sizes = Vec::with_capacity(sorted_offsets.len());
         match &self.backing {
-            AppendVecFileBacking::Mmap(Mmap { mmap }) => {
+            AppendVecFileBacking::Mmap(mmap) => {
                 let slice = self.get_valid_slice_from_mmap(mmap);
                 for &offset in sorted_offsets {
                     let Some((stored_meta, _)) = Self::get_type::<StoredMeta>(slice, offset) else {
@@ -1191,7 +1185,7 @@ impl AppendVec {
     fn scan_stored_accounts_no_data(&self, mut callback: impl FnMut(StoredAccountNoData)) {
         let self_len = self.len();
         match &self.backing {
-            AppendVecFileBacking::Mmap(Mmap { mmap }) => {
+            AppendVecFileBacking::Mmap(mmap) => {
                 let mut offset = 0;
                 let slice = self.get_valid_slice_from_mmap(mmap);
                 loop {
@@ -1350,7 +1344,7 @@ impl AppendVec {
         match &self.backing {
             AppendVecFileBacking::File(_file) => InternalsForArchive::FileIo(self.path()),
             // note this returns the entire mmap slice, even bytes that we consider invalid
-            AppendVecFileBacking::Mmap(Mmap { mmap }) => InternalsForArchive::Mmap(mmap),
+            AppendVecFileBacking::Mmap(mmap) => InternalsForArchive::Mmap(mmap),
         }
     }
 }
