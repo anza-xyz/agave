@@ -5679,6 +5679,31 @@ pub mod tests {
     }
 
     #[test]
+    fn test_batch_size() {
+        let slot = 1;
+        let num_entries = 5000;
+        let entries = create_ticks(num_entries, 1, Hash::new_unique());
+        let (d, c) = Shredder::new(slot, 0, 0, 0).unwrap().entries_to_shreds(
+            &Keypair::new(),
+            &entries,
+            false,
+            // chained_merkle_root
+            Some(Hash::new_from_array(rand::thread_rng().gen())),
+            0, // next_shred_index,
+            0, // next_code_index
+            true,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        );
+        for s in d {
+            assert!(s.index() - s.fec_set_index() <= DATA_SHREDS_PER_FEC_BLOCK as u32);
+        }
+        for s in c {
+            assert!(s.index() - s.fec_set_index() <= DATA_SHREDS_PER_FEC_BLOCK as u32);
+        }
+    }
+
+    #[test]
     fn test_read_shred_bytes() {
         let slot = 0;
         let (shreds, _) = make_slot_entries(slot, 0, 100, /*merkle_variant:*/ true);

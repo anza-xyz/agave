@@ -1178,7 +1178,8 @@ pub(super) fn make_shreds_from_data(
     };
     // Split the data into erasure batches and initialize
     // data and coding shreds for each batch.
-    while data.len() >= 2 * chunk_size || data.len() == chunk_size {
+    while data.len() >= chunk_size {
+        //while data.len() >= 2 * chunk_size || data.len() == chunk_size {
         let (chunk, rest) = data.split_at(chunk_size);
         debug_assert_eq!(chunk.len(), DATA_SHREDS_PER_FEC_BLOCK * data_buffer_size);
         common_header_data.fec_set_index = common_header_data.index;
@@ -1203,6 +1204,8 @@ pub(super) fn make_shreds_from_data(
     }
     // If shreds.is_empty() then the data argument was empty. In that case we
     // want to generate one data shred with empty data.
+    // If data is not empty, this means we have misalignment between data amount
+    // and FEC batch size, so we need to make a special, smaller batch.
     if !data.is_empty() || shreds.is_empty() {
         // Should generate at least one data shred (which may have no data).
         // Last erasure batch should also be padded with empty data shreds to
