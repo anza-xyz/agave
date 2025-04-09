@@ -65,7 +65,7 @@ $ ./cargo build
 **Run the test suite:**
 
 ```bash
-$ ./cargo nextest run
+$ ./cargo nextest run --profile ci  --cargo-profile ci --config-file ./nextest.toml
 ```
 
 ### Debugger
