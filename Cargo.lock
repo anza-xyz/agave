@@ -6621,7 +6621,6 @@ dependencies = [
  "bincode",
  "bytemuck",
  "log",
- "num-derive",
  "num-traits",
  "solana-address-lookup-table-interface",
  "solana-bincode",
