@@ -4173,7 +4173,7 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
     // Flushing cache should only create one storage entry
     let storage0 = accounts_db.get_and_assert_single_storage(slot);
 
-    storage0.accounts.scan_accounts(|account| {
+    storage0.accounts.scan_accounts_stored_meta(|account| {
         let before_size = storage0.alive_bytes();
         let account_info = accounts_db
             .accounts_index
@@ -7046,7 +7046,7 @@ fn get_all_accounts_from_storages<'a>(
     storages
         .flat_map(|storage| {
             let mut vec = Vec::default();
-            storage.accounts.scan_accounts(|account| {
+            storage.accounts.scan_accounts_stored_meta(|account| {
                 vec.push((*account.pubkey(), account.to_account_shared_data()));
             });
             // make sure scan_pubkeys results match
@@ -7554,7 +7554,7 @@ fn test_combine_ancient_slots_append() {
 fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
     slots.into_iter().for_each(|slot| {
         if let Some(storage) = db.get_storage_for_slot(slot) {
-            storage.accounts.scan_accounts(|account| {
+            storage.accounts.scan_accounts_stored_meta(|account| {
                 let info = AccountInfo::new(
                     StorageLocation::AppendVec(storage.id(), account.offset()),
                     account.is_zero_lamport(),

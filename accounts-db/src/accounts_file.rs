@@ -223,12 +223,15 @@ impl AccountsFile {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
-    pub fn scan_accounts(&self, callback: impl for<'local> FnMut(StoredAccountMeta<'local>)) {
+    pub fn scan_accounts_stored_meta(
+        &self,
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+    ) {
         match self {
-            Self::AppendVec(av) => av.scan_accounts(callback),
+            Self::AppendVec(av) => av.scan_accounts_stored_meta(callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    _ = reader.scan_accounts(callback);
+                    _ = reader.scan_accounts_stored_meta(callback);
                 }
             }
         }
@@ -240,7 +243,7 @@ impl AccountsFile {
         &self,
         mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
     ) {
-        self.scan_accounts(|stored_account_meta| {
+        self.scan_accounts_stored_meta(|stored_account_meta| {
             let account_for_geyser = AccountForGeyser {
                 pubkey: stored_account_meta.pubkey(),
                 lamports: stored_account_meta.lamports(),

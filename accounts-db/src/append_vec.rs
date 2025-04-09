@@ -1060,7 +1060,10 @@ impl AppendVec {
 
     /// Iterate over all accounts and call `callback` with each account.
     #[allow(clippy::blocks_in_conditions)]
-    pub fn scan_accounts(&self, mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>)) {
+    pub fn scan_accounts_stored_meta(
+        &self,
+        mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+    ) {
         match &self.backing {
             AppendVecFileBacking::Mmap(_mmap) => {
                 let mut offset = 0;
@@ -1622,7 +1625,7 @@ pub mod tests {
         /// return how many accounts in the storage
         fn accounts_count(&self) -> usize {
             let mut count = 0;
-            self.scan_accounts(|_| {
+            self.scan_accounts_stored_meta(|_| {
                 count += 1;
             });
             count
@@ -1671,7 +1674,7 @@ pub mod tests {
         let mut sample = 0;
         assert_eq!(av.accounts_count(), size);
         assert_eq!(av.store_accounts_no_data_count(), size);
-        av.scan_accounts(|v| {
+        av.scan_accounts_stored_meta(|v| {
             let account = create_test_account(sample + 1);
             let recovered = v.to_account_shared_data();
             assert_eq!(recovered, account.1);

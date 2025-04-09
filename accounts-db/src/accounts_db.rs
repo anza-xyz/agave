@@ -2714,7 +2714,7 @@ impl AccountsDb {
                 return;
             }
             if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-                storage.accounts.scan_accounts(|account| {
+                storage.accounts.scan_accounts_stored_meta(|account| {
                     let pk = account.pubkey();
                     match pubkey_refcount.entry(*pk) {
                         dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
@@ -4975,7 +4975,7 @@ impl AccountsDb {
                 .storage
                 .get_slot_storage_entry_shrinking_in_progress_ok(slot)
             {
-                storage.accounts.scan_accounts(|account| {
+                storage.accounts.scan_accounts_stored_meta(|account| {
                     let loaded_account = LoadedAccount::Stored(account);
                     let data = (scan_account_storage_data
                         == ScanAccountStorageData::DataRefForStorage)
@@ -6815,11 +6815,15 @@ impl AccountsDb {
         let mut lt_hash = storages
             .par_iter()
             .fold(LtHash::identity, |mut accum, storage| {
-                storage.accounts.scan_accounts(|stored_account_meta| {
-                    let account_lt_hash =
-                        Self::lt_hash_account(&stored_account_meta, stored_account_meta.pubkey());
-                    accum.mix_in(&account_lt_hash.0);
-                });
+                storage
+                    .accounts
+                    .scan_accounts_stored_meta(|stored_account_meta| {
+                        let account_lt_hash = Self::lt_hash_account(
+                            &stored_account_meta,
+                            stored_account_meta.pubkey(),
+                        );
+                        accum.mix_in(&account_lt_hash.0);
+                    });
                 accum
             })
             .reduce(LtHash::identity, |mut accum, elem| {
@@ -8533,15 +8537,17 @@ impl AccountsDb {
         };
         if secondary {
             // scan storage a second time to update the secondary index
-            storage.accounts.scan_accounts(|stored_account| {
-                stored_size_alive += stored_account.stored_size();
-                let pubkey = stored_account.pubkey();
-                self.accounts_index.update_secondary_indexes(
-                    pubkey,
-                    &stored_account,
-                    &self.account_indexes,
-                );
-            });
+            storage
+                .accounts
+                .scan_accounts_stored_meta(|stored_account| {
+                    stored_size_alive += stored_account.stored_size();
+                    let pubkey = stored_account.pubkey();
+                    self.accounts_index.update_secondary_indexes(
+                        pubkey,
+                        &stored_account,
+                        &self.account_indexes,
+                    );
+                });
         }
 
         if let Some(duplicates_this_slot) = std::mem::take(&mut generate_index_results.duplicates) {
@@ -8721,7 +8727,7 @@ impl AccountsDb {
                             // verify index matches expected and measure the time to get all items
                             assert!(verify);
                             let mut lookup_time = Measure::start("lookup_time");
-                            storage.accounts.scan_accounts(|account_info| {
+                            storage.accounts.scan_accounts_stored_meta(|account_info| {
                                 let key = account_info.pubkey();
                                 let index_entry = self.accounts_index.get_cloned(key).unwrap();
                                 let slot_list = index_entry.slot_list.read().unwrap();
@@ -9429,7 +9435,7 @@ impl AccountsDb {
     pub fn sizes_of_accounts_in_storage_for_tests(&self, slot: Slot) -> Vec<usize> {
         let mut sizes = Vec::default();
         if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-            storage.accounts.scan_accounts(|account| {
+            storage.accounts.scan_accounts_stored_meta(|account| {
                 sizes.push(account.stored_size());
             });
         }
