@@ -903,7 +903,7 @@ pub mod zk_elgamal_proof_program_enabled {
 }
 
 pub mod verify_retransmitter_signature {
-    solana_pubkey::declare_id!("BZ5g4hRbu5hLQQBdPyo2z9icGyJ8Khiyj3QS6dhWijTb");
+    solana_pubkey::declare_id!("51VCKU5eV6mcTc9q9ArfWELU2CqDoi13hdAjr6fHMdtv");
 }
 
 pub mod move_stake_and_move_lamports_ixs {
@@ -999,7 +999,7 @@ pub mod raise_block_limits_to_50m {
 }
 
 pub mod drop_unchained_merkle_shreds {
-    solana_pubkey::declare_id!("3A9WtMU4aHuryD3VN7SFKdfXto8HStLb1Jj6HjkgfnGL");
+    solana_pubkey::declare_id!("5KLGJSASDVxKPjLCDWNtnABLpZjsQSrYZ8HKwcEdAMC8");
 }
 
 pub mod relax_intrabatch_account_locks {
