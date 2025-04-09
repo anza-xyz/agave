@@ -1,6 +1,7 @@
 use {
     super::{AccountStorageEntry, AccountsDb, BinnedHashData, LoadedAccount, SplitAncientStorages},
     crate::{
+        account_storage::stored_account_info::StoredAccountInfo,
         accounts_hash::{
             AccountHash, CalcAccountsHashConfig, CalculateHashIntermediate, HashStats,
         },
@@ -353,11 +354,22 @@ impl AccountsDb {
     where
         S: AppendVecScan,
     {
-        storage.accounts.scan_accounts_stored_meta(|account| {
-            if scanner.filter(account.pubkey()) {
-                scanner.found_account(&LoadedAccount::Stored(account))
-            }
-        });
+        storage
+            .accounts
+            .scan_accounts_stored_meta(|stored_account_meta| {
+                let pubkey = stored_account_meta.pubkey();
+                if scanner.filter(pubkey) {
+                    let account = StoredAccountInfo {
+                        pubkey,
+                        lamports: stored_account_meta.lamports(),
+                        owner: stored_account_meta.owner(),
+                        data: stored_account_meta.data(),
+                        executable: stored_account_meta.executable(),
+                        rent_epoch: stored_account_meta.rent_epoch(),
+                    };
+                    scanner.found_account(&LoadedAccount::Stored(account))
+                }
+            });
     }
 }
 

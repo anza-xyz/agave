@@ -28,6 +28,7 @@ use qualifier_attr::qualifiers;
 use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
+        account_storage::stored_account_info::StoredAccountInfo,
         account_storage::{
             meta::StoredAccountMeta, AccountStorage, AccountStorageStatus, ShrinkInProgress,
         },
@@ -1045,11 +1046,20 @@ impl LoadedAccountAccessor<'_> {
                 maybe_storage_entry
                     .as_ref()
                     .and_then(|(storage_entry, offset)| {
-                        storage_entry
-                            .accounts
-                            .get_stored_account_meta_callback(*offset, |account| {
+                        storage_entry.accounts.get_stored_account_meta_callback(
+                            *offset,
+                            |stored_account_meta| {
+                                let account = StoredAccountInfo {
+                                    pubkey: stored_account_meta.pubkey(),
+                                    lamports: stored_account_meta.lamports(),
+                                    owner: stored_account_meta.owner(),
+                                    data: stored_account_meta.data(),
+                                    executable: stored_account_meta.executable(),
+                                    rent_epoch: stored_account_meta.rent_epoch(),
+                                };
                                 callback(LoadedAccount::Stored(account))
-                            })
+                            },
+                        )
                     })
             }
         }
@@ -1087,30 +1097,33 @@ impl LoadedAccountAccessor<'_> {
 }
 
 pub enum LoadedAccount<'a> {
-    Stored(StoredAccountMeta<'a>),
+    Stored(StoredAccountInfo<'a>),
     Cached(Cow<'a, Arc<CachedAccount>>),
 }
 
 impl LoadedAccount<'_> {
     pub fn loaded_hash(&self) -> AccountHash {
         match self {
-            LoadedAccount::Stored(stored_account_meta) => *stored_account_meta.hash(),
+            LoadedAccount::Stored(_stored_account) => {
+                // The account hash is no longer stored, so it is always the default value.
+                // Callers that want the account hash must (and do) check if the value is
+                // "missing", i.e. the default value, and then call hash_account() themselves.
+                AccountHash(Hash::default())
+            }
             LoadedAccount::Cached(cached_account) => cached_account.hash(),
         }
     }
 
     pub fn pubkey(&self) -> &Pubkey {
         match self {
-            LoadedAccount::Stored(stored_account_meta) => stored_account_meta.pubkey(),
+            LoadedAccount::Stored(stored_account) => stored_account.pubkey(),
             LoadedAccount::Cached(cached_account) => cached_account.pubkey(),
         }
     }
 
     pub fn take_account(&self) -> AccountSharedData {
         match self {
-            LoadedAccount::Stored(stored_account_meta) => {
-                stored_account_meta.to_account_shared_data()
-            }
+            LoadedAccount::Stored(stored_account) => stored_account.to_account_shared_data(),
             LoadedAccount::Cached(cached_account) => match cached_account {
                 Cow::Owned(cached_account) => cached_account.account.clone(),
                 Cow::Borrowed(cached_account) => cached_account.account.clone(),
@@ -1134,31 +1147,31 @@ impl LoadedAccount<'_> {
 impl ReadableAccount for LoadedAccount<'_> {
     fn lamports(&self) -> u64 {
         match self {
-            LoadedAccount::Stored(stored_account_meta) => stored_account_meta.lamports(),
+            LoadedAccount::Stored(stored_account) => stored_account.lamports(),
             LoadedAccount::Cached(cached_account) => cached_account.account.lamports(),
         }
     }
     fn data(&self) -> &[u8] {
         match self {
-            LoadedAccount::Stored(stored_account_meta) => stored_account_meta.data(),
+            LoadedAccount::Stored(stored_account) => stored_account.data(),
             LoadedAccount::Cached(cached_account) => cached_account.account.data(),
         }
     }
     fn owner(&self) -> &Pubkey {
         match self {
-            LoadedAccount::Stored(stored_account_meta) => stored_account_meta.owner(),
+            LoadedAccount::Stored(stored_account) => stored_account.owner(),
             LoadedAccount::Cached(cached_account) => cached_account.account.owner(),
         }
     }
     fn executable(&self) -> bool {
         match self {
-            LoadedAccount::Stored(stored_account_meta) => stored_account_meta.executable(),
+            LoadedAccount::Stored(stored_account) => stored_account.executable(),
             LoadedAccount::Cached(cached_account) => cached_account.account.executable(),
         }
     }
     fn rent_epoch(&self) -> Epoch {
         match self {
-            LoadedAccount::Stored(stored_account_meta) => stored_account_meta.rent_epoch(),
+            LoadedAccount::Stored(stored_account) => stored_account.rent_epoch(),
             LoadedAccount::Cached(cached_account) => cached_account.account.rent_epoch(),
         }
     }
@@ -4975,13 +4988,23 @@ impl AccountsDb {
                 .storage
                 .get_slot_storage_entry_shrinking_in_progress_ok(slot)
             {
-                storage.accounts.scan_accounts_stored_meta(|account| {
-                    let loaded_account = LoadedAccount::Stored(account);
-                    let data = (scan_account_storage_data
-                        == ScanAccountStorageData::DataRefForStorage)
-                        .then_some(loaded_account.data());
-                    storage_scan_func(&retval, &loaded_account, data)
-                });
+                storage
+                    .accounts
+                    .scan_accounts_stored_meta(|stored_account_meta| {
+                        let account = StoredAccountInfo {
+                            pubkey: stored_account_meta.pubkey(),
+                            lamports: stored_account_meta.lamports(),
+                            owner: stored_account_meta.owner(),
+                            data: stored_account_meta.data(),
+                            executable: stored_account_meta.executable(),
+                            rent_epoch: stored_account_meta.rent_epoch(),
+                        };
+                        let loaded_account = LoadedAccount::Stored(account);
+                        let data = (scan_account_storage_data
+                            == ScanAccountStorageData::DataRefForStorage)
+                            .then_some(loaded_account.data());
+                        storage_scan_func(&retval, &loaded_account, data)
+                    });
             }
 
             ScanStorageResult::Stored(retval)
