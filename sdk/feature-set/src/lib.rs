@@ -830,7 +830,7 @@ pub mod zk_elgamal_proof_program_enabled {
 }
 
 pub mod verify_retransmitter_signature {
-    solana_pubkey::declare_id!("BZ5g4hRbu5hLQQBdPyo2z9icGyJ8Khiyj3QS6dhWijTb");
+    solana_pubkey::declare_id!("51VCKU5eV6mcTc9q9ArfWELU2CqDoi13hdAjr6fHMdtv");
 }
 
 pub mod move_stake_and_move_lamports_ixs {
@@ -889,8 +889,13 @@ pub mod raise_block_limits_to_50m {
     solana_pubkey::declare_id!("5oMCU3JPaFLr8Zr4ct7yFA7jdk6Mw1RmB8K4u9ZbS42z");
 }
 
+<<<<<<< HEAD:sdk/feature-set/src/lib.rs
 pub mod reserve_minimal_cus_for_builtin_instructions {
     solana_pubkey::declare_id!("C9oAhLxDBm3ssWtJx1yBGzPY55r2rArHmN1pbQn6HogH");
+=======
+pub mod drop_unchained_merkle_shreds {
+    solana_pubkey::declare_id!("5KLGJSASDVxKPjLCDWNtnABLpZjsQSrYZ8HKwcEdAMC8");
+>>>>>>> 185893b3d (rekey verify_retransmitter_signature and drop_unchained_merkle_shreds (#5723)):feature-set/src/lib.rs
 }
 
 lazy_static! {
