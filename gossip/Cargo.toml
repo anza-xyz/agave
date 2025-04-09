@@ -54,7 +54,7 @@ solana-native-token = "=2.2.1"
 solana-net-utils = { workspace = true }
 solana-packet = "=2.2.1"
 solana-perf = { workspace = true }
-solana-pubkey = { version = "=2.2.1", features = ["rand"] }
+solana-pubkey = { version = "=2.3.0", features = ["rand"] }
 solana-quic-definitions = "=2.2.1"
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client = { workspace = true }

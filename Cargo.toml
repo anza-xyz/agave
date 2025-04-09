@@ -495,7 +495,7 @@ solana-program-option = "2.2.1"
 solana-program-pack = "2.2.1"
 solana-program-runtime = { path = "program-runtime", version = "=2.3.0" }
 solana-program-test = { path = "program-test", version = "=2.3.0" }
-solana-pubkey = { version = "2.2.1", default-features = false }
+solana-pubkey = { version = "2.3.0", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=2.3.0" }
 solana-quic-client = { path = "quic-client", version = "=2.3.0" }
 solana-quic-definitions = "2.2.1"
