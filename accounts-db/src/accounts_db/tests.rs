@@ -7046,7 +7046,7 @@ fn get_all_accounts_from_storages<'a>(
     storages
         .flat_map(|storage| {
             let mut vec = Vec::default();
-            storage.accounts.scan_accounts_stored_meta(|account| {
+            storage.accounts.scan_accounts(|account| {
                 vec.push((*account.pubkey(), account.to_account_shared_data()));
             });
             // make sure scan_pubkeys results match

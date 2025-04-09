@@ -2714,9 +2714,9 @@ impl AccountsDb {
                 return;
             }
             if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-                storage.accounts.scan_accounts_stored_meta(|account| {
-                    let pk = account.pubkey();
-                    match pubkey_refcount.entry(*pk) {
+                storage
+                    .accounts
+                    .scan_pubkeys(|pubkey| match pubkey_refcount.entry(*pubkey) {
                         dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
                             if !occupied_entry.get().iter().any(|s| s == &slot) {
                                 occupied_entry.get_mut().push(slot);
@@ -2725,8 +2725,7 @@ impl AccountsDb {
                         dashmap::mapref::entry::Entry::Vacant(vacant_entry) => {
                             vacant_entry.insert(vec![slot]);
                         }
-                    }
-                });
+                    });
             }
         });
         let total = pubkey_refcount.len();
@@ -6815,15 +6814,10 @@ impl AccountsDb {
         let mut lt_hash = storages
             .par_iter()
             .fold(LtHash::identity, |mut accum, storage| {
-                storage
-                    .accounts
-                    .scan_accounts_stored_meta(|stored_account_meta| {
-                        let account_lt_hash = Self::lt_hash_account(
-                            &stored_account_meta,
-                            stored_account_meta.pubkey(),
-                        );
-                        accum.mix_in(&account_lt_hash.0);
-                    });
+                storage.accounts.scan_accounts(|account| {
+                    let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
+                    accum.mix_in(&account_lt_hash.0);
+                });
                 accum
             })
             .reduce(LtHash::identity, |mut accum, elem| {

@@ -1,7 +1,7 @@
 use {
     crate::{
         account_info::AccountInfo,
-        account_storage::meta::StoredAccountMeta,
+        account_storage::{meta::StoredAccountMeta, stored_account_info::StoredAccountInfo},
         accounts_db::AccountsFileId,
         accounts_update_notifier_interface::AccountForGeyser,
         append_vec::{AppendVec, AppendVecError, IndexInfo},
@@ -223,6 +223,24 @@ impl AccountsFile {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
+    pub fn scan_accounts(&self, mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>)) {
+        self.scan_accounts_stored_meta(|stored_account_meta| {
+            let account = StoredAccountInfo {
+                pubkey: stored_account_meta.pubkey(),
+                lamports: stored_account_meta.lamports(),
+                owner: stored_account_meta.owner(),
+                data: stored_account_meta.data(),
+                executable: stored_account_meta.executable(),
+                rent_epoch: stored_account_meta.rent_epoch(),
+            };
+            callback(account)
+        })
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts() when possible, as it does not contain file format
+    /// implementation details, and thus potentially can read less and be faster.
     pub fn scan_accounts_stored_meta(
         &self,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
@@ -243,14 +261,14 @@ impl AccountsFile {
         &self,
         mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
     ) {
-        self.scan_accounts_stored_meta(|stored_account_meta| {
+        self.scan_accounts(|account| {
             let account_for_geyser = AccountForGeyser {
-                pubkey: stored_account_meta.pubkey(),
-                lamports: stored_account_meta.lamports(),
-                owner: stored_account_meta.owner(),
-                executable: stored_account_meta.executable(),
-                rent_epoch: stored_account_meta.rent_epoch(),
-                data: stored_account_meta.data(),
+                pubkey: account.pubkey(),
+                lamports: account.lamports(),
+                owner: account.owner(),
+                executable: account.executable(),
+                rent_epoch: account.rent_epoch(),
+                data: account.data(),
             };
             callback(account_for_geyser)
         })

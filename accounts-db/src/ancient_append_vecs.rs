@@ -2181,7 +2181,7 @@ pub mod tests {
             shrink_in_progress
                 .new_storage()
                 .accounts
-                .scan_accounts_stored_meta(|_| {
+                .scan_accounts(|_| {
                     count += 1;
                 });
             assert_eq!(count, 1);
@@ -2342,7 +2342,7 @@ pub mod tests {
                 })
                 .unwrap();
             let mut count = 0;
-            storage.accounts.scan_accounts_stored_meta(|_| {
+            storage.accounts.scan_accounts(|_| {
                 count += 1;
             });
             assert_eq!(count, 2);
@@ -3379,7 +3379,7 @@ pub mod tests {
                                 .1
                                 .new_storage()
                                 .accounts
-                                .scan_accounts_stored_meta(|meta| {
+                                .scan_accounts(|meta| {
                                     two.push((*meta.pubkey(), meta.to_account_shared_data()));
                                 });
 
