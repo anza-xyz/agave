@@ -197,7 +197,7 @@ impl VoteWorker {
     }
 
     // returns `true` if the end of slot is reached
-    pub fn process_packets(
+    fn process_packets(
         &mut self,
         vote_storage: &mut VoteStorage,
         bank_start: &BankStart,
