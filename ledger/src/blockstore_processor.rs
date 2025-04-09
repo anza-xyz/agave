@@ -240,18 +240,18 @@ pub fn execute_batch<'a>(
         // collect and check transaction costs
         let tx_costs = get_transaction_costs(bank, &commit_results, batch.sanitized_transactions());
         check_block_cost_limits(bank, &tx_costs).map(|_| tx_costs)
-    } else {
+    } else if record_transaction_meta {
         // Unified scheduler block production case;
-        // collect transaction costs if we are recording transaction metadata
-        if record_transaction_meta {
-            Ok(get_transaction_costs(
-                bank,
-                &commit_results,
-                batch.sanitized_transactions(),
-            ))
-        } else {
-            Ok(vec![])
-        }
+        // the scheduler will track costs elsewhere but costs are recalculated
+        // here so they can be recorded with other transaction metadata
+        Ok(get_transaction_costs(
+            bank,
+            &commit_results,
+            batch.sanitized_transactions(),
+        ))
+    } else {
+        // Unified scheduler block production wihout metadata recording
+        Ok(vec![])
     };
     check_block_costs_elapsed.stop();
     timings.saturating_add_in_place(
