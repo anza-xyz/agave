@@ -72,7 +72,8 @@ impl VoteStorage {
                 LatestValidatorVotePacket::new_from_immutable(
                     packet,
                     self.vote_source,
-                    self.should_deprecate_legacy_vote_ixs(),
+                    self.latest_unprocessed_votes
+                        .should_deprecate_legacy_vote_ixs(),
                 )
                 .ok()
             }),
@@ -82,11 +83,6 @@ impl VoteStorage {
 
     pub fn drain_unprocessed(&self, bank: &Bank) -> Vec<Arc<ImmutableDeserializedPacket>> {
         self.latest_unprocessed_votes.drain_unprocessed(bank)
-    }
-
-    pub fn should_deprecate_legacy_vote_ixs(&self) -> bool {
-        self.latest_unprocessed_votes
-            .should_deprecate_legacy_vote_ixs()
     }
 
     pub fn clear(&mut self) {
