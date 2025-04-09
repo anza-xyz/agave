@@ -9,7 +9,7 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
-    solana_instruction::error::InstructionError,
+    solana_instruction::{error::InstructionError, TRANSACTION_LEVEL_STACK_HEIGHT},
     solana_message::MessageHeader,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
@@ -227,7 +227,7 @@ impl RpcSender for MockSender {
                                         program_id_index: 2,
                                         accounts: vec![0, 1],
                                         data: "3Bxs49DitAvXtoDR".to_string(),
-                                        stack_height: None,
+                                        stack_height: Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
                                     }],
                                     address_table_lookups: None,
                                 })
