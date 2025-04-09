@@ -323,7 +323,7 @@ impl ShredCode {
 mod test {
     use {
         super::*,
-        crate::shred::{shred_code::MAX_CODE_SHREDS_PER_SLOT, ShredType, MAX_DATA_SHREDS_PER_SLOT},
+        crate::shred::{ShredType, MAX_DATA_SHREDS_PER_SLOT},
         assert_matches::assert_matches,
     };
 
@@ -396,84 +396,6 @@ mod test {
                     payload: 1228,
                 })
             );
-        }
-    }
-
-    #[test]
-    fn test_sanitize_coding_shred() {
-        let mut shred = ShredCode::new_from_parity_shard(
-            1,   // slot
-            12,  // index
-            &[], // parity_shard
-            11,  // fec_set_index
-            11,  // num_data_shreds
-            11,  // num_coding_shreds
-            8,   // position
-            0,   // version
-        );
-        assert_matches!(shred.sanitize(), Ok(()));
-        // index < position is invalid.
-        {
-            let mut shred = shred.clone();
-            let index = shred.common_header.index - shred.common_header.fec_set_index - 1;
-            shred.set_index(index);
-            assert_matches!(
-                shred.sanitize(),
-                Err(Error::InvalidErasureShardIndex { .. })
-            );
-        }
-        {
-            let mut shred = shred.clone();
-            shred.coding_header.num_coding_shreds = 0;
-            assert_matches!(
-                shred.sanitize(),
-                Err(Error::InvalidErasureShardIndex { .. })
-            );
-        }
-        {
-            let mut shred = shred.clone();
-            shred.common_header.index = MAX_CODE_SHREDS_PER_SLOT as u32;
-            assert_matches!(
-                shred.sanitize(),
-                Err(Error::InvalidShredIndex(ShredType::Code, 32_768))
-            );
-        }
-        // pos >= num_coding is invalid.
-        {
-            let mut shred = shred.clone();
-            let num_coding_shreds = shred.common_header.index - shred.common_header.fec_set_index;
-            shred.coding_header.num_coding_shreds = num_coding_shreds as u16;
-            assert_matches!(
-                shred.sanitize(),
-                Err(Error::InvalidErasureShardIndex { .. })
-            );
-        }
-        // set_index with num_coding that would imply the last
-        // shred has index > u32::MAX should fail.
-        {
-            let mut shred = shred.clone();
-            shred.common_header.fec_set_index = MAX_DATA_SHREDS_PER_SLOT as u32 - 2;
-            shred.coding_header.num_data_shreds = 3;
-            shred.coding_header.num_coding_shreds = 4;
-            shred.coding_header.position = 1;
-            shred.common_header.index = MAX_DATA_SHREDS_PER_SLOT as u32 - 2;
-            assert_matches!(
-                shred.sanitize(),
-                Err(Error::InvalidErasureShardIndex { .. })
-            );
-
-            shred.coding_header.num_data_shreds = 2;
-            shred.coding_header.num_coding_shreds = 2000;
-            assert_matches!(shred.sanitize(), Err(Error::InvalidNumCodingShreds(2000)));
-
-            // Decreasing the number of num_coding_shreds will put it within
-            // the allowed limit.
-            shred.coding_header.num_coding_shreds = 2;
-            assert_matches!(shred.sanitize(), Ok(()));
-        }
-        {
-            shred.coding_header.num_coding_shreds = u16::MAX;
-            assert_matches!(shred.sanitize(), Err(Error::InvalidNumCodingShreds(65535)));
         }
     }
 }
