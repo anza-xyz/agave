@@ -161,11 +161,8 @@ fn bench_process_and_record_transactions(bencher: &mut Bencher, batch_size: usiz
 
     bencher.iter(move || {
         for _ in 0..batches_per_iteration {
-            let summary = consumer.process_and_record_transactions(
-                &bank,
-                transaction_iter.next().unwrap(),
-                0,
-            );
+            let summary =
+                consumer.process_and_record_transactions(&bank, transaction_iter.next().unwrap());
             assert!(summary
                 .execute_and_commit_transactions_output
                 .commit_transactions_result

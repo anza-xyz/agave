@@ -13,7 +13,6 @@ use {
     },
     crate::banking_stage::consumer::{
         ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput,
-        TARGET_NUM_TRANSACTIONS_PER_BATCH,
     },
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
@@ -377,7 +376,6 @@ impl VoteWorker {
         bank_creation_time: &Instant,
         transactions: &[impl TransactionWithMeta],
     ) -> ProcessTransactionsSummary {
-        let mut chunk_start = 0;
         let mut all_retryable_tx_indexes = vec![];
         let mut total_transaction_counts = CommittedTransactionsCounts::default();
         let mut total_cost_model_throttled_transactions_count: u64 = 0;
@@ -387,78 +385,67 @@ impl VoteWorker {
         let mut reached_max_poh_height = false;
         let mut overall_min_prioritization_fees: u64 = u64::MAX;
         let mut overall_max_prioritization_fees: u64 = 0;
-        while chunk_start != transactions.len() {
-            let chunk_end = std::cmp::min(
-                transactions.len(),
-                chunk_start + TARGET_NUM_TRANSACTIONS_PER_BATCH,
-            );
-            let process_transaction_batch_output = self.consumer.process_and_record_transactions(
-                bank,
-                &transactions[chunk_start..chunk_end],
-                chunk_start,
-            );
+        let process_transaction_batch_output = self
+            .consumer
+            .process_and_record_transactions(bank, transactions);
 
-            let ProcessTransactionBatchOutput {
-                cost_model_throttled_transactions_count: new_cost_model_throttled_transactions_count,
-                cost_model_us: new_cost_model_us,
-                execute_and_commit_transactions_output,
-            } = process_transaction_batch_output;
-            saturating_add_assign!(
-                total_cost_model_throttled_transactions_count,
-                new_cost_model_throttled_transactions_count
-            );
-            saturating_add_assign!(total_cost_model_us, new_cost_model_us);
+        let ProcessTransactionBatchOutput {
+            cost_model_throttled_transactions_count: new_cost_model_throttled_transactions_count,
+            cost_model_us: new_cost_model_us,
+            execute_and_commit_transactions_output,
+        } = process_transaction_batch_output;
+        saturating_add_assign!(
+            total_cost_model_throttled_transactions_count,
+            new_cost_model_throttled_transactions_count
+        );
+        saturating_add_assign!(total_cost_model_us, new_cost_model_us);
 
-            let ExecuteAndCommitTransactionsOutput {
-                transaction_counts: new_transaction_counts,
-                retryable_transaction_indexes: new_retryable_transaction_indexes,
-                commit_transactions_result: new_commit_transactions_result,
-                execute_and_commit_timings: new_execute_and_commit_timings,
-                error_counters: new_error_counters,
-                min_prioritization_fees,
-                max_prioritization_fees,
-                ..
-            } = execute_and_commit_transactions_output;
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts: new_transaction_counts,
+            retryable_transaction_indexes: new_retryable_transaction_indexes,
+            commit_transactions_result: new_commit_transactions_result,
+            execute_and_commit_timings: new_execute_and_commit_timings,
+            error_counters: new_error_counters,
+            min_prioritization_fees,
+            max_prioritization_fees,
+            ..
+        } = execute_and_commit_transactions_output;
 
-            total_execute_and_commit_timings.accumulate(&new_execute_and_commit_timings);
-            total_error_counters.accumulate(&new_error_counters);
-            total_transaction_counts.accumulate(
-                &new_transaction_counts,
-                new_commit_transactions_result.is_ok(),
-            );
+        total_execute_and_commit_timings.accumulate(&new_execute_and_commit_timings);
+        total_error_counters.accumulate(&new_error_counters);
+        total_transaction_counts.accumulate(
+            &new_transaction_counts,
+            new_commit_transactions_result.is_ok(),
+        );
 
-            overall_min_prioritization_fees =
-                std::cmp::min(overall_min_prioritization_fees, min_prioritization_fees);
-            overall_max_prioritization_fees =
-                std::cmp::min(overall_max_prioritization_fees, max_prioritization_fees);
+        overall_min_prioritization_fees =
+            std::cmp::min(overall_min_prioritization_fees, min_prioritization_fees);
+        overall_max_prioritization_fees =
+            std::cmp::min(overall_max_prioritization_fees, max_prioritization_fees);
 
-            // Add the retryable txs (transactions that errored in a way that warrants a retry)
-            // to the list of unprocessed txs.
-            all_retryable_tx_indexes.extend_from_slice(&new_retryable_transaction_indexes);
+        // Add the retryable txs (transactions that errored in a way that warrants a retry)
+        // to the list of unprocessed txs.
+        all_retryable_tx_indexes.extend_from_slice(&new_retryable_transaction_indexes);
 
-            let should_bank_still_be_processing_txs =
-                Bank::should_bank_still_be_processing_txs(bank_creation_time, bank.ns_per_slot);
-            match (
-                new_commit_transactions_result,
-                should_bank_still_be_processing_txs,
-            ) {
-                (Err(PohRecorderError::MaxHeightReached), _) | (_, false) => {
-                    info!(
-                        "process transactions: max height reached slot: {} height: {}",
-                        bank.slot(),
-                        bank.tick_height()
-                    );
-                    // process_and_record_transactions has returned all retryable errors in
-                    // transactions[chunk_start..chunk_end], so we just need to push the remaining
-                    // transactions into the unprocessed queue.
-                    all_retryable_tx_indexes.extend(chunk_end..transactions.len());
-                    reached_max_poh_height = true;
-                    break;
-                }
-                _ => (),
+        let should_bank_still_be_processing_txs =
+            Bank::should_bank_still_be_processing_txs(bank_creation_time, bank.ns_per_slot);
+        match (
+            new_commit_transactions_result,
+            should_bank_still_be_processing_txs,
+        ) {
+            (Err(PohRecorderError::MaxHeightReached), _) | (_, false) => {
+                info!(
+                    "process transactions: max height reached slot: {} height: {}",
+                    bank.slot(),
+                    bank.tick_height()
+                );
+                // process_and_record_transactions has returned all retryable errors in
+                // transactions[chunk_start..chunk_end], so we just need to push the remaining
+                // transactions into the unprocessed queue.
+                all_retryable_tx_indexes.extend(0..transactions.len());
+                reached_max_poh_height = true;
             }
-            // Don't exit early on any other type of error, continue processing...
-            chunk_start = chunk_end;
+            _ => (),
         }
 
         ProcessTransactionsSummary {
