@@ -1249,19 +1249,17 @@ mod tests {
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
-        const MIN_CHUNK_SIZE: usize = DATA_SHREDS_PER_FEC_BLOCK;
+        const MAX_CHUNK_SIZE: usize = DATA_SHREDS_PER_FEC_BLOCK;
         let chunks: Vec<_> = data_shreds
             .iter()
             .group_by(|shred| shred.fec_set_index())
             .into_iter()
             .map(|(fec_set_index, chunk)| (fec_set_index, chunk.count()))
             .collect();
+        assert!(chunks.iter().all(|(_, chunk_size)| *chunk_size >= 1));
         assert!(chunks
             .iter()
-            .all(|(_, chunk_size)| *chunk_size >= MIN_CHUNK_SIZE));
-        assert!(chunks
-            .iter()
-            .all(|(_, chunk_size)| *chunk_size < 2 * MIN_CHUNK_SIZE));
+            .all(|(_, chunk_size)| *chunk_size <= MAX_CHUNK_SIZE));
         assert_eq!(chunks[0].0, start_index);
         assert!(chunks.iter().tuple_windows().all(
             |((fec_set_index, chunk_size), (next_fec_set_index, _chunk_size))| fec_set_index
