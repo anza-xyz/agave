@@ -605,6 +605,21 @@ fn build_solana_package(
             .iter()
             .filter_map(|target| {
                 if target.crate_types.contains(&"cdylib".to_string()) {
+                    let other_crate = if target.crate_types.contains(&"rlib".to_string()) {
+                        Some("rlib")
+                    } else if target.crate_types.contains(&"lib".to_string()) {
+                        Some("lib")
+                    } else {
+                        None
+                    };
+
+                    if let Some(other_crate) = other_crate {
+                        warn!("Package '{}' has two crate types defined: cdylib and {}. \
+                        This setting precludes compiler optimizations. Use cdylib for programs \
+                        to be deployed and rlib for packages to be imported by other programs as libraries.",
+                        package.name, other_crate);
+                    }
+
                     Some(&target.name)
                 } else {
                     None
@@ -614,13 +629,19 @@ fn build_solana_package(
 
         match cdylib_targets.len() {
             0 => {
-                warn!(
-                    "Note: {} crate does not contain a cdylib target",
+                info!(
+                    "Note: {} crate is a library to be imported by other solana programs",
                     package.name
                 );
                 None
             }
-            1 => Some(cdylib_targets[0].replace('-', "_")),
+            1 => {
+                info!(
+                    "Note: {} crate is a solana program ready for deployment",
+                    package.name
+                );
+                Some(cdylib_targets[0].replace('-', "_"))
+            }
             _ => {
                 error!(
                     "{} crate contains multiple cdylib targets: {:?}",
