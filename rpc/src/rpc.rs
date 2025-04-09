@@ -4665,7 +4665,7 @@ pub mod tests {
                 &owner_pubkey,
             )
             .into(),
-            &[from_pubkey],
+            &[],
         )?;
 
         ic_logger_msg!(log_collector, "All done!");
