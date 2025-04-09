@@ -11996,14 +11996,14 @@ pub mod tests {
             setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
                 slot,
                 parent_slot,
-                200,
+                200, // make sure at most one coding batch is made
                 fec_set_index,
                 // Do not set merkle root, so shreds are not signed
                 None,
                 true,
             );
         assert!(first_data_shreds.len() > DATA_SHREDS_PER_FEC_BLOCK);
-        let block_id = first_data_shreds[0].merkle_root().unwrap();
+        let block_id = first_data_shreds.last().unwrap().merkle_root().unwrap();
         blockstore
             .insert_shreds(first_data_shreds, None, false)
             .unwrap();
