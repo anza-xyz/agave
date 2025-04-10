@@ -1,3 +1,8 @@
+/// ClusterSlots object holds information about which validators have confirmed which slots
+/// via EpochSlots mechanism. Periodically, EpochSlots get sent into here via update method.
+/// The ClusterSlots datastructure maintains a shadow copy of the stake info for current and
+/// upcoming epochs, and a ringbuffer of per-slot records. The ringbuffer may contain blank
+/// records if stake information is not available (can happen for very short epochs).
 use {
     crate::{cluster_slots_service::slot_supporters::SlotSupporters, consensus::Stake},
     solana_gossip::{
@@ -95,11 +100,13 @@ impl ClusterSlots {
     #[inline]
     pub(crate) fn lookup(&self, slot: Slot) -> Option<Arc<SlotSupporters>> {
         let cluster_slots = self.cluster_slots.read().unwrap();
-        Some(
-            Self::get_row_for_slot(slot, &cluster_slots)?
-                .supporters
-                .clone(),
-        )
+
+        let row = Self::get_row_for_slot(slot, &cluster_slots)?;
+        if row.supporters.is_blank() {
+            None
+        } else {
+            Some(row.supporters.clone())
+        }
     }
 
     #[inline]
@@ -110,6 +117,19 @@ impl ClusterSlots {
         }
         let idx = slot - start;
         cluster_slots.get(idx as usize)
+    }
+
+    #[inline]
+    fn get_row_for_slot_mut(
+        slot: Slot,
+        cluster_slots: &mut VecDeque<RowContent>,
+    ) -> Option<&mut RowContent> {
+        let start = cluster_slots.front()?.slot;
+        if slot < start {
+            return None;
+        }
+        let idx = slot - start;
+        cluster_slots.get_mut(idx as usize)
     }
 
     pub(crate) fn update(&self, root_bank: &Bank, cluster_info: &ClusterInfo) {
@@ -148,21 +168,35 @@ impl ClusterSlots {
             epoch_metadata.remove(&my_epoch);
         }
         // Next we fetch info about current and upcoming epoch's stakes
-        // indexing in the epoch_stakes_map is done with an offset of 1,
-        // so current epoch is under epoch_number + 1 index
         epoch_metadata.insert(
             root_epoch,
-            EpochStakeInfo::from(&epoch_stakes_map[&root_epoch.wrapping_add(1)]),
+            EpochStakeInfo::from(&epoch_stakes_map[&root_epoch]),
         );
-        epoch_metadata.insert(
-            root_epoch,
-            EpochStakeInfo::from(&epoch_stakes_map[&root_epoch.wrapping_add(2)]),
-        );
-
+        let next_epoch = root_epoch.wrapping_add(1);
+        let next_epoch_info = EpochStakeInfo::from(&epoch_stakes_map[&next_epoch]);
         *self.root_epoch.write().unwrap() = Some(RootEpoch {
             schedule: root_bank.epoch_schedule().clone(),
             number: root_epoch,
-        })
+        });
+        let mut first_slot = root_bank
+            .epoch_schedule()
+            .get_first_slot_in_epoch(next_epoch);
+        let mut cluster_slots = self.cluster_slots.write().unwrap();
+        loop {
+            let row = Self::get_row_for_slot_mut(first_slot, &mut cluster_slots);
+            let Some(row) = row else {
+                break; // reached the end of ringbuffer
+            };
+            if row.supporters.is_blank() {
+                warn!("Finalizing init for slot {first_slot} in epoch {next_epoch}");
+                row.supporters = Arc::new(SlotSupporters::new(
+                    next_epoch_info.total_stake,
+                    next_epoch_info.pubkey_to_index.clone(),
+                ));
+            }
+            first_slot = first_slot.wrapping_add(1);
+        }
+        epoch_metadata.insert(next_epoch, next_epoch_info);
     }
     #[cfg(test)]
     pub(crate) fn fake_epoch_info_for_tests(&self, validator_stakes: ValidatorStakesMap) {
@@ -198,17 +232,27 @@ impl ClusterSlots {
         let epoch_metadata = self.epoch_metadata.read().unwrap();
         //startup init, this is very slow but only ever happens once
         if cluster_slots.is_empty() {
+            info!("Init cluster_slots at range {:?}", slot_range);
             for slot in slot_range.clone() {
                 // Epoch should be defined for all slots in the window
                 let epoch = self
                     .get_epoch_for_slot(slot)
                     .expect("Epoch should be defined for all slots");
-                //Data for current epoch should exist
-                let epoch_data = epoch_metadata
-                    .get(&epoch)
-                    .expect("Epoch stake information should be available for all slots");
-                let supporters =
-                    SlotSupporters::new(epoch_data.total_stake, epoch_data.pubkey_to_index.clone());
+                let supporters = if let Some(epoch_data) = epoch_metadata.get(&epoch) {
+                    SlotSupporters::new(epoch_data.total_stake, epoch_data.pubkey_to_index.clone())
+                } else {
+                    // we should be able to initialize at least current epoch right away
+                    if epoch
+                        == self
+                            .get_epoch_for_slot(current_slot)
+                            .expect("Epochs should be defined")
+                    {
+                        panic!(
+                            "Epoch slots can not find stake info for slot {slot} in epoch {epoch}"
+                        );
+                    }
+                    SlotSupporters::new_blank()
+                };
                 self.metric_allocations.fetch_add(1, Ordering::Relaxed);
                 cluster_slots.push_back(RowContent {
                     slot,
@@ -233,7 +277,14 @@ impl ClusterSlots {
             let epoch = self
                 .get_epoch_for_slot(slot)
                 .expect("Epoch should be defined for all slots in the window");
-            let stake_info = epoch_metadata.get(&epoch).unwrap();
+            let Some(stake_info) = epoch_metadata.get(&epoch) else {
+                warn!("Epoch slots can not reuse slot entry for slot {slot} since stakes for epoch {epoch} are not available");
+                cluster_slots.push_back(RowContent {
+                    slot,
+                    supporters: Arc::new(SlotSupporters::new_blank()),
+                });
+                break;
+            };
 
             let new_supporters = match Arc::try_unwrap(supporters) {
                 Ok(supporters) => {
@@ -303,22 +354,27 @@ impl ClusterSlots {
         }
     }
 
-    /// Returns number of stored entries
-    fn datastructure_size(&self) -> usize {
-        let cluster_slots = self.cluster_slots.read().unwrap();
-        cluster_slots
-            .iter()
-            .map(|RowContent { supporters, .. }| supporters.memory_usage())
-            .sum::<usize>()
-    }
-
+    /// Upload stats into metrics database
     fn maybe_report_cluster_slots_perf_stats(&self) {
         if self.metrics_last_report.should_update(10_000) {
             let write_locks = self.metric_write_locks.swap(0, Ordering::Relaxed);
             let allocations = self.metric_allocations.swap(0, Ordering::Relaxed);
+            let cluster_slots = self.cluster_slots.read().unwrap();
+            let (size, frozen, blank) =
+                cluster_slots
+                    .iter()
+                    .fold((0, 0, 0), |(s, f, b), RowContent { supporters, .. }| {
+                        (
+                            s + supporters.memory_usage(),
+                            f + supporters.is_frozen() as usize,
+                            b + supporters.is_blank() as usize,
+                        )
+                    });
             datapoint_info!(
                 "cluster-slots-size",
-                ("total_entries", self.datastructure_size() as i64, i64),
+                ("total_entries", size as i64, i64),
+                ("frozen_entries", frozen as i64, i64),
+                ("blank_entries", blank as i64, i64),
                 ("write_locks", write_locks as i64, i64),
                 ("total_allocations", allocations as i64, i64),
             );
