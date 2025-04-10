@@ -28,9 +28,9 @@ use qualifier_attr::qualifiers;
 use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
-        account_storage::stored_account_info::StoredAccountInfo,
         account_storage::{
-            meta::StoredAccountMeta, AccountStorage, AccountStorageStatus, ShrinkInProgress,
+            meta::StoredAccountMeta, stored_account_info::StoredAccountInfo, AccountStorage,
+            AccountStorageStatus, ShrinkInProgress,
         },
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
@@ -4988,23 +4988,13 @@ impl AccountsDb {
                 .storage
                 .get_slot_storage_entry_shrinking_in_progress_ok(slot)
             {
-                storage
-                    .accounts
-                    .scan_accounts_stored_meta(|stored_account_meta| {
-                        let account = StoredAccountInfo {
-                            pubkey: stored_account_meta.pubkey(),
-                            lamports: stored_account_meta.lamports(),
-                            owner: stored_account_meta.owner(),
-                            data: stored_account_meta.data(),
-                            executable: stored_account_meta.executable(),
-                            rent_epoch: stored_account_meta.rent_epoch(),
-                        };
-                        let loaded_account = LoadedAccount::Stored(account);
-                        let data = (scan_account_storage_data
-                            == ScanAccountStorageData::DataRefForStorage)
-                            .then_some(loaded_account.data());
-                        storage_scan_func(&retval, &loaded_account, data)
-                    });
+                storage.accounts.scan_accounts(|account| {
+                    let loaded_account = LoadedAccount::Stored(account);
+                    let data = (scan_account_storage_data
+                        == ScanAccountStorageData::DataRefForStorage)
+                        .then_some(loaded_account.data());
+                    storage_scan_func(&retval, &loaded_account, data)
+                });
             }
 
             ScanStorageResult::Stored(retval)
