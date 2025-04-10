@@ -328,7 +328,6 @@ impl BankingStageHelper {
     }
 
     pub fn generate_task_ids(&self, count: usize) -> usize {
-        assert!(count > 0);
         self.next_task_id.fetch_add(count, Relaxed)
     }
 
@@ -356,7 +355,7 @@ impl BankingStageHelper {
         Ok(())
     }
 
-    fn signal_disconnection(&self) {
+    fn abort_scheduler(&self) {
         let Some(sender) = self.new_task_sender.upgrade() else {
             return;
         };
@@ -2071,7 +2070,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // This match arm can be hit if context.is_preallocated()
                                 info!("ignoring duplicate CloseSubchannel...");
                             }
-                            Ok(NewTaskPayload::Disconnect) | Err(_) => {
+                            Ok(NewTaskPayload::Disconnect) | Err(RecvError) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
                                 // Initialize result_with_timings with a harmless value...
                                 result_with_timings = initialized_result_with_timings();
@@ -2152,7 +2151,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
-                                banking_stage_helper.signal_disconnection();
+                                banking_stage_helper.abort_scheduler();
                                 break;
                             };
                             if let Err(SchedulerAborted) = banking_packet_handler(banking_stage_helper, banking_packet) {
