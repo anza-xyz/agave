@@ -158,6 +158,28 @@ impl AccountsFile {
     }
 
     /// calls `callback` with the account located at the specified index offset.
+    pub fn get_stored_account_callback<Ret>(
+        &self,
+        offset: usize,
+        mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
+    ) -> Option<Ret> {
+        self.get_stored_account_meta_callback(offset, |stored_account_meta| {
+            let account = StoredAccountInfo {
+                pubkey: stored_account_meta.pubkey(),
+                lamports: stored_account_meta.lamports(),
+                owner: stored_account_meta.owner(),
+                data: stored_account_meta.data(),
+                executable: stored_account_meta.executable(),
+                rent_epoch: stored_account_meta.rent_epoch(),
+            };
+            callback(account)
+        })
+    }
+
+    /// calls `callback` with the account located at the specified index offset.
+    ///
+    /// Prefer get_stored_account_callback() when possible, as it does not contain file format
+    /// implementation details, and thus potentially can read less and be faster.
     pub fn get_stored_account_meta_callback<Ret>(
         &self,
         offset: usize,

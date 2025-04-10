@@ -1046,20 +1046,11 @@ impl LoadedAccountAccessor<'_> {
                 maybe_storage_entry
                     .as_ref()
                     .and_then(|(storage_entry, offset)| {
-                        storage_entry.accounts.get_stored_account_meta_callback(
-                            *offset,
-                            |stored_account_meta| {
-                                let account = StoredAccountInfo {
-                                    pubkey: stored_account_meta.pubkey(),
-                                    lamports: stored_account_meta.lamports(),
-                                    owner: stored_account_meta.owner(),
-                                    data: stored_account_meta.data(),
-                                    executable: stored_account_meta.executable(),
-                                    rent_epoch: stored_account_meta.rent_epoch(),
-                                };
+                        storage_entry
+                            .accounts
+                            .get_stored_account_callback(*offset, |account| {
                                 callback(LoadedAccount::Stored(account))
-                            },
-                        )
+                            })
                     })
             }
         }
