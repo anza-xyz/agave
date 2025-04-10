@@ -605,7 +605,7 @@ fn build_solana_package(
             .iter()
             .filter_map(|target| {
                 if target.crate_types.contains(&"cdylib".to_string()) {
-                    let other_crate = if target.crate_types.contains(&"rlib".to_string()) {
+                    let other_crate_type = if target.crate_types.contains(&"rlib".to_string()) {
                         Some("rlib")
                     } else if target.crate_types.contains(&"lib".to_string()) {
                         Some("lib")
@@ -613,7 +613,7 @@ fn build_solana_package(
                         None
                     };
 
-                    if let Some(other_crate) = other_crate {
+                    if let Some(other_crate) = other_crate_type {
                         warn!("Package '{}' has two crate types defined: cdylib and {}. \
                         This setting precludes link-time optimizations (LTO). Use cdylib for programs \
                         to be deployed and rlib for packages to be imported by other programs as libraries.",
