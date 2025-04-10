@@ -99,6 +99,17 @@ impl SlotSupporters {
             pubkey_to_index_map: index_map,
         }
     }
+    pub(crate) fn new_blank() -> Self {
+        Self {
+            total_support: AtomicU64::new(0),
+            total_stake: 0,
+            supporting_stakes: vec![],
+            pubkey_to_index_map: Arc::new(HashMap::default()),
+        }
+    }
+    pub(crate) fn is_blank(&self) -> bool {
+        self.total_stake == 0
+    }
     // recycles the object for new slot. If index_map is not provided,
     // the old one will be reused (which is fine within the epoch)
     pub(crate) fn recycle(mut self, total_stake: Stake, index_map: &Arc<IndexMap>) -> Self {
