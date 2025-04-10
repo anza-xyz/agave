@@ -6660,7 +6660,7 @@ impl Bank {
 
     fn get_build_hash_and_offsets(data: &[u8]) -> (usize, usize, Hash) {
         let offset = bpf_loader_upgradeable::UpgradeableLoaderState::size_of_programdata_metadata();
-        let end_offset = data.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
+        let end_offset = data.iter().rposition(|&x| x != 0).map_or(offset, |i| i + 1);
         let buffer_program_data = &data[offset..end_offset];
         (
             offset,
