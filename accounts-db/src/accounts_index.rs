@@ -1209,18 +1209,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         slot_list: &[(Slot, T)],
         max_allowed_root_inclusive: Option<Slot>,
     ) -> Slot {
-        let mut max_root = 0;
-        for (slot, _) in slot_list.iter() {
-            if let Some(max_allowed_root_inclusive) = max_allowed_root_inclusive {
-                if *slot > max_allowed_root_inclusive {
-                    continue;
-                }
-            }
-            if *slot > max_root && alive_roots.contains(slot) {
-                max_root = *slot;
-            }
-        }
-        max_root
+        slot_list
+            .iter()
+            .map(|(slot, _)| slot)
+            .filter(|slot| max_allowed_root_inclusive.is_none_or(|max_root| **slot <= max_root))
+            .filter(|slot| alive_roots.contains(slot))
+            .max()
+            .copied()
+            .unwrap_or(0)
     }
 
     fn update_spl_token_secondary_indexes<G: solana_inline_spl::token::GenericTokenAccount>(
