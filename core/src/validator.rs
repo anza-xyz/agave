@@ -2523,8 +2523,8 @@ fn initialize_rpc_transaction_history_services(
 
 #[derive(Error, Debug)]
 pub enum ValidatorError {
-    #[error("Bad expected bank hash")]
-    BadExpectedBankHash,
+    #[error("bank hash mismatch: actual={0}, expected={1}")]
+    BankHashMismatch(Hash, Hash),
 
     #[error("blockstore error: {0}")]
     Blockstore(#[source] BlockstoreError),
@@ -2596,12 +2596,10 @@ fn wait_for_supermajority(
 
             if let Some(expected_bank_hash) = config.expected_bank_hash {
                 if bank.hash() != expected_bank_hash {
-                    error!(
-                        "Bank hash({}) does not match expected value: {}",
+                    return Err(ValidatorError::BankHashMismatch(
                         bank.hash(),
-                        expected_bank_hash
-                    );
-                    return Err(ValidatorError::BadExpectedBankHash);
+                        expected_bank_hash,
+                    ));
                 }
             }
 
@@ -3129,7 +3127,7 @@ mod tests {
         // bank=1, wait=1, equal, but bad hash provided
         config.wait_for_supermajority = Some(1);
         config.expected_bank_hash = Some(hash(&[1]));
-        matches!(
+        assert!(matches!(
             wait_for_supermajority(
                 &config,
                 None,
@@ -3138,8 +3136,8 @@ mod tests {
                 rpc_override_health_check,
                 &start_progress,
             ),
-            Err(ValidatorError::BadExpectedBankHash),
-        );
+            Err(ValidatorError::BankHashMismatch(_, _)),
+        ));
     }
 
     #[test]
