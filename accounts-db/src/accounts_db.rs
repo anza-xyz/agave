@@ -8554,18 +8554,20 @@ impl AccountsDb {
             // Some were not inserted. This means some info like stored data is off.
             duplicates_this_slot
                 .into_iter()
-                .for_each(|(pubkey, (_slot, info))| {
-                    storage
-                        .accounts
-                        .get_stored_account_meta_callback(info.offset(), |duplicate| {
-                            assert_eq!(&pubkey, duplicate.pubkey());
-                            stored_size_alive =
-                                stored_size_alive.saturating_sub(duplicate.stored_size());
-                            if !duplicate.is_zero_lamport() {
-                                accounts_data_len =
-                                    accounts_data_len.saturating_sub(duplicate.data().len() as u64);
-                            }
-                        });
+                .filter_map(|(pubkey, (_slot, info))| {
+                    let duplicate = storage.accounts.get_account_index_info(info.offset());
+                    duplicate
+                        .as_ref()
+                        .inspect(|duplicate| assert_eq!(pubkey, duplicate.index_info.pubkey));
+                    duplicate
+                })
+                .for_each(|duplicate| {
+                    stored_size_alive =
+                        stored_size_alive.saturating_sub(duplicate.stored_size_aligned);
+                    if !duplicate.is_zero_lamport() {
+                        accounts_data_len =
+                            accounts_data_len.saturating_sub(duplicate.index_info.data_len);
+                    }
                 });
         }
 
