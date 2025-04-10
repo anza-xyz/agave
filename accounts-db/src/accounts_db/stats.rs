@@ -145,21 +145,33 @@ impl StoreAccountsTiming {
 pub struct FlushStats {
     pub num_accounts_flushed: Saturating<usize>,
     pub num_bytes_flushed: Saturating<u64>,
+    pub num_zero_lamport_accounts_flushed: Saturating<usize>,
+    pub num_accounts_reclaimed: Saturating<usize>,
     pub num_accounts_purged: Saturating<usize>,
     pub num_bytes_purged: Saturating<u64>,
     pub store_accounts_timing: StoreAccountsTiming,
     pub store_accounts_total_us: Saturating<u64>,
+    pub unref_time: Saturating<u64>,
+    pub zero_lamport_find_time: Saturating<u64>,
+    pub reclaim_time: Saturating<u64>,
+    pub collect_accounts_time: Saturating<u64>,
 }
 
 impl FlushStats {
     pub fn accumulate(&mut self, other: &Self) {
         self.num_accounts_flushed += other.num_accounts_flushed;
+        self.num_zero_lamport_accounts_flushed += other.num_zero_lamport_accounts_flushed;
+        self.num_accounts_reclaimed += other.num_accounts_reclaimed;
         self.num_bytes_flushed += other.num_bytes_flushed;
         self.num_accounts_purged += other.num_accounts_purged;
         self.num_bytes_purged += other.num_bytes_purged;
         self.store_accounts_timing
             .accumulate(&other.store_accounts_timing);
         self.store_accounts_total_us += other.store_accounts_total_us;
+        self.unref_time += other.unref_time;
+        self.zero_lamport_find_time += other.zero_lamport_find_time;
+        self.reclaim_time += other.reclaim_time;
+        self.collect_accounts_time += other.collect_accounts_time;
     }
 }
 

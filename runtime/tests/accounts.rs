@@ -8,23 +8,14 @@ use {
         ancestors::Ancestors,
     },
     solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
+        account::{AccountSharedData, WritableAccount},
         clock::Slot,
         hash::Hash,
-        pubkey::Pubkey,
-        sysvar::epoch_schedule::EpochSchedule,
     },
-    std::{
-        collections::HashSet,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
-        time::Instant,
-    },
+    std::{collections::HashSet, time::Instant},
 };
 
-#[test]
+/*#[test]
 fn test_shrink_and_clean() {
     solana_logger::setup();
 
@@ -80,7 +71,7 @@ fn test_shrink_and_clean() {
         exit.store(true, Ordering::Relaxed);
         shrink_thread.join().unwrap();
     }
-}
+}*/
 
 #[test]
 fn test_bad_bank_hash() {

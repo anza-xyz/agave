@@ -799,10 +799,12 @@ impl Serialize for SerializableAccountsDb<'_> {
             *entry_count.borrow_mut() += x.len();
             (
                 x.first().unwrap().slot(),
-                utils::serialize_iter_as_seq(
-                    x.iter()
-                        .map(|x| SerializableAccountStorageEntry::from(x.as_ref())),
-                ),
+                utils::serialize_iter_as_seq(x.iter().map(|x| {
+                    let mut entry = SerializableAccountStorageEntry::from(x.as_ref());
+                    entry
+                        .set_len(entry.current_len() - x.get_dead_account_stats(Some(self.slot)).1);
+                    entry
+                })),
             )
         }));
         let bank_hash_info = BankHashInfo {

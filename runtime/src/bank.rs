@@ -202,6 +202,7 @@ use {
     solana_accounts_db::accounts_db::{
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
+    solana_accounts_db::accounts_file::StorageAccess,
     solana_nonce_account::{get_system_account_kind, SystemAccountKind},
     solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
     solana_sdk::nonce,
@@ -974,6 +975,15 @@ impl Default for BankTestConfig {
         Self {
             accounts_db_config: ACCOUNTS_DB_CONFIG_FOR_TESTING,
         }
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl BankTestConfig {
+    pub fn new(storage_access: StorageAccess) -> Self {
+        let mut accounts_db_config = ACCOUNTS_DB_CONFIG_FOR_TESTING;
+        accounts_db_config.storage_access = storage_access;
+        Self { accounts_db_config }
     }
 }
 

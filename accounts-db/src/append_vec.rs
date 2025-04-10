@@ -607,6 +607,7 @@ impl AppendVec {
         let path = path.into();
         let file_size = std::fs::metadata(&path)?.len();
         Self::sanitize_len_and_size(current_len, file_size as usize)?;
+        //let current_len = file_size as usize;
 
         let data = OpenOptions::new()
             .read(true)

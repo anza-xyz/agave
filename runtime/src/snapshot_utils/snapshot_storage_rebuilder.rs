@@ -259,9 +259,10 @@ impl SnapshotStorageRebuilder {
     ) {
         thread_pool.spawn(move || {
             for path in rebuilder.file_receiver.iter() {
-                match rebuilder.process_append_vec_file(path) {
+                match rebuilder.process_append_vec_file(path.clone()) {
                     Ok(_) => {}
                     Err(err) => {
+                        println!("Failing for path {:?} with error {:?}", path, err);
                         exit_sender
                             .send(Err(err))
                             .expect("sender should be connected");
