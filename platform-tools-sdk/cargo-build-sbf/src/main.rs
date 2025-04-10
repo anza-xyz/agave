@@ -628,20 +628,8 @@ fn build_solana_package(
             .collect::<Vec<_>>();
 
         match cdylib_targets.len() {
-            0 => {
-                info!(
-                    "Note: {} crate is a library to be imported by other solana programs",
-                    package.name
-                );
-                None
-            }
-            1 => {
-                info!(
-                    "Note: {} crate is a solana program ready for deployment",
-                    package.name
-                );
-                Some(cdylib_targets[0].replace('-', "_"))
-            }
+            0 => None,
+            1 => Some(cdylib_targets[0].replace('-', "_")),
             _ => {
                 error!(
                     "{} crate contains multiple cdylib targets: {:?}",
