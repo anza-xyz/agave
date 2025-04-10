@@ -29,7 +29,7 @@ use {
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
-            TransactionStructure, Validator, ValidatorConfig, ValidatorError,
+            TransactionStructureCli, Validator, ValidatorConfig, ValidatorError,
             ValidatorStartProgress, ValidatorTpuConfig,
         },
     },
@@ -1032,9 +1032,10 @@ pub fn execute(
     validator_config.transaction_struct = value_t!(
         matches, // comment to align formatting...
         "transaction_struct",
-        TransactionStructure
+        TransactionStructureCli
     )
-    .unwrap_or_default();
+    .unwrap_or_default()
+    .into();
     validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
     validator_config.unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();

@@ -10,7 +10,7 @@ use {
     solana_core::{
         banking_stage::{update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage},
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
-        validator::{BlockProductionMethod, TransactionStructure},
+        validator::{BlockProductionMethod, TransactionStructure, TransactionStructureCli},
     },
     solana_gossip::cluster_info::{ClusterInfo, Node},
     solana_ledger::{
@@ -293,8 +293,8 @@ fn main() {
                 .long("transaction-structure")
                 .value_name("STRUCT")
                 .takes_value(true)
-                .possible_values(TransactionStructure::cli_names())
-                .help(TransactionStructure::cli_message()),
+                .possible_values(TransactionStructureCli::cli_names())
+                .help(TransactionStructureCli::cli_message()),
         )
         .arg(
             Arg::new("num_banking_threads")

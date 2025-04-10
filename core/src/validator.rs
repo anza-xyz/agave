@@ -212,13 +212,12 @@ impl BlockProductionMethod {
 
 #[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
-pub enum TransactionStructure {
+pub enum TransactionStructureCli {
     #[default]
     Sdk,
-    View,
 }
 
-impl TransactionStructure {
+impl TransactionStructureCli {
     pub const fn cli_names() -> &'static [&'static str] {
         Self::VARIANTS
     }
@@ -227,12 +226,28 @@ impl TransactionStructure {
         lazy_static! {
             static ref MESSAGE: String = format!(
                 "Switch internal transaction structure/representation [default: {}]",
-                TransactionStructure::default()
+                TransactionStructureCli::default()
             );
         };
 
         &MESSAGE
     }
+}
+
+impl From<TransactionStructureCli> for TransactionStructure {
+    fn from(cli: TransactionStructureCli) -> Self {
+        match cli {
+            TransactionStructureCli::Sdk => TransactionStructure::Sdk,
+        }
+    }
+}
+
+#[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
+#[strum(serialize_all = "kebab-case")]
+pub enum TransactionStructure {
+    #[default]
+    Sdk,
+    View,
 }
 
 /// Configuration for the block generator invalidator for replay.

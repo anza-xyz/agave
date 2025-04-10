@@ -12,7 +12,7 @@ use {
     },
     solana_core::{
         banking_trace::DirByteLimit,
-        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
+        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructureCli},
     },
     solana_ledger::use_snapshot_archives_at_startup,
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
@@ -1583,8 +1583,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("transaction-structure")
             .value_name("STRUCT")
             .takes_value(true)
-            .possible_values(TransactionStructure::cli_names())
-            .help(TransactionStructure::cli_message()),
+            .possible_values(TransactionStructureCli::cli_names())
+            .help(TransactionStructureCli::cli_message()),
     )
     .arg(
         Arg::with_name("unified_scheduler_handler_threads")
