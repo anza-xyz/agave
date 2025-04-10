@@ -615,7 +615,7 @@ fn build_solana_package(
 
                     if let Some(other_crate) = other_crate {
                         warn!("Package '{}' has two crate types defined: cdylib and {}. \
-                        This setting precludes compiler optimizations. Use cdylib for programs \
+                        This setting precludes link-time optimizations (LTO). Use cdylib for programs \
                         to be deployed and rlib for packages to be imported by other programs as libraries.",
                         package.name, other_crate);
                     }
