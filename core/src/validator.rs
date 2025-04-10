@@ -2532,8 +2532,11 @@ pub enum ValidatorError {
     #[error("genesis hash mismatch: actual={0}, expected={1}")]
     GenesisHashMismatch(Hash, Hash),
 
-    #[error("Ledger does not have enough data to wait for supermajority")]
-    NotEnoughLedgerData,
+    #[error(
+        "ledger does not have enough data to wait for supermajority: \
+        current slot={0}, needed slot={1}"
+    )]
+    NotEnoughLedgerData(Slot, Slot),
 
     #[error("failed to open genesis: {0}")]
     OpenGenesisConfig(#[source] OpenGenesisConfigError),
@@ -2583,13 +2586,10 @@ fn wait_for_supermajority(
             match wait_for_supermajority_slot.cmp(&bank.slot()) {
                 std::cmp::Ordering::Less => return Ok(false),
                 std::cmp::Ordering::Greater => {
-                    error!(
-                        "Ledger does not have enough data to wait for supermajority, please \
-                         enable snapshot fetch. Has {} needs {}",
+                    return Err(ValidatorError::NotEnoughLedgerData(
                         bank.slot(),
-                        wait_for_supermajority_slot
-                    );
-                    return Err(ValidatorError::NotEnoughLedgerData);
+                        wait_for_supermajority_slot,
+                    ));
                 }
                 _ => {}
             }
@@ -3095,7 +3095,7 @@ mod tests {
 
         // bank=0, wait=1, should fail
         config.wait_for_supermajority = Some(1);
-        matches!(
+        assert!(matches!(
             wait_for_supermajority(
                 &config,
                 None,
@@ -3104,8 +3104,8 @@ mod tests {
                 rpc_override_health_check.clone(),
                 &start_progress,
             ),
-            Err(ValidatorError::NotEnoughLedgerData),
-        );
+            Err(ValidatorError::NotEnoughLedgerData(_, _)),
+        ));
 
         // bank=1, wait=0, should pass, bank is past the wait slot
         let bank_forks = BankForks::new_rw_arc(Bank::new_from_parent(
