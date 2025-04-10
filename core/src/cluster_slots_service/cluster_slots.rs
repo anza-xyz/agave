@@ -91,7 +91,7 @@ impl ClusterSlots {
         root_epoch: u64,
     ) {
         let current_slot = self.current_slot.load(Ordering::Relaxed);
-        if current_slot > root_slot {
+        if current_slot > root_slot + 1 {
             error!("Invalid update call to ClusterSlots, can not roll time backwards!");
             return;
         }
