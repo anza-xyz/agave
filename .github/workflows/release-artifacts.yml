@@ -110,6 +110,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.windows-build.outputs.tag }}
-          draft: true
           files: |
             windows-release/${{ needs.windows-build.outputs.tag }}/*
