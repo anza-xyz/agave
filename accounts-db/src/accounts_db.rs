@@ -2714,9 +2714,9 @@ impl AccountsDb {
                 return;
             }
             if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-                storage
-                    .accounts
-                    .scan_pubkeys(|pubkey| match pubkey_refcount.entry(*pubkey) {
+                storage.accounts.scan_accounts(|account| {
+                    let pk = account.pubkey();
+                    match pubkey_refcount.entry(*pk) {
                         dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
                             if !occupied_entry.get().iter().any(|s| s == &slot) {
                                 occupied_entry.get_mut().push(slot);
@@ -2725,7 +2725,8 @@ impl AccountsDb {
                         dashmap::mapref::entry::Entry::Vacant(vacant_entry) => {
                             vacant_entry.insert(vec![slot]);
                         }
-                    });
+                    }
+                });
             }
         });
         let total = pubkey_refcount.len();
