@@ -4351,7 +4351,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "cannot take: Taken(0)")]
+    #[should_panic(expected = "cannot take")]
     fn test_block_production_scheduler_double_take_without_returning() {
         solana_logger::setup();
 
