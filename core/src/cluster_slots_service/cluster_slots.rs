@@ -31,11 +31,12 @@ const CLUSTER_SLOTS_TRIM_SIZE: usize = 50000;
 type PubkeyHasherBuilder = RandomState;
 pub(crate) type ValidatorStakesMap = HashMap<Pubkey, Stake, PubkeyHasherBuilder>;
 
-///Static snapshot of the information about a given epoch's stake distribution
+/// Static snapshot of the information about a given epoch's stake distribution.
 struct EpochStakeInfo {
     validator_stakes: Arc<ValidatorStakesMap>,
     pubkey_to_index: Arc<HashMap<Pubkey, usize>>,
-    total_stake: Stake, // total amount of stake across all validators in validator_stakes.
+    /// total amount of stake across all validators in `validator_stakes`.
+    total_stake: Stake,
 }
 
 impl From<&EpochStakes> for EpochStakeInfo {
