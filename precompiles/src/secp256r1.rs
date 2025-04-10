@@ -60,11 +60,13 @@ pub fn verify(
         let start = i
             .saturating_mul(SIGNATURE_OFFSETS_SERIALIZED_SIZE)
             .saturating_add(SIGNATURE_OFFSETS_START);
-        let end = start.saturating_add(SIGNATURE_OFFSETS_SERIALIZED_SIZE);
 
-        // bytemuck wants structures aligned
-        let offsets: &Secp256r1SignatureOffsets = bytemuck::try_from_bytes(&data[start..end])
-            .map_err(|_| PrecompileError::InvalidDataOffsets)?;
+        // SAFETY:
+        // - data[start..] is guaranteed to be >= size of Secp256r1SignatureOffsets
+        // - Secp256r1SignatureOffsets is a POD type, so we can safely read it as an unaligned struct
+        let offsets = unsafe {
+            core::ptr::read_unaligned(data.as_ptr().add(start) as *const Secp256r1SignatureOffsets)
+        };
 
         // Parse out signature
         let signature = get_data_slice(
