@@ -114,7 +114,7 @@ impl ClusterSlots {
     pub(crate) fn update(&self, root_bank: &Bank, cluster_info: &ClusterInfo) {
         let root_slot = root_bank.slot();
         let current_slot = self.get_current_slot();
-        if current_slot > root_slot {
+        if current_slot > root_slot + 1 {
             error!("Invalid update call to ClusterSlots, can not roll time backwards!");
             return;
         }
@@ -138,7 +138,7 @@ impl ClusterSlots {
         Some(root_epoch) != my_epoch
     }
 
-    // call this to update internal datastructures for current and (if available) next epoch
+    // call this to update internal datastructures for current and next epoch
     fn update_epoch_info(&self, my_epoch: Option<Epoch>, root_bank: &Bank) {
         let root_epoch = root_bank.epoch();
         let epoch_stakes_map = root_bank.epoch_stakes_map();
@@ -146,17 +146,17 @@ impl ClusterSlots {
         if let Some(my_epoch) = my_epoch {
             epoch_metadata.remove(&my_epoch);
         }
-        // indexing in the epoch_stakes_map is a offset by 1
+        // Next we fetch info about current and upcoming epoch's stakes
+        // indexing in the epoch_stakes_map is done with an offset of 1,
+        // so current epoch is under epoch_number + 1 index
         epoch_metadata.insert(
             root_epoch,
             EpochStakeInfo::from(&epoch_stakes_map[&root_epoch.wrapping_add(1)]),
         );
-
-        if let Some(value) = epoch_stakes_map.get(&root_epoch.wrapping_add(2)) {
-            epoch_metadata.insert(root_epoch + 1, EpochStakeInfo::from(value));
-        } else {
-            warn!("Could not find any info for the next epoch!");
-        }
+        epoch_metadata.insert(
+            root_epoch,
+            EpochStakeInfo::from(&epoch_stakes_map[&root_epoch.wrapping_add(2)]),
+        );
 
         *self.root_epoch.write().unwrap() = Some(RootEpoch {
             schedule: root_bank.epoch_schedule().clone(),
