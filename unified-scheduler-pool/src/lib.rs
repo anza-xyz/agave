@@ -103,7 +103,6 @@ type AtomicSchedulerId = AtomicU64;
 /// `solana-runtime` ( [`TransactionStatusSender`] and [`TransactionRecorder`]). Refer to the doc
 /// comment with a diagram at [`solana_runtime::installed_scheduler_pool::InstalledScheduler`] for
 /// explanation of this rather complex dyn trait/type hierarchy.
-#[derive(Debug)]
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
     block_production_scheduler_inner: Mutex<BlockProductionSchedulerInner<S, TH>>,
@@ -158,22 +157,28 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
     }
 
     fn put_spawned(&mut self, inner: S::Inner) {
-        assert_matches!(mem::replace(self, Self::Pooled(inner)), Self::NotSpawned);
+        assert!(matches!(
+            mem::replace(self, Self::Pooled(inner)),
+            Self::NotSpawned,
+        ));
     }
 
     fn trash_taken(&mut self) {
-        assert_matches!(mem::replace(self, Self::NotSpawned), Self::Taken(_));
+        assert!(matches!(
+            mem::replace(self, Self::NotSpawned),
+            Self::Taken(_)
+        ));
     }
 
     fn put_returned(&mut self, inner: S::Inner) {
         let new = inner.id();
-        assert_matches!(mem::replace(self, Self::Pooled(inner)), Self::Taken(old) if old == new);
+        assert!(matches!(mem::replace(self, Self::Pooled(inner)), Self::Taken(old) if old == new));
     }
 
     fn take_pooled(&mut self) -> S::Inner {
         let id = {
             let Self::Pooled(inner) = &self else {
-                panic!("cannot take: {:?}", self)
+                panic!("cannot take");
             };
             inner.id()
         };
@@ -735,7 +740,7 @@ where
     }
 }
 
-pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
+pub trait TaskHandler: Send + Sync + Sized + 'static {
     fn handle(
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
@@ -745,7 +750,6 @@ pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
     );
 }
 
-#[derive(Debug)]
 pub struct DefaultTaskHandler;
 
 impl TaskHandler for DefaultTaskHandler {
@@ -1167,13 +1171,11 @@ fn disconnected<T>() -> Receiver<T> {
 ///     }
 ///     Retired --> [*]: Terminated (by solScCleaner)
 /// ```
-#[derive(Debug)]
 pub struct PooledScheduler<TH: TaskHandler> {
     inner: PooledSchedulerInner<Self, TH>,
     context: SchedulingContext,
 }
 
-#[derive(Debug)]
 pub struct PooledSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     thread_manager: ThreadManager<S, TH>,
     usage_queue_loader: UsageQueueLoader,
@@ -1250,7 +1252,6 @@ where
 // This is equivalent to a particular bank for block verification. However, new terms is introduced
 // here to mean some continuous time over multiple continuous banks/slots for the block production,
 // which is planned to be implemented in the future.
-#[derive(Debug)]
 struct ThreadManager<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_id: SchedulerId,
     pool: Arc<SchedulerPool<S, TH>>,
@@ -2122,7 +2123,7 @@ pub trait SchedulerInner {
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
-    type Inner: SchedulerInner + Debug + Send + Sync;
+    type Inner: SchedulerInner + Send + Sync;
 
     fn into_inner(self) -> (ResultWithTimings, Self::Inner);
 
@@ -2330,8 +2331,6 @@ mod tests {
         // at this moment now
         // the 2 weaks are for the weak_self field and the pool cleaner thread.
         assert_eq!((Arc::strong_count(&pool), Arc::weak_count(&pool)), (1, 2));
-        let debug = format!("{pool:#?}");
-        assert!(!debug.is_empty());
     }
 
     #[test]
@@ -2343,10 +2342,7 @@ mod tests {
             DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
         let bank = Arc::new(Bank::default_for_tests());
         let context = SchedulingContext::for_verification(bank);
-        let scheduler = pool.take_scheduler(context);
-
-        let debug = format!("{scheduler:#?}");
-        assert!(!debug.is_empty());
+        let _scheduler = pool.take_scheduler(context);
     }
 
     const SHORTENED_POOL_CLEANER_INTERVAL: Duration = Duration::from_millis(1);
@@ -2956,10 +2952,10 @@ mod tests {
 
         // should never panic.
         scheduler.pause_for_recent_blockhash();
-        assert_matches!(
+        assert!(matches!(
             Box::new(scheduler).wait_for_termination(false),
             ((Ok(()), _), _)
-        );
+        ));
     }
 
     #[test]
@@ -3709,7 +3705,6 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
     struct AsyncScheduler<const TRIGGER_RACE_CONDITION: bool>(
         Mutex<ResultWithTimings>,
         Mutex<Vec<JoinHandle<ResultWithTimings>>>,
@@ -4104,17 +4099,17 @@ mod tests {
                         TransactionStatusBatch { .. }
                     ))
                 );
-                assert_matches!(
+                assert!(matches!(
                     signal_receiver.try_recv(),
                     Ok((_, (solana_entry::entry::Entry {transactions, ..} , _)))
                         if transactions == vec![tx.to_versioned_transaction()]
-                );
+                ));
             } else {
                 assert_eq!(result, &expected_tx_result);
                 assert_eq!(bank.transaction_count(), 0);
                 assert_eq!(bank.transaction_error_count(), 0);
                 assert_matches!(receiver.try_recv(), Err(_));
-                assert_matches!(signal_receiver.try_recv(), Err(_));
+                assert!(signal_receiver.try_recv().is_err());
             }
         } else {
             if expected_tx_result.is_ok() {
@@ -4125,7 +4120,7 @@ mod tests {
 
             assert_eq!(bank.transaction_count(), 0);
             assert_matches!(receiver.try_recv(), Err(_));
-            assert_matches!(signal_receiver.try_recv(), Err(_));
+            assert!(signal_receiver.try_recv().is_err());
         }
 
         exit.store(true, Ordering::Relaxed);

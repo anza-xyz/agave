@@ -298,10 +298,10 @@ fn test_scheduler_producing_blocks() {
 
     // Verify transactions are committed and poh-recorded
     assert_eq!(tpu_bank.transaction_count(), 1);
-    assert_matches!(
+    assert!(matches!(
         signal_receiver.into_iter().find(|(_, (entry, _))| !entry.is_tick()),
         Some((_, (Entry {transactions, ..}, _))) if transactions == [tx.to_versioned_transaction()]
-    );
+    ));
 
     // Stop things.
     exit.store(true, Ordering::Relaxed);

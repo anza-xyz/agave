@@ -65,7 +65,7 @@ mod tests {
         let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
 
         let bank = bank_forks.read().unwrap().root_bank();
-        assert_eq!(bank, root_bank_cache.root_bank());
+        assert!(bank == root_bank_cache.root_bank());
 
         {
             let child_bank = Bank::new_from_parent(bank.clone(), &Pubkey::default(), 1);
@@ -83,13 +83,13 @@ mod tests {
             let cached_root_bank = root_bank_cache.cached_root_bank.upgrade().unwrap();
             assert!(bank.slot() != cached_root_bank.slot());
             assert!(bank != cached_root_bank);
-            assert_eq!(bank, root_bank_cache.root_bank());
+            assert!(bank == root_bank_cache.root_bank());
 
             // cached slot and bank are updated
             let cached_root_bank = root_bank_cache.cached_root_bank.upgrade().unwrap();
             assert_eq!(bank.slot(), cached_root_bank.slot());
-            assert_eq!(bank, cached_root_bank);
-            assert_eq!(bank, root_bank_cache.root_bank());
+            assert!(bank == cached_root_bank);
+            assert!(bank == root_bank_cache.root_bank());
         }
     }
 }

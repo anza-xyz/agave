@@ -302,7 +302,6 @@ impl From<FeeDetails> for CollectorFeeDetails {
     }
 }
 
-#[derive(Debug)]
 pub struct BankRc {
     /// where all the Accounts are stored
     pub accounts: Arc<Accounts>,
@@ -741,7 +740,6 @@ struct HashOverride {
 }
 
 /// Manager for the state of all accounts and programs after processing its entries.
-#[derive(Debug)]
 pub struct Bank {
     /// References to accounts, parent and signature status
     pub rc: BankRc,

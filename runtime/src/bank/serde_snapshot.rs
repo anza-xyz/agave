@@ -285,7 +285,7 @@ mod tests {
             expected_accounts_lt_hash,
         );
         assert_eq!(dbank.get_bank_hash_stats(), bank2.get_bank_hash_stats());
-        assert_eq!(dbank, bank2);
+        assert!(dbank == bank2);
     }
 
     fn add_root_and_flush_write_cache(bank: &Bank) {

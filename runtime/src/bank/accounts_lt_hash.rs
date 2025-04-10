@@ -1016,7 +1016,7 @@ mod tests {
 
         // Wait for the startup verification to complete.  If we don't panic, then we're good!
         roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(roundtrip_bank, *bank);
+        assert!(roundtrip_bank == *bank);
     }
 
     /// Ensure that accounts written in Bank::new() are added to the accounts lt hash cache.
@@ -1186,7 +1186,7 @@ mod tests {
 
         // Wait for the startup verification to complete.  If we don't panic, then we're good!
         roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(roundtrip_bank, *bank);
+        assert!(roundtrip_bank == *bank);
     }
 
     /// Ensure that the snapshot hash is correct when snapshots_lt_hash is enabled
@@ -1275,6 +1275,6 @@ mod tests {
 
         // Wait for the startup verification to complete.  If we don't panic, then we're good!
         roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(roundtrip_bank, *bank);
+        assert!(roundtrip_bank == *bank);
     }
 }

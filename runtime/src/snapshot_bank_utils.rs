@@ -1227,7 +1227,7 @@ mod tests {
         )
         .unwrap();
         roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(original_bank, roundtrip_bank);
+        assert!(original_bank == roundtrip_bank);
     }
 
     /// Test roundtrip of bank to a full snapshot, then back again.  This test is more involved
@@ -1339,7 +1339,7 @@ mod tests {
         )
         .unwrap();
         roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(*bank4, roundtrip_bank);
+        assert!(*bank4 == roundtrip_bank);
     }
 
     /// Test roundtrip of bank to snapshots, then back again, with incremental snapshots.  In this
@@ -1469,7 +1469,7 @@ mod tests {
         )
         .unwrap();
         roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(*bank4, roundtrip_bank);
+        assert!(*bank4 == roundtrip_bank);
     }
 
     /// Test rebuilding bank from the latest snapshot archives
@@ -1589,7 +1589,7 @@ mod tests {
         )
         .unwrap();
         deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(deserialized_bank, *bank4);
+        assert!(deserialized_bank == *bank4);
     }
 
     /// Test that cleaning works well in the edge cases of zero-lamport accounts and snapshots.
@@ -1725,8 +1725,8 @@ mod tests {
         )
         .unwrap();
         deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(
-            deserialized_bank, *bank2,
+        assert!(
+            deserialized_bank == *bank2,
             "Ensure rebuilding from an incremental snapshot works"
         );
 
@@ -1789,8 +1789,8 @@ mod tests {
         )
         .unwrap();
         deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(
-            deserialized_bank, *bank4,
+        assert!(
+            deserialized_bank == *bank4,
             "Ensure rebuilding from an incremental snapshot works",
         );
         assert!(
@@ -2140,7 +2140,7 @@ mod tests {
         )
         .unwrap();
         deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(&deserialized_bank, bank.as_ref());
+        assert!(&deserialized_bank == bank.as_ref());
 
         // ensure the accounts hash stored in the deserialized bank matches
         let deserialized_accounts_hash = deserialized_bank
@@ -2213,7 +2213,7 @@ mod tests {
         .unwrap();
 
         bank_constructed.wait_for_initial_accounts_hash_verification_completed_for_tests();
-        assert_eq!(bank_constructed, bank);
+        assert!(bank_constructed == bank);
 
         // Verify that the next_append_vec_id tracking is correct
         let mut max_id = 0;
@@ -2253,8 +2253,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            deserialized_bank, bank,
+        assert!(
+            deserialized_bank == bank,
             "Ensure rebuilding bank from the highest snapshot dir results in the highest bank",
         );
     }

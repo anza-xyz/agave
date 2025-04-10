@@ -553,7 +553,7 @@ fn main() {
             new_bank_time.stop();
 
             let mut insert_time = Measure::start("insert_time");
-            assert_matches!(poh_recorder.read().unwrap().bank(), None);
+            assert!(poh_recorder.read().unwrap().bank().is_none());
             update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                 &bank_forks,
                 &poh_recorder,
@@ -561,7 +561,7 @@ fn main() {
                 false,
             );
             bank = bank_forks.read().unwrap().working_bank_with_scheduler();
-            assert_matches!(poh_recorder.read().unwrap().bank(), Some(_));
+            assert!(poh_recorder.read().unwrap().bank().is_some());
             insert_time.stop();
             debug!(
                 "new_bank_time: {}us insert_time: {}us poh_time: {}us",

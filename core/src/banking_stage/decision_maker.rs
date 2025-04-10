@@ -13,7 +13,7 @@ use {
     },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum BufferedPacketsDecision {
     Consume(BankStart),
     Forward,
@@ -194,7 +194,7 @@ mod tests {
                 .unwrap()
                 .set_bank_for_test(bank.clone());
             let decision = decision_maker.make_consume_or_forward_decision_no_cache();
-            assert_matches!(decision, BufferedPacketsDecision::Consume(_));
+            assert!(matches!(decision, BufferedPacketsDecision::Consume(_)));
         }
 
         // Will be leader shortly - Hold
@@ -235,7 +235,7 @@ mod tests {
         {
             poh_recorder.write().unwrap().reset(bank, None);
             let decision = decision_maker.make_consume_or_forward_decision_no_cache();
-            assert_matches!(decision, BufferedPacketsDecision::Forward);
+            assert!(matches!(decision, BufferedPacketsDecision::Forward));
         }
     }
 
@@ -249,7 +249,7 @@ mod tests {
             bank_creation_time: Arc::new(Instant::now()),
         });
         // having active bank allows to consume immediately
-        assert_matches!(
+        assert!(matches!(
             DecisionMaker::consume_or_forward_packets(
                 &my_pubkey,
                 || bank_start.clone(),
@@ -258,9 +258,9 @@ mod tests {
                 || panic!("should not be called")
             ),
             BufferedPacketsDecision::Consume(_)
-        );
+        ));
         // Unknown leader, hold the packets
-        assert_matches!(
+        assert!(matches!(
             DecisionMaker::consume_or_forward_packets(
                 &my_pubkey,
                 || None,
@@ -269,9 +269,9 @@ mod tests {
                 || None
             ),
             BufferedPacketsDecision::Hold
-        );
+        ));
         // Leader other than me, forward the packets
-        assert_matches!(
+        assert!(matches!(
             DecisionMaker::consume_or_forward_packets(
                 &my_pubkey,
                 || None,
@@ -280,9 +280,9 @@ mod tests {
                 || Some(my_pubkey1),
             ),
             BufferedPacketsDecision::Forward
-        );
+        ));
         // Will be leader shortly, hold the packets
-        assert_matches!(
+        assert!(matches!(
             DecisionMaker::consume_or_forward_packets(
                 &my_pubkey,
                 || None,
@@ -291,9 +291,9 @@ mod tests {
                 || panic!("should not be called"),
             ),
             BufferedPacketsDecision::Hold
-        );
+        ));
         // Will be leader (not shortly), forward and hold
-        assert_matches!(
+        assert!(matches!(
             DecisionMaker::consume_or_forward_packets(
                 &my_pubkey,
                 || None,
@@ -302,9 +302,9 @@ mod tests {
                 || panic!("should not be called"),
             ),
             BufferedPacketsDecision::ForwardAndHold
-        );
+        ));
         // Current leader matches my pubkey, hold
-        assert_matches!(
+        assert!(matches!(
             DecisionMaker::consume_or_forward_packets(
                 &my_pubkey1,
                 || None,
@@ -313,6 +313,6 @@ mod tests {
                 || Some(my_pubkey1),
             ),
             BufferedPacketsDecision::Hold
-        );
+        ));
     }
 }

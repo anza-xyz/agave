@@ -47,7 +47,7 @@ pub fn initialized_result_with_timings() -> ResultWithTimings {
     (Ok(()), ExecuteTimings::default())
 }
 
-pub trait InstalledSchedulerPool: Send + Sync + Debug {
+pub trait InstalledSchedulerPool: Send + Sync {
     /// A very thin wrapper of [`Self::take_resumed_scheduler`] to take a scheduler from this pool
     /// for a brand-new bank.
     fn take_scheduler(&self, context: SchedulingContext) -> InstalledSchedulerBox {
@@ -147,7 +147,7 @@ impl Debug for TimeoutListener {
 // suppress false clippy complaints arising from mockall-derive:
 //   warning: `#[must_use]` has no effect when applied to a struct field
 #[cfg_attr(feature = "dev-context-only-utils", allow(unused_attributes))]
-pub trait InstalledScheduler: Send + Sync + Debug + 'static {
+pub trait InstalledScheduler: Send + Sync + 'static {
     fn id(&self) -> SchedulerId;
     fn context(&self) -> &SchedulingContext;
 
@@ -227,7 +227,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", automock)]
-pub trait UninstalledScheduler: Send + Sync + Debug + 'static {
+pub trait UninstalledScheduler: Send + Sync + 'static {
     fn return_to_pool(self: Box<Self>);
 }
 
@@ -250,7 +250,7 @@ pub type SchedulerId = u64;
 ///
 /// There's a special construction only used for scheduler preallocation, which has no bank. Panics
 /// will be triggered when tried to be used normally across code-base.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SchedulingContext {
     mode: SchedulingMode,
     bank: Option<Arc<Bank>>,
@@ -340,7 +340,6 @@ impl WaitReason {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
 pub enum SchedulerStatus {
     /// Unified scheduler is disabled or installed scheduler is consumed by
     /// [`InstalledScheduler::wait_for_termination`]. Note that transition to [`Self::Unavailable`]
@@ -376,7 +375,7 @@ impl SchedulerStatus {
         f: impl FnOnce(InstalledSchedulerPoolArc, ResultWithTimings) -> InstalledSchedulerBox,
     ) {
         let Self::Stale(pool, result_with_timings) = mem::replace(self, Self::Unavailable) else {
-            panic!("transition to Active failed: {self:?}");
+            panic!("transition to Active failed.");
         };
         *self = Self::Active(f(pool, result_with_timings));
     }
@@ -389,7 +388,7 @@ impl SchedulerStatus {
             return;
         }
         let Self::Active(scheduler) = mem::replace(self, Self::Unavailable) else {
-            unreachable!("not active: {self:?}");
+            unreachable!("not active");
         };
         let (pool, result_with_timings) = f(scheduler);
         *self = Self::Stale(pool, result_with_timings);
@@ -397,21 +396,21 @@ impl SchedulerStatus {
 
     fn transition_from_active_to_unavailable(&mut self) -> InstalledSchedulerBox {
         let Self::Active(scheduler) = mem::replace(self, Self::Unavailable) else {
-            panic!("transition to Unavailable failed: {self:?}");
+            panic!("transition to Unavailable failed");
         };
         scheduler
     }
 
     fn transition_from_stale_to_unavailable(&mut self) -> ResultWithTimings {
         let Self::Stale(_pool, result_with_timings) = mem::replace(self, Self::Unavailable) else {
-            panic!("transition to Unavailable failed: {self:?}");
+            panic!("transition to Unavailable failed");
         };
         result_with_timings
     }
 
     fn active_scheduler(&self) -> &InstalledSchedulerBox {
         let SchedulerStatus::Active(active_scheduler) = self else {
-            panic!("not active: {self:?}");
+            panic!("not active");
         };
         active_scheduler
     }
@@ -434,12 +433,10 @@ impl SchedulerStatus {
 /// avoid ambiguity as to which to clone: BankWithScheduler or Arc<Bank>. Use
 /// clone_without_scheduler() for Arc<Bank>. Otherwise, use clone_with_scheduler() (this should be
 /// unusual outside scheduler code-path)
-#[derive(Debug)]
 pub struct BankWithScheduler {
     inner: Arc<BankWithSchedulerInner>,
 }
 
-#[derive(Debug)]
 pub struct BankWithSchedulerInner {
     bank: Arc<Bank>,
     scheduler: InstalledSchedulerRwLock,
@@ -612,7 +609,6 @@ impl BankWithSchedulerInner {
                 // unconditional context construction for verification is okay here.
                 let context = SchedulingContext::for_verification(self.bank.clone());
                 let mut scheduler = self.scheduler.write().unwrap();
-                trace!("with_active_scheduler: {:?}", scheduler);
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
                     let scheduler = pool.take_resumed_scheduler(context, result_with_timings);
                     info!(
@@ -672,7 +668,7 @@ impl BankWithSchedulerInner {
                 );
                 (pool, result_with_timings)
             });
-            trace!("timeout_listener: {:?}", scheduler);
+            trace!("timeout_listener");
         })
     }
 
@@ -685,7 +681,7 @@ impl BankWithSchedulerInner {
             SchedulerStatus::Stale(_pool, (result, _timings)) if result.is_err() => {
                 result.clone().unwrap_err()
             }
-            _ => unreachable!("no error in {:?}", self.scheduler),
+            _ => unreachable!("no error in scheduler"),
         }
     }
 

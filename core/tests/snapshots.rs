@@ -168,7 +168,7 @@ fn restore_from_snapshot(
     deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
 
     let bank = old_bank_forks.get(deserialized_bank.slot()).unwrap();
-    assert_eq!(bank.as_ref(), &deserialized_bank);
+    assert!(bank.as_ref() == &deserialized_bank);
 }
 
 // creates banks up to "last_slot" and runs the input function `f` on each bank created
@@ -623,7 +623,7 @@ fn restore_from_snapshots_and_check_banks_are_equal(
     )?;
     deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
 
-    assert_eq!(bank, &deserialized_bank);
+    assert!(bank == &deserialized_bank);
 
     Ok(())
 }
@@ -869,14 +869,14 @@ fn test_snapshots_with_background_services(
         deserialized_bank.slot(),
         latest_incremental_snapshot_slot.unwrap()
     );
-    assert_eq!(
-        &deserialized_bank,
-        bank_forks
-            .read()
-            .unwrap()
-            .get(deserialized_bank.slot())
-            .unwrap()
-            .as_ref()
+    assert!(
+        &deserialized_bank
+            == bank_forks
+                .read()
+                .unwrap()
+                .get(deserialized_bank.slot())
+                .unwrap()
+                .as_ref()
     );
 
     // Stop the background services, ignore any errors

@@ -8616,15 +8616,6 @@ fn test_invoke_non_program_account_owned_by_a_builtin() {
     );
 }
 
-#[test]
-fn test_debug_bank() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(50000);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.finish_init(&genesis_config, None, false);
-    let debug = format!("{bank:#?}");
-    assert!(!debug.is_empty());
-}
-
 #[derive(Debug)]
 enum AcceptableScanResults {
     DroppedSlotError,
@@ -13264,7 +13255,7 @@ fn test_rebuild_skipped_rewrites() {
     )
     .unwrap();
     snapshot_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-    assert_eq!(bank.as_ref(), &snapshot_bank);
+    assert!(bank.as_ref() == &snapshot_bank);
 
     // Ensure the snapshot bank's skipped rewrites match the original bank's
     let snapshot_skipped_rewrites = snapshot_bank.calculate_skipped_rewrites();

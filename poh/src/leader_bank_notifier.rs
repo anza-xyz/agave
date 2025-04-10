@@ -186,7 +186,7 @@ mod tests {
         );
         assert_eq!(state.status, Status::InProgress);
         assert_eq!(state.slot, Some(bank.slot()));
-        assert_eq!(state.bank.upgrade(), Some(bank));
+        assert!(state.bank.upgrade() == Some(bank));
     }
 
     #[test]
@@ -226,7 +226,7 @@ mod tests {
         assert_eq!(leader_bank_notifier.get_current_bank_id(), None);
         assert_eq!(state.status, Status::StandBy);
         assert_eq!(state.slot, Some(bank.slot()));
-        assert_eq!(state.bank.upgrade(), Some(bank));
+        assert!(state.bank.upgrade() == Some(bank));
     }
 
     #[test]
