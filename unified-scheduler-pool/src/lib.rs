@@ -1102,8 +1102,8 @@ enum SubchanneledPayload<P1, P2> {
     OpenSubchannel(P2),
     UnpauseOpenedSubchannel,
     CloseSubchannel,
-    Disconnect,
     Reset,
+    Disconnect,
 }
 
 type NewTaskPayload = SubchanneledPayload<Task, Box<(SchedulingContext, ResultWithTimings)>>;
@@ -2332,6 +2332,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .unwrap();
     }
 
+    fn start_discarding_buffered_tasks(&self) {
+        if let Err(err) = self.new_task_sender.send(NewTaskPayload::Reset) {
+            warn!("failed to send a reset due to error: {err:?}");
+        }
+    }
+
     fn start_session(
         &mut self,
         context: SchedulingContext,
@@ -2516,13 +2522,7 @@ where
     }
 
     fn discard_buffered_tasks(&self) {
-        if let Err(a) = self
-            .thread_manager
-            .new_task_sender
-            .send(NewTaskPayload::Reset)
-        {
-            warn!("failed to send a reset due to error: {a:?}");
-        }
+        self.thread_manager.start_discarding_buffered_tasks();
     }
 
     fn ensure_abort(&mut self) {
