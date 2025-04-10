@@ -7,7 +7,7 @@ use {
     crate::bank::Bank,
     error::CoreBpfMigrationError,
     num_traits::{CheckedAdd, CheckedSub},
-    solana_builtins::core_bpf_migration::CoreBpfMigrationConfig,
+    solana_builtins::core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType},
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::ProgramCacheForTxBatch,
@@ -62,8 +62,8 @@ impl Bank {
     /// well as the source program data account's upgrade authority and ELF.
     ///
     /// This function accepts a provided upgrade authority address, which comes
-    /// from the migration configuration. If the provided upgrade authority
-    /// address is different from the source buffer account's upgrade authority
+    /// from the migration configuration. If `check_authority` is true and the provided
+    /// upgrade authority address is different from the source buffer account's upgrade authority
     /// address, the migration will fail. If the provided upgrade authority
     /// address is `None`, the migration will ignore the source buffer account's
     /// upgrade authority and set the new program data account's upgrade
@@ -72,6 +72,7 @@ impl Bank {
         &self,
         source: &SourceBuffer,
         upgrade_authority_address: Option<Pubkey>,
+        check_authority: bool,
     ) -> Result<AccountSharedData, CoreBpfMigrationError> {
         let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
         if let UpgradeableLoaderState::Buffer {
@@ -79,7 +80,7 @@ impl Bank {
         } = bincode::deserialize(&source.buffer_account.data()[..buffer_metadata_size])?
         {
             if let Some(provided_authority) = upgrade_authority_address {
-                if upgrade_authority_address != buffer_authority {
+                if check_authority && upgrade_authority_address != buffer_authority {
                     return Err(CoreBpfMigrationError::UpgradeAuthorityMismatch(
                         provided_authority,
                         buffer_authority,
@@ -224,7 +225,7 @@ impl Bank {
         // Attempt serialization first before modifying the bank.
         let new_target_program_account = self.new_target_program_account(&target)?;
         let new_target_program_data_account =
-            self.new_target_program_data_account(&source, config.upgrade_authority_address)?;
+            self.new_target_program_data_account(&source, config.upgrade_authority_address, true)?;
 
         // Gather old and new account data sizes, for updating the bank's
         // accounts data size delta off-chain.
@@ -260,19 +261,7 @@ impl Bank {
             new_target_program_account.lamports(),
             new_target_program_data_account.lamports(),
         )?;
-
-        // Update the bank's capitalization.
-        match lamports_to_burn.cmp(&lamports_to_fund) {
-            Ordering::Greater => {
-                self.capitalization
-                    .fetch_sub(checked_sub(lamports_to_burn, lamports_to_fund)?, Relaxed);
-            }
-            Ordering::Less => {
-                self.capitalization
-                    .fetch_add(checked_sub(lamports_to_fund, lamports_to_burn)?, Relaxed);
-            }
-            Ordering::Equal => (),
-        }
+        self.update_captalization(lamports_to_burn, lamports_to_fund)?;
 
         // Store the new program accounts and clear the source buffer account.
         self.store_account(&target.program_address, &new_target_program_account);
@@ -322,7 +311,7 @@ impl Bank {
 
         // Attempt serialization first before modifying the bank.
         let new_target_program_data_account =
-            self.new_target_program_data_account(&source, target.upgrade_authority_address)?;
+            self.new_target_program_data_account(&source, target.upgrade_authority_address, true)?;
 
         // Gather old and new account data sizes, for updating the bank's
         // accounts data size delta off-chain.
@@ -354,19 +343,7 @@ impl Bank {
             source.buffer_account.lamports(),
         )?;
         let lamports_to_fund = new_target_program_data_account.lamports();
-
-        // Update the bank's capitalization.
-        match lamports_to_burn.cmp(&lamports_to_fund) {
-            Ordering::Greater => {
-                self.capitalization
-                    .fetch_sub(checked_sub(lamports_to_burn, lamports_to_fund)?, Relaxed);
-            }
-            Ordering::Less => {
-                self.capitalization
-                    .fetch_add(checked_sub(lamports_to_fund, lamports_to_burn)?, Relaxed);
-            }
-            Ordering::Equal => (),
-        }
+        self.update_captalization(lamports_to_burn, lamports_to_fund)?;
 
         // Store the new program data account and clear the source buffer account.
         self.store_account(
@@ -377,6 +354,101 @@ impl Bank {
 
         // Update the account data size delta.
         self.calculate_and_update_accounts_data_size_delta_off_chain(old_data_size, new_data_size);
+
+        Ok(())
+    }
+
+    /// Add a new Core BPF program.
+    ///
+    /// This function will create a new bpf program at `core_bpf_program_address`
+    /// and populate it from the buffer account `source_buffer_address`.
+    ///
+    /// The `upgrade_authority` is not required to be the same as the buffer account,
+    /// and will be set on the program account.
+    pub(crate) fn add_new_core_bpf_program(
+        &mut self,
+        core_bpf_program_address: &Pubkey,
+        source_buffer_address: &Pubkey,
+        expected_verified_build_hash: Hash,
+        upgrade_authority: Pubkey,
+        datapoint_name: &'static str,
+    ) -> Result<(), CoreBpfMigrationError> {
+        datapoint_info!(datapoint_name, ("slot", self.slot, i64));
+
+        // Although this is not a builtin program, it is similar to migrating a builtin to a `Stateless`
+        let target = TargetBuiltin::new_checked(
+            self,
+            core_bpf_program_address,
+            &CoreBpfMigrationTargetType::Stateless,
+        )?;
+        debug_assert!(target.program_account.data().is_empty());
+        debug_assert!(target.program_account.lamports() == 0);
+
+        // Load the source buffer and verify the build hash
+        let source = SourceBuffer::new_checked_with_verified_build_hash(
+            self,
+            source_buffer_address,
+            expected_verified_build_hash,
+        )?;
+
+        // Create the new program account and program data accounts
+        let new_target_program_account = self.new_target_program_account(&target)?;
+        let new_target_program_data_account =
+            self.new_target_program_data_account(&source, Some(upgrade_authority), false)?;
+
+        // Compute the data sizes for updatings the accounts data size delta
+        let old_data_size = source.buffer_account.data().len();
+        let new_data_size = checked_add(
+            new_target_program_account.data().len(),
+            new_target_program_data_account.data().len(),
+        )?;
+
+        // Deploy the new target Core BPF program.
+        // This step will validate the program ELF against the current runtime
+        // environment, as well as update the program cache.
+        self.directly_invoke_loader_v3_deploy(
+            core_bpf_program_address,
+            new_target_program_data_account.data(),
+        )?;
+
+        // Update capitalization
+        let lamports_to_burn = source.buffer_account.lamports();
+        let lamports_to_fund = checked_add(
+            new_target_program_account.lamports(),
+            new_target_program_data_account.lamports(),
+        )?;
+        self.update_captalization(lamports_to_burn, lamports_to_fund)?;
+
+        // Store the new program accounts and clear the source buffer account.
+        self.store_account(&target.program_address, &new_target_program_account);
+        self.store_account(
+            &target.program_data_address,
+            &new_target_program_data_account,
+        );
+        self.store_account(&source.buffer_address, &AccountSharedData::default());
+
+        // Update the account data size delta.
+        self.calculate_and_update_accounts_data_size_delta_off_chain(old_data_size, new_data_size);
+
+        Ok(())
+    }
+
+    fn update_captalization(
+        &mut self,
+        lamports_to_burn: u64,
+        lamports_to_fund: u64,
+    ) -> Result<(), CoreBpfMigrationError> {
+        match lamports_to_burn.cmp(&lamports_to_fund) {
+            Ordering::Greater => {
+                self.capitalization
+                    .fetch_sub(checked_sub(lamports_to_burn, lamports_to_fund)?, Relaxed);
+            }
+            Ordering::Less => {
+                self.capitalization
+                    .fetch_add(checked_sub(lamports_to_fund, lamports_to_burn)?, Relaxed);
+            }
+            Ordering::Equal => (),
+        };
 
         Ok(())
     }
@@ -1024,6 +1096,74 @@ pub(crate) mod tests {
                 upgrade_authority_address: None,
                 slot: bank.slot(),
             },
+        );
+    }
+
+    #[test]
+    fn test_add_new_core_bpf_program() {
+        let mut bank = create_simple_test_bank(0);
+
+        let core_bpf_program_address = Pubkey::new_unique();
+        let source_buffer_address = Pubkey::new_unique();
+        let upgrade_authority_address = Pubkey::new_unique();
+
+        let mut test_context = TestContext::new(
+            &bank,
+            &core_bpf_program_address,
+            &source_buffer_address,
+            // Random upgrade authority
+            Some(Pubkey::new_unique()),
+        );
+        let TestContext {
+            target_program_address,
+            source_buffer_address,
+            ..
+        } = test_context;
+
+        assert!(bank.get_account(&target_program_address).is_none());
+        assert!(bank
+            .get_account(&bpf_loader_upgradeable::get_program_data_address(
+                &target_program_address
+            ))
+            .is_none());
+
+        let (
+            expected_post_migration_capitalization,
+            expected_post_migration_accounts_data_size_delta_off_chain,
+        ) = test_context
+            .calculate_post_migration_capitalization_and_accounts_data_size_delta_off_chain(&bank);
+
+        let expected_hash = {
+            let data = test_elf();
+            let end_offset = data.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
+            solana_sha256_hasher::hash(&data[..end_offset])
+        };
+
+        // Add the program
+        let migration_slot = bank.slot();
+        bank.add_new_core_bpf_program(
+            &target_program_address,
+            &source_buffer_address,
+            expected_hash,
+            upgrade_authority_address,
+            "test",
+        )
+        .unwrap();
+
+        // Run program checks. Verify that the upgrade authority is overwritten with the new one.
+        test_context.upgrade_authority_address = Some(upgrade_authority_address);
+        test_context.run_program_checks(&bank, migration_slot);
+
+        // Check the bank's capitalization.
+        assert_eq!(
+            bank.capitalization(),
+            expected_post_migration_capitalization
+        );
+
+        // Check the bank's accounts data size delta off-chain.
+        assert_eq!(
+            bank.accounts_data_size_delta_off_chain.load(Relaxed),
+            expected_post_migration_accounts_data_size_delta_off_chain
         );
     }
 }
