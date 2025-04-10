@@ -741,7 +741,6 @@ struct HashOverride {
 }
 
 /// Manager for the state of all accounts and programs after processing its entries.
-#[derive(Debug)]
 pub struct Bank {
     /// References to accounts, parent and signature status
     pub rc: BankRc,
@@ -7042,6 +7041,18 @@ impl TransactionProcessingCallback for Bank {
         if self.is_accounts_lt_hash_enabled() {
             self.inspect_account_for_accounts_lt_hash(address, &account_state, is_writable);
         }
+    }
+}
+
+impl fmt::Debug for Bank {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Bank")
+            .field("slot", &self.slot)
+            .field("bank_id", &self.bank_id)
+            .field("block_height", &self.block_height)
+            .field("parent_slot", &self.parent_slot)
+            .field("capitalization", &self.capitalization())
+            .finish_non_exhaustive()
     }
 }
 
