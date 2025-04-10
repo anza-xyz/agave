@@ -30,6 +30,7 @@ use {
         signature::{Signature, Signer},
         signer::keypair::Keypair,
     },
+    static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
         io::{Cursor, Write},
@@ -37,6 +38,8 @@ use {
         time::Instant,
     },
 };
+
+const_assert_eq!(ShredData::SIZE_OF_PAYLOAD, 1203);
 
 // Layout: {common, data} headers | data buffer
 //     | [Merkle root of the previous erasure batch if chained]
