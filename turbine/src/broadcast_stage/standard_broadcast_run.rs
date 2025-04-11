@@ -21,6 +21,7 @@ pub struct StandardBroadcastRun {
     slot: Slot,
     parent: Slot,
     chained_merkle_root: Hash,
+    carryover_entry: Option<WorkingBankEntry>,
     next_shred_index: u32,
     next_code_index: u32,
     // If last_tick_height has reached bank.max_tick_height() for this slot
@@ -52,6 +53,7 @@ impl StandardBroadcastRun {
             slot: Slot::MAX,
             parent: Slot::MAX,
             chained_merkle_root: Hash::default(),
+            carryover_entry: None,
             next_shred_index: 0,
             next_code_index: 0,
             completed: true,
@@ -435,9 +437,11 @@ impl BroadcastRun for StandardBroadcastRun {
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
-        let receive_results = broadcast_utils::recv_slot_entries(receiver)?;
+        let receive_results =
+            broadcast_utils::recv_slot_entries(receiver, &mut self.carryover_entry)?;
         // TODO: Confirm that last chunk of coding shreds
-        // will not be lost or delayed for too long.
+        // will not be lost or delayed for too long.+
+
         self.process_receive_results(
             keypair,
             blockstore,
@@ -605,10 +609,7 @@ mod test {
                 &quic_endpoint_sender,
             )
             .unwrap();
-        assert_eq!(
-            standard_broadcast_run.next_shred_index as u64,
-            num_shreds_per_slot
-        );
+        assert_eq!(standard_broadcast_run.next_shred_index as u64, 32);
         assert_eq!(standard_broadcast_run.slot, 0);
         assert_eq!(standard_broadcast_run.parent, 0);
         // Make sure the slot is not complete
@@ -677,7 +678,7 @@ mod test {
 
         // The shred index should have reset to 0, which makes it possible for the
         // index < the previous shred index for slot 0
-        assert_eq!(standard_broadcast_run.next_shred_index as u64, num_shreds);
+        assert_eq!(standard_broadcast_run.next_shred_index as u64, 32);
         assert_eq!(standard_broadcast_run.slot, 2);
         assert_eq!(standard_broadcast_run.parent, 0);
 
@@ -746,14 +747,20 @@ mod test {
             shreds.extend(recv_shreds.deref().clone());
         }
         // At least as many coding shreds as data shreds.
-        assert!(shreds.len() >= 29 * 2);
-        assert_eq!(shreds.iter().filter(|shred| shred.is_data()).count(), 30);
+        assert!(shreds.len() >= 32 * 2);
+        assert_eq!(
+            shreds.iter().filter(|shred| shred.is_data()).count(),
+            shreds.len() / 2
+        );
         process_ticks(75);
         while let Ok((recv_shreds, _)) = brecv.recv_timeout(Duration::from_secs(1)) {
             shreds.extend(recv_shreds.deref().clone());
         }
-        assert!(shreds.len() >= 33 * 2);
-        assert_eq!(shreds.iter().filter(|shred| shred.is_data()).count(), 34);
+        assert!(shreds.len() >= 32 * 2);
+        assert_eq!(
+            shreds.iter().filter(|shred| shred.is_data()).count(),
+            shreds.len() / 2
+        );
     }
 
     #[test]

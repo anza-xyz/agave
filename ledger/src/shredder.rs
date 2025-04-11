@@ -546,7 +546,6 @@ mod tests {
             },
         },
         assert_matches::assert_matches,
-        bincode::serialized_size,
         rand::{seq::SliceRandom, Rng},
         solana_sdk::{
             hash::{hash, Hash},
@@ -592,15 +591,7 @@ mod tests {
             })
             .collect();
 
-        let size = serialized_size(&entries).unwrap() as usize;
-        // Integer division to ensure we have enough shreds to fit all the data
-        let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
-        let num_expected_data_shreds = size.div_ceil(data_buffer_size);
-        let num_expected_data_shreds = num_expected_data_shreds.max(if is_last_in_slot {
-            DATA_SHREDS_PER_FEC_BLOCK
-        } else {
-            1
-        });
+        let num_expected_data_shreds = DATA_SHREDS_PER_FEC_BLOCK;
         let num_expected_coding_shreds =
             get_erasure_batch_size(num_expected_data_shreds, is_last_in_slot)
                 - num_expected_data_shreds;
@@ -618,7 +609,7 @@ mod tests {
             &mut ProcessShredsStats::default(),
         );
         let next_index = data_shreds.last().unwrap().index() + 1;
-        assert_eq!(next_index as usize, num_expected_data_shreds);
+        assert_eq!(next_index as usize, DATA_SHREDS_PER_FEC_BLOCK);
 
         let mut data_shred_indexes = HashSet::new();
         let mut coding_shred_indexes = HashSet::new();

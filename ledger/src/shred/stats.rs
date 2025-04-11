@@ -27,6 +27,11 @@ pub struct ProcessShredsStats {
     // When looking up chained merkle root from parent slot fails.
     pub err_unknown_chained_merkle_root: u64,
     pub(crate) data_buffer_residual: usize,
+    pub(crate) data_padding_bytes: usize,
+    pub(crate) data_real_bytes: usize,
+    pub(crate) mostly_full_batches: usize,
+    pub(crate) mostly_empty_batches: usize,
+    pub(crate) inbetween_batches: usize,
     num_merkle_data_shreds: usize,
     num_merkle_coding_shreds: usize,
 }
@@ -98,6 +103,11 @@ impl ProcessShredsStats {
                 i64
             ),
             ("data_buffer_residual", self.data_buffer_residual, i64),
+            ("data_padding_bytes", self.data_padding_bytes, i64),
+            ("data_real_bytes", self.data_real_bytes, i64),
+            ("mostly_full_batches", self.mostly_full_batches, i64),
+            ("mostly_empty_batches", self.mostly_empty_batches, i64),
+            ("inbetween_batches", self.inbetween_batches, i64),
             ("num_data_shreds_07", self.num_data_shreds_hist[0], i64),
             ("num_data_shreds_15", self.num_data_shreds_hist[1], i64),
             ("num_data_shreds_31", self.num_data_shreds_hist[2], i64),
@@ -182,6 +192,11 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
             num_extant_slots,
             err_unknown_chained_merkle_root,
             data_buffer_residual,
+            data_padding_bytes,
+            data_real_bytes,
+            mostly_full_batches,
+            mostly_empty_batches,
+            inbetween_batches,
             num_merkle_data_shreds,
             num_merkle_coding_shreds,
         } = rhs;
@@ -197,6 +212,11 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
         self.num_extant_slots += num_extant_slots;
         self.err_unknown_chained_merkle_root += err_unknown_chained_merkle_root;
         self.data_buffer_residual += data_buffer_residual;
+        self.data_padding_bytes += data_padding_bytes;
+        self.data_real_bytes += data_real_bytes;
+        self.mostly_full_batches += mostly_full_batches;
+        self.mostly_empty_batches += mostly_empty_batches;
+        self.inbetween_batches += inbetween_batches;
         self.num_merkle_data_shreds += num_merkle_data_shreds;
         self.num_merkle_coding_shreds += num_merkle_coding_shreds;
         for (i, bucket) in self.num_data_shreds_hist.iter_mut().enumerate() {
