@@ -1,16 +1,15 @@
 use {
     super::*,
     crate::{translate_inner, translate_slice_inner, translate_type_inner},
-    scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
     solana_program_runtime::{
         invoke_context::SerializedAccountMetadata, serialization::create_memory_region_of_account,
     },
-    solana_sbpf::{ebpf, memory_region::MemoryRegion},
+    solana_sbpf::ebpf,
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_transaction_context::BorrowedAccount,
-    std::{mem, ptr},
+    std::mem,
 };
 
 const MAX_CPI_INSTRUCTION_DATA_LEN: u64 = 10 * 1024;
@@ -311,19 +310,6 @@ impl<'a> CallerAccount<'a> {
             vm_data_addr: account_info.data_addr,
             ref_to_len_in_vm,
         })
-    }
-
-    fn realloc_region(
-        &self,
-        memory_mapping: &'a mut MemoryMapping<'_>,
-        is_loader_deprecated: bool,
-    ) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
-        account_realloc_region(
-            memory_mapping,
-            self.vm_data_addr,
-            self.original_data_len,
-            is_loader_deprecated,
-        )
     }
 }
 
@@ -880,8 +866,6 @@ where
             // BorrowedAccount (callee_account) so the callee can see the
             // changes.
             let update_caller = update_callee_account(
-                invoke_context,
-                memory_mapping,
                 is_loader_deprecated,
                 &caller_account,
                 callee_account,
@@ -1108,7 +1092,6 @@ fn cpi_common<S: SyscallInvokeSigned>(
             update_caller_account(
                 invoke_context,
                 memory_mapping,
-                is_loader_deprecated,
                 &mut translate_account.caller_account,
                 &mut callee_account,
                 direct_mapping,
@@ -1132,8 +1115,6 @@ fn cpi_common<S: SyscallInvokeSigned>(
 // When true is returned, the caller account must be updated after CPI. This
 // is only set for direct mapping when the pointer may have changed.
 fn update_callee_account(
-    _invoke_context: &InvokeContext,
-    _memory_mapping: &MemoryMapping,
     is_loader_deprecated: bool,
     caller_account: &CallerAccount,
     mut callee_account: BorrowedAccount<'_>,
@@ -1224,7 +1205,6 @@ fn update_caller_account_region(
 fn update_caller_account(
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping<'_>,
-    _is_loader_deprecated: bool,
     caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedAccount<'_>,
     direct_mapping: bool,
@@ -1301,47 +1281,6 @@ fn update_caller_account(
     }
 
     Ok(())
-}
-
-fn account_data_region<'a>(
-    memory_mapping: &'a mut MemoryMapping<'_>,
-    vm_data_addr: u64,
-    address_space_reserved_for_account: usize,
-) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
-    if address_space_reserved_for_account == 0 {
-        return Ok(None);
-    }
-
-    // We can trust vm_data_addr to point to the correct region because we
-    // enforce that in CallerAccount::from_(sol_)account_info.
-    let (data_region_index, data_region) = memory_mapping
-        .find_region(vm_data_addr)
-        .ok_or_else(|| Box::new(InstructionError::MissingAccount))?;
-    // vm_data_addr must always point to the beginning of the region
-    debug_assert_eq!(data_region.vm_addr, vm_data_addr);
-    Ok(Some((data_region_index, data_region)))
-}
-
-fn account_realloc_region<'a>(
-    memory_mapping: &'a mut MemoryMapping<'_>,
-    vm_data_addr: u64,
-    original_data_len: usize,
-    is_loader_deprecated: bool,
-) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
-    if is_loader_deprecated {
-        return Ok(None);
-    }
-
-    let realloc_vm_addr = vm_data_addr.saturating_add(original_data_len as u64);
-    let (realloc_region_index, realloc_region) = memory_mapping
-        .find_region(realloc_vm_addr)
-        .ok_or_else(|| Box::new(InstructionError::MissingAccount))?;
-    debug_assert_eq!(realloc_region.vm_addr, realloc_vm_addr);
-    debug_assert!((MAX_PERMITTED_DATA_INCREASE
-        ..MAX_PERMITTED_DATA_INCREASE.saturating_add(BPF_ALIGN_OF_U128))
-        .contains(&(realloc_region.len as usize)));
-    debug_assert_eq!(realloc_region.access_violation_handler_payload, None);
-    Ok(Some((realloc_region_index, realloc_region)))
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -1597,7 +1536,6 @@ mod tests {
         update_caller_account(
             &invoke_context,
             &memory_mapping,
-            false,
             &mut caller_account,
             &mut callee_account,
             false,
@@ -1665,7 +1603,6 @@ mod tests {
             update_caller_account(
                 &invoke_context,
                 &memory_mapping,
-                false,
                 &mut caller_account,
                 &mut callee_account,
                 false,
@@ -1690,7 +1627,6 @@ mod tests {
         update_caller_account(
             &invoke_context,
             &memory_mapping,
-            false,
             &mut caller_account,
             &mut callee_account,
             false,
@@ -1707,7 +1643,6 @@ mod tests {
             update_caller_account(
                 &invoke_context,
                 &memory_mapping,
-                false,
                 &mut caller_account,
                 &mut callee_account,
                 false,
@@ -1723,7 +1658,6 @@ mod tests {
         update_caller_account(
             &invoke_context,
             &memory_mapping,
-            false,
             &mut caller_account,
             &mut callee_account,
             false,
@@ -1795,7 +1729,6 @@ mod tests {
                 update_caller_account(
                     &invoke_context,
                     &memory_mapping,
-                    false,
                     &mut caller_account,
                     &mut callee_account,
                     true,
@@ -1866,7 +1799,6 @@ mod tests {
         update_caller_account(
             &invoke_context,
             &memory_mapping,
-            false,
             &mut caller_account,
             &mut callee_account,
             true,
@@ -1885,7 +1817,6 @@ mod tests {
             update_caller_account(
                 &invoke_context,
                 &memory_mapping,
-                false,
                 &mut caller_account,
                 &mut callee_account,
                 false,
@@ -1901,7 +1832,6 @@ mod tests {
         update_caller_account(
             &invoke_context,
             &memory_mapping,
-            false,
             &mut caller_account,
             &mut callee_account,
             true,
@@ -1959,12 +1889,10 @@ mod tests {
 
         let mut callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(callee_account.get_data().len(), 3);
-        assert_eq!(callee_account.capacity(), 3);
 
         update_caller_account(
             &invoke_context,
             &memory_mapping,
-            false,
             &mut caller_account,
             &mut callee_account,
             true,
@@ -1972,7 +1900,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(callee_account.get_data().len(), 3);
-        assert!(callee_account.capacity() >= caller_account.original_data_len);
         let data = translate_slice::<u8>(
             &mut memory_mapping,
             caller_account.vm_data_addr,
@@ -2005,17 +1932,6 @@ mod tests {
             false,
         );
 
-        let config = Config {
-            aligned_memory_mapping: false,
-            ..Config::default()
-        };
-        let mut memory_mapping = MemoryMapping::new(
-            mock_caller_account.regions.split_off(0),
-            &config,
-            SBPFVersion::V3,
-        )
-        .unwrap();
-
         let caller_account = mock_caller_account.caller_account();
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -2023,15 +1939,7 @@ mod tests {
         *caller_account.lamports = 42;
         *caller_account.owner = Pubkey::new_unique();
 
-        update_callee_account(
-            &invoke_context,
-            &mut memory_mapping,
-            false,
-            &caller_account,
-            callee_account,
-            false,
-        )
-        .unwrap();
+        update_callee_account(false, &caller_account, callee_account, false).unwrap();
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(callee_account.get_lamports(), 42);
@@ -2061,17 +1969,6 @@ mod tests {
             false,
         );
 
-        let config = Config {
-            aligned_memory_mapping: false,
-            ..Config::default()
-        };
-        let mut memory_mapping = MemoryMapping::new(
-            mock_caller_account.regions.split_off(0),
-            &config,
-            SBPFVersion::V3,
-        )
-        .unwrap();
-
         let mut caller_account = mock_caller_account.caller_account();
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -2079,15 +1976,7 @@ mod tests {
         let mut data = b"foo".to_vec();
         caller_account.serialized_data = &mut data;
 
-        update_callee_account(
-            &invoke_context,
-            &mut memory_mapping,
-            false,
-            &caller_account,
-            callee_account,
-            false,
-        )
-        .unwrap();
+        update_callee_account(false, &caller_account, callee_account, false).unwrap();
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(callee_account.get_data(), caller_account.serialized_data);
@@ -2098,15 +1987,7 @@ mod tests {
         *caller_account.ref_to_len_in_vm = 0;
         let mut owner = system_program::id();
         caller_account.owner = &mut owner;
-        update_callee_account(
-            &invoke_context,
-            &mut memory_mapping,
-            false,
-            &caller_account,
-            callee_account,
-            false,
-        )
-        .unwrap();
+        update_callee_account(false, &caller_account, callee_account, false).unwrap();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(callee_account.get_data(), b"");
     }
@@ -2134,17 +2015,6 @@ mod tests {
             false,
         );
 
-        let config = Config {
-            aligned_memory_mapping: false,
-            ..Config::default()
-        };
-        let mut memory_mapping = MemoryMapping::new(
-            mock_caller_account.regions.split_off(0),
-            &config,
-            SBPFVersion::V3,
-        )
-        .unwrap();
-
         let mut caller_account = mock_caller_account.caller_account();
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -2152,8 +2022,6 @@ mod tests {
         caller_account.serialized_data[0] = b'b';
         assert_matches!(
             update_callee_account(
-                &invoke_context,
-                &mut memory_mapping,
                 false,
                 &caller_account,
                 callee_account,
@@ -2170,8 +2038,6 @@ mod tests {
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_matches!(
             update_callee_account(
-                &invoke_context,
-                &mut memory_mapping,
                 false,
                 &caller_account,
                 callee_account,
@@ -2188,8 +2054,6 @@ mod tests {
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_matches!(
             update_callee_account(
-                &invoke_context,
-                &mut memory_mapping,
                 false,
                 &caller_account,
                 callee_account,
@@ -2259,15 +2123,7 @@ mod tests {
             (3, b"foo".to_vec()),       // < original_data_len, truncates
         ] {
             *caller_account.ref_to_len_in_vm = len as u64;
-            update_callee_account(
-                &invoke_context,
-                &mut memory_mapping,
-                false,
-                &caller_account,
-                callee_account,
-                true,
-            )
-            .unwrap();
+            update_callee_account(false, &caller_account, callee_account, true).unwrap();
             callee_account = borrow_instruction_account!(invoke_context, 0);
             assert_eq!(callee_account.get_data(), expected);
         }
@@ -2278,15 +2134,7 @@ mod tests {
         *caller_account.ref_to_len_in_vm = 0;
         let mut owner = system_program::id();
         caller_account.owner = &mut owner;
-        update_callee_account(
-            &invoke_context,
-            &mut memory_mapping,
-            false,
-            &caller_account,
-            callee_account,
-            true,
-        )
-        .unwrap();
+        update_callee_account(false, &caller_account, callee_account, true).unwrap();
         callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(callee_account.get_data(), b"");
     }

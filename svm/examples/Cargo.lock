@@ -5524,7 +5524,6 @@ dependencies = [
  "libsecp256k1",
  "num-traits",
  "qualifier_attr",
- "scopeguard",
  "solana-account",
  "solana-account-info",
  "solana-big-mod-exp",
