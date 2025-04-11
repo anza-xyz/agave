@@ -185,6 +185,7 @@ impl From<PacketBatch> for Vec<Packet> {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<PacketBatch> {
     items
         .chunks(chunk_size)
