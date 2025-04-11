@@ -68,8 +68,6 @@ solana-runtime-transaction = { workspace = true, features = [
 solana-signer = { workspace = true }
 solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
-static_assertions = { workspace = true }
-test-case = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
