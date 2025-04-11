@@ -3,7 +3,7 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 #[cfg(not(target_os = "solana"))]
-use {solana_account::WritableAccount, solana_rent::Rent, std::mem::MaybeUninit};
+use {solana_account::WritableAccount, solana_rent::Rent};
 use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
@@ -959,16 +959,6 @@ impl BorrowedAccount<'_> {
         Ok(self.account.data_as_mut_slice())
     }
 
-    /// Returns the spare capacity of the vector backing the account data.
-    ///
-    /// This method should only ever be used during CPI, where after a shrinking
-    /// realloc we want to zero the spare capacity.
-    #[cfg(not(target_os = "solana"))]
-    pub fn spare_data_capacity_mut(&mut self) -> Result<&mut [MaybeUninit<u8>], InstructionError> {
-        debug_assert!(!self.account.is_shared());
-        Ok(self.account.spare_data_capacity_mut())
-    }
-
     /// Overwrites the account data and size (transaction wide).
     ///
     /// You should always prefer set_data_from_slice(). Calling this method is
@@ -1039,26 +1029,6 @@ impl BorrowedAccount<'_> {
         self.make_data_mut();
         self.account.extend_from_slice(data);
         Ok(())
-    }
-
-    /// Reserves capacity for at least additional more elements to be inserted
-    /// in the given account. Does nothing if capacity is already sufficient.
-    #[cfg(not(target_os = "solana"))]
-    pub fn reserve(&mut self, additional: usize) -> Result<(), InstructionError> {
-        // Note that we don't need to call can_data_be_changed() here nor
-        // touch() the account. reserve() only changes the capacity of the
-        // memory that holds the account but it doesn't actually change content
-        // nor length of the account.
-        self.make_data_mut();
-        self.account.reserve(additional);
-
-        Ok(())
-    }
-
-    /// Returns the number of bytes the account can hold without reallocating.
-    #[cfg(not(target_os = "solana"))]
-    pub fn capacity(&self) -> usize {
-        self.account.capacity()
     }
 
     /// Returns whether the underlying AccountSharedData is shared.
