@@ -4,15 +4,13 @@ use {
     scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
-    solana_program_runtime::{
-        invoke_context::SerializedAccountMetadata, serialization::account_data_region_memory_state,
-    },
+    solana_program_runtime::serialization::account_data_region_memory_state,
     solana_sbpf::{
         ebpf,
         memory_region::{MemoryRegion, MemoryState},
     },
     solana_stable_layout::stable_instruction::StableInstruction,
-    solana_transaction_context::BorrowedAccount,
+    solana_transaction_context::{BorrowedAccount, SerializedAccountMetadata},
     std::{mem, ptr},
 };
 // consts inlined to avoid solana-program dep
@@ -881,10 +879,7 @@ where
 
     // unwrapping here is fine: we're in a syscall and the method below fails
     // only outside syscalls
-    let accounts_metadata = &invoke_context
-        .get_syscall_context()
-        .unwrap()
-        .accounts_metadata;
+    let serialized_accounts_metadata = instruction_context.get_serialized_accounts_metadata();
 
     let direct_mapping = invoke_context
         .get_feature_set()
@@ -918,7 +913,7 @@ where
         } else if let Some(caller_account_index) =
             account_info_keys.iter().position(|key| *key == account_key)
         {
-            let serialized_metadata = accounts_metadata
+            let serialized_metadata = serialized_accounts_metadata
                 .get(instruction_account.index_in_caller as usize)
                 .ok_or_else(|| {
                     ic_msg!(
@@ -1619,14 +1614,12 @@ mod tests {
         solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_clock::Epoch,
         solana_instruction::Instruction,
-        solana_program_runtime::{
-            invoke_context::SerializedAccountMetadata, with_mock_invoke_context,
-        },
+        solana_program_runtime::with_mock_invoke_context,
         solana_sbpf::{
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
         solana_sdk_ids::system_program,
-        solana_transaction_context::TransactionAccount,
+        solana_transaction_context::{SerializedAccountMetadata, TransactionAccount},
         std::{
             cell::{Cell, RefCell},
             mem, ptr,

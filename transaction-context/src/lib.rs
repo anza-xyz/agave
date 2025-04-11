@@ -535,6 +535,16 @@ pub struct TransactionReturnData {
     pub data: Vec<u8>,
 }
 
+/// VM internal, used for de/serialitaion and CPI
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct SerializedAccountMetadata {
+    pub original_data_len: usize,
+    pub vm_data_addr: u64,
+    pub vm_key_addr: u64,
+    pub vm_lamports_addr: u64,
+    pub vm_owner_addr: u64,
+}
+
 /// Loaded instruction shared between runtime and programs.
 ///
 /// This context is valid for the entire duration of a (possibly cross program) instruction being processed.
@@ -545,6 +555,7 @@ pub struct InstructionContext {
     program_accounts: Vec<IndexOfAccount>,
     instruction_accounts: Vec<InstructionAccount>,
     instruction_data: Vec<u8>,
+    serialized_accounts_metadata: RefCell<Vec<SerializedAccountMetadata>>,
 }
 
 impl InstructionContext {
@@ -559,6 +570,19 @@ impl InstructionContext {
         self.program_accounts = program_accounts.to_vec();
         self.instruction_accounts = instruction_accounts.to_vec();
         self.instruction_data = instruction_data.to_vec();
+    }
+
+    /// VM internal, used for de/serialitaion and CPI
+    pub fn set_serialized_accounts_metadata(
+        &self,
+        serialized_accounts_metadata: Vec<SerializedAccountMetadata>,
+    ) {
+        *self.serialized_accounts_metadata.borrow_mut() = serialized_accounts_metadata
+    }
+
+    /// VM internal, used for de/serialitaion and CPI
+    pub fn get_serialized_accounts_metadata(&self) -> Ref<Vec<SerializedAccountMetadata>> {
+        self.serialized_accounts_metadata.borrow()
     }
 
     /// How many Instructions were on the stack after this one was pushed
