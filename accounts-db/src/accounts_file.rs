@@ -214,6 +214,22 @@ impl AccountsFile {
         }
     }
 
+    /// returns an `IndexInfo` for an account at `offset`, if any.  Otherwise, return None.
+    ///
+    /// Only intended to be used with the accounts index.
+    pub(crate) fn get_account_index_info(&self, offset: usize) -> Option<IndexInfo> {
+        match self {
+            Self::AppendVec(av) => av.get_account_index_info(offset),
+            Self::TieredStorage(ts) => {
+                // Note: The conversion here is needed as the AccountsDB currently
+                // assumes all offsets are multiple of 8 while TieredStorage uses
+                // IndexOffset that is equivalent to AccountInfo::reduced_offset.
+                let index_offset = IndexOffset(AccountInfo::get_reduced_offset(offset));
+                ts.reader()?.get_account_index_info(index_offset).ok()?
+            }
+        }
+    }
+
     pub fn account_matches_owners(
         &self,
         offset: usize,

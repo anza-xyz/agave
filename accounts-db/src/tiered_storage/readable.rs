@@ -2,7 +2,7 @@ use {
     crate::{
         account_storage::meta::StoredAccountMeta,
         accounts_file::MatchAccountOwnerError,
-        append_vec::IndexInfo,
+        append_vec::{IndexInfo, IndexInfoInner},
         tiered_storage::{
             file::TieredReadableFile,
             footer::{AccountMetaFormat, TieredStorageFooter},
@@ -11,7 +11,7 @@ use {
             TieredStorageResult,
         },
     },
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     std::path::Path,
 };
@@ -74,6 +74,26 @@ impl TieredStorageReader {
         match self {
             Self::Hot(hot) => hot.get_account_shared_data(index_offset),
         }
+    }
+
+    /// Returns the `IndexInfo` for the account located at the specified index offset.
+    ///
+    /// Only intended to be used with the accounts index.
+    pub(crate) fn get_account_index_info(
+        &self,
+        index_offset: IndexOffset,
+    ) -> TieredStorageResult<Option<IndexInfo>> {
+        self.get_stored_account_meta_callback(index_offset, |account| IndexInfo {
+            stored_size_aligned: account.stored_size(),
+            index_info: IndexInfoInner {
+                pubkey: *account.pubkey(),
+                lamports: account.lamports(),
+                offset: account.offset(),
+                data_len: account.data_len() as u64,
+                executable: account.executable(),
+                rent_epoch: account.rent_epoch(),
+            },
+        })
     }
 
     /// calls `callback` with the account located at the specified index offset.
