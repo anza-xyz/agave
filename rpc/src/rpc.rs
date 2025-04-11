@@ -2380,8 +2380,7 @@ impl JsonRpcRequestProcessor {
 
     fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
         let bank = self.get_bank_with_config(config)?;
-        let stake_minimum_delegation =
-            solana_stake_program::get_minimum_delegation(&bank.feature_set);
+        let stake_minimum_delegation = solana_stake_program::get_minimum_delegation();
         Ok(new_response(&bank, stake_minimum_delegation))
     }
 
@@ -9033,9 +9032,7 @@ pub mod tests {
     #[test]
     fn test_rpc_get_stake_minimum_delegation() {
         let rpc = RpcHandler::start();
-        let bank = rpc.working_bank();
-        let expected_stake_minimum_delegation =
-            solana_stake_program::get_minimum_delegation(&bank.feature_set);
+        let expected_stake_minimum_delegation = solana_stake_program::get_minimum_delegation();
 
         let request = create_test_request("getStakeMinimumDelegation", None);
         let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));

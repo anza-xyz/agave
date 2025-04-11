@@ -2450,8 +2450,7 @@ impl Bank {
         {
             let num_stake_delegations = stakes.stake_delegations().len();
             let min_stake_delegation =
-                solana_stake_program::get_minimum_delegation(&self.feature_set)
-                    .max(LAMPORTS_PER_SOL);
+                solana_stake_program::get_minimum_delegation().max(LAMPORTS_PER_SOL);
 
             let (stake_delegations, filter_time_us) = measure_us!(stakes
                 .stake_delegations()

@@ -9,7 +9,6 @@
 )]
 pub use solana_stake_interface::state::*;
 use {
-    agave_feature_set::FeatureSet,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
     solana_clock::{Clock, Epoch},
     solana_instruction::error::InstructionError,
@@ -318,7 +317,6 @@ pub fn delegate(
     clock: &Clock,
     stake_history: &StakeHistory,
     signers: &HashSet<Pubkey>,
-    feature_set: &FeatureSet,
 ) -> Result<(), InstructionError> {
     let vote_account = instruction_context
         .try_borrow_instruction_account(transaction_context, vote_account_index)?;
@@ -335,7 +333,7 @@ pub fn delegate(
         StakeStateV2::Initialized(meta) => {
             meta.authorized.check(signers, StakeAuthorize::Staker)?;
             let ValidatedDelegatedInfo { stake_amount } =
-                validate_delegated_amount(&stake_account, &meta, feature_set)?;
+                validate_delegated_amount(&stake_account, &meta)?;
             let stake = new_stake(
                 stake_amount,
                 &vote_pubkey,
@@ -347,7 +345,7 @@ pub fn delegate(
         StakeStateV2::Stake(meta, mut stake, stake_flags) => {
             meta.authorized.check(signers, StakeAuthorize::Staker)?;
             let ValidatedDelegatedInfo { stake_amount } =
-                validate_delegated_amount(&stake_account, &meta, feature_set)?;
+                validate_delegated_amount(&stake_account, &meta)?;
             redelegate_stake(
                 invoke_context,
                 &mut stake,
@@ -430,8 +428,7 @@ pub fn split(
     match stake_state {
         StakeStateV2::Stake(meta, mut stake, stake_flags) => {
             meta.authorized.check(signers, StakeAuthorize::Staker)?;
-            let minimum_delegation =
-                crate::get_minimum_delegation(invoke_context.get_feature_set());
+            let minimum_delegation = crate::get_minimum_delegation();
             let is_active = {
                 let clock = invoke_context.get_sysvar_cache().get_clock()?;
                 let status = get_stake_status(invoke_context, &stake, &clock)?;
@@ -654,7 +651,7 @@ pub fn move_stake(
         return Err(InstructionError::InvalidAccountData);
     };
 
-    let minimum_delegation = crate::get_minimum_delegation(invoke_context.get_feature_set());
+    let minimum_delegation = crate::get_minimum_delegation();
     let source_effective_stake = source_stake.delegation.stake;
 
     // source cannot move more stake than it has, regardless of how many lamports it has
@@ -961,7 +958,6 @@ struct ValidatedDelegatedInfo {
 fn validate_delegated_amount(
     account: &BorrowedAccount,
     meta: &Meta,
-    feature_set: &FeatureSet,
 ) -> Result<ValidatedDelegatedInfo, InstructionError> {
     let stake_amount = account
         .get_lamports()
@@ -969,7 +965,7 @@ fn validate_delegated_amount(
 
     // Stake accounts may be initialized with a stake amount below the minimum delegation so check
     // that the minimum is met before delegation.
-    if stake_amount < crate::get_minimum_delegation(feature_set) {
+    if stake_amount < crate::get_minimum_delegation() {
         return Err(StakeError::InsufficientDelegation.into());
     }
     Ok(ValidatedDelegatedInfo { stake_amount })
