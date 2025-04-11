@@ -29,6 +29,7 @@ solana-clock = { workspace = true }
 solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
+solana-inline-spl = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["serde"] }
 solana-nonce = { workspace = true, features = ["serde"] }

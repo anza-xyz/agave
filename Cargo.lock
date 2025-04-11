@@ -6414,6 +6414,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-calculator",
  "solana-hash",
+ "solana-inline-spl",
  "solana-instruction",
  "solana-loader-v3-interface",
  "solana-nonce",
