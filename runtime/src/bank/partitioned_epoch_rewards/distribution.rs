@@ -1,11 +1,12 @@
 use {
     super::{
-        Bank, EpochRewardStatus, PartitionedStakeReward, PartitionedStakeRewards, StakeRewards,
+        epoch_rewards_hasher, Bank, EpochRewardStatus, PartitionedStakeReward,
+        PartitionedStakeRewards, StakeRewards,
     },
     crate::{
         bank::{
             metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
-            partitioned_epoch_rewards::StartBlockHeightAndPartitionedRewards,
+            partitioned_epoch_rewards::{EpochRewardPhase, StartBlockHeightAndPartitionedRewards},
         },
         stake_account::StakeAccount,
     },
@@ -20,7 +21,7 @@ use {
         reward_type::RewardType,
         stake::state::{Delegation, StakeStateV2},
     },
-    std::sync::atomic::Ordering::Relaxed,
+    std::sync::{atomic::Ordering::Relaxed, Arc},
     thiserror::Error,
 };
 
@@ -45,13 +46,13 @@ struct DistributionResults {
 impl Bank {
     /// Process reward distribution for the block if it is inside reward interval.
     pub(in crate::bank) fn distribute_partitioned_epoch_rewards(&mut self) {
-        let distribution_starting_block_height = match &self.epoch_reward_status {
-            EpochRewardStatus::Inactive => {
-                // epoch rewards is inactive, no rewards to distribute
-                return;
-            }
-            EpochRewardStatus::Calculated(status) => status.distribution_starting_block_height,
-            EpochRewardStatus::Partitioned(status) => status.distribution_starting_block_height,
+        let EpochRewardStatus::Active(status) = &self.epoch_reward_status else {
+            return;
+        };
+
+        let distribution_starting_block_height = match &status {
+            EpochRewardPhase::Calculation(status) => status.distribution_starting_block_height,
+            EpochRewardPhase::Distribution(status) => status.distribution_starting_block_height,
         };
 
         let height = self.block_height();
@@ -93,13 +94,13 @@ impl Bank {
                     ),
                 );
 
-                (stake_rewards_by_partition, true)
+                stake_rewards_by_partition
             }
-            EpochRewardStatus::Partitioned(status) => (
-                // epoch rewards have been partitioned, so use the partitioned rewards
-                status.stake_rewards_by_partition.clone(),
-                false,
-            ),
+            EpochRewardPhase::Distribution(status) =>
+            // epoch rewards have been partitioned, so use the partitioned rewards
+            {
+                status.stake_rewards_by_partition.clone()
+            }
         };
 
         let distribution_end_exclusive =
@@ -119,15 +120,6 @@ impl Bank {
             );
         }
 
-        if update_to_partitioned {
-            // update epoch reward status to partitioned
-            self.epoch_reward_status =
-                EpochRewardStatus::Partitioned(StartBlockHeightAndPartitionedRewards {
-                    distribution_starting_block_height,
-                    stake_rewards_by_partition,
-                });
-        }
-
         if height.saturating_add(1) >= distribution_end_exclusive {
             datapoint_info!(
                 "epoch-rewards-status-update",
@@ -143,7 +135,7 @@ impl Bank {
 
             assert!(matches!(
                 self.epoch_reward_status,
-                EpochRewardStatus::Partitioned(_)
+                EpochRewardStatus::Active(EpochRewardPhase::Distribution(_))
             ));
             self.epoch_reward_status = EpochRewardStatus::Inactive;
             self.set_epoch_rewards_sysvar_to_inactive();

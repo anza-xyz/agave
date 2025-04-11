@@ -63,12 +63,16 @@ pub(crate) enum EpochRewardStatus {
     /// Contents are the start point for epoch reward calculation,
     /// i.e. parent_slot and parent_block height for the starting
     /// block of the current epoch.
-    Calculated(StartBlockHeightAndRewards),
-
-    Partitioned(StartBlockHeightAndPartitionedRewards),
+    Active(EpochRewardPhase),
     /// this bank is outside of the rewarding phase.
     #[default]
     Inactive,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum EpochRewardPhase {
+    Calculation(StartBlockHeightAndRewards),
+    Distribution(StartBlockHeightAndPartitionedRewards),
 }
 
 #[derive(Debug, Default)]
@@ -180,10 +184,11 @@ impl Bank {
         distribution_starting_block_height: u64,
         stake_rewards: Vec<PartitionedStakeReward>,
     ) {
-        self.epoch_reward_status = EpochRewardStatus::Calculated(StartBlockHeightAndRewards {
-            distribution_starting_block_height,
-            all_stake_rewards: Arc::new(stake_rewards),
-        });
+        self.epoch_reward_status =
+            EpochRewardStatus::Active(EpochRewardPhase::Calculation(StartBlockHeightAndRewards {
+                distribution_starting_block_height,
+                all_stake_rewards: Arc::new(stake_rewards),
+            }));
     }
 
     pub(crate) fn set_epoch_reward_status_partitioned(
@@ -191,11 +196,12 @@ impl Bank {
         distribution_starting_block_height: u64,
         stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
     ) {
-        self.epoch_reward_status =
-            EpochRewardStatus::Partitioned(StartBlockHeightAndPartitionedRewards {
+        self.epoch_reward_status = EpochRewardStatus::Active(EpochRewardPhase::Distribution(
+            StartBlockHeightAndPartitionedRewards {
                 distribution_starting_block_height,
                 stake_rewards_by_partition: Arc::new(stake_rewards_by_partition),
-            });
+            },
+        ));
     }
 
     pub(super) fn partitioned_epoch_rewards_config(&self) -> &PartitionedEpochRewardsConfig {
@@ -312,10 +318,7 @@ mod tests {
     impl Bank {
         /// Return `RewardInterval` enum for current bank
         fn get_reward_interval(&self) -> RewardInterval {
-            if matches!(
-                self.epoch_reward_status,
-                EpochRewardStatus::Calculated(_) | EpochRewardStatus::Partitioned(_)
-            ) {
+            if matches!(self.epoch_reward_status, EpochRewardStatus::Active(_)) {
                 RewardInterval::InsideInterval
             } else {
                 RewardInterval::OutsideInterval
@@ -323,11 +326,17 @@ mod tests {
         }
 
         fn is_calculated(&self) -> bool {
-            matches!(self.epoch_reward_status, EpochRewardStatus::Calculated(_))
+            matches!(
+                self.epoch_reward_status,
+                EpochRewardStatus::Active(EpochRewardPhase::Calculation(_))
+            )
         }
 
         fn is_partitioned(&self) -> bool {
-            matches!(self.epoch_reward_status, EpochRewardStatus::Partitioned(_))
+            matches!(
+                self.epoch_reward_status,
+                EpochRewardStatus::Active(EpochRewardPhase::Distribution(_))
+            )
         }
     }
 

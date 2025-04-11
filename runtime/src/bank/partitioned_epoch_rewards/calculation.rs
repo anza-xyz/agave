@@ -533,7 +533,7 @@ mod tests {
                         create_default_reward_bank, create_reward_bank,
                         create_reward_bank_with_specific_stakes, RewardBank, SLOTS_PER_EPOCH,
                     },
-                    EpochRewardStatus, StartBlockHeightAndPartitionedRewards,
+                    EpochRewardPhase, EpochRewardStatus, StartBlockHeightAndPartitionedRewards,
                 },
                 tests::create_genesis_config,
                 VoteReward,
@@ -984,10 +984,12 @@ mod tests {
         );
 
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
-        let EpochRewardStatus::Partitioned(StartBlockHeightAndPartitionedRewards {
-            distribution_starting_block_height,
-            stake_rewards_by_partition: ref recalculated_rewards,
-        }) = bank.epoch_reward_status
+        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
+            StartBlockHeightAndPartitionedRewards {
+                distribution_starting_block_height,
+                stake_rewards_by_partition: ref recalculated_rewards,
+            },
+        )) = bank.epoch_reward_status
         else {
             panic!("{:?} not active", bank.epoch_reward_status);
         };
@@ -1014,10 +1016,12 @@ mod tests {
             Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), SLOTS_PER_EPOCH + 1);
 
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
-        let EpochRewardStatus::Partitioned(StartBlockHeightAndPartitionedRewards {
-            distribution_starting_block_height,
-            stake_rewards_by_partition: ref recalculated_rewards,
-        }) = bank.epoch_reward_status
+        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
+            StartBlockHeightAndPartitionedRewards {
+                distribution_starting_block_height,
+                stake_rewards_by_partition: ref recalculated_rewards,
+            },
+        )) = bank.epoch_reward_status
         else {
             panic!("{:?} not active", bank.epoch_reward_status);
         };
