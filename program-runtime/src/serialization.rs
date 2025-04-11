@@ -21,6 +21,8 @@ use {
 /// Maximum number of instruction accounts that can be serialized into the
 /// SBF VM.
 const MAX_INSTRUCTION_ACCOUNTS: u8 = NON_DUP_MARKER;
+pub static ZEROED_REALLOC_PADDING: [u8; MAX_PERMITTED_DATA_INCREASE + BPF_ALIGN_OF_U128] =
+    [0; MAX_PERMITTED_DATA_INCREASE + BPF_ALIGN_OF_U128];
 
 #[allow(dead_code)]
 enum SerializeAccount<'a> {
@@ -92,6 +94,8 @@ impl Serializer {
         &mut self,
         account: &mut BorrowedAccount<'_>,
     ) -> Result<u64, InstructionError> {
+        let writable = account.can_data_be_changed().is_ok();
+        let shared = account.is_shared();
         let vm_data_addr = if self.copy_account_data {
             let vm_data_addr = self.vaddr.saturating_add(self.buffer.len() as u64);
             self.write_all(account.get_data());
@@ -100,8 +104,6 @@ impl Serializer {
             self.push_region(true);
             let vaddr = self.vaddr;
             if !account.get_data().is_empty() {
-                let writable = account.can_data_be_changed().is_ok();
-                let shared = account.is_shared();
                 let mut new_region = if writable && !shared {
                     MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
                 } else {
@@ -124,7 +126,18 @@ impl Serializer {
                     .map_err(|_| InstructionError::InvalidArgument)?;
             } else {
                 // put the realloc padding in its own region
-                self.push_region(account.can_data_be_changed().is_ok());
+                self.region_start = self.buffer.len();
+                let slice = ZEROED_REALLOC_PADDING
+                    .get(align_offset..MAX_PERMITTED_DATA_INCREASE + align_offset)
+                    .unwrap();
+                let mut new_region = MemoryRegion::new_readonly(slice, self.vaddr);
+                if writable {
+                    new_region.cow_callback_payload = (account.get_data().len() as u32)
+                        .wrapping_shl(8)
+                        | (account.get_index_in_transaction() as u32);
+                }
+                self.regions.push(new_region);
+                self.vaddr += slice.len() as u64;
                 // The deserialization code is going to align the vm_addr to
                 // BPF_ALIGN_OF_U128. Always add one BPF_ALIGN_OF_U128 worth of
                 // padding and shift the start of the next region, so that once

@@ -4,7 +4,9 @@ use {
     scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
-    solana_program_runtime::invoke_context::SerializedAccountMetadata,
+    solana_program_runtime::{
+        invoke_context::SerializedAccountMetadata, serialization::ZEROED_REALLOC_PADDING,
+    },
     solana_sbpf::{ebpf, memory_region::MemoryRegion},
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_transaction_context::BorrowedAccount,
@@ -1271,12 +1273,12 @@ fn update_caller_account_perms(
         vm_data_addr,
         ..
     } = caller_account;
+    let writable = callee_account.can_data_be_changed().is_ok();
+    let shared = callee_account.is_shared();
 
     if let Some((region_index, region)) =
         account_data_region(memory_mapping, *vm_data_addr, *original_data_len)?
     {
-        let writable = callee_account.can_data_be_changed().is_ok();
-        let shared = callee_account.is_shared();
         let mut new_region = if writable && !shared {
             MemoryRegion::new_writable(
                 unsafe {
@@ -1310,26 +1312,48 @@ fn update_caller_account_perms(
         *original_data_len,
         is_loader_deprecated,
     )? {
-        let new_region = if callee_account.can_data_be_changed().is_ok() {
-            MemoryRegion::new_writable(
-                unsafe {
-                    std::slice::from_raw_parts_mut(
-                        region.host_addr.get() as *mut u8,
-                        region.len as usize,
-                    )
-                },
-                region.vm_addr,
-            )
+        let new_region = if callee_account.get_data().len() > *original_data_len {
+            // Realloc region does contain account payload
+            let mut new_region = if writable && !shared {
+                MemoryRegion::new_writable(
+                    unsafe {
+                        std::slice::from_raw_parts_mut(
+                            callee_account
+                                .get_data_mut()?
+                                .as_mut_ptr()
+                                .add(*original_data_len),
+                            region.len as usize,
+                        )
+                    },
+                    region.vm_addr,
+                )
+            } else {
+                MemoryRegion::new_readonly(
+                    unsafe {
+                        std::slice::from_raw_parts(
+                            callee_account.get_data().as_ptr().add(*original_data_len),
+                            region.len as usize,
+                        )
+                    },
+                    region.vm_addr,
+                )
+            };
+            if writable && shared {
+                new_region.cow_callback_payload = callee_account.get_index_in_transaction() as u32;
+            }
+            new_region
         } else {
-            MemoryRegion::new_readonly(
-                unsafe {
-                    std::slice::from_raw_parts(
-                        region.host_addr.get() as *const u8,
-                        region.len as usize,
-                    )
-                },
-                region.vm_addr,
-            )
+            // Realloc region is uninitialized (zeroed out)
+            let align_offset = (*original_data_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
+            let slice = ZEROED_REALLOC_PADDING
+                .get(align_offset..MAX_PERMITTED_DATA_INCREASE + align_offset)
+                .unwrap();
+            let mut new_region = MemoryRegion::new_readonly(slice, region.vm_addr);
+            if writable {
+                new_region.cow_callback_payload = (*original_data_len as u32).wrapping_shl(8)
+                    | (callee_account.get_index_in_transaction() as u32);
+            }
+            new_region
         };
         memory_mapping.replace_region(region_index, new_region)?;
     }
@@ -1631,7 +1655,6 @@ fn account_realloc_region<'a>(
     debug_assert!((MAX_PERMITTED_DATA_INCREASE
         ..MAX_PERMITTED_DATA_INCREASE.saturating_add(BPF_ALIGN_OF_U128))
         .contains(&(realloc_region.len as usize)));
-    debug_assert_eq!(realloc_region.cow_callback_payload, u32::MAX);
     Ok(Some((realloc_region_index, realloc_region)))
 }
 
