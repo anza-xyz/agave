@@ -1700,7 +1700,26 @@ mod tests {
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
-        let _ = consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()]);
+        let consumer_output =
+            consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()]);
+        let CommitTransactionDetails::Committed {
+            compute_units,
+            loaded_accounts_data_size,
+        } = consumer_output
+            .execute_and_commit_transactions_output
+            .commit_transactions_result
+            .unwrap()
+            .pop()
+            .unwrap()
+        else {
+            panic!("The transaction was not commited");
+        };
+        let tx_cost = CostModel::calculate_cost_for_executed_transaction(
+            &sanitized_tx,
+            compute_units,
+            loaded_accounts_data_size,
+            &bank.feature_set,
+        );
 
         drop(consumer); // drop/disconnect transaction_status_sender
 
@@ -1721,6 +1740,7 @@ mod tests {
                 rewards: Some(vec![]),
                 loaded_addresses: sanitized_tx.get_loaded_addresses(),
                 compute_units_consumed: Some(0),
+                cost_units: Some(tx_cost.sum()),
                 ..TransactionStatusMeta::default()
             }
         );
