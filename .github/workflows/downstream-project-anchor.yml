@@ -46,6 +46,8 @@ jobs:
         version: ["master"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - shell: bash
         run: |
