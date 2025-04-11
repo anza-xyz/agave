@@ -801,8 +801,7 @@ impl Serialize for SerializableAccountsDb<'_> {
                 x.first().unwrap().slot(),
                 utils::serialize_iter_as_seq(x.iter().map(|x| {
                     let mut entry = SerializableAccountStorageEntry::from(x.as_ref());
-                    entry
-                        .set_len(entry.current_len() - x.get_dead_account_stats(Some(self.slot)).1);
+                    entry.set_len(entry.current_len() - x.get_dead_account_bytes(Some(self.slot)));
                     entry
                 })),
             )

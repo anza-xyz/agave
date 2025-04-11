@@ -1148,87 +1148,80 @@ fn archive_snapshot_storages(
     for storage in snapshot_storages {
         let path_in_archive =
             Path::new(ACCOUNTS_DIR).join(AccountsFile::file_name(storage.slot(), storage.id()));
+
+        let sorted_dead_accounts = {
+            let dead_accounts = storage.get_sorted_dead_accounts();
+            dead_accounts
+                .into_iter()
+                .filter(|&(_, _, slot)| slot <= snapshot_slot)
+                .collect::<Vec<_>>()
+        };
+
+        let mut bytestream = Vec::new();
+
         match storage.accounts.internals_for_archive() {
             InternalsForArchive::Mmap(data) => {
-                let mut bytestream = Vec::new(); // Use a Vec to hold the data
-                let dead_accounts = storage.get_dead_accounts_vector();
-                let mut sorted_dead_accounts = dead_accounts.clone();
-                sorted_dead_accounts.sort();
-
-                let sorted_dead_accounts: Vec<(usize, usize, u64)> = sorted_dead_accounts
-                    .into_iter()
-                    .filter(|&dead_account| {
-                        // Filter out dead accounts that are not in the range of the data
-                        let (_dead_account_start, _dead_account_size, slot) = dead_account;
-                        slot <= snapshot_slot
-                    })
-                    .collect();
-
-                let mut current_offset = 0;
-                for &(dead_account_start, dead_account_size, _slot) in &sorted_dead_accounts {
-                    bytestream.extend_from_slice(&data[current_offset..dead_account_start]); // Write to the Vec
-                    current_offset = dead_account_start + dead_account_size;
-                }
-
-                // Write remaining data after the last dead account
-                bytestream.extend_from_slice(&data[current_offset..]); // Write to the Vec
-
-                let mut header = tar::Header::new_gnu();
-                header.set_path(path_in_archive).map_err(|err| {
-                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                })?;
-
-                header.set_size(bytestream.len() as u64);
-                header.set_cksum();
-                archive.append(&header, &bytestream[..]) // Use the Vec as a slice
+                process_data_from_memory(&mut bytestream, data, &sorted_dead_accounts)
             }
             InternalsForArchive::FileIo(path) => {
-                let mut bytestream = Vec::new(); // Use a Vec to hold the data
-                let mut file = fs::File::open(path).unwrap();
-                let dead_accounts = storage.get_dead_accounts_vector();
-                let mut sorted_dead_accounts = dead_accounts.clone();
-                sorted_dead_accounts.sort();
-
-                let sorted_dead_accounts: Vec<(usize, usize, u64)> = sorted_dead_accounts
-                .into_iter()
-                .filter(|&dead_account| {
-                    // Filter out dead accounts that are not in the range of the data
-                    let (_dead_account_start, _dead_account_size, slot) = dead_account;
-                    slot <= snapshot_slot
-                })
-                .collect();
-
-                let mut current_offset = 0;
-                for &(dead_account_offset, dead_account_size, _slot) in &sorted_dead_accounts {
-                    let length = dead_account_offset - current_offset;
-                    file.seek(std::io::SeekFrom::Start(current_offset as u64))
-                        .unwrap();
-                    let mut buffer = vec![0; length];
-                    file.read_exact(&mut buffer).unwrap();
-                    bytestream.extend_from_slice(&buffer); // Write to the Vec
-                    current_offset = dead_account_offset + dead_account_size;
-                }
-
-                // Write remaining data after the last dead account
-                file.seek(std::io::SeekFrom::Start(current_offset as u64))
-                    .unwrap();
-                let length = file.metadata().unwrap().len() as usize - current_offset;
-                let mut buffer = vec![0; length];
-                file.read_exact(&mut buffer).unwrap();
-                bytestream.extend_from_slice(&buffer); // Write to the Vec
-
-                let mut header = tar::Header::new_gnu();
-                header.set_path(path_in_archive).map_err(|err| {
-                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                })?;
-
-                header.set_size(bytestream.len() as u64);
-                header.set_cksum();
-                archive.append(&header, &bytestream[..]) // Use the Vec as a slice
+                process_data_from_file(&mut bytestream, path, &sorted_dead_accounts)
             }
         }
         .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
+
+        let mut header = tar::Header::new_gnu();
+        header
+            .set_path(path_in_archive)
+            .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
+        header.set_size(bytestream.len() as u64);
+        header.set_cksum();
+
+        archive
+            .append(&header, &bytestream[..])
+            .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
     }
+
+    Ok(())
+}
+
+fn process_data_from_memory(
+    bytestream: &mut Vec<u8>,
+    data: &[u8],
+    sorted_dead_accounts: &[(usize, usize, u64)],
+) -> std::io::Result<()> {
+    let mut current_offset = 0;
+
+    for &(dead_account_start, dead_account_size, _) in sorted_dead_accounts {
+        bytestream.extend_from_slice(&data[current_offset..dead_account_start]);
+        current_offset = dead_account_start + dead_account_size;
+    }
+
+    bytestream.extend_from_slice(&data[current_offset..]);
+    Ok(())
+}
+
+fn process_data_from_file(
+    bytestream: &mut Vec<u8>,
+    path: &Path,
+    sorted_dead_accounts: &[(usize, usize, u64)],
+) -> std::io::Result<()> {
+    let mut file = fs::File::open(path)?;
+    let mut current_offset = 0;
+
+    for &(dead_account_offset, dead_account_size, _) in sorted_dead_accounts {
+        let length = dead_account_offset - current_offset;
+        file.seek(std::io::SeekFrom::Start(current_offset as u64))?;
+        let mut buffer = vec![0; length];
+        file.read_exact(&mut buffer)?;
+        bytestream.extend_from_slice(&buffer);
+        current_offset = dead_account_offset + dead_account_size;
+    }
+
+    file.seek(std::io::SeekFrom::Start(current_offset as u64))?;
+    let length = file.metadata()?.len() as usize - current_offset;
+    let mut buffer = vec![0; length];
+    file.read_exact(&mut buffer).unwrap();
+    bytestream.extend_from_slice(&buffer);
 
     Ok(())
 }

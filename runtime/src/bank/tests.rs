@@ -6668,10 +6668,18 @@ fn test_clean_nonrooted() {
     bank3.force_flush_accounts_cache();
 
     bank3.clean_accounts_for_tests();
-    assert_eq!(
-        bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
-        1
-    );
+    if bank3.rc.accounts.accounts_db.track_dead_accounts {
+        assert_eq!(
+            bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
+            1
+        );
+    } else {
+        assert_eq!(
+            bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
+            2
+        );
+    }
+
     assert!(bank3
         .rc
         .accounts
@@ -10090,7 +10098,7 @@ fn do_test_clean_dropped_unrooted_banks(freeze_bank1: FreezeBank1) {
     bank2
         .transfer(amount, &mint_keypair, &key3.pubkey())
         .unwrap();
-    bank2.store_account(&key5.pubkey(), &AccountSharedData::new(1, 0, &owner));
+    bank2.store_account(&key5.pubkey(), &AccountSharedData::new(0, 0, &owner));
 
     bank2.freeze(); // the freeze here is not strictly necessary, but more for illustration
     bank2.squash();
