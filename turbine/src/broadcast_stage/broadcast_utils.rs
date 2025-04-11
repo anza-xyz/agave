@@ -63,7 +63,7 @@ pub(super) fn recv_slot_entries(
     // Wait up to `ENTRY_COALESCE_DURATION` to try to coalesce entries into a 32 shred batch
     let mut coalesce_start = Instant::now();
     let target_serialized_batch_byte_count: u64 =
-        32 * ShredData::capacity(Some((6, true, false))).unwrap() as u64;
+        3 * 32 * ShredData::capacity(Some((6, true, false))).unwrap() as u64;
 
     if last_tick_height == bank.max_tick_height()
         || serialized_batch_byte_count >= target_serialized_batch_byte_count
