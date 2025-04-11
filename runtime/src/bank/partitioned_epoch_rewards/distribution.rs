@@ -1,8 +1,5 @@
 use {
-    super::{
-        epoch_rewards_hasher, Bank, EpochRewardStatus, PartitionedStakeReward,
-        PartitionedStakeRewards, StakeRewards,
-    },
+    super::{epoch_rewards_hasher, Bank, EpochRewardStatus, PartitionedStakeReward, StakeRewards},
     crate::{
         bank::{
             metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
@@ -21,7 +18,7 @@ use {
         reward_type::RewardType,
         stake::state::{Delegation, StakeStateV2},
     },
-    std::sync::{atomic::Ordering::Relaxed, Arc},
+    std::sync::atomic::Ordering::Relaxed,
     thiserror::Error,
 };
 
@@ -60,64 +57,61 @@ impl Bank {
             return;
         }
 
-        let stake_rewards_by_partition = match &status {
-            EpochRewardPhase::Calculation(status) => {
-                // epoch rewards have been calculated, but not yet partitioned.
-                // so partition them now.
-                // This should happen only once immediately on the first rewards distribution block, after reward calculation block.
-                let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
-                let (stake_rewards_by_partition, partition_us) = measure_us!({
-                    Arc::new(epoch_rewards_hasher::hash_rewards_into_partitions_slice(
-                        &status.all_stake_rewards,
-                        &epoch_rewards_sysvar.parent_blockhash,
-                        epoch_rewards_sysvar.num_partitions as usize,
-                    ))
-                });
+        if let EpochRewardPhase::Calculation(status) = &status {
+            // epoch rewards have not been partitioned yet, so partition them now
+            // This should happen only once immediately on the first rewards distribution block, after reward calculation block.
+            let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
+            let (partition_indices, partition_us) = measure_us!({
+                epoch_rewards_hasher::hash_rewards_into_partitions(
+                    &status.all_stake_rewards,
+                    &epoch_rewards_sysvar.parent_blockhash,
+                    epoch_rewards_sysvar.num_partitions as usize,
+                )
+            });
 
-                // update epoch reward status to partitioned
-                self.epoch_reward_status = EpochRewardStatus::Active(
-                    EpochRewardPhase::Distribution(StartBlockHeightAndPartitionedRewards {
-                        distribution_starting_block_height,
-                        stake_rewards_by_partition: stake_rewards_by_partition.clone(),
-                    }),
-                );
+            // update epoch reward status to partitioned
+            self.epoch_reward_status = EpochRewardStatus::Active(EpochRewardPhase::Distribution(
+                StartBlockHeightAndPartitionedRewards {
+                    distribution_starting_block_height,
+                    all_stake_rewards: status.all_stake_rewards.clone(),
+                    partition_indices,
+                },
+            ));
 
-                datapoint_info!(
-                    "epoch-rewards-status-update",
-                    ("slot", self.slot(), i64),
-                    ("block_height", height, i64),
-                    ("partition_us", partition_us, i64),
-                    (
-                        "distribution_starting_block_height",
-                        distribution_starting_block_height,
-                        i64
-                    ),
-                );
+            datapoint_info!(
+                "epoch-rewards-status-update",
+                ("slot", self.slot(), i64),
+                ("block_height", height, i64),
+                ("partition_us", partition_us, i64),
+                (
+                    "distribution_starting_block_height",
+                    distribution_starting_block_height,
+                    i64
+                ),
+            );
+        }
 
-                stake_rewards_by_partition
-            }
-            EpochRewardPhase::Distribution(status) =>
-            // epoch rewards have been partitioned, so use the partitioned rewards
-            {
-                status.stake_rewards_by_partition.clone()
-            }
+        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(partition_rewards)) =
+            &self.epoch_reward_status
+        else {
+            // We should never get here.
+            unreachable!(
+                "epoch rewards status is not partitioned, but we are trying to distribute rewards"
+            );
         };
 
         let distribution_end_exclusive =
-            distribution_starting_block_height + stake_rewards_by_partition.len() as u64;
+            distribution_starting_block_height + partition_rewards.partition_indices.len() as u64;
 
         assert!(
             self.epoch_schedule.get_slots_in_epoch(self.epoch)
-                > stake_rewards_by_partition.len() as u64
+                > partition_rewards.partition_indices.len() as u64
         );
 
         if height >= distribution_starting_block_height && height < distribution_end_exclusive {
             let partition_index = height - distribution_starting_block_height;
 
-            self.distribute_epoch_rewards_in_partition(
-                &stake_rewards_by_partition,
-                partition_index,
-            );
+            self.distribute_epoch_rewards_in_partition(partition_index);
         }
 
         if height.saturating_add(1) >= distribution_end_exclusive {
@@ -144,13 +138,17 @@ impl Bank {
 
     /// Process reward credits for a partition of rewards
     /// Store the rewards to AccountsDB, update reward history record and total capitalization.
-    fn distribute_epoch_rewards_in_partition(
-        &self,
-        all_stake_rewards: &[PartitionedStakeRewards],
-        partition_index: u64,
-    ) {
+    fn distribute_epoch_rewards_in_partition(&self, partition_index: u64) {
         let pre_capitalization = self.capitalization();
-        let this_partition_stake_rewards = &all_stake_rewards[partition_index as usize];
+        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(partition_rewards)) =
+            &self.epoch_reward_status
+        else {
+            // We should never get here.
+            error!(
+                "epoch rewards status is not partitioned, but we are trying to distribute rewards"
+            );
+            return;
+        };
 
         let (
             DistributionResults {
@@ -159,7 +157,7 @@ impl Bank {
                 updated_stake_rewards,
             },
             store_stake_accounts_us,
-        ) = measure_us!(self.store_stake_accounts_in_partition(this_partition_stake_rewards));
+        ) = measure_us!(self.store_stake_accounts_in_partition(partition_index));
 
         // increase total capitalization by the distributed rewards
         self.capitalization.fetch_add(lamports_distributed, Relaxed);
@@ -173,7 +171,8 @@ impl Bank {
         let metrics = RewardsStoreMetrics {
             pre_capitalization,
             post_capitalization: self.capitalization(),
-            total_stake_accounts_count: all_stake_rewards.len(),
+            total_stake_accounts_count: partition_rewards.all_stake_rewards.len(),
+            total_num_partitions: partition_rewards.partition_indices.len(),
             partition_index,
             store_stake_accounts_us,
             store_stake_accounts_count: updated_stake_rewards.len(),
@@ -252,16 +251,30 @@ impl Bank {
     ///
     /// Note: even if staker's reward is 0, the stake account still needs to be
     /// stored because credits observed has changed
-    fn store_stake_accounts_in_partition(
-        &self,
-        stake_rewards: &[PartitionedStakeReward],
-    ) -> DistributionResults {
+    fn store_stake_accounts_in_partition(&self, partition_index: u64) -> DistributionResults {
         let mut lamports_distributed = 0;
         let mut lamports_burned = 0;
-        let mut updated_stake_rewards = Vec::with_capacity(stake_rewards.len());
+
+        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(partition_rewards)) =
+            &self.epoch_reward_status
+        else {
+            // We should never get here.
+            error!(
+                "epoch rewards status is not partitioned, but we are trying to distribute rewards"
+            );
+            return DistributionResults {
+                lamports_distributed: 0,
+                lamports_burned: 0,
+                updated_stake_rewards: vec![],
+            };
+        };
+
+        let indices = &partition_rewards.partition_indices[partition_index as usize];
+        let mut updated_stake_rewards = Vec::with_capacity(indices.len());
         let stakes_cache = self.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
-        for partitioned_stake_reward in stake_rewards {
+        for index in indices {
+            let partitioned_stake_reward = &partition_rewards.all_stake_rewards[*index];
             let stake_pubkey = partitioned_stake_reward.stake_pubkey;
             let reward_amount = partitioned_stake_reward.stake_reward;
             match Self::build_updated_stake_reward(stakes_cache_accounts, partitioned_stake_reward)
@@ -321,6 +334,7 @@ mod tests {
         },
         solana_stake_program::stake_state,
         solana_vote_program::vote_state,
+        std::sync::Arc,
     };
 
     #[test]
@@ -334,12 +348,13 @@ mod tests {
             .map(|_| PartitionedStakeReward::new_random())
             .collect::<Vec<_>>();
 
-        let stake_rewards =
-            hash_rewards_into_partitions(stake_rewards, &Hash::new_from_array([1; 32]), 2);
+        let partition_indices =
+            hash_rewards_into_partitions(&stake_rewards, &Hash::new_from_array([1; 32]), 2);
 
         bank.set_epoch_reward_status_partitioned(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
-            stake_rewards,
+            Arc::new(stake_rewards),
+            partition_indices,
         );
 
         bank.distribute_partitioned_epoch_rewards();
@@ -357,13 +372,17 @@ mod tests {
             .map(|_| PartitionedStakeReward::new_random())
             .collect::<Vec<_>>();
 
-        let stake_rewards = hash_rewards_into_partitions(
-            stake_rewards,
+        let partition_indices = hash_rewards_into_partitions(
+            &stake_rewards,
             &Hash::new_from_array([1; 32]),
             bank.epoch_schedule().slots_per_epoch as usize + 1,
         );
 
-        bank.set_epoch_reward_status_partitioned(bank.block_height(), stake_rewards);
+        bank.set_epoch_reward_status_partitioned(
+            bank.block_height(),
+            Arc::new(stake_rewards),
+            partition_indices,
+        );
 
         bank.distribute_partitioned_epoch_rewards();
     }
@@ -375,6 +394,7 @@ mod tests {
 
         bank.set_epoch_reward_status_partitioned(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
+            Arc::new(vec![]),
             vec![],
         );
 
@@ -410,7 +430,7 @@ mod tests {
         let (mut genesis_config, _mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
 
         // Set up epoch_rewards sysvar with rewards with 1e9 lamports to distribute.
         let total_rewards = 1_000_000_000;
@@ -441,11 +461,17 @@ mod tests {
             .map(|stake_reward| stake_reward.stake_reward_info.lamports)
             .sum::<i64>() as u64;
         populate_starting_stake_accounts_from_stake_rewards(&bank, &stake_rewards);
-        let all_rewards = vec![convert_rewards(stake_rewards)];
+        let all_rewards = convert_rewards(stake_rewards);
+
+        bank.set_epoch_reward_status_partitioned(
+            bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
+            Arc::new(all_rewards),
+            vec![(0..expected_num as usize).collect::<Vec<_>>()],
+        );
 
         // Distribute rewards
         let pre_cap = bank.capitalization();
-        bank.distribute_epoch_rewards_in_partition(&all_rewards, 0);
+        bank.distribute_epoch_rewards_in_partition(0);
         let post_cap = bank.capitalization();
         let post_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
 
@@ -489,11 +515,13 @@ mod tests {
 
         let stake_rewards = convert_rewards(stake_rewards);
 
-        let stake_rewards_bucket =
-            hash_rewards_into_partitions(stake_rewards, &Hash::new_from_array([1; 32]), 100);
+        let partition_indices =
+            hash_rewards_into_partitions(&stake_rewards, &Hash::new_from_array([1; 32]), 100);
+        let num_partitions = partition_indices.len();
         bank.set_epoch_reward_status_partitioned(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
-            stake_rewards_bucket.clone(),
+            Arc::new(stake_rewards),
+            partition_indices,
         );
 
         // Test partitioned stores
@@ -502,12 +530,12 @@ mod tests {
 
         let pre_update_history_len = bank.rewards.read().unwrap().len();
 
-        for stake_rewards in stake_rewards_bucket {
+        for i in 0..num_partitions {
             let DistributionResults {
                 lamports_distributed,
                 updated_stake_rewards,
                 ..
-            } = bank.store_stake_accounts_in_partition(&stake_rewards);
+            } = bank.store_stake_accounts_in_partition(i as u64);
             let num_history_updates =
                 bank.update_reward_history_in_partition(&updated_stake_rewards);
             assert_eq!(updated_stake_rewards.len(), num_history_updates);
@@ -715,7 +743,7 @@ mod tests {
     #[test]
     fn test_store_stake_accounts_in_partition() {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
 
         let expected_num = 100;
 
@@ -730,26 +758,36 @@ mod tests {
             .map(|stake_reward| stake_reward.stake_reward)
             .sum::<u64>();
 
+        bank.set_epoch_reward_status_partitioned(
+            bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
+            Arc::new(converted_rewards),
+            vec![(0..expected_num as usize).collect::<Vec<_>>()],
+        );
+
         let DistributionResults {
             lamports_distributed,
             ..
-        } = bank.store_stake_accounts_in_partition(&converted_rewards);
+        } = bank.store_stake_accounts_in_partition(0);
         assert_eq!(expected_total, lamports_distributed);
     }
 
     #[test]
     fn test_store_stake_accounts_in_partition_empty() {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
 
-        let stake_rewards = vec![];
+        bank.set_epoch_reward_status_partitioned(
+            bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
+            Arc::new(vec![]),
+            vec![vec![]],
+        );
 
         let expected_total = 0;
 
         let DistributionResults {
             lamports_distributed,
             ..
-        } = bank.store_stake_accounts_in_partition(&stake_rewards);
+        } = bank.store_stake_accounts_in_partition(0);
         assert_eq!(expected_total, lamports_distributed);
     }
 }
