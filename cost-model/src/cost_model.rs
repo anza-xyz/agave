@@ -90,7 +90,7 @@ impl CostModel {
     /// - `num_write_locks` - number of requested write locks
     pub fn estimate_cost<'a, Tx: StaticMeta>(
         transaction: &'a Tx,
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
         num_write_locks: u64,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
@@ -112,7 +112,7 @@ impl CostModel {
 
     fn calculate_non_vote_transaction_cost<'a, Tx: StaticMeta>(
         transaction: &'a Tx,
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
         num_write_locks: u64,
         programs_execution_cost: u64,
         loaded_accounts_data_size_cost: u64,
