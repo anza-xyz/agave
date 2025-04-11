@@ -88,11 +88,17 @@ impl StakeUpdater {
                     .collect::<HashMap<Pubkey, u64>>(),
             );
 
-            *last_refresh = Some(Instant::now());
-            shared_staked_nodes
-                .write()
-                .unwrap()
-                .update_stake_map(stake_map);
+            if stake_map.is_empty() {
+                warn!("No stake information found");
+                sleep(*refresh_sleep_duration);
+            } else {
+                info!("Stake map updated with {} entries", stake_map.len());
+                *last_refresh = Some(Instant::now());
+                shared_staked_nodes
+                    .write()
+                    .unwrap()
+                    .update_stake_map(stake_map);
+            }
         } else {
             sleep(*refresh_sleep_duration);
         }
