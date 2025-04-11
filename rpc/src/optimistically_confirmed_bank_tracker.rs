@@ -8,12 +8,16 @@
 //! BankNotification::Frozen --> SlotNotification::Frozen
 //! BankNotification::NewRootedChain --> SlotNotification::Root for the roots in the chain.
 
+pub use solana_runtime::bank_notification::{BankNotification, BankNotificationReceiver};
 use {
     crate::rpc_subscriptions::RpcSubscriptions,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_rpc_client_api::response::{SlotTransactionStats, SlotUpdate},
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
+        bank::Bank,
+        bank_forks::BankForks,
+        // bank_notification::{BankNotification, BankNotificationReceiver},
+        prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_sdk::{clock::Slot, timing::timestamp},
     std::{
@@ -39,15 +43,6 @@ impl OptimisticallyConfirmedBank {
     }
 }
 
-#[derive(Clone)]
-pub enum BankNotification {
-    OptimisticallyConfirmed(Slot),
-    Frozen(Arc<Bank>),
-    NewRootBank(Arc<Bank>),
-    /// The newly rooted slot chain including the parent slot of the oldest bank in the rooted chain.
-    NewRootedChain(Vec<Slot>),
-}
-
 #[derive(Clone, Debug)]
 pub enum SlotNotification {
     OptimisticallyConfirmed(Slot),
@@ -55,28 +50,6 @@ pub enum SlotNotification {
     Frozen((Slot, Slot)),
     /// The (Slot, Parent Slot) pair for the root slot
     Root((Slot, Slot)),
-}
-
-impl std::fmt::Debug for BankNotification {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            BankNotification::OptimisticallyConfirmed(slot) => {
-                write!(f, "OptimisticallyConfirmed({slot:?})")
-            }
-            BankNotification::Frozen(bank) => write!(f, "Frozen({})", bank.slot()),
-            BankNotification::NewRootBank(bank) => write!(f, "Root({})", bank.slot()),
-            BankNotification::NewRootedChain(chain) => write!(f, "RootedChain({chain:?})"),
-        }
-    }
-}
-
-pub type BankNotificationReceiver = Receiver<BankNotification>;
-pub type BankNotificationSender = Sender<BankNotification>;
-
-#[derive(Clone)]
-pub struct BankNotificationSenderConfig {
-    pub sender: BankNotificationSender,
-    pub should_send_parents: bool,
 }
 
 pub type SlotNotificationReceiver = Receiver<SlotNotification>;

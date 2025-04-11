@@ -10,6 +10,7 @@ pub mod bank;
 pub mod bank_client;
 pub mod bank_forks;
 pub mod bank_hash_cache;
+pub mod bank_notification;
 pub mod bank_utils;
 pub mod commitment;
 pub mod epoch_stakes;
@@ -39,6 +40,7 @@ pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
 pub mod transaction_batch;
+pub mod transaction_notification;
 pub mod vote_sender_types;
 
 #[macro_use]

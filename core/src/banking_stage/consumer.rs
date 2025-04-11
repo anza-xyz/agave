@@ -1542,6 +1542,7 @@ mod tests {
             None,
             blockstore.clone(),
             false,
+            None, // no bank notifications interested
             tss_exit.clone(),
         );
 
@@ -1687,6 +1688,7 @@ mod tests {
             None,
             blockstore.clone(),
             false,
+            None, // no bank notifications interested
             tss_exit.clone(),
         );
 
