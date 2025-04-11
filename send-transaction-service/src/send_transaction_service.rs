@@ -21,7 +21,10 @@ use {
         hash::Hash, nonce_account, pubkey::Pubkey, saturating_add_assign, signature::Signature,
     },
     std::{
-        collections::hash_map::{Entry, HashMap},
+        collections::{
+            hash_map::{Entry, HashMap},
+            HashSet,
+        },
         net::SocketAddr,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -96,16 +99,6 @@ impl TransactionInfo {
             last_sent_time,
         }
     }
-
-    fn get_max_retries(
-        &self,
-        default_max_retries: Option<usize>,
-        service_max_retries: usize,
-    ) -> Option<usize> {
-        self.max_retries
-            .or(default_max_retries)
-            .map(|max_retries| max_retries.min(service_max_retries))
-    }
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -116,7 +109,6 @@ struct ProcessTransactionsResult {
     max_retries_elapsed: u64,
     failed: u64,
     retained: u64,
-    last_sent_time: Option<Instant>,
 }
 
 #[derive(Clone, Debug)]
@@ -311,16 +303,18 @@ impl SendTransactionService {
                     {
                         // take a lock of retry_transactions and move the batch to the retry set.
                         let mut retry_transactions = retry_transactions.lock().unwrap();
-                        let mut transactions_to_retry: usize = 0;
+                        let transactions_to_retry = transactions.len();
                         let mut transactions_added_to_retry: usize = 0;
                         for (signature, mut transaction_info) in transactions.drain() {
                             // drop transactions with 0 max retries
-                            let max_retries = transaction_info
-                                .get_max_retries(default_max_retries, service_max_retries);
-                            if max_retries == Some(0) {
+                            if resolve_max_retries(
+                                transaction_info.max_retries,
+                                default_max_retries,
+                                service_max_retries,
+                            ) == Some(0)
+                            {
                                 continue;
                             }
-                            transactions_to_retry += 1;
 
                             let retry_len = retry_transactions.len();
                             let entry = retry_transactions.entry(signature);
@@ -360,20 +354,19 @@ impl SendTransactionService {
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         debug!("Starting send-transaction-service::retry_thread.");
-        let retry_interval_ms_default = MAX_RETRY_SLEEP_MS.min(config.retry_rate_ms);
-        let mut retry_interval_ms = retry_interval_ms_default;
         Builder::new()
             .name("solStxRetry".to_string())
             .spawn(move || loop {
-                sleep(Duration::from_millis(retry_interval_ms));
+                let retry_interval_ms = config.retry_rate_ms;
+                let stats = &stats_report.stats;
+                sleep(Duration::from_millis(
+                    MAX_RETRY_SLEEP_MS.min(retry_interval_ms),
+                ));
                 if exit.load(Ordering::Relaxed) {
                     break;
                 }
                 let mut transactions = retry_transactions.lock().unwrap();
-                if transactions.is_empty() {
-                    retry_interval_ms = retry_interval_ms_default;
-                } else {
-                    let stats = &stats_report.stats;
+                if !transactions.is_empty() {
                     stats
                         .retry_queue_size
                         .store(transactions.len() as u64, Ordering::Relaxed);
@@ -382,7 +375,7 @@ impl SendTransactionService {
                         (bank_forks.root_bank(), bank_forks.working_bank())
                     };
 
-                    let result = Self::process_transactions(
+                    let _result = Self::process_transactions(
                         &working_bank,
                         &root_bank,
                         &mut transactions,
@@ -391,17 +384,6 @@ impl SendTransactionService {
                         stats,
                     );
                     stats_report.report();
-
-                    // Adjust retry interval taking into account the time since the last send.
-                    retry_interval_ms = retry_interval_ms_default
-                        .checked_sub(
-                            result
-                                .last_sent_time
-                                .and_then(|last| Instant::now().checked_duration_since(last))
-                                .and_then(|interval| interval.as_millis().try_into().ok())
-                                .unwrap_or(0),
-                        )
-                        .unwrap_or(retry_interval_ms_default);
                 }
             })
             .unwrap()
@@ -424,8 +406,7 @@ impl SendTransactionService {
     ) -> ProcessTransactionsResult {
         let mut result = ProcessTransactionsResult::default();
 
-        let mut batched_transactions = Vec::new();
-        let mut exceeded_retries_transactions = Vec::new();
+        let mut batched_transactions = HashSet::new();
         let retry_rate = Duration::from_millis(retry_rate_ms);
 
         transactions.retain(|signature, transaction_info| {
@@ -444,8 +425,7 @@ impl SendTransactionService {
                 let now = Instant::now();
                 let expired = transaction_info
                     .last_sent_time
-                    .and_then(|last| now.checked_duration_since(last))
-                    .map(|elapsed| elapsed >= retry_rate)
+                    .map(|last| now.duration_since(last) >= retry_rate)
                     .unwrap_or(false);
                 let verify_nonce_account =
                     nonce_account::verify_nonce_account(&nonce_account, &durable_nonce);
@@ -463,10 +443,11 @@ impl SendTransactionService {
                 return false;
             }
 
-            let max_retries =
-                transaction_info.get_max_retries(default_max_retries, service_max_retries);
-
-            if let Some(max_retries) = max_retries {
+            if let Some(max_retries) = resolve_max_retries(
+                transaction_info.max_retries,
+                default_max_retries,
+                service_max_retries,
+            ) {
                 if transaction_info.retries >= max_retries {
                     info!("Dropping transaction due to max retries: {}", signature);
                     result.max_retries_elapsed += 1;
@@ -482,36 +463,21 @@ impl SendTransactionService {
                     let now = Instant::now();
                     let need_send = transaction_info
                         .last_sent_time
-                        .and_then(|last| now.checked_duration_since(last))
-                        .map(|elapsed| elapsed >= retry_rate)
+                        .map(|last| now.duration_since(last) >= retry_rate)
                         .unwrap_or(true);
                     if need_send {
                         if transaction_info.last_sent_time.is_some() {
                             // Transaction sent before is unknown to the working bank, it might have been
-                            // dropped or landed in another fork. Re-send it.
+                            // dropped or landed in another fork.  Re-send it
 
                             info!("Retrying transaction: {}", signature);
                             result.retried += 1;
                             transaction_info.retries += 1;
+                            stats.retries.fetch_add(1, Ordering::Relaxed);
                         }
 
-                        batched_transactions.push(*signature);
+                        batched_transactions.insert(*signature);
                         transaction_info.last_sent_time = Some(now);
-
-                        let max_retries = transaction_info
-                            .get_max_retries(default_max_retries, service_max_retries);
-                        if let Some(max_retries) = max_retries {
-                            if transaction_info.retries >= max_retries {
-                                exceeded_retries_transactions.push(*signature);
-                            }
-                        }
-                    } else if let Some(last) = transaction_info.last_sent_time {
-                        result.last_sent_time = Some(
-                            result
-                                .last_sent_time
-                                .map(|result_last| result_last.min(last))
-                                .unwrap_or(last),
-                        );
                     }
                     true
                 }
@@ -529,14 +495,12 @@ impl SendTransactionService {
             }
         });
 
-        stats.retries.fetch_add(result.retried, Ordering::Relaxed);
-
         if !batched_transactions.is_empty() {
             // Processing the transactions in batch
-            let wire_transactions = batched_transactions
+            let wire_transactions = transactions
                 .iter()
-                .filter_map(|signature| transactions.get(signature))
-                .map(|transaction_info| transaction_info.wire_transaction.clone());
+                .filter(|(signature, _)| batched_transactions.contains(signature))
+                .map(|(_, transaction_info)| transaction_info.wire_transaction.clone());
 
             let iter = wire_transactions.chunks(batch_size);
             for chunk in &iter {
@@ -544,16 +508,6 @@ impl SendTransactionService {
                 client.send_transactions_in_batch(chunk, stats);
             }
         }
-
-        result.max_retries_elapsed += exceeded_retries_transactions.len() as u64;
-        stats
-            .transactions_exceeding_max_retries
-            .fetch_add(result.max_retries_elapsed, Ordering::Relaxed);
-        for signature in exceeded_retries_transactions {
-            info!("Dropping transaction due to max retries: {signature}");
-            transactions.remove(&signature);
-        }
-
         result
     }
 
@@ -563,6 +517,24 @@ impl SendTransactionService {
         self.retry_thread.join()
     }
 }
+
+/// Determines the effective number of retries based on:
+/// * `request_max_retries` – the maximum number of retries specified in the request,
+/// * `default_max_retries` – the fallback value used when the request doesn't specify one,
+/// * `retry_cap` – the system-wide maximum number of allowed retries.
+///
+/// Returns `Some(number_of_retries)` if retrying is configured,
+/// or `None` if the transaction should be retried until expiration.
+fn resolve_max_retries(
+    request_max_retries: Option<usize>,
+    default_max_retries: Option<usize>,
+    retry_cap: usize,
+) -> Option<usize> {
+    request_max_retries
+        .or(default_max_retries)
+        .map(|retries| retries.min(retry_cap))
+}
+
 #[cfg(test)]
 mod test {
     use {
@@ -905,12 +877,28 @@ mod test {
             &config,
             &stats,
         );
-        assert!(transactions.is_empty());
+        assert_eq!(transactions.len(), 1);
         assert_eq!(
             result,
             ProcessTransactionsResult {
                 retried: 1,
-                max_retries_elapsed: 2,
+                max_retries_elapsed: 1,
+                ..ProcessTransactionsResult::default()
+            }
+        );
+        let result = SendTransactionService::process_transactions(
+            &working_bank,
+            &root_bank,
+            &mut transactions,
+            &client,
+            &config,
+            &stats,
+        );
+        assert!(transactions.is_empty());
+        assert_eq!(
+            result,
+            ProcessTransactionsResult {
+                max_retries_elapsed: 1,
                 ..ProcessTransactionsResult::default()
             }
         );
