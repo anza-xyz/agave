@@ -11126,6 +11126,7 @@ dependencies = [
  "solana-instructions-sysvar",
  "solana-pubkey",
  "solana-rent",
+ "solana-sbpf",
  "solana-signature",
  "solana-system-interface",
  "solana-transaction-context 2.3.0",
