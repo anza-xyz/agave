@@ -16,7 +16,7 @@ use {
     solana_faucet::faucet::run_local_faucet_with_port,
     solana_logger::redirect_stderr_to_file,
     solana_rpc::{
-        rpc::{JsonRpcConfig, RpcBigtableConfig},
+        rpc::{JsonRpcConfig, ProcessorType, RpcBigtableConfig},
         rpc_pubsub_service::PubSubConfig,
     },
     solana_rpc_client::rpc_client::RpcClient,
@@ -464,12 +464,19 @@ fn main() {
         })
         .deactivate_features(&features_to_deactivate);
 
+    let rpc_processor_type = if matches.is_present("enable-test-features") {
+        Some(ProcessorType::Test)
+    } else {
+        Some(ProcessorType::Standard)
+    };
+
     genesis.rpc_config(JsonRpcConfig {
         enable_rpc_transaction_history: true,
         enable_extended_tx_metadata_storage: true,
         rpc_bigtable_config,
         faucet_addr: Some(faucet_addr),
         account_indexes,
+        rpc_processor_type,
         ..JsonRpcConfig::default_for_test()
     });
 

@@ -64,10 +64,9 @@ pub struct JsonRpcService {
     thread_hdl: JoinHandle<()>,
 
     #[cfg(test)]
-    pub request_processor: JsonRpcRequestProcessor, // Used only by test_rpc_new()...
+    pub request_processor: Box<dyn RpcRequestProcessorTrait>, 
 
     close_handle: Option<CloseHandle>,
-
     client_updater: Arc<dyn NotifyKeyUpdate + Send + Sync>,
 }
 
@@ -696,26 +695,57 @@ impl JsonRpcService {
         let max_request_body_size = config
             .max_request_body_size
             .unwrap_or(MAX_REQUEST_BODY_SIZE);
-        let (request_processor, receiver) = JsonRpcRequestProcessor::new(
-            config,
-            snapshot_config.clone(),
-            bank_forks.clone(),
-            block_commitment_cache,
-            blockstore,
-            validator_exit.clone(),
-            health.clone(),
-            cluster_info.clone(),
-            genesis_hash,
-            bigtable_ledger_storage,
-            optimistically_confirmed_bank,
-            largest_accounts_cache,
-            max_slots,
-            leader_schedule_cache,
-            max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
-            prioritization_fee_cache,
-            Arc::clone(&runtime),
-        );
+        let processor_type = config.rpc_processor_type.clone().unwrap_or(ProcessorType::Standard);
+        let (request_processor, receiver) = match processor_type {
+            ProcessorType::Standard => {
+                let (request_processor, receiver) = JsonRpcRequestProcessor::new(
+                    config,
+                    snapshot_config.clone(),
+                    bank_forks.clone(),
+                    block_commitment_cache,
+                    blockstore,
+                    validator_exit.clone(),
+                    health.clone(), 
+                    cluster_info.clone(),
+                    genesis_hash,
+                    bigtable_ledger_storage,
+                    optimistically_confirmed_bank,
+                    largest_accounts_cache,
+                    max_slots,
+                    leader_schedule_cache,
+                    max_complete_transaction_status_slot,
+                    max_complete_rewards_slot,
+                    prioritization_fee_cache,
+                    Arc::clone(&runtime),
+                );
+
+                (Box::new(request_processor) as Box<dyn RpcRequestProcessorTrait>, receiver)
+            }
+            ProcessorType::Test => {
+                let (request_processor, receiver) = TestValidatorJsonRpcRequestProcessor::new(
+                    config,
+                    snapshot_config.clone(),
+                    bank_forks.clone(),
+                    block_commitment_cache,
+                    blockstore,
+                    validator_exit.clone(),
+                    health.clone(),
+                    cluster_info.clone(),
+                    genesis_hash,
+                    bigtable_ledger_storage,
+                    optimistically_confirmed_bank,
+                    largest_accounts_cache,
+                    max_slots,
+                    leader_schedule_cache,
+                    max_complete_transaction_status_slot,
+                    max_complete_rewards_slot,
+                    prioritization_fee_cache,
+                    Arc::clone(&runtime),
+                );
+
+                (Box::new(request_processor) as Box<dyn RpcRequestProcessorTrait>, receiver)
+            }
+        };
 
         let _send_transaction_service = Arc::new(SendTransactionService::new_with_client(
             &bank_forks,
@@ -756,11 +786,14 @@ impl JsonRpcService {
                     io,
                     move |req: &hyper::Request<hyper::Body>| {
                         let xbigtable = req.headers().get("x-bigtable");
-                        if xbigtable.is_some_and(|v| v == "disabled") {
+                        let processor = if xbigtable.is_some_and(|v| v == "disabled") {
                             request_processor.clone_without_bigtable()
                         } else {
                             request_processor.clone()
-                        }
+                        }; 
+                        processor.as_any().downcast_ref::<JsonRpcRequestProcessor>()
+                        .expect("Expected JsonRpcRequestProcessor")
+                        .clone()
                     },
                 )
                 .event_loop_executor(runtime.handle().clone())
