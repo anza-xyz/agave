@@ -140,8 +140,8 @@ impl Serializer {
                 MemoryState::Writable => {
                     MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
                 }
-                MemoryState::Cow(index_in_transaction) => {
-                    MemoryRegion::new_cow(account.get_data(), self.vaddr, index_in_transaction)
+                MemoryState::Cow(region_index) => {
+                    MemoryRegion::new_cow(account.get_data(), self.vaddr, region_index)
                 }
             };
             self.vaddr += region.len;
