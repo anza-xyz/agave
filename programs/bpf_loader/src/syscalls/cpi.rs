@@ -1295,10 +1295,15 @@ fn update_caller_account_perms(
     if let Some(region) = realloc_region {
         region
             .state
-            .set(if callee_account.can_data_be_changed().is_ok() {
+            .set(if callee_account.can_data_be_changed().is_err() {
+                MemoryState::Readable
+            } else if callee_account.get_data().len() > *original_data_len {
                 MemoryState::Writable
             } else {
-                MemoryState::Readable
+                MemoryState::Cow(
+                    (*original_data_len as u64).wrapping_shl(32)
+                        | (callee_account.get_index_in_transaction() as u64),
+                )
             });
     }
 
@@ -1598,7 +1603,6 @@ fn account_realloc_region<'a>(
     debug_assert!((MAX_PERMITTED_DATA_INCREASE
         ..MAX_PERMITTED_DATA_INCREASE.saturating_add(BPF_ALIGN_OF_U128))
         .contains(&(realloc_region.len as usize)));
-    debug_assert!(!matches!(realloc_region.state.get(), MemoryState::Cow(_)));
     Ok(Some(realloc_region))
 }
 

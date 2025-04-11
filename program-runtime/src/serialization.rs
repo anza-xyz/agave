@@ -121,7 +121,10 @@ impl Serializer {
                 // put the realloc padding in its own region
                 let memory_state = match account_data_region_memory_state(account) {
                     MemoryState::Readable => MemoryState::Readable,
-                    MemoryState::Writable | MemoryState::Cow(_) => MemoryState::Writable,
+                    MemoryState::Writable | MemoryState::Cow(_) => MemoryState::Cow(
+                        (account.get_data().len() as u64).wrapping_shl(32)
+                            | (account.get_index_in_transaction() as u64),
+                    ),
                 };
                 self.push_region(memory_state);
             }
