@@ -4038,31 +4038,25 @@ fn test_cpi_change_account_data_memory_allocation() {
         let transaction_context = &invoke_context.transaction_context;
         let instruction_context = transaction_context.get_current_instruction_context()?;
         let instruction_data = instruction_context.get_instruction_data();
-
-        let index_in_transaction =
-            instruction_context.get_index_of_instruction_account_in_transaction(0)?;
-
-        let mut account = transaction_context
-            .accounts()
-            .get(index_in_transaction)
-            .unwrap()
-            .borrow_mut();
+        let mut borrowed_account =
+            instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
 
         // Test changing the account data both in place and by changing the
         // underlying vector. CPI will have to detect the vector change and
         // update the corresponding memory region. In all cases CPI will have
         // to zero the spare bytes correctly.
         match instruction_data[0] {
-            0xFE => account.set_data(instruction_data.to_vec()),
-            0xFD => account.set_data_from_slice(instruction_data),
+            0xFE => borrowed_account.set_data(instruction_data.to_vec()),
+            0xFD => borrowed_account.set_data_from_slice(instruction_data),
             0xFC => {
                 // Exercise the update_caller_account capacity check where account len != capacity.
                 let mut data = instruction_data.to_vec();
                 data.reserve_exact(1);
-                account.set_data(data)
+                borrowed_account.set_data(data)
             }
             _ => panic!(),
         }
+        .unwrap();
 
         Ok(())
     });
