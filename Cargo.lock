@@ -6862,7 +6862,6 @@ dependencies = [
  "num-traits",
  "qualifier_attr",
  "rand 0.8.5",
- "scopeguard",
  "solana-account",
  "solana-account-info",
  "solana-big-mod-exp",
