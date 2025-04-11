@@ -590,27 +590,11 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                 // See Serializer::write_account() as to why we have this
                 // padding before the realloc region here.
                 start += BPF_ALIGN_OF_U128.saturating_sub(alignment_offset);
-                let data = buffer
-                    .get(start..start + MAX_PERMITTED_DATA_INCREASE)
-                    .ok_or(InstructionError::InvalidArgument)?;
                 match borrowed_account
                     .can_data_be_resized(post_len)
                     .and_then(|_| borrowed_account.can_data_be_changed())
                 {
-                    Ok(()) => {
-                        borrowed_account.set_data_length(post_len)?;
-                        let allocated_bytes = post_len.saturating_sub(pre_len);
-                        if allocated_bytes > 0 {
-                            borrowed_account
-                                .get_data_mut()?
-                                .get_mut(pre_len..pre_len.saturating_add(allocated_bytes))
-                                .ok_or(InstructionError::InvalidArgument)?
-                                .copy_from_slice(
-                                    data.get(0..allocated_bytes)
-                                        .ok_or(InstructionError::InvalidArgument)?,
-                                );
-                        }
-                    }
+                    Ok(()) => borrowed_account.set_data_length(post_len)?,
                     Err(err) if borrowed_account.get_data().len() != post_len => return Err(err),
                     _ => {}
                 }
