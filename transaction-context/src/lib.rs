@@ -528,15 +528,20 @@ impl TransactionContext {
         let accounts = Rc::clone(&self.accounts);
         Box::new(
             move |region: &mut MemoryRegion,
-                  _address_space_reserved_for_account: u64,
+                  address_space_reserved_for_account: u64,
                   _access_type: AccessType,
-                  _vm_addr: u64,
-                  _len: u64| {
+                  vm_addr: u64,
+                  len: u64| {
                 let Some(index_in_transaction) = region.access_violation_handler_payload else {
                     return;
                 };
+                let requested_length =
+                    vm_addr.saturating_add(len).saturating_sub(region.vm_addr) as usize;
+                if requested_length > address_space_reserved_for_account as usize {
+                    return;
+                }
 
-                // The two calls below can't really fail. If they fail because of a bug,
+                // The four calls below can't really fail. If they fail because of a bug,
                 // whatever is writing will trigger an EbpfError::AccessViolation like
                 // if the region was readonly, and the transaction will fail gracefully.
                 let Some(account) = accounts.accounts.get(index_in_transaction as usize) else {
@@ -548,11 +553,34 @@ impl TransactionContext {
                 if accounts.touch(index_in_transaction).is_err() {
                     return;
                 }
+                let Ok(remaining_allowed_growth) =
+                    accounts.resize_delta.try_borrow().map(|resize_delta| {
+                        MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+                            .saturating_sub(*resize_delta) as usize
+                    })
+                else {
+                    return;
+                };
 
-                if account.is_shared() {
-                    // See BorrowedAccount::make_data_mut() as to why we reserve extra
-                    // MAX_PERMITTED_DATA_INCREASE bytes here.
-                    account.reserve(MAX_PERMITTED_DATA_INCREASE);
+                if requested_length > region.len as usize {
+                    const PAGE_SIZE: usize = 0x1000; // 4 KiB
+                    let old_len = account.data().len();
+                    let new_len = requested_length
+                        .div_ceil(PAGE_SIZE)
+                        .saturating_mul(PAGE_SIZE)
+                        .min(address_space_reserved_for_account as usize)
+                        .min(MAX_PERMITTED_DATA_LENGTH as usize)
+                        .min(old_len.saturating_add(remaining_allowed_growth));
+                    // The last two min operations ensure the following:
+                    debug_assert!(accounts.can_data_be_resized(old_len, new_len).is_ok());
+                    if accounts
+                        .update_accounts_resize_delta(old_len, new_len)
+                        .is_err()
+                    {
+                        return;
+                    }
+                    account.resize(new_len, 0);
+                    region.len = new_len as u64;
                 }
                 region.host_addr = account.data_as_mut_slice().as_mut_ptr() as u64;
                 region.writable = true;
