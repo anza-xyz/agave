@@ -3677,7 +3677,7 @@ impl RpcClient {
 /// Mocks for documentation examples
 #[doc(hidden)]
 pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
-    let mut mocks = crate::mock_sender::Mocks::default();
+    let mut mocks = crate::mock_sender::Mocks::new();
 
     let get_account_request = RpcRequest::GetAccountInfo;
     let get_account_response = serde_json::to_value(Response {
@@ -3948,7 +3948,7 @@ mod tests {
             pubkey: pubkey.to_string(),
             account: encode_ui_account(&pubkey, &account, UiAccountEncoding::Base64, None, None),
         };
-        let expected_result = vec![(pubkey, account)];
+        let expected_result = vec![(pubkey, account.clone())];
         // Test: without context
         {
             let mocks: Mocks = [(
@@ -3987,7 +3987,7 @@ mod tests {
                         slot: 1,
                         api_version: None,
                     },
-                    value: vec![keyed_account],
+                    value: vec![keyed_account.clone()],
                 }))
                 .unwrap(),
             )]
@@ -4011,6 +4011,74 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(expected_result, result);
+        }
+
+        // Test: Mock with duplicate requests
+        {
+            let expected_result = vec![(pubkey, account.clone()), (pubkey, account.clone())];
+            let mocks: Mocks = [
+                (
+                    RpcRequest::GetProgramAccounts,
+                    serde_json::to_value(OptionalContext::Context(Response {
+                        context: RpcResponseContext {
+                            slot: 1,
+                            api_version: None,
+                        },
+                        value: vec![keyed_account.clone()],
+                    }))
+                    .unwrap(),
+                ),
+                (
+                    RpcRequest::GetProgramAccounts,
+                    serde_json::to_value(OptionalContext::Context(Response {
+                        context: RpcResponseContext {
+                            slot: 1,
+                            api_version: None,
+                        },
+                        value: vec![keyed_account.clone()],
+                    }))
+                    .unwrap(),
+                ),
+            ]
+            .into_iter()
+            .collect();
+            let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
+            let mut result1 = rpc_client
+                .get_program_accounts_with_config(
+                    &program_id,
+                    RpcProgramAccountsConfig {
+                        filters: None,
+                        account_config: RpcAccountInfoConfig {
+                            encoding: Some(UiAccountEncoding::Base64),
+                            data_slice: None,
+                            commitment: None,
+                            min_context_slot: None,
+                        },
+                        with_context: Some(true),
+                        sort_results: None,
+                    },
+                )
+                .unwrap();
+
+            let result2 = rpc_client
+                .get_program_accounts_with_config(
+                    &program_id,
+                    RpcProgramAccountsConfig {
+                        filters: None,
+                        account_config: RpcAccountInfoConfig {
+                            encoding: Some(UiAccountEncoding::Base64),
+                            data_slice: None,
+                            commitment: None,
+                            min_context_slot: None,
+                        },
+                        with_context: Some(true),
+                        sort_results: None,
+                    },
+                )
+                .unwrap();
+
+            result1.extend(result2);
+            assert_eq!(expected_result, result1);
         }
     }
 }
