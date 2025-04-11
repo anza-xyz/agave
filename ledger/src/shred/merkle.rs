@@ -1032,7 +1032,6 @@ pub(super) fn make_shreds_from_data(
     reed_solomon_cache: &ReedSolomonCache,
     stats: &mut ProcessShredsStats,
 ) -> Result<Vec<Shred>, Error> {
-    println!("make_shreds_from_data with data size = {}", data.len());
     let now = Instant::now();
     let chained = chained_merkle_root.is_some();
     let resigned = chained && is_last_in_slot;
@@ -1089,7 +1088,6 @@ pub(super) fn make_shreds_from_data(
     // Split the data into full erasure batches and initialize data and coding
     // shreds for each batch.
     while data.len() >= data_buffer_total_size {
-        println!(" making full batch");
         let (current_batch_data_chunk, rest) = data.split_at(data_buffer_total_size);
         debug_assert_eq!(
             current_batch_data_chunk.len(),
@@ -1124,10 +1122,7 @@ pub(super) fn make_shreds_from_data(
     //
     // In either case, we want to generate empty data shreds.
     if !data.is_empty() || shreds.is_empty() {
-        println!(
-            " making padded out batch with remaining {} bytes",
-            data.len()
-        );
+        stats.data_padding_bytes += data_buffer_total_size - data.len();
         common_header_data.shred_variant = ShredVariant::MerkleData {
             proof_size,
             chained,
@@ -1148,6 +1143,7 @@ pub(super) fn make_shreds_from_data(
                 .take(DATA_SHREDS_PER_FEC_BLOCK);
             make_shreds_data(&mut common_header_data, data_header, chunks).map(Shred::ShredData)
         });
+
         if let Some(Shred::ShredData(shred)) = shreds.last() {
             stats.data_buffer_residual += data_buffer_per_shred_size - shred.data()?.len();
         }
