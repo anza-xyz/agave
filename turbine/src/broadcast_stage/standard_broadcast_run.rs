@@ -605,10 +605,7 @@ mod test {
                 &quic_endpoint_sender,
             )
             .unwrap();
-        assert_eq!(
-            standard_broadcast_run.next_shred_index as u64,
-            num_shreds_per_slot
-        );
+        assert_eq!(standard_broadcast_run.next_shred_index as u64, 32);
         assert_eq!(standard_broadcast_run.slot, 0);
         assert_eq!(standard_broadcast_run.parent, 0);
         // Make sure the slot is not complete
@@ -677,7 +674,7 @@ mod test {
 
         // The shred index should have reset to 0, which makes it possible for the
         // index < the previous shred index for slot 0
-        assert_eq!(standard_broadcast_run.next_shred_index as u64, num_shreds);
+        assert_eq!(standard_broadcast_run.next_shred_index as u64, 32);
         assert_eq!(standard_broadcast_run.slot, 2);
         assert_eq!(standard_broadcast_run.parent, 0);
 
@@ -746,14 +743,20 @@ mod test {
             shreds.extend(recv_shreds.deref().clone());
         }
         // At least as many coding shreds as data shreds.
-        assert!(shreds.len() >= 29 * 2);
-        assert_eq!(shreds.iter().filter(|shred| shred.is_data()).count(), 30);
+        assert!(shreds.len() >= 32 * 2);
+        assert_eq!(
+            shreds.iter().filter(|shred| shred.is_data()).count(),
+            shreds.len() / 2
+        );
         process_ticks(75);
         while let Ok((recv_shreds, _)) = brecv.recv_timeout(Duration::from_secs(1)) {
             shreds.extend(recv_shreds.deref().clone());
         }
-        assert!(shreds.len() >= 33 * 2);
-        assert_eq!(shreds.iter().filter(|shred| shred.is_data()).count(), 34);
+        assert!(shreds.len() >= 32 * 2);
+        assert_eq!(
+            shreds.iter().filter(|shred| shred.is_data()).count(),
+            shreds.len() / 2
+        );
     }
 
     #[test]
