@@ -1,13 +1,13 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
-pub use solana_sdk::net::DEFAULT_TPU_COALESCE;
 // allow multiple connections for NAT and any open/close overlap
 #[deprecated(
     since = "2.2.0",
     note = "Use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER instead"
 )]
 pub use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER as MAX_QUIC_CONNECTIONS_PER_PEER;
+pub use {crate::forwarding_stage::ForwardingClientOption, solana_sdk::net::DEFAULT_TPU_COALESCE};
 use {
     crate::{
         banking_stage::BankingStage,
@@ -280,9 +280,11 @@ impl Tpu {
             prioritization_fee_cache,
         );
 
+        let client = ForwardingClientOption::ConnectionCache(connection_cache.clone());
+
         let forwarding_stage = spawn_forwarding_stage(
             forward_stage_receiver,
-            connection_cache.clone(),
+            client,
             RootBankCache::new(bank_forks.clone()),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
             DataBudget::default(),
