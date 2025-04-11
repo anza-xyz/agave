@@ -604,8 +604,15 @@ impl BankingStage {
         Builder::new()
             .name(format!("solBanknStgTx{id:02}"))
             .spawn(move || {
-                VoteWorker::new(decision_maker, packet_receiver, bank_forks, consumer, id)
-                    .run(vote_storage)
+                VoteWorker::new(
+                    decision_maker,
+                    packet_receiver,
+                    vote_storage,
+                    bank_forks,
+                    consumer,
+                    id,
+                )
+                .run()
             })
             .unwrap()
     }

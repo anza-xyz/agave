@@ -42,6 +42,7 @@ pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 64;
 pub struct VoteWorker {
     decision_maker: DecisionMaker,
     packet_receiver: PacketReceiver,
+    storage: VoteStorage,
     bank_forks: Arc<RwLock<BankForks>>,
     consumer: Consumer,
     id: u32,
@@ -51,6 +52,7 @@ impl VoteWorker {
     pub fn new(
         decision_maker: DecisionMaker,
         packet_receiver: PacketReceiver,
+        storage: VoteStorage,
         bank_forks: Arc<RwLock<BankForks>>,
         consumer: Consumer,
         id: u32,
@@ -58,34 +60,32 @@ impl VoteWorker {
         Self {
             decision_maker,
             packet_receiver,
+            storage,
             bank_forks,
             consumer,
             id,
         }
     }
 
-    pub fn run(mut self, mut vote_storage: VoteStorage) {
+    pub fn run(mut self) {
         let mut banking_stage_stats = BankingStageStats::new(self.id);
         let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(self.id);
 
         let mut last_metrics_update = Instant::now();
 
         loop {
-            if !vote_storage.is_empty()
+            if !self.storage.is_empty()
                 || last_metrics_update.elapsed() >= SLOT_BOUNDARY_CHECK_PERIOD
             {
-                let (_, process_buffered_packets_us) = measure_us!(self.process_buffered_packets(
-                    &mut vote_storage,
-                    &mut banking_stage_stats,
-                    &mut slot_metrics_tracker
-                ));
+                let (_, process_buffered_packets_us) = measure_us!(self
+                    .process_buffered_packets(&mut banking_stage_stats, &mut slot_metrics_tracker));
                 slot_metrics_tracker
                     .increment_process_buffered_packets_us(process_buffered_packets_us);
                 last_metrics_update = Instant::now();
             }
 
             match self.packet_receiver.receive_and_buffer_packets(
-                &mut vote_storage,
+                &mut self.storage,
                 &mut banking_stage_stats,
                 &mut slot_metrics_tracker,
             ) {
@@ -98,11 +98,10 @@ impl VoteWorker {
 
     fn process_buffered_packets(
         &mut self,
-        vote_storage: &mut VoteStorage,
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
-        if vote_storage.should_not_process() {
+        if self.storage.should_not_process() {
             return;
         }
         let (decision, make_decision_us) =
@@ -118,7 +117,6 @@ impl VoteWorker {
                 // of the previous slot
                 slot_metrics_tracker.apply_action(metrics_action);
                 let (_, consume_buffered_packets_us) = measure_us!(self.consume_buffered_packets(
-                    vote_storage,
                     &bank_start,
                     banking_stage_stats,
                     slot_metrics_tracker,
@@ -130,14 +128,14 @@ impl VoteWorker {
                 // get current working bank from bank_forks, use it to sanitize transaction and
                 // load all accounts from address loader;
                 let current_bank = self.bank_forks.read().unwrap().working_bank();
-                vote_storage.cache_epoch_boundary_info(&current_bank);
-                vote_storage.clear();
+                self.storage.cache_epoch_boundary_info(&current_bank);
+                self.storage.clear();
             }
             BufferedPacketsDecision::ForwardAndHold => {
                 // get current working bank from bank_forks, use it to sanitize transaction and
                 // load all accounts from address loader;
                 let current_bank = self.bank_forks.read().unwrap().working_bank();
-                vote_storage.cache_epoch_boundary_info(&current_bank);
+                self.storage.cache_epoch_boundary_info(&current_bank);
             }
             BufferedPacketsDecision::Hold => {}
         }
@@ -145,22 +143,20 @@ impl VoteWorker {
 
     fn consume_buffered_packets(
         &mut self,
-        vote_storage: &mut VoteStorage,
         bank_start: &BankStart,
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
-        if vote_storage.is_empty() {
+        if self.storage.is_empty() {
             return;
         }
 
         let mut consumed_buffered_packets_count = 0;
         let mut rebuffered_packet_count = 0;
         let mut proc_start = Measure::start("consume_buffered_process");
-        let num_packets_to_process = vote_storage.len();
+        let num_packets_to_process = self.storage.len();
 
         let reached_end_of_slot = self.process_packets(
-            vote_storage,
             bank_start,
             &mut consumed_buffered_packets_count,
             &mut rebuffered_packet_count,
@@ -169,7 +165,7 @@ impl VoteWorker {
         );
 
         if reached_end_of_slot {
-            slot_metrics_tracker.set_end_of_slot_unprocessed_buffer_len(vote_storage.len() as u64);
+            slot_metrics_tracker.set_end_of_slot_unprocessed_buffer_len(self.storage.len() as u64);
         }
 
         proc_start.stop();
@@ -196,7 +192,6 @@ impl VoteWorker {
     // returns `true` if the end of slot is reached
     fn process_packets(
         &mut self,
-        vote_storage: &mut VoteStorage,
         bank_start: &BankStart,
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
@@ -206,7 +201,7 @@ impl VoteWorker {
         // Based on the stake distribution present in the supplied bank, drain the unprocessed votes
         // from each validator using a weighted random ordering. Votes from validators with
         // 0 stake are ignored.
-        let all_vote_packets = vote_storage.drain_unprocessed(&bank_start.working_bank);
+        let all_vote_packets = self.storage.drain_unprocessed(&bank_start.working_bank);
 
         let mut reached_end_of_slot = false;
         let mut sanitized_transactions = Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
@@ -239,13 +234,13 @@ impl VoteWorker {
                 vote_packets.len(),
                 slot_metrics_tracker,
             ) {
-                vote_storage.reinsert_packets(
+                self.storage.reinsert_packets(
                     retryable_vote_indices
                         .into_iter()
                         .map(|index| vote_packets[index].clone()),
                 );
             } else {
-                vote_storage.reinsert_packets(vote_packets.drain(..));
+                self.storage.reinsert_packets(vote_packets.drain(..));
             }
         }
 
