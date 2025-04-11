@@ -1,7 +1,7 @@
 //! trait for abstracting underlying storage of pubkey and account pairs to be written
 use {
     crate::{
-        account_storage::meta::StoredAccountMeta,
+        account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
         is_zero_lamport::IsZeroLamport,
     },
@@ -15,7 +15,7 @@ use {
 #[derive(Debug, Copy, Clone)]
 pub enum AccountForStorage<'a> {
     AddressAndAccount((&'a Pubkey, &'a AccountSharedData)),
-    StoredAccountMeta(&'a StoredAccountMeta<'a>),
+    StoredAccountInfo(&'a StoredAccountInfo<'a>),
 }
 
 impl<'a> From<(&'a Pubkey, &'a AccountSharedData)> for AccountForStorage<'a> {
@@ -24,9 +24,9 @@ impl<'a> From<(&'a Pubkey, &'a AccountSharedData)> for AccountForStorage<'a> {
     }
 }
 
-impl<'a> From<&'a StoredAccountMeta<'a>> for AccountForStorage<'a> {
-    fn from(source: &'a StoredAccountMeta<'a>) -> Self {
-        Self::StoredAccountMeta(source)
+impl<'a> From<&'a StoredAccountInfo<'a>> for AccountForStorage<'a> {
+    fn from(source: &'a StoredAccountInfo<'a>) -> Self {
+        Self::StoredAccountInfo(source)
     }
 }
 
@@ -40,7 +40,7 @@ impl<'a> AccountForStorage<'a> {
     pub fn pubkey(&self) -> &'a Pubkey {
         match self {
             AccountForStorage::AddressAndAccount((pubkey, _account)) => pubkey,
-            AccountForStorage::StoredAccountMeta(account) => account.pubkey(),
+            AccountForStorage::StoredAccountInfo(account) => account.pubkey(),
         }
     }
 }
@@ -49,31 +49,31 @@ impl ReadableAccount for AccountForStorage<'_> {
     fn lamports(&self) -> u64 {
         match self {
             AccountForStorage::AddressAndAccount((_pubkey, account)) => account.lamports(),
-            AccountForStorage::StoredAccountMeta(account) => account.lamports(),
+            AccountForStorage::StoredAccountInfo(account) => account.lamports(),
         }
     }
     fn data(&self) -> &[u8] {
         match self {
             AccountForStorage::AddressAndAccount((_pubkey, account)) => account.data(),
-            AccountForStorage::StoredAccountMeta(account) => account.data(),
+            AccountForStorage::StoredAccountInfo(account) => account.data(),
         }
     }
     fn owner(&self) -> &Pubkey {
         match self {
             AccountForStorage::AddressAndAccount((_pubkey, account)) => account.owner(),
-            AccountForStorage::StoredAccountMeta(account) => account.owner(),
+            AccountForStorage::StoredAccountInfo(account) => account.owner(),
         }
     }
     fn executable(&self) -> bool {
         match self {
             AccountForStorage::AddressAndAccount((_pubkey, account)) => account.executable(),
-            AccountForStorage::StoredAccountMeta(account) => account.executable(),
+            AccountForStorage::StoredAccountInfo(account) => account.executable(),
         }
     }
     fn rent_epoch(&self) -> Epoch {
         match self {
             AccountForStorage::AddressAndAccount((_pubkey, account)) => account.rent_epoch(),
-            AccountForStorage::StoredAccountMeta(account) => account.rent_epoch(),
+            AccountForStorage::StoredAccountInfo(account) => account.rent_epoch(),
         }
     }
     fn to_account_shared_data(&self) -> AccountSharedData {
@@ -81,7 +81,7 @@ impl ReadableAccount for AccountForStorage<'_> {
             AccountForStorage::AddressAndAccount((_pubkey, account)) => {
                 account.to_account_shared_data()
             }
-            AccountForStorage::StoredAccountMeta(account) => account.to_account_shared_data(),
+            AccountForStorage::StoredAccountInfo(account) => account.to_account_shared_data(),
         }
     }
 }
@@ -282,9 +282,7 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
         let mut call_callback = |storage: &AccountStorageEntry| {
             storage
                 .accounts
-                .get_stored_account_meta_callback(offset, |account: StoredAccountMeta| {
-                    callback((&account).into())
-                })
+                .get_stored_account_callback(offset, |account| callback((&account).into()))
                 .expect("account has to exist to be able to store it")
         };
         {
@@ -357,7 +355,17 @@ pub mod tests {
             index: usize,
             mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
         ) -> Ret {
-            callback(self.1[index].into())
+            let stored_account_meta = self.1[index];
+            let stored_account_info = StoredAccountInfo {
+                pubkey: stored_account_meta.pubkey(),
+                lamports: stored_account_meta.lamports(),
+                owner: stored_account_meta.owner(),
+                data: stored_account_meta.data(),
+                executable: stored_account_meta.executable(),
+                rent_epoch: stored_account_meta.rent_epoch(),
+            };
+            let account_for_storage = AccountForStorage::StoredAccountInfo(&stored_account_info);
+            callback(account_for_storage)
         }
         fn is_zero_lamport(&self, index: usize) -> bool {
             self.1[index].is_zero_lamport()
@@ -416,7 +424,17 @@ pub mod tests {
             index: usize,
             mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
         ) -> Ret {
-            callback(self.1[index].into())
+            let stored_account_meta = self.1[index];
+            let stored_account_info = StoredAccountInfo {
+                pubkey: stored_account_meta.pubkey(),
+                lamports: stored_account_meta.lamports(),
+                owner: stored_account_meta.owner(),
+                data: stored_account_meta.data(),
+                executable: stored_account_meta.executable(),
+                rent_epoch: stored_account_meta.rent_epoch(),
+            };
+            let account_for_storage = AccountForStorage::StoredAccountInfo(&stored_account_info);
+            callback(account_for_storage)
         }
         fn is_zero_lamport(&self, index: usize) -> bool {
             self.1[index].is_zero_lamport()
