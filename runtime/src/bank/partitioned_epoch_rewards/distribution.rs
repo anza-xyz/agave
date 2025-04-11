@@ -59,20 +59,28 @@ impl Bank {
             return;
         }
 
-        let (stake_rewards_by_partition, update_to_partitioned) = match &self.epoch_reward_status {
-            EpochRewardStatus::Inactive => {
-                // epoch rewards is inactive, no rewards to distribute
-                unreachable!("shouldn't reach here");
-            }
-            EpochRewardStatus::Calculated(status) => {
+        let stake_rewards_by_partition = match &status {
+            EpochRewardPhase::Calculation(status) => {
                 // epoch rewards have been calculated, but not yet partitioned.
                 // so partition them now.
                 // This should happen only once immediately on the first rewards distribution block, after reward calculation block.
                 let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
-                let (stake_rewards_by_partition, partition_us) = measure_us!(status.do_partition(
-                    &epoch_rewards_sysvar.parent_blockhash,
-                    epoch_rewards_sysvar.num_partitions as usize,
-                ));
+                let (stake_rewards_by_partition, partition_us) = measure_us!({
+                    Arc::new(epoch_rewards_hasher::hash_rewards_into_partitions_slice(
+                        &status.all_stake_rewards,
+                        &epoch_rewards_sysvar.parent_blockhash,
+                        epoch_rewards_sysvar.num_partitions as usize,
+                    ))
+                });
+
+                // update epoch reward status to partitioned
+                self.epoch_reward_status = EpochRewardStatus::Active(
+                    EpochRewardPhase::Distribution(StartBlockHeightAndPartitionedRewards {
+                        distribution_starting_block_height,
+                        stake_rewards_by_partition: stake_rewards_by_partition.clone(),
+                    }),
+                );
+
                 datapoint_info!(
                     "epoch-rewards-status-update",
                     ("slot", self.slot(), i64),

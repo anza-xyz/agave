@@ -14,7 +14,6 @@ use {
     },
     solana_sdk::{
         account::AccountSharedData,
-        hash::Hash,
         pubkey::Pubkey,
         reward_info::RewardInfo,
         stake::state::{Delegation, Stake},
@@ -55,22 +54,6 @@ pub(crate) struct StartBlockHeightAndPartitionedRewards {
     pub(crate) distribution_starting_block_height: u64,
     /// calculated epoch rewards pending distribution after partitioning, outer Vec is by partition (one partition per block)
     pub(crate) stake_rewards_by_partition: Arc<Vec<PartitionedStakeRewards>>,
-}
-
-impl StartBlockHeightAndRewards {
-    pub(crate) fn do_partition(
-        &self,
-        parent_blockhash: &Hash,
-        num_partitions: usize,
-    ) -> Arc<Vec<PartitionedStakeRewards>> {
-        let stake_rewards_by_partition = epoch_rewards_hasher::hash_rewards_into_partitions_slice(
-            &self.all_stake_rewards,
-            parent_blockhash,
-            num_partitions,
-        );
-
-        Arc::new(stake_rewards_by_partition)
-    }
 }
 
 /// Represent whether bank is in the reward phase or not.
