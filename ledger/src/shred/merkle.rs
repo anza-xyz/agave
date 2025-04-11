@@ -1090,6 +1090,7 @@ pub(super) fn make_shreds_from_data(
     while data.len() >= data_buffer_total_size {
         let (current_batch_data_chunk, rest) = data.split_at(data_buffer_total_size);
         stats.data_real_bytes += current_batch_data_chunk.len();
+        stats.mostly_full_batches += 1;
         debug_assert_eq!(
             current_batch_data_chunk.len(),
             DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size
@@ -1123,8 +1124,18 @@ pub(super) fn make_shreds_from_data(
     //
     // In either case, we want to generate empty data shreds.
     if !data.is_empty() || shreds.is_empty() {
-        stats.data_real_bytes += data.len();
-        stats.data_padding_bytes += data_buffer_total_size - data.len();
+        let data_remaining = data.len();
+        stats.data_real_bytes += data_remaining;
+        stats.data_padding_bytes += data_buffer_total_size - data_remaining;
+        if data_remaining * 10 > data_buffer_total_size * 9 {
+            // More than 90% filled
+            stats.mostly_full_batches += 1;
+        } else if data_remaining * 10 < data_buffer_total_size * 2 {
+            // 20% filled or less
+            stats.mostly_empty_batches += 1;
+        } else {
+            stats.inbetween_batches += 1;
+        }
         common_header_data.shred_variant = ShredVariant::MerkleData {
             proof_size,
             chained,

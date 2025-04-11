@@ -64,34 +64,47 @@ pub(super) fn recv_slot_entries(
     let mut coalesce_start = Instant::now();
     let target_serialized_batch_byte_count: u64 =
         32 * ShredData::capacity(Some((6, true, false))).unwrap() as u64;
-    while last_tick_height != bank.max_tick_height()
-        && serialized_batch_byte_count < target_serialized_batch_byte_count
-    {
-        let Ok((try_bank, (entry, tick_height))) =
-            receiver.recv_deadline(coalesce_start + ENTRY_COALESCE_DURATION)
-        else {
-            break;
-        };
-        // If the bank changed, that implies the previous slot was interrupted and we do not have to
-        // broadcast its entries.
-        if try_bank.slot() != bank.slot() {
-            warn!("Broadcast for slot: {} interrupted", bank.slot());
-            entries.clear();
-            serialized_batch_byte_count = 8; // Vec len
-            bank = try_bank.clone();
-            coalesce_start = Instant::now();
-        }
-        last_tick_height = tick_height;
-        let entry_bytes = serialized_size(&entry)?;
 
-        // If this entry will push us over the batch byte limit, save it for the next batch.
-        if serialized_batch_byte_count + entry_bytes > target_serialized_batch_byte_count {
-            *carryover_entry = Some((try_bank, (entry, tick_height)));
-            break;
+    if last_tick_height == bank.max_tick_height()
+        || serialized_batch_byte_count >= target_serialized_batch_byte_count
+    {
+        warn!("#BW: Not entering coalesce loop, serialized_batch_byte_count: {serialized_batch_byte_count}, target_serialized_batch_byte_count: {target_serialized_batch_byte_count}");
+    } else {
+        while last_tick_height != bank.max_tick_height()
+            && serialized_batch_byte_count < target_serialized_batch_byte_count
+        {
+            let Ok((try_bank, (entry, tick_height))) =
+                receiver.recv_deadline(coalesce_start + ENTRY_COALESCE_DURATION)
+            else {
+                warn!("#BW: Breaking out of coalesce loop, timed out, serialized_batch_byte_count: {serialized_batch_byte_count}, target_serialized_batch_byte_count: {target_serialized_batch_byte_count}");
+                break;
+            };
+            // If the bank changed, that implies the previous slot was interrupted and we do not have to
+            // broadcast its entries.
+            if try_bank.slot() != bank.slot() {
+                warn!("Broadcast for slot: {} interrupted", bank.slot());
+                entries.clear();
+                serialized_batch_byte_count = 8; // Vec len
+                bank = try_bank.clone();
+                coalesce_start = Instant::now();
+            }
+            last_tick_height = tick_height;
+            let entry_bytes = serialized_size(&entry)?;
+
+            // If this entry will push us over the batch byte limit, save it for the next batch.
+            if serialized_batch_byte_count + entry_bytes > target_serialized_batch_byte_count {
+                *carryover_entry = Some((try_bank, (entry, tick_height)));
+                warn!("#BW: Breaking out of coalesce loop, serialized_batch_byte_count: {serialized_batch_byte_count}, entry_bytes: {entry_bytes}, target_serialized_batch_byte_count: {target_serialized_batch_byte_count}");
+                break;
+            }
+            serialized_batch_byte_count += entry_bytes;
+            entries.push(entry);
+            assert!(last_tick_height <= bank.max_tick_height());
         }
-        serialized_batch_byte_count += entry_bytes;
-        entries.push(entry);
-        assert!(last_tick_height <= bank.max_tick_height());
+
+        if last_tick_height == bank.max_tick_height() {
+            warn!("#BW: Exited coalesce loop w/ max bank height, serialized_batch_byte_count: {serialized_batch_byte_count}, target_serialized_batch_byte_count: {target_serialized_batch_byte_count}");
+        }
     }
     let time_coalesced = coalesce_start.elapsed();
 
