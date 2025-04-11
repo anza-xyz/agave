@@ -130,6 +130,7 @@ fn bench_retransmitter(bencher: &mut Bencher) {
         Arc::new(solana_rpc::max_slots::MaxSlots::default()),
         None,
         None,
+        None,
     );
 
     let mut index = 0;
