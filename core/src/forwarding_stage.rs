@@ -486,7 +486,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 .send_transactions_in_batch(non_vote_batch)
                 .is_err()
             {
-                self.metrics.votes_dropped_on_send += num_non_votes;
+                self.metrics.non_votes_dropped_on_send += num_non_votes;
             }
         }
     }
@@ -518,7 +518,6 @@ impl LeaderUpdater for ForwardAddressGetter {
 
 #[derive(Clone)]
 struct TpuClientNextClient {
-    runtime_handle: RuntimeHandle,
     sender: mpsc::Sender<TransactionBatch>,
 }
 
@@ -530,13 +529,14 @@ impl TpuClientNextClient {
         forward_address_getter: ForwardAddressGetter,
         stake_identity: Option<&Keypair>,
     ) -> Self {
-        // TODO(klykov): find the best channel size
-        let (sender, receiver) = mpsc::channel(16);
+        // For now use large channel, the more suitable size to be found later.
+        let (sender, receiver) = mpsc::channel(128);
         let cancel = CancellationToken::new();
         let leader_updater = forward_address_getter.clone();
 
-        let config = Self::create_config(stake_identity, 1);
-        let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
+        let config = Self::create_config(stake_identity);
+        let scheduler: ConnectionWorkersScheduler =
+            ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
             "forwarding-stage-tpu-client",
@@ -544,26 +544,24 @@ impl TpuClientNextClient {
             cancel.clone(),
         ));
         let _handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
-        Self {
-            runtime_handle,
-            sender,
-        }
+        Self { sender }
     }
 
-    fn create_config(
-        stake_identity: Option<&Keypair>,
-        leader_forward_count: usize,
-    ) -> ConnectionWorkersSchedulerConfig {
+    fn create_config(stake_identity: Option<&Keypair>) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
             bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
             stake_identity: stake_identity.map(Into::into),
-            num_connections: 1,
+            // Cache size of 128 covers all nodes above the P90 slot count threshold,
+            // which together account for ~75% of total slots in the epoch.
+            num_connections: 128,
             skip_check_transaction_age: true,
             worker_channel_size: 2,
             max_reconnect_attempts: 4,
+            // Send to the next leader only, but verify that connections exist
+            // for the leaders of the next `4 * NUM_CONSECUTIVE_SLOTS`.
             leaders_fanout: Fanout {
-                send: leader_forward_count,
-                connect: 4 * leader_forward_count,
+                send: 1,
+                connect: 4,
             },
         }
     }
@@ -574,15 +572,12 @@ impl ForwardingClient for TpuClientNextClient {
         &self,
         wire_transactions: Vec<Vec<u8>>,
     ) -> Result<(), ForwardingClientError> {
-        self.runtime_handle.spawn({
-            let sender = self.sender.clone();
-            async move {
-                let res = sender.send(TransactionBatch::new(wire_transactions)).await;
-                if res.is_err() {
-                    warn!("Failed to send transaction to channel: it is closed.");
-                }
-            }
-        });
+        let res = self
+            .sender
+            .try_send(TransactionBatch::new(wire_transactions));
+        if res.is_err() {
+            return Err(ForwardingClientError::Failed);
+        }
         Ok(())
     }
 }
