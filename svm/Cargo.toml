@@ -28,6 +28,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-hash = { workspace = true }
+solana-inline-spl = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
