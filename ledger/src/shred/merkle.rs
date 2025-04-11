@@ -35,6 +35,7 @@ use {
         cmp::Ordering,
         io::{Cursor, Write},
         ops::Range,
+        sync::Arc,
         time::Instant,
     },
 };
@@ -935,7 +936,7 @@ fn make_stub_shred(
             // while their payload is sent to retransmit-stage. Using a shared
             // payload between the two concurrent paths will reduce allocations
             // and memcopies.
-            payload: Payload::from(std::sync::Arc::new(payload)),
+            payload: Payload::from(Arc::new(payload)),
         })
     };
     if let Some(chained_merkle_root) = chained_merkle_root {
@@ -995,7 +996,11 @@ pub(super) fn make_shreds_from_data(
             let shred = ShredData {
                 common_header: *common_header,
                 data_header,
-                payload: Payload::from(payload),
+                // Shreds generated during leader slots are concurrently
+                // inserted into blockstore while their payload is broadcasted
+                // to turbine. Using a shared payload between the two
+                // concurrent paths will reduce allocations and memcopies.
+                payload: Payload::from(Arc::new(payload)),
             };
             common_header.index += 1;
             shred
@@ -1020,7 +1025,11 @@ pub(super) fn make_shreds_from_data(
             let shred = ShredCode {
                 common_header: *common_header,
                 coding_header,
-                payload: Payload::from(vec![0u8; ShredCode::SIZE_OF_PAYLOAD]),
+                // Shreds generated during leader slots are concurrently
+                // inserted into blockstore while their payload is broadcasted
+                // to turbine. Using a shared payload between the two
+                // concurrent paths will reduce allocations and memcopies.
+                payload: Payload::from(Arc::new(vec![0u8; ShredCode::SIZE_OF_PAYLOAD])),
             };
             common_header.index += 1;
             coding_header.position += 1;
