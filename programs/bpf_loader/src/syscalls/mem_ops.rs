@@ -1,7 +1,7 @@
 use {
     super::*,
-    solana_program_runtime::invoke_context::SerializedAccountMetadata,
     solana_sbpf::{error::EbpfError, memory_region::MemoryRegion},
+    solana_transaction_context::SerializedAccountMetadata,
     std::slice,
 };
 
@@ -92,9 +92,9 @@ declare_builtin_function!(
                 cmp_result_addr,
                 invoke_context.get_check_aligned(),
             )?;
-            let syscall_context = invoke_context.get_syscall_context()?;
+            let serialized_accounts_metadata = invoke_context.transaction_context.get_current_instruction_context()?.get_serialized_accounts_metadata();
 
-            *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, &syscall_context.accounts_metadata, memory_mapping, invoke_context.get_check_aligned())?;
+            *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, &serialized_accounts_metadata, memory_mapping, invoke_context.get_check_aligned())?;
         } else {
             let s1 = translate_slice::<u8>(
                 memory_mapping,
@@ -145,9 +145,9 @@ declare_builtin_function!(
             .get_feature_set()
             .is_active(&agave_feature_set::bpf_account_data_direct_mapping::id())
         {
-            let syscall_context = invoke_context.get_syscall_context()?;
+            let serialized_accounts_metadata = invoke_context.transaction_context.get_current_instruction_context()?.get_serialized_accounts_metadata();
 
-            memset_non_contiguous(dst_addr, c as u8, n, &syscall_context.accounts_metadata, memory_mapping, invoke_context.get_check_aligned())
+            memset_non_contiguous(dst_addr, c as u8, n, &serialized_accounts_metadata, memory_mapping, invoke_context.get_check_aligned())
         } else {
             let s = translate_slice_mut::<u8>(
                 memory_mapping,
@@ -172,13 +172,16 @@ fn memmove(
         .get_feature_set()
         .is_active(&agave_feature_set::bpf_account_data_direct_mapping::id())
     {
-        let syscall_context = invoke_context.get_syscall_context()?;
+        let serialized_accounts_metadata = invoke_context
+            .transaction_context
+            .get_current_instruction_context()?
+            .get_serialized_accounts_metadata();
 
         memmove_non_contiguous(
             dst_addr,
             src_addr,
             n,
-            &syscall_context.accounts_metadata,
+            &serialized_accounts_metadata,
             memory_mapping,
             invoke_context.get_check_aligned(),
         )

@@ -170,17 +170,7 @@ impl<'a> EnvironmentConfig<'a> {
 
 pub struct SyscallContext {
     pub allocator: BpfAllocator,
-    pub accounts_metadata: Vec<SerializedAccountMetadata>,
     pub trace_log: Vec<[u64; 12]>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SerializedAccountMetadata {
-    pub original_data_len: usize,
-    pub vm_data_addr: u64,
-    pub vm_key_addr: u64,
-    pub vm_lamports_addr: u64,
-    pub vm_owner_addr: u64,
 }
 
 /// Main pipeline from runtime to program execution.

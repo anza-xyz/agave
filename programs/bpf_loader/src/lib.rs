@@ -22,7 +22,7 @@ use {
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
-        invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
+        invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             ProgramCacheForTxBatch, ProgramRuntimeEnvironment, DELAY_VISIBILITY_SLOT_OFFSET,
@@ -47,7 +47,9 @@ use {
         system_program,
     },
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
-    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
+    solana_transaction_context::{
+        IndexOfAccount, InstructionContext, SerializedAccountMetadata, TransactionContext,
+    },
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{cell::RefCell, mem, rc::Rc},
     syscalls::morph_into_deployment_environment_v1,
@@ -243,7 +245,7 @@ pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
 fn create_vm<'a, 'b>(
     program: &'a Executable<InvokeContext<'b>>,
     regions: Vec<MemoryRegion>,
-    accounts_metadata: Vec<SerializedAccountMetadata>,
+    serialized_accounts_metadata: Vec<SerializedAccountMetadata>,
     invoke_context: &'a mut InvokeContext<'b>,
     stack: &mut [u8],
     heap: &mut [u8],
@@ -257,9 +259,12 @@ fn create_vm<'a, 'b>(
         regions,
         invoke_context.transaction_context,
     )?;
+    invoke_context
+        .transaction_context
+        .get_current_instruction_context()?
+        .set_serialized_accounts_metadata(serialized_accounts_metadata);
     invoke_context.set_syscall_context(SyscallContext {
         allocator: BpfAllocator::new(heap_size as u64),
-        accounts_metadata,
         trace_log: Vec::new(),
     })?;
     Ok(EbpfVm::new(
@@ -1702,14 +1707,15 @@ fn execute<'a, 'b: 'a>(
         parameter_bytes: &[u8],
         copy_account_data: bool,
     ) -> Result<(), InstructionError> {
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_current_instruction_context()?;
         serialization::deserialize_parameters(
             invoke_context.transaction_context,
-            invoke_context
-                .transaction_context
-                .get_current_instruction_context()?,
+            instruction_context,
             copy_account_data,
             parameter_bytes,
-            &invoke_context.get_syscall_context()?.accounts_metadata,
+            &instruction_context.get_serialized_accounts_metadata(),
         )
     }
 

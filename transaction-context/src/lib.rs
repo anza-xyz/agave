@@ -500,7 +500,9 @@ impl TransactionContext {
     /// Returns a new account data write access handler
     pub fn account_data_write_access_handler(&self) -> Box<dyn Fn(u64) -> Result<u64, ()>> {
         let accounts = Rc::clone(&self.accounts);
-        Box::new(move |index_in_transaction| {
+        Box::new(move |region_index| {
+            let index_in_transaction = region_index & 0xFFFFFFFF;
+            let offset = (region_index.wrapping_shr(32) & 0xFFFFFFFF) as usize;
             // The two calls below can't really fail. If they fail because of a bug,
             // whatever is writing will trigger an EbpfError::AccessViolation like
             // if the region was readonly, and the transaction will fail gracefully.
@@ -519,7 +521,7 @@ impl TransactionContext {
                 // MAX_PERMITTED_DATA_INCREASE bytes here.
                 account.reserve(MAX_PERMITTED_DATA_INCREASE);
             }
-            Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
+            Ok(unsafe { account.data_as_mut_slice().as_mut_ptr().add(offset) } as u64)
         })
     }
 }
@@ -535,6 +537,16 @@ pub struct TransactionReturnData {
     pub data: Vec<u8>,
 }
 
+/// VM internal, used for de/serialitaion and CPI
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct SerializedAccountMetadata {
+    pub original_data_len: usize,
+    pub vm_data_addr: u64,
+    pub vm_key_addr: u64,
+    pub vm_lamports_addr: u64,
+    pub vm_owner_addr: u64,
+}
+
 /// Loaded instruction shared between runtime and programs.
 ///
 /// This context is valid for the entire duration of a (possibly cross program) instruction being processed.
@@ -545,6 +557,7 @@ pub struct InstructionContext {
     program_accounts: Vec<IndexOfAccount>,
     instruction_accounts: Vec<InstructionAccount>,
     instruction_data: Vec<u8>,
+    serialized_accounts_metadata: RefCell<Vec<SerializedAccountMetadata>>,
 }
 
 impl InstructionContext {
@@ -559,6 +572,19 @@ impl InstructionContext {
         self.program_accounts = program_accounts.to_vec();
         self.instruction_accounts = instruction_accounts.to_vec();
         self.instruction_data = instruction_data.to_vec();
+    }
+
+    /// VM internal, used for de/serialitaion and CPI
+    pub fn set_serialized_accounts_metadata(
+        &self,
+        serialized_accounts_metadata: Vec<SerializedAccountMetadata>,
+    ) {
+        *self.serialized_accounts_metadata.borrow_mut() = serialized_accounts_metadata
+    }
+
+    /// VM internal, used for de/serialitaion and CPI
+    pub fn get_serialized_accounts_metadata(&self) -> Ref<Vec<SerializedAccountMetadata>> {
+        self.serialized_accounts_metadata.borrow()
     }
 
     /// How many Instructions were on the stack after this one was pushed

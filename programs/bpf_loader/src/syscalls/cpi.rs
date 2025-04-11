@@ -1,18 +1,15 @@
 use {
     super::*,
     agave_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix},
-    scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
-    solana_program_runtime::{
-        invoke_context::SerializedAccountMetadata, serialization::account_data_region_memory_state,
-    },
+    solana_program_runtime::serialization::account_data_region_memory_state,
     solana_sbpf::{
         ebpf,
         memory_region::{MemoryRegion, MemoryState},
     },
     solana_stable_layout::stable_instruction::StableInstruction,
-    solana_transaction_context::BorrowedAccount,
+    solana_transaction_context::{BorrowedAccount, SerializedAccountMetadata},
     std::{mem, ptr},
 };
 // consts inlined to avoid solana-program dep
@@ -367,19 +364,6 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             vm_data_addr: account_info.data_addr,
             ref_to_len_in_vm,
         })
-    }
-
-    fn realloc_region(
-        &self,
-        memory_mapping: &'b MemoryMapping<'_>,
-        is_loader_deprecated: bool,
-    ) -> Result<Option<&'a MemoryRegion>, Error> {
-        account_realloc_region(
-            memory_mapping,
-            self.vm_data_addr,
-            self.original_data_len,
-            is_loader_deprecated,
-        )
     }
 }
 
@@ -881,10 +865,7 @@ where
 
     // unwrapping here is fine: we're in a syscall and the method below fails
     // only outside syscalls
-    let accounts_metadata = &invoke_context
-        .get_syscall_context()
-        .unwrap()
-        .accounts_metadata;
+    let serialized_accounts_metadata = instruction_context.get_serialized_accounts_metadata();
 
     let direct_mapping = invoke_context
         .get_feature_set()
@@ -918,7 +899,7 @@ where
         } else if let Some(caller_account_index) =
             account_info_keys.iter().position(|key| *key == account_key)
         {
-            let serialized_metadata = accounts_metadata
+            let serialized_metadata = serialized_accounts_metadata
                 .get(instruction_account.index_in_caller as usize)
                 .ok_or_else(|| {
                     ic_msg!(
@@ -1199,8 +1180,8 @@ fn cpi_common<S: SyscallInvokeSigned>(
 // When true is returned, the caller account must be updated after CPI. This
 // is only set for direct mapping when the pointer may have changed.
 fn update_callee_account(
-    invoke_context: &InvokeContext,
-    memory_mapping: &MemoryMapping,
+    _invoke_context: &InvokeContext,
+    _memory_mapping: &MemoryMapping,
     is_loader_deprecated: bool,
     caller_account: &CallerAccount,
     mut callee_account: BorrowedAccount<'_>,
@@ -1229,21 +1210,6 @@ fn update_callee_account(
                     callee_account.set_data_length(post_len)?;
                     // pointer to data may have changed, so caller must be updated
                     must_update_caller = true;
-                }
-                if realloc_bytes_used > 0 {
-                    let serialized_data = translate_slice::<u8>(
-                        memory_mapping,
-                        caller_account
-                            .vm_data_addr
-                            .saturating_add(caller_account.original_data_len as u64),
-                        realloc_bytes_used as u64,
-                        invoke_context.get_check_aligned(),
-                    )?;
-                    callee_account
-                        .get_data_mut()?
-                        .get_mut(caller_account.original_data_len..post_len)
-                        .ok_or(SyscallError::InvalidLength)?
-                        .copy_from_slice(serialized_data);
                 }
             }
             Err(err) if prev_len != post_len => {
@@ -1300,10 +1266,15 @@ fn update_caller_account_perms(
     if let Some(region) = realloc_region {
         region
             .state
-            .set(if callee_account.can_data_be_changed().is_ok() {
+            .set(if callee_account.can_data_be_changed().is_err() {
+                MemoryState::Readable
+            } else if callee_account.get_data().len() > *original_data_len {
                 MemoryState::Writable
             } else {
-                MemoryState::Readable
+                MemoryState::Cow(
+                    (*original_data_len as u64).wrapping_shl(32)
+                        | (callee_account.get_index_in_transaction() as u64),
+                )
             });
     }
 
@@ -1321,7 +1292,7 @@ fn update_caller_account_perms(
 fn update_caller_account(
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping,
-    is_loader_deprecated: bool,
+    _is_loader_deprecated: bool,
     caller_account: &mut CallerAccount,
     callee_account: &mut BorrowedAccount<'_>,
     direct_mapping: bool,
@@ -1367,14 +1338,14 @@ fn update_caller_account(
         }
     }
 
+    let max_increase = if direct_mapping && !invoke_context.get_check_aligned() {
+        0
+    } else {
+        MAX_PERMITTED_DATA_INCREASE
+    };
     let prev_len = *caller_account.ref_to_len_in_vm.get()? as usize;
     let post_len = callee_account.get_data().len();
     if prev_len != post_len {
-        let max_increase = if direct_mapping && !invoke_context.get_check_aligned() {
-            0
-        } else {
-            MAX_PERMITTED_DATA_INCREASE
-        };
         let data_overflow = post_len
             > caller_account
                 .original_data_len
@@ -1387,74 +1358,19 @@ fn update_caller_account(
             return Err(Box::new(InstructionError::InvalidRealloc));
         }
 
-        // If the account has been shrunk, we're going to zero the unused memory
-        // *that was previously used*.
-        if post_len < prev_len {
-            if direct_mapping {
-                // We have two separate regions to zero out: the account data
-                // and the realloc region. Here we zero the realloc region, the
-                // data region is zeroed further down below.
-                //
-                // This is done for compatibility but really only necessary for
-                // the fringe case of a program calling itself, see
-                // TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS.
-                //
-                // Zeroing the realloc region isn't necessary in the normal
-                // invoke case because consider the following scenario:
-                //
-                // 1. Caller grows an account (prev_len > original_data_len)
-                // 2. Caller assigns the account to the callee (needed for 3 to
-                //    work)
-                // 3. Callee shrinks the account (post_len < prev_len)
-                //
-                // In order for the caller to assign the account to the callee,
-                // the caller _must_ either set the account length to zero,
-                // therefore making prev_len > original_data_len impossible,
-                // or it must zero the account data, therefore making the
-                // zeroing we do here redundant.
-                if prev_len > caller_account.original_data_len {
-                    // If we get here and prev_len > original_data_len, then
-                    // we've already returned InvalidRealloc for the
-                    // bpf_loader_deprecated case.
-                    debug_assert!(!is_loader_deprecated);
-
-                    // Temporarily configure the realloc region as writable then set it back to
-                    // whatever state it had.
-                    let realloc_region = caller_account
-                        .realloc_region(memory_mapping, is_loader_deprecated)?
-                        .unwrap(); // unwrapping here is fine, we already asserted !is_loader_deprecated
-                    let original_state = realloc_region.state.replace(MemoryState::Writable);
-                    defer! {
-                        realloc_region.state.set(original_state);
-                    };
-
-                    // We need to zero the unused space in the realloc region, starting after the
-                    // last byte of the new data which might be > original_data_len.
-                    let dirty_realloc_start = caller_account.original_data_len.max(post_len);
-                    // and we want to zero up to the old length
-                    let dirty_realloc_len = prev_len.saturating_sub(dirty_realloc_start);
-                    let serialized_data = translate_slice_mut::<u8>(
-                        memory_mapping,
-                        caller_account
-                            .vm_data_addr
-                            .saturating_add(dirty_realloc_start as u64),
-                        dirty_realloc_len as u64,
-                        invoke_context.get_check_aligned(),
-                    )?;
-                    serialized_data.fill(0);
-                }
-            } else {
+        // when direct mapping is enabled we don't cache the serialized data in
+        // caller_account.serialized_data. See CallerAccount::from_account_info.
+        if !direct_mapping {
+            // If the account has been shrunk, we're going to zero the unused memory
+            // *that was previously used*.
+            if post_len < prev_len {
                 caller_account
                     .serialized_data
                     .get_mut(post_len..)
                     .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall))?
                     .fill(0);
             }
-        }
-
-        // when direct mapping is enabled we don't cache the serialized data in
-        // caller_account.serialized_data. See CallerAccount::from_account_info.
-        if !direct_mapping {
+            // Set the length of caller_account.serialized_data to post_len.
             caller_account.serialized_data = translate_slice_mut::<u8>(
                 memory_mapping,
                 caller_account.vm_data_addr,
@@ -1488,12 +1404,14 @@ fn update_caller_account(
         let spare_len = if zero_all_mapped_spare_capacity {
             // In the unlikely case where the account data vector has
             // changed - which can happen during CoW - we zero the whole
-            // extra capacity up to the original data length.
+            // extra capacity.
             //
-            // The extra capacity up to original data length is
-            // accessible from the vm and since it's uninitialized
-            // memory, it could be a source of non determinism.
-            caller_account.original_data_len
+            // The extra capacity up to original data length plus the realloc region
+            // is accessible from the vm and since it's uninitialized memory,
+            // it could be a source of non determinism.
+            caller_account
+                .original_data_len
+                .saturating_add(max_increase)
         } else {
             // If the allocation has not changed, we only zero the
             // difference between the previous and current lengths. The
@@ -1511,49 +1429,6 @@ fn update_caller_account(
                 .as_mut_ptr();
             // Safety: we check bounds above
             unsafe { ptr::write_bytes(dst, 0, spare_len) };
-        }
-
-        // Propagate changes to the realloc region in the callee up to the caller.
-        let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
-        if realloc_bytes_used > 0 {
-            // In the is_loader_deprecated case, we must have failed with
-            // InvalidRealloc by now.
-            debug_assert!(!is_loader_deprecated);
-
-            let to_slice = {
-                // If a callee reallocs an account, we write into the caller's
-                // realloc region regardless of whether the caller has write
-                // permissions to the account or not. If the callee has been able to
-                // make changes, it means they had permissions to do so, and here
-                // we're just going to reflect those changes to the caller's frame.
-                //
-                // Therefore we temporarily configure the realloc region as writable
-                // then set it back to whatever state it had.
-                let realloc_region = caller_account
-                    .realloc_region(memory_mapping, is_loader_deprecated)?
-                    .unwrap(); // unwrapping here is fine, we asserted !is_loader_deprecated
-                let original_state = realloc_region.state.replace(MemoryState::Writable);
-                defer! {
-                    realloc_region.state.set(original_state);
-                };
-
-                translate_slice_mut::<u8>(
-                    memory_mapping,
-                    caller_account
-                        .vm_data_addr
-                        .saturating_add(caller_account.original_data_len as u64),
-                    realloc_bytes_used as u64,
-                    invoke_context.get_check_aligned(),
-                )?
-            };
-            let from_slice = callee_account
-                .get_data()
-                .get(caller_account.original_data_len..post_len)
-                .ok_or(SyscallError::InvalidLength)?;
-            if to_slice.len() != from_slice.len() {
-                return Err(Box::new(InstructionError::AccountDataTooSmall));
-            }
-            to_slice.copy_from_slice(from_slice);
         }
     } else {
         let to_slice = &mut caller_account.serialized_data;
@@ -1603,7 +1478,6 @@ fn account_realloc_region<'a>(
     debug_assert!((MAX_PERMITTED_DATA_INCREASE
         ..MAX_PERMITTED_DATA_INCREASE.saturating_add(BPF_ALIGN_OF_U128))
         .contains(&(realloc_region.len as usize)));
-    debug_assert!(!matches!(realloc_region.state.get(), MemoryState::Cow(_)));
     Ok(Some(realloc_region))
 }
 
@@ -1619,14 +1493,12 @@ mod tests {
         solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_clock::Epoch,
         solana_instruction::Instruction,
-        solana_program_runtime::{
-            invoke_context::SerializedAccountMetadata, with_mock_invoke_context,
-        },
+        solana_program_runtime::with_mock_invoke_context,
         solana_sbpf::{
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
         solana_sdk_ids::system_program,
-        solana_transaction_context::TransactionAccount,
+        solana_transaction_context::{SerializedAccountMetadata, TransactionAccount},
         std::{
             cell::{Cell, RefCell},
             mem, ptr,
