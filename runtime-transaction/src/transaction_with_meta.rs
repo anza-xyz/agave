@@ -14,4 +14,9 @@ pub trait TransactionWithMeta: StaticMeta + SVMTransaction {
     /// `VersionedTransaction`. This should not be used unless necessary, as it
     /// performs numerous allocations that negatively impact performance.
     fn to_versioned_transaction(&self) -> VersionedTransaction;
+    /// Returns the size in bytes of the versioned transaction.
+    fn size(&self) -> u64 {
+        bincode::serialized_size(&self.to_versioned_transaction())
+            .expect("Serialization should succeed")
+    }
 }
