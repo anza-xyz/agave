@@ -16,7 +16,7 @@ use {
     },
 };
 
-const ENTRY_COALESCE_DURATION: Duration = Duration::from_millis(50);
+const ENTRY_COALESCE_DURATION: Duration = Duration::from_millis(100);
 
 pub(super) struct ReceiveResults {
     pub entries: Vec<Entry>,
@@ -26,16 +26,54 @@ pub(super) struct ReceiveResults {
     pub last_tick_height: u64,
 }
 
-pub(super) fn recv_slot_entries(receiver: &Receiver<WorkingBankEntry>) -> Result<ReceiveResults> {
-    let target_serialized_batch_byte_count: u64 =
-        32 * ShredData::capacity(/*merkle_proof_size*/ None).unwrap() as u64;
+fn keep_coalescing_entries(
+    last_tick_height: u64,
+    max_tick_height: u64,
+    serialized_batch_byte_count: u64,
+    max_batch_byte_count: u64,
+    data_shred_bytes_per_batch: u64,
+    data_shred_bytes: u64,
+) -> bool {
+    // If we are at the last tick height, we don't need to coalesce anymore.
+    if last_tick_height >= max_tick_height {
+        return false;
+    } else if serialized_batch_byte_count >= max_batch_byte_count {
+        // If we are over the max batch byte count, we don't need to coalesce anymore.
+        return false;
+    }
+    let bytes_to_fill_erasure_batch =
+        data_shred_bytes_per_batch - (serialized_batch_byte_count % data_shred_bytes_per_batch);
+    if bytes_to_fill_erasure_batch < data_shred_bytes {
+        // We're close enough to tightly packing erasure batches. Just send it.
+        return false;
+    }
+    true
+}
+
+fn max_coalesce_time(serialized_batch_byte_count: u64, max_batch_byte_count: u64) -> Duration {
+    // Compute the fraction of the target batch that has been filled.
+    let ratio = (serialized_batch_byte_count as f64 / max_batch_byte_count as f64).min(1.0);
+
+    // Scale the base duration: the more data we have (ratio near 1.0), the less we wait.
+    ENTRY_COALESCE_DURATION.mul_f64(1.0 - ratio)
+}
+
+pub(super) fn recv_slot_entries(
+    receiver: &Receiver<WorkingBankEntry>,
+    carryover_entry: &mut Option<WorkingBankEntry>,
+) -> Result<ReceiveResults> {
     let timer = Duration::new(1, 0);
     let recv_start = Instant::now();
-    let (mut bank, (entry, mut last_tick_height)) = receiver.recv_timeout(timer)?;
-    let mut entries = vec![entry];
-    assert!(last_tick_height <= bank.max_tick_height());
 
-    // Drain channel
+    // If there is a carryover entry, use it. Else, see if there is a new entry.
+    let (mut bank, (entry, mut last_tick_height)) = match carryover_entry.take() {
+        Some((bank, (entry, tick_height))) => (bank, (entry, tick_height)),
+        None => receiver.recv_timeout(timer)?,
+    };
+    assert!(last_tick_height <= bank.max_tick_height());
+    let mut entries = vec![entry];
+
+    // Drain the channel of entries.
     while last_tick_height != bank.max_tick_height() {
         let Ok((try_bank, (entry, tick_height))) = receiver.try_recv() else {
             break;
@@ -54,27 +92,51 @@ pub(super) fn recv_slot_entries(receiver: &Receiver<WorkingBankEntry>) -> Result
 
     let mut serialized_batch_byte_count = serialized_size(&entries)?;
 
-    // Wait up to `ENTRY_COALESCE_DURATION` to try to coalesce entries into a 32 shred batch
+    let data_shred_bytes =
+        ShredData::capacity(Some((6, true, false))).expect("Failed to get capacity") as u64;
+    let data_shred_bytes_per_batch = 32 * data_shred_bytes;
+    let max_batch_byte_count = 3 * data_shred_bytes_per_batch;
+
+    // Coalesce entries until one of the following conditions are hit:
+    // 1. We have neatly packed some multiple of data batches (minimizes padding).
+    // 2. We hit the timeout.
+    // 3. Next entry would push us over the max data limit.
     let mut coalesce_start = Instant::now();
-    while last_tick_height != bank.max_tick_height()
-        && serialized_batch_byte_count < target_serialized_batch_byte_count
-    {
-        let Ok((try_bank, (entry, tick_height))) =
-            receiver.recv_deadline(coalesce_start + ENTRY_COALESCE_DURATION)
-        else {
+    while keep_coalescing_entries(
+        last_tick_height,
+        bank.max_tick_height(),
+        serialized_batch_byte_count,
+        max_batch_byte_count,
+        data_shred_bytes_per_batch,
+        data_shred_bytes,
+    ) {
+        // Fetch the next entry.
+        let Ok((try_bank, (entry, tick_height))) = receiver.recv_deadline(
+            coalesce_start + max_coalesce_time(serialized_batch_byte_count, max_batch_byte_count),
+        ) else {
             break;
         };
-        // If the bank changed, that implies the previous slot was interrupted and we do not have to
-        // broadcast its entries.
+
         if try_bank.slot() != bank.slot() {
+            // The bank changed, that implies the previous slot was interrupted
+            // and we do not have to broadcast its entries.
             warn!("Broadcast for slot: {} interrupted", bank.slot());
             entries.clear();
             serialized_batch_byte_count = 8; // Vec len
-            bank = try_bank;
+            bank = try_bank.clone();
             coalesce_start = Instant::now();
         }
         last_tick_height = tick_height;
+
         let entry_bytes = serialized_size(&entry)?;
+        if serialized_batch_byte_count + entry_bytes > max_batch_byte_count {
+            // This entry will push us over the batch byte limit. Save it for
+            // the next batch.
+            *carryover_entry = Some((try_bank, (entry, tick_height)));
+            break;
+        }
+
+        // Add the entry to the batch.
         serialized_batch_byte_count += entry_bytes;
         entries.push(entry);
         assert!(last_tick_height <= bank.max_tick_height());
@@ -168,7 +230,7 @@ mod tests {
 
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
-        while let Ok(result) = recv_slot_entries(&r) {
+        while let Ok(result) = recv_slot_entries(&r, &mut None) {
             assert_eq!(result.bank.slot(), bank1.slot());
             last_tick_height = result.last_tick_height;
             res_entries.extend(result.entries);
@@ -210,7 +272,7 @@ mod tests {
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
         let mut bank_slot = 0;
-        while let Ok(result) = recv_slot_entries(&r) {
+        while let Ok(result) = recv_slot_entries(&r, &mut None) {
             bank_slot = result.bank.slot();
             last_tick_height = result.last_tick_height;
             res_entries = result.entries;
