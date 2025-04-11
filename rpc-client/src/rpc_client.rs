@@ -3677,7 +3677,7 @@ impl RpcClient {
 /// Mocks for documentation examples
 #[doc(hidden)]
 pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
-    let mut mocks = std::collections::HashMap::new();
+    let mut mocks = crate::mock_sender::Mocks::default();
 
     let get_account_request = RpcRequest::GetAccountInfo;
     let get_account_response = serde_json::to_value(Response {
