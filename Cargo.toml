@@ -675,3 +675,6 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 # comments and the overrides in sync.
 solana-curve25519 = { path = "curves/curve25519" }
 solana-zk-sdk = { path = "zk-sdk" }
+
+# A necessary frozen-abi change.
+solana-frozen-abi = { git = "https://github.com/vadorovsky/solana-sdk", branch = "bytes" }

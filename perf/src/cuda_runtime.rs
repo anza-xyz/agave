@@ -280,6 +280,14 @@ impl<T: Sized + Default + Clone> Drop for PinnedVec<T> {
     }
 }
 
+impl<T: Sized + Default + Clone + PartialEq> PartialEq for PinnedVec<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.x.eq(&other.x)
+    }
+}
+
+impl<T: Sized + Default + Clone + PartialEq + Eq> Eq for PinnedVec<T> {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

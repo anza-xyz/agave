@@ -377,7 +377,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                         usize::from(!dropped_packet.meta().is_simple_vote_tx());
                 }
 
-                self.packet_container.insert(packet.clone(), priority);
+                self.packet_container.insert(packet.to_packet(), priority);
             }
         }
     }
@@ -660,7 +660,7 @@ mod tests {
         super::*,
         crossbeam_channel::unbounded,
         packet::PacketFlags,
-        solana_perf::packet::{Packet, PacketBatch},
+        solana_perf::packet::{Packet, PacketBatch, PinnedPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::create_genesis_config,
         solana_sdk::{hash::Hash, signature::Keypair, system_transaction},
@@ -750,22 +750,28 @@ mod tests {
         );
 
         // Send packet batches.
-        let non_vote_packets = BankingPacketBatch::new(vec![PacketBatch::new(vec![
-            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
-            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
-            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
-        ])]);
-        let vote_packets = BankingPacketBatch::new(vec![PacketBatch::new(vec![
-            simple_transfer_with_flags(PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE),
-            simple_transfer_with_flags(
-                PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD,
-            ),
-            simple_transfer_with_flags(
-                PacketFlags::SIMPLE_VOTE_TX
-                    | PacketFlags::FROM_STAKED_NODE
-                    | PacketFlags::FORWARDED,
-            ),
-        ])]);
+        let non_vote_packets =
+            BankingPacketBatch::new(vec![PacketBatch::from(PinnedPacketBatch::new(vec![
+                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
+                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
+                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
+            ]))]);
+        let vote_packets =
+            BankingPacketBatch::new(vec![PacketBatch::from(PinnedPacketBatch::new(vec![
+                simple_transfer_with_flags(
+                    PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE,
+                ),
+                simple_transfer_with_flags(
+                    PacketFlags::SIMPLE_VOTE_TX
+                        | PacketFlags::FROM_STAKED_NODE
+                        | PacketFlags::DISCARD,
+                ),
+                simple_transfer_with_flags(
+                    PacketFlags::SIMPLE_VOTE_TX
+                        | PacketFlags::FROM_STAKED_NODE
+                        | PacketFlags::FORWARDED,
+                ),
+            ]))]);
 
         packet_batch_sender
             .send((non_vote_packets.clone(), false))
@@ -786,13 +792,16 @@ mod tests {
 
         let vote_wired_txs = vote_mock_client.get_packets();
         assert_eq!(vote_wired_txs.len(), 1);
-        assert_eq!(vote_wired_txs[0], vote_packets[0][0].data(..).unwrap());
+        assert_eq!(
+            vote_wired_txs[0],
+            vote_packets[0].first().unwrap().data(..).unwrap()
+        );
 
         let non_vote_wired_txs = non_vote_mock_client.get_packets();
         assert_eq!(non_vote_wired_txs.len(), 1);
         assert_eq!(
             non_vote_wired_txs[0],
-            non_vote_packets[0][0].data(..).unwrap()
+            non_vote_packets[0].first().unwrap().data(..).unwrap()
         );
     }
 }

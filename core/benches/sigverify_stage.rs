@@ -49,7 +49,7 @@ fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
 
     for batch in batches.iter_mut() {
         total += batch.len();
-        for p in batch.iter_mut() {
+        for mut p in batch.iter_mut() {
             let ip_index = thread_rng().gen_range(0..ips.len());
             p.meta_mut().addr = ips[ip_index];
         }
@@ -60,7 +60,7 @@ fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
         SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
         let mut num_packets = 0;
         for batch in batches.iter_mut() {
-            for p in batch.iter_mut() {
+            for mut p in batch.iter_mut() {
                 if !p.meta().discard() {
                     num_packets += 1;
                 }
@@ -94,7 +94,7 @@ fn bench_packet_discard_mixed_senders(bencher: &mut Bencher) {
     let mut batches = to_packet_batches(&vec![test_tx(); SIZE], CHUNK_SIZE);
     let spam_addr = new_rand_addr(&mut rng);
     for batch in batches.iter_mut() {
-        for packet in batch.iter_mut() {
+        for mut packet in batch.iter_mut() {
             // One spam address, ~1000 unique addresses.
             packet.meta_mut().addr = if rng.gen_ratio(1, 30) {
                 new_rand_addr(&mut rng)
@@ -107,7 +107,7 @@ fn bench_packet_discard_mixed_senders(bencher: &mut Bencher) {
         SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
         let mut num_packets = 0;
         for batch in batches.iter_mut() {
-            for packet in batch.iter_mut() {
+            for mut packet in batch.iter_mut() {
                 if !packet.meta().discard() {
                     num_packets += 1;
                 }
@@ -217,7 +217,7 @@ fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
 
     let mut c = 0;
     batches.iter_mut().for_each(|batch| {
-        batch.iter_mut().for_each(|p| {
+        batch.iter_mut().for_each(|mut p| {
             let throw = die.sample(&mut rng);
             if throw < discard_factor {
                 p.meta_mut().set_discard(true);

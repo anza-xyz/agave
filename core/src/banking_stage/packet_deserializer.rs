@@ -185,9 +185,14 @@ impl PacketDeserializer {
         ) -> Result<ImmutableDeserializedPacket, PacketFilterFailure>,
     ) -> impl Iterator<Item = ImmutableDeserializedPacket> + 'a {
         packet_indexes.iter().filter_map(move |packet_index| {
-            let packet_clone = packet_batch[*packet_index].clone();
+            let packet_clone = packet_batch.get(*packet_index).unwrap_or_else(|| {
+                panic!(
+                    "expected packet index {packet_index} to not exceed the batch size {}",
+                    packet_batch.len()
+                )
+            });
 
-            match ImmutableDeserializedPacket::new(&packet_clone)
+            match ImmutableDeserializedPacket::new(packet_clone)
                 .and_then(|packet| packet_filter(packet).map_err(Into::into))
             {
                 Ok(packet) => Some(packet),
@@ -205,8 +210,8 @@ impl PacketDeserializer {
     ) -> impl Iterator<Item = (ImmutableDeserializedPacket, usize)> + '_ {
         let packet_indexes = PacketDeserializer::generate_packet_indexes(packet_batch);
         packet_indexes.into_iter().filter_map(move |packet_index| {
-            let packet = packet_batch[packet_index].clone();
-            ImmutableDeserializedPacket::new(&packet)
+            let packet = packet_batch.get(packet_index).unwrap();
+            ImmutableDeserializedPacket::new(packet)
                 .ok()
                 .map(|packet| (packet, packet_index))
         })
@@ -258,7 +263,11 @@ mod tests {
         let transactions = vec![random_transfer(), random_transfer()];
         let mut packet_batches = to_packet_batches(&transactions, 1);
         assert_eq!(packet_batches.len(), 2);
-        packet_batches[0][0].meta_mut().set_discard(true);
+        packet_batches[0]
+            .first_mut()
+            .unwrap()
+            .meta_mut()
+            .set_discard(true);
 
         let packet_count: usize = packet_batches.iter().map(|x| x.len()).sum();
         let results = PacketDeserializer::deserialize_and_collect_packets(

@@ -6,7 +6,7 @@ use {
     log::*,
     rand::{thread_rng, Rng},
     solana_perf::{
-        packet::{to_packet_batches, Packet, PacketBatch},
+        packet::{to_packet_batches, BytesPacket, BytesPacketBatch, PacketBatch},
         recycler::Recycler,
         sigverify,
         test_tx::{test_multisig_tx, test_tx},
@@ -145,22 +145,22 @@ fn bench_sigverify_uneven(bencher: &mut Bencher) {
             len -= current_packets - num_packets;
             current_packets = num_packets;
         }
-        let mut batch = PacketBatch::with_capacity(len);
-        batch.resize(len, Packet::default());
-        for packet in batch.iter_mut() {
+        let mut batch = BytesPacketBatch::with_capacity(len);
+        for _ in 0..len {
             if thread_rng().gen_ratio(1, 2) {
                 tx = simple_tx.clone();
             } else {
                 tx = multi_tx.clone();
             };
-            Packet::populate_packet(packet, None, &tx).expect("serialize request");
+            let mut packet = BytesPacket::from_data(None, &tx).expect("serialize request");
             if thread_rng().gen_ratio((num_packets - NUM) as u32, num_packets as u32) {
                 packet.meta_mut().set_discard(true);
             } else {
                 num_valid += 1;
             }
+            batch.push(packet);
         }
-        batches.push(batch);
+        batches.push(PacketBatch::from(batch));
     }
     info!("num_packets: {} valid: {}", num_packets, num_valid);
 

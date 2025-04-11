@@ -108,7 +108,7 @@ impl VoteStorage {
 mod tests {
     use {
         super::*,
-        solana_perf::packet::{Packet, PacketFlags},
+        solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::genesis_utils,
         solana_sdk::{
             hash::Hash,
@@ -127,7 +127,7 @@ mod tests {
                 .genesis_config;
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let vote_keypair = Keypair::new();
-        let mut vote = Packet::from_data(
+        let mut vote = BytesPacket::from_data(
             None,
             new_tower_sync_transaction(
                 TowerSync::default(),
@@ -145,7 +145,7 @@ mod tests {
         let mut transaction_storage =
             VoteStorage::new(Arc::new(latest_unprocessed_votes), VoteSource::Tpu);
 
-        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(&vote)?]);
+        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(vote.as_ref())?]);
         assert_eq!(1, transaction_storage.len());
 
         // Drain all packets, then re-insert.

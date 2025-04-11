@@ -165,12 +165,12 @@ fn run_shred_sigverify<const K: usize>(
             .flatten()
             .filter(|packet| {
                 !packet.meta().discard()
-                    && shred::wire::get_shred(packet)
+                    && shred::wire::get_shred(packet.as_ref())
                         .map(|shred| deduper.dedup(shred))
                         .unwrap_or(true)
                     && !packet.meta().repair()
             })
-            .map(|packet| packet.meta_mut().set_discard(true))
+            .map(|mut packet| packet.meta_mut().set_discard(true))
             .count()
     });
     let (working_bank, root_bank) = {
@@ -195,9 +195,9 @@ fn run_shred_sigverify<const K: usize>(
             .par_iter_mut()
             .flatten()
             .filter(|packet| !packet.meta().discard())
-            .for_each(|packet| {
+            .for_each(|mut packet| {
                 let repair = packet.meta().repair();
-                let Some(shred) = shred::layout::get_shred_mut(packet) else {
+                let Some(shred) = shred::layout::get_shred_mut(&mut packet) else {
                     packet.meta_mut().set_discard(true);
                     return;
                 };
@@ -373,7 +373,8 @@ fn get_slot_leaders(
         .flat_map(|batch| batch.iter_mut())
         .filter(|packet| !packet.meta().discard())
         .filter(|packet| {
-            let shred = shred::layout::get_shred(packet);
+            let packet_ref = packet.as_ref();
+            let shred = shred::layout::get_shred(packet_ref);
             let Some(slot) = shred.and_then(shred::layout::get_slot) else {
                 return true;
             };
@@ -387,7 +388,7 @@ fn get_slot_leaders(
                 })
                 .is_none()
         })
-        .for_each(|packet| packet.meta_mut().set_discard(true));
+        .for_each(|mut packet| packet.meta_mut().set_discard(true));
     leaders
 }
 
@@ -513,7 +514,7 @@ mod tests {
             genesis_utils::create_genesis_config_with_leader,
             shred::{Shred, ShredFlags},
         },
-        solana_perf::packet::Packet,
+        solana_perf::packet::{Packet, PinnedPacketBatch},
         solana_runtime::bank::Bank,
         solana_sdk::signature::{Keypair, Signer},
     };
@@ -528,7 +529,7 @@ mod tests {
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let bank_forks = BankForks::new_rw_arc(bank);
         let batch_size = 2;
-        let mut batch = PacketBatch::with_capacity(batch_size);
+        let mut batch = PinnedPacketBatch::with_capacity(batch_size);
         batch.resize(batch_size, Packet::default());
         let mut batches = vec![batch];
 
@@ -564,6 +565,10 @@ mod tests {
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let working_bank = bank_forks.read().unwrap().working_bank();
+        let mut batches = batches
+            .into_iter()
+            .map(PacketBatch::from)
+            .collect::<Vec<_>>();
         verify_packets(
             &thread_pool,
             &Pubkey::new_unique(), // self_pubkey
@@ -573,7 +578,7 @@ mod tests {
             &mut batches,
             &cache,
         );
-        assert!(!batches[0][0].meta().discard());
-        assert!(batches[0][1].meta().discard());
+        assert!(!batches[0].get(0).unwrap().meta().discard());
+        assert!(batches[0].get(1).unwrap().meta().discard());
     }
 }
