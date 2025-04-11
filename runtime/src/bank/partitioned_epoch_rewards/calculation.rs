@@ -196,7 +196,7 @@ impl Bank {
 
         let CalculateValidatorRewardsResult {
             vote_rewards_accounts: vote_account_rewards,
-            stake_reward_calculation: mut stake_rewards,
+            stake_reward_calculation: stake_rewards,
             point_value,
         } = self
             .calculate_validator_rewards(
@@ -210,10 +210,7 @@ impl Bank {
 
         PartitionedRewardsCalculation {
             vote_account_rewards,
-            stake_rewards: StakeRewardCalculation {
-                stake_rewards: std::mem::take(&mut stake_rewards.stake_rewards),
-                total_stake_rewards_lamports: stake_rewards.total_stake_rewards_lamports,
-            },
+            stake_rewards,
             validator_rate,
             foundation_rate,
             prev_epoch_duration_in_years,
