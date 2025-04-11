@@ -1131,12 +1131,12 @@ impl LoadedAccount<'_> {
         }
     }
 
-    pub fn offset(&self) -> Offset {
+    /*pub fn offset(&self) -> Offset {
         match self {
             LoadedAccount::Stored(stored_account_meta) => stored_account_meta.offset(),
             LoadedAccount::Cached(_) => panic!(),
         }
-    }
+    }*/
 
     /// data_len can be calculated without having access to `&data` in future implementations
     pub fn data_len(&self) -> usize {

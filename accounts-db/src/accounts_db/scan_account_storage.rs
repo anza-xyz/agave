@@ -1,13 +1,9 @@
 use {
     super::{AccountStorageEntry, AccountsDb, BinnedHashData, LoadedAccount, SplitAncientStorages},
     crate::{
-        accounts_hash::{
+        account_storage::stored_account_info::StoredAccountInfo, accounts_hash::{
             AccountHash, CalcAccountsHashConfig, CalculateHashIntermediate, HashStats,
-        },
-        active_stats::ActiveStatItem,
-        cache_hash_data::{CacheHashData, CacheHashDataFileReference},
-        pubkey_bins::PubkeyBinCalculator24,
-        sorted_storages::SortedStorages,
+        }, active_stats::ActiveStatItem, cache_hash_data::{CacheHashData, CacheHashDataFileReference}, pubkey_bins::PubkeyBinCalculator24, sorted_storages::SortedStorages
     },
     rayon::prelude::*,
     solana_account::ReadableAccount as _,
@@ -32,11 +28,12 @@ trait AppendVecScan: Send + Sync + Clone {
     /// set current slot of the scan
     fn set_slot(&mut self, slot: Slot, is_ancient: bool);
     /// found `account` in the append vec
-    fn found_account(&mut self, storage: &AccountStorageEntry, account: &LoadedAccount);
+    fn found_account(&mut self, account: &LoadedAccount);
     /// scanning is done
     fn scanning_complete(self) -> BinnedHashData;
     /// initialize accumulator
-    fn init_accum(&mut self, count: usize);
+    fn init_accum(&mut self, count: usize);    
+    fn max_slot(&self) -> Slot;
 }
 
 #[derive(Clone)]
@@ -74,14 +71,13 @@ impl AppendVecScan for ScanState<'_> {
             self.accum.append(&mut vec![Vec::new(); count]);
         }
     }
-    fn found_account(&mut self, storage: &AccountStorageEntry, loaded_account: &LoadedAccount) {
+    fn max_slot(&self) -> Slot {
+        self.max_slot
+    }
+    fn found_account(&mut self, loaded_account: &LoadedAccount) {
         let pubkey = loaded_account.pubkey();
         assert!(self.bin_range.contains(&self.pubkey_to_bin_index)); // get rid of this once we have confidence
 
-        // Check to see if the account is marked dead inside of the account storage entry
-        if storage.is_account_dead(loaded_account.offset(), Some(self.max_slot)) {
-            return;
-        }
 
         // when we are scanning with bin ranges, we don't need to use exact bin numbers.
         // Subtract to make first bin we care about at index 0.
@@ -339,9 +335,19 @@ impl AccountsDb {
     where
         S: AppendVecScan,
     {
-        storage.accounts.scan_accounts(|account| {
-            if scanner.filter(account.pubkey()) {
-                scanner.found_account(storage, &LoadedAccount::Stored(account))
+        storage.accounts.scan_accounts_stored_meta(|stored_account_meta| {
+            if scanner.filter(stored_account_meta.pubkey()) {
+                if !storage.is_account_dead(stored_account_meta.offset(), Some(scanner.max_slot())) {
+                    let account = StoredAccountInfo {
+                        pubkey: stored_account_meta.pubkey(),
+                        lamports: stored_account_meta.lamports(),
+                        owner: stored_account_meta.owner(),
+                        data: stored_account_meta.data(),
+                        executable: stored_account_meta.executable(),
+                        rent_epoch: stored_account_meta.rent_epoch(),
+                    };
+                    scanner.found_account(&LoadedAccount::Stored(account))
+                }
             }
         });
     }
@@ -412,10 +418,12 @@ mod tests {
         fn set_slot(&mut self, slot: Slot, _is_ancient: bool) {
             self.current_slot = slot;
         }
+        fn max_slot(&self) -> Slot {
+            self.current_slot
+        }
         fn init_accum(&mut self, _count: usize) {}
         fn found_account(
-            &mut self,
-            _storage: &AccountStorageEntry,
+            &mut self,            
             loaded_account: &LoadedAccount,
         ) {
             self.calls.fetch_add(1, Ordering::Relaxed);
@@ -449,10 +457,12 @@ mod tests {
         fn filter(&mut self, _pubkey: &Pubkey) -> bool {
             true
         }
+        fn max_slot(&self) -> Slot {
+            self.current_slot
+        }
         fn init_accum(&mut self, _count: usize) {}
         fn found_account(
-            &mut self,
-            _storage: &AccountStorageEntry,
+            &mut self,            
             loaded_account: &LoadedAccount,
         ) {
             self.calls.fetch_add(1, Ordering::Relaxed);
