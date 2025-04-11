@@ -97,7 +97,7 @@ impl Serializer {
             self.write_all(account.get_data());
             vm_data_addr
         } else {
-            self.push_region(true);
+            self.push_region(MemoryState::Writable);
             let vaddr = self.vaddr;
             self.push_account_data_region(account)?;
             vaddr
@@ -119,7 +119,11 @@ impl Serializer {
                     .map_err(|_| InstructionError::InvalidArgument)?;
                 self.region_start += BPF_ALIGN_OF_U128.saturating_sub(align_offset);
                 // put the realloc padding in its own region
-                self.push_region(account.can_data_be_changed().is_ok());
+                let memory_state = match account_data_region_memory_state(account) {
+                    MemoryState::Readable => MemoryState::Readable,
+                    MemoryState::Writable | MemoryState::Cow(_) => MemoryState::Writable,
+                };
+                self.push_region(memory_state);
             }
         }
 
@@ -147,18 +151,22 @@ impl Serializer {
         Ok(())
     }
 
-    fn push_region(&mut self, writable: bool) {
+    fn push_region(&mut self, memory_state: MemoryState) {
         let range = self.region_start..self.buffer.len();
-        let region = if writable {
-            MemoryRegion::new_writable(
-                self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
-                self.vaddr,
-            )
-        } else {
-            MemoryRegion::new_readonly(
+        let region = match memory_state {
+            MemoryState::Readable => MemoryRegion::new_readonly(
                 self.buffer.as_slice().get(range.clone()).unwrap(),
                 self.vaddr,
-            )
+            ),
+            MemoryState::Writable => MemoryRegion::new_writable(
+                self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
+                self.vaddr,
+            ),
+            MemoryState::Cow(region_index) => MemoryRegion::new_cow(
+                self.buffer.as_slice().get(range.clone()).unwrap(),
+                self.vaddr,
+                region_index,
+            ),
         };
         self.regions.push(region);
         self.region_start = range.end;
@@ -166,7 +174,7 @@ impl Serializer {
     }
 
     fn finish(mut self) -> (AlignedMemory<HOST_ALIGN>, Vec<MemoryRegion>) {
-        self.push_region(true);
+        self.push_region(MemoryState::Writable);
         debug_assert_eq!(self.region_start, self.buffer.len());
         (self.buffer, self.regions)
     }
