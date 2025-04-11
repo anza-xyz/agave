@@ -578,28 +578,8 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                     Err(err) if borrowed_account.get_data() != data => return Err(err),
                     _ => {}
                 }
-            } else {
-                let data = buffer
-                    .get(start..start + MAX_PERMITTED_DATA_INCREASE)
-                    .ok_or(InstructionError::InvalidArgument)?;
-                match borrowed_account.can_data_be_resized(post_len) {
-                    Ok(()) => {
-                        borrowed_account.set_data_length(post_len)?;
-                        let allocated_bytes = post_len.saturating_sub(pre_len);
-                        if allocated_bytes > 0 {
-                            borrowed_account
-                                .get_data_mut()?
-                                .get_mut(pre_len..pre_len.saturating_add(allocated_bytes))
-                                .ok_or(InstructionError::InvalidArgument)?
-                                .copy_from_slice(
-                                    data.get(0..allocated_bytes)
-                                        .ok_or(InstructionError::InvalidArgument)?,
-                                );
-                        }
-                    }
-                    Err(err) if borrowed_account.get_data().len() != post_len => return Err(err),
-                    _ => {}
-                }
+            } else if borrowed_account.get_data().len() != post_len {
+                borrowed_account.set_data_length(post_len)?;
             }
             start += if copy_account_data {
                 let alignment_offset = (pre_len as *const u8).align_offset(BPF_ALIGN_OF_U128);

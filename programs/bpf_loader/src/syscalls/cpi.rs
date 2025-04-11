@@ -1124,8 +1124,8 @@ fn cpi_common<S: SyscallInvokeSigned>(
 // When true is returned, the caller account must be updated after CPI. This
 // is only set for direct mapping when the pointer may have changed.
 fn update_callee_account(
-    invoke_context: &InvokeContext,
-    memory_mapping: &MemoryMapping,
+    _invoke_context: &InvokeContext,
+    _memory_mapping: &MemoryMapping,
     is_loader_deprecated: bool,
     caller_account: &CallerAccount,
     mut callee_account: BorrowedAccount<'_>,
@@ -1151,21 +1151,6 @@ fn update_callee_account(
                     callee_account.set_data_length(post_len)?;
                     // pointer to data may have changed, so caller must be updated
                     must_update_caller = true;
-                }
-                if realloc_bytes_used > 0 {
-                    let serialized_data = translate_slice::<u8>(
-                        memory_mapping,
-                        caller_account
-                            .vm_data_addr
-                            .saturating_add(caller_account.original_data_len as u64),
-                        realloc_bytes_used as u64,
-                        invoke_context.get_check_aligned(),
-                    )?;
-                    callee_account
-                        .get_data_mut()?
-                        .get_mut(caller_account.original_data_len..post_len)
-                        .ok_or(SyscallError::InvalidLength)?
-                        .copy_from_slice(serialized_data);
                 }
             }
             Err(err) if prev_len != post_len => {
@@ -1231,7 +1216,7 @@ fn update_caller_account_perms(
 fn update_caller_account(
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping<'_>,
-    is_loader_deprecated: bool,
+    _is_loader_deprecated: bool,
     caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedAccount<'_>,
     direct_mapping: bool,
@@ -1293,51 +1278,8 @@ fn update_caller_account(
         *serialized_len_ptr = post_len as u64;
     }
 
-    if direct_mapping {
-        // Propagate changes to the realloc region in the callee up to the caller.
-        let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
-        if realloc_bytes_used > 0 {
-            // In the is_loader_deprecated case, we must have failed with
-            // InvalidRealloc by now.
-            debug_assert!(!is_loader_deprecated);
-
-            let to_slice = {
-                // If a callee reallocs an account, we write into the caller's
-                // realloc region regardless of whether the caller has write
-                // permissions to the account or not. If the callee has been able to
-                // make changes, it means they had permissions to do so, and here
-                // we're just going to reflect those changes to the caller's frame.
-                //
-                // Therefore we temporarily configure the realloc region as writable
-                // then set it back to whatever state it had.
-                let (_realloc_region_index, realloc_region) = caller_account
-                    .realloc_region(memory_mapping, is_loader_deprecated)?
-                    .unwrap(); // unwrapping here is fine, we asserted !is_loader_deprecated
-                let original_state = realloc_region.writable;
-                realloc_region.writable = true;
-                defer! {
-                    realloc_region.writable = original_state;
-                };
-
-                translate_slice_mut::<u8>(
-                    memory_mapping,
-                    caller_account
-                        .vm_data_addr
-                        .saturating_add(caller_account.original_data_len as u64),
-                    realloc_bytes_used as u64,
-                    invoke_context.get_check_aligned(),
-                )?
-            };
-            let from_slice = callee_account
-                .get_data()
-                .get(caller_account.original_data_len..post_len)
-                .ok_or(SyscallError::InvalidLength)?;
-            if to_slice.len() != from_slice.len() {
-                return Err(Box::new(InstructionError::AccountDataTooSmall));
-            }
-            to_slice.copy_from_slice(from_slice);
-        }
-    } else {
+    if !direct_mapping {
+        // Propagate changes in the callee up to the caller.
         let to_slice = &mut caller_account.serialized_data;
         let from_slice = callee_account
             .get_data()
