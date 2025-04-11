@@ -15,6 +15,7 @@ use {
     solana_instruction::error::InstructionError,
     solana_instructions_sysvar as instructions,
     solana_pubkey::Pubkey,
+    solana_sbpf::memory_region::{AccessType, MemoryCowCallback, MemoryRegion},
     std::{
         cell::{Ref, RefCell, RefMut},
         collections::HashSet,
@@ -498,29 +499,42 @@ impl TransactionContext {
     }
 
     /// Returns a new account data write access handler
-    pub fn account_data_write_access_handler(&self) -> Box<dyn Fn(u32) -> Result<u64, ()>> {
+    pub fn account_data_write_access_handler(&self) -> MemoryCowCallback {
         let accounts = Rc::clone(&self.accounts);
-        Box::new(move |index_in_transaction| {
-            // The two calls below can't really fail. If they fail because of a bug,
-            // whatever is writing will trigger an EbpfError::AccessViolation like
-            // if the region was readonly, and the transaction will fail gracefully.
-            let mut account = accounts
-                .accounts
-                .get(index_in_transaction as usize)
-                .ok_or(())?
-                .try_borrow_mut()
-                .map_err(|_| ())?;
-            accounts
-                .touch(index_in_transaction as IndexOfAccount)
-                .map_err(|_| ())?;
+        Box::new(
+            move |region: &mut MemoryRegion, access_type: AccessType, vm_addr: u64, len: u64| {
+                if region.cow_callback_payload == u32::MAX || access_type == AccessType::Load {
+                    return;
+                }
+                let index_in_transaction = region.cow_callback_payload & 0xFF;
+                let address_space_reserved_for_account =
+                    (region.cow_callback_payload.wrapping_shr(8) & 0xFFFFFF) as usize;
 
-            if account.is_shared() {
-                // See BorrowedAccount::make_data_mut() as to why we reserve extra
-                // MAX_PERMITTED_DATA_INCREASE bytes here.
-                account.reserve(MAX_PERMITTED_DATA_INCREASE);
-            }
-            Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
-        })
+                // The three calls below can't really fail. If they fail because of a bug,
+                // whatever is writing will trigger an EbpfError::AccessViolation like
+                // if the region was readonly, and the transaction will fail gracefully.
+                let Some(account) = accounts.accounts.get(index_in_transaction as usize) else {
+                    return;
+                };
+                let Ok(mut account) = account.try_borrow_mut() else {
+                    return;
+                };
+                if accounts
+                    .touch(index_in_transaction as IndexOfAccount)
+                    .is_err()
+                {
+                    return;
+                }
+
+                if vm_addr.saturating_add(len) > region.vm_addr_range().end {
+                    // TODO: Properly implement BorrowedAccount::set_data_length() here.
+                    account.resize(address_space_reserved_for_account, 0);
+                    region.len = address_space_reserved_for_account as u64;
+                }
+                region.host_addr = account.data_as_mut_slice().as_mut_ptr() as u64;
+                region.writable = true;
+            },
+        )
     }
 }
 
