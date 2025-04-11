@@ -390,8 +390,6 @@ impl VoteWorker {
             commit_transactions_result,
             execute_and_commit_timings,
             error_counters,
-            min_prioritization_fees,
-            max_prioritization_fees,
             ..
         } = execute_and_commit_transactions_output;
 
@@ -424,8 +422,6 @@ impl VoteWorker {
             cost_model_us,
             execute_and_commit_timings,
             error_counters,
-            min_prioritization_fees,
-            max_prioritization_fees,
         }
     }
 
