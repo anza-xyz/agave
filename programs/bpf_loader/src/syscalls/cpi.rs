@@ -1372,7 +1372,7 @@ fn update_caller_account_perms(
 fn update_caller_account(
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping<'_>,
-    is_loader_deprecated: bool,
+    _is_loader_deprecated: bool,
     caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedAccount<'_>,
     direct_mapping: bool,
@@ -1443,74 +1443,19 @@ fn update_caller_account(
             return Err(Box::new(InstructionError::InvalidRealloc));
         }
 
-        // If the account has been shrunk, we're going to zero the unused memory
-        // *that was previously used*.
-        if post_len < prev_len {
-            if direct_mapping {
-                // We have two separate regions to zero out: the account data
-                // and the realloc region. Here we zero the realloc region, the
-                // data region is zeroed further down below.
-                //
-                // This is done for compatibility but really only necessary for
-                // the fringe case of a program calling itself, see
-                // TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS.
-                //
-                // Zeroing the realloc region isn't necessary in the normal
-                // invoke case because consider the following scenario:
-                //
-                // 1. Caller grows an account (prev_len > original_data_len)
-                // 2. Caller assigns the account to the callee (needed for 3 to
-                //    work)
-                // 3. Callee shrinks the account (post_len < prev_len)
-                //
-                // In order for the caller to assign the account to the callee,
-                // the caller _must_ either set the account length to zero,
-                // therefore making prev_len > original_data_len impossible,
-                // or it must zero the account data, therefore making the
-                // zeroing we do here redundant.
-                if prev_len > caller_account.original_data_len {
-                    // If we get here and prev_len > original_data_len, then
-                    // we've already returned InvalidRealloc for the
-                    // bpf_loader_deprecated case.
-                    debug_assert!(!is_loader_deprecated);
-
-                    // Temporarily configure the realloc region as writable then set it back to
-                    // whatever state it had.
-                    let (_realloc_region_index, realloc_region) = caller_account
-                        .realloc_region(memory_mapping, is_loader_deprecated)?
-                        .unwrap(); // unwrapping here is fine, we already asserted !is_loader_deprecated
-                    let original_state = realloc_region.writable.replace(true);
-                    defer! {
-                        realloc_region.writable.set(original_state);
-                    };
-
-                    // We need to zero the unused space in the realloc region, starting after the
-                    // last byte of the new data which might be > original_data_len.
-                    let dirty_realloc_start = caller_account.original_data_len.max(post_len);
-                    // and we want to zero up to the old length
-                    let dirty_realloc_len = prev_len.saturating_sub(dirty_realloc_start);
-                    let serialized_data = translate_slice_mut::<u8>(
-                        memory_mapping,
-                        caller_account
-                            .vm_data_addr
-                            .saturating_add(dirty_realloc_start as u64),
-                        dirty_realloc_len as u64,
-                        invoke_context.get_check_aligned(),
-                    )?;
-                    serialized_data.fill(0);
-                }
-            } else {
+        // when direct mapping is enabled we don't cache the serialized data in
+        // caller_account.serialized_data. See CallerAccount::from_account_info.
+        if !direct_mapping {
+            // If the account has been shrunk, we're going to zero the unused memory
+            // *that was previously used*.
+            if post_len < prev_len {
                 caller_account
                     .serialized_data
                     .get_mut(post_len..)
                     .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall))?
                     .fill(0);
             }
-        }
-
-        // when direct mapping is enabled we don't cache the serialized data in
-        // caller_account.serialized_data. See CallerAccount::from_account_info.
-        if !direct_mapping {
+            // Set the length of caller_account.serialized_data to post_len.
             caller_account.serialized_data = translate_slice_mut::<u8>(
                 memory_mapping,
                 caller_account.vm_data_addr,
