@@ -10,7 +10,7 @@ use {
 
 pub struct InstructionMeta {
     pub precompile_signature_details: PrecompileSignatureDetails,
-    pub instruction_data_len: u64,
+    pub instruction_data_len: u16,
 }
 
 impl InstructionMeta {

@@ -116,7 +116,7 @@ impl CostModel {
         num_write_locks: u64,
         programs_execution_cost: u64,
         loaded_accounts_data_size_cost: u64,
-        data_bytes_cost: u64,
+        data_bytes_cost: u16,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
         let signature_cost = Self::get_signature_cost(transaction, feature_set);
@@ -182,7 +182,7 @@ impl CostModel {
     }
 
     /// Return (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost)
-    fn get_transaction_cost(meta: &impl StaticMeta, feature_set: &FeatureSet) -> (u64, u64, u64) {
+    fn get_transaction_cost(meta: &impl StaticMeta, feature_set: &FeatureSet) -> (u64, u64, u16) {
         let data_bytes_cost = Self::get_instructions_data_cost(meta);
         let (programs_execution_cost, loaded_accounts_data_size_cost) =
             Self::get_estimated_execution_cost(meta, feature_set);
@@ -218,8 +218,8 @@ impl CostModel {
     }
 
     /// Return the instruction data bytes cost.
-    fn get_instructions_data_cost(transaction: &impl StaticMeta) -> u64 {
-        transaction.instruction_data_len() / INSTRUCTION_DATA_BYTES_COST
+    fn get_instructions_data_cost(transaction: &impl StaticMeta) -> u16 {
+        transaction.instruction_data_len() / (INSTRUCTION_DATA_BYTES_COST as u16)
     }
 
     pub fn calculate_loaded_accounts_data_size_cost(

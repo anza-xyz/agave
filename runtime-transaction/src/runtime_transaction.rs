@@ -48,7 +48,7 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
         &self.meta.compute_budget_instruction_details
     }
-    fn instruction_data_len(&self) -> u64 {
+    fn instruction_data_len(&self) -> u16 {
         self.meta.instruction_data_len
     }
 }
