@@ -139,10 +139,9 @@ impl ClusterSlots {
             error!("Invalid update call to ClusterSlots, can not roll time backwards!");
             return;
         }
-        let my_epoch = self.get_epoch_for_slot(self.get_current_slot());
         let root_epoch = root_bank.epoch();
         if self.need_to_update_epoch(root_epoch) {
-            self.update_epoch_info(my_epoch, root_bank);
+            self.update_epoch_info(root_bank);
         }
 
         let epoch_slots = {
@@ -160,12 +159,17 @@ impl ClusterSlots {
     }
 
     // call this to update internal datastructures for current and next epoch
-    fn update_epoch_info(&self, my_epoch: Option<Epoch>, root_bank: &Bank) {
+    fn update_epoch_info(&self, root_bank: &Bank) {
         let root_epoch = root_bank.epoch();
+        info!("Updating epoch_metadata for epoch {root_epoch}");
         let epoch_stakes_map = root_bank.epoch_stakes_map();
         let mut epoch_metadata = self.epoch_metadata.write().unwrap();
-        if let Some(my_epoch) = my_epoch {
-            epoch_metadata.remove(&my_epoch);
+        {
+            let my_epoch = self.get_epoch_for_slot(self.get_current_slot());
+            if let Some(my_epoch) = my_epoch {
+                info!("Evicting epoch_metadata for epoch {my_epoch}");
+                epoch_metadata.remove(&my_epoch);
+            }
         }
         // Next we fetch info about current and upcoming epoch's stakes
         epoch_metadata.insert(
@@ -182,19 +186,23 @@ impl ClusterSlots {
             .epoch_schedule()
             .get_first_slot_in_epoch(next_epoch);
         let mut cluster_slots = self.cluster_slots.write().unwrap();
+        let mut patched = 0;
         loop {
             let row = Self::get_row_for_slot_mut(first_slot, &mut cluster_slots);
             let Some(row) = row else {
-                break; // reached the end of ringbuffer
+                break; // reached the end of ringbuffer and/or ringbuffer is not initialized
             };
             if row.supporters.is_blank() {
-                warn!("Finalizing init for slot {first_slot} in epoch {next_epoch}");
+                patched += 1;
                 row.supporters = Arc::new(SlotSupporters::new(
                     next_epoch_info.total_stake,
                     next_epoch_info.pubkey_to_index.clone(),
                 ));
             }
             first_slot = first_slot.wrapping_add(1);
+        }
+        if patched > 0 {
+            warn!("Finalized init for {patched} slots in epoch {next_epoch}");
         }
         epoch_metadata.insert(next_epoch, next_epoch_info);
     }
