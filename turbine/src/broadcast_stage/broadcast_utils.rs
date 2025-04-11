@@ -26,14 +26,20 @@ pub(super) struct ReceiveResults {
     pub last_tick_height: u64,
 }
 
-pub(super) fn recv_slot_entries(receiver: &Receiver<WorkingBankEntry>) -> Result<ReceiveResults> {
-    let target_serialized_batch_byte_count: u64 =
-        32 * ShredData::capacity(/*merkle_proof_size*/ None).unwrap() as u64;
+pub(super) fn recv_slot_entries(
+    receiver: &Receiver<WorkingBankEntry>,
+    carryover_entry: &mut Option<WorkingBankEntry>,
+) -> Result<ReceiveResults> {
     let timer = Duration::new(1, 0);
     let recv_start = Instant::now();
-    let (mut bank, (entry, mut last_tick_height)) = receiver.recv_timeout(timer)?;
-    let mut entries = vec![entry];
+
+    // If there is a carryover entry, use it. Else, see if there is a new entry.
+    let (mut bank, (entry, mut last_tick_height)) = match carryover_entry.take() {
+        Some((bank, (entry, tick_height))) => (bank, (entry, tick_height)),
+        None => receiver.recv_timeout(timer)?,
+    };
     assert!(last_tick_height <= bank.max_tick_height());
+    let mut entries = vec![entry];
 
     // Drain channel
     while last_tick_height != bank.max_tick_height() {
@@ -56,6 +62,8 @@ pub(super) fn recv_slot_entries(receiver: &Receiver<WorkingBankEntry>) -> Result
 
     // Wait up to `ENTRY_COALESCE_DURATION` to try to coalesce entries into a 32 shred batch
     let mut coalesce_start = Instant::now();
+    let target_serialized_batch_byte_count: u64 =
+        32 * ShredData::capacity(Some((6, true, false))).unwrap() as u64;
     while last_tick_height != bank.max_tick_height()
         && serialized_batch_byte_count < target_serialized_batch_byte_count
     {
@@ -70,11 +78,17 @@ pub(super) fn recv_slot_entries(receiver: &Receiver<WorkingBankEntry>) -> Result
             warn!("Broadcast for slot: {} interrupted", bank.slot());
             entries.clear();
             serialized_batch_byte_count = 8; // Vec len
-            bank = try_bank;
+            bank = try_bank.clone();
             coalesce_start = Instant::now();
         }
         last_tick_height = tick_height;
         let entry_bytes = serialized_size(&entry)?;
+
+        // If this entry will push us over the batch byte limit, save it for the next batch.
+        if serialized_batch_byte_count + entry_bytes > target_serialized_batch_byte_count {
+            *carryover_entry = Some((try_bank, (entry, tick_height)));
+            break;
+        }
         serialized_batch_byte_count += entry_bytes;
         entries.push(entry);
         assert!(last_tick_height <= bank.max_tick_height());
@@ -168,7 +182,7 @@ mod tests {
 
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
-        while let Ok(result) = recv_slot_entries(&r) {
+        while let Ok(result) = recv_slot_entries(&r, &mut None) {
             assert_eq!(result.bank.slot(), bank1.slot());
             last_tick_height = result.last_tick_height;
             res_entries.extend(result.entries);
@@ -210,7 +224,7 @@ mod tests {
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
         let mut bank_slot = 0;
-        while let Ok(result) = recv_slot_entries(&r) {
+        while let Ok(result) = recv_slot_entries(&r, &mut None) {
             bank_slot = result.bank.slot();
             last_tick_height = result.last_tick_height;
             res_entries = result.entries;

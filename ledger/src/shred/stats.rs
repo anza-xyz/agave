@@ -116,7 +116,6 @@ impl ProcessShredsStats {
         let index = usize::BITS - num_data_shreds.leading_zeros();
         let index = index.saturating_sub(3) as usize;
         let index = index.min(self.num_data_shreds_hist.len() - 1);
-        println!("{num_data_shreds} --> index: {index}");
         self.num_data_shreds_hist[index] += 1;
     }
 
