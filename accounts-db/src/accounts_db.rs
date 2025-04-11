@@ -8536,16 +8536,13 @@ impl AccountsDb {
         };
         if secondary {
             // scan storage a second time to update the secondary index
-            storage
-                .accounts
-                .scan_accounts_stored_meta(|stored_account| {
-                    let pubkey = stored_account.pubkey();
-                    self.accounts_index.update_secondary_indexes(
-                        pubkey,
-                        &stored_account,
-                        &self.account_indexes,
-                    );
-                });
+            storage.accounts.scan_accounts(|stored_account| {
+                self.accounts_index.update_secondary_indexes(
+                    stored_account.pubkey(),
+                    &stored_account,
+                    &self.account_indexes,
+                );
+            });
         }
 
         if let Some(duplicates_this_slot) = std::mem::take(&mut generate_index_results.duplicates) {
