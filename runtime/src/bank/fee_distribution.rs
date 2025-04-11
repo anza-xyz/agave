@@ -28,6 +28,18 @@ enum DepositFeeError {
     InvalidAccountOwner,
 }
 
+#[derive(Default)]
+struct BurnedTransactionFee {
+    deposit: u64,
+    burn: u64,
+}
+
+impl BurnedTransactionFee {
+    fn add_deposit(&mut self, deposit: u64) {
+        self.deposit = self.deposit.saturating_add(deposit);
+    }
+}
+
 impl Bank {
     // Distribute collected transaction fees for this slot to collector_id (= current leader).
     //
@@ -50,7 +62,8 @@ impl Bank {
             return;
         }
 
-        let (deposit, mut burn) = self.calculate_reward_and_burn_fee_details(&fee_details);
+        let BurnedTransactionFee { deposit, mut burn } =
+            self.calculate_reward_and_burn_fee_details(&fee_details);
 
         if deposit > 0 {
             self.deposit_or_burn_fee(deposit, &mut burn);
@@ -72,26 +85,32 @@ impl Bank {
             fee_budget_limits.prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),
         );
-        let (reward, _burn) =
-            self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details));
+        let BurnedTransactionFee {
+            deposit: reward,
+            burn: _,
+        } = self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details));
         reward
     }
 
     pub fn calculate_reward_and_burn_fee_details(
         &self,
         fee_details: &CollectorFeeDetails,
-    ) -> (u64, u64) {
-        let (deposit, burn) = if fee_details.transaction_fee != 0 {
-            self.burn_transaction_fee(fee_details.transaction_fee)
-        } else {
-            (0, 0)
-        };
-        (deposit.saturating_add(fee_details.priority_fee), burn)
+    ) -> BurnedTransactionFee {
+        if fee_details.transaction_fee == 0 {
+            return BurnedTransactionFee::default();
+        }
+
+        let mut burned_fee = self.burn_transaction_fee(fee_details.transaction_fee);
+        burned_fee.add_deposit(fee_details.priority_fee);
+        burned_fee
     }
 
-    fn burn_transaction_fee(&self, fees: u64) -> (u64, u64) {
-        let burned = fees * self.burn_percent() / 100;
-        (fees - burned, burned)
+    fn burn_transaction_fee(&self, fees: u64) -> BurnedTransactionFee {
+        let burn = fees * self.burn_percent() / 100;
+        BurnedTransactionFee {
+            deposit: fees - burn,
+            burn,
+        }
     }
 
     const fn burn_percent(&self) -> u64 {
@@ -693,7 +712,10 @@ pub mod tests {
             transaction_fee,
             priority_fee,
         });
-        let (expected_deposit, expected_burn) = bank.burn_transaction_fee(transaction_fee);
+        let BurnedTransactionFee {
+            deposit: expected_deposit,
+            burn: expected_burn,
+        } = bank.burn_transaction_fee(transaction_fee);
         let expected_rewards = expected_deposit + priority_fee;
 
         let initial_capitalization = bank.capitalization();
