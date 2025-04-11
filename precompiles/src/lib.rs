@@ -119,3 +119,27 @@ pub fn verify_if_precompile(
     }
     Ok(())
 }
+
+#[cfg(test)]
+pub(crate) fn test_verify_with_alignment(
+    verify: Verify,
+    instruction_data: &[u8],
+    instruction_datas: &[&[u8]],
+    feature_set: &FeatureSet,
+) -> Result<(), PrecompileError> {
+    // Copy instruction data.
+    let mut instruction_data_copy = vec![0u8; instruction_data.len().checked_add(1).unwrap()];
+    instruction_data_copy[0..instruction_data.len()].copy_from_slice(instruction_data);
+    // Verify the instruction data.
+    let result = verify(
+        &instruction_data_copy[..instruction_data.len()],
+        instruction_datas,
+        feature_set,
+    );
+
+    // Shift alignment by 1 to test `verify` does not rely on alignment.
+    instruction_data_copy[1..].copy_from_slice(instruction_data);
+    let result_shifted = verify(&instruction_data_copy[1..], instruction_datas, feature_set);
+    assert_eq!(result, result_shifted);
+    result
+}

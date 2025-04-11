@@ -101,7 +101,6 @@ version = "2.2.8"
 dependencies = [
  "agave-feature-set",
  "bincode",
- "bytemuck",
  "digest 0.10.7",
  "ed25519-dalek",
  "lazy_static",
