@@ -169,31 +169,10 @@ fn get_data_slice<'a>(
 mod tests {
     use {
         super::*,
+        crate::test_verify_with_alignment,
         bytemuck::bytes_of,
         solana_secp256r1_program::{new_secp256r1_instruction, DATA_START, SECP256R1_ORDER},
     };
-
-    fn test_verify_with_alignment(
-        instruction_data: &[u8],
-        instruction_datas: &[&[u8]],
-        feature_set: &FeatureSet,
-    ) -> Result<(), PrecompileError> {
-        // Copy instruction data.
-        let mut instruction_data_copy = vec![0u8; instruction_data.len().checked_add(1).unwrap()];
-        instruction_data_copy[0..instruction_data.len()].copy_from_slice(instruction_data);
-        // Verify the instruction data.
-        let result = verify(
-            &instruction_data_copy[..instruction_data.len()],
-            instruction_datas,
-            feature_set,
-        );
-
-        // Shift alignment by 1 to test `verify` does not rely on alignment.
-        instruction_data_copy[1..].copy_from_slice(instruction_data);
-        let result_shifted = verify(&instruction_data_copy[1..], instruction_datas, feature_set);
-        assert_eq!(result, result_shifted);
-        result
-    }
 
     fn test_case(
         num_signatures: u16,
@@ -208,6 +187,7 @@ mod tests {
         instruction_data[0..SIGNATURE_OFFSETS_START].copy_from_slice(bytes_of(&num_signatures));
         instruction_data[SIGNATURE_OFFSETS_START..DATA_START].copy_from_slice(bytes_of(offsets));
         test_verify_with_alignment(
+            verify,
             &instruction_data,
             &[&[0u8; 100]],
             &FeatureSet::all_enabled(),
@@ -226,6 +206,7 @@ mod tests {
 
         assert_eq!(
             test_verify_with_alignment(
+                verify,
                 &instruction_data,
                 &[&[0u8; 100]],
                 &FeatureSet::all_enabled()
@@ -268,7 +249,7 @@ mod tests {
         // Test data.len() < SIGNATURE_OFFSETS_START
         let small_data = vec![0u8; SIGNATURE_OFFSETS_START - 1];
         assert_eq!(
-            test_verify_with_alignment(&small_data, &[&[]], &FeatureSet::all_enabled()),
+            test_verify_with_alignment(verify, &small_data, &[&[]], &FeatureSet::all_enabled()),
             Err(PrecompileError::InvalidInstructionDataSize)
         );
 
@@ -276,7 +257,7 @@ mod tests {
         let mut zero_sigs_data = vec![0u8; DATA_START];
         zero_sigs_data[0] = 0; // Set num_signatures to 0
         assert_eq!(
-            test_verify_with_alignment(&zero_sigs_data, &[&[]], &FeatureSet::all_enabled()),
+            test_verify_with_alignment(verify, &zero_sigs_data, &[&[]], &FeatureSet::all_enabled()),
             Err(PrecompileError::InvalidInstructionDataSize)
         );
 
@@ -284,7 +265,7 @@ mod tests {
         let mut too_many_sigs = vec![0u8; DATA_START];
         too_many_sigs[0] = 9; // Set num_signatures to 9
         assert_eq!(
-            test_verify_with_alignment(&too_many_sigs, &[&[]], &FeatureSet::all_enabled()),
+            test_verify_with_alignment(verify, &too_many_sigs, &[&[]], &FeatureSet::all_enabled()),
             Err(PrecompileError::InvalidInstructionDataSize)
         );
     }
@@ -382,10 +363,13 @@ mod tests {
         let mut instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
         let feature_set = FeatureSet::all_enabled();
 
-        assert!(
-            test_verify_with_alignment(&instruction.data, &[&instruction.data], &feature_set)
-                .is_ok()
-        );
+        assert!(test_verify_with_alignment(
+            verify,
+            &instruction.data,
+            &[&instruction.data],
+            &feature_set
+        )
+        .is_ok());
 
         // The message is the last field in the instruction data so
         // changing its last byte will also change the signature validity
@@ -393,10 +377,13 @@ mod tests {
         instruction.data[message_byte_index] =
             instruction.data[message_byte_index].wrapping_add(12);
 
-        assert!(
-            test_verify_with_alignment(&instruction.data, &[&instruction.data], &feature_set)
-                .is_err()
-        );
+        assert!(test_verify_with_alignment(
+            verify,
+            &instruction.data,
+            &[&instruction.data],
+            &feature_set
+        )
+        .is_err());
     }
 
     #[test]
@@ -410,6 +397,7 @@ mod tests {
         // To double check that the untampered low-S value signature passes
         let feature_set = FeatureSet::all_enabled();
         let tx_pass = test_verify_with_alignment(
+            verify,
             instruction.data.as_slice(),
             &[instruction.data.as_slice()],
             &feature_set,
@@ -431,8 +419,12 @@ mod tests {
         // Replace the S value in the signature with our high S
         instruction.data[s_offset..s_offset + FIELD_SIZE].copy_from_slice(&high_s.to_vec());
 
-        let tx_fail =
-            test_verify_with_alignment(&instruction.data, &[&instruction.data], &feature_set);
+        let tx_fail = test_verify_with_alignment(
+            verify,
+            &instruction.data,
+            &[&instruction.data],
+            &feature_set,
+        );
         assert!(tx_fail.unwrap_err() == PrecompileError::InvalidSignature);
     }
     #[test]
@@ -462,6 +454,7 @@ mod tests {
                 // Once found, verify the signature and break out of the loop
                 let feature_set = FeatureSet::all_enabled();
                 assert!(test_verify_with_alignment(
+                    verify,
                     &instruction.data,
                     &[&instruction.data],
                     &feature_set
