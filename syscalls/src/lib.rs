@@ -12,7 +12,7 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
-    crate::syscalls::mem_ops::is_nonoverlapping,
+    crate::mem_ops::is_nonoverlapping,
     agave_feature_set::{
         self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
         bpf_account_data_direct_mapping, curve25519_syscall_enabled,
@@ -309,7 +309,7 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub(crate) fn morph_into_deployment_environment_v1(
+pub fn morph_into_deployment_environment_v1(
     from: Arc<BuiltinProgram<InvokeContext>>,
 ) -> Result<BuiltinProgram<InvokeContext>, Error> {
     let mut config = from.get_config().clone();
@@ -2244,10 +2244,10 @@ mod tests {
     use solana_sysvar::fees::Fees;
     use {
         super::*,
-        crate::mock_create_vm,
         assert_matches::assert_matches,
         core::slice,
         solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_bpf_loader_program::mock_create_vm,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
         solana_epoch_schedule::EpochSchedule,
@@ -4991,6 +4991,7 @@ mod tests {
         compute_budget.compute_unit_limit = expected_cus;
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
+
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,

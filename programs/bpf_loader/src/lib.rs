@@ -1,8 +1,7 @@
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
-pub mod syscalls;
-
+pub use agave_syscalls as syscalls;
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
@@ -11,6 +10,7 @@ use {
         enable_loader_v4, mask_out_rent_epoch_in_vm_serialization,
         remove_accounts_executable_flag_checks,
     },
+    agave_syscalls::morph_into_deployment_environment_v1,
     solana_bincode::limited_deserialize,
     solana_clock::Slot,
     solana_instruction::{error::InstructionError, AccountMeta},
@@ -50,7 +50,6 @@ use {
     solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{cell::RefCell, mem, rc::Rc},
-    syscalls::morph_into_deployment_environment_v1,
 };
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
@@ -1732,7 +1731,7 @@ fn execute<'a, 'b: 'a>(
 mod test_utils {
     #[cfg(feature = "svm-internal")]
     use {
-        super::*, crate::syscalls::create_program_runtime_environment_v1,
+        super::*, agave_syscalls::create_program_runtime_environment_v1,
         solana_account::ReadableAccount, solana_loader_v4_interface::state::LoaderV4State,
         solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
         solana_sdk_ids::loader_v4,
