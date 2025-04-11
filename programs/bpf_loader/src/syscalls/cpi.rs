@@ -1,7 +1,6 @@
 use {
     super::*,
     agave_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix},
-    scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
     solana_program_runtime::serialization::account_data_region_memory_state,
@@ -365,19 +364,6 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             vm_data_addr: account_info.data_addr,
             ref_to_len_in_vm,
         })
-    }
-
-    fn realloc_region(
-        &self,
-        memory_mapping: &'b MemoryMapping<'_>,
-        is_loader_deprecated: bool,
-    ) -> Result<Option<&'a MemoryRegion>, Error> {
-        account_realloc_region(
-            memory_mapping,
-            self.vm_data_addr,
-            self.original_data_len,
-            is_loader_deprecated,
-        )
     }
 }
 
