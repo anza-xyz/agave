@@ -983,7 +983,7 @@ impl BorrowedAccount<'_> {
 
     /// Resizes the account data (transaction wide)
     ///
-    /// Fills it with zeros at the end if is extended or truncates at the end otherwise.
+    /// This keeps the data in the spare capacity intact.
     #[cfg(not(target_os = "solana"))]
     pub fn set_data_length(&mut self, new_length: usize) -> Result<(), InstructionError> {
         self.can_data_be_resized(new_length)?;
@@ -994,7 +994,18 @@ impl BorrowedAccount<'_> {
         }
         self.touch()?;
         self.update_accounts_resize_delta(new_length)?;
-        self.account.resize(new_length, 0);
+        unsafe {
+            let vec = self.account.data_mut();
+            if new_length > vec.len() {
+                // Keep spare capacity untouched
+                vec.set_len(new_length.min(vec.capacity()));
+                // Potentially realloc and only fill zeros in for groth beyond capacity
+                vec.resize(new_length, 0);
+            } else {
+                // Drop bytes and potentially realloc
+                vec.truncate(new_length);
+            }
+        }
         Ok(())
     }
 
