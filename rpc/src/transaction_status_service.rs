@@ -392,6 +392,13 @@ pub(crate) mod tests {
         let mut rent_debits = RentDebits::default();
         rent_debits.insert(&pubkey, 123, 456);
 
+        let post_accounts_states: Vec<(Pubkey, AccountSharedData)> = transaction
+            .message()
+            .account_keys()
+            .iter()
+            .map(|x| (*x, bank.get_account(x).unwrap()))
+            .collect();
+
         let commit_result = Ok(CommittedTransaction {
             status: Ok(()),
             log_messages: None,
@@ -401,8 +408,7 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits,
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            //Do we need to put something here?
-            post_accounts_states: vec![],
+            post_accounts_states,
         });
 
         let balances = TransactionBalancesSet {
@@ -530,7 +536,6 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits: RentDebits::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            //Do we need to put something here?
             post_accounts_states: vec![],
         });
 
