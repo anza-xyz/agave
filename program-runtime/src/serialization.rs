@@ -101,7 +101,7 @@ impl Serializer {
             self.write_all(account.get_data());
             vm_data_addr
         } else {
-            self.push_region(true);
+            self.push_region();
             let vaddr = self.vaddr;
             if !account.get_data().is_empty() {
                 let mut new_region = if writable && !shared {
@@ -152,26 +152,18 @@ impl Serializer {
         Ok(vm_data_addr)
     }
 
-    fn push_region(&mut self, writable: bool) {
+    fn push_region(&mut self) {
         let range = self.region_start..self.buffer.len();
-        let region = if writable {
-            MemoryRegion::new_writable(
-                self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
-                self.vaddr,
-            )
-        } else {
-            MemoryRegion::new_readonly(
-                self.buffer.as_slice().get(range.clone()).unwrap(),
-                self.vaddr,
-            )
-        };
-        self.regions.push(region);
+        self.regions.push(MemoryRegion::new_writable(
+            self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
+            self.vaddr,
+        ));
         self.region_start = range.end;
         self.vaddr += range.len() as u64;
     }
 
     fn finish(mut self) -> (AlignedMemory<HOST_ALIGN>, Vec<MemoryRegion>) {
-        self.push_region(true);
+        self.push_region();
         debug_assert_eq!(self.region_start, self.buffer.len());
         (self.buffer, self.regions)
     }
