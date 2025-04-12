@@ -1380,6 +1380,19 @@ fn update_caller_account(
     *caller_account.lamports = callee_account.get_lamports();
     *caller_account.owner = *callee_account.get_owner();
 
+    let prev_len = *caller_account.ref_to_len_in_vm.get(memory_mapping)? as usize;
+    let post_len = callee_account.get_data().len();
+    let max_increase = if direct_mapping && !invoke_context.get_check_aligned() {
+        0
+    } else {
+        MAX_PERMITTED_DATA_INCREASE
+    };
+    let mut min_capacity = caller_account.original_data_len;
+    if post_len > min_capacity {
+        // Only zero the realloc region if the account size reaches it
+        min_capacity = min_capacity.saturating_add(max_increase);
+    }
+
     let mut zero_all_mapped_spare_capacity = false;
     if direct_mapping {
         if let Some((_region_index, region)) = account_data_region(
@@ -1396,7 +1409,6 @@ fn update_caller_account(
             // reallocated using the AccountSharedData API directly (deprecated) or using
             // BorrowedAccount::set_data_from_slice(), which implements an optimization to avoid an
             // extra allocation.
-            let min_capacity = caller_account.original_data_len;
             if callee_account.capacity() < min_capacity {
                 callee_account
                     .reserve(min_capacity.saturating_sub(callee_account.get_data().len()))?;
@@ -1418,14 +1430,7 @@ fn update_caller_account(
         }
     }
 
-    let prev_len = *caller_account.ref_to_len_in_vm.get(memory_mapping)? as usize;
-    let post_len = callee_account.get_data().len();
     if prev_len != post_len {
-        let max_increase = if direct_mapping && !invoke_context.get_check_aligned() {
-            0
-        } else {
-            MAX_PERMITTED_DATA_INCREASE
-        };
         let data_overflow = post_len
             > caller_account
                 .original_data_len
@@ -1539,12 +1544,12 @@ fn update_caller_account(
         let spare_len = if zero_all_mapped_spare_capacity {
             // In the unlikely case where the account data vector has
             // changed - which can happen during CoW - we zero the whole
-            // extra capacity up to the original data length.
+            // extra capacity.
             //
-            // The extra capacity up to original data length is
-            // accessible from the vm and since it's uninitialized
-            // memory, it could be a source of non determinism.
-            caller_account.original_data_len
+            // The extra capacity up to original data length plus the realloc region
+            // is accessible from the vm and since it's uninitialized memory,
+            // it could be a source of non determinism.
+            min_capacity
         } else {
             // If the allocation has not changed, we only zero the
             // difference between the previous and current lengths. The
