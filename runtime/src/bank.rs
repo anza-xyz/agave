@@ -141,7 +141,6 @@ use {
     solana_svm::{
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
-        nonce_info::NonceInfo,
         program_loader::load_program_with_pubkey,
         rollback_accounts::RollbackAccounts,
         transaction_balances::BalanceCollector,
@@ -3908,8 +3907,8 @@ impl Bank {
                                     fee_payer_account,
                                     fee_payer_address,
                                 } => vec![
-                                    (fee_payer_address, fee_payer_account), 
-                                    (nonde.address, nonce.account)
+                                    (fee_payer_address, fee_payer_account),
+                                    (nonce.address, nonce.account),
                                 ],
                             }
                         };
