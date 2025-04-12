@@ -124,6 +124,17 @@ cargo_audit_ignores=(
   # Dependency tree:
   # openssl 0.10.70
   --ignore RUSTSEC-2025-0022
+
+  # Crate:     crossbeam-channel
+  # Version:   0.5.13
+  # Title:     crossbeam-channel: double free on Drop
+  # Date:      2025-04-08
+  # ID:        RUSTSEC-2025-0024
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2025-0024
+  # Solution:  Upgrade to >=0.5.15
+  # Dependency tree:
+  # crossbeam-channel 0.5.13
+  --ignore RUSTSEC-2025-0024
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
 # we want the `cargo audit` exit code, not `$dep_tree_filter`'s
