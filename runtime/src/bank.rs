@@ -3901,17 +3901,16 @@ impl Bank {
                                     vec![(fee_payer_address, fee_payer_account)]
                                 }
                                 RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-                                    let NonceInfo { address, account } = nonce;
-                                    vec![(address, account)]
+                                    vec![(nonce.address, nonce.account)]
                                 }
                                 RollbackAccounts::SeparateNonceAndFeePayer {
                                     nonce,
                                     fee_payer_account,
                                     fee_payer_address,
-                                } => {
-                                    let NonceInfo { address, account } = nonce;
-                                    vec![(fee_payer_address, fee_payer_account), (address, account)]
-                                }
+                                } => vec![
+                                    (fee_payer_address, fee_payer_account), 
+                                    (nonde.address, nonce.account)
+                                ],
                             }
                         };
                         Ok(CommittedTransaction {
