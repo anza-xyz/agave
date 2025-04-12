@@ -124,16 +124,18 @@ impl Serializer {
                 self.fill_write(MAX_PERMITTED_DATA_INCREASE + align_offset, 0)
                     .map_err(|_| InstructionError::InvalidArgument)?;
             } else {
+                // put the realloc padding in its own region
+                self.fill_write(MAX_PERMITTED_DATA_INCREASE, 0)
+                    .map_err(|_| InstructionError::InvalidArgument)?;
+                self.push_region(account.can_data_be_changed().is_ok());
                 // The deserialization code is going to align the vm_addr to
                 // BPF_ALIGN_OF_U128. Always add one BPF_ALIGN_OF_U128 worth of
                 // padding and shift the start of the next region, so that once
                 // vm_addr is aligned, the corresponding host_addr is aligned
                 // too.
-                self.fill_write(MAX_PERMITTED_DATA_INCREASE + BPF_ALIGN_OF_U128, 0)
+                self.fill_write(BPF_ALIGN_OF_U128, 0)
                     .map_err(|_| InstructionError::InvalidArgument)?;
                 self.region_start += BPF_ALIGN_OF_U128.saturating_sub(align_offset);
-                // put the realloc padding in its own region
-                self.push_region(account.can_data_be_changed().is_ok());
             }
         }
 
