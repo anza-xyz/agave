@@ -10,7 +10,6 @@ use {
         quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
         streamer::StakedNodes,
     },
-    ahash::AHashSet,
     async_channel::{bounded as async_bounded, Receiver as AsyncReceiver, Sender as AsyncSender},
     bytes::Bytes,
     crossbeam_channel::Sender,
@@ -900,12 +899,37 @@ async fn packet_batch_sender(
     trace!("enter packet_batch_sender");
     let recycler = PacketBatchRecycler::default();
     let mut batch_start_time = Instant::now();
+    const MINIMUM_SIGNIFICANT_TRANSACTION_SIZE: usize = 134;
+    type LikeSignature = [u8; 64];
+    const SIGNATURE_OFFSET: usize = 1;
+    const SIGNATURE_BUFFER_LEN: usize = SIGNATURE_OFFSET + size_of::<LikeSignature>();
+    let mut signature_buffer_across_chunks = [0; SIGNATURE_BUFFER_LEN];
+    let deduper_insert = |(deduper, length): &mut ([LikeSignature; PACKETS_PER_BATCH], usize),
+                          new_signature: &LikeSignature|
+     -> bool {
+        if *length > 0 {
+            for &signature in deduper.iter().take(*length) {
+                if signature == *new_signature {
+                    return false;
+                }
+            }
+        }
+        if *length < deduper.len() {
+            deduper[*length] = *new_signature;
+            *length += 1;
+        }
+        true
+    };
+    let deduper_clear = |(_deduper, length): &mut ([LikeSignature; PACKETS_PER_BATCH], usize)| {
+        *length = 0;
+    };
+    let mut packet_batch_deduper = ([[0; size_of::<LikeSignature>()]; PACKETS_PER_BATCH], 0);
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
         let mut packet_batch =
             PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "quic_packet_coalescer");
         let mut total_bytes: usize = 0;
-        let mut packet_batch_deduper = AHashSet::with_capacity(PACKETS_PER_BATCH);
+        deduper_clear(&mut packet_batch_deduper);
 
         stats
             .total_packet_batches_allocated
@@ -968,24 +992,43 @@ async fn packet_batch_sender(
                     batch_start_time = Instant::now();
                 }
 
-                let discard = {
-                    let mut discard = false;
+                let mut discard = false;
+                {
                     let packet_len: usize = packet_accumulator.chunks.iter().map(|c| c.len()).sum();
-                    if packet_len < 128 {
+                    if packet_len < MINIMUM_SIGNIFICANT_TRANSACTION_SIZE {
                         discard = true;
                         stats
                             .total_packets_too_small
                             .fetch_add(1, Ordering::Relaxed);
-                    } else if packet_accumulator.chunks[0].len() < 65 {
-                        stats
-                            .total_chunks_first_too_small
-                            .fetch_add(1, Ordering::Relaxed);
                     } else {
-                        // let's assume this quic server is for transactions only
-                        let signature: [u8; 64] = packet_accumulator.chunks[0].as_ref()[1..65]
+                        let signature_slice = {
+                            if packet_accumulator.chunks[0].len() >= SIGNATURE_BUFFER_LEN {
+                                &packet_accumulator.chunks[0]
+                                    [SIGNATURE_OFFSET..SIGNATURE_BUFFER_LEN]
+                            } else {
+                                let mut offset = 0;
+                                for chunk in &packet_accumulator.chunks {
+                                    if chunk.len() >= SIGNATURE_BUFFER_LEN - offset {
+                                        signature_buffer_across_chunks
+                                            [offset..SIGNATURE_BUFFER_LEN]
+                                            .copy_from_slice(
+                                                &chunk[0..SIGNATURE_BUFFER_LEN - offset],
+                                            );
+                                        break;
+                                    } else {
+                                        signature_buffer_across_chunks
+                                            [offset..offset + chunk.len()]
+                                            .copy_from_slice(chunk);
+                                        offset += chunk.len();
+                                    }
+                                }
+                                &signature_buffer_across_chunks
+                                    [SIGNATURE_OFFSET..SIGNATURE_BUFFER_LEN]
+                            }
                             .try_into()
-                            .unwrap();
-                        if !packet_batch_deduper.insert(signature) {
+                            .unwrap()
+                        };
+                        if !deduper_insert(&mut packet_batch_deduper, signature_slice) {
                             discard = true;
                             stats
                                 .total_chunks_deduped_by_batcher
@@ -995,8 +1038,7 @@ async fn packet_batch_sender(
                                 .fetch_add(1, Ordering::Relaxed);
                         }
                     }
-                    discard
-                };
+                }
                 stats
                     .total_packets_processed_by_batcher
                     .fetch_add(1, Ordering::Relaxed);
