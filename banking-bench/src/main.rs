@@ -64,11 +64,14 @@ fn check_txs(
     let now = Instant::now();
     let mut no_bank = false;
     loop {
+        /*
         match block_production_method {
             BlockProductionMethod::UnifiedScheduler => {
+            */
                 if let Ok(txs) = solana_unified_scheduler_pool::DUMMY_POH.1.recv_timeout(Duration::from_millis(10)) {
                     total += txs.len();
                 }
+                /*
             }
             _ => {
                 if let Ok((_bank, (entry, _tick_height))) = receiver.recv_timeout(Duration::from_millis(10))
@@ -77,6 +80,7 @@ fn check_txs(
                 }
             }
         }
+        */
         if total >= ref_tx_count {
             break;
         }
