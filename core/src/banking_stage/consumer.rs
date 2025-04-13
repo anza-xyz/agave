@@ -1,3 +1,5 @@
+#[!allow(unused_variables)]
+
 use {
     super::{
         committer::{CommitTransactionDetails, Committer, PreBalanceInfo},
