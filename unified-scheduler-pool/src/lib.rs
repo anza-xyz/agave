@@ -65,6 +65,7 @@ use {
     vec_extract_if_polyfill::MakeExtractIf,
 };
 
+use solana_transaction::versioned::VersionedTransaction;
 pub static DUMMY_POH: std::sync::LazyLock<(Sender<Vec<VersionedTransaction>>, Receiver<Vec<VersionedTransaction>>)> = std::sync::LazyLock::new(|| { crossbeam_channel::unbounded() });
 
 mod sleepless_testing;
