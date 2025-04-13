@@ -366,7 +366,7 @@ impl Consumer {
             ..record_transactions_timings
         };
         */
-        DUMMY_POH.0.send(processed_transactions).unwrap();
+        solana_unified_scheduler_pool::DUMMY_POH.0.send(processed_transactions).unwrap();
 
         let starting_transaction_index = None;
 
