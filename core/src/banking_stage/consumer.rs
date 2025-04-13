@@ -370,6 +370,7 @@ impl Consumer {
 
         let starting_transaction_index = None;
 
+        /*
         if let Err(recorder_err) = record_transactions_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
                 |(index, processing_result)| processing_result.was_processed().then_some(index),
@@ -385,6 +386,7 @@ impl Consumer {
                 max_prioritization_fees,
             };
         }
+        */
 
         let (commit_time_us, commit_transaction_statuses) =
             if processed_counts.processed_transactions_count != 0 {
