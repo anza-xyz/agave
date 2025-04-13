@@ -144,7 +144,7 @@ solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-timings = { workspace = true }
-solana-transaction-context = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-status = { workspace = true }
 solana-type-overrides = { workspace = true }
 solana-vote = { workspace = true }

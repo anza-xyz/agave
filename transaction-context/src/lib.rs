@@ -97,7 +97,7 @@ impl TransactionAccounts {
         self.accounts.len()
     }
 
-    pub fn get(&self, index: IndexOfAccount) -> Option<&RefCell<AccountSharedData>> {
+    fn get(&self, index: IndexOfAccount) -> Option<&RefCell<AccountSharedData>> {
         self.accounts.get(index as usize)
     }
 

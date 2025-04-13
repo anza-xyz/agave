@@ -245,7 +245,10 @@ where
         const MAX_TRANSACTION_CHECKS: usize = 10_000;
         let mut transaction_ids = Vec::with_capacity(MAX_TRANSACTION_CHECKS);
 
-        while let Some(id) = self.container.pop() {
+        while transaction_ids.len() < MAX_TRANSACTION_CHECKS {
+            let Some(id) = self.container.pop() else {
+                break
+            };
             transaction_ids.push(id);
         }
 

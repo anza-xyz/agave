@@ -60,11 +60,13 @@ pub fn verify(
         let start = i
             .saturating_mul(SIGNATURE_OFFSETS_SERIALIZED_SIZE)
             .saturating_add(SIGNATURE_OFFSETS_START);
-        let end = start.saturating_add(SIGNATURE_OFFSETS_SERIALIZED_SIZE);
 
-        // bytemuck wants structures aligned
-        let offsets: &Secp256r1SignatureOffsets = bytemuck::try_from_bytes(&data[start..end])
-            .map_err(|_| PrecompileError::InvalidDataOffsets)?;
+        // SAFETY:
+        // - data[start..] is guaranteed to be >= size of Secp256r1SignatureOffsets
+        // - Secp256r1SignatureOffsets is a POD type, so we can safely read it as an unaligned struct
+        let offsets = unsafe {
+            core::ptr::read_unaligned(data.as_ptr().add(start) as *const Secp256r1SignatureOffsets)
+        };
 
         // Parse out signature
         let signature = get_data_slice(
@@ -167,6 +169,7 @@ fn get_data_slice<'a>(
 mod tests {
     use {
         super::*,
+        crate::test_verify_with_alignment,
         bytemuck::bytes_of,
         solana_secp256r1_program::{new_secp256r1_instruction, DATA_START, SECP256R1_ORDER},
     };
@@ -183,7 +186,8 @@ mod tests {
         let mut instruction_data = vec![0u8; DATA_START];
         instruction_data[0..SIGNATURE_OFFSETS_START].copy_from_slice(bytes_of(&num_signatures));
         instruction_data[SIGNATURE_OFFSETS_START..DATA_START].copy_from_slice(bytes_of(offsets));
-        verify(
+        test_verify_with_alignment(
+            verify,
             &instruction_data,
             &[&[0u8; 100]],
             &FeatureSet::all_enabled(),
@@ -201,7 +205,8 @@ mod tests {
         instruction_data.truncate(instruction_data.len() - 1);
 
         assert_eq!(
-            verify(
+            test_verify_with_alignment(
+                verify,
                 &instruction_data,
                 &[&[0u8; 100]],
                 &FeatureSet::all_enabled()
@@ -244,7 +249,7 @@ mod tests {
         // Test data.len() < SIGNATURE_OFFSETS_START
         let small_data = vec![0u8; SIGNATURE_OFFSETS_START - 1];
         assert_eq!(
-            verify(&small_data, &[&[]], &FeatureSet::all_enabled()),
+            test_verify_with_alignment(verify, &small_data, &[&[]], &FeatureSet::all_enabled()),
             Err(PrecompileError::InvalidInstructionDataSize)
         );
 
@@ -252,7 +257,7 @@ mod tests {
         let mut zero_sigs_data = vec![0u8; DATA_START];
         zero_sigs_data[0] = 0; // Set num_signatures to 0
         assert_eq!(
-            verify(&zero_sigs_data, &[&[]], &FeatureSet::all_enabled()),
+            test_verify_with_alignment(verify, &zero_sigs_data, &[&[]], &FeatureSet::all_enabled()),
             Err(PrecompileError::InvalidInstructionDataSize)
         );
 
@@ -260,7 +265,7 @@ mod tests {
         let mut too_many_sigs = vec![0u8; DATA_START];
         too_many_sigs[0] = 9; // Set num_signatures to 9
         assert_eq!(
-            verify(&too_many_sigs, &[&[]], &FeatureSet::all_enabled()),
+            test_verify_with_alignment(verify, &too_many_sigs, &[&[]], &FeatureSet::all_enabled()),
             Err(PrecompileError::InvalidInstructionDataSize)
         );
     }
@@ -358,7 +363,13 @@ mod tests {
         let mut instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
         let feature_set = FeatureSet::all_enabled();
 
-        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
+        assert!(test_verify_with_alignment(
+            verify,
+            &instruction.data,
+            &[&instruction.data],
+            &feature_set
+        )
+        .is_ok());
 
         // The message is the last field in the instruction data so
         // changing its last byte will also change the signature validity
@@ -366,7 +377,13 @@ mod tests {
         instruction.data[message_byte_index] =
             instruction.data[message_byte_index].wrapping_add(12);
 
-        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_err());
+        assert!(test_verify_with_alignment(
+            verify,
+            &instruction.data,
+            &[&instruction.data],
+            &feature_set
+        )
+        .is_err());
     }
 
     #[test]
@@ -379,7 +396,8 @@ mod tests {
 
         // To double check that the untampered low-S value signature passes
         let feature_set = FeatureSet::all_enabled();
-        let tx_pass = verify(
+        let tx_pass = test_verify_with_alignment(
+            verify,
             instruction.data.as_slice(),
             &[instruction.data.as_slice()],
             &feature_set,
@@ -401,7 +419,12 @@ mod tests {
         // Replace the S value in the signature with our high S
         instruction.data[s_offset..s_offset + FIELD_SIZE].copy_from_slice(&high_s.to_vec());
 
-        let tx_fail = verify(&instruction.data, &[&instruction.data], &feature_set);
+        let tx_fail = test_verify_with_alignment(
+            verify,
+            &instruction.data,
+            &[&instruction.data],
+            &feature_set,
+        );
         assert!(tx_fail.unwrap_err() == PrecompileError::InvalidSignature);
     }
     #[test]
@@ -430,7 +453,13 @@ mod tests {
             if r_bytes.len() == 31 || s_bytes.len() == 31 {
                 // Once found, verify the signature and break out of the loop
                 let feature_set = FeatureSet::all_enabled();
-                assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
+                assert!(test_verify_with_alignment(
+                    verify,
+                    &instruction.data,
+                    &[&instruction.data],
+                    &feature_set
+                )
+                .is_ok());
                 break;
             }
         }

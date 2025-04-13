@@ -466,16 +466,24 @@ impl Crds {
 
     /// Returns all crds values which the first 'mask_bits'
     /// of their hash value is equal to 'mask'.
-    /// Excludes deprecated values.
+    /// Excludes deprecated values and ContactInfo with invalid shred version
     pub(crate) fn filter_bitmask(
         &self,
         mask: u64,
         mask_bits: u32,
+        self_shred_version: u16,
     ) -> impl Iterator<Item = &VersionedCrdsValue> {
         self.shards
             .find(mask, mask_bits)
             .map(move |i| self.table.index(i))
-            .filter(|VersionedCrdsValue { value, .. }| !value.data().is_deprecated())
+            .filter(move |VersionedCrdsValue { value, .. }| {
+                let data = value.data();
+                !value.data().is_deprecated()
+                    && match data {
+                        CrdsData::ContactInfo(info) => info.shred_version() == self_shred_version,
+                        _ => true,
+                    }
+            })
     }
 
     /// Update the timestamp's of all the labels that are associated with Pubkey

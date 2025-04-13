@@ -302,6 +302,7 @@ impl CrdsGossipPull {
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        self_shred_version: u16,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         Self::filter_crds_values(
@@ -311,6 +312,7 @@ impl CrdsGossipPull {
             output_size_limit,
             now,
             should_retain_crds_value,
+            self_shred_version,
             stats,
         )
     }
@@ -459,6 +461,7 @@ impl CrdsGossipPull {
         now: u64,
         // Predicate returning false if the CRDS value should be discarded.
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        self_shred_version: u16,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
@@ -494,7 +497,7 @@ impl CrdsGossipPull {
                 }
             };
             let out: Vec<_> = crds
-                .filter_bitmask(filter.mask, filter.mask_bits)
+                .filter_bitmask(filter.mask, filter.mask_bits, self_shred_version)
                 .filter(pred)
                 .map(|entry| entry.value.clone())
                 .take(output_size_limit.load(Ordering::Relaxed).max(0) as usize)
@@ -1118,6 +1121,7 @@ pub(crate) mod tests {
             usize::MAX, // output_size_limit
             now,
             |_| true, // should_retain_crds_value
+            0,        // self_shred_version
             &GossipStats::default(),
         );
 
@@ -1142,6 +1146,7 @@ pub(crate) mod tests {
             usize::MAX, // output_size_limit
             now,
             |_| true, // should_retain_crds_value
+            0,        // self_shred_version
             &GossipStats::default(),
         );
         assert_eq!(rsp[0].len(), 0);
@@ -1168,6 +1173,7 @@ pub(crate) mod tests {
             usize::MAX, // output_size_limit
             now,
             |_| true, // should_retain_crds_value
+            0,        // self_shred_version
             &GossipStats::default(),
         );
         assert_eq!(rsp.len(), 2 * MIN_NUM_BLOOM_FILTERS);
@@ -1261,6 +1267,7 @@ pub(crate) mod tests {
                 usize::MAX, // output_size_limit
                 0,          // now
                 |_| true,   // should_retain_crds_value
+                0,          // self_shred_version
                 &GossipStats::default(),
             );
             // if there is a false positive this is empty

@@ -1704,6 +1704,7 @@ impl ClusterInfo {
                         value, stakes, /*drop_unstaked_node_instance:*/ true,
                     )
                 },
+                self.my_shred_version(),
                 &self.stats,
             )
         };

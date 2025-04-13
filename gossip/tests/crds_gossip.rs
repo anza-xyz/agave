@@ -612,6 +612,7 @@ fn network_run_pull(
                                 usize::MAX, // output_size_limit
                                 now,
                                 |_| true, // should_retain_crds_value
+                                0,        // network shred version
                                 &GossipStats::default(),
                             )
                             .into_iter()

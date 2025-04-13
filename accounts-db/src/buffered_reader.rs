@@ -23,31 +23,6 @@ pub(crate) trait Backing {
     unsafe fn as_mut_slice(&mut self) -> &mut [u8];
 }
 
-/// A heap-allocated buffer.
-///
-/// This should be used when the required size is unknown at compile time or is larger than reasonable
-/// stack limits.
-pub(crate) struct Heap(Vec<MaybeUninit<u8>>);
-
-impl Heap {
-    #[inline(always)]
-    pub fn new(size: usize) -> Self {
-        Self(vec![MaybeUninit::uninit(); size])
-    }
-}
-
-impl Backing for Heap {
-    #[inline(always)]
-    unsafe fn as_slice(&self) -> &[u8] {
-        slice::from_raw_parts(self.0.as_ptr() as *const u8, self.0.len())
-    }
-
-    #[inline(always)]
-    unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
-        slice::from_raw_parts_mut(self.0.as_mut_ptr() as *mut u8, self.0.len())
-    }
-}
-
 /// A stack-allocated buffer.
 ///
 /// This is a fixed-size buffer that is allocated on the stack.
@@ -188,36 +163,6 @@ where
     }
 }
 
-impl<'a> BufferedReader<'a, Heap> {
-    /// create a new buffered reader with a heap-allocated buffer
-    pub fn new_heap(
-        buffer_size: usize,
-        file_len_valid: usize,
-        file: &'a File,
-        default_min_read_requirement: usize,
-    ) -> Self {
-        BufferedReader::new(
-            Heap::new(buffer_size.min(file_len_valid)),
-            file_len_valid,
-            file,
-            default_min_read_requirement,
-        )
-    }
-
-    /// resize the buffer to the given length.
-    ///
-    /// note this will never shrink the buffer.
-    #[inline(always)]
-    pub fn resize(&mut self, len: usize) {
-        if len > self.buf.0.len() {
-            self.buf.0.reserve_exact(len - self.buf.0.len());
-            // SAFETY: `reserve_exact` ensures that the buffer is large enough to hold the new length
-            // and buffer reads are gated by `self.buf_valid_bytes`, which will be initialized by `read_more_buffer`.
-            unsafe { self.buf.0.set_len(len) };
-        }
-    }
-}
-
 impl<'a, const N: usize> BufferedReader<'a, Stack<N>> {
     /// create a new buffered reader with a stack-allocated buffer
     pub fn new_stack(
@@ -246,7 +191,6 @@ mod tests {
     }
 
     #[test_case(Stack::<16>::new(), 16)]
-    #[test_case(Heap::new(16), 16)]
     fn test_buffered_reader(backing: impl Backing, buffer_size: usize) {
         // Setup a sample file with 32 bytes of data
         const FILE_SIZE: usize = 32;
@@ -305,7 +249,6 @@ mod tests {
     }
 
     #[test_case(Stack::<16>::new(), 16)]
-    #[test_case(Heap::new(16), 16)]
     fn test_buffered_reader_with_extra_data_in_file(backing: impl Backing, buffer_size: usize) {
         // Setup a sample file with 32 bytes of data
         let mut sample_file = tempfile().unwrap();
@@ -384,7 +327,6 @@ mod tests {
     }
 
     #[test_case(Stack::<16>::new(), 16)]
-    #[test_case(Heap::new(16), 16)]
     fn test_buffered_reader_partial_consume(backing: impl Backing, buffer_size: usize) {
         // Setup a sample file with 32 bytes of data
         let mut sample_file = tempfile().unwrap();
@@ -451,7 +393,6 @@ mod tests {
     }
 
     #[test_case(Stack::<16>::new(), 16)]
-    #[test_case(Heap::new(16), 16)]
     fn test_buffered_reader_partial_consume_with_move(backing: impl Backing, buffer_size: usize) {
         // Setup a sample file with 32 bytes of data
         let mut sample_file = tempfile().unwrap();

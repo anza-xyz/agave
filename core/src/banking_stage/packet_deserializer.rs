@@ -106,29 +106,35 @@ impl PacketDeserializer {
         ) -> Result<ImmutableDeserializedPacket, PacketFilterFailure>,
     ) -> ReceivePacketResults {
         let mut packet_stats = PacketReceiverStats::default();
-        let mut deserialized_packets = Vec::with_capacity(packet_count);
-
-        for banking_batch in banking_batches {
-            for packet_batch in banking_batch.iter() {
-                let packet_indexes = Self::generate_packet_indexes(packet_batch);
-
-                saturating_add_assign!(
-                    packet_stats.passed_sigverify_count,
-                    packet_indexes.len() as u64
-                );
-                saturating_add_assign!(
-                    packet_stats.failed_sigverify_count,
-                    packet_batch.len().saturating_sub(packet_indexes.len()) as u64
-                );
-
-                deserialized_packets.extend(Self::deserialize_packets(
-                    packet_batch,
-                    &packet_indexes,
-                    &mut packet_stats,
-                    &packet_filter,
-                ));
-            }
-        }
+        let mut errors = 0_usize;
+        let deserialized_packets: Vec<_> = banking_batches
+            .iter()
+            .flat_map(|banking_batch| banking_batch.iter())
+            .flat_map(|batch| batch.iter())
+            .filter(|pkt| !pkt.meta().discard())
+            .filter_map(|pkt| {
+                match ImmutableDeserializedPacket::new(pkt)
+                    .and_then(|pkt| packet_filter(pkt).map_err(Into::into))
+                {
+                    Ok(pkt) => Some(pkt),
+                    Err(err) => {
+                        saturating_add_assign!(errors, 1);
+                        packet_stats.increment_error_count(&err);
+                        None
+                    }
+                }
+            })
+            .collect();
+        saturating_add_assign!(
+            packet_stats.passed_sigverify_count,
+            deserialized_packets.len().saturating_add(errors) as u64
+        );
+        saturating_add_assign!(
+            packet_stats.failed_sigverify_count,
+            packet_count
+                .saturating_sub(deserialized_packets.len())
+                .saturating_sub(errors) as u64
+        );
 
         ReceivePacketResults {
             deserialized_packets,
@@ -167,48 +173,16 @@ impl PacketDeserializer {
         Ok((num_packets_received, messages))
     }
 
-    fn generate_packet_indexes(packet_batch: &PacketBatch) -> Vec<usize> {
-        packet_batch
-            .iter()
-            .enumerate()
-            .filter(|(_, pkt)| !pkt.meta().discard())
-            .map(|(index, _)| index)
-            .collect()
-    }
-
-    fn deserialize_packets<'a>(
-        packet_batch: &'a PacketBatch,
-        packet_indexes: &'a [usize],
-        packet_stats: &'a mut PacketReceiverStats,
-        packet_filter: &'a impl Fn(
-            ImmutableDeserializedPacket,
-        ) -> Result<ImmutableDeserializedPacket, PacketFilterFailure>,
-    ) -> impl Iterator<Item = ImmutableDeserializedPacket> + 'a {
-        packet_indexes.iter().filter_map(move |packet_index| {
-            let packet_clone = packet_batch[*packet_index].clone();
-
-            match ImmutableDeserializedPacket::new(&packet_clone)
-                .and_then(|packet| packet_filter(packet).map_err(Into::into))
-            {
-                Ok(packet) => Some(packet),
-                Err(err) => {
-                    packet_stats.increment_error_count(&err);
-                    None
-                }
-            }
-        })
-    }
-
-    #[allow(dead_code)]
     pub(crate) fn deserialize_packets_with_indexes(
         packet_batch: &PacketBatch,
     ) -> impl Iterator<Item = (ImmutableDeserializedPacket, usize)> + '_ {
-        let packet_indexes = PacketDeserializer::generate_packet_indexes(packet_batch);
-        packet_indexes.into_iter().filter_map(move |packet_index| {
-            let packet = packet_batch[packet_index].clone();
-            ImmutableDeserializedPacket::new(&packet)
-                .ok()
-                .map(|packet| (packet, packet_index))
+        packet_batch.iter().enumerate().filter_map(|(index, pkt)| {
+            if !pkt.meta().discard() {
+                let pkt = ImmutableDeserializedPacket::new(pkt).ok()?;
+                Some((pkt, index))
+            } else {
+                None
+            }
         })
     }
 }
