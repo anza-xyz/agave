@@ -2126,7 +2126,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
             move || {
+                let (do_now, dont_now) = (&disconnected::<()>(), &never::<()>());
+                let mut busy_start = Instant::now();
                 loop {
+                    let busy_waker = if busy_start.elapsed() < Duration::from_micros(10) {
+                        do_now
+                    } else {
+                        dont_now
+                    };
                     let (task, sender) = select_biased! {
                         recv(runnable_task_receiver.for_select()) -> message => {
                             let Ok(message) = message else {
@@ -2163,7 +2170,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             continue;
                         },
+                        recv(busy_waker) -> _ => {
+                            continue;
+                        },
                     };
+                    defer! { busy_start = Instant::now() }
                     defer! {
                         if !thread::panicking() {
                             return;
