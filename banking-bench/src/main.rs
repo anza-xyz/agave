@@ -574,7 +574,7 @@ fn main() {
         // processed, with `FALSE` indicate there is still bank. or returns TRUE indicate a
         // bank has expired before receiving all txs.
         if check_txs(
-            block_production_method,
+            block_production_method.clone(),
             &signal_receiver,
             packets_for_this_iteration.transactions.len(),
             &poh_recorder,
