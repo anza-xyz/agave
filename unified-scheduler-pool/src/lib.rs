@@ -1055,7 +1055,7 @@ impl TaskHandler for DefaultTaskHandler {
                 DUMMY_POH.0.send(vec![transaction.to_versioned_transaction()]).unwrap();
                 trace!("pre_commit_callback: poh: {result:?}");
                 match result {
-                    Ok(()) => Ok(0),
+                    Ok(()) => Ok(None),
                     Err(_) => {
                         // Poh failed; need to revert the committed cost state change.
                         bank.write_cost_tracker().unwrap().remove(&cost);
