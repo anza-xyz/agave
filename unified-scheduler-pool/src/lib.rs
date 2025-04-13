@@ -65,7 +65,7 @@ use {
     vec_extract_if_polyfill::MakeExtractIf,
 };
 
-pub static DUMMY_POH: std::sync::LazyLock<(Sender<usize>, Receiver<usize>)> = std::sync::LazyLock::new(|| { crossbeam_channel::unbounded() });
+pub static DUMMY_POH: std::sync::LazyLock<(Sender<Vec<VersionedTransaction>>, Receiver<Vec<VersionedTransaction>>)> = std::sync::LazyLock::new(|| { crossbeam_channel::unbounded() });
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
