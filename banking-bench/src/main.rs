@@ -55,6 +55,7 @@ use {
 const TRANSFER_TRANSACTION_COST: u32 = 1470;
 
 fn check_txs(
+    block_production_method: BlockProductionMethod,
     receiver: &Arc<Receiver<WorkingBankEntry>>,
     ref_tx_count: usize,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
