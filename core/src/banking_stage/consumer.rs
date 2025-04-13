@@ -412,7 +412,7 @@ impl Consumer {
             "bank: {} process_and_record_locked: {}us record: {}us commit: {}us txs_len: {}",
             bank.slot(),
             load_execute_us,
-            record_us,
+            /*record_us, */ 3,
             commit_time_us,
             batch.sanitized_transactions().len(),
         );
