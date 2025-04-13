@@ -65,6 +65,8 @@ use {
     vec_extract_if_polyfill::MakeExtractIf,
 };
 
+pub static DUMMY_POH: LazyLock<usize> = LazyLock::new(|| { 3 });
+
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
 
