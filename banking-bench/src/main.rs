@@ -63,7 +63,7 @@ fn check_txs(
     let now = Instant::now();
     let mut no_bank = false;
     loop {
-        if let Ok(txs) = solana_unified_scheduler_pool::DUMMY_POH.recv_timeout(Duration::from_millis(10)) {
+        if let Ok(txs) = solana_unified_scheduler_pool::DUMMY_POH.1.recv_timeout(Duration::from_millis(10)) {
             total += txs.len();
         }
         /*
