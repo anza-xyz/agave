@@ -1547,7 +1547,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 // not rigidly been tested yet; but capping to 2x of handler thread should be
                 // enough, because unified scheduler is latency optimized... This means each thread
                 // has extra pseudo task queue entry.
-                const MAX_RUNNING_TASK_COUNT_FACTOR: usize = 2;
+                const MAX_RUNNING_TASK_COUNT_FACTOR: usize = 10;
 
                 Some(
                     thread_count
