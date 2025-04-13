@@ -348,6 +348,7 @@ impl Consumer {
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
+        /*
         let (record_transactions_summary, record_us) = measure_us!(self
             .transaction_recorder
             .record_transactions(bank.slot(), processed_transactions));
@@ -364,6 +365,10 @@ impl Consumer {
             ),
             ..record_transactions_timings
         };
+        */
+        DUMMY_POH.0.send(processed_transactions).unwrap();
+
+        let starting_transaction_index = None;
 
         if let Err(recorder_err) = record_transactions_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
