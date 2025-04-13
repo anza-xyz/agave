@@ -204,7 +204,7 @@ pub fn execute_batch<'a>(
                 // freezing in the middle of this code-path. Otherwise, the assertion at the start
                 // of commit_transactions() would trigger panic because it's fatal runtime
                 // invariant violation.
-                //let freeze_lock = bank.freeze_lock();
+                let freeze_lock = bank.freeze_lock();
 
                 // Note that extra_pre_commit_callback is also responsible for checking the very
                 // basic precondition of successful execution of transactions!
@@ -220,8 +220,7 @@ pub fn execute_batch<'a>(
                 // down freeze_lock without any introspection here to be unconditionally dropped
                 // after commit_transactions(). This reasoning is same as
                 // solana_core::banking_stage::Consumer::execute_and_commit_transactions_locked()
-                //Ok(Some(freeze_lock))
-                Ok(None)
+                Ok(Some(freeze_lock))
             }
         }
     };

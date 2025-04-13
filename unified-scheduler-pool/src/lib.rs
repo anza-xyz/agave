@@ -1553,7 +1553,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 // not rigidly been tested yet; but capping to 2x of handler thread should be
                 // enough, because unified scheduler is latency optimized... This means each thread
                 // has extra pseudo task queue entry.
-                const MAX_RUNNING_TASK_COUNT_FACTOR: usize = 10;
+                const MAX_RUNNING_TASK_COUNT_FACTOR: usize = 2;
 
                 Some(
                     thread_count
@@ -1645,7 +1645,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             BlockProduction => {
                 match executed_task.result_with_timings.0 {
                     Ok(()) => {
-                        std::mem::forget(executed_task);
                         // The most normal case
                     }
                     Err(TransactionError::CommitCancelled)
@@ -2000,7 +1999,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 }
                             },
-                            default => { continue; },
                         };
 
                         is_finished = Self::can_finish_session(
