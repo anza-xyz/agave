@@ -1052,10 +1052,10 @@ impl TaskHandler for DefaultTaskHandler {
                     .unwrap()
                     .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
                 */
-                DUMMY_POH.0.send(32).unwrap();
+                DUMMY_POH.0.send(vec![transaction.to_versioned_transaction()]).unwrap();
                 trace!("pre_commit_callback: poh: {result:?}");
                 match result {
-                    Ok(()) => Ok(starting_transaction_index),
+                    Ok(()) => Ok(0),
                     Err(_) => {
                         // Poh failed; need to revert the committed cost state change.
                         bank.write_cost_tracker().unwrap().remove(&cost);
