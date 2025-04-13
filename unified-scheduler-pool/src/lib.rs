@@ -1671,6 +1671,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         debug!("error is detected while accumulating....: {error:?}");
                     }
                 };
+                std::mem::forget(executed_task);
                 // Don't abort at all in block production unlike block verification
                 false
             }
@@ -1993,6 +1994,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 }
                             },
+                            default => { continue; },
                         };
 
                         is_finished = Self::can_finish_session(
