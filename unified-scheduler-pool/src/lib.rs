@@ -1639,6 +1639,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             BlockProduction => {
                 match executed_task.result_with_timings.0 {
                     Ok(()) => {
+                        std::mem::forget(executed_task);
                         // The most normal case
                     }
                     Err(TransactionError::CommitCancelled)
@@ -1671,7 +1672,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         debug!("error is detected while accumulating....: {error:?}");
                     }
                 };
-                std::mem::forget(executed_task);
                 // Don't abort at all in block production unlike block verification
                 false
             }
