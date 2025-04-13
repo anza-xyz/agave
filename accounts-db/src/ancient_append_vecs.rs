@@ -3300,7 +3300,7 @@ pub mod tests {
                             .iter()
                             .map(|storage| {
                                 let mut accounts = Vec::default();
-                                storage.accounts.scan_accounts(|account| {
+                                storage.accounts.scan_accounts_stored_meta(|account| {
                                     accounts.push(AccountFromStorage::new(&account));
                                 });
                                 (storage.slot(), accounts)

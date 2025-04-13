@@ -87,8 +87,6 @@ members = [
     "precompiles",
     "program-runtime",
     "program-test",
-    "programs/address-lookup-table",
-    "programs/address-lookup-table-tests",
     "programs/bpf-loader-tests",
     "programs/bpf_loader",
     "programs/bpf_loader/gen-syscall-list",
@@ -177,6 +175,16 @@ check-cfg = [
     'cfg(target_os, values("solana"))',
     'cfg(feature, values("frozen-abi", "no-entrypoint"))',
 ]
+
+[workspace.lints.rust]
+warnings = "deny"
+
+# Clippy lint configuration that can not be applied in clippy.toml
+[workspace.lints.clippy]
+arithmetic_side_effects = "deny"
+default_trait_access = "deny"
+manual_let_else = "deny"
+used_underscore_binding = "deny"
 
 [workspace.dependencies]
 Inflector = "0.11.4"
@@ -342,10 +350,10 @@ rayon = "1.10.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.11.1"
 reqwest = { version = "0.12.15", default-features = false }
-reqwest-middleware = "0.4.1"
+reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.3"
-rustls = { version = "0.23.23", features = ["std"], default-features = false }
+rustls = { version = "0.23.26", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.26"
 seqlock = "0.2.0"
@@ -373,7 +381,6 @@ solana-account-decoder-client-types = { path = "account-decoder-client-types", v
 solana-account-info = "2.2.1"
 solana-accounts-db = { path = "accounts-db", version = "=2.3.0" }
 solana-address-lookup-table-interface = "2.2.2"
-solana-address-lookup-table-program = { path = "programs/address-lookup-table", version = "=2.3.0" }
 solana-atomic-u64 = "2.2.1"
 solana-banks-client = { path = "banks-client", version = "=2.3.0" }
 solana-banks-interface = { path = "banks-interface", version = "=2.3.0" }
@@ -485,7 +492,7 @@ solana-program-option = "2.2.1"
 solana-program-pack = "2.2.1"
 solana-program-runtime = { path = "program-runtime", version = "=2.3.0" }
 solana-program-test = { path = "program-test", version = "=2.3.0" }
-solana-pubkey = { version = "2.2.1", default-features = false }
+solana-pubkey = { version = "2.3.0", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=2.3.0" }
 solana-quic-client = { path = "quic-client", version = "=2.3.0" }
 solana-quic-definitions = "2.2.1"
@@ -595,7 +602,7 @@ thiserror = "2.0.12"
 thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
-tokio = "1.44.0"
+tokio = "1.44.2"
 tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.20.1"

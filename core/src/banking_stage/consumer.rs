@@ -96,7 +96,6 @@ impl Consumer {
         &self,
         bank: &Arc<Bank>,
         txs: &[impl TransactionWithMeta],
-        chunk_offset: usize,
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results = vec![Ok(()); txs.len()];
@@ -112,7 +111,6 @@ impl Consumer {
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
             txs,
-            chunk_offset,
             check_results.into_iter(),
         );
 
@@ -156,14 +154,13 @@ impl Consumer {
 
             Ok(())
         });
-        self.process_and_record_transactions_with_pre_results(bank, txs, 0, pre_results)
+        self.process_and_record_transactions_with_pre_results(bank, txs, pre_results)
     }
 
     fn process_and_record_transactions_with_pre_results(
         &self,
         bank: &Arc<Bank>,
         txs: &[impl TransactionWithMeta],
-        chunk_offset: usize,
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
     ) -> ProcessTransactionBatchOutput {
         let (
@@ -189,14 +186,13 @@ impl Consumer {
         // retryable_txs includes AccountInUse, WouldExceedMaxBlockCostLimit
         // WouldExceedMaxAccountCostLimit, WouldExceedMaxVoteCostLimit
         // and WouldExceedMaxAccountDataCostLimit
-        let mut execute_and_commit_transactions_output =
+        let execute_and_commit_transactions_output =
             self.execute_and_commit_transactions_locked(bank, &batch);
 
         // Once the accounts are new transactions can enter the pipeline to process them
         let (_, unlock_us) = measure_us!(drop(batch));
 
         let ExecuteAndCommitTransactionsOutput {
-            ref mut retryable_transaction_indexes,
             ref execute_and_commit_timings,
             ref commit_transactions_result,
             ..
@@ -211,10 +207,6 @@ impl Consumer {
             commit_transactions_result.as_ref().ok(),
             bank,
         );
-
-        retryable_transaction_indexes
-            .iter_mut()
-            .for_each(|x| *x += chunk_offset);
 
         let (cu, us) =
             Self::accumulate_execute_units_and_time(&execute_and_commit_timings.execute_timings);
@@ -589,7 +581,7 @@ mod tests {
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
         let process_transactions_summary =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         poh_recorder
             .read()
@@ -699,7 +691,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -747,7 +739,7 @@ mod tests {
         )]);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -891,7 +883,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
             commit_transactions_result,
@@ -993,7 +985,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1086,7 +1078,7 @@ mod tests {
         )]);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1116,7 +1108,7 @@ mod tests {
         ]);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1230,7 +1222,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         poh_recorder
             .read()
@@ -1422,7 +1414,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder.clone(), QosService::new(1), None);
 
         let process_transactions_summary =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ProcessTransactionBatchOutput {
             mut execute_and_commit_transactions_output,
@@ -1563,7 +1555,7 @@ mod tests {
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
-        let _ = consumer.process_and_record_transactions(&bank, &transactions, 0);
+        let _ = consumer.process_and_record_transactions(&bank, &transactions);
 
         drop(consumer); // drop/disconnect transaction_status_sender
 
@@ -1708,7 +1700,7 @@ mod tests {
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
-        let _ = consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()], 0);
+        let _ = consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()]);
 
         drop(consumer); // drop/disconnect transaction_status_sender
 

@@ -14,6 +14,7 @@ use {
     },
     solana_sdk::{
         account::AccountSharedData,
+        hash::Hash,
         pubkey::Pubkey,
         reward_info::RewardInfo,
         stake::state::{Delegation, Stake},
@@ -44,8 +45,32 @@ type PartitionedStakeRewards = Vec<PartitionedStakeReward>;
 pub(crate) struct StartBlockHeightAndRewards {
     /// the block height of the slot at which rewards distribution began
     pub(crate) distribution_starting_block_height: u64,
-    /// calculated epoch rewards pending distribution, outer Vec is by partition (one partition per block)
+    /// calculated epoch rewards before partitioning
+    pub(crate) all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct StartBlockHeightAndPartitionedRewards {
+    /// the block height of the slot at which rewards distribution began
+    pub(crate) distribution_starting_block_height: u64,
+    /// calculated epoch rewards pending distribution after partitioning, outer Vec is by partition (one partition per block)
     pub(crate) stake_rewards_by_partition: Arc<Vec<PartitionedStakeRewards>>,
+}
+
+impl StartBlockHeightAndRewards {
+    pub(crate) fn do_partition(
+        &self,
+        parent_blockhash: &Hash,
+        num_partitions: usize,
+    ) -> Arc<Vec<PartitionedStakeRewards>> {
+        let stake_rewards_by_partition = epoch_rewards_hasher::hash_rewards_into_partitions_slice(
+            &self.all_stake_rewards,
+            parent_blockhash,
+            num_partitions,
+        );
+
+        Arc::new(stake_rewards_by_partition)
+    }
 }
 
 /// Represent whether bank is in the reward phase or not.
@@ -55,7 +80,9 @@ pub(crate) enum EpochRewardStatus {
     /// Contents are the start point for epoch reward calculation,
     /// i.e. parent_slot and parent_block height for the starting
     /// block of the current epoch.
-    Active(StartBlockHeightAndRewards),
+    Calculated(StartBlockHeightAndRewards),
+
+    Partitioned(StartBlockHeightAndPartitionedRewards),
     /// this bank is outside of the rewarding phase.
     #[default]
     Inactive,
@@ -74,7 +101,7 @@ pub(super) struct VoteRewardsAccounts {
 
 #[derive(Debug, Default)]
 /// result of calculating the stake rewards at end of epoch
-struct StakeRewardCalculation {
+pub(super) struct StakeRewardCalculation {
     /// each individual stake account to reward
     stake_rewards: PartitionedStakeRewards,
     /// total lamports across all `stake_rewards`
@@ -113,20 +140,12 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// side effects.
 pub(super) struct PartitionedRewardsCalculation {
     pub(super) vote_account_rewards: VoteRewardsAccounts,
-    pub(super) stake_rewards_by_partition: StakeRewardCalculationPartitioned,
+    pub(super) stake_rewards: StakeRewardCalculation,
     pub(super) validator_rate: f64,
     pub(super) foundation_rate: f64,
     pub(super) prev_epoch_duration_in_years: f64,
     pub(super) capitalization: u64,
     point_value: PointValue,
-}
-
-/// result of calculating the stake rewards at beginning of new epoch
-pub(super) struct StakeRewardCalculationPartitioned {
-    /// each individual stake account to reward, grouped by partition
-    pub(super) stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
-    /// total lamports across all `stake_rewards`
-    pub(super) total_stake_rewards_lamports: u64,
 }
 
 pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
@@ -137,8 +156,8 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
     /// delegations and rewards are the lamports to split across all stake and
     /// vote accounts
     pub(super) point_value: PointValue,
-    /// stake rewards that still need to be distributed, grouped by partition
-    pub(super) stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
+    /// stake rewards that still need to be distributed
+    pub(super) stake_rewards: Vec<PartitionedStakeReward>,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
@@ -173,15 +192,27 @@ impl Bank {
         }
     }
 
-    pub(crate) fn set_epoch_reward_status_active(
+    pub(crate) fn set_epoch_reward_status_calculated(
+        &mut self,
+        distribution_starting_block_height: u64,
+        stake_rewards: Vec<PartitionedStakeReward>,
+    ) {
+        self.epoch_reward_status = EpochRewardStatus::Calculated(StartBlockHeightAndRewards {
+            distribution_starting_block_height,
+            all_stake_rewards: Arc::new(stake_rewards),
+        });
+    }
+
+    pub(crate) fn set_epoch_reward_status_partitioned(
         &mut self,
         distribution_starting_block_height: u64,
         stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
     ) {
-        self.epoch_reward_status = EpochRewardStatus::Active(StartBlockHeightAndRewards {
-            distribution_starting_block_height,
-            stake_rewards_by_partition: Arc::new(stake_rewards_by_partition),
-        });
+        self.epoch_reward_status =
+            EpochRewardStatus::Partitioned(StartBlockHeightAndPartitionedRewards {
+                distribution_starting_block_height,
+                stake_rewards_by_partition: Arc::new(stake_rewards_by_partition),
+            });
     }
 
     pub(super) fn partitioned_epoch_rewards_config(&self) -> &PartitionedEpochRewardsConfig {
@@ -298,11 +329,22 @@ mod tests {
     impl Bank {
         /// Return `RewardInterval` enum for current bank
         fn get_reward_interval(&self) -> RewardInterval {
-            if matches!(self.epoch_reward_status, EpochRewardStatus::Active(_)) {
+            if matches!(
+                self.epoch_reward_status,
+                EpochRewardStatus::Calculated(_) | EpochRewardStatus::Partitioned(_)
+            ) {
                 RewardInterval::InsideInterval
             } else {
                 RewardInterval::OutsideInterval
             }
+        }
+
+        fn is_calculated(&self) -> bool {
+            matches!(self.epoch_reward_status, EpochRewardStatus::Calculated(_))
+        }
+
+        fn is_partitioned(&self) -> bool {
+            matches!(self.epoch_reward_status, EpochRewardStatus::Partitioned(_))
         }
     }
 
@@ -428,7 +470,7 @@ mod tests {
             .map(|_| PartitionedStakeReward::new_random())
             .collect::<Vec<_>>();
 
-        bank.set_epoch_reward_status_active(
+        bank.set_epoch_reward_status_partitioned(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
             vec![stake_rewards],
         );
@@ -553,6 +595,8 @@ mod tests {
                     RewardInterval::InsideInterval
                 );
 
+                assert!(curr_bank.is_calculated());
+
                 if slot == SLOTS_PER_EPOCH {
                     // cap should increase because of new epoch rewards
                     assert!(post_cap > pre_cap);
@@ -633,6 +677,9 @@ mod tests {
                     RewardInterval::InsideInterval
                 );
 
+                // calculation block, state should be calculated.
+                assert!(curr_bank.is_calculated());
+
                 // cap should increase because of new epoch rewards
                 assert!(post_cap > pre_cap);
             } else if slot == SLOTS_PER_EPOCH + 1 {
@@ -643,6 +690,9 @@ mod tests {
                     curr_bank.get_reward_interval(),
                     RewardInterval::InsideInterval
                 );
+
+                // 1st reward distribution block, state should be partitioned.
+                assert!(curr_bank.is_partitioned());
 
                 let account = curr_bank
                     .get_account(&solana_sdk::sysvar::epoch_rewards::id())

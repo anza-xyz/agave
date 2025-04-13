@@ -51,7 +51,7 @@
 
 #[cfg(test)]
 pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
-pub(crate) use self::{merkle::SIZE_OF_MERKLE_ROOT, payload::serde_bytes_payload};
+pub(crate) use self::{merkle_tree::SIZE_OF_MERKLE_ROOT, payload::serde_bytes_payload};
 pub use {
     self::{
         payload::Payload,
@@ -84,6 +84,7 @@ use {
 mod common;
 mod legacy;
 mod merkle;
+mod merkle_tree;
 mod payload;
 pub mod shred_code;
 mod shred_data;

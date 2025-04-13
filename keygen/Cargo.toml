@@ -21,7 +21,7 @@ solana-derivation-path = "=2.2.1"
 solana-instruction = { version = "=2.2.1", features = ["bincode"] }
 solana-keypair = "=2.2.1"
 solana-message = { version = "=2.3.0", features = ["bincode"] }
-solana-pubkey = { version = "=2.2.1", default-features = false }
+solana-pubkey = { version = "=2.3.0", default-features = false }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-seed-derivable = "=2.2.1"
 solana-signer = "=2.2.1"

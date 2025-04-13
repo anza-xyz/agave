@@ -26,7 +26,7 @@ solana-message = "=2.3.0"
 solana-metrics = { workspace = true }
 solana-native-token = "=2.2.1"
 solana-packet = "=2.2.1"
-solana-pubkey = { version = "=2.2.1", features = ["rand"] }
+solana-pubkey = { version = "=2.3.0", features = ["rand"] }
 solana-signer = "=2.2.1"
 solana-system-interface = "=1.0"
 solana-system-transaction = "=2.2.1"

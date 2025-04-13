@@ -436,9 +436,6 @@ pub mod fix_recent_blockhashes {
 pub mod update_rewards_from_cached_accounts {
     solana_pubkey::declare_id!("28s7i3htzhahXQKqmS2ExzbEoUypg9krwvtK2M9UWXh9");
 }
-pub mod enable_partitioned_epoch_reward {
-    solana_pubkey::declare_id!("9bn2vTJUsUcnpiZWbu2woSKtTGW3ErZC9ERv88SDqQjK");
-}
 
 pub mod partitioned_epoch_rewards_superfeature {
     solana_pubkey::declare_id!("PERzQrt5gBD1XEe2c9XdFWqwgHY3mr7cYWbm5V772V8");
@@ -650,7 +647,7 @@ pub mod enable_turbine_fanout_experiments {
 }
 
 pub mod disable_turbine_fanout_experiments {
-    solana_pubkey::declare_id!("Gz1aLrbeQ4Q6PTSafCZcGWZXz91yVRi7ASFzFEr1U4sa");
+    solana_pubkey::declare_id!("turbnbNRp22nwZCmgVVXFSshz7H7V23zMzQgA46YpmQ");
 }
 
 pub mod move_serialized_len_ptr_in_cpi {
@@ -692,8 +689,9 @@ pub mod delay_visibility_of_program_deployment {
 pub mod apply_cost_tracker_during_replay {
     solana_pubkey::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
 }
+
 pub mod bpf_account_data_direct_mapping {
-    solana_pubkey::declare_id!("AjX3A4Nv2rzUuATEUWLP4rrBaBropyUnHxEvFDj1dKbx");
+    solana_pubkey::declare_id!("1ncomp1ete111111111111111111111111111111111");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -905,7 +903,7 @@ pub mod zk_elgamal_proof_program_enabled {
 }
 
 pub mod verify_retransmitter_signature {
-    solana_pubkey::declare_id!("BZ5g4hRbu5hLQQBdPyo2z9icGyJ8Khiyj3QS6dhWijTb");
+    solana_pubkey::declare_id!("51VCKU5eV6mcTc9q9ArfWELU2CqDoi13hdAjr6fHMdtv");
 }
 
 pub mod move_stake_and_move_lamports_ixs {
@@ -929,7 +927,7 @@ pub mod enable_transaction_loading_failure_fees {
 }
 
 pub mod enable_turbine_extended_fanout_experiments {
-    solana_pubkey::declare_id!("BZn14Liea52wtBwrXUxTv6vojuTTmfc7XGEDTXrvMD7b");
+    solana_pubkey::declare_id!("turbRpTzBzDU6PJmWvRTbcJXXGxUs19CvQamUrRD9bN");
 }
 
 pub mod deprecate_legacy_vote_ixs {
@@ -1001,7 +999,7 @@ pub mod raise_block_limits_to_50m {
 }
 
 pub mod drop_unchained_merkle_shreds {
-    solana_pubkey::declare_id!("3A9WtMU4aHuryD3VN7SFKdfXto8HStLb1Jj6HjkgfnGL");
+    solana_pubkey::declare_id!("5KLGJSASDVxKPjLCDWNtnABLpZjsQSrYZ8HKwcEdAMC8");
 }
 
 pub mod relax_intrabatch_account_locks {
@@ -1116,7 +1114,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (executables_incur_cpi_data_cost::id(), "Executables incur CPI data costs"),
         (fix_recent_blockhashes::id(), "stop adding hashes for skipped slots to recent blockhashes"),
         (update_rewards_from_cached_accounts::id(), "update rewards from cached accounts"),
-        (enable_partitioned_epoch_reward::id(), "enable partitioned rewards at epoch boundary #32166"),
         (spl_token_v3_4_0::id(), "SPL Token Program version 3.4.0 release #24740"),
         (spl_associated_token_account_v1_1_0::id(), "SPL Associated Token Account Program version 1.1.0 release #24741"),
         (default_units_per_instruction::id(), "Default max tx-wide compute units calculated per instruction"),
