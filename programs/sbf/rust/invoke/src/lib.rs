@@ -1074,7 +1074,7 @@ fn process_instruction<'a>(
             let invoke_program_id = accounts[INVOKE_PROGRAM_INDEX].key;
 
             let prev_data = {
-                let data = &instruction_data[9..];
+                let data = &instruction_data[10..];
                 let prev_len = account.data_len();
                 account.realloc(prev_len + data.len(), false)?;
                 account.data.borrow_mut()[prev_len..].copy_from_slice(data);
@@ -1092,8 +1092,9 @@ fn process_instruction<'a>(
             };
 
             let mut expected = account.data.borrow().to_vec();
-            let new_len = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            expected.extend_from_slice(&instruction_data[9..]);
+            let direct_mapping = instruction_data[1];
+            let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
+            expected.extend_from_slice(&instruction_data[10..]);
             let mut instruction_data =
                 vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS_NESTED];
             instruction_data.extend_from_slice(&new_len.to_le_bytes());
@@ -1122,7 +1123,7 @@ fn process_instruction<'a>(
             );
             assert_eq!(
                 unsafe { *account.data.borrow().as_ptr().add(prev_data.len()) },
-                SENTINEL
+                if direct_mapping == 0 { SENTINEL } else { 0 }
             );
         }
         TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS_NESTED => {

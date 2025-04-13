@@ -3868,7 +3868,10 @@ fn test_cpi_account_data_updates() {
         let mut account = AccountSharedData::new(42, 0, &invoke_program_id);
         account.set_data(b"foo".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS];
+        let mut instruction_data = vec![
+            TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
+            direct_mapping as u8,
+        ];
         // realloc to "foobazbad" then shrink to "foobazb"
         instruction_data.extend_from_slice(7usize.to_le_bytes().as_ref());
         instruction_data.extend_from_slice(b"bazbad");
@@ -3888,7 +3891,10 @@ fn test_cpi_account_data_updates() {
         let mut account = AccountSharedData::new(42, 0, &invoke_program_id);
         account.set_data(b"foo".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS];
+        let mut instruction_data = vec![
+            TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
+            direct_mapping as u8,
+        ];
         // realloc to "foobazbad" then shrink to "f"
         instruction_data.extend_from_slice(1usize.to_le_bytes().as_ref());
         instruction_data.extend_from_slice(b"bazbad");
