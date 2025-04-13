@@ -1041,6 +1041,7 @@ impl TaskHandler for DefaultTaskHandler {
                 // callback. Extra care must be taken in the case of poh failure just below;
                 bank.write_cost_tracker().unwrap().try_add(&cost)?;
 
+                /*
                 let RecordTransactionsSummary {
                     result,
                     starting_transaction_index,
@@ -1050,6 +1051,8 @@ impl TaskHandler for DefaultTaskHandler {
                     .as_ref()
                     .unwrap()
                     .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
+                */
+                DUMMY_POH.0.send(32).unwrap();
                 trace!("pre_commit_callback: poh: {result:?}");
                 match result {
                     Ok(()) => Ok(starting_transaction_index),
