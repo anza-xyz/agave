@@ -352,6 +352,7 @@ impl BankingStageHelper {
             return Err(SchedulerAborted);
         };
         sender.send(NewTaskPayload::Payload(task)).unwrap();
+        trace!("sent new task");
         Ok(())
     }
 
