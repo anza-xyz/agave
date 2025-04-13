@@ -55,7 +55,7 @@ use {
 const TRANSFER_TRANSACTION_COST: u32 = 1470;
 
 fn check_txs(
-    block_production_method: BlockProductionMethod,
+    block_production_method: &BlockProductionMethod,
     receiver: &Arc<Receiver<WorkingBankEntry>>,
     ref_tx_count: usize,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
@@ -64,15 +64,19 @@ fn check_txs(
     let now = Instant::now();
     let mut no_bank = false;
     loop {
-        if let Ok(txs) = solana_unified_scheduler_pool::DUMMY_POH.1.recv_timeout(Duration::from_millis(10)) {
-            total += txs.len();
+        match block_production_method {
+            BlockProductionMethod::UnifiedScheduler => {
+                if let Ok(txs) = solana_unified_scheduler_pool::DUMMY_POH.1.recv_timeout(Duration::from_millis(10)) {
+                    total += txs.len();
+                }
+            }
+            _ => {
+                if let Ok((_bank, (entry, _tick_height))) = receiver.recv_timeout(Duration::from_millis(10))
+                {
+                    total += entry.transactions.len();
+                }
+            }
         }
-        /*
-        if let Ok((_bank, (entry, _tick_height))) = receiver.recv_timeout(Duration::from_millis(10))
-        {
-            total += entry.transactions.len();
-        }
-        */
         if total >= ref_tx_count {
             break;
         }
@@ -519,7 +523,7 @@ fn main() {
     // This bench processes transactions, starting from the very first bank, so special-casing is
     // needed for unified scheduler.
     if matches!(
-        block_production_method.clone(),
+        block_production_method,
         BlockProductionMethod::UnifiedScheduler
     ) {
         bank = bank_forks
@@ -574,7 +578,7 @@ fn main() {
         // processed, with `FALSE` indicate there is still bank. or returns TRUE indicate a
         // bank has expired before receiving all txs.
         if check_txs(
-            block_production_method.clone(),
+            &block_production_method,
             &signal_receiver,
             packets_for_this_iteration.transactions.len(),
             &poh_recorder,
