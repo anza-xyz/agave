@@ -969,6 +969,7 @@ impl TaskHandler for DefaultTaskHandler {
                 // this will indeed create a rather noisy lock contention. However, this is already
                 // the case as well for the other block producing method (CentralScheduler). So,
                 // this could be justified here, hopefully...
+                /*
                 let mut batch;
                 let started = Instant::now();
                 loop {
@@ -985,6 +986,8 @@ impl TaskHandler for DefaultTaskHandler {
                     sleep(Duration::from_micros(100));
                 }
                 batch
+                    */
+                bank.prepare_unlocked_batch_from_single_tx(transaction)
             }
         };
         let transaction_indexes = match scheduling_context.mode() {
