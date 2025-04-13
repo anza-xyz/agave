@@ -2031,6 +2031,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
                             Ok(NewTaskPayload::Payload(task)) => {
+                                info!("buffered");
                                 sleepless_testing::at(CheckPoint::NewBufferedTask(
                                     task.task_index(),
                                 ));
