@@ -598,6 +598,26 @@ impl BankWithScheduler {
         )
     }
 
+    fn return_completed_scheduler_to_bp_scheduler_pool(&self) {
+        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
+            if matches!(scheduler.context().mode(), SchedulingMode::BlockProduction) {
+                if let Some((result, _completed_execute_timings)) = self.wait_for_completed_scheduler()
+                {
+                    info!(
+                        "Reaped aborted tpu_bank with unified scheduler: {} {:?}",
+                        bank.slot(),
+                        result
+                    );
+                } else {
+                    info!(
+                        "Skipped to reap a tpu_bank (seems unified scheduler is disabled): {}",
+                        bank.slot()
+                    );
+                }
+                }
+        }
+    }
+
     pub fn scheduling_mode(&self) -> Option<SchedulingMode> {
         self.inner.scheduler.read().unwrap().scheduling_mode()
     }
