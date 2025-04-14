@@ -25,11 +25,14 @@ impl InstructionMeta {
         let mut instruction_data_len_builder = InstructionDataLenBuilder::default();
         let mut compute_budget_instruction_details_builder =
             ComputeBudgetInstructionDetailsBuilder::default();
-        for (program_id, instruction) in instructions {
+        for (index, (program_id, instruction)) in instructions.enumerate() {
             precompile_signature_details_builder.process_instruction(program_id, &instruction);
             instruction_data_len_builder.process_instruction(program_id, &instruction);
-            compute_budget_instruction_details_builder
-                .process_instruction(program_id, &instruction)?;
+            compute_budget_instruction_details_builder.process_instruction(
+                index,
+                program_id,
+                &instruction,
+            )?;
         }
 
         Ok(Self {

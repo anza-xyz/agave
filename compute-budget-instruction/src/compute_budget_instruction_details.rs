@@ -60,6 +60,7 @@ pub struct ComputeBudgetInstructionDetailsBuilder {
 impl ComputeBudgetInstructionDetailsBuilder {
     pub fn process_instruction(
         &mut self,
+        instruction_index: usize,
         program_id: &Pubkey,
         instruction: &SVMInstruction,
     ) -> Result<()> {
@@ -68,7 +69,7 @@ impl ComputeBudgetInstructionDetailsBuilder {
             .is_compute_budget_program(usize::from(instruction.program_id_index), program_id)
         {
             self.compute_budget_instruction_details
-                .process_instruction(instruction.program_id_index, instruction)?;
+                .process_instruction(instruction_index as u8, instruction)?;
             // If it is a compute budget program, which is a non-migratable builtin program,
             // we can skip the builtin program filter.
             self.compute_budget_instruction_details
@@ -110,50 +111,13 @@ impl ComputeBudgetInstructionDetailsBuilder {
 
 impl ComputeBudgetInstructionDetails {
     pub fn try_from<'a>(
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
     ) -> Result<Self> {
-        let mut filter = ComputeBudgetProgramIdFilter::new();
-        let mut compute_budget_instruction_details = ComputeBudgetInstructionDetails::default();
-
-        for (i, (program_id, instruction)) in instructions.clone().enumerate() {
-            if filter.is_compute_budget_program(instruction.program_id_index as usize, program_id) {
-                compute_budget_instruction_details.process_instruction(i as u8, &instruction)?;
-            } else {
-                compute_budget_instruction_details.num_non_compute_budget_instructions += 1;
-            }
+        let mut builder = ComputeBudgetInstructionDetailsBuilder::default();
+        for (index, (program_id, instruction)) in instructions.enumerate() {
+            builder.process_instruction(index, program_id, &instruction)?;
         }
-
-        if compute_budget_instruction_details
-            .requested_compute_unit_limit
-            .is_none()
-        {
-            let mut filter = BuiltinProgramsFilter::new();
-            // reiterate to collect builtin details
-            for (program_id, instruction) in instructions {
-                match filter.get_program_kind(instruction.program_id_index as usize, program_id) {
-                    ProgramKind::Builtin => {
-                        compute_budget_instruction_details
-                            .num_non_migratable_builtin_instructions += 1;
-                    }
-                    ProgramKind::NotBuiltin => {
-                        compute_budget_instruction_details.num_non_builtin_instructions += 1;
-                    }
-                    ProgramKind::MigratingBuiltin {
-                        core_bpf_migration_feature_index,
-                    } => {
-                        *compute_budget_instruction_details
-                            .migrating_builtin_feature_counters
-                            .migrating_builtin
-                            .get_mut(core_bpf_migration_feature_index)
-                            .expect(
-                                "migrating feature index within range of MIGRATION_FEATURE_IDS",
-                            ) += 1;
-                    }
-                }
-            }
-        }
-
-        Ok(compute_budget_instruction_details)
+        Ok(builder.build())
     }
 
     pub fn sanitize_and_convert_to_compute_budget_limits(
