@@ -14,7 +14,7 @@ use {
         },
         quic_client::QuicClientConnection as BlockingQuicClientConnection,
     },
-    quinn::Endpoint,
+    quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_connection_cache::{
         connection_cache::{
             BaseClientConnection, ClientError, ConnectionCache, ConnectionManager, ConnectionPool,
@@ -28,7 +28,7 @@ use {
     solana_streamer::streamer::StakedNodes,
     solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate},
     std::{
-        net::{IpAddr, SocketAddr},
+        net::{IpAddr, SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
     },
 };
@@ -146,8 +146,12 @@ impl QuicConfig {
         self.maybe_client_pubkey = Some(*client_pubkey);
     }
 
-    pub fn update_client_endpoint(&mut self, client_endpoint: Endpoint) {
-        self.client_endpoint = Some(client_endpoint);
+    pub fn update_client_endpoint(&mut self, client_socket: UdpSocket) {
+        let config = EndpointConfig::default();
+        self.client_endpoint = Some(
+            quinn::Endpoint::new(config, None, client_socket, Arc::new(TokioRuntime))
+                .expect("QuicNewConnection::create_endpoint quinn::Endpoint::new"),
+        );
     }
 }
 
