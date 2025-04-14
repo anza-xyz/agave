@@ -69,7 +69,7 @@ impl Bank {
                 )
             });
 
-            // update epoch reward status to partitioned
+            // update epoch reward status to distribution phase
             self.epoch_reward_status = EpochRewardStatus::Active(EpochRewardPhase::Distribution(
                 StartBlockHeightAndPartitionedRewards {
                     distribution_starting_block_height,
