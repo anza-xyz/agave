@@ -478,7 +478,7 @@ fn main() {
             &cluster_info,
             &poh_recorder,
             transaction_recorder.clone(),
-            num_banking_threads,
+            num_banking_threads - NUM_VOTE_PROCESSING_THREADS,
         );
         bank_forks.write().unwrap().install_scheduler_pool(pool);
         channels
