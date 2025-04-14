@@ -1372,7 +1372,6 @@ fn test_lazy_gc_slot() {
     //slot is gone
     accounts.print_accounts_stats("pre-clean");
     accounts.add_root_and_flush_write_cache(1);
-    // No longer need clean to flush the account
     //assert!(accounts.storage.get_slot_storage_entry(0).is_some());
     accounts.clean_accounts_for_tests();
     assert!(accounts.storage.get_slot_storage_entry(0).is_none());
@@ -1446,11 +1445,18 @@ fn test_clean_zero_lamport_and_dead_slot() {
     accounts.calculate_accounts_delta_hash(2);
     accounts.add_root_and_flush_write_cache(2);
 
+    // After flush before clean, ref count should be 1
+    assert_eq!(accounts.ref_count_for_pubkey(&pubkey1), 1);
+
     // Slot 1 should be removed, slot 0 cannot be removed because it still has
     // the latest update for pubkey 2
     accounts.clean_accounts_for_tests();
     assert!(accounts.storage.get_slot_storage_entry(0).is_some());
     assert!(accounts.storage.get_slot_storage_entry(1).is_none());
+    assert!(accounts.storage.get_slot_storage_entry(2).is_none());
+
+    // If this passes, then clean is working
+    assert_eq!(accounts.ref_count_for_pubkey(&pubkey1), 0);
 
     // Slot 1 should be cleaned because all it's accounts are
     // zero lamports, and are not present in any other slot's
@@ -1720,7 +1726,6 @@ fn test_clean_multiple_zero_lamport_decrements_index_ref_count() {
     assert!(accounts.storage.get_slot_storage_entry(1).is_none());
     // Slot 2 only has a zero lamport account as well. But, calc_delete_dependencies()
     // should exclude slot 2 from the clean due to changes in other slots
-    //This is safe to delete with the dead account changes
     //assert!(accounts.storage.get_slot_storage_entry(2).is_some());
     // Index ref counts should be consistent with the slot stores. Account 1 ref count
     // should be 1 since slot 2 is the only alive slot; account 2 should have a ref
@@ -2043,7 +2048,6 @@ fn test_accounts_db_purge_keep_live() {
     let account2 = AccountSharedData::new(some_lamport, no_data, &owner);
     let pubkey2 = solana_pubkey::new_rand();
 
-    // Keep the slot around to let the test run
     let account3 = AccountSharedData::new(some_lamport, no_data, &owner);
     let pubkey3 = solana_pubkey::new_rand();
 
@@ -2777,6 +2781,7 @@ fn do_full_clean_refcount(mut accounts: AccountsDb, store1_first: bool, store_si
 
     accounts.clean_accounts_for_tests();
 
+    assert_eq!(1, accounts.ref_count_for_pubkey(&pubkey1));
     info!("post B");
     accounts.print_accounts_stats("Post-B");
 
@@ -5468,7 +5473,7 @@ fn test_is_candidate_for_shrink() {
 
     entry
         .alive_bytes
-        .store(store_file_size as usize - 1, Ordering::Release);
+        .store(store_file_size as usize - 2000, Ordering::Release);
     assert!(accounts.is_candidate_for_shrink(&entry));
     entry
         .alive_bytes
@@ -5481,7 +5486,7 @@ fn test_is_candidate_for_shrink() {
         .alive_bytes
         .store(file_size_shrink_limit + 1, Ordering::Release);
     accounts.shrink_ratio = AccountShrinkThreshold::TotalSpace { shrink_ratio };
-    assert!(accounts.is_candidate_for_shrink(&entry));
+    assert!(!accounts.is_candidate_for_shrink(&entry));
     accounts.shrink_ratio = AccountShrinkThreshold::IndividualStore { shrink_ratio };
     assert!(!accounts.is_candidate_for_shrink(&entry));
 }

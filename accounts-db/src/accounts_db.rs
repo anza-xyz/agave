@@ -697,7 +697,7 @@ pub enum AccountShrinkThreshold {
     IndividualStore { shrink_ratio: f64 },
 }
 pub const DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE: bool = true;
-pub const DEFAULT_ACCOUNTS_SHRINK_RATIO: f64 = 0.80;
+pub const DEFAULT_ACCOUNTS_SHRINK_RATIO: f64 = 0.99;
 // The default extra account space in percentage from the ideal target
 const DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION: AccountShrinkThreshold =
     AccountShrinkThreshold::TotalSpace {
@@ -1332,12 +1332,14 @@ impl AccountStorageEntry {
             .push((offset, size, slot));
     }
 
-    pub fn is_account_dead(&self, offset: Offset, slot: Slot) -> bool {
+    pub fn is_account_dead(&self, offset: Offset, slot: Option<Slot>) -> bool {
         self.dead_account_offsets
             .read()
             .unwrap()
             .iter()
-            .any(|(dead_offset, _, dead_slot)| *dead_offset == offset && *dead_slot <= slot)
+            .any(|(dead_offset, _, dead_slot)| {
+                *dead_offset == offset && (slot.is_none_or(|s| *dead_slot <= s))
+            })
     }
 
     pub fn get_dead_account_stats(&self) -> (usize, usize) {
@@ -3529,7 +3531,7 @@ impl AccountsDb {
     ) -> LoadAccountsIndexForShrink<'a, T> {
         let count = accounts.len();
         let mut alive_accounts = T::with_capacity(count, slot_to_shrink);
-        let pubkeys_to_unref = Vec::with_capacity(count);
+        let mut pubkeys_to_unref = Vec::with_capacity(count);
         let mut zero_lamport_single_ref_pubkeys = Vec::with_capacity(count);
 
         let mut alive = 0;
@@ -3574,10 +3576,17 @@ impl AccountsDb {
 
                     if !is_alive {
                         // This pubkey was found in the storage, but no longer exists in the index.
-                        // It would have had a ref to the storage from the initial store, but it will
-                        // not exist in the re-written slot. Unref it to keep the index consistent with
-                        // rewriting the storage entries.
-                        //pubkeys_to_unref.push(pubkey);
+                        // If this slot was unrefed by clean, then it would have a reference from the
+                        // initial store.
+                        // However if this was dereferenced during flush, no reference exists.
+                        if let Some(store) = self
+                            .storage
+                            .get_slot_storage_entry_shrinking_in_progress_ok(slot_to_shrink)
+                        {
+                            if !store.is_account_dead(stored_account.index_info.offset(), None) {
+                                pubkeys_to_unref.push(pubkey);
+                            }
+                        }
                         dead += 1;
                     } else {
                         do_populate_accounts_for_shrink(ref_count, slot_list);
@@ -6517,7 +6526,7 @@ impl AccountsDb {
             let storage = self.storage.get_slot_storage_entry(slot);
             assert!(storage.is_some());
 
-            // Find all the zero lamport accounts that were added and makr them
+            // Find all the zero lamport accounts that were added and mark them
             let storage = storage.unwrap();
             storage.accounts.scan_accounts(|account| {
                 if account.lamports() == 0 {
@@ -7833,7 +7842,9 @@ impl AccountsDb {
 
         let alive_bytes = store.alive_bytes_exclude_zero_lamport_single_ref_accounts() as u64;
         match self.shrink_ratio {
-            AccountShrinkThreshold::TotalSpace { shrink_ratio: _ } => alive_bytes < total_bytes,
+            AccountShrinkThreshold::TotalSpace { shrink_ratio } => {
+                (alive_bytes as f64 / total_bytes as f64) < shrink_ratio
+            }
             AccountShrinkThreshold::IndividualStore { shrink_ratio } => {
                 (alive_bytes as f64 / total_bytes as f64) < shrink_ratio
             }
@@ -8105,6 +8116,24 @@ impl AccountsDb {
                     .collect::<HashSet<_>>()
             })
         };
+
+        //Unref the accounts from storage
+        /*let mut accounts_index_root_stats = AccountsIndexRootsStats::default();
+        let mut measure_unref = Measure::start("unref_from_storage");
+
+        if let Some(purged_account_slots) = purged_account_slots {
+            self.unref_accounts(
+                purged_slot_pubkeys,
+                purged_account_slots,
+                pubkeys_removed_from_accounts_index,
+            );
+        }
+        measure_unref.stop();
+        accounts_index_root_stats.clean_unref_from_storage_us += measure_unref.as_us();
+
+        self.clean_accounts_stats
+            .latest_accounts_index_roots_stats
+            .update(&accounts_index_root_stats);*/
 
         self.remove_dead_slots_metadata(dead_slots.iter());
         measure.stop();

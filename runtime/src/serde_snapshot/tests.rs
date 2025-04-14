@@ -545,7 +545,6 @@ mod serde_snapshot_tests {
             .unwrap();
     }
 
-    //Test cannot run until snapshot is fixed
     /*#[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_purge_chained_purge_before_snapshot_restore(storage_access: StorageAccess) {
