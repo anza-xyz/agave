@@ -2853,7 +2853,7 @@ impl Node {
             tpu_vote_quic,
         };
 
-        info!("Bound all network sockets as follows:{:#?}", &sockets);
+        info!("Bound all network sockets as follows: {:#?}", &sockets);
         Node { info, sockets }
     }
 }
