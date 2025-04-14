@@ -77,7 +77,6 @@ use {
         transaction::Transaction,
     },
     solana_timings::ExecuteTimings,
-    solana_unified_scheduler_logic::SchedulingMode,
     solana_vote::vote_transaction::VoteTransaction,
     std::{
         collections::{HashMap, HashSet},
