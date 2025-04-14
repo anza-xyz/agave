@@ -1,8 +1,3 @@
-#![allow(unused_variables)]
-#![allow(unused_imports)]
-#![allow(unused_mut)]
-#![allow(dead_code)]
-
 use {
     super::{
         committer::{CommitTransactionDetails, Committer, PreBalanceInfo},
@@ -353,7 +348,6 @@ impl Consumer {
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
-        /*
         let (record_transactions_summary, record_us) = measure_us!(self
             .transaction_recorder
             .record_transactions(bank.slot(), processed_transactions));
@@ -370,12 +364,7 @@ impl Consumer {
             ),
             ..record_transactions_timings
         };
-        */
-        solana_unified_scheduler_pool::DUMMY_POH.0.send(processed_transactions).unwrap();
 
-        let starting_transaction_index = None;
-
-        /*
         if let Err(recorder_err) = record_transactions_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
                 |(index, processing_result)| processing_result.was_processed().then_some(index),
@@ -391,7 +380,6 @@ impl Consumer {
                 max_prioritization_fees,
             };
         }
-        */
 
         let (commit_time_us, commit_transaction_statuses) =
             if processed_counts.processed_transactions_count != 0 {
@@ -417,7 +405,7 @@ impl Consumer {
             "bank: {} process_and_record_locked: {}us record: {}us commit: {}us txs_len: {}",
             bank.slot(),
             load_execute_us,
-            /*record_us, */ 3,
+            record_us,
             commit_time_us,
             batch.sanitized_transactions().len(),
         );

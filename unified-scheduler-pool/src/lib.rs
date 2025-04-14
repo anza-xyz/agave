@@ -65,9 +65,6 @@ use {
     vec_extract_if_polyfill::MakeExtractIf,
 };
 
-use solana_transaction::versioned::VersionedTransaction;
-pub static DUMMY_POH: std::sync::LazyLock<(Sender<Vec<VersionedTransaction>>, Receiver<Vec<VersionedTransaction>>)> = std::sync::LazyLock::new(|| { crossbeam_channel::unbounded() });
-
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
 
@@ -972,7 +969,6 @@ impl TaskHandler for DefaultTaskHandler {
                 // this will indeed create a rather noisy lock contention. However, this is already
                 // the case as well for the other block producing method (CentralScheduler). So,
                 // this could be justified here, hopefully...
-                /*
                 let mut batch;
                 let started = Instant::now();
                 loop {
@@ -989,8 +985,6 @@ impl TaskHandler for DefaultTaskHandler {
                     sleep(Duration::from_micros(100));
                 }
                 batch
-                    */
-                bank.prepare_unlocked_batch_from_single_tx(transaction)
             }
         };
         let transaction_indexes = match scheduling_context.mode() {
@@ -1042,7 +1036,6 @@ impl TaskHandler for DefaultTaskHandler {
                 // callback. Extra care must be taken in the case of poh failure just below;
                 bank.write_cost_tracker().unwrap().try_add(&cost)?;
 
-                /*
                 let RecordTransactionsSummary {
                     result,
                     starting_transaction_index,
@@ -1052,11 +1045,9 @@ impl TaskHandler for DefaultTaskHandler {
                     .as_ref()
                     .unwrap()
                     .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
-                */
-                DUMMY_POH.0.send(vec![transaction.to_versioned_transaction()]).unwrap();
                 trace!("pre_commit_callback: poh: {result:?}");
                 match result {
-                    Ok(()) => Ok(None),
+                    Ok(()) => Ok(starting_transaction_index),
                     Err(_) => {
                         // Poh failed; need to revert the committed cost state change.
                         bank.write_cost_tracker().unwrap().remove(&cost);
@@ -2132,14 +2123,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
             move || {
-                let (do_now, dont_now) = (&disconnected::<()>(), &never::<()>());
-                let mut busy_start = Instant::now();
                 loop {
-                    let busy_waker = if busy_start.elapsed() < Duration::from_micros(10) {
-                        do_now
-                    } else {
-                        dont_now
-                    };
                     let (task, sender) = select_biased! {
                         recv(runnable_task_receiver.for_select()) -> message => {
                             let Ok(message) = message else {
@@ -2176,11 +2160,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             continue;
                         },
-                        recv(busy_waker) -> _ => {
-                            continue;
-                        },
                     };
-                    defer! { busy_start = Instant::now() }
                     defer! {
                         if !thread::panicking() {
                             return;

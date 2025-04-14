@@ -287,7 +287,6 @@ impl BankForks {
         self.banks
             .insert(bank.slot(), bank.clone_with_scheduler())
             .expect("some removed bank");
-        bank.unpause_new_block_production_scheduler();
         bank
     }
 
