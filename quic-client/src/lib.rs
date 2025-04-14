@@ -14,6 +14,7 @@ use {
         },
         quic_client::QuicClientConnection as BlockingQuicClientConnection,
     },
+    quic_client::get_runtime,
     quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_connection_cache::{
         connection_cache::{
@@ -147,6 +148,8 @@ impl QuicConfig {
     }
 
     pub fn update_client_endpoint(&mut self, client_socket: UdpSocket) {
+        let runtime = get_runtime();
+        let _guard = runtime.enter();
         let config = EndpointConfig::default();
         self.client_endpoint = Some(
             quinn::Endpoint::new(config, None, client_socket, Arc::new(TokioRuntime))
