@@ -47,6 +47,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use solana_core::banking_stage::NUM_VOTE_PROCESSING_THREADS;
 
 // transfer transaction cost = 1 * SIGNATURE_COST +
 //                             2 * WRITE_LOCK_UNITS +
