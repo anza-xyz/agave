@@ -21,8 +21,7 @@ use {
         reward_type::RewardType,
         stake::state::{Delegation, StakeStateV2},
     },
-    std::sync::atomic::Ordering::Relaxed,
-    std::sync::Arc,
+    std::sync::{atomic::Ordering::Relaxed, Arc},
     thiserror::Error,
 };
 
