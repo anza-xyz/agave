@@ -8549,9 +8549,7 @@ impl AccountsDb {
         };
         if secondary {
             // scan storage a second time to update the secondary index
-<<<<<<< HEAD
             storage.accounts.scan_accounts(|stored_account| {
-                stored_size_alive += stored_account.stored_size();
                 let pubkey = stored_account.pubkey();
                 self.accounts_index.update_secondary_indexes(
                     pubkey,
@@ -8559,18 +8557,6 @@ impl AccountsDb {
                     &self.account_indexes,
                 );
             });
-=======
-            storage
-                .accounts
-                .scan_accounts_stored_meta(|stored_account| {
-                    let pubkey = stored_account.pubkey();
-                    self.accounts_index.update_secondary_indexes(
-                        pubkey,
-                        &stored_account,
-                        &self.account_indexes,
-                    );
-                });
->>>>>>> 679ad8034 (Fixes storage alive size with secondary indexes (#5778))
         }
 
         if let Some(duplicates_this_slot) = std::mem::take(&mut generate_index_results.duplicates) {
