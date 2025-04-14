@@ -50,10 +50,7 @@ impl FromClapArgMatches for RunArgs {
             .map(|s| s.into())
             .unwrap_or_else(|| format!("agave-validator-{}.log", identity.pubkey()));
 
-        Ok(RunArgs {
-            identity: identity,
-            logfile: logfile,
-        })
+        Ok(RunArgs { identity, logfile })
     }
 }
 
@@ -1704,10 +1701,7 @@ mod tests {
             let identity = Keypair::new();
             let logfile = format!("agave-validator-{}.log", identity.pubkey());
 
-            RunArgs {
-                identity: identity,
-                logfile: logfile,
-            }
+            RunArgs { identity, logfile }
         }
     }
 
