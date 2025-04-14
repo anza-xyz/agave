@@ -605,13 +605,13 @@ impl BankWithScheduler {
                 {
                     info!(
                         "Reaped aborted tpu_bank with unified scheduler: {} {:?}",
-                        bank.slot(),
+                        self.slot(),
                         result
                     );
                 } else {
                     info!(
                         "Skipped to reap a tpu_bank (seems unified scheduler is disabled): {}",
-                        bank.slot()
+                        self.slot()
                     );
                 }
                 }
