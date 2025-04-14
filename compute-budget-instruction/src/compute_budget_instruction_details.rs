@@ -303,6 +303,8 @@ mod test {
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_compute_unit_limit: Some((1, u32::MAX)),
             num_non_compute_budget_instructions: Saturating(2),
+            num_non_builtin_instructions: Saturating(2),
+            num_non_migratable_builtin_instructions: Saturating(1),
             ..ComputeBudgetInstructionDetails::default()
         });
         assert_eq!(
