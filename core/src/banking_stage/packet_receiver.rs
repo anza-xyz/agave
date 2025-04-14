@@ -1,6 +1,7 @@
 use {
     super::{
         immutable_deserialized_packet::ImmutableDeserializedPacket,
+        latest_unprocessed_votes::VoteSource,
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_deserializer::{PacketDeserializer, ReceivePacketResults},
         vote_storage::VoteStorage,
@@ -32,6 +33,7 @@ impl PacketReceiver {
         vote_storage: &mut VoteStorage,
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
+        vote_source: VoteSource,
     ) -> Result<(), RecvTimeoutError> {
         let (result, recv_time_us) = measure_us!({
             let recv_timeout = Self::get_receive_timeout(vote_storage);
@@ -47,6 +49,7 @@ impl PacketReceiver {
                     self.buffer_packets(
                         receive_packet_results,
                         vote_storage,
+                        vote_source,
                         banking_stage_stats,
                         slot_metrics_tracker,
                     );
@@ -65,9 +68,7 @@ impl PacketReceiver {
     }
 
     fn get_receive_timeout(vote_storage: &VoteStorage) -> Duration {
-        // Gossip thread (does not process) should not continuously receive with 0 duration.
-        // This can cause the thread to run at 100% CPU because it is continuously polling.
-        if !vote_storage.should_not_process() && !vote_storage.is_empty() {
+        if !vote_storage.is_empty() {
             // If there are buffered packets, run the equivalent of try_recv to try reading more
             // packets. This prevents starving BankingStage::consume_buffered_packets due to
             // buffered_packet_batches containing transactions that exceed the cost model for
@@ -86,6 +87,7 @@ impl PacketReceiver {
             packet_stats,
         }: ReceivePacketResults,
         vote_storage: &mut VoteStorage,
+        vote_source: VoteSource,
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
@@ -99,6 +101,7 @@ impl PacketReceiver {
         let mut newly_buffered_forwarded_packets_count = 0;
         Self::push_unprocessed(
             vote_storage,
+            vote_source,
             deserialized_packets,
             &mut dropped_packets_count,
             &mut newly_buffered_packets_count,
@@ -123,6 +126,7 @@ impl PacketReceiver {
 
     fn push_unprocessed(
         vote_storage: &mut VoteStorage,
+        vote_source: VoteSource,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
         dropped_packets_count: &mut usize,
         newly_buffered_packets_count: &mut usize,
@@ -143,7 +147,8 @@ impl PacketReceiver {
             slot_metrics_tracker
                 .increment_newly_buffered_packets_count(deserialized_packets.len() as u64);
 
-            let vote_batch_insertion_metrics = vote_storage.insert_batch(deserialized_packets);
+            let vote_batch_insertion_metrics =
+                vote_storage.insert_batch(vote_source, deserialized_packets);
             slot_metrics_tracker
                 .accumulate_vote_batch_insertion_metrics(&vote_batch_insertion_metrics);
             saturating_add_assign!(

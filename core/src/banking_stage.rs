@@ -6,13 +6,9 @@
 use qualifier_attr::qualifiers;
 use {
     self::{
-        committer::Committer,
-        consumer::Consumer,
-        decision_maker::DecisionMaker,
-        latest_unprocessed_votes::{LatestUnprocessedVotes, VoteSource},
-        packet_receiver::PacketReceiver,
-        qos_service::QosService,
-        vote_storage::VoteStorage,
+        committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
+        latest_unprocessed_votes::LatestUnprocessedVotes, packet_receiver::PacketReceiver,
+        qos_service::QosService, vote_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -98,7 +94,6 @@ const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 #[derive(Debug, Default)]
 pub struct BankingStageStats {
     last_report: AtomicInterval,
-    id: String,
     receive_and_buffer_packets_count: AtomicUsize,
     dropped_packets_count: AtomicUsize,
     pub(crate) dropped_duplicated_packets_count: AtomicUsize,
@@ -119,9 +114,8 @@ pub struct BankingStageStats {
 }
 
 impl BankingStageStats {
-    pub fn new(id: u32) -> Self {
+    pub fn new() -> Self {
         BankingStageStats {
-            id: id.to_string(),
             batch_packet_indexes_len: Histogram::configure()
                 .max_value(PACKETS_PER_BATCH as u64)
                 .build()
@@ -162,8 +156,7 @@ impl BankingStageStats {
         }
         if self.last_report.should_update(report_interval_ms) {
             datapoint_info!(
-                "banking_stage-loop-stats",
-                "id" => self.id,
+                "banking_stage-vote_loop_stats",
                 (
                     "receive_and_buffer_packets_count",
                     self.receive_and_buffer_packets_count
@@ -429,22 +422,17 @@ impl BankingStage {
         // + 1 for the central scheduler thread
         let mut bank_thread_hdls = Vec::with_capacity(num_threads as usize + 1);
 
-        // Spawn legacy voting threads first: 1 gossip, 1 tpu
-        for (id, packet_receiver, vote_source) in [
-            (0, gossip_vote_receiver, VoteSource::Gossip),
-            (1, tpu_vote_receiver, VoteSource::Tpu),
-        ] {
-            bank_thread_hdls.push(Self::spawn_vote_worker(
-                id,
-                packet_receiver,
-                decision_maker.clone(),
-                bank_forks.clone(),
-                committer.clone(),
-                transaction_recorder.clone(),
-                log_messages_bytes_limit,
-                VoteStorage::new(latest_unprocessed_votes.clone(), vote_source),
-            ));
-        }
+        // Spawn legacy voting thread
+        bank_thread_hdls.push(Self::spawn_vote_worker(
+            tpu_vote_receiver,
+            gossip_vote_receiver,
+            decision_maker.clone(),
+            bank_forks.clone(),
+            committer.clone(),
+            transaction_recorder.clone(),
+            log_messages_bytes_limit,
+            VoteStorage::new(latest_unprocessed_votes.clone()),
+        ));
 
         match transaction_struct {
             TransactionStructure::Sdk => {
@@ -584,8 +572,8 @@ impl BankingStage {
     }
 
     fn spawn_vote_worker(
-        id: u32,
-        packet_receiver: BankingPacketReceiver,
+        tpu_receiver: BankingPacketReceiver,
+        gossip_receiver: BankingPacketReceiver,
         decision_maker: DecisionMaker,
         bank_forks: Arc<RwLock<BankForks>>,
         committer: Committer,
@@ -593,24 +581,25 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         vote_storage: VoteStorage,
     ) -> JoinHandle<()> {
-        let packet_receiver = PacketReceiver::new(id, packet_receiver);
+        let tpu_receiver = PacketReceiver::new(1, tpu_receiver);
+        let gossip_receiver = PacketReceiver::new(0, gossip_receiver);
         let consumer = Consumer::new(
             committer,
             transaction_recorder,
-            QosService::new(id),
+            QosService::new(0),
             log_messages_bytes_limit,
         );
 
         Builder::new()
-            .name(format!("solBanknStgTx{id:02}"))
+            .name("solBanknStgVote".to_string())
             .spawn(move || {
                 VoteWorker::new(
                     decision_maker,
-                    packet_receiver,
+                    tpu_receiver,
+                    gossip_receiver,
                     vote_storage,
                     bank_forks,
                     consumer,
-                    id,
                 )
                 .run()
             })
