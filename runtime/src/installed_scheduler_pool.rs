@@ -618,10 +618,6 @@ impl BankWithScheduler {
         }
     }
 
-    pub fn scheduling_mode(&self) -> Option<SchedulingMode> {
-        self.inner.scheduler.read().unwrap().scheduling_mode()
-    }
-
     pub const fn no_scheduler_available() -> InstalledSchedulerRwLock {
         RwLock::new(SchedulerStatus::Unavailable)
     }
