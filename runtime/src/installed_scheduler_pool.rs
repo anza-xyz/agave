@@ -497,17 +497,14 @@ impl BankWithScheduler {
     }
 
     pub fn has_installed_scheduler(&self) -> bool {
-        !matches!(
-            &*self.inner.scheduler.read().unwrap(),
-            SchedulerStatus::Unavailable
-        )
+        self.installed_scheduler_mode().is_some()
     }
 
-    fn has_installed_bp_scheduler(&self) -> bool {
-        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
-            matches!(scheduler.context().mode(), SchedulingMode::BlockProduction)
-        } else {
-            false
+    fn installed_scheduler_mode(&self) -> Option<SchedulingMode> {
+        match &*self.inner.scheduler.read().unwrap() {
+            SchedulerStatus::Unavailable => None,
+            SchedulerStatus::Active(scheduler) => Some(scheduler.context().mode()),
+            SchedulerStatus::Stale(_, _) => Some(SchedulingMode::BlockVerification),
         }
     }
 
@@ -591,10 +588,10 @@ impl BankWithScheduler {
     }
 
     pub fn ensure_return_abandoned_bp_scheduler_to_scheduler_pool(&self) {
-        if self.has_installed_bp_scheduler() {
+        if let Some(SchedulingMode::BlockProduction) = self.installed_scheduler_mode() {
             if let Some((result, _timings)) = self.wait_for_completed_scheduler() {
                 info!(
-                    "Reaped tpu_bank and returned abandoned bp scheduler: {} {:?}",
+                    "Reaped cleared tpu_bank and returned abandoned bp scheduler: {} {:?}",
                     self.slot(),
                     result
                 );
