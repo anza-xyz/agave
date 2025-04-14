@@ -5310,7 +5310,6 @@ dependencies = [
  "solana-fee-calculator",
  "solana-genesis-config",
  "solana-hash",
- "solana-inline-spl",
  "solana-lattice-hash",
  "solana-measure",
  "solana-message",
@@ -5329,6 +5328,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context 2.3.0",
  "solana-transaction-error",
+ "spl-generic-token",
  "static_assertions",
  "tar",
  "tempfile",
@@ -6418,14 +6418,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-inline-spl"
-version = "2.3.0"
-dependencies = [
- "bytemuck",
- "solana-pubkey",
-]
-
-[[package]]
 name = "solana-instruction"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7128,7 +7120,6 @@ dependencies = [
  "solana-banks-interface",
  "solana-banks-server",
  "solana-compute-budget",
- "solana-inline-spl",
  "solana-instruction",
  "solana-log-collector",
  "solana-logger",
@@ -7141,6 +7132,7 @@ dependencies = [
  "solana-timings",
  "solana-transaction-context 2.3.0",
  "solana-vote-program",
+ "spl-generic-token",
  "thiserror 2.0.12",
  "tokio",
 ]
@@ -7357,7 +7349,6 @@ dependencies = [
  "solana-entry",
  "solana-faucet",
  "solana-gossip",
- "solana-inline-spl",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
@@ -7382,6 +7373,7 @@ dependencies = [
  "solana-version",
  "solana-vote",
  "solana-vote-program",
+ "spl-generic-token",
  "spl-token 8.0.0",
  "spl-token-2022 8.0.0",
  "stream-cancel",
@@ -7478,11 +7470,11 @@ dependencies = [
  "solana-commitment-config",
  "solana-fee-calculator",
  "solana-inflation",
- "solana-inline-spl",
  "solana-pubkey",
  "solana-transaction-error",
  "solana-transaction-status-client-types",
  "solana-version",
+ "spl-generic-token",
  "thiserror 2.0.12",
 ]
 
@@ -7539,7 +7531,6 @@ dependencies = [
  "solana-compute-budget-instruction",
  "solana-cost-model",
  "solana-fee",
- "solana-inline-spl",
  "solana-lattice-hash",
  "solana-measure",
  "solana-metrics",
@@ -7566,6 +7557,7 @@ dependencies = [
  "solana-version",
  "solana-vote",
  "solana-vote-program",
+ "spl-generic-token",
  "static_assertions",
  "strum",
  "strum_macros",
@@ -9492,6 +9484,16 @@ dependencies = [
  "solana-zk-sdk",
  "spl-pod",
  "spl-token-confidential-transfer-proof-extraction 0.3.0",
+]
+
+[[package]]
+name = "spl-generic-token"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "741a62a566d97c58d33f9ed32337ceedd4e35109a686e31b1866c5dfa56abddc"
+dependencies = [
+ "bytemuck",
+ "solana-pubkey",
 ]
 
 [[package]]
