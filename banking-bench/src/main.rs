@@ -11,6 +11,7 @@ use {
         banking_stage::{
             unified_scheduler::ensure_banking_stage_setup,
             update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage,
+            NUM_VOTE_PROCESSING_THREADS,
         },
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::{BlockProductionMethod, TransactionStructure},
@@ -47,7 +48,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use solana_core::banking_stage::NUM_VOTE_PROCESSING_THREADS;
 
 // transfer transaction cost = 1 * SIGNATURE_COST +
 //                             2 * WRITE_LOCK_UNITS +
