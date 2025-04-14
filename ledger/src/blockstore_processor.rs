@@ -4957,10 +4957,9 @@ pub mod tests {
         let mut mocked_scheduler = MockInstalledScheduler::new();
         let seq = Arc::new(Mutex::new(mockall::Sequence::new()));
         let seq_cloned = seq.clone();
-        // Used for assertions in BankWithScheduler::{new, schedule_transaction_executions}
         mocked_scheduler
             .expect_context()
-            .times(2)
+            .times(1)
             .in_sequence(&mut seq.lock().unwrap())
             .return_const(context);
         if should_succeed {
