@@ -32,10 +32,6 @@ use {
     solana_entry::entry::Entry,
     solana_faucet::faucet::request_airdrop_transaction,
     solana_gossip::cluster_info::ClusterInfo,
-    spl_generic_token::{
-        token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
-        token_2022::{self, ACCOUNTTYPE_ACCOUNT},
-    },
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError, SignatureInfosForAddress},
         blockstore_meta::{PerfSample, PerfSampleV1, PerfSampleV2},
@@ -97,6 +93,10 @@ use {
         UiConfirmedBlock, UiTransactionEncoding,
     },
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
+    spl_generic_token::{
+        token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
+        token_2022::{self, ACCOUNTTYPE_ACCOUNT},
+    },
     spl_token_2022::{
         extension::{
             interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,

@@ -1752,8 +1752,8 @@ pub mod tests {
         crate::bucket_map_holder::{AtomicAge, BucketMapHolder},
         account_map_entry::AccountMapEntryMeta,
         solana_account::{AccountSharedData, WritableAccount},
-        spl_generic_token::token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
         solana_pubkey::PUBKEY_BYTES,
+        spl_generic_token::token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
         std::ops::{
             Bound::{Excluded, Included, Unbounded},
             RangeInclusive,
