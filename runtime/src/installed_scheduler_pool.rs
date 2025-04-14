@@ -503,6 +503,15 @@ impl BankWithScheduler {
         )
     }
 
+    fn has_installed_bp_scheduler(&self) -> bool {
+        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
+            matches!(scheduler.context().mode(), SchedulingMode::BlockProduction)
+        } else {
+            false
+        }
+    }
+
+
     /// Schedule the transaction as long as the scheduler hasn't been aborted.
     ///
     /// If the scheduler has been aborted, this doesn't schedule the transaction, instead just
@@ -582,16 +591,14 @@ impl BankWithScheduler {
         )
     }
 
-    pub fn return_completed_scheduler_to_bp_scheduler_pool(&self) {
-        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
-            if matches!(scheduler.context().mode(), SchedulingMode::BlockProduction) {
-                if let Some((result, _timings)) = self.wait_for_completed_scheduler() {
-                    info!(
-                        "Reaped aborted tpu_bank with unified scheduler: {} {:?}",
-                        self.slot(),
-                        result
-                    );
-                }
+    pub fn try_return_abandoned_bp_scheduler_to_scheduler_pool(&self) {
+        if self.has_installed_bp_scheduler() {
+            if let Some((result, _timings)) = self.wait_for_completed_scheduler() {
+                info!(
+                    "Reaped aborted tpu_bank with unified scheduler: {} {:?}",
+                    self.slot(),
+                    result
+                );
             }
         }
     }
@@ -814,7 +821,6 @@ mod tests {
             bank::test_utils::goto_end_of_slot_with_scheduler,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
-        assert_matches::assert_matches,
         mockall::Sequence,
         solana_sdk::system_transaction,
         std::sync::Mutex,

@@ -2849,7 +2849,7 @@ impl ReplayStage {
 
         let cleared_bank = poh_recorder.write().unwrap().reset(bank, next_leader_slot);
         if let Some(cleared_bank) = cleared_bank {
-            cleared_bank.return_completed_scheduler_to_bp_scheduler_pool();
+            cleared_bank.try_return_abandoned_bp_scheduler_to_scheduler_pool();
         }
 
         let next_leader_msg = if let Some(next_leader_slot) = next_leader_slot {
