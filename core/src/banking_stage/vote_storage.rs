@@ -15,11 +15,11 @@ const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
 
 #[derive(Debug)]
 pub struct VoteStorage {
-    latest_unprocessed_votes: Arc<LatestUnprocessedVotes>,
+    latest_unprocessed_votes: LatestUnprocessedVotes,
 }
 
 impl VoteStorage {
-    pub fn new(latest_unprocessed_votes: Arc<LatestUnprocessedVotes>) -> Self {
+    pub fn new(latest_unprocessed_votes: LatestUnprocessedVotes) -> Self {
         Self {
             latest_unprocessed_votes,
         }
@@ -129,7 +129,7 @@ mod tests {
 
         let latest_unprocessed_votes =
             LatestUnprocessedVotes::new_for_tests(&[vote_keypair.pubkey()]);
-        let mut transaction_storage = VoteStorage::new(Arc::new(latest_unprocessed_votes));
+        let mut transaction_storage = VoteStorage::new(latest_unprocessed_votes);
 
         transaction_storage.insert_batch(
             VoteSource::Tpu,

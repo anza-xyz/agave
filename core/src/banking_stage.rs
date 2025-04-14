@@ -409,7 +409,7 @@ impl BankingStage {
         // Keeps track of extraneous vote transactions for the vote threads
         let latest_unprocessed_votes = {
             let bank = bank_forks.read().unwrap().working_bank();
-            Arc::new(LatestUnprocessedVotes::new(&bank))
+            LatestUnprocessedVotes::new(&bank)
         };
 
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
@@ -431,7 +431,7 @@ impl BankingStage {
             committer.clone(),
             transaction_recorder.clone(),
             log_messages_bytes_limit,
-            VoteStorage::new(latest_unprocessed_votes.clone()),
+            VoteStorage::new(latest_unprocessed_votes),
         ));
 
         match transaction_struct {
