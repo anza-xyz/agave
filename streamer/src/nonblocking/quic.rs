@@ -931,6 +931,7 @@ async fn packet_batch_sender(
 
                     // The downstream channel is disconnected, this error is not recoverable.
                     if matches!(e, TrySendError::Disconnected(_)) {
+                        exit.store(true, Ordering::Relaxed);
                         return;
                     }
                 } else {
