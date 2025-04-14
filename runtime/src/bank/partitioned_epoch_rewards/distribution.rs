@@ -73,7 +73,7 @@ impl Bank {
             self.epoch_reward_status = EpochRewardStatus::Active(EpochRewardPhase::Distribution(
                 StartBlockHeightAndPartitionedRewards {
                     distribution_starting_block_height,
-                    all_stake_rewards: status.all_stake_rewards.clone(),
+                    all_stake_rewards: Arc::clone(&status.all_stake_rewards),
                     partition_indices,
                 },
             ));
