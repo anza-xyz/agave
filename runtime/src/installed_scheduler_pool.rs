@@ -590,7 +590,7 @@ impl BankWithScheduler {
         )
     }
 
-    pub fn try_return_abandoned_bp_scheduler_to_scheduler_pool(&self) {
+    pub fn ensure_return_abandoned_bp_scheduler_to_scheduler_pool(&self) {
         if self.has_installed_bp_scheduler() {
             if let Some((result, _timings)) = self.wait_for_completed_scheduler() {
                 info!(
