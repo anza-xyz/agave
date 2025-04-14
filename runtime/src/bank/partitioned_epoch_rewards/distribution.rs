@@ -257,22 +257,25 @@ impl Bank {
         let indices = partition_rewards
             .partition_indices
             .get(partition_index as usize)
-            .expect(&format!(
-                "partition index out of bound: {partition_index} >= {}",
-                partition_rewards.partition_indices.len()
-            ));
+            .unwrap_or_else(|| {
+                panic!(
+                    "partition index out of bound: {partition_index} >= {}",
+                    partition_rewards.partition_indices.len()
+                )
+            });
         let mut updated_stake_rewards = Vec::with_capacity(indices.len());
         let stakes_cache = self.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         for index in indices {
-            let partitioned_stake_reward =
-                partition_rewards
-                    .all_stake_rewards
-                    .get(*index)
-                    .expect(&format!(
+            let partitioned_stake_reward = partition_rewards
+                .all_stake_rewards
+                .get(*index)
+                .unwrap_or_else(|| {
+                    panic!(
                         "partition reward out of bound: {index} >= {}",
-                        partition_rewards.all_stake_rewards.len(),
-                    ));
+                        partition_rewards.all_stake_rewards.len()
+                    )
+                });
             let stake_pubkey = partitioned_stake_reward.stake_pubkey;
             let reward_amount = partitioned_stake_reward.stake_reward;
             match Self::build_updated_stake_reward(stakes_cache_accounts, partitioned_stake_reward)
@@ -519,7 +522,7 @@ mod tests {
         let partitioned_rewards = StartBlockHeightAndPartitionedRewards {
             distribution_starting_block_height: bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
             all_stake_rewards: Arc::new(stake_rewards),
-            partition_indices: partition_indices,
+            partition_indices,
         };
 
         // Test partitioned stores
