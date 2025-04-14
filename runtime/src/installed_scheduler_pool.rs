@@ -372,14 +372,6 @@ impl SchedulerStatus {
         }
     }
 
-    fn scheduling_mode(&self) -> Option<SchedulingMode> {
-        match self {
-            SchedulerStatus::Unavailable => None,
-            SchedulerStatus::Active(scheduler) => Some(scheduler.context().mode()),
-            SchedulerStatus::Stale(_, mode, _) => Some(*mode),
-        }
-    }
-
     fn transition_from_stale_to_active(
         &mut self,
         f: impl FnOnce(InstalledSchedulerPoolArc, ResultWithTimings) -> InstalledSchedulerBox,
