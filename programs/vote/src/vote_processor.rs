@@ -127,16 +127,12 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &signers,
                 sysvar_cache.get_epoch_schedule()?.as_ref(),
                 sysvar_cache.get_clock()?.as_ref(),
-                invoke_context.get_feature_set(),
             )
         }
         VoteInstruction::Vote(vote) | VoteInstruction::VoteSwitch(vote, _) => {
             if invoke_context
                 .get_feature_set()
                 .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
-                && invoke_context
-                    .get_feature_set()
-                    .is_active(&feature_set::enable_tower_sync_ix::id())
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
@@ -144,23 +140,13 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 get_sysvar_with_account_check::slot_hashes(invoke_context, instruction_context, 1)?;
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, instruction_context, 2)?;
-            vote_state::process_vote_with_account(
-                &mut me,
-                &slot_hashes,
-                &clock,
-                &vote,
-                &signers,
-                invoke_context.get_feature_set(),
-            )
+            vote_state::process_vote_with_account(&mut me, &slot_hashes, &clock, &vote, &signers)
         }
         VoteInstruction::UpdateVoteState(vote_state_update)
         | VoteInstruction::UpdateVoteStateSwitch(vote_state_update, _) => {
             if invoke_context
                 .get_feature_set()
                 .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
-                && invoke_context
-                    .get_feature_set()
-                    .is_active(&feature_set::enable_tower_sync_ix::id())
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
@@ -173,7 +159,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &clock,
                 vote_state_update,
                 &signers,
-                invoke_context.get_feature_set(),
             )
         }
         VoteInstruction::CompactUpdateVoteState(vote_state_update)
@@ -181,9 +166,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if invoke_context
                 .get_feature_set()
                 .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
-                && invoke_context
-                    .get_feature_set()
-                    .is_active(&feature_set::enable_tower_sync_ix::id())
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
@@ -196,17 +178,10 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &clock,
                 vote_state_update,
                 &signers,
-                invoke_context.get_feature_set(),
             )
         }
         VoteInstruction::TowerSync(tower_sync)
         | VoteInstruction::TowerSyncSwitch(tower_sync, _) => {
-            if !invoke_context
-                .get_feature_set()
-                .is_active(&feature_set::enable_tower_sync_ix::id())
-            {
-                return Err(InstructionError::InvalidInstructionData);
-            }
             let sysvar_cache = invoke_context.get_sysvar_cache();
             let slot_hashes = sysvar_cache.get_slot_hashes()?;
             let clock = sysvar_cache.get_clock()?;
@@ -216,7 +191,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &clock,
                 tower_sync,
                 &signers,
-                invoke_context.get_feature_set(),
             )
         }
         VoteInstruction::Withdraw(lamports) => {
