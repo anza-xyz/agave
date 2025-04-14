@@ -78,12 +78,9 @@ impl AppendVecScan for ScanState<'_> {
         let pubkey = loaded_account.pubkey();
         assert!(self.bin_range.contains(&self.pubkey_to_bin_index)); // get rid of this once we have confidence
 
+        // Check to see if the account is marked dead inside of the account storage entry
         if storage.is_account_dead(loaded_account.offset(), self.max_slot) {
-            /*println!(
-                "dead account found in scan {}, offset {}",
-                pubkey,
-                loaded_account.offset()
-            );*/
+
             return;
         }
 

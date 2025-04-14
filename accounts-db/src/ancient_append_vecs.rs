@@ -1904,7 +1904,6 @@ pub mod tests {
                                     expected_number_accounts_to_combine,
                                     "method: {method:?}, num_slots: {num_slots}, two_refs: {two_refs}, many_refs: {many_ref_slots:?}"
                                 );
-
                                 let expected_target_slots_sorted = if !two_refs
                                     || many_ref_slots == IncludeManyRefSlots::Include
                                     || num_slots == 1
