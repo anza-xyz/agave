@@ -2188,7 +2188,7 @@ pub mod tests {
             let account = shrink_in_progress
                 .new_storage()
                 .accounts
-                .get_stored_account_meta_callback(0, |account| {
+                .get_stored_account_callback(0, |account| {
                     assert_eq!(account.pubkey(), pk_with_2_refs);
                     account.to_account_shared_data()
                 })
@@ -2337,7 +2337,7 @@ pub mod tests {
             let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
             let accounts_shrunk_same_slot = storage
                 .accounts
-                .get_stored_account_meta_callback(0, |account| {
+                .get_stored_account_callback(0, |account| {
                     (*account.pubkey(), account.to_account_shared_data())
                 })
                 .unwrap();

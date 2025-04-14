@@ -7498,7 +7498,7 @@ fn test_combine_ancient_slots_append() {
                     }
                     let original_pubkey = original
                         .accounts
-                        .get_stored_account_meta_callback(0, |account| *account.pubkey())
+                        .get_stored_account_callback(0, |account| *account.pubkey())
                         .unwrap();
                     let slot = ancient_slot + 1 + (count_marked_dead as Slot);
                     _ = db.purge_keys_exact(
@@ -7542,7 +7542,7 @@ fn test_combine_ancient_slots_append() {
             for original in &originals {
                 let i = original
                     .accounts
-                    .get_stored_account_meta_callback(0, |original| {
+                    .get_stored_account_callback(0, |original| {
                         after_stored_accounts
                             .iter()
                             .enumerate()
