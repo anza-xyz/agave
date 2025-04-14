@@ -56,13 +56,11 @@ impl Bank {
             return;
         }
 
-        let FeeDistribution { deposit, mut burn } =
+        let FeeDistribution { deposit, burn } =
             self.calculate_reward_and_burn_fee_details(&fee_details);
 
-        if deposit > 0 {
-            self.deposit_or_burn_fee(deposit, &mut burn);
-        }
-        self.capitalization.fetch_sub(burn, Relaxed);
+        let total_burn = self.deposit_or_burn_fee(deposit).saturating_add(burn);
+        self.capitalization.fetch_sub(total_burn, Relaxed);
     }
 
     pub fn calculate_reward_for_transaction(
@@ -110,8 +108,12 @@ impl Bank {
         solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT as u64
     }
 
-    fn deposit_or_burn_fee(&self, deposit: u64, burn: &mut u64) {
-        match self.deposit_fees(&self.collector_id, deposit) {
+    fn deposit_or_burn_fee(&self, deposit: u64) -> u64 {
+        if deposit == 0 {
+            return 0;
+        }
+
+        let burn_undepositable_fund = match self.deposit_fees(&self.collector_id, deposit) {
             Ok(post_balance) => {
                 self.rewards.write().unwrap().push((
                     self.collector_id,
@@ -122,6 +124,7 @@ impl Bank {
                         commission: None,
                     },
                 ));
+                0
             }
             Err(err) => {
                 debug!(
@@ -134,9 +137,10 @@ impl Bank {
                     ("num_lamports", deposit, i64),
                     ("error", err.to_string(), String),
                 );
-                *burn = burn.saturating_add(deposit);
+                deposit
             }
-        }
+        };
+        burn_undepositable_fund
     }
 
     // Deposits fees into a specified account and if successful, returns the new balance of that account
@@ -340,6 +344,13 @@ pub mod tests {
     };
 
     #[test]
+    fn test_deposit_or_burn_zero_fee() {
+        let genesis = create_genesis_config(0);
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        assert_eq!(bank.deposit_or_burn_fee(0), 0);
+    }
+
+    #[test]
     fn test_deposit_or_burn_fee() {
         #[derive(PartialEq)]
         enum Scenario {
@@ -391,7 +402,7 @@ pub mod tests {
 
             let initial_burn = burn;
             let initial_collector_id_balance = bank.get_balance(bank.collector_id());
-            bank.deposit_or_burn_fee(deposit, &mut burn);
+            burn += bank.deposit_or_burn_fee(deposit);
             let new_collector_id_balance = bank.get_balance(bank.collector_id());
 
             if test_case.scenario != Scenario::Normal {
