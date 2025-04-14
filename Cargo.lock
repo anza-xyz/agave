@@ -6429,6 +6429,7 @@ dependencies = [
  "solana-stake-interface",
  "solana-sysvar",
  "solana-vote-interface",
+ "spl-generic-token",
  "spl-pod",
  "spl-token 8.0.0",
  "spl-token-2022 8.0.0",
