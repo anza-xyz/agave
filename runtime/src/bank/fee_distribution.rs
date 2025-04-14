@@ -29,15 +29,9 @@ enum DepositFeeError {
 }
 
 #[derive(Default)]
-struct BurnedTransactionFee {
+struct FeeDistribution {
     deposit: u64,
     burn: u64,
-}
-
-impl BurnedTransactionFee {
-    fn add_deposit(&mut self, deposit: u64) {
-        self.deposit = self.deposit.saturating_add(deposit);
-    }
 }
 
 impl Bank {
@@ -62,7 +56,7 @@ impl Bank {
             return;
         }
 
-        let BurnedTransactionFee { deposit, mut burn } =
+        let FeeDistribution { deposit, mut burn } =
             self.calculate_reward_and_burn_fee_details(&fee_details);
 
         if deposit > 0 {
@@ -85,7 +79,7 @@ impl Bank {
             fee_budget_limits.prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),
         );
-        let BurnedTransactionFee {
+        let FeeDistribution {
             deposit: reward,
             burn: _,
         } = self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details));
@@ -95,28 +89,24 @@ impl Bank {
     pub fn calculate_reward_and_burn_fee_details(
         &self,
         fee_details: &CollectorFeeDetails,
-    ) -> BurnedTransactionFee {
+    ) -> FeeDistribution {
         if fee_details.transaction_fee == 0 {
-            return BurnedTransactionFee::default();
+            return FeeDistribution::default();
         }
 
-        let mut burned_fee = self.burn_transaction_fee(fee_details.transaction_fee);
-        burned_fee.add_deposit(fee_details.priority_fee);
-        burned_fee
-    }
-
-    fn burn_transaction_fee(&self, fees: u64) -> BurnedTransactionFee {
-        let burn = fees * self.burn_percent() / 100;
-        BurnedTransactionFee {
-            deposit: fees - burn,
-            burn,
-        }
+        let burn = fee_details.transaction_fee * self.burn_percent() / 100;
+        let deposit = fee_details
+            .priority_fee
+            .saturating_add(fee_details.transaction_fee.saturating_sub(burn));
+        FeeDistribution { deposit, burn }
     }
 
     const fn burn_percent(&self) -> u64 {
         // NOTE: burn percent is statically 50%, in case it needs to change in the future,
         // burn_percent can be bank property that being passed down from bank to bank, without
         // needing fee-rate-governor
+        static_assertions::const_assert!(solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT <= 100);
+
         solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT as u64
     }
 
@@ -712,11 +702,8 @@ pub mod tests {
             transaction_fee,
             priority_fee,
         });
-        let BurnedTransactionFee {
-            deposit: expected_deposit,
-            burn: expected_burn,
-        } = bank.burn_transaction_fee(transaction_fee);
-        let expected_rewards = expected_deposit + priority_fee;
+        let expected_burn = transaction_fee * bank.burn_percent() / 100;
+        let expected_rewards = transaction_fee - expected_burn + priority_fee;
 
         let initial_capitalization = bank.capitalization();
         let initial_collector_id_balance = bank.get_balance(bank.collector_id());
