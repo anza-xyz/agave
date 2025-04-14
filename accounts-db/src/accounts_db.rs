@@ -7895,6 +7895,12 @@ impl AccountsDb {
             let mut info = storage_info.entry(store_id).or_default();
             info.stored_size += stored_size_alive;
             info.count += generate_index_results.count;
+
+            // sanity check that stored_size is not larger than the size of the accounts files.
+            assert!(info.stored_size <= storage.accounts.len(), "
+                Stored size ({}) is larger than the size of the accounts file ({}) for store_id: {}",
+                info.stored_size, storage.accounts.len(), store_id
+            );
         }
 
         // dirty_pubkeys will contain a pubkey if an item has multiple rooted entries for
