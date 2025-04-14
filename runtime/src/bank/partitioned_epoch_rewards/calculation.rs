@@ -66,7 +66,7 @@ impl Bank {
 
         let num_partitions = self.get_reward_distribution_num_blocks(&stake_rewards);
 
-        self.set_epoch_reward_status_calculated(distribution_starting_block_height, stake_rewards);
+        self.set_epoch_reward_status_calculation(distribution_starting_block_height, stake_rewards);
 
         self.create_epoch_rewards_sysvar(
             distributed_rewards,
@@ -472,7 +472,7 @@ impl Bank {
                 reward_calc_tracer,
                 thread_pool,
             );
-            self.set_epoch_reward_status_partitioned(
+            self.set_epoch_reward_status_distribution(
                 epoch_rewards_sysvar.distribution_starting_block_height,
                 Arc::new(stake_rewards),
                 partition_indices,
@@ -881,6 +881,15 @@ mod tests {
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         let (recalculated_rewards, recalculated_partition_indices) =
             bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer(), &thread_pool);
+
+        // Note that recalculated rewards are **NOT** the same as expected
+        // rewards, which were calculated before any distribution. This is
+        // because "Recalculated rewards" doesn't include already distributed
+        // stake rewards. Therefore, the partition_indices are different too.
+        // However, the actual rewards for the remaining partitions should be
+        // the same. The following code use the test helper function to build
+        // the partitioned stake rewards for the remaining partitions and verify
+        // that they are the same.
         let recalculated_rewards =
             build_partitioned_stake_rewards(&recalculated_rewards, &recalculated_partition_indices);
         assert_eq!(
@@ -1051,6 +1060,15 @@ mod tests {
         else {
             panic!("{:?} not active", bank.epoch_reward_status);
         };
+
+        // Note that recalculated rewards are **NOT** the same as expected
+        // rewards, which were calculated before any distribution. This is
+        // because "Recalculated rewards" doesn't include already distributed
+        // stake rewards. Therefore, the partition_indices are different too.
+        // However, the actual rewards for the remaining partitions should be
+        // the same. The following code use the test helper function to build
+        // the partitioned stake rewards for the remaining partitions and verify
+        // that they are the same.
         let recalculated_rewards =
             build_partitioned_stake_rewards(recalculated_rewards, partition_indices);
         assert_eq!(

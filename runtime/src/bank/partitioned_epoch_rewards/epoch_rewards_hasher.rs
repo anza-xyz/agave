@@ -29,15 +29,12 @@ mod tests {
     use {
         super::*,
         crate::bank::{
-            partitioned_epoch_rewards::{
-                tests::build_partitioned_stake_rewards, PartitionedStakeReward,
-                PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS,
-            },
+            partitioned_epoch_rewards::{PartitionedStakeReward, REWARD_CALCULATION_NUM_BLOCKS},
             tests::create_genesis_config,
             Bank,
         },
         solana_sdk::{epoch_schedule::EpochSchedule, native_token::LAMPORTS_PER_SOL},
-        std::{collections::HashMap, sync::Arc},
+        std::sync::Arc,
     };
 
     #[test]
@@ -49,55 +46,24 @@ mod tests {
             .map(|_| PartitionedStakeReward::new_random())
             .collect::<Vec<_>>();
 
-        let total = stake_rewards
-            .iter()
-            .map(|stake_reward| stake_reward.stake_reward)
-            .sum::<u64>();
-
         let partition_indices = hash_rewards_into_partitions(&stake_rewards, &Hash::default(), 5);
-        let stake_rewards_in_bucket =
-            build_partitioned_stake_rewards(&stake_rewards, &partition_indices);
-
-        let stake_rewards_in_bucket_clone =
-            stake_rewards_in_bucket.iter().flatten().cloned().collect();
-        compare(&stake_rewards, &stake_rewards_in_bucket_clone);
-
-        let total_after_hash_partition = stake_rewards_in_bucket
-            .iter()
-            .flatten()
-            .map(|stake_reward| stake_reward.stake_reward)
-            .sum::<u64>();
-
-        let total_num_after_hash_partition: usize =
-            stake_rewards_in_bucket.iter().map(|x| x.len()).sum();
+        let total_num_after_hash_partition: usize = partition_indices.iter().map(|x| x.len()).sum();
 
         // assert total is same, so nothing is dropped or duplicated
-        assert_eq!(total, total_after_hash_partition);
         assert_eq!(expected_num, total_num_after_hash_partition);
     }
 
     #[test]
     fn test_hash_rewards_into_partitions_empty() {
         let stake_rewards = vec![];
-        let total = 0;
 
         let num_partitions = 5;
         let partition_indices =
             hash_rewards_into_partitions(&stake_rewards, &Hash::default(), num_partitions);
-        let stake_rewards_in_bucket =
-            build_partitioned_stake_rewards(&stake_rewards, &partition_indices);
 
-        let total_after_hash_partition = stake_rewards_in_bucket
-            .iter()
-            .flatten()
-            .map(|stake_reward| stake_reward.stake_reward)
-            .sum::<u64>();
-
-        assert_eq!(total, total_after_hash_partition);
-
-        assert_eq!(stake_rewards_in_bucket.len(), num_partitions);
-        for bucket in stake_rewards_in_bucket.iter().take(num_partitions) {
-            assert!(bucket.is_empty());
+        assert_eq!(partition_indices.len(), num_partitions);
+        for indices in partition_indices.iter().take(num_partitions) {
+            assert!(indices.is_empty());
         }
     }
 
@@ -119,7 +85,7 @@ mod tests {
         let partition_indices =
             hash_rewards_into_partitions(&stake_rewards, &Hash::new_from_array([1; 32]), 10);
 
-        bank.set_epoch_reward_status_partitioned(
+        bank.set_epoch_reward_status_distribution(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
             Arc::new(stake_rewards),
             partition_indices.clone(),
@@ -127,17 +93,5 @@ mod tests {
 
         // This call should panic, i.e. 15 is out of the num_credit_blocks
         let _range = &partition_indices[15];
-    }
-
-    fn compare(a: &PartitionedStakeRewards, b: &PartitionedStakeRewards) {
-        let mut a = a
-            .iter()
-            .map(|stake_reward| (stake_reward.stake_pubkey, stake_reward.clone()))
-            .collect::<HashMap<_, _>>();
-        b.iter().for_each(|stake_reward| {
-            let reward = a.remove(&stake_reward.stake_pubkey).unwrap();
-            assert_eq!(&reward, stake_reward);
-        });
-        assert!(a.is_empty());
     }
 }

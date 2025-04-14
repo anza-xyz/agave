@@ -185,7 +185,7 @@ impl Bank {
         }
     }
 
-    pub(crate) fn set_epoch_reward_status_calculated(
+    pub(crate) fn set_epoch_reward_status_calculation(
         &mut self,
         distribution_starting_block_height: u64,
         stake_rewards: Vec<PartitionedStakeReward>,
@@ -197,7 +197,7 @@ impl Bank {
             }));
     }
 
-    pub(crate) fn set_epoch_reward_status_partitioned(
+    pub(crate) fn set_epoch_reward_status_distribution(
         &mut self,
         distribution_starting_block_height: u64,
         all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
@@ -489,7 +489,7 @@ mod tests {
 
         let partition_indices = vec![(0..expected_num).collect()];
 
-        bank.set_epoch_reward_status_partitioned(
+        bank.set_epoch_reward_status_distribution(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
             Arc::new(stake_rewards),
             partition_indices,
