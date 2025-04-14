@@ -878,7 +878,7 @@ mod tests {
             validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
         solana_gossip::cluster_info::{ClusterInfo, Node},
-        solana_inline_spl::token,
+        spl_generic_token::token,
         solana_ledger::{
             create_new_tmp_ledger,
             genesis_utils::{

@@ -52,7 +52,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-genesis-config = { workspace = true, features = ["serde"] }
 solana-hash = { workspace = true, features = ["serde"] }
-solana-inline-spl = { workspace = true }
+spl-generic-token = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-lattice-hash = { workspace = true }
 solana-measure = { workspace = true }

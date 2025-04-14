@@ -42,7 +42,7 @@ use {
     solana_cost_model::block_cost_limits::{
         MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0207, MAX_BLOCK_UNITS_SIMD_0256,
     },
-    solana_inline_spl::token,
+    spl_generic_token::token,
     solana_logger,
     solana_program_runtime::{
         declare_process_instruction,

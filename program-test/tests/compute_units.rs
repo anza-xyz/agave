@@ -25,7 +25,7 @@ async fn max_compute_units() {
     // Invalid compute unit maximums are only triggered by BPF programs, so send
     // a valid instruction into a BPF program to make sure the issue doesn't
     // manifest.
-    let token_2022_id = solana_inline_spl::token_2022::id();
+    let token_2022_id = spl_generic_token::token_2022::id();
     let mint = Keypair::new();
     let rent = context.banks_client.get_rent().await.unwrap();
     let space = 82;

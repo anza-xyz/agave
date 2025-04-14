@@ -61,7 +61,6 @@ members = [
     "geyser-plugin-interface",
     "geyser-plugin-manager",
     "gossip",
-    "inline-spl",
     "install",
     "keygen",
     "lattice-hash",
@@ -450,7 +449,6 @@ solana-gossip = { path = "gossip", version = "=2.3.0" }
 solana-hard-forks = "2.2.1"
 solana-hash = "2.2.1"
 solana-inflation = "2.2.1"
-solana-inline-spl = { path = "inline-spl", version = "=2.3.0" }
 solana-instruction = "2.2.1"
 solana-instructions-sysvar = "2.2.1"
 solana-keccak-hasher = "2.2.1"
@@ -577,6 +575,7 @@ solana-zk-sdk = { path = "zk-sdk", version = "=2.3.0" }
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.3.0" }
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.3.0" }
 spl-associated-token-account = "=6.0.0"
+spl-generic-token = "1.0.1"
 spl-instruction-padding = "0.3"
 spl-memo = "=6.0.0"
 spl-pod = "=0.5.1"

@@ -1849,14 +1849,14 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
 
     // Set up account to be added to secondary index
     let mint_key = Pubkey::new_unique();
-    let mut account_data_with_mint = vec![0; solana_inline_spl::token::Account::get_packed_len()];
+    let mut account_data_with_mint = vec![0; spl_generic_token::token::Account::get_packed_len()];
     account_data_with_mint[..PUBKEY_BYTES].clone_from_slice(&(mint_key.to_bytes()));
 
     let mut normal_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-    normal_account.set_owner(solana_inline_spl::token::id());
+    normal_account.set_owner(spl_generic_token::token::id());
     normal_account.set_data(account_data_with_mint.clone());
     let mut zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-    zero_account.set_owner(solana_inline_spl::token::id());
+    zero_account.set_owner(spl_generic_token::token::id());
     zero_account.set_data(account_data_with_mint);
 
     //store an account

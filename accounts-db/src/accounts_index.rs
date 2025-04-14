@@ -1219,7 +1219,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .unwrap_or(0)
     }
 
-    fn update_spl_token_secondary_indexes<G: solana_inline_spl::token::GenericTokenAccount>(
+    fn update_spl_token_secondary_indexes<G: spl_generic_token::token::GenericTokenAccount>(
         &self,
         token_id: &Pubkey,
         pubkey: &Pubkey,
@@ -1310,15 +1310,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // (as persisted tombstone for snapshots). This will then ultimately be
         // filtered out by post-scan filters, like in `get_filtered_spl_token_accounts_by_owner()`.
 
-        self.update_spl_token_secondary_indexes::<solana_inline_spl::token::Account>(
-            &solana_inline_spl::token::id(),
+        self.update_spl_token_secondary_indexes::<spl_generic_token::token::Account>(
+            &spl_generic_token::token::id(),
             pubkey,
             account_owner,
             account_data,
             account_indexes,
         );
-        self.update_spl_token_secondary_indexes::<solana_inline_spl::token_2022::Account>(
-            &solana_inline_spl::token_2022::id(),
+        self.update_spl_token_secondary_indexes::<spl_generic_token::token_2022::Account>(
+            &spl_generic_token::token_2022::id(),
             pubkey,
             account_owner,
             account_data,
@@ -1752,7 +1752,7 @@ pub mod tests {
         crate::bucket_map_holder::{AtomicAge, BucketMapHolder},
         account_map_entry::AccountMapEntryMeta,
         solana_account::{AccountSharedData, WritableAccount},
-        solana_inline_spl::token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
+        spl_generic_token::token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
         solana_pubkey::PUBKEY_BYTES,
         std::ops::{
             Bound::{Excluded, Included, Unbounded},
@@ -1761,8 +1761,8 @@ pub mod tests {
     };
 
     const SPL_TOKENS: &[Pubkey] = &[
-        solana_inline_spl::token::id(),
-        solana_inline_spl::token_2022::id(),
+        spl_generic_token::token::id(),
+        spl_generic_token::token_2022::id(),
     ];
 
     pub enum SecondaryIndexTypes<'a> {
@@ -3055,7 +3055,7 @@ pub mod tests {
     }
 
     fn make_empty_token_account_data() -> Vec<u8> {
-        vec![0; solana_inline_spl::token::Account::get_packed_len()]
+        vec![0; spl_generic_token::token::Account::get_packed_len()]
     }
 
     fn run_test_purge_exact_secondary_index<
@@ -3085,7 +3085,7 @@ pub mod tests {
                 &AccountSharedData::create(
                     0,
                     account_data.to_vec(),
-                    solana_inline_spl::token::id(),
+                    spl_generic_token::token::id(),
                     false,
                     0,
                 ),

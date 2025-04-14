@@ -1,5 +1,5 @@
 use {
-    solana_inline_spl::{token::GenericTokenAccount, token_2022::Account},
+    spl_generic_token::{token::GenericTokenAccount, token_2022::Account},
     solana_rpc_client_api::filter::RpcFilterType,
     solana_sdk::account::{AccountSharedData, ReadableAccount},
 };

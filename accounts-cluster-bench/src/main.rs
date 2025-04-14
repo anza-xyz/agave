@@ -13,7 +13,7 @@ use {
         rpc_request::MAX_GET_CONFIRMED_BLOCKS_RANGE, transaction_executor::TransactionExecutor,
     },
     solana_gossip::gossip_service::discover,
-    solana_inline_spl::token,
+    spl_generic_token::token,
     solana_measure::measure::Measure,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::TokenAccountsFilter,
