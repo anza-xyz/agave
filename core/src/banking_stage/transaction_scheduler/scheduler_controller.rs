@@ -380,7 +380,7 @@ where
 
         while transaction_ids.len() < MAX_TRANSACTION_CHECKS {
             let Some(id) = self.container.pop() else {
-                break
+                break;
             };
             transaction_ids.push(id);
         }
