@@ -950,9 +950,9 @@ impl TestValidator {
         )?;
 
         let node_config = NodeConfig {
-            gossip_addr: config.node_config.gossip_addr.clone(),
-            port_range: config.node_config.port_range.clone(),
-            bind_ip_addr: config.node_config.bind_ip_addr.clone(),
+            gossip_addr: config.node_config.gossip_addr,
+            port_range: config.node_config.port_range,
+            bind_ip_addr: config.node_config.bind_ip_addr,
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
             num_quic_endpoints: NonZero::new(1).unwrap(),
