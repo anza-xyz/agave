@@ -96,7 +96,7 @@ impl Bank {
         else {
             // We should never get here.
             unreachable!(
-                "epoch rewards status is not partitioned, but we are trying to distribute rewards"
+                "epoch rewards status is not in distribution phase, but we are trying to distribute rewards"
             );
         };
 
