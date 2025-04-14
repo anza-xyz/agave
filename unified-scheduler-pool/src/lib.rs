@@ -298,10 +298,10 @@ impl CommonHandlerContext {
 struct BankingStageHandlerContext {
     banking_thread_count: CountOrDefault,
     banking_packet_receiver: BankingPacketReceiver,
-    banking_stage_monitor: Box<dyn BankingStageMonitor>,
     #[debug("{banking_packet_handler:p}")]
     banking_packet_handler: Box<dyn BankingPacketHandler>,
     transaction_recorder: TransactionRecorder,
+    banking_stage_monitor: Box<dyn BankingStageMonitor>,
 }
 
 trait_set! {
@@ -750,16 +750,16 @@ where
         &self,
         banking_thread_count: CountOrDefault,
         banking_packet_receiver: BankingPacketReceiver,
-        banking_stage_monitor: Box<dyn BankingStageMonitor>,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
         transaction_recorder: TransactionRecorder,
+        banking_stage_monitor: Box<dyn BankingStageMonitor>,
     ) {
         *self.banking_stage_handler_context.lock().unwrap() = Some(BankingStageHandlerContext {
             banking_thread_count,
             banking_packet_receiver,
-            banking_stage_monitor,
             banking_packet_handler,
             transaction_recorder,
+            banking_stage_monitor,
         });
         // Immediately start a block production scheduler, so that the scheduler can start
         // buffering tasks, which are preprocessed as much as possible.
@@ -3820,9 +3820,9 @@ mod tests {
             pool.register_banking_stage(
                 None,
                 banking_packet_receiver,
-                Box::new(DummyBankingMinitor),
                 Box::new(|_, _| unreachable!()),
                 transaction_recorder,
+                Box::new(DummyBankingMinitor),
             );
         }
 
@@ -3953,9 +3953,9 @@ mod tests {
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
-            Box::new(DummyBankingMinitor),
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         let bank = Arc::new(Bank::new_from_parent(
@@ -4575,10 +4575,10 @@ mod tests {
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
-            Box::new(DummyBankingMinitor),
             // we don't use the banking packet channel in this test. so, pass panicking handler.
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         assert_eq!(bank.transaction_count(), 0);
@@ -4658,9 +4658,9 @@ mod tests {
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
-            Box::new(DummyBankingMinitor),
             fixed_banking_packet_handler,
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         // Confirm the banking packet channel is cleared, even before taking scheduler
@@ -4732,9 +4732,9 @@ mod tests {
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
-            Box::new(DummyBankingMinitor),
             fixed_banking_packet_handler,
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         // Quickly take and return the scheduler so that this test can test the behavior while
@@ -4818,9 +4818,9 @@ mod tests {
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
-            Box::new(DummyBankingMinitor),
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         let context = SchedulingContext::for_production(bank.clone());
@@ -4873,9 +4873,9 @@ mod tests {
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
-            Box::new(DummyBankingMinitor),
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         let context = SchedulingContext::for_production(bank);
@@ -4936,9 +4936,9 @@ mod tests {
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
-            Box::new(DummyBankingMinitor),
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         // Make sure the assertion in BlockProductionSchedulerInner::can_put() doesn't cause false

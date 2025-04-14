@@ -96,8 +96,8 @@ pub(crate) fn ensure_banking_stage_setup(
     pool.register_banking_stage(
         Some(num_threads.try_into().unwrap()),
         unified_receiver,
-        banking_stage_monitor,
         banking_packet_handler,
         transaction_recorder,
+        banking_stage_monitor,
     );
 }

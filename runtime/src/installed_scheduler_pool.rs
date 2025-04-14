@@ -511,7 +511,6 @@ impl BankWithScheduler {
         }
     }
 
-
     /// Schedule the transaction as long as the scheduler hasn't been aborted.
     ///
     /// If the scheduler has been aborted, this doesn't schedule the transaction, instead just
@@ -595,7 +594,7 @@ impl BankWithScheduler {
         if self.has_installed_bp_scheduler() {
             if let Some((result, _timings)) = self.wait_for_completed_scheduler() {
                 info!(
-                    "Reaped aborted tpu_bank with unified scheduler: {} {:?}",
+                    "Reaped tpu_bank and returned abandoned bp scheduler: {} {:?}",
                     self.slot(),
                     result
                 );
