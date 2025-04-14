@@ -8,7 +8,11 @@ use {
     rand::{thread_rng, Rng},
     rayon::prelude::*,
     solana_core::{
-        banking_stage::{update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage},
+        banking_stage::{
+            unified_scheduler::ensure_banking_stage_setup,
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage,
+            NUM_VOTE_PROCESSING_THREADS,
+        },
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::{BlockProductionMethod, TransactionStructure},
     },
@@ -36,6 +40,8 @@ use {
         transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
+    solana_unified_scheduler_logic::SchedulingMode,
+    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     std::{
         sync::{atomic::Ordering, Arc, RwLock},
         thread::sleep,
@@ -453,6 +459,33 @@ fn main() {
         ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
     };
     let cluster_info = Arc::new(cluster_info);
+    let banking_tracer_channels = if matches!(
+        block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
+        let pool = DefaultSchedulerPool::new(
+            SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
+            None,
+            None,
+            None,
+            Some(replay_vote_sender.clone()),
+            prioritization_fee_cache.clone(),
+        );
+        let channels = banking_tracer.create_channels_for_scheduler_pool(&pool);
+        ensure_banking_stage_setup(
+            &pool,
+            &bank_forks,
+            &channels,
+            &cluster_info,
+            &poh_recorder,
+            transaction_recorder.clone(),
+            num_banking_threads - NUM_VOTE_PROCESSING_THREADS,
+        );
+        bank_forks.write().unwrap().install_scheduler_pool(pool);
+        channels
+    } else {
+        banking_tracer.create_channels(false)
+    };
     let Channels {
         non_vote_sender,
         non_vote_receiver,
@@ -460,9 +493,9 @@ fn main() {
         tpu_vote_receiver,
         gossip_vote_sender,
         gossip_vote_receiver,
-    } = banking_tracer.create_channels(false);
+    } = banking_tracer_channels;
     let banking_stage = BankingStage::new_num_threads(
-        block_production_method,
+        block_production_method.clone(),
         transaction_struct,
         &cluster_info,
         &poh_recorder,
@@ -477,6 +510,18 @@ fn main() {
         bank_forks.clone(),
         &prioritization_fee_cache,
     );
+
+    // This bench processes transactions, starting from the very first bank, so special-casing is
+    // needed for unified scheduler.
+    if matches!(
+        block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
+        bank = bank_forks
+            .write()
+            .unwrap()
+            .reinstall_block_production_scheduler_into_working_genesis_bank();
+    }
 
     // This is so that the signal_receiver does not go out of scope after the closure.
     // If it is dropped before poh_service, then poh_service will error when
@@ -538,10 +583,11 @@ fn main() {
             tx_total_us += now.elapsed().as_micros() as u64;
 
             let mut poh_time = Measure::start("poh_time");
-            poh_recorder
+            let cleared_bank = poh_recorder
                 .write()
                 .unwrap()
                 .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
+            assert_matches!(cleared_bank, None);
             poh_time.stop();
 
             let mut new_bank_time = Measure::start("new_bank");

@@ -1028,6 +1028,17 @@ pub fn execute(
         "block_production_method",
         BlockProductionMethod
     )
+    .inspect(|method| {
+        if matches!(method, BlockProductionMethod::UnifiedScheduler)
+            && !matches.is_present("enable_experimental_block_production_method")
+        {
+            eprintln!(
+                "Currently, the unified-scheduler method is experimental for block-production. \
+                 Explicitly pass --enable-experimental-block-production-method to use it."
+            );
+            exit(1);
+        }
+    })
     .unwrap_or_default();
     validator_config.transaction_struct = value_t!(
         matches, // comment to align formatting...
