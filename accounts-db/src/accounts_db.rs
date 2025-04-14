@@ -8539,7 +8539,6 @@ impl AccountsDb {
             storage
                 .accounts
                 .scan_accounts_stored_meta(|stored_account| {
-                    stored_size_alive += stored_account.stored_size();
                     let pubkey = stored_account.pubkey();
                     self.accounts_index.update_secondary_indexes(
                         pubkey,
