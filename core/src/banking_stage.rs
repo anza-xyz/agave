@@ -90,6 +90,7 @@ pub const NUM_THREADS: u32 = 6;
 
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const NUM_VOTE_PROCESSING_THREADS: u32 = 2;
 const MIN_THREADS_BANKING: u32 = 1;
 const MIN_TOTAL_THREADS: u32 = NUM_VOTE_PROCESSING_THREADS + MIN_THREADS_BANKING;
