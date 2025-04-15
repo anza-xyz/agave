@@ -2,7 +2,7 @@
 //! packets to a node that is or will be leader soon.
 
 use {
-    crate::next_leader::{next_leader_tpu_vote, next_leaders},
+    crate::next_leader::next_leaders,
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     async_trait::async_trait,
@@ -21,9 +21,9 @@ use {
     },
     solana_sdk::{
         fee::FeeBudgetLimits, packet, quic::NotifyKeyUpdate, signer::keypair::Keypair,
-        transaction::MessageHash,
+        transaction::MessageHash, transport::TransportError,
     },
-    solana_streamer::sendmmsg::batch_send,
+    solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_tpu_client_next::{
         connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::LeaderUpdater,
@@ -58,6 +58,19 @@ pub enum ForwardingClientOption<'a> {
 /// this should be evaluated with new stage.
 const FORWARD_BATCH_SIZE: usize = 128;
 
+/// How far ahead to look in the leader schedule when determining forwarding
+/// addresses. The unit is `NUM_CONSECUTIVE_LEADER_SLOTS`.
+///
+/// This lookahead is needed because the immediate next leader might not have
+/// shared their forwarding ports. In such cases, we skip them and attempt to
+/// forward to the next available leader (up to this limit).
+///
+/// The value is chosen to ensure that the likelihood of the same leader occupying
+/// all lookahead slots is negligible.
+const NUM_LOOKAHEAD_LEADERS: u64 = 3;
+
+/// [`ForwardAddressGetter`] provides helper methods for retrieving forwarding
+/// addresses for both vote and non-vote transactions.
 #[derive(Clone)]
 pub(crate) struct ForwardAddressGetter {
     cluster_info: Arc<ClusterInfo>,
@@ -72,17 +85,23 @@ impl ForwardAddressGetter {
         }
     }
 
+    /// Returns a list of forwarding addresses for non-vote transactions.
     fn get_non_vote_forwarding_addresses(
         &self,
         max_count: u64,
         protocol: Protocol,
-    ) -> Vec<Option<SocketAddr>> {
+    ) -> Vec<SocketAddr> {
         next_leaders(&self.cluster_info, &self.poh_recorder, max_count, |node| {
             node.tpu_forwards(protocol)
         })
     }
-    fn get_vote_forwarding_addresses(&self) -> Option<SocketAddr> {
-        next_leader_tpu_vote(&self.cluster_info, &self.poh_recorder).map(|(_, s)| s)
+
+    /// Returns the TPU vote forwarding address of the next leader, if
+    /// available.
+    fn get_vote_forwarding_addresses(&self, max_count: u64) -> Vec<SocketAddr> {
+        next_leaders(&self.cluster_info, &self.poh_recorder, max_count, |node| {
+            node.tpu_vote(Protocol::UDP)
+        })
     }
 }
 
@@ -310,11 +329,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         self.metrics.did_something |= !self.packet_container.is_empty();
         self.refresh_data_budget();
 
-        // Get forwarding addresses otherwise return now.
-        if !self.vote_client.update_address() || !self.non_vote_client.update_address() {
-            return;
-        };
-
         let mut non_vote_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
         let mut vote_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
 
@@ -333,34 +347,45 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
 
             if packet.meta().is_simple_vote_tx() {
                 vote_batch.push(packet_data_vec);
-                if vote_batch.len() == vote_batch.capacity() {
-                    self.metrics.votes_forwarded += vote_batch.len();
-
-                    let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
-                    core::mem::swap(&mut batch, &mut vote_batch);
-                    self.vote_client.send_transactions_in_batch(batch);
-                }
+                send_batch_if_full(
+                    &mut vote_batch,
+                    &self.vote_client,
+                    &mut self.metrics.votes_forwarded,
+                    &mut self.metrics.votes_dropped_on_send,
+                );
             } else {
                 non_vote_batch.push(packet_data_vec);
-                if non_vote_batch.len() == non_vote_batch.capacity() {
-                    self.metrics.non_votes_forwarded += non_vote_batch.len();
-
-                    let mut batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
-                    core::mem::swap(&mut batch, &mut non_vote_batch);
-                    self.non_vote_client.send_transactions_in_batch(batch);
-                }
+                send_batch_if_full(
+                    &mut non_vote_batch,
+                    &self.non_vote_client,
+                    &mut self.metrics.non_votes_forwarded,
+                    &mut self.metrics.non_votes_dropped_on_send,
+                );
             }
         }
 
         // Send out remaining packets
         if !vote_batch.is_empty() {
-            self.metrics.votes_forwarded += vote_batch.len();
-            self.vote_client.send_transactions_in_batch(vote_batch);
+            let num_votes = vote_batch.len();
+            self.metrics.votes_forwarded += num_votes;
+            if self
+                .vote_client
+                .send_transactions_in_batch(vote_batch)
+                .is_err()
+            {
+                self.metrics.votes_dropped_on_send += num_votes;
+            }
         }
         if !non_vote_batch.is_empty() {
-            self.metrics.non_votes_forwarded += non_vote_batch.len();
-            self.non_vote_client
-                .send_transactions_in_batch(non_vote_batch);
+            let num_non_votes = non_vote_batch.len();
+            self.metrics.non_votes_forwarded += num_non_votes;
+            if self
+                .non_vote_client
+                .send_transactions_in_batch(non_vote_batch)
+                .is_err()
+            {
+                self.metrics.non_votes_dropped_on_send += num_non_votes;
+            }
         }
     }
 
@@ -380,15 +405,43 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
     }
 }
 
+/// [`ForwardingClientError`] enum represents failure when sending transactions
+/// over the network.
+#[derive(Debug)]
+enum ForwardingClientError {
+    /// Failed to send transaction to the provided host.
+    Failed,
+    /// Failed to send the transaction because no contact information was found
+    /// for any of the next `NUM_LOOKAHEAD_LEADERS` scheduled leaders.
+    LeaderContactMissing,
+}
+
+impl From<SendPktsError> for ForwardingClientError {
+    fn from(_err: SendPktsError) -> Self {
+        ForwardingClientError::Failed
+    }
+}
+
+impl From<TransportError> for ForwardingClientError {
+    fn from(_err: TransportError) -> Self {
+        ForwardingClientError::Failed
+    }
+}
+
+/// [`ForwardingClient`] trait defines a generic interface for clients that can
+/// forward transactions to other validators.
 trait ForwardingClient: Send + Sync + 'static {
-    fn update_address(&mut self) -> bool;
-    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>);
+    /// Sends a batch of serialized transactions to the currently configured
+    /// address.
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+    ) -> Result<(), ForwardingClientError>;
 }
 
 struct VoteClient {
     udp_socket: UdpSocket,
     forward_address_getter: ForwardAddressGetter,
-    current_address: Option<SocketAddr>,
 }
 
 impl VoteClient {
@@ -396,27 +449,30 @@ impl VoteClient {
         Self {
             udp_socket: bind_to_unspecified().unwrap(),
             forward_address_getter,
-            current_address: None,
         }
+    }
+
+    fn get_next_valid_leader(&self) -> Option<SocketAddr> {
+        let node_addresses = self
+            .forward_address_getter
+            .get_vote_forwarding_addresses(NUM_LOOKAHEAD_LEADERS);
+        node_addresses.first().copied()
     }
 }
 
 impl ForwardingClient for VoteClient {
-    fn update_address(&mut self) -> bool {
-        self.current_address = self.forward_address_getter.get_vote_forwarding_addresses();
-        self.current_address.is_some()
-    }
-
-    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
-        assert!(
-            self.current_address.is_some(),
-            "current_address should be updated before send_batch call."
-        );
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+    ) -> Result<(), ForwardingClientError> {
+        let Some(current_address) = self.get_next_valid_leader() else {
+            return Err(ForwardingClientError::LeaderContactMissing);
+        };
         let batch_with_addresses = wire_transactions
             .iter()
-            .map(|bytes| (bytes, self.current_address.unwrap()));
-        // TODO(klykov) Not really in favour of skipping these errors, need to think
-        let _res = batch_send(&self.udp_socket, batch_with_addresses);
+            .map(|bytes| (bytes, current_address));
+        batch_send(&self.udp_socket, batch_with_addresses)?;
+        Ok(())
     }
 }
 
@@ -424,7 +480,6 @@ impl ForwardingClient for VoteClient {
 struct ConnectionCacheClient {
     connection_cache: Arc<ConnectionCache>,
     forward_address_getter: ForwardAddressGetter,
-    current_address: Option<SocketAddr>,
 }
 
 impl ConnectionCacheClient {
@@ -435,28 +490,30 @@ impl ConnectionCacheClient {
         Self {
             connection_cache,
             forward_address_getter,
-            current_address: None,
         }
+    }
+    fn get_next_valid_leader(&self) -> Option<SocketAddr> {
+        let node_addresses = self
+            .forward_address_getter
+            .get_non_vote_forwarding_addresses(
+                NUM_LOOKAHEAD_LEADERS,
+                self.connection_cache.protocol(),
+            );
+        node_addresses.first().copied()
     }
 }
 
 impl ForwardingClient for ConnectionCacheClient {
-    fn update_address(&mut self) -> bool {
-        self.current_address = self
-            .forward_address_getter
-            .get_non_vote_forwarding_addresses(1, self.connection_cache.protocol())[0];
-        self.current_address.is_some()
-    }
-
-    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
-        assert!(
-            self.current_address.is_some(),
-            "current_address should be updated before send_batch call."
-        );
-        let conn = self
-            .connection_cache
-            .get_connection(&self.current_address.unwrap());
-        let _res = conn.send_data_batch_async(wire_transactions);
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+    ) -> Result<(), ForwardingClientError> {
+        let Some(current_address) = self.get_next_valid_leader() else {
+            return Err(ForwardingClientError::LeaderContactMissing);
+        };
+        let conn = self.connection_cache.get_connection(&current_address);
+        conn.send_data_batch_async(wire_transactions)?;
+        Ok(())
     }
 }
 
@@ -470,9 +527,6 @@ impl NotifyKeyUpdate for ConnectionCacheClient {
 impl LeaderUpdater for ForwardAddressGetter {
     fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {
         self.get_non_vote_forwarding_addresses(lookahead_slots as u64, Protocol::QUIC)
-            .into_iter()
-            .flatten()
-            .collect()
     }
 
     async fn stop(&mut self) {}
@@ -488,7 +542,6 @@ struct TpuClientNextClient {
     // This handle is needed to implement `NotifyKeyUpdate` trait. It's only
     // method takes &self and thus we need to wrap with Mutex.
     join_and_cancel: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
-    forward_address_getter: ForwardAddressGetter,
 }
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
@@ -499,12 +552,14 @@ impl TpuClientNextClient {
         forward_address_getter: ForwardAddressGetter,
         stake_identity: Option<&Keypair>,
     ) -> Self {
-        let (sender, receiver) = mpsc::channel(16); // random number of now
+        // For now use large channel, the more suitable size to be found later.
+        let (sender, receiver) = mpsc::channel(128);
         let cancel = CancellationToken::new();
         let leader_updater = forward_address_getter.clone();
 
-        let config = Self::create_config(stake_identity, 1);
-        let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
+        let config = Self::create_config(stake_identity);
+        let scheduler: ConnectionWorkersScheduler =
+            ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
             "forwarding-stage-tpu-client",
@@ -516,31 +571,31 @@ impl TpuClientNextClient {
             runtime_handle,
             join_and_cancel: Arc::new(Mutex::new((Some(handle), cancel))),
             sender,
-            forward_address_getter,
         }
     }
 
-    fn create_config(
-        stake_identity: Option<&Keypair>,
-        leader_forward_count: usize,
-    ) -> ConnectionWorkersSchedulerConfig {
+    fn create_config(stake_identity: Option<&Keypair>) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
             bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
             stake_identity: stake_identity.map(Into::into),
-            num_connections: 1,
+            // Cache size of 128 covers all nodes above the P90 slot count threshold,
+            // which together account for ~75% of total slots in the epoch.
+            num_connections: 128,
             skip_check_transaction_age: true,
             worker_channel_size: 2,
             max_reconnect_attempts: 4,
+            // Send to the next leader only, but verify that connections exist
+            // for the leaders of the next `4 * NUM_CONSECUTIVE_SLOTS`.
             leaders_fanout: Fanout {
-                send: leader_forward_count,
-                connect: 4 * leader_forward_count,
+                send: 1,
+                connect: 4,
             },
         }
     }
 
     async fn do_update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let runtime_handle = self.runtime_handle.clone();
-        let config = Self::create_config(Some(identity), 1);
+        let config = Self::create_config(Some(identity));
         let handle = self.join_and_cancel.clone();
 
         let join_handle = {
@@ -583,30 +638,17 @@ impl TpuClientNextClient {
 }
 
 impl ForwardingClient for TpuClientNextClient {
-    fn update_address(&mut self) -> bool {
-        // Updating the address is not strictly necessary because
-        // `TpuClientNextClient` relies on `ForwardingStageLeaderUpdater`
-        // to determine the correct leader for forwarding transactions.
-        //
-        // However, we still need to indicate that a next leader exists.
-        // This is important because in `forward_buffered_packets`, packets
-        // are only pop from the container and processed if `next_leader` is not `None`.
-        self.forward_address_getter
-            .get_non_vote_forwarding_addresses(1, Protocol::QUIC)
-            .first()
-            .is_some_and(|first| first.is_some())
-    }
-
-    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
-        self.runtime_handle.spawn({
-            let sender = self.sender.clone();
-            async move {
-                let res = sender.send(TransactionBatch::new(wire_transactions)).await;
-                if res.is_err() {
-                    warn!("Failed to send transaction to channel: it is closed.");
-                }
-            }
-        });
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+    ) -> Result<(), ForwardingClientError> {
+        let res = self
+            .sender
+            .try_send(TransactionBatch::new(wire_transactions));
+        if res.is_err() {
+            return Err(ForwardingClientError::Failed);
+        }
+        Ok(())
     }
 }
 
@@ -669,21 +711,49 @@ fn calculate_priority(
     )
 }
 
+fn send_batch_if_full(
+    batch: &mut Vec<Vec<u8>>,
+    client: &impl ForwardingClient,
+    forwarded_counter: &mut usize,
+    dropped_counter: &mut usize,
+) {
+    if batch.len() == FORWARD_BATCH_SIZE {
+        *forwarded_counter += batch.len();
+
+        let mut swap_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
+        std::mem::swap(batch, &mut swap_batch);
+
+        if client.send_transactions_in_batch(swap_batch).is_err() {
+            *dropped_counter += FORWARD_BATCH_SIZE;
+        }
+    }
+}
+
 struct ForwardingStageMetrics {
     last_reported: Instant,
     did_something: bool,
 
+    /// Number of votes received for forwarding.
     votes_received: usize,
+    /// Number of votes that failed basic sanitization or priority calculation.
     votes_dropped_on_receive: usize,
+    /// Number of votes dropped because forwarding container is full and the
+    /// priority of transaction is lower than the priority of other transaction
+    /// in the container.
     votes_dropped_on_capacity: usize,
+    /// Number of votes dropped due to exceeding outbound data traffic limit.
     votes_dropped_on_data_budget: usize,
+    /// Number of votes we tried to forward.
     votes_forwarded: usize,
+    /// Number of votes dropped due to send failure.
+    votes_dropped_on_send: usize,
 
     non_votes_received: usize,
     non_votes_dropped_on_receive: usize,
     non_votes_dropped_on_capacity: usize,
     non_votes_dropped_on_data_budget: usize,
     non_votes_forwarded: usize,
+    non_votes_dropped_on_send: usize,
 
     dropped_on_timeout: usize,
 }
@@ -710,23 +780,39 @@ impl ForwardingStageMetrics {
                     i64
                 ),
                 (
+                    "votes_dropped_on_capacity",
+                    metrics.votes_dropped_on_capacity,
+                    i64
+                ),
+                (
                     "votes_dropped_on_data_budget",
                     metrics.votes_dropped_on_data_budget,
                     i64
                 ),
                 ("votes_forwarded", metrics.votes_forwarded, i64),
+                ("votes_dropped_on_send", metrics.votes_dropped_on_send, i64),
                 ("non_votes_received", metrics.non_votes_received, i64),
                 (
-                    "votes_dropped_on_receive",
-                    metrics.votes_dropped_on_receive,
+                    "non_votes_dropped_on_receive",
+                    metrics.non_votes_dropped_on_receive,
                     i64
                 ),
                 (
-                    "votes_dropped_on_data_budget",
-                    metrics.votes_dropped_on_data_budget,
+                    "non_votes_dropped_on_capacity",
+                    metrics.non_votes_dropped_on_capacity,
                     i64
                 ),
-                ("votes_forwarded", metrics.votes_forwarded, i64),
+                (
+                    "non_votes_dropped_on_data_budget",
+                    metrics.non_votes_dropped_on_data_budget,
+                    i64
+                ),
+                ("non_votes_forwarded", metrics.non_votes_forwarded, i64),
+                (
+                    "non_votes_dropped_on_send",
+                    metrics.non_votes_dropped_on_send,
+                    i64
+                ),
             );
         }
     }
@@ -742,11 +828,13 @@ impl Default for ForwardingStageMetrics {
             votes_dropped_on_capacity: 0,
             votes_dropped_on_data_budget: 0,
             votes_forwarded: 0,
+            votes_dropped_on_send: 0,
             non_votes_received: 0,
             non_votes_dropped_on_receive: 0,
             non_votes_dropped_on_capacity: 0,
             non_votes_dropped_on_data_budget: 0,
             non_votes_forwarded: 0,
+            non_votes_dropped_on_send: 0,
             dropped_on_timeout: 0,
         }
     }
@@ -787,12 +875,12 @@ mod tests {
     }
 
     impl ForwardingClient for MockClient {
-        fn update_address(&mut self) -> bool {
-            true
-        }
-
-        fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
+        fn send_transactions_in_batch(
+            &self,
+            wire_transactions: Vec<Vec<u8>>,
+        ) -> Result<(), ForwardingClientError> {
             self.packets.lock().unwrap().extend(wire_transactions);
+            Ok(())
         }
     }
 
