@@ -351,6 +351,7 @@ impl BankingStageHelper {
         let _ = self.new_task_sender.send(NewTaskPayload::Payload(task));
     }
 
+    #[allow(dead_code)]
     fn abort_scheduler(&self) {
         if self
             .new_task_sender
@@ -2148,7 +2149,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
-                                banking_stage_helper.abort_scheduler();
+                                //banking_stage_helper.abort_scheduler();
                                 break;
                             };
                             banking_packet_handler(banking_stage_helper, banking_packet);
