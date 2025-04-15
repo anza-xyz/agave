@@ -215,13 +215,13 @@ impl Accounts {
                 // Cache only has one version per key, don't need to worry about versioning
                 func(loaded_account)
             },
-            |accum: &DashMap<Pubkey, B>, loaded_account: &LoadedAccount, _data| {
+            |accum: &DashMap<Pubkey, B>, loaded_account: &LoadedAccount| {
                 let loaded_account_pubkey = *loaded_account.pubkey();
                 if let Some(val) = func(loaded_account) {
                     accum.insert(loaded_account_pubkey, val);
                 }
             },
-            ScanAccountStorageData::NoData,
+            ScanAccountStorageData::DataRefForStorage,
         );
 
         match scan_result {

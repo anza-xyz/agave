@@ -29,8 +29,9 @@ use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
-            meta::StoredAccountMeta, stored_account_info::StoredAccountInfo, AccountStorage,
-            AccountStorageStatus, ShrinkInProgress,
+            meta::StoredAccountMeta,
+            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+            AccountStorage, AccountStorageStatus, ShrinkInProgress,
         },
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
@@ -173,6 +174,8 @@ impl StoreTo<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanAccountStorageData {
     /// callback for accounts in storage will not include `data`
+    // Note, currently only used in tests, but do not remove.
+    #[cfg_attr(not(test), allow(dead_code))]
     NoData,
     /// return data (&[u8]) for each account.
     /// This can be expensive to get and is not necessary for many scan operations.
@@ -1088,6 +1091,7 @@ impl LoadedAccountAccessor<'_> {
 }
 
 pub enum LoadedAccount<'a> {
+    StoredNoData(StoredAccountInfoWithoutData<'a>),
     Stored(StoredAccountInfo<'a>),
     Cached(Cow<'a, Arc<CachedAccount>>),
 }
@@ -1095,7 +1099,7 @@ pub enum LoadedAccount<'a> {
 impl LoadedAccount<'_> {
     pub fn loaded_hash(&self) -> AccountHash {
         match self {
-            LoadedAccount::Stored(_stored_account) => {
+            LoadedAccount::StoredNoData(_) | LoadedAccount::Stored(_) => {
                 // The account hash is no longer stored, so it is always the default value.
                 // Callers that want the account hash must (and do) check if the value is
                 // "missing", i.e. the default value, and then call hash_account() themselves.
@@ -1107,6 +1111,7 @@ impl LoadedAccount<'_> {
 
     pub fn pubkey(&self) -> &Pubkey {
         match self {
+            LoadedAccount::StoredNoData(stored_account) => stored_account.pubkey(),
             LoadedAccount::Stored(stored_account) => stored_account.pubkey(),
             LoadedAccount::Cached(cached_account) => cached_account.pubkey(),
         }
@@ -1114,6 +1119,9 @@ impl LoadedAccount<'_> {
 
     pub fn take_account(&self) -> AccountSharedData {
         match self {
+            LoadedAccount::StoredNoData(_) => {
+                panic!("attempting to get AccountSharedData from LoadedAccount::StoredNoData is illegal");
+            }
             LoadedAccount::Stored(stored_account) => stored_account.to_account_shared_data(),
             LoadedAccount::Cached(cached_account) => match cached_account {
                 Cow::Owned(cached_account) => cached_account.account.clone(),
@@ -1124,44 +1132,54 @@ impl LoadedAccount<'_> {
 
     pub fn is_cached(&self) -> bool {
         match self {
-            LoadedAccount::Stored(_) => false,
+            LoadedAccount::StoredNoData(_) | LoadedAccount::Stored(_) => false,
             LoadedAccount::Cached(_) => true,
         }
     }
 
     /// data_len can be calculated without having access to `&data` in future implementations
     pub fn data_len(&self) -> usize {
-        self.data().len()
+        match self {
+            LoadedAccount::StoredNoData(_) => self.data_len(),
+            LoadedAccount::Stored(_) | LoadedAccount::Cached(_) => self.data().len(),
+        }
     }
 }
 
 impl ReadableAccount for LoadedAccount<'_> {
     fn lamports(&self) -> u64 {
         match self {
+            LoadedAccount::StoredNoData(stored_account) => stored_account.lamports(),
             LoadedAccount::Stored(stored_account) => stored_account.lamports(),
             LoadedAccount::Cached(cached_account) => cached_account.account.lamports(),
         }
     }
     fn data(&self) -> &[u8] {
         match self {
+            LoadedAccount::StoredNoData(_) => {
+                panic!("attempting to get data from LoadedAccount::StoredNoData is illegal");
+            }
             LoadedAccount::Stored(stored_account) => stored_account.data(),
             LoadedAccount::Cached(cached_account) => cached_account.account.data(),
         }
     }
     fn owner(&self) -> &Pubkey {
         match self {
+            LoadedAccount::StoredNoData(stored_account) => stored_account.owner(),
             LoadedAccount::Stored(stored_account) => stored_account.owner(),
             LoadedAccount::Cached(cached_account) => cached_account.account.owner(),
         }
     }
     fn executable(&self) -> bool {
         match self {
+            LoadedAccount::StoredNoData(stored_account) => stored_account.executable(),
             LoadedAccount::Stored(stored_account) => stored_account.executable(),
             LoadedAccount::Cached(cached_account) => cached_account.account.executable(),
         }
     }
     fn rent_epoch(&self) -> Epoch {
         match self {
+            LoadedAccount::StoredNoData(stored_account) => stored_account.rent_epoch(),
             LoadedAccount::Stored(stored_account) => stored_account.rent_epoch(),
             LoadedAccount::Cached(cached_account) => cached_account.account.rent_epoch(),
         }
@@ -4924,7 +4942,7 @@ impl AccountsDb {
         &self,
         slot: Slot,
         cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
-        storage_scan_func: impl Fn(&B, &LoadedAccount, Option<&[u8]>) + Sync,
+        storage_scan_func: impl Fn(&B, &LoadedAccount) + Sync,
         scan_account_storage_data: ScanAccountStorageData,
     ) -> ScanStorageResult<R, B>
     where
@@ -4933,10 +4951,14 @@ impl AccountsDb {
     {
         self.scan_cache_storage_fallback(slot, cache_map_func, |retval, storage| {
             storage.scan_accounts(|account| {
-                let loaded_account = LoadedAccount::Stored(account);
-                let data = (scan_account_storage_data == ScanAccountStorageData::DataRefForStorage)
-                    .then_some(loaded_account.data());
-                storage_scan_func(retval, &loaded_account, data)
+                let loaded_account = match scan_account_storage_data {
+                    ScanAccountStorageData::DataRefForStorage => LoadedAccount::Stored(account),
+                    ScanAccountStorageData::NoData => {
+                        let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
+                        LoadedAccount::StoredNoData(account_without_data)
+                    }
+                };
+                storage_scan_func(retval, &loaded_account)
             });
         })
     }
@@ -7495,18 +7517,18 @@ impl AccountsDb {
         let scan_result: ScanStorageResult<(Pubkey, AccountHash), DashMap<Pubkey, AccountHash>> =
             self.scan_account_storage(
                 slot,
-                |loaded_account: &LoadedAccount| {
+                |loaded_account| {
                     // Cache only has one version per key, don't need to worry about versioning
                     Some((*loaded_account.pubkey(), loaded_account.loaded_hash()))
                 },
-                |accum: &DashMap<Pubkey, AccountHash>, loaded_account: &LoadedAccount, _data| {
+                |accum: &DashMap<_, _>, loaded_account| {
                     let mut loaded_hash = loaded_account.loaded_hash();
                     if loaded_hash == AccountHash(Hash::default()) {
                         loaded_hash = Self::hash_account(loaded_account, loaded_account.pubkey())
                     }
                     accum.insert(*loaded_account.pubkey(), loaded_hash);
                 },
-                ScanAccountStorageData::NoData,
+                ScanAccountStorageData::DataRefForStorage,
             );
         scan.stop();
 
@@ -7527,11 +7549,11 @@ impl AccountsDb {
                 // Cache only has one version per key, don't need to worry about versioning
                 Some((*loaded_account.pubkey(), loaded_account.take_account()))
             },
-            |accum: &DashMap<_, _>, loaded_account, _data| {
+            |accum: &DashMap<_, _>, loaded_account| {
                 // Storage may have duplicates so only keep the latest version for each key
                 accum.insert(*loaded_account.pubkey(), loaded_account.take_account());
             },
-            ScanAccountStorageData::NoData,
+            ScanAccountStorageData::DataRefForStorage,
         );
 
         match scan_result {
@@ -7546,7 +7568,7 @@ impl AccountsDb {
             ScanStorageResult<PubkeyHashAccount, DashMap<Pubkey, (AccountHash, AccountSharedData)>>;
         let scan_result: ScanResult = self.scan_account_storage(
             slot,
-            |loaded_account: &LoadedAccount| {
+            |loaded_account| {
                 // Cache only has one version per key, don't need to worry about versioning
                 Some(PubkeyHashAccount {
                     pubkey: *loaded_account.pubkey(),
@@ -7554,9 +7576,7 @@ impl AccountsDb {
                     account: loaded_account.take_account(),
                 })
             },
-            |accum: &DashMap<Pubkey, (AccountHash, AccountSharedData)>,
-             loaded_account: &LoadedAccount,
-             _data| {
+            |accum: &DashMap<_, _>, loaded_account| {
                 // Storage may have duplicates so only keep the latest version for each key
                 let mut loaded_hash = loaded_account.loaded_hash();
                 let key = *loaded_account.pubkey();
@@ -7566,7 +7586,7 @@ impl AccountsDb {
                 }
                 accum.insert(key, (loaded_hash, account));
             },
-            ScanAccountStorageData::NoData,
+            ScanAccountStorageData::DataRefForStorage,
         );
 
         match scan_result {

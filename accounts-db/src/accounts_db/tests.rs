@@ -4418,7 +4418,7 @@ fn test_accounts_db_cache_clean_dead_slots() {
         if let ScanStorageResult::Stored(slot_accounts) = accounts_db.scan_account_storage(
             *slot as Slot,
             |_| Some(0),
-            |slot_accounts: &DashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
+            |slot_accounts: &DashSet<Pubkey>, loaded_account: &LoadedAccount| {
                 slot_accounts.insert(*loaded_account.pubkey());
             },
             ScanAccountStorageData::NoData,
@@ -4452,7 +4452,7 @@ fn test_accounts_db_cache_clean() {
         if let ScanStorageResult::Stored(slot_account) = accounts_db.scan_account_storage(
             *slot as Slot,
             |_| Some(0),
-            |slot_account: &RwLock<Pubkey>, loaded_account: &LoadedAccount, _data| {
+            |slot_account: &RwLock<Pubkey>, loaded_account: &LoadedAccount| {
                 *slot_account.write().unwrap() = *loaded_account.pubkey();
             },
             ScanAccountStorageData::NoData,
@@ -4517,7 +4517,7 @@ fn run_test_accounts_db_cache_clean_max_root(
                 assert!(*slot > requested_flush_root);
                 Some(*loaded_account.pubkey())
             },
-            |slot_accounts: &DashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
+            |slot_accounts: &DashSet<Pubkey>, loaded_account: &LoadedAccount| {
                 slot_accounts.insert(*loaded_account.pubkey());
                 if !is_cache_at_limit {
                     // Only true when the limit hasn't been reached and there are still
@@ -4629,7 +4629,7 @@ fn run_flush_rooted_accounts_cache(should_clean: bool) {
             .scan_account_storage(
                 *slot as Slot,
                 |_| Some(0),
-                |slot_account: &DashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
+                |slot_account: &DashSet<Pubkey>, loaded_account: &LoadedAccount| {
                     slot_account.insert(*loaded_account.pubkey());
                 },
                 ScanAccountStorageData::NoData,
