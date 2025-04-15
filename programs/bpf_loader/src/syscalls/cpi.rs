@@ -87,7 +87,7 @@ impl<T> VmValue<'_, T> {
 ///
 /// At the start of a CPI, this can be different from the data stored in the
 /// corresponding BorrowedAccount, and needs to be synched.
-struct CallerAccount<'a, 'b> {
+struct CallerAccount<'a> {
     lamports: &'a mut u64,
     owner: &'a mut Pubkey,
     // The original data length of the account at the start of the current
@@ -105,18 +105,18 @@ struct CallerAccount<'a, 'b> {
     // Given the corresponding input AccountInfo::data, vm_data_addr points to
     // the pointer field and ref_to_len_in_vm points to the length field.
     vm_data_addr: u64,
-    ref_to_len_in_vm: VmValue<'b, u64>,
+    ref_to_len_in_vm: VmValue<'a, u64>,
 }
 
-impl<'a, 'b> CallerAccount<'a, 'b> {
+impl<'a> CallerAccount<'a> {
     // Create a CallerAccount given an AccountInfo.
     fn from_account_info(
         invoke_context: &InvokeContext,
-        memory_mapping: &'b MemoryMapping<'a>,
+        memory_mapping: &MemoryMapping<'_>,
         _vm_addr: u64,
         account_info: &AccountInfo,
         account_metadata: &SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a, 'b>, Error> {
+    ) -> Result<CallerAccount<'a>, Error> {
         let direct_mapping = invoke_context
             .get_feature_set()
             .is_active(&feature_set::bpf_account_data_direct_mapping::id());
@@ -256,11 +256,11 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
     // Create a CallerAccount given a SolAccountInfo.
     fn from_sol_account_info(
         invoke_context: &InvokeContext,
-        memory_mapping: &'b MemoryMapping<'a>,
+        memory_mapping: &MemoryMapping<'_>,
         vm_addr: u64,
         account_info: &SolAccountInfo,
         account_metadata: &SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a, 'b>, Error> {
+    ) -> Result<CallerAccount<'a>, Error> {
         let direct_mapping = invoke_context
             .get_feature_set()
             .is_active(&feature_set::bpf_account_data_direct_mapping::id());
@@ -363,9 +363,9 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
 
     fn realloc_region(
         &self,
-        memory_mapping: &'b MemoryMapping<'_>,
+        memory_mapping: &'a MemoryMapping<'_>,
         is_loader_deprecated: bool,
-    ) -> Result<Option<&'b MemoryRegion>, Error> {
+    ) -> Result<Option<&'a MemoryRegion>, Error> {
         account_realloc_region(
             memory_mapping,
             self.vm_data_addr,
@@ -375,7 +375,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
     }
 }
 
-type TranslatedAccounts<'a, 'b> = Vec<(IndexOfAccount, Option<CallerAccount<'a, 'b>>)>;
+type TranslatedAccounts<'a> = Vec<(IndexOfAccount, Option<CallerAccount<'a>>)>;
 
 /// Implemented by language specific data structure translators
 trait SyscallInvokeSigned {
@@ -384,15 +384,15 @@ trait SyscallInvokeSigned {
         memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
     ) -> Result<StableInstruction, Error>;
-    fn translate_accounts<'a, 'b>(
+    fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
-        memory_mapping: &'b MemoryMapping<'a>,
+        memory_mapping: &MemoryMapping<'_>,
         invoke_context: &mut InvokeContext,
-    ) -> Result<TranslatedAccounts<'a, 'b>, Error>;
+    ) -> Result<TranslatedAccounts<'a>, Error>;
     fn translate_signers(
         program_id: &Pubkey,
         signers_seeds_addr: u64,
@@ -487,15 +487,15 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         })
     }
 
-    fn translate_accounts<'a, 'b>(
+    fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
-        memory_mapping: &'b MemoryMapping<'a>,
+        memory_mapping: &MemoryMapping<'_>,
         invoke_context: &mut InvokeContext,
-    ) -> Result<TranslatedAccounts<'a, 'b>, Error> {
+    ) -> Result<TranslatedAccounts<'a>, Error> {
         let (account_infos, account_info_keys) = translate_account_infos(
             account_infos_addr,
             account_infos_len,
@@ -714,15 +714,15 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         })
     }
 
-    fn translate_accounts<'a, 'b>(
+    fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
-        memory_mapping: &'b MemoryMapping<'a>,
+        memory_mapping: &MemoryMapping<'_>,
         invoke_context: &mut InvokeContext,
-    ) -> Result<TranslatedAccounts<'a, 'b>, Error> {
+    ) -> Result<TranslatedAccounts<'a>, Error> {
         let (account_infos, account_info_keys) = translate_account_infos(
             account_infos_addr,
             account_infos_len,
@@ -842,7 +842,7 @@ where
 
 // Finish translating accounts, build CallerAccount values and update callee
 // accounts in preparation of executing the callee.
-fn translate_and_update_accounts<'a, 'b, T, F>(
+fn translate_and_update_accounts<'a, T, F>(
     instruction_accounts: &[InstructionAccount],
     program_indices: &[IndexOfAccount],
     account_info_keys: &[&Pubkey],
@@ -850,17 +850,17 @@ fn translate_and_update_accounts<'a, 'b, T, F>(
     account_infos_addr: u64,
     is_loader_deprecated: bool,
     invoke_context: &mut InvokeContext,
-    memory_mapping: &'b MemoryMapping<'a>,
+    memory_mapping: &MemoryMapping<'_>,
     do_translate: F,
-) -> Result<TranslatedAccounts<'a, 'b>, Error>
+) -> Result<TranslatedAccounts<'a>, Error>
 where
     F: Fn(
         &InvokeContext,
-        &'b MemoryMapping<'a>,
+        &MemoryMapping<'_>,
         u64,
         &T,
         &SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a, 'b>, Error>,
+    ) -> Result<CallerAccount<'a>, Error>,
 {
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
@@ -1310,11 +1310,11 @@ fn update_caller_account_perms(
 //
 // This method updates caller_account so the CPI caller can see the callee's
 // changes.
-fn update_caller_account<'a>(
+fn update_caller_account(
     invoke_context: &InvokeContext,
-    memory_mapping: &MemoryMapping<'a>,
+    memory_mapping: &MemoryMapping<'_>,
     is_loader_deprecated: bool,
-    caller_account: &mut CallerAccount<'a, 'a>,
+    caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedAccount<'_>,
     direct_mapping: bool,
 ) -> Result<(), Error> {
@@ -2710,7 +2710,7 @@ mod tests {
             }
         }
 
-        fn caller_account(&mut self) -> CallerAccount<'_, '_> {
+        fn caller_account(&mut self) -> CallerAccount {
             let data = if self.direct_mapping {
                 &mut []
             } else {
