@@ -262,11 +262,11 @@ clone_trait_object!(BankingPacketHandler);
 pub struct BankingStageHelper {
     usage_queue_loader: UsageQueueLoader,
     next_task_id: AtomicUsize,
-    new_task_sender: Sender<NewTaskPayload>,
+    new_task_sender: Weak<Sender<NewTaskPayload>>,
 }
 
 impl BankingStageHelper {
-    fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
+    fn new(new_task_sender: Weak<Sender<NewTaskPayload>>) -> Self {
         Self {
             usage_queue_loader: UsageQueueLoader::default(),
             next_task_id: AtomicUsize::default(),
@@ -296,6 +296,8 @@ impl BankingStageHelper {
 
     pub fn send_new_task(&self, task: Task) {
         self.new_task_sender
+            .upgrade()
+            .unwrap()
             .send(NewTaskPayload::Payload(task))
             .unwrap();
     }
@@ -619,7 +621,7 @@ where
     fn create_handler_context(
         &self,
         mode: SchedulingMode,
-        new_task_sender: &Sender<NewTaskPayload>,
+        new_task_sender: &Arc<Sender<NewTaskPayload>>,
     ) -> HandlerContext {
         let (
             thread_count,
@@ -652,7 +654,9 @@ where
                     handler_context.banking_thread_count,
                     handler_context.banking_packet_receiver.clone(),
                     handler_context.banking_packet_handler.clone(),
-                    Some(Arc::new(BankingStageHelper::new(new_task_sender.clone()))),
+                    Some(Arc::new(BankingStageHelper::new(Arc::downgrade(
+                        new_task_sender,
+                    )))),
                     Some(handler_context.transaction_recorder.clone()),
                 )
             }
@@ -1207,7 +1211,7 @@ where
 
         // Ensure to initiate thread shutdown via disconnected new_task_receiver by replacing the
         // current new_task_sender with a random one...
-        self.new_task_sender = crossbeam_channel::unbounded().0;
+        self.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
 
         self.ensure_join_threads(true);
         assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
@@ -1258,7 +1262,7 @@ where
 struct ThreadManager<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_id: SchedulerId,
     pool: Weak<SchedulerPool<S, TH>>,
-    new_task_sender: Sender<NewTaskPayload>,
+    new_task_sender: Arc<Sender<NewTaskPayload>>,
     new_task_receiver: Option<Receiver<NewTaskPayload>>,
     session_result_sender: Sender<ResultWithTimings>,
     session_result_receiver: Receiver<ResultWithTimings>,
@@ -1278,7 +1282,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         Self {
             scheduler_id: pool.new_scheduler_id(),
             pool: Arc::downgrade(pool),
-            new_task_sender,
+            new_task_sender: Arc::new(new_task_sender),
             new_task_receiver: Some(new_task_receiver),
             session_result_sender,
             session_result_receiver,
@@ -3777,7 +3781,7 @@ mod tests {
                     &task,
                     &pool.create_handler_context(
                         BlockVerification,
-                        &crossbeam_channel::unbounded().0,
+                        &Arc::new(crossbeam_channel::unbounded().0),
                     ),
                 );
                 (result, timings)
