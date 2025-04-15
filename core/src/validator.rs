@@ -1586,6 +1586,7 @@ impl Validator {
                 .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
             ForwardingClientOption::TpuClientNext((
                 Arc::as_ref(&identity_keypair),
+                node.sockets.tpu_transactions_forwards_client,
                 runtime_handle.clone(),
             ))
         } else {
@@ -1605,6 +1606,7 @@ impl Validator {
                 transactions_quic: node.sockets.tpu_quic,
                 transactions_forwards_quic: node.sockets.tpu_forwards_quic,
                 vote_quic: node.sockets.tpu_vote_quic,
+                vote_forwards_client: node.sockets.tpu_vote_forwards_client,
             },
             &rpc_subscriptions,
             transaction_status_sender,

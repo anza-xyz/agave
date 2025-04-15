@@ -50,7 +50,7 @@ mod packet_container;
 ///       requires a reference to a [`Keypair`].
 pub enum ForwardingClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext((&'a Keypair, RuntimeHandle)),
+    TpuClientNext((&'a Keypair, UdpSocket, RuntimeHandle)),
 }
 
 /// Value chosen because it was used historically, at some point
@@ -116,11 +116,12 @@ pub(crate) struct SpawnForwardingStageResult {
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
     client: ForwardingClientOption<'_>,
+    vote_client_udp_socket: UdpSocket,
     root_bank_cache: RootBankCache,
     forward_address_getter: ForwardAddressGetter,
     data_budget: DataBudget,
 ) -> SpawnForwardingStageResult {
-    let vote_client = VoteClient::new(forward_address_getter.clone());
+    let vote_client = VoteClient::new(vote_client_udp_socket, forward_address_getter.clone());
     match client {
         ForwardingClientOption::ConnectionCache(connection_cache) => {
             let non_vote_client =
@@ -140,7 +141,11 @@ pub(crate) fn spawn_forwarding_stage(
                 client_updater: Arc::new(non_vote_client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
             }
         }
-        ForwardingClientOption::TpuClientNext((stake_identity, runtime_handle)) => {
+        ForwardingClientOption::TpuClientNext((
+            stake_identity,
+            tpu_client_socket,
+            runtime_handle,
+        )) => {
             let non_vote_client = TpuClientNextClient::new(
                 runtime_handle,
                 forward_address_getter,
@@ -445,9 +450,9 @@ struct VoteClient {
 }
 
 impl VoteClient {
-    fn new(forward_address_getter: ForwardAddressGetter) -> Self {
+    fn new(udp_socket: UdpSocket, forward_address_getter: ForwardAddressGetter) -> Self {
         Self {
-            udp_socket: bind_to_unspecified().unwrap(),
+            udp_socket,
             forward_address_getter,
         }
     }
@@ -574,9 +579,12 @@ impl TpuClientNextClient {
         }
     }
 
-    fn create_config(stake_identity: Option<&Keypair>) -> ConnectionWorkersSchedulerConfig {
+    fn create_config(
+        bind_socket: UdpSocket,
+        stake_identity: Option<&Keypair>,
+    ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
-            bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
+            bind: bind_socket,
             stake_identity: stake_identity.map(Into::into),
             // Cache size of 128 covers all nodes above the P90 slot count threshold,
             // which together account for ~75% of total slots in the epoch.
