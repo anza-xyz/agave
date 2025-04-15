@@ -5,6 +5,7 @@ use {
     },
     chrono::{Local, TimeZone},
     itertools::Either,
+    pretty_hex::PrettyHex,
     serde::ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
     serde_derive::{Deserialize, Serialize},
     solana_account_decoder::{encode_ui_account, UiAccountData, UiAccountEncoding},
@@ -938,6 +939,28 @@ impl serde::Serialize for AccountsScanner {
         seq_serializer.unwrap().end()
     }
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct CliAccounts {
+    pub accounts: Vec<CliAccount>,
+}
+
+impl fmt::Display for CliAccounts {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for account in &self.accounts {
+            write!(f, "{account}")?;
+            let account_data = account.keyed_account.account.data.decode();
+            if let Some(data) = account_data {
+                if !data.is_empty() {
+                    writeln!(f, "{:?}", data.hex_dump())?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+impl QuietDisplay for CliAccounts {}
+impl VerboseDisplay for CliAccounts {}
 
 pub fn output_account(
     pubkey: &Pubkey,

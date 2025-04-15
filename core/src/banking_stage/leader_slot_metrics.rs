@@ -45,9 +45,6 @@ pub(crate) struct ProcessTransactionsSummary {
     /// Breakdown of all the transaction errors from transactions passed for
     /// execution
     pub error_counters: TransactionErrorMetrics,
-
-    pub min_prioritization_fees: u64,
-    pub max_prioritization_fees: u64,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -174,10 +171,6 @@ struct LeaderSlotPacketCountMetrics {
     // according to the cost model. These transactions are added back to the buffered queue and are
     // already counted in `self.retrayble_errored_transaction_count`.
     cost_model_throttled_transactions_count: u64,
-    // min prioritization fees for scheduled transactions
-    min_prioritization_fees: u64,
-    // max prioritization fees for scheduled transactions
-    max_prioritization_fees: u64,
 }
 
 impl LeaderSlotPacketCountMetrics {
@@ -293,16 +286,6 @@ impl LeaderSlotPacketCountMetrics {
             (
                 "end_of_slot_unprocessed_buffer_len",
                 self.end_of_slot_unprocessed_buffer_len,
-                i64
-            ),
-            (
-                "min_prioritization_fees",
-                self.min_prioritization_fees,
-                i64
-            ),
-            (
-                "max_prioritization_fees",
-                self.max_prioritization_fees,
                 i64
             ),
         );
@@ -588,8 +571,6 @@ impl LeaderSlotMetricsTracker {
                 cost_model_us,
                 ref execute_and_commit_timings,
                 error_counters,
-                min_prioritization_fees,
-                max_prioritization_fees,
                 ..
             } = process_transactions_summary;
 
@@ -663,23 +644,6 @@ impl LeaderSlotMetricsTracker {
                 .timing_metrics
                 .process_packets_timings
                 .cost_model_us += cost_model_us;
-
-            leader_slot_metrics
-                .packet_count_metrics
-                .min_prioritization_fees = std::cmp::min(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .min_prioritization_fees,
-                *min_prioritization_fees,
-            );
-            leader_slot_metrics
-                .packet_count_metrics
-                .max_prioritization_fees = std::cmp::min(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .max_prioritization_fees,
-                *max_prioritization_fees,
-            );
 
             leader_slot_metrics
                 .timing_metrics

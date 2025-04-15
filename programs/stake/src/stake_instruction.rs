@@ -137,7 +137,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             instruction_context.check_number_of_instruction_accounts(5)?;
             drop(me);
             delegate(
-                invoke_context,
                 transaction_context,
                 instruction_context,
                 0,
@@ -210,14 +209,14 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 } else {
                     None
                 },
-                new_warmup_cooldown_rate_epoch(invoke_context),
+                new_warmup_cooldown_rate_epoch(),
             )
         }
         StakeInstruction::Deactivate => {
             let mut me = get_stake_account()?;
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, instruction_context, 1)?;
-            deactivate(invoke_context, &mut me, &clock, &signers)
+            deactivate(&mut me, &clock, &signers)
         }
         StakeInstruction::SetLockup(lockup) => {
             let mut me = get_stake_account()?;
@@ -337,42 +336,28 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             Err(InstructionError::InvalidInstructionData)
         }
         StakeInstruction::MoveStake(lamports) => {
-            if invoke_context
-                .get_feature_set()
-                .is_active(&solana_feature_set::move_stake_and_move_lamports_ixs::id())
-            {
-                instruction_context.check_number_of_instruction_accounts(3)?;
-                move_stake(
-                    invoke_context,
-                    transaction_context,
-                    instruction_context,
-                    0,
-                    lamports,
-                    1,
-                    2,
-                )
-            } else {
-                Err(InstructionError::InvalidInstructionData)
-            }
+            instruction_context.check_number_of_instruction_accounts(3)?;
+            move_stake(
+                invoke_context,
+                transaction_context,
+                instruction_context,
+                0,
+                lamports,
+                1,
+                2,
+            )
         }
         StakeInstruction::MoveLamports(lamports) => {
-            if invoke_context
-                .get_feature_set()
-                .is_active(&solana_feature_set::move_stake_and_move_lamports_ixs::id())
-            {
-                instruction_context.check_number_of_instruction_accounts(3)?;
-                move_lamports(
-                    invoke_context,
-                    transaction_context,
-                    instruction_context,
-                    0,
-                    lamports,
-                    1,
-                    2,
-                )
-            } else {
-                Err(InstructionError::InvalidInstructionData)
-            }
+            instruction_context.check_number_of_instruction_accounts(3)?;
+            move_lamports(
+                invoke_context,
+                transaction_context,
+                instruction_context,
+                0,
+                lamports,
+                1,
+                2,
+            )
         }
     }
 });
@@ -388,6 +373,7 @@ mod tests {
                 stake_from, Delegation, Meta, Stake, StakeStateV2,
             },
         },
+        agave_feature_set::FeatureSet,
         assert_matches::assert_matches,
         bincode::serialize,
         solana_account::{
@@ -397,7 +383,6 @@ mod tests {
         solana_clock::{Clock, Epoch, UnixTimestamp},
         solana_epoch_rewards::EpochRewards,
         solana_epoch_schedule::EpochSchedule,
-        solana_feature_set::FeatureSet,
         solana_instruction::{AccountMeta, Instruction},
         solana_program_runtime::invoke_context::mock_process_instruction,
         solana_pubkey::Pubkey,
@@ -437,7 +422,7 @@ mod tests {
         let mut feature_set = feature_set_all_enabled();
         Arc::get_mut(&mut feature_set)
             .unwrap()
-            .deactivate(&solana_feature_set::stake_raise_minimum_delegation_to_1_sol::id());
+            .deactivate(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id());
         feature_set
     }
 

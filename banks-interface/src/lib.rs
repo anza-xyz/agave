@@ -12,8 +12,8 @@ use {
         pubkey::Pubkey,
         signature::Signature,
         transaction::{self, TransactionError, VersionedTransaction},
-        transaction_context::TransactionReturnData,
     },
+    solana_transaction_context::TransactionReturnData,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

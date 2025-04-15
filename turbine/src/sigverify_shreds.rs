@@ -3,10 +3,10 @@ use {
         cluster_nodes::{self, check_feature_activation, ClusterNodesCache},
         retransmit_stage::RetransmitStage,
     },
+    agave_feature_set as feature_set,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     itertools::{Either, Itertools},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
-    solana_feature_set as feature_set,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
@@ -144,7 +144,7 @@ fn run_shred_sigverify<const K: usize>(
     let now = Instant::now();
     stats.num_iters += 1;
     stats.num_batches += packets.len();
-    stats.num_packets += packets.iter().map(PacketBatch::len).sum::<usize>();
+    stats.num_packets += packets.iter().map(|batch| batch.len()).sum::<usize>();
     stats.num_discards_pre += count_discards(&packets);
     // Repair shreds include a randomly generated u32 nonce, so it does not
     // make sense to deduplicate the entire packet payload (i.e. they are not
@@ -246,7 +246,7 @@ fn run_shred_sigverify<const K: usize>(
     // Extract shred payload from packets, and separate out repaired shreds.
     let (shreds, repairs): (Vec<_>, Vec<_>) = packets
         .iter()
-        .flat_map(PacketBatch::iter)
+        .flat_map(|batch| batch.iter())
         .filter(|packet| !packet.meta().discard())
         .filter_map(|packet| {
             let shred = shred::layout::get_shred(packet)?.to_vec();
@@ -313,7 +313,12 @@ fn verify_retransmitter_signature(
     let data_plane_fanout = cluster_nodes::get_data_plane_fanout(shred.slot(), root_bank);
     let parent = match cluster_nodes.get_retransmit_parent(&leader, &shred, data_plane_fanout) {
         Ok(Some(parent)) => parent,
-        Ok(None) => return true,
+        Ok(None) => {
+            stats
+                .num_retranmitter_signature_skipped
+                .fetch_add(1, Ordering::Relaxed);
+            return true;
+        }
         Err(err) => {
             error!("get_retransmit_parent: {err:?}");
             stats
@@ -322,7 +327,14 @@ fn verify_retransmitter_signature(
             return false;
         }
     };
-    signature.verify(parent.as_ref(), merkle_root.as_ref())
+    if signature.verify(parent.as_ref(), merkle_root.as_ref()) {
+        stats
+            .num_retranmitter_signature_verified
+            .fetch_add(1, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
 }
 
 fn verify_packets(
@@ -358,7 +370,7 @@ fn get_slot_leaders(
     let mut leaders = HashMap::<Slot, Option<Pubkey>>::new();
     batches
         .iter_mut()
-        .flat_map(PacketBatch::iter_mut)
+        .flat_map(|batch| batch.iter_mut())
         .filter(|packet| !packet.meta().discard())
         .filter(|packet| {
             let shred = shred::layout::get_shred(packet);
@@ -382,7 +394,7 @@ fn get_slot_leaders(
 fn count_discards(packets: &[PacketBatch]) -> usize {
     packets
         .iter()
-        .flat_map(PacketBatch::iter)
+        .flat_map(|batch| batch.iter())
         .filter(|packet| packet.meta().discard())
         .count()
 }
@@ -412,6 +424,8 @@ struct ShredSigVerifyStats {
     num_discards_pre: usize,
     num_duplicates: usize,
     num_invalid_retransmitter: AtomicUsize,
+    num_retranmitter_signature_skipped: AtomicUsize,
+    num_retranmitter_signature_verified: AtomicUsize,
     num_retransmit_shreds: usize,
     num_unknown_slot_leader: AtomicUsize,
     num_unknown_turbine_parent: AtomicUsize,
@@ -433,6 +447,8 @@ impl ShredSigVerifyStats {
             num_discards_post: 0usize,
             num_duplicates: 0usize,
             num_invalid_retransmitter: AtomicUsize::default(),
+            num_retranmitter_signature_skipped: AtomicUsize::default(),
+            num_retranmitter_signature_verified: AtomicUsize::default(),
             num_retransmit_shreds: 0usize,
             num_unknown_slot_leader: AtomicUsize::default(),
             num_unknown_turbine_parent: AtomicUsize::default(),
@@ -457,6 +473,18 @@ impl ShredSigVerifyStats {
             (
                 "num_invalid_retransmitter",
                 self.num_invalid_retransmitter.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_retranmitter_signature_skipped",
+                self.num_retranmitter_signature_skipped
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_retranmitter_signature_verified",
+                self.num_retranmitter_signature_verified
+                    .load(Ordering::Relaxed),
                 i64
             ),
             ("num_retransmit_shreds", self.num_retransmit_shreds, i64),

@@ -1,7 +1,7 @@
 #![cfg(feature = "sbf_rust")]
 
 use {
-    solana_feature_set::disable_fees_sysvar,
+    agave_feature_set::disable_fees_sysvar,
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,

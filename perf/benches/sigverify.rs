@@ -24,7 +24,7 @@ fn bench_sigverify_simple(bencher: &mut Bencher) {
 
     // generate packet vector
     let mut batches = to_packet_batches(
-        &std::iter::repeat(tx).take(num_packets).collect::<Vec<_>>(),
+        &std::iter::repeat_n(tx, num_packets).collect::<Vec<_>>(),
         128,
     );
 
@@ -177,8 +177,7 @@ fn bench_get_offsets(bencher: &mut Bencher) {
     let tx = test_tx();
 
     // generate packet vector
-    let mut batches =
-        to_packet_batches(&std::iter::repeat(tx).take(1024).collect::<Vec<_>>(), 1024);
+    let mut batches = to_packet_batches(&std::iter::repeat_n(tx, 1024).collect::<Vec<_>>(), 1024);
 
     let recycler = Recycler::default();
     // verify packets

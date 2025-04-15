@@ -21,7 +21,7 @@ solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
-solana-tpu-client-next = { workspace = true }
+solana-tpu-client-next = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 

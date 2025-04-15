@@ -6,7 +6,7 @@ use {
     bytemuck_derive::{Pod, Zeroable},
     memmap2::MmapMut,
     solana_clock::Slot,
-    solana_measure::{measure::Measure, measure_us},
+    solana_measure::measure::Measure,
     std::{
         collections::HashSet,
         fs::{self, remove_file, File, OpenOptions},
@@ -395,17 +395,10 @@ impl CacheHashData {
         });
         assert_eq!(i, entries);
         m2.stop();
-        // We must flush the mmap after writing, since we're about to turn around and load it for
-        // reading *not* via the mmap.  If the mmap is never flushed to disk, it is possible the
-        // entries will *not* be visible when the reader comes along.
-        let (_, measure_flush_us) = measure_us!(cache_file.mmap.flush()?);
         m.stop();
         stats
             .write_to_mmap_us
             .fetch_add(m2.as_us(), Ordering::Relaxed);
-        stats
-            .flush_mmap_us
-            .fetch_add(measure_flush_us, Ordering::Relaxed);
         stats.save_us.fetch_add(m.as_us(), Ordering::Relaxed);
         stats.saved_to_cache.fetch_add(1, Ordering::Relaxed);
         Ok(())

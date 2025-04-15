@@ -15,7 +15,7 @@ edition = { workspace = true }
 agave-banking-stage-ingress-types = { workspace = true }
 async-channel = { workspace = true }
 bytes = { workspace = true }
-clap = { workspace = true }
+clap = { version = "4.5.31", features = ["cargo", "derive", "error-context"] }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 futures  = { workspace = true }
@@ -37,6 +37,7 @@ signal-hook = { workspace = true }
 smallvec = { workspace = true }
 socket2 = { workspace = true }
 solana-clap-utils = { workspace = true }
+solana-client = { workspace = true }
 solana-core = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
@@ -50,10 +51,12 @@ solana-version = { workspace = true }
 
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+url = { workspace = true }
 x509-parser = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+solana-local-cluster = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
 
 [lib]

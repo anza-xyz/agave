@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::{
         scheduler_common::SchedulingCommon, scheduler_error::SchedulerError,
@@ -52,7 +54,13 @@ pub(crate) enum PreLockFilterAction {
 
 /// Metrics from scheduling transactions.
 #[derive(Default, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct SchedulingSummary {
+    /// Starting queue size
+    pub starting_queue_size: usize,
+    /// Starting buffer size (outstanding txs are not counted in queue)
+    pub starting_buffer_size: usize,
+
     /// Number of transactions scheduled.
     pub num_scheduled: usize,
     /// Number of transactions that were not scheduled due to conflicts.

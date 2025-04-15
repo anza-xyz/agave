@@ -2,7 +2,7 @@
 //! to the upcoming leaders.
 
 use {
-    super::{leader_updater::LeaderUpdater, SendTransactionStatsPerAddr},
+    super::leader_updater::LeaderUpdater,
     crate::{
         connection_worker::ConnectionWorker,
         quic_networking::{
@@ -21,6 +21,7 @@ use {
     tokio::sync::mpsc,
     tokio_util::sync::CancellationToken,
 };
+pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
 
 /// The [`ConnectionWorkersScheduler`] sends transactions from the provided
 /// receiver channel to upcoming leaders. It obtains information about future
@@ -28,7 +29,11 @@ use {
 ///
 /// Internally, it enables the management and coordination of multiple network
 /// connections, schedules and oversees connection workers.
-pub struct ConnectionWorkersScheduler;
+pub struct ConnectionWorkersScheduler {
+    leader_updater: Box<dyn LeaderUpdater>,
+    transaction_receiver: TransactionReceiver,
+    stats: Arc<SendTransactionStats>,
+}
 
 /// Errors that arise from running [`ConnectionWorkersSchedulerError`].
 #[derive(Debug, Error, PartialEq)]
@@ -137,14 +142,27 @@ pub trait WorkersBroadcaster {
     ) -> Result<(), ConnectionWorkersSchedulerError>;
 }
 
-pub type TransactionStatsAndReceiver = (
-    SendTransactionStatsPerAddr,
-    mpsc::Receiver<TransactionBatch>,
-);
-
 impl ConnectionWorkersScheduler {
-    /// Starts the scheduler, which manages the distribution of transactions to
+    /// Creates the scheduler, which manages the distribution of transactions to
     /// the network's upcoming leaders.
+    pub fn new(
+        leader_updater: Box<dyn LeaderUpdater>,
+        transaction_receiver: mpsc::Receiver<TransactionBatch>,
+    ) -> Self {
+        let stats = Arc::new(SendTransactionStats::default());
+        Self {
+            leader_updater,
+            transaction_receiver,
+            stats,
+        }
+    }
+
+    /// Retrieves a reference to the statistics of the scheduler
+    pub fn get_stats(&self) -> Arc<SendTransactionStats> {
+        self.stats.clone()
+    }
+
+    /// Starts the scheduler.
     ///
     /// This method is a shorthand for
     /// [`ConnectionWorkersScheduler::run_with_broadcaster`] using
@@ -154,18 +172,12 @@ impl ConnectionWorkersScheduler {
     /// will be dropped. The same for transactions that failed to be delivered
     /// over the network.
     pub async fn run(
+        self,
         config: ConnectionWorkersSchedulerConfig,
-        leader_updater: Box<dyn LeaderUpdater>,
-        transaction_receiver: mpsc::Receiver<TransactionBatch>,
         cancel: CancellationToken,
-    ) -> Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError> {
-        Self::run_with_broadcaster::<NonblockingBroadcaster>(
-            config,
-            leader_updater,
-            transaction_receiver,
-            cancel,
-        )
-        .await
+    ) -> Result<Self, ConnectionWorkersSchedulerError> {
+        self.run_with_broadcaster::<NonblockingBroadcaster>(config, cancel)
+            .await
     }
 
     /// Starts the scheduler, which manages the distribution of transactions to
@@ -182,6 +194,7 @@ impl ConnectionWorkersScheduler {
     /// Importantly, if some transactions were not delivered due to network
     /// problems, they will not be retried when the problem is resolved.
     pub async fn run_with_broadcaster<Broadcaster: WorkersBroadcaster>(
+        mut self,
         ConnectionWorkersSchedulerConfig {
             bind,
             stake_identity,
@@ -191,20 +204,17 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
-        mut leader_updater: Box<dyn LeaderUpdater>,
-        mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
         cancel: CancellationToken,
-    ) -> Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError> {
+    ) -> Result<Self, ConnectionWorkersSchedulerError> {
         let endpoint = Self::setup_endpoint(bind, stake_identity)?;
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
-        let mut send_stats_per_addr = SendTransactionStatsPerAddr::new();
 
         let mut last_error = None;
 
         loop {
             let transaction_batch: TransactionBatch = tokio::select! {
-                recv_res = transaction_receiver.recv() => match recv_res {
+                recv_res = self.transaction_receiver.recv() => match recv_res {
                     Some(txs) => txs,
                     None => {
                         debug!("End of `transaction_receiver`: shutting down.");
@@ -217,21 +227,20 @@ impl ConnectionWorkersScheduler {
                 }
             };
 
-            let connect_leaders = leader_updater.next_leaders(leaders_fanout.connect);
+            let connect_leaders = self.leader_updater.next_leaders(leaders_fanout.connect);
             let send_leaders = extract_send_leaders(&connect_leaders, leaders_fanout.send);
 
             // add future leaders to the cache to hide the latency of opening
             // the connection.
             for peer in connect_leaders {
                 if !workers.contains(&peer) {
-                    let stats = send_stats_per_addr.entry(peer.ip()).or_default();
                     let worker = Self::spawn_worker(
                         &endpoint,
                         &peer,
                         worker_channel_size,
                         skip_check_transaction_age,
                         max_reconnect_attempts,
-                        stats.clone(),
+                        self.stats.clone(),
                     );
                     maybe_shutdown_worker(workers.push(peer, worker));
                 }
@@ -248,11 +257,11 @@ impl ConnectionWorkersScheduler {
         workers.shutdown().await;
 
         endpoint.close(0u32.into(), b"Closing connection");
-        leader_updater.stop().await;
+        self.leader_updater.stop().await;
         if let Some(error) = last_error {
             return Err(error);
         }
-        Ok((send_stats_per_addr, transaction_receiver))
+        Ok(self)
     }
 
     /// Sets up the QUIC endpoint for the scheduler to handle connections.

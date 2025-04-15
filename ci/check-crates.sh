@@ -50,6 +50,43 @@ for file in "${files[@]}"; do
     fi
   done
 
+  # crates.io will reject publication if certain fields are not populated
+  # https://doc.rust-lang.org/cargo/reference/publishing.html#before-publishing-a-new-crate
+  IFS=$'\t' read -r lic licf desc home repo < <(toml get "$file" . | jq -r "
+    (.package.license | tojson)\
+    +\"\t\"+(.package.license_file | tojson)\
+    +\"\t\"+(.package.description | tojson)\
+    +\"\t\"+(.package.homepage | tojson)\
+    +\"\t\"+(.package.repository | tojson)\
+  ")
+
+  declare missing_metadata=()
+  if [ "$lic" = "null" ] && [ "$licf" = "null" ]; then
+    missing_metadata+=( "license" )
+  else
+    echo "✅ license"
+  fi
+  if [ "$desc" = "null" ]; then
+    missing_metadata+=( "description" )
+  else
+    echo "✅ description"
+  fi
+  if [ "$home" = "null" ]; then
+    missing_metadata+=( "homepage" )
+  else
+    echo "✅ homepage"
+  fi
+  if [ "$repo" = "null" ]; then
+    missing_metadata+=( "repository" )
+  else
+    echo "✅ repository"
+  fi
+
+  if [ ${#missing_metadata[@]} -ne 0 ]; then
+    echo "❌ $crate_name is missing the following metadata fields: ${missing_metadata[*]}"
+    exit 1
+  fi
+
   response=$(curl -s https://crates.io/api/v1/crates/"$crate_name"/owners)
   errors=$(echo "$response" | jq .errors)
   if [[ $errors != "null" ]]; then

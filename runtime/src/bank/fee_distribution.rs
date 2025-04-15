@@ -63,9 +63,11 @@ impl Bank {
         transaction: &impl TransactionWithMeta,
         fee_budget_limits: &FeeBudgetLimits,
     ) -> u64 {
+        let (_last_hash, last_lamports_per_signature) =
+            self.last_blockhash_and_lamports_per_signature();
         let fee_details = solana_fee::calculate_fee_details(
             transaction,
-            self.get_lamports_per_signature() == 0,
+            last_lamports_per_signature == 0,
             self.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),
@@ -75,16 +77,28 @@ impl Bank {
         reward
     }
 
-    fn calculate_reward_and_burn_fee_details(
+    pub fn calculate_reward_and_burn_fee_details(
         &self,
         fee_details: &CollectorFeeDetails,
     ) -> (u64, u64) {
         let (deposit, burn) = if fee_details.transaction_fee != 0 {
-            self.fee_rate_governor.burn(fee_details.transaction_fee)
+            self.burn_transaction_fee(fee_details.transaction_fee)
         } else {
             (0, 0)
         };
         (deposit.saturating_add(fee_details.priority_fee), burn)
+    }
+
+    fn burn_transaction_fee(&self, fees: u64) -> (u64, u64) {
+        let burned = fees * self.burn_percent() / 100;
+        (fees - burned, burned)
+    }
+
+    const fn burn_percent(&self) -> u64 {
+        // NOTE: burn percent is statically 50%, in case it needs to change in the future,
+        // burn_percent can be bank property that being passed down from bank to bank, without
+        // needing fee-rate-governor
+        solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT as u64
     }
 
     fn deposit_or_burn_fee(&self, deposit: u64, burn: &mut u64) {
@@ -679,7 +693,7 @@ pub mod tests {
             transaction_fee,
             priority_fee,
         });
-        let (expected_deposit, expected_burn) = bank.fee_rate_governor.burn(transaction_fee);
+        let (expected_deposit, expected_burn) = bank.burn_transaction_fee(transaction_fee);
         let expected_rewards = expected_deposit + priority_fee;
 
         let initial_capitalization = bank.capitalization();
@@ -734,50 +748,6 @@ pub mod tests {
         assert!(
             locked_rewards.is_empty(),
             "There should be no rewards distributed"
-        );
-    }
-
-    #[test]
-    fn test_distribute_transaction_fee_details_burn_all() {
-        let mut genesis = create_genesis_config(0);
-        genesis.genesis_config.fee_rate_governor.burn_percent = 100;
-        let mut bank = Bank::new_for_tests(&genesis.genesis_config);
-        let transaction_fee = 100;
-        let priority_fee = 200;
-        bank.collector_fee_details = RwLock::new(CollectorFeeDetails {
-            transaction_fee,
-            priority_fee,
-        });
-
-        let initial_capitalization = bank.capitalization();
-        let initial_collector_id_balance = bank.get_balance(bank.collector_id());
-        bank.distribute_transaction_fee_details();
-        let new_collector_id_balance = bank.get_balance(bank.collector_id());
-
-        assert_eq!(
-            initial_collector_id_balance + priority_fee,
-            new_collector_id_balance
-        );
-        assert_eq!(
-            initial_capitalization - transaction_fee,
-            bank.capitalization()
-        );
-        let locked_rewards = bank.rewards.read().unwrap();
-        assert_eq!(
-            locked_rewards.len(),
-            1,
-            "There should be one reward distributed"
-        );
-
-        let reward_info = &locked_rewards[0];
-        assert_eq!(
-            reward_info.1.lamports, priority_fee as i64,
-            "The reward amount should match the expected deposit"
-        );
-        assert_eq!(
-            reward_info.1.reward_type,
-            RewardType::Fee,
-            "The reward type should be Fee"
         );
     }
 

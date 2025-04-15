@@ -3,18 +3,19 @@
 #![allow(clippy::items_after_test_module)]
 
 use {
+    agave_feature_set::enable_alt_bn128_syscall,
     assert_matches::assert_matches,
     serde_json::Value,
     solana_cli::{
         cli::{process_command, CliCommand, CliConfig},
         program::{ProgramCliCommand, CLOSE_PROGRAM_WARNING},
+        program_v4::{AdditionalCliConfig, ProgramV4CliCommand},
         test_utils::wait_n_slots,
     },
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet,
-    solana_feature_set::{disable_new_loader_v3_deployments, enable_alt_bn128_syscall},
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
     solana_rpc_client_api::config::RpcTransactionConfig,
@@ -32,6 +33,7 @@ use {
         system_program,
         transaction::Transaction,
     },
+    solana_sdk_ids::loader_v4,
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidatorGenesis,
     solana_transaction_status::UiTransactionEncoding,
@@ -54,8 +56,7 @@ fn test_validator_genesis(mint_keypair: Keypair) -> TestValidatorGenesis {
             exemption_threshold: 1.0,
             ..Rent::default()
         })
-        .faucet_addr(Some(run_local_faucet(mint_keypair, None)))
-        .deactivate_features(&[disable_new_loader_v3_deployments::id()]);
+        .faucet_addr(Some(run_local_faucet(mint_keypair, None)));
     genesis
 }
 
@@ -2926,7 +2927,6 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
             exemption_threshold: 1.0,
             ..Rent::default()
         })
-        .deactivate_features(&[disable_new_loader_v3_deployments::id()])
         .rpc_config(JsonRpcConfig {
             enable_rpc_transaction_history: true,
             faucet_addr: Some(faucet_addr),
@@ -3081,4 +3081,175 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
             &system_program::id()
         );
     }
+}
+
+#[test]
+fn test_cli_program_v4() {
+    let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    noop_path.push("tests");
+    noop_path.push("fixtures");
+    noop_path.push("noop");
+    noop_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let mint_pubkey = mint_keypair.pubkey();
+    let test_validator = test_validator_genesis(mint_keypair)
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
+    let rpc_client =
+        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::confirmed());
+
+    let payer_keypair = Keypair::new();
+    let upgrade_authority = Keypair::new();
+    let program_keypair = Keypair::new();
+    let buffer_keypair = Keypair::new();
+    let mut config = CliConfig::recent_for_tests();
+    config.signers = vec![
+        &payer_keypair,
+        &upgrade_authority,
+        &program_keypair,
+        &buffer_keypair,
+    ];
+    config.json_rpc_url = test_validator.rpc_url();
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 10000000,
+    };
+    process_command(&config).unwrap();
+    config.command = CliCommand::Airdrop {
+        pubkey: Some(program_keypair.pubkey()),
+        lamports: 1000,
+    };
+    process_command(&config).unwrap();
+
+    // Initial deployment
+    config.output_format = OutputFormat::JsonCompact;
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
+        additional_cli_config: AdditionalCliConfig::default(),
+        program_address: program_keypair.pubkey(),
+        buffer_address: None,
+        upload_signer_index: Some(2),
+        authority_signer_index: 1,
+        path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
+        upload_range: None..None,
+    });
+    assert!(process_command(&config).is_ok());
+    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert_eq!(program_account.owner, loader_v4::id());
+    assert!(program_account.executable);
+
+    // Single-step redeployment without buffer
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
+        additional_cli_config: AdditionalCliConfig::default(),
+        program_address: program_keypair.pubkey(),
+        buffer_address: None,
+        upload_signer_index: None,
+        authority_signer_index: 1,
+        path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
+        upload_range: None..None,
+    });
+    assert!(process_command(&config).is_ok());
+    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert_eq!(program_account.owner, loader_v4::id());
+    assert!(program_account.executable);
+
+    // Single-step redeployment with buffer
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
+        additional_cli_config: AdditionalCliConfig::default(),
+        program_address: program_keypair.pubkey(),
+        buffer_address: Some(buffer_keypair.pubkey()),
+        upload_signer_index: Some(3),
+        authority_signer_index: 1,
+        path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
+        upload_range: None..None,
+    });
+    assert!(process_command(&config).is_ok());
+    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert_eq!(program_account.owner, loader_v4::id());
+    assert!(program_account.executable);
+    let _error = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .unwrap_err();
+
+    // Two-step redeployment with buffer
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
+        additional_cli_config: AdditionalCliConfig::default(),
+        program_address: buffer_keypair.pubkey(),
+        buffer_address: Some(buffer_keypair.pubkey()),
+        upload_signer_index: Some(3),
+        authority_signer_index: 1,
+        path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
+        upload_range: None..None,
+    });
+    assert!(process_command(&config).is_ok());
+    let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
+    assert_eq!(buffer_account.owner, loader_v4::id());
+    assert!(buffer_account.executable);
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
+        additional_cli_config: AdditionalCliConfig::default(),
+        program_address: program_keypair.pubkey(),
+        buffer_address: Some(buffer_keypair.pubkey()),
+        upload_signer_index: None,
+        authority_signer_index: 1,
+        path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
+        upload_range: None..None,
+    });
+    assert!(process_command(&config).is_ok());
+    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert_eq!(program_account.owner, loader_v4::id());
+    assert!(program_account.executable);
+    let _error = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .unwrap_err();
+
+    // Transfer authority over program
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::TransferAuthority {
+        additional_cli_config: AdditionalCliConfig::default(),
+        program_address: program_keypair.pubkey(),
+        authority_signer_index: 1,
+        new_authority_signer_index: 2,
+    });
+    assert!(process_command(&config).is_ok());
+    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert_eq!(program_account.owner, loader_v4::id());
+    assert!(program_account.executable);
+
+    // Close program
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Retract {
+        additional_cli_config: AdditionalCliConfig::default(),
+        program_address: program_keypair.pubkey(),
+        authority_signer_index: 2,
+        close_program_entirely: true,
+    });
+    assert!(process_command(&config).is_ok());
+    let _error = rpc_client
+        .get_account(&program_keypair.pubkey())
+        .unwrap_err();
+
+    // Deployment at the closed address
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
+        additional_cli_config: AdditionalCliConfig::default(),
+        program_address: program_keypair.pubkey(),
+        buffer_address: None,
+        upload_signer_index: Some(2),
+        authority_signer_index: 1,
+        path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
+        upload_range: None..None,
+    });
+    assert!(process_command(&config).is_ok());
+    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert_eq!(program_account.owner, loader_v4::id());
+    assert!(program_account.executable);
+
+    // Finalize program
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Finalize {
+        additional_cli_config: AdditionalCliConfig::default(),
+        program_address: program_keypair.pubkey(),
+        authority_signer_index: 1,
+        next_version_signer_index: 2,
+    });
+    assert!(process_command(&config).is_ok());
+    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert_eq!(program_account.owner, loader_v4::id());
+    assert!(program_account.executable);
 }

@@ -30,7 +30,6 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         repair_validators: config.repair_validators.clone(),
         repair_whitelist: config.repair_whitelist.clone(),
         gossip_validators: config.gossip_validators.clone(),
-        accounts_hash_interval_slots: config.accounts_hash_interval_slots,
         max_genesis_archive_unpacked_size: config.max_genesis_archive_unpacked_size,
         run_verification: config.run_verification,
         require_tower: config.require_tower,
@@ -74,6 +73,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         replay_transactions_threads: config.replay_transactions_threads,
         tvu_shred_sigverify_threads: config.tvu_shred_sigverify_threads,
         delay_leader_block_for_pending_fork: config.delay_leader_block_for_pending_fork,
+        use_tpu_client_next: config.use_tpu_client_next,
     }
 }
 

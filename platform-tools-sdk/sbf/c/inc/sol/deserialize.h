@@ -126,6 +126,9 @@ static bool sol_deserialize(
 
   params->program_id = (SolPubkey *) input;
   input += sizeof(SolPubkey);
+  if (params->ka_num > ka_num) {
+    params->ka_num = ka_num;
+  }
 
   return true;
 }

@@ -3,7 +3,7 @@
 #![deny(clippy::indexing_slicing)]
 use {
     crate::shred::{
-        self, merkle::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
+        self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
         ShredType, ShredVariant, SignedData, SIZE_OF_COMMON_SHRED_HEADER,
     },
     solana_perf::packet::Packet,

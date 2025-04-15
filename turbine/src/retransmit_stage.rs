@@ -17,7 +17,6 @@ use {
     },
     solana_measure::measure::Measure,
     solana_perf::deduper::Deduper,
-    solana_rayon_threadlimit::get_thread_count,
     solana_rpc::{
         max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions,
         slot_status_notifier::SlotStatusNotifier,
@@ -543,9 +542,7 @@ impl RetransmitStage {
         let mut shred_deduper = ShredDeduper::new(&mut rng, DEDUPER_NUM_BITS);
 
         let thread_pool = {
-            // Using clamp will panic if max < min.
-            #[allow(clippy::manual_clamp)]
-            let num_threads = get_thread_count().min(12).max(retransmit_sockets.len());
+            let num_threads = retransmit_sockets.len();
             ThreadPoolBuilder::new()
                 .num_threads(num_threads)
                 .thread_name(|i| format!("solRetransmit{i:02}"))

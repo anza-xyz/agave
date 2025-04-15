@@ -15,9 +15,7 @@ use {
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
-        connection_workers_scheduler::{
-            ConnectionWorkersSchedulerConfig, Fanout, TransactionStatsAndReceiver,
-        },
+        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
@@ -27,7 +25,6 @@ use {
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         num::Saturating,
-        str::FromStr,
         sync::{atomic::Ordering, Arc},
         time::Duration,
     },
@@ -67,7 +64,7 @@ async fn setup_connection_worker_scheduler(
     transaction_receiver: Receiver<TransactionBatch>,
     stake_identity: Option<Keypair>,
 ) -> (
-    JoinHandle<Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>>,
+    JoinHandle<Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>>,
     CancellationToken,
 ) {
     let json_rpc_url = "http://127.0.0.1:8899";
@@ -85,29 +82,22 @@ async fn setup_connection_worker_scheduler(
 
     let cancel = CancellationToken::new();
     let config = test_config(stake_identity);
-    let scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
-        config,
-        leader_updater,
-        transaction_receiver,
-        cancel.clone(),
-    ));
+    let scheduler = ConnectionWorkersScheduler::new(leader_updater, transaction_receiver);
+    let scheduler = tokio::spawn(scheduler.run(config, cancel.clone()));
 
     (scheduler, cancel)
 }
 
 async fn join_scheduler(
     scheduler_handle: JoinHandle<
-        Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>,
+        Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>,
     >,
 ) -> SendTransactionStatsNonAtomic {
-    let (stats_per_ip, _) = scheduler_handle
+    let scheduler = scheduler_handle
         .await
         .unwrap()
         .expect("Scheduler should stop successfully.");
-    stats_per_ip
-        .get(&IpAddr::from_str("127.0.0.1").unwrap())
-        .expect("setup_connection_worker_scheduler() connected to a leader at 127.0.0.1")
-        .to_non_atomic()
+    scheduler.get_stats().read_and_reset()
 }
 
 // Specify the pessimistic time to finish generation and result checks.
@@ -246,14 +236,8 @@ async fn test_basic_transactions_sending() {
 
     // Stop sending
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
-    assert_eq!(
-        localhost_stats,
-        SendTransactionStatsNonAtomic {
-            successfully_sent: expected_num_txs as u64,
-            ..Default::default()
-        }
-    );
+    let stats = join_scheduler(scheduler_handle).await;
+    assert_eq!(stats.successfully_sent, expected_num_txs as u64,);
 
     // Stop server
     exit.store(true, Ordering::Relaxed);
@@ -323,14 +307,13 @@ async fn test_connection_denied_until_allowed() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let stats = join_scheduler(scheduler_handle).await;
     // in case of pruning, server closes the connection with code 1 and error
     // message b"dropped". This might lead to connection error
     // (ApplicationClosed::ApplicationClose) or to stream error
     // (ConnectionLost::ApplicationClosed::ApplicationClose).
     assert_eq!(
-        localhost_stats.write_error_connection_lost
-            + localhost_stats.connection_error_application_closed,
+        stats.write_error_connection_lost + stats.connection_error_application_closed,
         1
     );
 
@@ -382,14 +365,13 @@ async fn test_connection_pruned_and_reopened() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let stats = join_scheduler(scheduler_handle).await;
     // in case of pruning, server closes the connection with code 1 and error
     // message b"dropped". This might lead to connection error
     // (ApplicationClosed::ApplicationClose) or to stream error
     // (ConnectionLost::ApplicationClosed::ApplicationClose).
     assert_eq!(
-        localhost_stats.connection_error_application_closed
-            + localhost_stats.write_error_connection_lost,
+        stats.connection_error_application_closed + stats.write_error_connection_lost,
         1,
     );
 
@@ -442,9 +424,9 @@ async fn test_staked_connection() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let stats = join_scheduler(scheduler_handle).await;
     assert_eq!(
-        localhost_stats,
+        stats,
         SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
             ..Default::default()
@@ -489,9 +471,9 @@ async fn test_connection_throttling() {
 
     // Stop sending
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let stats = join_scheduler(scheduler_handle).await;
     assert_eq!(
-        localhost_stats,
+        stats,
         SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
             ..Default::default()
@@ -534,11 +516,7 @@ async fn test_no_host() {
 
     // While attempting to establish a connection with a nonexistent host, we fill the worker's
     // channel.
-    let (stats, _) = scheduler_handle
-        .await
-        .expect("Scheduler should stop successfully")
-        .expect("Scheduler execution was successful");
-    let stats = stats.get(&server_ip).unwrap().to_non_atomic();
+    let stats = join_scheduler(scheduler_handle).await;
     // `5` because `config.max_reconnect_attempts` is 4
     assert_eq!(stats.connect_error_invalid_remote_address, 5);
 }
@@ -590,13 +568,13 @@ async fn test_rate_limiting() {
 
     // And the scheduler.
     scheduler_cancel.cancel();
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let stats = join_scheduler(scheduler_handle).await;
 
     // We do not expect to see any errors, as the connection is in the pending state still, when we
     // do the shutdown.  If we increase the time we wait in `count_received_packets_for`, we would
     // start seeing a `connection_error_timed_out` incremented to 1.  Potentially, we may want to
     // accept both 0 and 1 as valid values for it.
-    assert_eq!(localhost_stats, SendTransactionStatsNonAtomic::default());
+    assert_eq!(stats, SendTransactionStatsNonAtomic::default());
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);
@@ -654,26 +632,26 @@ async fn test_rate_limiting_establish_connection() {
 
     // And the scheduler.
     scheduler_cancel.cancel();
-    let mut localhost_stats = join_scheduler(scheduler_handle).await;
+    let mut stats = join_scheduler(scheduler_handle).await;
     assert!(
-        localhost_stats.connection_error_timed_out > 0,
+        stats.connection_error_timed_out > 0,
         "As the quinn timeout is below 1 minute, a few connections will fail to connect during \
          the 1 minute delay.\n\
          Actual connection_error_timed_out: {}",
-        localhost_stats.connection_error_timed_out
+        stats.connection_error_timed_out
     );
     assert!(
-        localhost_stats.successfully_sent > 0,
+        stats.successfully_sent > 0,
         "As we run the test for longer than 1 minute, we expect a connection to be established, \
          and a number of transactions to be delivered.\n\
          Actual successfully_sent: {}",
-        localhost_stats.successfully_sent
+        stats.successfully_sent
     );
 
     // All the rest of the error counters should be 0.
-    localhost_stats.connection_error_timed_out = 0;
-    localhost_stats.successfully_sent = 0;
-    assert_eq!(localhost_stats, SendTransactionStatsNonAtomic::default());
+    stats.connection_error_timed_out = 0;
+    stats.successfully_sent = 0;
+    assert_eq!(stats, SendTransactionStatsNonAtomic::default());
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);

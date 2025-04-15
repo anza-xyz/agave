@@ -15,6 +15,8 @@ check-cfg = [
 ]
 
 [workspace.dependencies]
+agave-feature-set = { path = "../../feature-set", version = "=2.3.0" }
+agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=2.3.0" }
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"
@@ -35,14 +37,13 @@ serde_derive = "1.0.112"                                                        
 serde_json = "1.0.56"
 solana-account-decoder = { path = "../../account-decoder", version = "=2.3.0" }
 solana-accounts-db = { path = "../../accounts-db", version = "=2.3.0" }
-solana-bn254 = "=2.2.1"
+solana-bn254 = "=2.2.2"
 solana-bpf-loader-program = { path = "../bpf_loader", version = "=2.3.0" }
 solana-cli-output = { path = "../../cli-output", version = "=2.3.0" }
 solana-compute-budget = { path = "../../compute-budget", version = "=2.3.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=2.3.0" }
 solana-curve25519 = { path = "../../curves/curve25519", version = "=2.3.0" }
 solana-decode-error = "=2.2.1"
-solana-feature-set = "=2.2.4"
 solana-fee = { path = "../../fee", version = "=2.3.0" }
 solana-ledger = { path = "../../ledger", version = "=2.3.0" }
 solana-log-collector = { path = "../../log-collector", version = "=2.3.0" }
@@ -61,12 +62,14 @@ solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=2.3.0" }
 solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=2.3.0" }
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=2.3.0" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=2.3.0" }
-solana-sdk = "=2.2.1"
+solana-sdk = "=2.2.2"
 solana-sbpf = "=0.10.0"
 solana-secp256k1-recover = "=2.2.1"
 solana-svm = { path = "../../svm", version = "=2.3.0" }
+solana-svm-callback = { path = "../../svm-callback", version = "=2.3.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=2.3.0" }
 solana-timings = { path = "../../timings", version = "=2.3.0" }
+solana-transaction-context = { path = "../../transaction-context", version = "=2.3.0" }
 solana-transaction-status = { path = "../../transaction-status", version = "=2.3.0" }
 solana-type-overrides = { path = "../../type-overrides", version = "=2.3.0" }
 solana-vote = { path = "../../vote", version = "=2.3.0" }
@@ -96,11 +99,14 @@ strip = true
 [features]
 sbf_c = []
 sbf_rust = []
-dummy-for-ci-check = ["sbf_c", "sbf_rust"]
+sbf_sanity_list = []
+dummy-for-ci-check = ["sbf_c", "sbf_rust", "sbf_sanity_list"]
 # This was needed for ci
 frozen-abi = []
 
 [dev-dependencies]
+agave-feature-set = { workspace = true }
+agave-reserved-account-keys = { workspace = true }
 agave-validator = { workspace = true }
 bincode = { workspace = true }
 borsh = { workspace = true }
@@ -118,7 +124,6 @@ solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
-solana-feature-set = { workspace = true }
 solana-fee = { workspace = true }
 solana-ledger = { workspace = true }
 solana-log-collector = { workspace = true }
@@ -136,8 +141,10 @@ solana-sbf-rust-realloc-invoke-dep = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-svm = { workspace = true }
+solana-svm-callback = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-status = { workspace = true }
 solana-type-overrides = { workspace = true }
 solana-vote = { workspace = true }

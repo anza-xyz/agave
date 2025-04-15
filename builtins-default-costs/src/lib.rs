@@ -1,22 +1,18 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
-#[cfg(feature = "svm-internal")]
-use qualifier_attr::qualifiers;
 use {
+    agave_feature_set::{self as feature_set, FeatureSet},
     ahash::AHashMap,
     lazy_static::lazy_static,
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
-        address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        compute_budget, config, ed25519_program, loader_v4, secp256k1_program, stake,
-        system_program, vote,
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget, ed25519_program,
+        loader_v4, secp256k1_program, stake, system_program, vote,
     },
 };
 
 #[derive(Clone)]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-struct MigratingBuiltinCost {
+pub struct MigratingBuiltinCost {
     native_cost: u64,
     core_bpf_migration_feature: Pubkey,
     // encoding positional information explicitly for migration feature item,
@@ -27,8 +23,7 @@ struct MigratingBuiltinCost {
 }
 
 #[derive(Clone)]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-struct NotMigratingBuiltinCost {
+pub struct NotMigratingBuiltinCost {
     native_cost: u64,
 }
 
@@ -39,8 +34,7 @@ struct NotMigratingBuiltinCost {
 /// When migration completed, eg the feature gate is enabled everywhere, please
 /// remove that builtin entry from MIGRATING_BUILTINS_COSTS.
 #[derive(Clone)]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-enum BuiltinCost {
+pub enum BuiltinCost {
     Migrating(MigratingBuiltinCost),
     NotMigrating(NotMigratingBuiltinCost),
 }
@@ -53,7 +47,6 @@ impl BuiltinCost {
         }
     }
 
-    #[cfg(feature = "svm-internal")]
     fn core_bpf_migration_feature(&self) -> Option<&Pubkey> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost {
@@ -64,7 +57,6 @@ impl BuiltinCost {
         }
     }
 
-    #[cfg(feature = "svm-internal")]
     fn position(&self) -> Option<usize> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost { position, .. }) => Some(*position),
@@ -109,41 +101,21 @@ lazy_static! {
 /// correctly furnishing `core_bpf_migration_feature`.
 ///
 #[allow(dead_code)]
-const TOTAL_COUNT_BUILTINS: usize = 12;
+const TOTAL_COUNT_BUILTINS: usize = 10;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
     MIGRATING_BUILTINS_COSTS.len() + NON_MIGRATING_BUILTINS_COSTS.len(),
     TOTAL_COUNT_BUILTINS
 );
 
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
-    (
-        stake::id(),
-        BuiltinCost::Migrating(MigratingBuiltinCost {
-            native_cost: solana_stake_program::stake_instruction::DEFAULT_COMPUTE_UNITS,
-            core_bpf_migration_feature: feature_set::migrate_stake_program_to_core_bpf::id(),
-            position: 0,
-        }),
-    ),
-    (
-        config::id(),
-        BuiltinCost::Migrating(MigratingBuiltinCost {
-            native_cost: solana_config_program::config_processor::DEFAULT_COMPUTE_UNITS,
-            core_bpf_migration_feature: feature_set::migrate_config_program_to_core_bpf::id(),
-            position: 1,
-        }),
-    ),
-    (
-        address_lookup_table::id(),
-        BuiltinCost::Migrating(MigratingBuiltinCost {
-            native_cost: solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS,
-            core_bpf_migration_feature:
-                feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
-            position: 2,
-        }),
-    ),
-];
+pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[(
+    stake::id(),
+    BuiltinCost::Migrating(MigratingBuiltinCost {
+        native_cost: solana_stake_program::stake_instruction::DEFAULT_COMPUTE_UNITS,
+        core_bpf_migration_feature: feature_set::migrate_stake_program_to_core_bpf::id(),
+        position: 0,
+    }),
+)];
 
 const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (
@@ -223,17 +195,13 @@ pub fn get_builtin_instruction_cost<'a>(
         .map(|builtin_cost| builtin_cost.native_cost())
 }
 
-#[cfg(feature = "svm-internal")]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-enum BuiltinMigrationFeatureIndex {
+pub enum BuiltinMigrationFeatureIndex {
     NotBuiltin,
     BuiltinNoMigrationFeature,
     BuiltinWithMigrationFeature(usize),
 }
 
-#[cfg(feature = "svm-internal")]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-fn get_builtin_migration_feature_index(program_id: &Pubkey) -> BuiltinMigrationFeatureIndex {
+pub fn get_builtin_migration_feature_index(program_id: &Pubkey) -> BuiltinMigrationFeatureIndex {
     BUILTIN_INSTRUCTION_COSTS.get(program_id).map_or(
         BuiltinMigrationFeatureIndex::NotBuiltin,
         |builtin_cost| {
@@ -266,9 +234,7 @@ const _: () = validate_position(MIGRATING_BUILTINS_COSTS);
 
 /// Helper function to return ref of migration feature Pubkey at position `index`
 /// from MIGRATING_BUILTINS_COSTS
-#[cfg(feature = "svm-internal")]
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-pub(crate) fn get_migration_feature_id(index: usize) -> &'static Pubkey {
+pub fn get_migration_feature_id(index: usize) -> &'static Pubkey {
     MIGRATING_BUILTINS_COSTS
         .get(index)
         .expect("valid index of MIGRATING_BUILTINS_COSTS")
@@ -353,34 +319,6 @@ mod test {
         assert_eq!(
             get_migration_feature_id(feature_index),
             &feature_set::migrate_stake_program_to_core_bpf::id()
-        );
-        let feature_index = get_builtin_migration_feature_index(&config::id());
-        assert!(matches!(
-            feature_index,
-            BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(_)
-        ));
-        let BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(feature_index) =
-            feature_index
-        else {
-            panic!("expect migrating builtin")
-        };
-        assert_eq!(
-            get_migration_feature_id(feature_index),
-            &feature_set::migrate_config_program_to_core_bpf::id()
-        );
-        let feature_index = get_builtin_migration_feature_index(&address_lookup_table::id());
-        assert!(matches!(
-            feature_index,
-            BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(_)
-        ));
-        let BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(feature_index) =
-            feature_index
-        else {
-            panic!("expect migrating builtin")
-        };
-        assert_eq!(
-            get_migration_feature_id(feature_index),
-            &feature_set::migrate_address_lookup_table_program_to_core_bpf::id()
         );
     }
 

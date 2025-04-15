@@ -21,6 +21,7 @@ use {
     },
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::serialize,
+    futures::join,
     log::*,
     serde_json::{json, Value},
     solana_account::Account,
@@ -600,16 +601,9 @@ impl RpcClient {
         const GET_STATUS_RETRIES: usize = usize::MAX;
 
         'sending: for _ in 0..SEND_RETRIES {
-            let signature = self.send_transaction(transaction).await?;
-
-            let recent_blockhash = if transaction.uses_durable_nonce() {
-                let (recent_blockhash, ..) = self
-                    .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
-                    .await?;
-                recent_blockhash
-            } else {
-                *transaction.get_recent_blockhash()
-            };
+            let (latest_blockhash, signature) = self
+                .send_transaction_and_get_latest_blockhash(transaction, None)
+                .await?;
 
             for status_retry in 0..GET_STATUS_RETRIES {
                 match self.get_signature_status(&signature).await? {
@@ -617,7 +611,7 @@ impl RpcClient {
                     Some(Err(e)) => return Err(e.into()),
                     None => {
                         if !self
-                            .is_blockhash_valid(&recent_blockhash, CommitmentConfig::processed())
+                            .is_blockhash_valid(&latest_blockhash, CommitmentConfig::processed())
                             .await?
                         {
                             // Block hash is not found by some reason
@@ -673,6 +667,33 @@ impl RpcClient {
         .await
     }
 
+    async fn send_transaction_and_get_latest_blockhash(
+        &self,
+        transaction: &impl SerializableTransaction,
+        config: Option<RpcSendTransactionConfig>,
+    ) -> ClientResult<(Hash, Signature)> {
+        let (latest_blockhash, signature) = join!(
+            async {
+                if transaction.uses_durable_nonce() {
+                    self.get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+                        .await
+                        .map(|v| v.0)
+                } else {
+                    Ok(*transaction.get_recent_blockhash())
+                }
+            },
+            async {
+                if let Some(config) = config {
+                    self.send_transaction_with_config(transaction, config).await
+                } else {
+                    self.send_transaction(transaction).await
+                }
+            },
+        );
+
+        Ok((latest_blockhash?, signature?))
+    }
+
     #[cfg(feature = "spinner")]
     pub async fn send_and_confirm_transaction_with_spinner_and_config(
         &self,
@@ -680,17 +701,10 @@ impl RpcClient {
         commitment: CommitmentConfig,
         config: RpcSendTransactionConfig,
     ) -> ClientResult<Signature> {
-        let recent_blockhash = if transaction.uses_durable_nonce() {
-            self.get_latest_blockhash_with_commitment(CommitmentConfig::processed())
-                .await?
-                .0
-        } else {
-            *transaction.get_recent_blockhash()
-        };
-        let signature = self
-            .send_transaction_with_config(transaction, config)
+        let (latest_blockhash, signature) = self
+            .send_transaction_and_get_latest_blockhash(transaction, Some(config))
             .await?;
-        self.confirm_transaction_with_spinner(&signature, &recent_blockhash, commitment)
+        self.confirm_transaction_with_spinner(&signature, &latest_blockhash, commitment)
             .await?;
         Ok(signature)
     }

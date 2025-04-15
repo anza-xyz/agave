@@ -1,5 +1,6 @@
 use {
     crate::{
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::{
             ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch,
             ProgramRuntimeEnvironments,
@@ -7,19 +8,16 @@ use {
         stable_log,
         sysvar_cache::SysvarCache,
     },
+    agave_feature_set::{
+        lift_cpi_caller_restriction, remove_accounts_executable_flag_checks, FeatureSet,
+    },
     solana_account::{create_account_shared_data_for_test, AccountSharedData},
     solana_clock::Slot,
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_epoch_schedule::EpochSchedule,
-    solana_feature_set::{
-        lift_cpi_caller_restriction, move_precompile_verification_to_svm,
-        remove_accounts_executable_flag_checks, FeatureSet,
-    },
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta},
     solana_log_collector::{ic_msg, LogCollector},
     solana_measure::measure::Measure,
-    solana_precompiles::Precompile,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -28,8 +26,11 @@ use {
         program::{BuiltinFunction, SBPFVersion},
         vm::{Config, ContextObject, EbpfVm},
     },
-    solana_sdk_ids::{bpf_loader_deprecated, native_loader, sysvar},
+    solana_sdk_ids::{
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader, sysvar,
+    },
     solana_stable_layout::stable_instruction::StableInstruction,
+    solana_svm_callback::InvokeContextCallback,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
         IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
@@ -145,8 +146,7 @@ impl BpfAllocator {
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
-    epoch_total_stake: u64,
-    get_epoch_vote_account_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
+    epoch_stake_callback: &'a dyn InvokeContextCallback,
     pub feature_set: Arc<FeatureSet>,
     sysvar_cache: &'a SysvarCache,
 }
@@ -154,16 +154,14 @@ impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
-        epoch_total_stake: u64,
-        get_epoch_vote_account_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
+        epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: Arc<FeatureSet>,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
             blockhash,
             blockhash_lamports_per_signature,
-            epoch_total_stake,
-            get_epoch_vote_account_stake_callback,
+            epoch_stake_callback,
             feature_set,
             sysvar_cache,
         }
@@ -194,7 +192,9 @@ pub struct InvokeContext<'a> {
     /// Runtime configurations used to provision the invocation environment.
     pub environment_config: EnvironmentConfig<'a>,
     /// The compute budget for the current invocation.
-    compute_budget: ComputeBudget,
+    compute_budget: SVMTransactionExecutionBudget,
+    /// The compute cost for the current invocation.
+    execution_cost: SVMTransactionExecutionCost,
     /// Instruction compute meter, for tracking compute units consumed against
     /// the designated compute budget during program execution.
     compute_meter: RefCell<u64>,
@@ -213,7 +213,8 @@ impl<'a> InvokeContext<'a> {
         program_cache_for_tx_batch: &'a mut ProgramCacheForTxBatch,
         environment_config: EnvironmentConfig<'a>,
         log_collector: Option<Rc<RefCell<LogCollector>>>,
-        compute_budget: ComputeBudget,
+        compute_budget: SVMTransactionExecutionBudget,
+        execution_cost: SVMTransactionExecutionCost,
     ) -> Self {
         Self {
             transaction_context,
@@ -221,6 +222,7 @@ impl<'a> InvokeContext<'a> {
             environment_config,
             log_collector,
             compute_budget,
+            execution_cost,
             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
             execute_time: None,
             timings: ExecuteDetailsTimings::default(),
@@ -481,7 +483,7 @@ impl<'a> InvokeContext<'a> {
     /// Processes a precompile instruction
     pub fn process_precompile<'ix_data>(
         &mut self,
-        precompile: &Precompile,
+        program_id: &Pubkey,
         instruction_data: &[u8],
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
@@ -492,18 +494,12 @@ impl<'a> InvokeContext<'a> {
             .configure(program_indices, instruction_accounts, instruction_data);
         self.push()?;
 
-        let feature_set = self.get_feature_set();
-        let move_precompile_verification_to_svm =
-            feature_set.is_active(&move_precompile_verification_to_svm::id());
-        if move_precompile_verification_to_svm {
-            let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
-            precompile
-                .verify(instruction_data, &instruction_datas, feature_set)
-                .map_err(InstructionError::from)
-                .and(self.pop())
-        } else {
-            self.pop()
-        }
+        let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
+        self.environment_config
+            .epoch_stake_callback
+            .process_precompile(program_id, instruction_data, instruction_datas)
+            .map_err(InstructionError::from)
+            .and(self.pop())
     }
 
     /// Calls the instruction's program entrypoint method
@@ -523,6 +519,19 @@ impl<'a> InvokeContext<'a> {
             let owner_id = borrowed_root_account.get_owner();
             if native_loader::check_id(owner_id) {
                 *borrowed_root_account.get_key()
+            } else if self
+                .get_feature_set()
+                .is_active(&remove_accounts_executable_flag_checks::id())
+            {
+                if bpf_loader_deprecated::check_id(owner_id)
+                    || bpf_loader::check_id(owner_id)
+                    || bpf_loader_upgradeable::check_id(owner_id)
+                    || loader_v4::check_id(owner_id)
+                {
+                    *owner_id
+                } else {
+                    return Err(InstructionError::UnsupportedProgramId);
+                }
             } else {
                 *owner_id
             }
@@ -627,8 +636,13 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get this invocation's compute budget
-    pub fn get_compute_budget(&self) -> &ComputeBudget {
+    pub fn get_compute_budget(&self) -> &SVMTransactionExecutionBudget {
         &self.compute_budget
+    }
+
+    /// Get this invocation's compute budget
+    pub fn get_execution_cost(&self) -> &SVMTransactionExecutionCost {
+        &self.execution_cost
     }
 
     /// Get the current feature set.
@@ -649,15 +663,23 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get cached epoch total stake.
-    pub fn get_epoch_total_stake(&self) -> u64 {
-        self.environment_config.epoch_total_stake
+    pub fn get_epoch_stake(&self) -> u64 {
+        self.environment_config
+            .epoch_stake_callback
+            .get_epoch_stake()
     }
 
     /// Get cached stake for the epoch vote account.
-    pub fn get_epoch_vote_account_stake(&self, pubkey: &'a Pubkey) -> u64 {
-        (self
-            .environment_config
-            .get_epoch_vote_account_stake_callback)(pubkey)
+    pub fn get_epoch_stake_for_vote_account(&self, pubkey: &'a Pubkey) -> u64 {
+        self.environment_config
+            .epoch_stake_callback
+            .get_epoch_stake_for_vote_account(pubkey)
+    }
+
+    pub fn is_precompile(&self, pubkey: &Pubkey) -> bool {
+        self.environment_config
+            .epoch_stake_callback
+            .is_precompile(pubkey)
     }
 
     // Should alignment be enforced during user pointer translation
@@ -716,18 +738,23 @@ macro_rules! with_mock_invoke_context {
         $transaction_accounts:expr $(,)?
     ) => {
         use {
-            solana_compute_budget::compute_budget::ComputeBudget,
-            solana_feature_set::FeatureSet,
+            agave_feature_set::FeatureSet,
             solana_log_collector::LogCollector,
+            solana_svm_callback::InvokeContextCallback,
             solana_type_overrides::sync::Arc,
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
+                execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::ProgramCacheForTxBatch,
                 sysvar_cache::SysvarCache,
             },
         };
-        let compute_budget = ComputeBudget::default();
+
+        struct MockInvokeContextCallback {}
+        impl InvokeContextCallback for MockInvokeContextCallback {}
+
+        let compute_budget = SVMTransactionExecutionBudget::default();
         let mut $transaction_context = TransactionContext::new(
             $transaction_accounts,
             Rent::default(),
@@ -744,9 +771,9 @@ macro_rules! with_mock_invoke_context {
                 {
                     callback(
                         $transaction_context
-                            .get_account_at_index(index)
+                            .accounts()
+                            .try_borrow(index)
                             .unwrap()
-                            .borrow()
                             .data(),
                     );
                 }
@@ -755,8 +782,7 @@ macro_rules! with_mock_invoke_context {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0,
-            &|_| 0,
+            &MockInvokeContextCallback {},
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -767,6 +793,7 @@ macro_rules! with_mock_invoke_context {
             environment_config,
             Some(LogCollector::new_ref()),
             compute_budget,
+            SVMTransactionExecutionCost::default(),
         );
     };
 }
@@ -852,9 +879,9 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
 mod tests {
     use {
         super::*,
+        crate::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
         serde::{Deserialize, Serialize},
         solana_account::WritableAccount,
-        solana_compute_budget::compute_budget_limits,
         solana_instruction::Instruction,
         solana_rent::Rent,
     };
@@ -981,7 +1008,7 @@ mod tests {
 
     #[test]
     fn test_instruction_stack_height() {
-        let one_more_than_max_depth = ComputeBudget::default()
+        let one_more_than_max_depth = SVMTransactionExecutionBudget::default()
             .max_instruction_stack_depth
             .saturating_add(1);
         let mut invoke_stack = vec![];
@@ -1017,7 +1044,7 @@ mod tests {
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
         // Check call depth increases and has a limit
-        let mut depth_reached = 0;
+        let mut depth_reached: usize = 0;
         for _ in 0..invoke_stack.len() {
             invoke_context
                 .transaction_context
@@ -1179,11 +1206,13 @@ mod tests {
     #[test]
     fn test_invoke_context_compute_budget() {
         let transaction_accounts = vec![(solana_pubkey::new_rand(), AccountSharedData::default())];
+        let execution_budget = SVMTransactionExecutionBudget {
+            compute_unit_limit: u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
+            ..SVMTransactionExecutionBudget::default()
+        };
 
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-        invoke_context.compute_budget = ComputeBudget::new(
-            compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
-        );
+        invoke_context.compute_budget = execution_budget;
 
         invoke_context
             .transaction_context
@@ -1191,12 +1220,7 @@ mod tests {
             .unwrap()
             .configure(&[0], &[], &[]);
         invoke_context.push().unwrap();
-        assert_eq!(
-            *invoke_context.get_compute_budget(),
-            ComputeBudget::new(
-                compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64
-            )
-        );
+        assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
         invoke_context.pop().unwrap();
     }
 

@@ -30,9 +30,8 @@ pub(in crate::parse_token) fn parse_reallocate_instruction(
 #[cfg(test)]
 mod test {
     use {
-        super::*,
-        solana_pubkey::Pubkey,
-        spl_token_2022::{instruction::reallocate, solana_program::message::Message},
+        super::*, solana_message::Message, solana_pubkey::Pubkey,
+        spl_token_2022::instruction::reallocate,
     };
 
     #[test]

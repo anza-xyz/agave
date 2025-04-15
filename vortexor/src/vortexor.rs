@@ -56,7 +56,7 @@ impl Vortexor {
     pub fn create_tpu_sockets(
         bind_address: std::net::IpAddr,
         dynamic_port_range: (u16, u16),
-        num_quic_endpoints: u64,
+        num_quic_endpoints: usize,
     ) -> TpuSockets {
         let quic_config = SocketConfig::default().reuseport(true);
 
@@ -65,12 +65,7 @@ impl Vortexor {
                 .expect("expected bind to succeed");
 
         let tpu_quic_port = tpu_quic.local_addr().unwrap().port();
-        let tpu_quic = bind_more_with_config(
-            tpu_quic,
-            num_quic_endpoints.try_into().unwrap(),
-            quic_config,
-        )
-        .unwrap();
+        let tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints, quic_config).unwrap();
 
         let (_, tpu_quic_fwd) = bind_in_range_with_config(
             bind_address,
@@ -79,12 +74,8 @@ impl Vortexor {
         )
         .expect("expected bind to succeed");
 
-        let tpu_quic_fwd = bind_more_with_config(
-            tpu_quic_fwd,
-            num_quic_endpoints.try_into().unwrap(),
-            quic_config,
-        )
-        .unwrap();
+        let tpu_quic_fwd =
+            bind_more_with_config(tpu_quic_fwd, num_quic_endpoints, quic_config).unwrap();
 
         TpuSockets {
             tpu_quic,
@@ -111,11 +102,11 @@ impl Vortexor {
         staked_nodes: Arc<RwLock<StakedNodes>>,
         tpu_sender: Sender<PacketBatch>,
         tpu_fwd_sender: Sender<PacketBatch>,
-        max_connections_per_peer: u64,
-        max_tpu_staked_connections: u64,
-        max_tpu_unstaked_connections: u64,
-        max_fwd_staked_connections: u64,
-        max_fwd_unstaked_connections: u64,
+        max_connections_per_peer: usize,
+        max_tpu_staked_connections: usize,
+        max_tpu_unstaked_connections: usize,
+        max_fwd_staked_connections: usize,
+        max_fwd_unstaked_connections: usize,
         max_streams_per_ms: u64,
         max_connections_per_ipaddr_per_min: u64,
         tpu_coalesce: Duration,
@@ -123,9 +114,9 @@ impl Vortexor {
         exit: Arc<AtomicBool>,
     ) -> Self {
         let mut quic_server_params = QuicServerParams {
-            max_connections_per_peer: max_connections_per_peer.try_into().unwrap(),
-            max_staked_connections: max_tpu_staked_connections.try_into().unwrap(),
-            max_unstaked_connections: max_tpu_unstaked_connections.try_into().unwrap(),
+            max_connections_per_peer,
+            max_staked_connections: max_tpu_staked_connections,
+            max_unstaked_connections: max_tpu_unstaked_connections,
             max_streams_per_ms,
             max_connections_per_ipaddr_per_min,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
@@ -152,9 +143,8 @@ impl Vortexor {
 
         // Fot TPU forward -- we disallow unstaked connections. Allocate all connection resources
         // for staked connections:
-        quic_server_params.max_staked_connections = max_fwd_staked_connections.try_into().unwrap();
-        quic_server_params.max_unstaked_connections =
-            max_fwd_unstaked_connections.try_into().unwrap();
+        quic_server_params.max_staked_connections = max_fwd_staked_connections;
+        quic_server_params.max_unstaked_connections = max_fwd_unstaked_connections;
         let tpu_fwd_result = spawn_server_multi(
             "solVtxTpuFwd",
             "quic_vortexor_tpu_forwards",

@@ -70,6 +70,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         _pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError> {
+        let starting_queue_size = container.queue_size();
+        let starting_buffer_size = container.buffer_size();
+
         let num_threads = self.common.consume_work_senders.len();
         let target_cu_per_thread = self.config.target_scheduled_cus / num_threads as u64;
 
@@ -82,7 +85,11 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             }
         }
         if schedulable_threads.is_empty() {
-            return Ok(SchedulingSummary::default());
+            return Ok(SchedulingSummary {
+                starting_queue_size,
+                starting_buffer_size,
+                ..SchedulingSummary::default()
+            });
         }
 
         // Track metrics on filter.
@@ -113,7 +120,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             // we should immediately send out the batches, so this transaction may be scheduled.
             if !self
                 .working_account_set
-                .check_locks(&transaction_state.transaction_ttl().transaction)
+                .check_locks(transaction_state.transaction())
             {
                 self.working_account_set.clear();
                 num_sent += self
@@ -197,6 +204,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         container.push_ids_into_queue(self.unschedulables.drain(..));
 
         Ok(SchedulingSummary {
+            starting_queue_size,
+            starting_buffer_size,
             num_scheduled,
             num_unschedulable_conflicts,
             num_unschedulable_threads,
@@ -222,7 +231,7 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
     }
 
     // Schedule the transaction if it can be.
-    let transaction = &transaction_state.transaction_ttl().transaction;
+    let transaction = transaction_state.transaction();
     let account_keys = transaction.account_keys();
     let write_account_locks = account_keys
         .iter()
@@ -248,13 +257,13 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
         }
     };
 
-    let sanitized_transaction_ttl = transaction_state.transition_to_pending();
+    let (transaction, max_age) = transaction_state.take_transaction_for_scheduling();
     let cost = transaction_state.cost();
 
     Ok(TransactionSchedulingInfo {
         thread_id,
-        transaction: sanitized_transaction_ttl.transaction,
-        max_age: sanitized_transaction_ttl.max_age,
+        transaction,
+        max_age,
         cost,
     })
 }
@@ -265,10 +274,7 @@ mod test {
         super::*,
         crate::banking_stage::{
             scheduler_messages::{MaxAge, TransactionId},
-            transaction_scheduler::{
-                transaction_state::SanitizedTransactionTTL,
-                transaction_state_container::TransactionStateContainer,
-            },
+            transaction_scheduler::transaction_state_container::TransactionStateContainer,
         },
         crossbeam_channel::unbounded,
         itertools::Itertools,
@@ -345,13 +351,10 @@ mod test {
                 lamports,
                 compute_unit_price,
             );
-            let transaction_ttl = SanitizedTransactionTTL {
-                transaction,
-                max_age: MaxAge::MAX,
-            };
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
-                transaction_ttl,
+                transaction,
+                MaxAge::MAX,
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );

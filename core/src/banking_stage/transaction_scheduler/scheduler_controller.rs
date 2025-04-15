@@ -3,11 +3,12 @@
 
 use {
     super::{
-        receive_and_buffer::ReceiveAndBuffer,
+        receive_and_buffer::{DisconnectedError, ReceiveAndBuffer},
         scheduler::{PreLockFilterAction, Scheduler},
         scheduler_error::SchedulerError,
         scheduler_metrics::{
             SchedulerCountMetrics, SchedulerLeaderDetectionMetrics, SchedulerTimingMetrics,
+            SchedulingDetails,
         },
     },
     crate::banking_stage::{
@@ -49,6 +50,8 @@ where
     timing_metrics: SchedulerTimingMetrics,
     /// Metric report handles for the worker threads.
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
+    /// Detailed scheduling metrics.
+    scheduling_details: SchedulingDetails,
 }
 
 impl<R, S> SchedulerController<R, S>
@@ -73,6 +76,7 @@ where
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
             worker_metrics,
+            scheduling_details: SchedulingDetails::default(),
         }
     }
 
@@ -120,6 +124,7 @@ where
             self.worker_metrics
                 .iter()
                 .for_each(|metrics| metrics.maybe_report_and_reset());
+            self.scheduling_details.maybe_report();
         }
 
         Ok(())
@@ -171,6 +176,7 @@ where
                     );
                     saturating_add_assign!(timing_metrics.schedule_time_us, schedule_time_us);
                 });
+                self.scheduling_details.update(&scheduling_summary);
             }
             BufferedPacketsDecision::Forward => {
                 let (_, clear_time_us) = measure_us!(self.clear_container());
@@ -239,7 +245,10 @@ where
         const MAX_TRANSACTION_CHECKS: usize = 10_000;
         let mut transaction_ids = Vec::with_capacity(MAX_TRANSACTION_CHECKS);
 
-        while let Some(id) = self.container.pop() {
+        while transaction_ids.len() < MAX_TRANSACTION_CHECKS {
+            let Some(id) = self.container.pop() else {
+                break
+            };
             transaction_ids.push(id);
         }
 
@@ -253,11 +262,9 @@ where
             let sanitized_txs: Vec<_> = chunk
                 .iter()
                 .map(|id| {
-                    &self
-                        .container
-                        .get_transaction_ttl(id.id)
+                    self.container
+                        .get_transaction(id.id)
                         .expect("transaction must exist")
-                        .transaction
                 })
                 .collect();
 
@@ -317,7 +324,7 @@ where
     fn receive_and_buffer_packets(
         &mut self,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, ()> {
+    ) -> Result<usize, DisconnectedError> {
         self.receive_and_buffer.receive_and_buffer_packets(
             &mut self.container,
             &mut self.timing_metrics,
@@ -350,7 +357,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
-        solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        solana_poh::poh_recorder::PohRecorder,
         solana_runtime::bank::Bank,
         solana_runtime_transaction::transaction_meta::StaticMeta,
         solana_sdk::{
@@ -373,8 +380,6 @@ mod tests {
         bank: Arc<Bank>,
         mint_keypair: Keypair,
         _ledger_path: TempDir,
-        _entry_receiver: Receiver<WorkingBankEntry>,
-        _record_receiver: Receiver<Record>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
 
@@ -418,7 +423,7 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
             bank.tick_height(),
             bank.last_blockhash(),
             bank.clone(),
@@ -443,8 +448,6 @@ mod tests {
             bank,
             mint_keypair,
             _ledger_path: ledger_path,
-            _entry_receiver: entry_receiver,
-            _record_receiver: record_receiver,
             poh_recorder,
             banking_packet_sender,
             consume_work_receivers,

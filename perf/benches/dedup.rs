@@ -46,9 +46,7 @@ fn bench_dedup_same_small_packets(bencher: &mut Bencher) {
     let small_packet = test_packet_with_size(128, &mut rng);
 
     let batches = to_packet_batches(
-        &std::iter::repeat(small_packet)
-            .take(NUM)
-            .collect::<Vec<_>>(),
+        &std::iter::repeat_n(small_packet, NUM).collect::<Vec<_>>(),
         128,
     );
 
@@ -62,7 +60,7 @@ fn bench_dedup_same_big_packets(bencher: &mut Bencher) {
     let big_packet = test_packet_with_size(1024, &mut rng);
 
     let batches = to_packet_batches(
-        &std::iter::repeat(big_packet).take(NUM).collect::<Vec<_>>(),
+        &std::iter::repeat_n(big_packet, NUM).collect::<Vec<_>>(),
         128,
     );
 

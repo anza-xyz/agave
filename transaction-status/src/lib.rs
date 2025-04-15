@@ -22,6 +22,7 @@ use {
         parse_accounts::{parse_legacy_message_accounts, parse_v0_message_accounts},
         parse_instruction::parse,
     },
+    agave_reserved_account_keys::ReservedAccountKeys,
     base64::{prelude::BASE64_STANDARD, Engine},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -31,7 +32,6 @@ use {
         AccountKeys, Message, VersionedMessage,
     },
     solana_pubkey::Pubkey,
-    solana_reserved_account_keys::ReservedAccountKeys,
     solana_signature::Signature,
     solana_transaction::{
         versioned::{TransactionVersion, VersionedTransaction},
@@ -187,6 +187,7 @@ fn build_simple_ui_transaction_status_meta(
         loaded_addresses: OptionSerializer::Skip,
         return_data: OptionSerializer::Skip,
         compute_units_consumed: OptionSerializer::Skip,
+        cost_units: OptionSerializer::Skip,
     }
 }
 
@@ -225,6 +226,7 @@ fn parse_ui_transaction_status_meta(
             meta.return_data.map(|return_data| return_data.into()),
         ),
         compute_units_consumed: OptionSerializer::or_skip(meta.compute_units_consumed),
+        cost_units: OptionSerializer::or_skip(meta.cost_units),
     }
 }
 
@@ -876,6 +878,7 @@ mod test {
             },
             return_data: None,
             compute_units_consumed: None,
+            cost_units: None,
         };
         let expected_json_output_value: serde_json::Value = serde_json::from_str(
             "{\

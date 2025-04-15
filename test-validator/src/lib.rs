@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_feature_set::{FeatureSet, FEATURE_NAMES},
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -15,12 +16,11 @@ use {
         consensus::tower_storage::TowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
-    solana_feature_set::FEATURE_NAMES,
     solana_geyser_plugin_manager::{
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::{ClusterInfo, Node, NodeConfig},
         contact_info::Protocol,
         gossip_service::discover_cluster,
         socketaddr,
@@ -29,7 +29,7 @@ use {
         blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
         create_new_tmp_ledger,
     },
-    solana_net_utils::PortRange,
+    solana_net_utils::{find_available_port_in_range, PortRange},
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
@@ -46,7 +46,6 @@ use {
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         exit::Exit,
-        feature_set::FeatureSet,
         fee_calculator::FeeRateGovernor,
         instruction::{AccountMeta, Instruction},
         message::Message,
@@ -64,6 +63,7 @@ use {
         fs::{self, remove_dir_all, File},
         io::Read,
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        num::NonZero,
         path::{Path, PathBuf},
         str::FromStr,
         sync::{Arc, RwLock},
@@ -98,7 +98,7 @@ impl Default for TestValidatorNodeConfig {
         const MIN_PORT_RANGE: u16 = 1024;
         const MAX_PORT_RANGE: u16 = 65535;
 
-        let bind_ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = (MIN_PORT_RANGE, MAX_PORT_RANGE);
 
         Self {
@@ -788,7 +788,7 @@ impl TestValidator {
         let mint_lamports = sol_to_lamports(500_000_000.);
 
         // Only activate features which are not explicitly deactivated.
-        let mut feature_set = FeatureSet::default().inactive;
+        let mut feature_set = FeatureSet::default().inactive().clone();
         for feature in &config.deactivate_feature_set {
             if feature_set.remove(feature) {
                 info!("Feature for {:?} deactivated", feature)
@@ -949,16 +949,28 @@ impl TestValidator {
                 .unwrap(),
         )?;
 
-        let mut node = Node::new_single_bind(
-            &validator_identity.pubkey(),
-            &config.node_config.gossip_addr,
-            config.node_config.port_range,
-            config.node_config.bind_ip_addr,
-        );
+        let node_config = NodeConfig {
+            gossip_addr: config.node_config.gossip_addr,
+            port_range: config.node_config.port_range,
+            bind_ip_addr: config.node_config.bind_ip_addr,
+            public_tpu_addr: None,
+            public_tpu_forwards_addr: None,
+            num_quic_endpoints: NonZero::new(1).unwrap(),
+            num_tvu_receive_sockets: NonZero::new(1).unwrap(),
+            num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
+        };
+
+        let port_range = node_config.port_range;
+        let mut node = Node::new_with_external_ip(&validator_identity.pubkey(), node_config);
+        let addr = node.info.gossip().unwrap().ip();
         if let Some((rpc, rpc_pubsub)) = config.rpc_ports {
-            let addr = node.info.gossip().unwrap().ip();
             node.info.set_rpc((addr, rpc)).unwrap();
             node.info.set_rpc_pubsub((addr, rpc_pubsub)).unwrap();
+        } else {
+            let rpc_port = find_available_port_in_range(addr, port_range).unwrap();
+            let rpc_pubsub_port = find_available_port_in_range(addr, port_range).unwrap();
+            node.info.set_rpc((addr, rpc_port)).unwrap();
+            node.info.set_rpc_pubsub((addr, rpc_pubsub_port)).unwrap();
         }
 
         let vote_account_address = validator_vote_account.pubkey();
@@ -978,10 +990,7 @@ impl TestValidator {
         }
 
         let accounts_db_config = Some(AccountsDbConfig {
-            index: Some(AccountsIndexConfig {
-                started_from_validator: true,
-                ..AccountsIndexConfig::default()
-            }),
+            index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
             ..AccountsDbConfig::default()
         });
@@ -1011,7 +1020,6 @@ impl TestValidator {
             )),
             rpc_config: config.rpc_config.clone(),
             pubsub_config: config.pubsub_config.clone(),
-            accounts_hash_interval_slots: 100,
             account_paths: vec![
                 create_accounts_run_and_snapshot_dirs(ledger_path.join("accounts"))
                     .unwrap()
@@ -1224,7 +1232,7 @@ mod test {
 
     #[tokio::test]
     async fn test_deactivate_features() {
-        let mut control = FeatureSet::default().inactive;
+        let mut control = FeatureSet::default().inactive().clone();
         let mut deactivate_features = Vec::new();
         [
             solana_sdk::feature_set::deprecate_rewards_sysvar::id(),
@@ -1308,8 +1316,8 @@ mod test {
     async fn test_core_bpf_programs() {
         let (test_validator, _payer) = TestValidatorGenesis::default()
             .deactivate_features(&[
-                // Don't migrate the config program.
-                solana_sdk::feature_set::migrate_config_program_to_core_bpf::id(),
+                // Don't migrate the stake program.
+                solana_sdk::feature_set::migrate_stake_program_to_core_bpf::id(),
             ])
             .start_async()
             .await;
@@ -1321,6 +1329,7 @@ mod test {
                 solana_sdk_ids::address_lookup_table::id(),
                 solana_sdk_ids::config::id(),
                 solana_sdk_ids::feature::id(),
+                solana_sdk_ids::stake::id(),
             ])
             .await
             .unwrap();
@@ -1330,14 +1339,19 @@ mod test {
         assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
         assert!(account.executable);
 
-        // Config is a builtin.
+        // Config is a BPF program.
         let account = fetched_programs[1].as_ref().unwrap();
-        assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
+        assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
         assert!(account.executable);
 
         // Feature Gate is a BPF program.
         let account = fetched_programs[2].as_ref().unwrap();
         assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
+        assert!(account.executable);
+
+        // Stake is a builtin.
+        let account = fetched_programs[3].as_ref().unwrap();
+        assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
         assert!(account.executable);
     }
 }

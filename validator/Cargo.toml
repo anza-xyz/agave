@@ -45,7 +45,7 @@ solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
-solana-logger = { workspace = true }
+solana-logger = "=2.3.1"
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
@@ -56,7 +56,7 @@ solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { workspace = true, features = ["openssl-vendored"] }
+solana-sdk = { version = "=2.2.2", features = ["openssl-vendored"] }
 solana-send-transaction-service = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
@@ -74,6 +74,8 @@ assert_cmd = { workspace = true }
 predicates = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-inline-spl = { workspace = true }
+solana-program-option = { workspace = true }
+solana-program-pack = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 tempfile = { workspace = true }

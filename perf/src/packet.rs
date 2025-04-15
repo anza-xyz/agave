@@ -9,8 +9,8 @@ use {
         borrow::Borrow,
         io::Read,
         net::SocketAddr,
-        ops::{Index, IndexMut},
-        slice::{Iter, IterMut, SliceIndex},
+        ops::{Deref, DerefMut, Index, IndexMut},
+        slice::{Iter, SliceIndex},
     },
 };
 
@@ -117,58 +117,24 @@ impl PacketBatch {
         batch
     }
 
-    pub fn resize(&mut self, new_len: usize, value: Packet) {
-        self.packets.resize(new_len, value)
-    }
-
-    pub fn truncate(&mut self, len: usize) {
-        self.packets.truncate(len);
-    }
-
-    pub fn push(&mut self, packet: Packet) {
-        self.packets.push(packet);
-    }
-
     pub fn set_addr(&mut self, addr: &SocketAddr) {
         for p in self.iter_mut() {
             p.meta_mut().set_socket_addr(addr);
         }
     }
+}
 
-    pub fn len(&self) -> usize {
-        self.packets.len()
+impl Deref for PacketBatch {
+    type Target = PinnedVec<Packet>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.packets
     }
+}
 
-    pub fn capacity(&self) -> usize {
-        self.packets.capacity()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.packets.is_empty()
-    }
-
-    pub fn as_ptr(&self) -> *const Packet {
-        self.packets.as_ptr()
-    }
-
-    pub fn iter(&self) -> Iter<'_, Packet> {
-        self.packets.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> IterMut<'_, Packet> {
-        self.packets.iter_mut()
-    }
-
-    /// See Vector::set_len() for more details
-    ///
-    /// # Safety
-    ///
-    /// - `new_len` must be less than or equal to [`self.capacity`].
-    /// - The elements at `old_len..new_len` must be initialized. Packet data
-    ///   will likely be overwritten when populating the packet, but the meta
-    ///   should specifically be initialized to known values.
-    pub unsafe fn set_len(&mut self, new_len: usize) {
-        self.packets.set_len(new_len);
+impl DerefMut for PacketBatch {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.packets
     }
 }
 

@@ -1,7 +1,7 @@
 use {
     super::*,
+    agave_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix},
     scopeguard::defer,
-    solana_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix},
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
     solana_program_runtime::{
@@ -54,34 +54,28 @@ fn check_account_info_pointer(
     Ok(())
 }
 
-enum VmValue<'a, 'b, T> {
-    VmAddress {
-        vm_addr: u64,
-        memory_mapping: &'b MemoryMapping<'a>,
-        check_aligned: bool,
-    },
+enum VmValue<'a, T> {
+    VmAddress { vm_addr: u64, check_aligned: bool },
     // Once direct mapping is activated, this variant can be removed and the
     // enum can be made a struct.
     Translated(&'a mut T),
 }
 
-impl<T> VmValue<'_, '_, T> {
-    fn get(&self) -> Result<&T, Error> {
+impl<T> VmValue<'_, T> {
+    fn get(&self, memory_mapping: &MemoryMapping) -> Result<&T, Error> {
         match self {
             VmValue::VmAddress {
                 vm_addr,
-                memory_mapping,
                 check_aligned,
             } => translate_type(memory_mapping, *vm_addr, *check_aligned),
             VmValue::Translated(addr) => Ok(*addr),
         }
     }
 
-    fn get_mut(&mut self) -> Result<&mut T, Error> {
+    fn get_mut(&mut self, memory_mapping: &MemoryMapping) -> Result<&mut T, Error> {
         match self {
             VmValue::VmAddress {
                 vm_addr,
-                memory_mapping,
                 check_aligned,
             } => translate_type_mut(memory_mapping, *vm_addr, *check_aligned),
             VmValue::Translated(addr) => Ok(*addr),
@@ -93,7 +87,7 @@ impl<T> VmValue<'_, '_, T> {
 ///
 /// At the start of a CPI, this can be different from the data stored in the
 /// corresponding BorrowedAccount, and needs to be synched.
-struct CallerAccount<'a, 'b> {
+struct CallerAccount<'a> {
     lamports: &'a mut u64,
     owner: &'a mut Pubkey,
     // The original data length of the account at the start of the current
@@ -111,18 +105,18 @@ struct CallerAccount<'a, 'b> {
     // Given the corresponding input AccountInfo::data, vm_data_addr points to
     // the pointer field and ref_to_len_in_vm points to the length field.
     vm_data_addr: u64,
-    ref_to_len_in_vm: VmValue<'b, 'a, u64>,
+    ref_to_len_in_vm: VmValue<'a, u64>,
 }
 
-impl<'a, 'b> CallerAccount<'a, 'b> {
+impl<'a> CallerAccount<'a> {
     // Create a CallerAccount given an AccountInfo.
     fn from_account_info(
         invoke_context: &InvokeContext,
-        memory_mapping: &'b MemoryMapping<'a>,
+        memory_mapping: &MemoryMapping<'_>,
         _vm_addr: u64,
         account_info: &AccountInfo,
         account_metadata: &SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a, 'b>, Error> {
+    ) -> Result<CallerAccount<'a>, Error> {
         let direct_mapping = invoke_context
             .get_feature_set()
             .is_active(&feature_set::bpf_account_data_direct_mapping::id());
@@ -195,7 +189,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             consume_compute_meter(
                 invoke_context,
                 (data.len() as u64)
-                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
 
@@ -210,7 +204,6 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
                 }
                 VmValue::VmAddress {
                     vm_addr,
-                    memory_mapping,
                     check_aligned: invoke_context.get_check_aligned(),
                 }
             } else {
@@ -263,11 +256,11 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
     // Create a CallerAccount given a SolAccountInfo.
     fn from_sol_account_info(
         invoke_context: &InvokeContext,
-        memory_mapping: &'b MemoryMapping<'a>,
+        memory_mapping: &MemoryMapping<'_>,
         vm_addr: u64,
         account_info: &SolAccountInfo,
         account_metadata: &SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a, 'b>, Error> {
+    ) -> Result<CallerAccount<'a>, Error> {
         let direct_mapping = invoke_context
             .get_feature_set()
             .is_active(&feature_set::bpf_account_data_direct_mapping::id());
@@ -319,7 +312,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             invoke_context,
             account_info
                 .data_len
-                .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                 .unwrap_or(u64::MAX),
         )?;
 
@@ -346,7 +339,6 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
         let ref_to_len_in_vm = if direct_mapping {
             VmValue::VmAddress {
                 vm_addr: data_len_vm_addr,
-                memory_mapping,
                 check_aligned: invoke_context.get_check_aligned(),
             }
         } else {
@@ -371,7 +363,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
 
     fn realloc_region(
         &self,
-        memory_mapping: &'b MemoryMapping<'_>,
+        memory_mapping: &'a MemoryMapping<'_>,
         is_loader_deprecated: bool,
     ) -> Result<Option<&'a MemoryRegion>, Error> {
         account_realloc_region(
@@ -383,7 +375,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
     }
 }
 
-type TranslatedAccounts<'a, 'b> = Vec<(IndexOfAccount, Option<CallerAccount<'a, 'b>>)>;
+type TranslatedAccounts<'a> = Vec<(IndexOfAccount, Option<CallerAccount<'a>>)>;
 
 /// Implemented by language specific data structure translators
 trait SyscallInvokeSigned {
@@ -392,15 +384,15 @@ trait SyscallInvokeSigned {
         memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
     ) -> Result<StableInstruction, Error>;
-    fn translate_accounts<'a, 'b>(
+    fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
-        memory_mapping: &'b MemoryMapping<'a>,
+        memory_mapping: &MemoryMapping<'_>,
         invoke_context: &mut InvokeContext,
-    ) -> Result<TranslatedAccounts<'a, 'b>, Error>;
+    ) -> Result<TranslatedAccounts<'a>, Error>;
     fn translate_signers(
         program_id: &Pubkey,
         signers_seeds_addr: u64,
@@ -468,7 +460,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
             consume_compute_meter(
                 invoke_context,
                 (data.len() as u64)
-                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
         }
@@ -495,15 +487,15 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         })
     }
 
-    fn translate_accounts<'a, 'b>(
+    fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
-        memory_mapping: &'b MemoryMapping<'a>,
+        memory_mapping: &MemoryMapping<'_>,
         invoke_context: &mut InvokeContext,
-    ) -> Result<TranslatedAccounts<'a, 'b>, Error> {
+    ) -> Result<TranslatedAccounts<'a>, Error> {
         let (account_infos, account_info_keys) = translate_account_infos(
             account_infos_addr,
             account_infos_len,
@@ -686,7 +678,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
             consume_compute_meter(
                 invoke_context,
                 (data.len() as u64)
-                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
         }
@@ -722,15 +714,15 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         })
     }
 
-    fn translate_accounts<'a, 'b>(
+    fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
-        memory_mapping: &'b MemoryMapping<'a>,
+        memory_mapping: &MemoryMapping<'_>,
         invoke_context: &mut InvokeContext,
-    ) -> Result<TranslatedAccounts<'a, 'b>, Error> {
+    ) -> Result<TranslatedAccounts<'a>, Error> {
         let (account_infos, account_info_keys) = translate_account_infos(
             account_infos_addr,
             account_infos_len,
@@ -850,7 +842,7 @@ where
 
 // Finish translating accounts, build CallerAccount values and update callee
 // accounts in preparation of executing the callee.
-fn translate_and_update_accounts<'a, 'b, T, F>(
+fn translate_and_update_accounts<'a, T, F>(
     instruction_accounts: &[InstructionAccount],
     program_indices: &[IndexOfAccount],
     account_info_keys: &[&Pubkey],
@@ -858,17 +850,17 @@ fn translate_and_update_accounts<'a, 'b, T, F>(
     account_infos_addr: u64,
     is_loader_deprecated: bool,
     invoke_context: &mut InvokeContext,
-    memory_mapping: &'b MemoryMapping<'a>,
+    memory_mapping: &MemoryMapping<'_>,
     do_translate: F,
-) -> Result<TranslatedAccounts<'a, 'b>, Error>
+) -> Result<TranslatedAccounts<'a>, Error>
 where
     F: Fn(
         &InvokeContext,
-        &'b MemoryMapping<'a>,
+        &MemoryMapping<'_>,
         u64,
         &T,
         &SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a, 'b>, Error>,
+    ) -> Result<CallerAccount<'a>, Error>,
 {
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
@@ -910,7 +902,7 @@ where
             consume_compute_meter(
                 invoke_context,
                 (callee_account.get_data().len() as u64)
-                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
 
@@ -1069,9 +1061,7 @@ fn check_authorized_program(
                         instruction_data,
                     ))
                 || bpf_loader_upgradeable::is_close_instruction(instruction_data)))
-        || is_precompile(program_id, |feature_id: &Pubkey| {
-            invoke_context.get_feature_set().is_active(feature_id)
-        })
+        || invoke_context.is_precompile(program_id)
     {
         return Err(Box::new(SyscallError::ProgramNotSupported(*program_id)));
     }
@@ -1094,7 +1084,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     // changes so the callee can see them.
     consume_compute_meter(
         invoke_context,
-        invoke_context.get_compute_budget().invoke_units,
+        invoke_context.get_execution_cost().invoke_units,
     )?;
     if let Some(execute_time) = invoke_context.execute_time.as_mut() {
         execute_time.stop();
@@ -1216,7 +1206,7 @@ fn update_callee_account(
 
     if direct_mapping {
         let prev_len = callee_account.get_data().len();
-        let post_len = *caller_account.ref_to_len_in_vm.get()? as usize;
+        let post_len = *caller_account.ref_to_len_in_vm.get(memory_mapping)? as usize;
         match callee_account
             .can_data_be_resized(post_len)
             .and_then(|_| callee_account.can_data_be_changed())
@@ -1322,9 +1312,9 @@ fn update_caller_account_perms(
 // changes.
 fn update_caller_account(
     invoke_context: &InvokeContext,
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &MemoryMapping<'_>,
     is_loader_deprecated: bool,
-    caller_account: &mut CallerAccount,
+    caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedAccount<'_>,
     direct_mapping: bool,
 ) -> Result<(), Error> {
@@ -1369,7 +1359,7 @@ fn update_caller_account(
         }
     }
 
-    let prev_len = *caller_account.ref_to_len_in_vm.get()? as usize;
+    let prev_len = *caller_account.ref_to_len_in_vm.get(memory_mapping)? as usize;
     let post_len = callee_account.get_data().len();
     if prev_len != post_len {
         let max_increase = if direct_mapping && !invoke_context.get_check_aligned() {
@@ -1465,7 +1455,7 @@ fn update_caller_account(
             )?;
         }
         // this is the len field in the AccountInfo::data slice
-        *caller_account.ref_to_len_in_vm.get_mut()? = post_len as u64;
+        *caller_account.ref_to_len_in_vm.get_mut(memory_mapping)? = post_len as u64;
 
         // this is the len field in the serialized parameters
         let serialized_len_ptr = translate_type_mut::<u64>(
@@ -1616,10 +1606,10 @@ mod tests {
     use {
         super::*,
         crate::mock_create_vm,
+        agave_feature_set::bpf_account_data_direct_mapping,
         assert_matches::assert_matches,
         solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_clock::Epoch,
-        solana_feature_set::bpf_account_data_direct_mapping,
         solana_instruction::Instruction,
         solana_program_runtime::{
             invoke_context::SerializedAccountMetadata, with_mock_invoke_context,
@@ -1808,7 +1798,10 @@ mod tests {
         assert_eq!(caller_account.owner, account.owner());
         assert_eq!(caller_account.original_data_len, account.data().len());
         assert_eq!(
-            *caller_account.ref_to_len_in_vm.get().unwrap() as usize,
+            *caller_account
+                .ref_to_len_in_vm
+                .get(&memory_mapping)
+                .unwrap() as usize,
             account.data().len()
         );
         assert_eq!(caller_account.serialized_data, account.data());
@@ -1936,7 +1929,10 @@ mod tests {
             let data_len = callee_account.get_data().len();
             assert_eq!(
                 data_len,
-                *caller_account.ref_to_len_in_vm.get().unwrap() as usize
+                *caller_account
+                    .ref_to_len_in_vm
+                    .get(&memory_mapping)
+                    .unwrap() as usize
             );
             assert_eq!(data_len, serialized_len());
             assert_eq!(data_len, caller_account.serialized_data.len());
@@ -2078,7 +2074,10 @@ mod tests {
                 // the account info length must get updated
                 assert_eq!(
                     data_len,
-                    *caller_account.ref_to_len_in_vm.get().unwrap() as usize
+                    *caller_account
+                        .ref_to_len_in_vm
+                        .get(&memory_mapping)
+                        .unwrap() as usize
                 );
                 // the length slot in the serialization parameters must be updated
                 assert_eq!(data_len, serialized_len());
@@ -2214,7 +2213,8 @@ mod tests {
                 .transaction_context
                 .get_account_at_index(1)
                 .unwrap()
-                .borrow_mut();
+                .try_borrow_mut()
+                .unwrap();
             account.set_data(b"baz".to_vec());
         }
 
@@ -2356,7 +2356,10 @@ mod tests {
         // close the account
         let mut data = Vec::new();
         caller_account.serialized_data = &mut data;
-        *caller_account.ref_to_len_in_vm.get_mut().unwrap() = 0;
+        *caller_account
+            .ref_to_len_in_vm
+            .get_mut(&memory_mapping)
+            .unwrap() = 0;
         let mut owner = system_program::id();
         caller_account.owner = &mut owner;
         update_callee_account(
@@ -2425,7 +2428,10 @@ mod tests {
 
         // without direct mapping
         let mut data = b"foobarbaz".to_vec();
-        *caller_account.ref_to_len_in_vm.get_mut().unwrap() = data.len() as u64;
+        *caller_account
+            .ref_to_len_in_vm
+            .get_mut(&memory_mapping)
+            .unwrap() = data.len() as u64;
         caller_account.serialized_data = &mut data;
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -2443,7 +2449,10 @@ mod tests {
 
         // with direct mapping
         let mut data = b"baz".to_vec();
-        *caller_account.ref_to_len_in_vm.get_mut().unwrap() = 9;
+        *caller_account
+            .ref_to_len_in_vm
+            .get_mut(&memory_mapping)
+            .unwrap() = 9;
         caller_account.serialized_data = &mut data;
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -2519,7 +2528,10 @@ mod tests {
             (6, b"foobar".to_vec()),    // == original_data_len, truncates
             (3, b"foo".to_vec()),       // < original_data_len, truncates
         ] {
-            *caller_account.ref_to_len_in_vm.get_mut().unwrap() = len as u64;
+            *caller_account
+                .ref_to_len_in_vm
+                .get_mut(&memory_mapping)
+                .unwrap() = len as u64;
             update_callee_account(
                 &invoke_context,
                 &memory_mapping,
@@ -2536,7 +2548,10 @@ mod tests {
         // close the account
         let mut data = Vec::new();
         caller_account.serialized_data = &mut data;
-        *caller_account.ref_to_len_in_vm.get_mut().unwrap() = 0;
+        *caller_account
+            .ref_to_len_in_vm
+            .get_mut(&memory_mapping)
+            .unwrap() = 0;
         let mut owner = system_program::id();
         caller_account.owner = &mut owner;
         update_callee_account(
@@ -2695,7 +2710,7 @@ mod tests {
             }
         }
 
-        fn caller_account(&mut self) -> CallerAccount<'_, '_> {
+        fn caller_account(&mut self) -> CallerAccount {
             let data = if self.direct_mapping {
                 &mut []
             } else {

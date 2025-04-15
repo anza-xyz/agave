@@ -9,12 +9,12 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 criterion = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-message = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm-transaction = { workspace = true }

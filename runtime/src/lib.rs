@@ -27,6 +27,7 @@ pub mod serde_snapshot;
 pub mod snapshot_archive_info;
 pub mod snapshot_bank_utils;
 pub mod snapshot_config;
+pub mod snapshot_controller;
 pub mod snapshot_hash;
 pub mod snapshot_minimizer;
 pub mod snapshot_package;
@@ -38,7 +39,6 @@ pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
 pub mod transaction_batch;
-pub mod verify_precompiles;
 pub mod vote_sender_types;
 
 #[macro_use]

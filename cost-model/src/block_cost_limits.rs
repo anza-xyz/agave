@@ -27,6 +27,7 @@ pub const INSTRUCTION_DATA_BYTES_COST: u64 = 140 /*bytes per us*/ / COMPUTE_UNIT
 /// data size and built-in and SBF instructions.
 pub const MAX_BLOCK_UNITS: u64 = 48_000_000;
 pub const MAX_BLOCK_UNITS_SIMD_0207: u64 = 50_000_000;
+pub const MAX_BLOCK_UNITS_SIMD_0256: u64 = 60_000_000;
 
 /// Number of compute units that a writable account in a block is allowed. The
 /// limit is to prevent too many transactions write to same account, therefore
@@ -50,6 +51,19 @@ pub const fn simd_0207_block_limits() -> (u64, u64, u64) {
     (
         MAX_WRITABLE_ACCOUNT_UNITS,
         MAX_BLOCK_UNITS_SIMD_0207,
+        MAX_VOTE_UNITS,
+    )
+}
+
+/// Return the block limits that will be used upon activation of SIMD-0256.
+/// Returns as
+/// (account_limit, block_limit, vote_limit)
+// ^ Above order is used to be consistent with the order of
+//   `CostTracker::set_limits`.
+pub const fn simd_0256_block_limits() -> (u64, u64, u64) {
+    (
+        MAX_WRITABLE_ACCOUNT_UNITS,
+        MAX_BLOCK_UNITS_SIMD_0256,
         MAX_VOTE_UNITS,
     )
 }

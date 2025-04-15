@@ -10,19 +10,16 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 ahash = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
-qualifier_attr = { workspace = true }
-solana-address-lookup-table-program = { workspace = true }
-solana-bpf-loader-program = { workspace = true, features = ["svm-internal"] }
-solana-compute-budget-program = { workspace = true, features = ["svm-internal"] }
-solana-config-program = { workspace = true }
-solana-feature-set = { workspace = true }
+solana-bpf-loader-program = { workspace = true }
+solana-compute-budget-program = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-loader-v4-program = { workspace = true, features = ["svm-internal"] }
+solana-loader-v4-program = { workspace = true, features = ["agave-unstable-api"] }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-stake-program = { workspace = true }
@@ -36,7 +33,6 @@ name = "solana_builtins_default_costs"
 
 [dev-dependencies]
 rand = "0.8.5"
-solana-builtins-default-costs = { path = ".", features = ["svm-internal"] }
 static_assertions = { workspace = true }
 
 [package.metadata.docs.rs]
@@ -48,7 +44,6 @@ frozen-abi = [
     "solana-vote-program/frozen-abi",
 ]
 dev-context-only-utils = []
-svm-internal = []
 
 [lints]
 workspace = true

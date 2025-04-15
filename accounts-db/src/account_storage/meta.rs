@@ -77,14 +77,6 @@ impl<'storage> StoredAccountMeta<'storage> {
             Self::Hot(_) => unreachable!(),
         }
     }
-
-    pub(crate) fn sanitize(&self) -> bool {
-        match self {
-            Self::AppendVec(av) => av.sanitize(),
-            // Hot account currently doesn't have the concept of sanitization.
-            Self::Hot(_) => unimplemented!(),
-        }
-    }
 }
 
 impl ReadableAccount for StoredAccountMeta<'_> {

@@ -298,6 +298,7 @@ pub struct UiConfidentialMintBurn {
     pub confidential_supply: String,
     pub decryptable_supply: String,
     pub supply_elgamal_pubkey: String,
+    pub pending_burn: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]

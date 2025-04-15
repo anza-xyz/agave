@@ -9,10 +9,10 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 bytemuck = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-program-runtime = { workspace = true }

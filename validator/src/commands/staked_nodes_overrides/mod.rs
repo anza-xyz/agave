@@ -1,5 +1,8 @@
 use {
-    crate::{admin_rpc_service, commands::FromClapArgMatches},
+    crate::{
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{App, Arg, ArgMatches, SubCommand},
     std::path::Path,
 };
@@ -12,7 +15,7 @@ pub struct StakedNodesOverridesArgs {
 }
 
 impl FromClapArgMatches for StakedNodesOverridesArgs {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self, String> {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(StakedNodesOverridesArgs {
             path: matches
                 .value_of("path")
@@ -39,18 +42,18 @@ pub fn command<'a>() -> App<'a, 'a> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<(), String> {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let staked_nodes_overrides_args = StakedNodesOverridesArgs::from_clap_arg_match(matches)?;
 
     let admin_client = admin_rpc_service::connect(ledger_path);
-    admin_rpc_service::runtime()
-        .block_on(async move {
-            admin_client
-                .await?
-                .set_staked_nodes_overrides(staked_nodes_overrides_args.path)
-                .await
-        })
-        .map_err(|err| format!("set staked nodes override request failed: {err}"))
+    admin_rpc_service::runtime().block_on(async move {
+        admin_client
+            .await?
+            .set_staked_nodes_overrides(staked_nodes_overrides_args.path)
+            .await
+    })?;
+
+    Ok(())
 }
 
 #[cfg(test)]

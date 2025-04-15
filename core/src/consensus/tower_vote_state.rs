@@ -1,5 +1,6 @@
 use {
     solana_sdk::clock::Slot,
+    solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::vote_state::{Lockout, VoteState, VoteState1_14_11, MAX_LOCKOUT_HISTORY},
     std::collections::VecDeque,
 };
@@ -102,6 +103,15 @@ impl From<VoteState1_14_11> for TowerVoteState {
         } = vote_state;
 
         Self { votes, root_slot }
+    }
+}
+
+impl From<&VoteStateView> for TowerVoteState {
+    fn from(vote_state: &VoteStateView) -> Self {
+        Self {
+            votes: vote_state.votes_iter().collect(),
+            root_slot: vote_state.root_slot(),
+        }
     }
 }
 

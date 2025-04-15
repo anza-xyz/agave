@@ -1,9 +1,10 @@
 use {
     super::{Bank, BankStatusCache},
+    agave_feature_set::FeatureSet,
     solana_accounts_db::blockhash_queue::BlockhashQueue,
-    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
-    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
+    solana_fee::{calculate_fee_details, FeeFeatures},
     solana_perf::perf_libs,
+    solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         account::AccountSharedData,
@@ -12,6 +13,7 @@ use {
             MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
             MAX_TRANSACTION_FORWARDING_DELAY_GPU,
         },
+        fee::{FeeBudgetLimits, FeeDetails},
         nonce::{
             state::{
                 Data as NonceData, DurableNonce, State as NonceState, Versions as NonceVersions,
@@ -92,15 +94,42 @@ impl Bank {
             .get_lamports_per_signature(&last_blockhash)
             .unwrap();
 
+        let feature_set: &FeatureSet = &self.feature_set;
+        let fee_features = FeeFeatures::from(feature_set);
+
         sanitized_txs
             .iter()
             .zip(lock_results)
             .map(|(tx, lock_res)| match lock_res {
                 Ok(()) => {
-                    let compute_budget_limits = process_compute_budget_instructions(
-                        tx.borrow().program_instructions_iter(),
-                        &self.feature_set,
-                    );
+                    let compute_budget_and_limits = tx
+                        .borrow()
+                        .compute_budget_instruction_details()
+                        .sanitize_and_convert_to_compute_budget_limits(feature_set)
+                        .map(|limit| {
+                            let fee_budget = FeeBudgetLimits::from(limit);
+                            let fee_details = calculate_fee_details(
+                                tx.borrow(),
+                                false,
+                                self.fee_structure.lamports_per_signature,
+                                fee_budget.prioritization_fee,
+                                fee_features,
+                            );
+                            if let Some(compute_budget) = self.compute_budget {
+                                // This block of code is only necessary to retain legacy behavior of the code.
+                                // It should be removed along with the change to favor transaction's compute budget limits
+                                // over configured compute budget in Bank.
+                                compute_budget.get_compute_budget_and_limits(
+                                    fee_budget.loaded_accounts_data_size_limit,
+                                    fee_details,
+                                )
+                            } else {
+                                limit.get_compute_budget_and_limits(
+                                    fee_budget.loaded_accounts_data_size_limit,
+                                    fee_details,
+                                )
+                            }
+                        });
                     self.check_transaction_age(
                         tx.borrow(),
                         max_age,
@@ -108,12 +137,34 @@ impl Bank {
                         &hash_queue,
                         next_lamports_per_signature,
                         error_counters,
-                        compute_budget_limits,
+                        compute_budget_and_limits,
                     )
                 }
                 Err(e) => Err(e.clone()),
             })
             .collect()
+    }
+
+    fn checked_transactions_details_with_test_override(
+        nonce: Option<NonceInfo>,
+        lamports_per_signature: u64,
+        compute_budget_and_limits: Result<
+            SVMTransactionExecutionAndFeeBudgetLimits,
+            TransactionError,
+        >,
+    ) -> CheckedTransactionDetails {
+        let compute_budget_and_limits = if lamports_per_signature == 0 {
+            // This is done to support legacy tests. The tests should be updated, and check
+            // for 0 lamports_per_signature should be removed from the code.
+            compute_budget_and_limits.map(|v| SVMTransactionExecutionAndFeeBudgetLimits {
+                budget: v.budget,
+                loaded_accounts_data_size_limit: v.loaded_accounts_data_size_limit,
+                fee_details: FeeDetails::default(),
+            })
+        } else {
+            compute_budget_and_limits
+        };
+        CheckedTransactionDetails::new(nonce, compute_budget_and_limits)
     }
 
     fn check_transaction_age(
@@ -124,14 +175,14 @@ impl Bank {
         hash_queue: &BlockhashQueue,
         next_lamports_per_signature: u64,
         error_counters: &mut TransactionErrorMetrics,
-        compute_budget_limits: Result<ComputeBudgetLimits, TransactionError>,
+        compute_budget: Result<SVMTransactionExecutionAndFeeBudgetLimits, TransactionError>,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
-            Ok(CheckedTransactionDetails::new(
+            Ok(Self::checked_transactions_details_with_test_override(
                 None,
                 hash_info.lamports_per_signature(),
-                compute_budget_limits,
+                compute_budget,
             ))
         } else if let Some((nonce, previous_lamports_per_signature)) = self
             .check_load_and_advance_message_nonce_account(
@@ -140,10 +191,10 @@ impl Bank {
                 next_lamports_per_signature,
             )
         {
-            Ok(CheckedTransactionDetails::new(
+            Ok(Self::checked_transactions_details_with_test_override(
                 Some(nonce),
                 previous_lamports_per_signature,
-                compute_budget_limits,
+                compute_budget,
             ))
         } else {
             error_counters.blockhash_not_found += 1;
@@ -185,7 +236,10 @@ impl Bank {
         &self,
         message: &impl SVMMessage,
     ) -> Option<(Pubkey, AccountSharedData, NonceData)> {
-        let nonce_address = message.get_durable_nonce()?;
+        let require_static_nonce_account = self
+            .feature_set
+            .is_active(&agave_feature_set::require_static_nonce_account::id());
+        let nonce_address = message.get_durable_nonce(require_static_nonce_account)?;
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
         let nonce_data =
             nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
@@ -248,9 +302,20 @@ mod tests {
             setup_nonce_with_bank,
         },
         solana_sdk::{
-            feature_set::FeatureSet, hash::Hash, message::Message, signature::Keypair,
-            signer::Signer, system_instruction,
+            hash::Hash,
+            instruction::CompiledInstruction,
+            message::{
+                v0::{self, LoadedAddresses, MessageAddressTableLookup},
+                Message, MessageHeader, SanitizedMessage, SanitizedVersionedMessage,
+                SimpleAddressLoader, VersionedMessage,
+            },
+            signature::Keypair,
+            signer::Signer,
+            system_instruction::{self, SystemInstruction},
+            system_program,
         },
+        std::collections::HashSet,
+        test_case::test_case,
     };
 
     #[test]
@@ -440,8 +505,79 @@ mod tests {
             .check_load_and_advance_message_nonce_account(
                 &message,
                 &bank.next_durable_nonce(),
-                lamports_per_signature
+                lamports_per_signature,
             )
             .is_none());
+    }
+
+    #[test_case(true; "test_check_and_load_message_nonce_account_nonce_is_alt_disallowed")]
+    #[test_case(false; "test_check_and_load_message_nonce_account_nonce_is_alt_allowed")]
+    fn test_check_and_load_message_nonce_account_nonce_is_alt(require_static_nonce_account: bool) {
+        let feature_set = if require_static_nonce_account {
+            FeatureSet::all_enabled()
+        } else {
+            FeatureSet::default()
+        };
+        let nonce_authority = Pubkey::new_unique();
+        let (bank, _mint_keypair, _custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
+            10_000_000,
+            |_| {},
+            5_000_000,
+            250_000,
+            Some(nonce_authority),
+            feature_set,
+        )
+        .unwrap();
+
+        let nonce_pubkey = nonce_keypair.pubkey();
+        let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
+        let loaded_addresses = LoadedAddresses {
+            writable: vec![nonce_pubkey],
+            readonly: vec![],
+        };
+
+        let message = SanitizedMessage::try_new(
+            SanitizedVersionedMessage::try_new(VersionedMessage::V0(v0::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                account_keys: vec![nonce_authority, system_program::id()],
+                recent_blockhash: nonce_hash,
+                instructions: vec![CompiledInstruction::new(
+                    1, // index of system program
+                    &SystemInstruction::AdvanceNonceAccount,
+                    vec![
+                        2, // index of alt nonce account
+                        0, // index of nonce_authority
+                    ],
+                )],
+                address_table_lookups: vec![MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: (0..loaded_addresses.writable.len())
+                        .map(|x| x as u8)
+                        .collect(),
+                    readonly_indexes: (0..loaded_addresses.readonly.len())
+                        .map(|x| (loaded_addresses.writable.len() + x) as u8)
+                        .collect(),
+                }],
+            }))
+            .unwrap(),
+            SimpleAddressLoader::Enabled(loaded_addresses),
+            &HashSet::new(),
+        )
+        .unwrap();
+
+        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
+        assert_eq!(
+            bank.check_load_and_advance_message_nonce_account(
+                &message,
+                &bank.next_durable_nonce(),
+                lamports_per_signature
+            )
+            .is_none(),
+            require_static_nonce_account,
+        );
     }
 }

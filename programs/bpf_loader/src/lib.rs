@@ -6,15 +6,13 @@ pub mod syscalls;
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
-    solana_account::WritableAccount,
-    solana_bincode::limited_deserialize,
-    solana_clock::Slot,
-    solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
-    solana_feature_set::{
-        bpf_account_data_direct_mapping, disable_new_loader_v3_deployments,
-        enable_bpf_loader_set_authority_checked_ix, enable_loader_v4,
+    agave_feature_set::{
+        bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
+        enable_loader_v4, mask_out_rent_epoch_in_vm_serialization,
         remove_accounts_executable_flag_checks,
     },
+    solana_bincode::limited_deserialize,
+    solana_clock::Slot,
     solana_instruction::{error::InstructionError, AccountMeta},
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
@@ -23,6 +21,7 @@ use {
     solana_measure::measure::Measure,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
+        execution_budget::MAX_INSTRUCTION_STACK_DEPTH,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
@@ -38,7 +37,7 @@ use {
         ebpf::{self, MM_HEAP_START},
         elf::Executable,
         error::{EbpfError, ProgramResult},
-        memory_region::{AccessType, MemoryCowCallback, MemoryMapping, MemoryRegion},
+        memory_region::{AccessType, MemoryMapping, MemoryRegion},
         program::BuiltinProgram,
         verifier::RequisiteVerifier,
         vm::{ContextObject, EbpfVm},
@@ -251,30 +250,12 @@ fn create_vm<'a, 'b>(
 ) -> Result<EbpfVm<'a, InvokeContext<'b>>, Box<dyn std::error::Error>> {
     let stack_size = stack.len();
     let heap_size = heap.len();
-    let accounts = Rc::clone(invoke_context.transaction_context.accounts());
     let memory_mapping = create_memory_mapping(
         program,
         stack,
         heap,
         regions,
-        Some(Box::new(move |index_in_transaction| {
-            // The two calls below can't really fail. If they fail because of a bug,
-            // whatever is writing will trigger an EbpfError::AccessViolation like
-            // if the region was readonly, and the transaction will fail gracefully.
-            let mut account = accounts
-                .try_borrow_mut(index_in_transaction as IndexOfAccount)
-                .map_err(|_| ())?;
-            accounts
-                .touch(index_in_transaction as IndexOfAccount)
-                .map_err(|_| ())?;
-
-            if account.is_shared() {
-                // See BorrowedAccount::make_data_mut() as to why we reserve extra
-                // MAX_PERMITTED_DATA_INCREASE bytes here.
-                account.reserve(MAX_PERMITTED_DATA_INCREASE);
-            }
-            Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
-        })),
+        invoke_context.transaction_context,
     )?;
     invoke_context.set_syscall_context(SyscallContext {
         allocator: BpfAllocator::new(heap_size as u64),
@@ -299,7 +280,7 @@ macro_rules! create_vm {
         let heap_size = invoke_context.get_compute_budget().heap_size;
         let heap_cost_result = invoke_context.consume_checked($crate::calculate_heap_cost(
             heap_size,
-            invoke_context.get_compute_budget().heap_cost,
+            invoke_context.get_execution_cost().heap_cost,
         ));
         let $vm = heap_cost_result.and_then(|_| {
             let (mut stack, mut heap) = $crate::MEMORY_POOL
@@ -353,7 +334,7 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
     stack: &'b mut [u8],
     heap: &'b mut [u8],
     additional_regions: Vec<MemoryRegion>,
-    cow_cb: Option<MemoryCowCallback>,
+    transaction_context: &TransactionContext,
 ) -> Result<MemoryMapping<'a>, Box<dyn std::error::Error>> {
     let config = executable.get_config();
     let sbpf_version = executable.get_sbpf_version();
@@ -374,11 +355,12 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
     .chain(additional_regions)
     .collect();
 
-    Ok(if let Some(cow_cb) = cow_cb {
-        MemoryMapping::new_with_cow(regions, cow_cb, config, sbpf_version)?
-    } else {
-        MemoryMapping::new(regions, config, sbpf_version)?
-    })
+    Ok(MemoryMapping::new_with_cow(
+        regions,
+        transaction_context.account_data_write_access_handler(),
+        config,
+        sbpf_version,
+    )?)
 }
 
 declare_builtin_function!(
@@ -568,14 +550,6 @@ fn process_loader_upgradeable_instruction(
             )?;
         }
         UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
-            if invoke_context
-                .get_feature_set()
-                .is_active(&disable_new_loader_v3_deployments::id())
-            {
-                ic_logger_msg!(log_collector, "Unsupported instruction");
-                return Err(InstructionError::InvalidInstructionData);
-            }
-
             instruction_context.check_number_of_instruction_accounts(4)?;
             let payer_key = *transaction_context.get_key_of_account_at_index(
                 instruction_context.get_index_of_instruction_account_in_transaction(0)?,
@@ -1582,12 +1556,16 @@ fn execute<'a, 'b: 'a>(
     let direct_mapping = invoke_context
         .get_feature_set()
         .is_active(&bpf_account_data_direct_mapping::id());
+    let mask_out_rent_epoch_in_vm_serialization = invoke_context
+        .get_feature_set()
+        .is_active(&mask_out_rent_epoch_in_vm_serialization::id());
 
     let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
         invoke_context.transaction_context,
         instruction_context,
         !direct_mapping,
+        mask_out_rent_epoch_in_vm_serialization,
     )?;
     serialize_time.stop();
 
@@ -1653,11 +1631,7 @@ fn execute<'a, 'b: 'a>(
                 Err(Box::new(error) as Box<dyn std::error::Error>)
             }
             ProgramResult::Err(mut error) => {
-                if invoke_context
-                    .get_feature_set()
-                    .is_active(&solana_feature_set::deplete_cu_meter_on_vm_failure::id())
-                    && !matches!(error, EbpfError::SyscallError(_))
-                {
+                if !matches!(error, EbpfError::SyscallError(_)) {
                     // when an exception is thrown during the execution of a
                     // Basic Block (e.g., a null memory dereference or other
                     // faults), determining the exact number of CUs consumed
@@ -1787,9 +1761,9 @@ mod test_utils {
         for index in 0..num_accounts {
             let account = invoke_context
                 .transaction_context
-                .get_account_at_index(index)
-                .expect("Failed to get the account")
-                .borrow();
+                .accounts()
+                .try_borrow(index)
+                .expect("Failed to get the account");
 
             let owner = account.owner();
             if check_loader_id(owner) {
@@ -1867,9 +1841,6 @@ mod tests {
             expected_result,
             Entrypoint::vm,
             |invoke_context| {
-                let mut feature_set = invoke_context.get_feature_set().clone();
-                feature_set.deactivate(&disable_new_loader_v3_deployments::id());
-                invoke_context.mock_set_feature_set(Arc::new(feature_set));
                 test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},

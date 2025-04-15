@@ -23,7 +23,7 @@ pub(super) fn create_test_account(seed: u64) -> (StoredMeta, AccountSharedData) 
     let owner_byte = u8::MAX - data_byte;
     let account = Account {
         lamports: seed,
-        data: std::iter::repeat(data_byte).take(seed as usize).collect(),
+        data: std::iter::repeat_n(data_byte, seed as usize).collect(),
         // this will allow some test account sharing the same owner.
         owner: [owner_byte; 32].into(),
         executable: seed % 2 > 0,

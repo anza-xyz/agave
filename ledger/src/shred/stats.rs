@@ -126,10 +126,10 @@ impl ProcessShredsStats {
 }
 
 impl ShredFetchStats {
-    pub fn maybe_submit(&mut self, name: &'static str, cadence: Duration) {
+    pub fn maybe_submit(&mut self, name: &'static str, cadence: Duration) -> bool {
         let elapsed = self.since.as_ref().map(Instant::elapsed);
         if elapsed.unwrap_or(Duration::MAX) < cadence {
-            return;
+            return false;
         }
         datapoint_info!(
             name,
@@ -161,6 +161,8 @@ impl ShredFetchStats {
             since: Some(Instant::now()),
             ..Self::default()
         };
+
+        true
     }
 }
 

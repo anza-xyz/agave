@@ -27,6 +27,41 @@ use {
     thiserror::Error,
 };
 
+pub trait ChannelSend<T>: Send + 'static {
+    fn send(&self, msg: T) -> std::result::Result<(), SendError<T>>;
+
+    fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>>;
+
+    fn is_empty(&self) -> bool;
+
+    fn len(&self) -> usize;
+}
+
+impl<T> ChannelSend<T> for Sender<T>
+where
+    T: Send + 'static,
+{
+    #[inline]
+    fn send(&self, msg: T) -> std::result::Result<(), SendError<T>> {
+        self.send(msg)
+    }
+
+    #[inline]
+    fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
+        self.try_send(msg)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
 // Total stake and nodes => stake map
 #[derive(Default)]
 pub struct StakedNodes {
@@ -113,10 +148,10 @@ pub type Result<T> = std::result::Result<T, StreamerError>;
 fn recv_loop(
     socket: &UdpSocket,
     exit: &AtomicBool,
-    packet_batch_sender: &PacketBatchSender,
+    packet_batch_sender: &impl ChannelSend<PacketBatch>,
     recycler: &PacketBatchRecycler,
     stats: &StreamerReceiveStats,
-    coalesce: Duration,
+    coalesce: Option<Duration>,
     use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
@@ -175,10 +210,10 @@ pub fn receiver(
     thread_name: String,
     socket: Arc<UdpSocket>,
     exit: Arc<AtomicBool>,
-    packet_batch_sender: PacketBatchSender,
+    packet_batch_sender: impl ChannelSend<PacketBatch>,
     recycler: PacketBatchRecycler,
     stats: Arc<StreamerReceiveStats>,
-    coalesce: Duration,
+    coalesce: Option<Duration>,
     use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
@@ -313,7 +348,11 @@ impl StreamerSendStats {
 }
 
 impl StakedNodes {
-    pub fn new(stakes: Arc<HashMap<Pubkey, u64>>, overrides: HashMap<Pubkey, u64>) -> Self {
+    /// Calculate the stake stats: return the new (total_stake, min_stake and max_stake) tuple
+    fn calculate_stake_stats(
+        stakes: &Arc<HashMap<Pubkey, u64>>,
+        overrides: &HashMap<Pubkey, u64>,
+    ) -> (u64, u64, u64) {
         let values = stakes
             .iter()
             .filter(|(pubkey, _)| !overrides.contains_key(pubkey))
@@ -322,6 +361,11 @@ impl StakedNodes {
             .filter(|&stake| stake > 0);
         let total_stake = values.clone().sum();
         let (min_stake, max_stake) = values.minmax().into_option().unwrap_or_default();
+        (total_stake, min_stake, max_stake)
+    }
+
+    pub fn new(stakes: Arc<HashMap<Pubkey, u64>>, overrides: HashMap<Pubkey, u64>) -> Self {
+        let (total_stake, min_stake, max_stake) = Self::calculate_stake_stats(&stakes, &overrides);
         Self {
             stakes,
             overrides,
@@ -352,6 +396,17 @@ impl StakedNodes {
     #[inline]
     pub(super) fn max_stake(&self) -> u64 {
         self.max_stake
+    }
+
+    // Update the stake map given a new stakes map
+    pub fn update_stake_map(&mut self, stakes: Arc<HashMap<Pubkey, u64>>) {
+        let (total_stake, min_stake, max_stake) =
+            Self::calculate_stake_stats(&stakes, &self.overrides);
+
+        self.total_stake = total_stake;
+        self.min_stake = min_stake;
+        self.max_stake = max_stake;
+        self.stakes = stakes;
     }
 }
 
@@ -504,7 +559,7 @@ mod test {
             s_reader,
             Recycler::default(),
             stats.clone(),
-            Duration::from_millis(1), // coalesce
+            Some(Duration::from_millis(1)), // coalesce
             true,
             None,
             false,

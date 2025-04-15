@@ -1,5 +1,6 @@
 use {
     super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
+    agave_feature_set as feature_set,
     itertools::Itertools,
     rand::{thread_rng, Rng},
     solana_perf::packet::Packet,
@@ -7,7 +8,6 @@ use {
     solana_sdk::{
         account::from_account,
         clock::{Slot, UnixTimestamp},
-        feature_set::{self},
         hash::Hash,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
@@ -45,7 +45,7 @@ pub struct LatestValidatorVotePacket {
 
 impl LatestValidatorVotePacket {
     pub fn new(
-        packet: Packet,
+        packet: &Packet,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
@@ -406,7 +406,7 @@ impl LatestUnprocessedVotes {
     /// Drains all votes yet to be processed sorted by a weighted random ordering by stake
     /// Do not touch votes that are for a different fork from `bank` as we know they will fail,
     /// however the next bank could be built on a different fork and consume these votes.
-    pub fn drain_unprocessed(&self, bank: Arc<Bank>) -> Vec<Arc<ImmutableDeserializedPacket>> {
+    pub fn drain_unprocessed(&self, bank: &Bank) -> Vec<Arc<ImmutableDeserializedPacket>> {
         let slot_hashes = bank
             .get_account(&sysvar::slot_hashes::id())
             .and_then(|account| from_account::<SlotHashes, _>(&account));
@@ -507,7 +507,7 @@ mod tests {
             .meta_mut()
             .flags
             .set(PacketFlags::SIMPLE_VOTE_TX, true);
-        LatestValidatorVotePacket::new(packet, vote_source, true).unwrap()
+        LatestValidatorVotePacket::new(&packet, vote_source, true).unwrap()
     }
 
     fn deserialize_packets<'a>(
@@ -516,8 +516,7 @@ mod tests {
         vote_source: VoteSource,
     ) -> impl Iterator<Item = LatestValidatorVotePacket> + 'a {
         packet_indexes.iter().filter_map(move |packet_index| {
-            LatestValidatorVotePacket::new(packet_batch[*packet_index].clone(), vote_source, true)
-                .ok()
+            LatestValidatorVotePacket::new(&packet_batch[*packet_index], vote_source, true).ok()
         })
     }
 

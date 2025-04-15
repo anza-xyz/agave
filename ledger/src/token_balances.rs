@@ -128,15 +128,14 @@ fn collect_token_balance_from_account(
 mod test {
     use {
         super::*,
+        solana_program_option::COption,
+        solana_program_pack::Pack,
         solana_sdk::{account::Account, genesis_config::create_genesis_config},
         spl_pod::optional_keys::OptionalNonZeroPubkey,
-        spl_token_2022::{
-            extension::{
-                immutable_owner::ImmutableOwner, memo_transfer::MemoTransfer,
-                mint_close_authority::MintCloseAuthority, BaseStateWithExtensionsMut,
-                ExtensionType, StateWithExtensionsMut,
-            },
-            solana_program::{program_option::COption, program_pack::Pack},
+        spl_token_2022::extension::{
+            immutable_owner::ImmutableOwner, memo_transfer::MemoTransfer,
+            mint_close_authority::MintCloseAuthority, BaseStateWithExtensionsMut, ExtensionType,
+            StateWithExtensionsMut,
         },
         std::collections::BTreeMap,
     };
