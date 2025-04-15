@@ -204,7 +204,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
         }
     }
 
-    fn peek_pooled(&self) -> Option<&S::Inner> {
+    fn peek_pooled(&mut self) -> Option<&mut S::Inner> {
         match self {
             Self::NotSpawned | Self::Taken(_) => None,
             Self::Pooled(inner) => Some(inner),
@@ -527,6 +527,13 @@ where
                 if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
                     exiting = true;
                     scheduler_pool.unregister_banking_stage();
+                    let mut inner = scheduler_pool
+                        .block_production_scheduler_inner
+                        .lock()
+                        .unwrap();
+                    if let Some(pooled) = inner.peek_pooled() {
+                        pooled.ensure_abort();
+                    }
                 }
 
                 let trashed_inner_count = {
@@ -2149,8 +2156,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
-                                //banking_stage_helper.abort_scheduler();
-                                break;
+                                handler_context.banking_packet_receiver = never();
+                                continue;
                             };
                             banking_packet_handler(banking_stage_helper, banking_packet);
                             continue;
