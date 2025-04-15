@@ -2382,10 +2382,11 @@ pub struct Sockets {
     pub tpu_forwards_quic: Vec<UdpSocket>,
     pub tpu_vote_quic: Vec<UdpSocket>,
 
-    /// Client-side socket for ForwardingStage.
+    /// Client-side socket for ForwardingStage
     pub tpu_vote_forwards_client: UdpSocket,
-    /// Connection cache endpoints
+    /// Connection cache endpoint for Forwarding
     pub quic_forwards_client: UdpSocket,
+    /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket,
 }
 
