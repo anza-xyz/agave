@@ -1,6 +1,7 @@
 use {
     crate::{
         account_locks::{validate_account_locks, AccountLocks},
+        account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
             AccountStorageEntry, AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount,
             ScanAccountStorageData, ScanStorageResult, VerifyAccountsHashAndLamportsConfig,
@@ -214,13 +215,18 @@ impl Accounts {
                 // Cache only has one version per key, don't need to worry about versioning
                 func(loaded_account)
             },
-            |accum: &mut HashMap<Pubkey, B>, loaded_account: &LoadedAccount, _data| {
+            |accum: &mut HashMap<Pubkey, B>, stored_account, data| {
+                // SAFETY: We called scan_account_storage() with
+                // ScanAccountStorageData::DataRefForStorage, so `data` must be Some.
+                let data = data.unwrap();
+                let loaded_account =
+                    LoadedAccount::Stored(StoredAccountInfo::new_from(stored_account, data));
                 let loaded_account_pubkey = *loaded_account.pubkey();
-                if let Some(val) = func(loaded_account) {
+                if let Some(val) = func(&loaded_account) {
                     accum.insert(loaded_account_pubkey, val);
                 }
             },
-            ScanAccountStorageData::NoData,
+            ScanAccountStorageData::DataRefForStorage,
         );
 
         match scan_result {

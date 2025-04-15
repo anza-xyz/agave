@@ -29,8 +29,9 @@ use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
-            meta::StoredAccountMeta, stored_account_info::StoredAccountInfo, AccountStorage,
-            AccountStorageStatus, ShrinkInProgress,
+            meta::StoredAccountMeta,
+            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+            AccountStorage, AccountStorageStatus, ShrinkInProgress,
         },
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
@@ -173,6 +174,8 @@ impl StoreTo<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanAccountStorageData {
     /// callback for accounts in storage will not include `data`
+    // Note, currently only used in tests, but do not remove.
+    #[cfg_attr(not(test), allow(dead_code))]
     NoData,
     /// return data (&[u8]) for each account.
     /// This can be expensive to get and is not necessary for many scan operations.
@@ -4924,7 +4927,11 @@ impl AccountsDb {
         &self,
         slot: Slot,
         cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
-        storage_scan_func: impl Fn(&mut B, &LoadedAccount, Option<&[u8]>) + Sync,
+        storage_scan_func: impl for<'a, 'b, 'storage> Fn(
+                &'b mut B,
+                &'a StoredAccountInfoWithoutData<'storage>,
+                Option<&'storage [u8]>, // account data
+            ) + Sync,
         scan_account_storage_data: ScanAccountStorageData,
     ) -> ScanStorageResult<R, B>
     where
@@ -4932,12 +4939,20 @@ impl AccountsDb {
         B: Send + Default + Sync,
     {
         self.scan_cache_storage_fallback(slot, cache_map_func, |retval, storage| {
-            storage.scan_accounts(|account| {
-                let loaded_account = LoadedAccount::Stored(account);
-                let data = (scan_account_storage_data == ScanAccountStorageData::DataRefForStorage)
-                    .then_some(loaded_account.data());
-                storage_scan_func(retval, &loaded_account, data)
-            });
+            match scan_account_storage_data {
+                ScanAccountStorageData::NoData => {
+                    storage.scan_accounts(|account| {
+                        let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
+                        storage_scan_func(retval, &account_without_data, None);
+                    });
+                }
+                ScanAccountStorageData::DataRefForStorage => {
+                    storage.scan_accounts(|account| {
+                        let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
+                        storage_scan_func(retval, &account_without_data, Some(account.data));
+                    });
+                }
+            };
         })
     }
 
@@ -7495,20 +7510,23 @@ impl AccountsDb {
         let scan_result: ScanStorageResult<(Pubkey, AccountHash), HashMap<Pubkey, AccountHash>> =
             self.scan_account_storage(
                 slot,
-                |loaded_account: &LoadedAccount| {
+                |loaded_account| {
                     // Cache only has one version per key, don't need to worry about versioning
                     Some((*loaded_account.pubkey(), loaded_account.loaded_hash()))
                 },
-                |accum: &mut HashMap<Pubkey, AccountHash>,
-                 loaded_account: &LoadedAccount,
-                 _data| {
+                |accum: &mut HashMap<_, _>, stored_account, data| {
+                    // SAFETY: We called scan_account_storage() with
+                    // ScanAccountStorageData::DataRefForStorage, so `data` must be Some.
+                    let data = data.unwrap();
+                    let loaded_account =
+                        LoadedAccount::Stored(StoredAccountInfo::new_from(stored_account, data));
                     let mut loaded_hash = loaded_account.loaded_hash();
                     if loaded_hash == AccountHash(Hash::default()) {
-                        loaded_hash = Self::hash_account(loaded_account, loaded_account.pubkey())
+                        loaded_hash = Self::hash_account(&loaded_account, loaded_account.pubkey())
                     }
                     accum.insert(*loaded_account.pubkey(), loaded_hash);
                 },
-                ScanAccountStorageData::NoData,
+                ScanAccountStorageData::DataRefForStorage,
             );
         scan.stop();
 
@@ -7529,11 +7547,16 @@ impl AccountsDb {
                 // Cache only has one version per key, don't need to worry about versioning
                 Some((*loaded_account.pubkey(), loaded_account.take_account()))
             },
-            |accum: &mut HashMap<_, _>, loaded_account, _data| {
+            |accum: &mut HashMap<_, _>, stored_account, data| {
+                // SAFETY: We called scan_account_storage() with
+                // ScanAccountStorageData::DataRefForStorage, so `data` must be Some.
+                let data = data.unwrap();
+                let loaded_account =
+                    LoadedAccount::Stored(StoredAccountInfo::new_from(stored_account, data));
                 // Storage may have duplicates so only keep the latest version for each key
                 accum.insert(*loaded_account.pubkey(), loaded_account.take_account());
             },
-            ScanAccountStorageData::NoData,
+            ScanAccountStorageData::DataRefForStorage,
         );
 
         match scan_result {
@@ -7548,7 +7571,7 @@ impl AccountsDb {
             ScanStorageResult<PubkeyHashAccount, HashMap<Pubkey, (AccountHash, AccountSharedData)>>;
         let scan_result: ScanResult = self.scan_account_storage(
             slot,
-            |loaded_account: &LoadedAccount| {
+            |loaded_account| {
                 // Cache only has one version per key, don't need to worry about versioning
                 Some(PubkeyHashAccount {
                     pubkey: *loaded_account.pubkey(),
@@ -7556,19 +7579,22 @@ impl AccountsDb {
                     account: loaded_account.take_account(),
                 })
             },
-            |accum: &mut HashMap<Pubkey, (AccountHash, AccountSharedData)>,
-             loaded_account: &LoadedAccount,
-             _data| {
-                // Storage may have duplicates so only keep the latest version for each key
+            |accum: &mut HashMap<_, _>, stored_account, data| {
+                // SAFETY: We called scan_account_storage() with
+                // ScanAccountStorageData::DataRefForStorage, so `data` must be Some.
+                let data = data.unwrap();
+                let loaded_account =
+                    LoadedAccount::Stored(StoredAccountInfo::new_from(stored_account, data));
                 let mut loaded_hash = loaded_account.loaded_hash();
                 let key = *loaded_account.pubkey();
                 let account = loaded_account.take_account();
                 if loaded_hash == AccountHash(Hash::default()) {
                     loaded_hash = Self::hash_account(&account, &key)
                 }
+                // Storage may have duplicates so only keep the latest version for each key
                 accum.insert(key, (loaded_hash, account));
             },
-            ScanAccountStorageData::NoData,
+            ScanAccountStorageData::DataRefForStorage,
         );
 
         match scan_result {

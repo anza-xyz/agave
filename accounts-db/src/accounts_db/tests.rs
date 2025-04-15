@@ -4418,8 +4418,8 @@ fn test_accounts_db_cache_clean_dead_slots() {
         if let ScanStorageResult::Stored(slot_accounts) = accounts_db.scan_account_storage(
             *slot as Slot,
             |_| Some(0),
-            |slot_accounts: &mut HashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
-                slot_accounts.insert(*loaded_account.pubkey());
+            |slot_accounts: &mut HashSet<Pubkey>, stored_account, _data| {
+                slot_accounts.insert(*stored_account.pubkey());
             },
             ScanAccountStorageData::NoData,
         ) {
@@ -4452,8 +4452,8 @@ fn test_accounts_db_cache_clean() {
         if let ScanStorageResult::Stored(slot_account) = accounts_db.scan_account_storage(
             *slot as Slot,
             |_| Some(0),
-            |slot_account: &mut Pubkey, loaded_account: &LoadedAccount, _data| {
-                *slot_account = *loaded_account.pubkey();
+            |slot_account: &mut Pubkey, stored_account, _data| {
+                *slot_account = *stored_account.pubkey();
             },
             ScanAccountStorageData::NoData,
         ) {
@@ -4507,7 +4507,7 @@ fn run_test_accounts_db_cache_clean_max_root(
     for slot in &slots {
         let slot_accounts = accounts_db.scan_account_storage(
             *slot as Slot,
-            |loaded_account: &LoadedAccount| {
+            |loaded_account| {
                 assert!(
                     !is_cache_at_limit,
                     "When cache is at limit, all roots should have been flushed to storage"
@@ -4517,8 +4517,8 @@ fn run_test_accounts_db_cache_clean_max_root(
                 assert!(*slot > requested_flush_root);
                 Some(*loaded_account.pubkey())
             },
-            |slot_accounts: &mut HashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
-                slot_accounts.insert(*loaded_account.pubkey());
+            |slot_accounts: &mut HashSet<Pubkey>, stored_account, _data| {
+                slot_accounts.insert(*stored_account.pubkey());
                 if !is_cache_at_limit {
                     // Only true when the limit hasn't been reached and there are still
                     // slots left in the cache
@@ -4628,8 +4628,8 @@ fn run_flush_rooted_accounts_cache(should_clean: bool) {
         let ScanStorageResult::Stored(slot_accounts) = accounts_db.scan_account_storage(
             *slot as Slot,
             |_| Some(0),
-            |slot_account: &mut HashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
-                slot_account.insert(*loaded_account.pubkey());
+            |slot_account: &mut HashSet<Pubkey>, stored_account, _data| {
+                slot_account.insert(*stored_account.pubkey());
             },
             ScanAccountStorageData::NoData,
         ) else {
