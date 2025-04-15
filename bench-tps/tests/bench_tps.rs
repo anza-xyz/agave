@@ -2,29 +2,28 @@
 
 use {
     serial_test::serial,
+    solana_account::{Account, AccountSharedData},
     solana_bench_tps::{
         bench::{do_bench_tps, generate_and_fund_keypairs},
         cli::{Config, InstructionPaddingConfig},
         send_batch::generate_durable_nonce_accounts,
     },
+    solana_commitment_config::CommitmentConfig,
     solana_connection_cache::connection_cache::NewConnectionConfig,
     solana_core::validator::ValidatorConfig,
     solana_faucet::faucet::run_local_faucet,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_keypair::Keypair,
     solana_local_cluster::{
         cluster::Cluster,
         local_cluster::{ClusterConfig, LocalCluster},
         validator_configs::make_identical_validator_configs,
     },
     solana_quic_client::{QuicConfig, QuicConnectionManager},
+    solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        account::{Account, AccountSharedData},
-        commitment_config::CommitmentConfig,
-        fee_calculator::FeeRateGovernor,
-        rent::Rent,
-        signature::{Keypair, Signer},
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidatorGenesis,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
@@ -35,7 +34,7 @@ fn program_account(program_data: &[u8]) -> AccountSharedData {
     AccountSharedData::from(Account {
         lamports: Rent::default().minimum_balance(program_data.len()).min(1),
         data: program_data.to_vec(),
-        owner: solana_sdk::bpf_loader::id(),
+        owner: solana_sdk_ids::bpf_loader::id(),
         executable: true,
         rent_epoch: 0,
     })
