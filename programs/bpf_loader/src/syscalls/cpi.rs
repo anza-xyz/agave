@@ -54,34 +54,28 @@ fn check_account_info_pointer(
     Ok(())
 }
 
-enum VmValue<'a, 'b, T> {
-    VmAddress {
-        vm_addr: u64,
-        memory_mapping: &'b MemoryMapping<'a>,
-        check_aligned: bool,
-    },
+enum VmValue<'a, T> {
+    VmAddress { vm_addr: u64, check_aligned: bool },
     // Once direct mapping is activated, this variant can be removed and the
     // enum can be made a struct.
     Translated(&'a mut T),
 }
 
-impl<T> VmValue<'_, '_, T> {
-    fn get(&self) -> Result<&T, Error> {
+impl<T> VmValue<'_, T> {
+    fn get(&self, memory_mapping: &MemoryMapping) -> Result<&T, Error> {
         match self {
             VmValue::VmAddress {
                 vm_addr,
-                memory_mapping,
                 check_aligned,
             } => translate_type(memory_mapping, *vm_addr, *check_aligned),
             VmValue::Translated(addr) => Ok(*addr),
         }
     }
 
-    fn get_mut(&mut self) -> Result<&mut T, Error> {
+    fn get_mut(&mut self, memory_mapping: &MemoryMapping) -> Result<&mut T, Error> {
         match self {
             VmValue::VmAddress {
                 vm_addr,
-                memory_mapping,
                 check_aligned,
             } => translate_type_mut(memory_mapping, *vm_addr, *check_aligned),
             VmValue::Translated(addr) => Ok(*addr),
@@ -111,7 +105,7 @@ struct CallerAccount<'a, 'b> {
     // Given the corresponding input AccountInfo::data, vm_data_addr points to
     // the pointer field and ref_to_len_in_vm points to the length field.
     vm_data_addr: u64,
-    ref_to_len_in_vm: VmValue<'b, 'a, u64>,
+    ref_to_len_in_vm: VmValue<'b, u64>,
 }
 
 impl<'a, 'b> CallerAccount<'a, 'b> {
@@ -210,7 +204,6 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
                 }
                 VmValue::VmAddress {
                     vm_addr,
-                    memory_mapping,
                     check_aligned: invoke_context.get_check_aligned(),
                 }
             } else {
@@ -346,7 +339,6 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
         let ref_to_len_in_vm = if direct_mapping {
             VmValue::VmAddress {
                 vm_addr: data_len_vm_addr,
-                memory_mapping,
                 check_aligned: invoke_context.get_check_aligned(),
             }
         } else {
@@ -373,7 +365,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
         &self,
         memory_mapping: &'b MemoryMapping<'_>,
         is_loader_deprecated: bool,
-    ) -> Result<Option<&'a MemoryRegion>, Error> {
+    ) -> Result<Option<&'b MemoryRegion>, Error> {
         account_realloc_region(
             memory_mapping,
             self.vm_data_addr,
@@ -1214,7 +1206,7 @@ fn update_callee_account(
 
     if direct_mapping {
         let prev_len = callee_account.get_data().len();
-        let post_len = *caller_account.ref_to_len_in_vm.get()? as usize;
+        let post_len = *caller_account.ref_to_len_in_vm.get(memory_mapping)? as usize;
         match callee_account
             .can_data_be_resized(post_len)
             .and_then(|_| callee_account.can_data_be_changed())
@@ -1318,11 +1310,11 @@ fn update_caller_account_perms(
 //
 // This method updates caller_account so the CPI caller can see the callee's
 // changes.
-fn update_caller_account(
+fn update_caller_account<'a>(
     invoke_context: &InvokeContext,
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &MemoryMapping<'a>,
     is_loader_deprecated: bool,
-    caller_account: &mut CallerAccount,
+    caller_account: &mut CallerAccount<'a, 'a>,
     callee_account: &mut BorrowedAccount<'_>,
     direct_mapping: bool,
 ) -> Result<(), Error> {
@@ -1367,7 +1359,7 @@ fn update_caller_account(
         }
     }
 
-    let prev_len = *caller_account.ref_to_len_in_vm.get()? as usize;
+    let prev_len = *caller_account.ref_to_len_in_vm.get(memory_mapping)? as usize;
     let post_len = callee_account.get_data().len();
     if prev_len != post_len {
         let max_increase = if direct_mapping && !invoke_context.get_check_aligned() {
@@ -1463,7 +1455,7 @@ fn update_caller_account(
             )?;
         }
         // this is the len field in the AccountInfo::data slice
-        *caller_account.ref_to_len_in_vm.get_mut()? = post_len as u64;
+        *caller_account.ref_to_len_in_vm.get_mut(memory_mapping)? = post_len as u64;
 
         // this is the len field in the serialized parameters
         let serialized_len_ptr = translate_type_mut::<u64>(
@@ -1806,7 +1798,10 @@ mod tests {
         assert_eq!(caller_account.owner, account.owner());
         assert_eq!(caller_account.original_data_len, account.data().len());
         assert_eq!(
-            *caller_account.ref_to_len_in_vm.get().unwrap() as usize,
+            *caller_account
+                .ref_to_len_in_vm
+                .get(&memory_mapping)
+                .unwrap() as usize,
             account.data().len()
         );
         assert_eq!(caller_account.serialized_data, account.data());
@@ -1934,7 +1929,10 @@ mod tests {
             let data_len = callee_account.get_data().len();
             assert_eq!(
                 data_len,
-                *caller_account.ref_to_len_in_vm.get().unwrap() as usize
+                *caller_account
+                    .ref_to_len_in_vm
+                    .get(&memory_mapping)
+                    .unwrap() as usize
             );
             assert_eq!(data_len, serialized_len());
             assert_eq!(data_len, caller_account.serialized_data.len());
@@ -2076,7 +2074,10 @@ mod tests {
                 // the account info length must get updated
                 assert_eq!(
                     data_len,
-                    *caller_account.ref_to_len_in_vm.get().unwrap() as usize
+                    *caller_account
+                        .ref_to_len_in_vm
+                        .get(&memory_mapping)
+                        .unwrap() as usize
                 );
                 // the length slot in the serialization parameters must be updated
                 assert_eq!(data_len, serialized_len());
@@ -2355,7 +2356,10 @@ mod tests {
         // close the account
         let mut data = Vec::new();
         caller_account.serialized_data = &mut data;
-        *caller_account.ref_to_len_in_vm.get_mut().unwrap() = 0;
+        *caller_account
+            .ref_to_len_in_vm
+            .get_mut(&memory_mapping)
+            .unwrap() = 0;
         let mut owner = system_program::id();
         caller_account.owner = &mut owner;
         update_callee_account(
@@ -2424,7 +2428,10 @@ mod tests {
 
         // without direct mapping
         let mut data = b"foobarbaz".to_vec();
-        *caller_account.ref_to_len_in_vm.get_mut().unwrap() = data.len() as u64;
+        *caller_account
+            .ref_to_len_in_vm
+            .get_mut(&memory_mapping)
+            .unwrap() = data.len() as u64;
         caller_account.serialized_data = &mut data;
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -2442,7 +2449,10 @@ mod tests {
 
         // with direct mapping
         let mut data = b"baz".to_vec();
-        *caller_account.ref_to_len_in_vm.get_mut().unwrap() = 9;
+        *caller_account
+            .ref_to_len_in_vm
+            .get_mut(&memory_mapping)
+            .unwrap() = 9;
         caller_account.serialized_data = &mut data;
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -2518,7 +2528,10 @@ mod tests {
             (6, b"foobar".to_vec()),    // == original_data_len, truncates
             (3, b"foo".to_vec()),       // < original_data_len, truncates
         ] {
-            *caller_account.ref_to_len_in_vm.get_mut().unwrap() = len as u64;
+            *caller_account
+                .ref_to_len_in_vm
+                .get_mut(&memory_mapping)
+                .unwrap() = len as u64;
             update_callee_account(
                 &invoke_context,
                 &memory_mapping,
@@ -2535,7 +2548,10 @@ mod tests {
         // close the account
         let mut data = Vec::new();
         caller_account.serialized_data = &mut data;
-        *caller_account.ref_to_len_in_vm.get_mut().unwrap() = 0;
+        *caller_account
+            .ref_to_len_in_vm
+            .get_mut(&memory_mapping)
+            .unwrap() = 0;
         let mut owner = system_program::id();
         caller_account.owner = &mut owner;
         update_callee_account(
