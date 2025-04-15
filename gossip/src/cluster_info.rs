@@ -2572,7 +2572,7 @@ impl Node {
         bind_in_range_with_config(bind_ip_addr, port_range, config).expect("Failed to bind")
     }
 
-    #[deprecated(since = "2.3.0", note = "unneeded, use `new_with_external_ip`")]
+    #[deprecated(since = "2.3.0", note = "Please use `new_with_external_ip` instead.")]
     pub fn new_single_bind(
         pubkey: &Pubkey,
         gossip_addr: &SocketAddr,

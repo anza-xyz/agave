@@ -175,7 +175,7 @@ fn main() {
     let bind_address = solana_net_utils::parse_host(
         matches
             .value_of("bind_address")
-            .expect("Bind addresshas default value"),
+            .expect("Bind address has default value"),
     )
     .unwrap_or_else(|err| {
         eprintln!("Failed to parse --bind-address: {err}");
