@@ -64,6 +64,7 @@ use {
     ahash::{AHashSet, RandomState},
     dashmap::{DashMap, DashSet},
     log::*,
+    partitioned_epoch_rewards::PartitionedRewardsCalculation,
     rayon::{
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         ThreadPoolBuilder,
@@ -583,6 +584,7 @@ impl PartialEq for Bank {
             stats_for_accounts_lt_hash: _,
             block_id,
             bank_hash_stats: _,
+            epoch_reward_calculation_results: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -941,6 +943,12 @@ pub struct Bank {
 
     /// Accounts stats for computing the bank hash
     bank_hash_stats: AtomicBankHashStats,
+
+    /// The cache of epoch rewards calculation results
+    /// This is used to avoid recalculating the same epoch rewards at epoch boundary.
+    /// The outer hashmap is keyed by current epoch, and the inner hashmap is keyed by the parent slot in previous epoch.
+    epoch_reward_calculation_results:
+        Arc<Mutex<HashMap<Epoch, HashMap<Slot, PartitionedRewardsCalculation>>>>,
 }
 
 #[derive(Debug)]
@@ -1140,6 +1148,10 @@ impl Bank {
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
+            epoch_reward_calculation_results: Arc::new(Mutex::new(HashMap::<
+                Epoch,
+                HashMap<Slot, PartitionedRewardsCalculation>,
+            >::default())),
         };
 
         bank.transaction_processor =
@@ -1396,6 +1408,10 @@ impl Bank {
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
+            epoch_reward_calculation_results: Arc::new(Mutex::new(HashMap::<
+                Epoch,
+                HashMap<Slot, PartitionedRewardsCalculation>,
+            >::default())),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1873,6 +1889,10 @@ impl Bank {
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
+            epoch_reward_calculation_results: Arc::new(Mutex::new(HashMap::<
+                Epoch,
+                HashMap<Slot, PartitionedRewardsCalculation>,
+            >::default())),
         };
 
         bank.transaction_processor =

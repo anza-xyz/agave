@@ -90,7 +90,7 @@ pub(super) struct VoteRewardsAccounts {
     pub(super) total_vote_rewards_lamports: u64,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 /// result of calculating the stake rewards at end of epoch
 pub(super) struct StakeRewardCalculation {
     /// each individual stake account to reward
@@ -129,6 +129,7 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// Hold all results from calculating the rewards for partitioned distribution.
 /// This struct exists so we can have a function which does all the calculation with no
 /// side effects.
+#[derive(Debug, Clone)]
 pub(super) struct PartitionedRewardsCalculation {
     pub(super) vote_account_rewards: Arc<VoteRewardsAccounts>,
     pub(super) stake_rewards: StakeRewardCalculation,
@@ -258,7 +259,10 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::tests::{create_genesis_config, new_bank_from_parent_with_bank_forks},
+            bank::{
+                tests::{create_genesis_config, new_bank_from_parent_with_bank_forks},
+                Epoch, Slot,
+            },
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
@@ -357,6 +361,24 @@ mod tests {
                 self.epoch_reward_status,
                 EpochRewardStatus::Active(EpochRewardPhase::Distribution(_))
             )
+        }
+
+        fn get_epoch_rewards_from_cache(
+            &self,
+            epoch: Epoch,
+            parent_slot: Slot,
+        ) -> Option<PartitionedRewardsCalculation> {
+            self.epoch_reward_calculation_results
+                .lock()
+                .unwrap()
+                .get(&epoch)
+                .map(|m| m.get(&parent_slot))
+                .flatten()
+                .map(|m| m.clone())
+        }
+
+        fn get_epoch_rewards_cache_size(&self) -> usize {
+            self.epoch_reward_calculation_results.lock().unwrap().len()
         }
     }
 
@@ -611,7 +633,18 @@ mod tests {
                 );
 
                 assert!(curr_bank.is_calculated());
-                assert_eq!(post_cap, pre_cap);
+
+                // after reward calculation, the cache should be filled.
+                assert!(curr_bank
+                    .get_epoch_rewards_from_cache(curr_bank.epoch, curr_bank.parent_slot)
+                    .is_some());
+
+                if slot == SLOTS_PER_EPOCH {
+                    // cap should increase because of new epoch rewards
+                    assert!(post_cap > pre_cap);
+                } else {
+                    assert_eq!(post_cap, pre_cap);
+                }
             } else if slot == SLOTS_PER_EPOCH + 1 {
                 // 1. when curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
                 // epoch 1, reward distribution should happen in this block.
@@ -622,6 +655,12 @@ mod tests {
                     curr_bank.get_reward_interval(),
                     RewardInterval::OutsideInterval
                 );
+
+                // after reward distribution, the cache should be cleared.
+                assert!(curr_bank
+                    .get_epoch_rewards_from_cache(curr_bank.epoch, curr_bank.parent_slot)
+                    .is_none());
+                assert_eq!(curr_bank.get_epoch_rewards_cache_size(), 0);
 
                 let account = curr_bank
                     .get_account(&solana_sysvar::epoch_rewards::id())
@@ -688,6 +727,15 @@ mod tests {
 
                 // calculation block, state should be calculated.
                 assert!(curr_bank.is_calculated());
+
+                // after reward calculation, the cache should be filled.
+                assert!(curr_bank
+                    .get_epoch_rewards_from_cache(curr_bank.epoch, curr_bank.parent_slot)
+                    .is_some());
+                assert_eq!(curr_bank.get_epoch_rewards_cache_size(), 1);
+
+                // cap should increase because of new epoch rewards
+                assert!(post_cap > pre_cap);
             } else if slot == SLOTS_PER_EPOCH + 1 {
                 // When curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
                 // epoch 1, reward distribution should happen in this block. The
@@ -719,6 +767,12 @@ mod tests {
                     curr_bank.get_reward_interval(),
                     RewardInterval::OutsideInterval
                 );
+
+                // after reward distribution, the cache should be cleared.
+                assert!(curr_bank
+                    .get_epoch_rewards_from_cache(curr_bank.epoch, curr_bank.parent_slot)
+                    .is_none());
+                assert_eq!(curr_bank.get_epoch_rewards_cache_size(), 0);
 
                 let account = curr_bank
                     .get_account(&solana_sysvar::epoch_rewards::id())
