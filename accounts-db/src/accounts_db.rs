@@ -4931,6 +4931,27 @@ impl AccountsDb {
         R: Send,
         B: Send + Default + Sync,
     {
+        self.scan_cache_storage_fallback(slot, cache_map_func, |retval, storage| {
+            storage.scan_accounts(|account| {
+                let loaded_account = LoadedAccount::Stored(account);
+                let data = (scan_account_storage_data == ScanAccountStorageData::DataRefForStorage)
+                    .then_some(loaded_account.data());
+                storage_scan_func(retval, &loaded_account, data)
+            });
+        })
+    }
+
+    /// Scan the cache with a fallback to storage for a specific slot.
+    pub fn scan_cache_storage_fallback<R, B>(
+        &self,
+        slot: Slot,
+        cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
+        storage_fallback_func: impl Fn(&B, &AccountsFile) + Sync,
+    ) -> ScanStorageResult<R, B>
+    where
+        R: Send,
+        B: Send + Default + Sync,
+    {
         if let Some(slot_cache) = self.accounts_cache.slot_cache(slot) {
             // If we see the slot in the cache, then all the account information
             // is in this cached slot
@@ -4975,13 +4996,7 @@ impl AccountsDb {
                 .storage
                 .get_slot_storage_entry_shrinking_in_progress_ok(slot)
             {
-                storage.accounts.scan_accounts(|account| {
-                    let loaded_account = LoadedAccount::Stored(account);
-                    let data = (scan_account_storage_data
-                        == ScanAccountStorageData::DataRefForStorage)
-                        .then_some(loaded_account.data());
-                    storage_scan_func(&retval, &loaded_account, data)
-                });
+                storage_fallback_func(&retval, &storage.accounts);
             }
 
             ScanStorageResult::Stored(retval)
@@ -7454,13 +7469,14 @@ impl AccountsDb {
 
     /// Returns all of the accounts' pubkeys for a given slot
     pub fn get_pubkeys_for_slot(&self, slot: Slot) -> Vec<Pubkey> {
-        let scan_result = self.scan_account_storage(
+        let scan_result = self.scan_cache_storage_fallback(
             slot,
             |loaded_account| Some(*loaded_account.pubkey()),
-            |accum: &DashSet<_>, loaded_account, _data| {
-                accum.insert(*loaded_account.pubkey());
+            |accum: &DashSet<Pubkey>, storage| {
+                storage.scan_pubkeys(|pubkey| {
+                    accum.insert(*pubkey);
+                });
             },
-            ScanAccountStorageData::NoData,
         );
         match scan_result {
             ScanStorageResult::Cached(cached_result) => cached_result,
