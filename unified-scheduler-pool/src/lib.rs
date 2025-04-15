@@ -524,9 +524,11 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
-                if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
-                    exiting = true;
-                    scheduler_pool.unregister_banking_stage();
+                if matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
+                    if !exiting {
+                        exiting = true;
+                        scheduler_pool.unregister_banking_stage();
+                    }
                     let mut inner = scheduler_pool
                         .block_production_scheduler_inner
                         .lock()
