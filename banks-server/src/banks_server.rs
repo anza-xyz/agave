@@ -2,32 +2,33 @@ use {
     bincode::{deserialize, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
     futures::{future, prelude::stream::StreamExt},
+    solana_account::Account,
     solana_banks_interface::{
         Banks, BanksRequest, BanksResponse, BanksTransactionResultWithMetadata,
         BanksTransactionResultWithSimulation, TransactionConfirmationStatus, TransactionMetadata,
         TransactionSimulationDetails, TransactionStatus,
     },
     solana_client::connection_cache::ConnectionCache,
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentLevel,
+    solana_hash::Hash,
+    solana_message::{Message, SanitizedMessage},
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        account::Account,
-        clock::Slot,
-        commitment_config::CommitmentLevel,
-        hash::Hash,
-        message::{Message, SanitizedMessage},
-        pubkey::Pubkey,
-        signature::Signature,
-        transaction::{self, MessageHash, SanitizedTransaction, VersionedTransaction},
-    },
     solana_send_transaction_service::{
         send_transaction_service::{Config, SendTransactionService, TransactionInfo},
         tpu_info::NullTpuInfo,
         transaction_client::ConnectionCacheClient,
+    },
+    solana_signature::Signature,
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        versioned::VersionedTransaction,
     },
     std::{
         io,
@@ -46,6 +47,10 @@ use {
     tokio::time::sleep,
     tokio_serde::formats::Bincode,
 };
+
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 
 #[derive(Clone)]
 struct BanksServer {
