@@ -5454,8 +5454,16 @@ version = "2.3.0"
 dependencies = [
  "serde",
  "serde_derive",
- "solana-sdk",
+ "solana-account",
+ "solana-clock",
+ "solana-commitment-config",
+ "solana-hash",
+ "solana-message",
+ "solana-pubkey",
+ "solana-signature",
+ "solana-transaction",
  "solana-transaction-context 2.3.0",
+ "solana-transaction-error",
  "tarpc",
 ]
 
