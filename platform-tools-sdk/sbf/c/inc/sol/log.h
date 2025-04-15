@@ -15,7 +15,7 @@ extern "C" {
  * Prints a string to stdout
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/log.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 void sol_log_(const char *, uint64_t);
 #else
 typedef void(*sol_log__pointer_type)(const char *, uint64_t);
@@ -30,7 +30,7 @@ static void sol_log_(const char * arg1, uint64_t arg2) {
  * Prints a 64 bit values represented in hexadecimal to stdout
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/log.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 void sol_log_64_(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 #else
 typedef void(*sol_log_64__pointer_type)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
@@ -45,7 +45,7 @@ static void sol_log_64_(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t ar
  * Prints the current compute unit consumption to stdout
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/log.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 void sol_log_compute_units_();
 #else
 typedef void(*sol_log_compute_units__pointer_type)();
@@ -71,7 +71,7 @@ static void sol_log_array(const uint8_t *array, int len) {
  * Print the base64 representation of some arrays.
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/log.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 void sol_log_data(SolBytes *, uint64_t);
 #else
 typedef void(*sol_log_data_pointer_type)(SolBytes *, uint64_t);
