@@ -6,7 +6,10 @@
 
 use {
     crate::{
-        account_storage::meta::{AccountMeta, StoredAccountMeta, StoredMeta},
+        account_storage::{
+            meta::{AccountMeta, StoredAccountMeta, StoredMeta},
+            stored_account_info::StoredAccountInfo,
+        },
         accounts_file::{
             AccountsFileError, InternalsForArchive, MatchAccountOwnerError, Result, StorageAccess,
             StoredAccountsInfo, ALIGN_BOUNDARY_OFFSET,
@@ -770,6 +773,29 @@ impl AppendVec {
 
     /// calls `callback` with the stored account metadata for the account at `offset` if its data doesn't overrun
     /// the internal buffer. Otherwise return None.
+    pub fn get_stored_account_callback<Ret>(
+        &self,
+        offset: usize,
+        mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
+    ) -> Option<Ret> {
+        self.get_stored_account_meta_callback(offset, |stored_account_meta| {
+            let account = StoredAccountInfo {
+                pubkey: stored_account_meta.pubkey(),
+                lamports: stored_account_meta.lamports(),
+                owner: stored_account_meta.owner(),
+                data: stored_account_meta.data(),
+                executable: stored_account_meta.executable(),
+                rent_epoch: stored_account_meta.rent_epoch(),
+            };
+            callback(account)
+        })
+    }
+
+    /// calls `callback` with the stored account metadata for the account at `offset` if its data doesn't overrun
+    /// the internal buffer. Otherwise return None.
+    ///
+    /// Prefer get_stored_account_callback() when possible, as it does not contain file format
+    /// implementation details, and thus potentially can read less and be faster.
     pub fn get_stored_account_meta_callback<Ret>(
         &self,
         offset: usize,
@@ -778,9 +804,9 @@ impl AppendVec {
         match &self.backing {
             AppendVecFileBacking::Mmap(mmap) => {
                 let slice = self.get_valid_slice_from_mmap(mmap);
-                let (meta, next): (&StoredMeta, _) = Self::get_type(slice, offset)?;
-                let (account_meta, next): (&AccountMeta, _) = Self::get_type(slice, next)?;
-                let (hash, next): (&AccountHash, _) = Self::get_type(slice, next)?;
+                let (meta, next) = Self::get_type::<StoredMeta>(slice, offset)?;
+                let (account_meta, next) = Self::get_type::<AccountMeta>(slice, next)?;
+                let (hash, next) = Self::get_type::<AccountHash>(slice, next)?;
                 let (data, next) = Self::get_slice(slice, next, meta.data_len as usize)?;
                 let stored_size = next - offset;
                 Some(callback(StoredAccountMeta::AppendVec(
@@ -806,9 +832,9 @@ impl AppendVec {
                 let valid_bytes = ValidSlice(unsafe {
                     slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read)
                 });
-                let (meta, next): (&StoredMeta, _) = Self::get_type(valid_bytes, 0)?;
-                let (account_meta, next): (&AccountMeta, _) = Self::get_type(valid_bytes, next)?;
-                let (hash, next): (&AccountHash, _) = Self::get_type(valid_bytes, next)?;
+                let (meta, next) = Self::get_type::<StoredMeta>(valid_bytes, 0)?;
+                let (account_meta, next) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
+                let (hash, next) = Self::get_type::<AccountHash>(valid_bytes, next)?;
                 let data_len = meta.data_len;
                 let remaining_bytes_for_data = bytes_read - next;
                 Some(if remaining_bytes_for_data >= data_len as usize {
@@ -866,8 +892,8 @@ impl AppendVec {
         match &self.backing {
             AppendVecFileBacking::Mmap(mmap) => {
                 let slice = self.get_valid_slice_from_mmap(mmap);
-                let (meta, next): (&StoredMeta, _) = Self::get_type(slice, offset)?;
-                let (account_meta, _): (&AccountMeta, _) = Self::get_type(slice, next)?;
+                let (meta, next) = Self::get_type::<StoredMeta>(slice, offset)?;
+                let (account_meta, _) = Self::get_type::<AccountMeta>(slice, next)?;
                 let stored_size = aligned_stored_size_checked(meta.data_len as usize)?;
 
                 Some(callback(StoredAccountNoData {
@@ -888,8 +914,8 @@ impl AppendVec {
                 let valid_bytes = ValidSlice(unsafe {
                     slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read)
                 });
-                let (meta, next): (&StoredMeta, _) = Self::get_type(valid_bytes, 0)?;
-                let (account_meta, _): (&AccountMeta, _) = Self::get_type(valid_bytes, next)?;
+                let (meta, next) = Self::get_type::<StoredMeta>(valid_bytes, 0)?;
+                let (account_meta, _) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
                 let stored_size = aligned_stored_size_checked(meta.data_len as usize)?;
 
                 Some(callback(StoredAccountNoData {
@@ -905,7 +931,7 @@ impl AppendVec {
     /// return an `AccountSharedData` for an account at `offset`.
     /// This fn can efficiently return exactly what is needed by a caller.
     /// This is on the critical path of tx processing for accounts not in the read or write caches.
-    pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
+    pub fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
         match &self.backing {
             AppendVecFileBacking::Mmap(_) => self
                 .get_stored_account_meta_callback(offset, |account| {
@@ -920,9 +946,9 @@ impl AppendVec {
                 let valid_bytes = ValidSlice(unsafe {
                     slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read)
                 });
-                let (meta, next): (&StoredMeta, _) = Self::get_type(valid_bytes, 0)?;
-                let (account_meta, next): (&AccountMeta, _) = Self::get_type(valid_bytes, next)?;
-                let (hash, next): (&AccountHash, _) = Self::get_type(valid_bytes, next)?;
+                let (meta, next) = Self::get_type::<StoredMeta>(valid_bytes, 0)?;
+                let (account_meta, next) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
+                let (hash, next) = Self::get_type::<AccountHash>(valid_bytes, next)?;
                 let data_len = meta.data_len;
                 let remaining_bytes_for_data = bytes_read - next;
                 Some(if remaining_bytes_for_data >= data_len as usize {
@@ -966,6 +992,23 @@ impl AppendVec {
                 })
             }
         }
+    }
+
+    /// Returns the `IndexInfo` for the account at `offset`.
+    ///
+    /// Only intended to be used with the accounts index.
+    pub(crate) fn get_account_index_info(&self, offset: usize) -> Option<IndexInfo> {
+        self.get_stored_account_no_data_callback(offset, |account| IndexInfo {
+            stored_size_aligned: account.stored_size,
+            index_info: IndexInfoInner {
+                pubkey: *account.pubkey(),
+                lamports: account.lamports(),
+                offset: account.offset(),
+                data_len: account.data_len(),
+                executable: account.executable(),
+                rent_epoch: account.rent_epoch(),
+            },
+        })
     }
 
     /// Return Ok(index_of_matching_owner) if the account owner at `offset` is one of the pubkeys in `owners`.
@@ -1057,6 +1100,24 @@ impl AppendVec {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
+    pub fn scan_accounts(&self, mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>)) {
+        self.scan_accounts_stored_meta(|stored_account_meta| {
+            let account = StoredAccountInfo {
+                pubkey: stored_account_meta.pubkey(),
+                lamports: stored_account_meta.lamports(),
+                owner: stored_account_meta.owner(),
+                data: stored_account_meta.data(),
+                executable: stored_account_meta.executable(),
+                rent_epoch: stored_account_meta.rent_epoch(),
+            };
+            callback(account);
+        })
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts() when possible, as it does not contain file format
+    /// implementation details, and thus potentially can read less and be faster.
     #[allow(clippy::blocks_in_conditions)]
     pub fn scan_accounts_stored_meta(
         &self,
@@ -1092,11 +1153,10 @@ impl AppendVec {
                 let mut data_overflow_buffer = vec![];
                 while let Ok(BufferedReaderStatus::Success) = reader.read() {
                     let (offset, bytes_subset) = reader.get_offset_and_data();
-                    let (meta, next): (&StoredMeta, _) = Self::get_type(bytes_subset, 0).unwrap();
-                    let (account_meta, next): (&AccountMeta, _) =
-                        Self::get_type(bytes_subset, next).unwrap();
-                    let (hash, next): (&AccountHash, _) =
-                        Self::get_type(bytes_subset, next).unwrap();
+                    let (meta, next) = Self::get_type::<StoredMeta>(bytes_subset, 0).unwrap();
+                    let (account_meta, next) =
+                        Self::get_type::<AccountMeta>(bytes_subset, next).unwrap();
+                    let (hash, next) = Self::get_type::<AccountHash>(bytes_subset, next).unwrap();
                     let data_len = meta.data_len as usize;
                     let leftover = bytes_subset.len() - next;
                     if leftover >= data_len {

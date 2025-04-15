@@ -107,6 +107,7 @@ impl TransactionStatusService {
                 commit_results,
                 balances,
                 token_balances,
+                costs,
                 transaction_indexes,
             }) => {
                 let mut status_and_memos_batch = blockstore.get_write_batch()?;
@@ -118,6 +119,7 @@ impl TransactionStatusService {
                     post_balances,
                     pre_token_balances,
                     post_token_balances,
+                    cost,
                     transaction_index,
                 ) in izip!(
                     transactions,
@@ -126,6 +128,7 @@ impl TransactionStatusService {
                     balances.post_balances,
                     token_balances.pre_token_balances,
                     token_balances.post_token_balances,
+                    costs,
                     transaction_indexes,
                 ) {
                     let Ok(committed_tx) = commit_result else {
@@ -176,6 +179,7 @@ impl TransactionStatusService {
                         loaded_addresses,
                         return_data,
                         compute_units_consumed: Some(executed_units),
+                        cost_units: cost,
                     };
 
                     if let Some(transaction_notifier) = transaction_notifier.as_ref() {
@@ -438,6 +442,7 @@ pub(crate) mod tests {
             commit_results: vec![commit_result],
             balances,
             token_balances,
+            costs: vec![Some(123)],
             transaction_indexes: vec![transaction_index],
         };
 
@@ -541,6 +546,7 @@ pub(crate) mod tests {
             commit_results: vec![commit_result.clone(), commit_result],
             balances: balances.clone(),
             token_balances,
+            costs: vec![Some(123), Some(456)],
             transaction_indexes: vec![transaction_index1, transaction_index2],
         };
 

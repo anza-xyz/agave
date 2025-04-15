@@ -3,8 +3,7 @@ use {
         epoch_rewards_hasher::hash_rewards_into_partitions, Bank,
         CalculateRewardsAndDistributeVoteRewardsResult, CalculateValidatorRewardsResult,
         EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, PartitionedStakeReward,
-        PartitionedStakeRewards, StakeRewardCalculation, VoteRewardsAccounts,
-        REWARD_CALCULATION_NUM_BLOCKS,
+        StakeRewardCalculation, VoteRewardsAccounts, REWARD_CALCULATION_NUM_BLOCKS,
     },
     crate::{
         bank::{
@@ -32,7 +31,10 @@ use {
         stake::state::Delegation,
         sysvar::epoch_rewards::EpochRewards,
     },
-    std::sync::atomic::{AtomicU64, Ordering::Relaxed},
+    std::sync::{
+        atomic::{AtomicU64, Ordering::Relaxed},
+        Arc,
+    },
 };
 
 impl Bank {
@@ -64,7 +66,7 @@ impl Bank {
 
         let num_partitions = self.get_reward_distribution_num_blocks(&stake_rewards);
 
-        self.set_epoch_reward_status_calculated(distribution_starting_block_height, stake_rewards);
+        self.set_epoch_reward_status_calculation(distribution_starting_block_height, stake_rewards);
 
         self.create_epoch_rewards_sysvar(
             distributed_rewards,
@@ -196,7 +198,7 @@ impl Bank {
 
         let CalculateValidatorRewardsResult {
             vote_rewards_accounts: vote_account_rewards,
-            stake_reward_calculation: mut stake_rewards,
+            stake_reward_calculation: stake_rewards,
             point_value,
         } = self
             .calculate_validator_rewards(
@@ -210,10 +212,7 @@ impl Bank {
 
         PartitionedRewardsCalculation {
             vote_account_rewards,
-            stake_rewards: StakeRewardCalculation {
-                stake_rewards: std::mem::take(&mut stake_rewards.stake_rewards),
-                total_stake_rewards_lamports: stake_rewards.total_stake_rewards_lamports,
-            },
+            stake_rewards,
             validator_rate,
             foundation_rate,
             prev_epoch_duration_in_years,
@@ -468,14 +467,15 @@ impl Bank {
     ) {
         let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
         if epoch_rewards_sysvar.active {
-            let stake_rewards_by_partition = self.recalculate_stake_rewards(
+            let (stake_rewards, partition_indices) = self.recalculate_stake_rewards(
                 &epoch_rewards_sysvar,
                 reward_calc_tracer,
                 thread_pool,
             );
-            self.set_epoch_reward_status_partitioned(
+            self.set_epoch_reward_status_distribution(
                 epoch_rewards_sysvar.distribution_starting_block_height,
-                stake_rewards_by_partition,
+                Arc::new(stake_rewards),
+                partition_indices,
             );
         }
     }
@@ -488,7 +488,7 @@ impl Bank {
         epoch_rewards_sysvar: &EpochRewards,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         thread_pool: &ThreadPool,
-    ) -> Vec<PartitionedStakeRewards> {
+    ) -> (Vec<PartitionedStakeReward>, Vec<Vec<usize>>) {
         assert!(epoch_rewards_sysvar.active);
         // If rewards are active, the rewarded epoch is always the immediately
         // preceding epoch.
@@ -516,11 +516,12 @@ impl Bank {
             &mut RewardsMetrics::default(), // This is required, but not reporting anything at the moment
         );
         drop(stakes);
-        hash_rewards_into_partitions(
-            stake_rewards,
+        let partition_indices = hash_rewards_into_partitions(
+            &stake_rewards,
             &epoch_rewards_sysvar.parent_blockhash,
             epoch_rewards_sysvar.num_partitions as usize,
-        )
+        );
+        (stake_rewards, partition_indices)
     }
 }
 
@@ -533,10 +534,12 @@ mod tests {
                 null_tracer,
                 partitioned_epoch_rewards::{
                     tests::{
-                        create_default_reward_bank, create_reward_bank,
-                        create_reward_bank_with_specific_stakes, RewardBank, SLOTS_PER_EPOCH,
+                        build_partitioned_stake_rewards, create_default_reward_bank,
+                        create_reward_bank, create_reward_bank_with_specific_stakes, RewardBank,
+                        SLOTS_PER_EPOCH,
                     },
-                    EpochRewardStatus, StartBlockHeightAndPartitionedRewards,
+                    EpochRewardPhase, EpochRewardStatus, PartitionedStakeRewards,
+                    StartBlockHeightAndPartitionedRewards,
                 },
                 tests::create_genesis_config,
                 VoteReward,
@@ -848,14 +851,20 @@ mod tests {
         );
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-        let recalculated_rewards =
+        let (recalculated_rewards, recalculated_partition_indices) =
             bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer(), &thread_pool);
 
-        let expected_stake_rewards_partitioned = hash_rewards_into_partitions(
-            expected_stake_rewards,
+        let recalculated_rewards =
+            build_partitioned_stake_rewards(&recalculated_rewards, &recalculated_partition_indices);
+
+        let expected_partition_indices = hash_rewards_into_partitions(
+            &expected_stake_rewards,
             &epoch_rewards_sysvar.parent_blockhash,
             epoch_rewards_sysvar.num_partitions as usize,
         );
+
+        let expected_stake_rewards_partitioned =
+            build_partitioned_stake_rewards(&expected_stake_rewards, &expected_partition_indices);
 
         assert_eq!(
             expected_stake_rewards_partitioned.len(),
@@ -870,8 +879,19 @@ mod tests {
         let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), new_slot));
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-        let recalculated_rewards =
+        let (recalculated_rewards, recalculated_partition_indices) =
             bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer(), &thread_pool);
+
+        // Note that recalculated rewards are **NOT** the same as expected
+        // rewards, which were calculated before any distribution. This is
+        // because "Recalculated rewards" doesn't include already distributed
+        // stake rewards. Therefore, the partition_indices are different too.
+        // However, the actual rewards for the remaining partitions should be
+        // the same. The following code use the test helper function to build
+        // the partitioned stake rewards for the remaining partitions and verify
+        // that they are the same.
+        let recalculated_rewards =
+            build_partitioned_stake_rewards(&recalculated_rewards, &recalculated_partition_indices);
         assert_eq!(
             expected_stake_rewards_partitioned.len(),
             recalculated_rewards.len()
@@ -926,14 +946,19 @@ mod tests {
         );
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-        let expected_stake_rewards = hash_rewards_into_partitions(
-            expected_stake_rewards,
+        let expected_partition_indices = hash_rewards_into_partitions(
+            &expected_stake_rewards,
             &epoch_rewards_sysvar.parent_blockhash,
             epoch_rewards_sysvar.num_partitions as usize,
         );
+        let expected_stake_rewards =
+            build_partitioned_stake_rewards(&expected_stake_rewards, &expected_partition_indices);
 
-        let recalculated_rewards =
+        let (recalculated_rewards, recalculated_partition_indices) =
             bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer(), &thread_pool);
+        let recalculated_rewards =
+            build_partitioned_stake_rewards(&recalculated_rewards, &recalculated_partition_indices);
+
         assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
         compare_stake_rewards(&expected_stake_rewards, &recalculated_rewards);
 
@@ -987,10 +1012,13 @@ mod tests {
         );
 
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
-        let EpochRewardStatus::Partitioned(StartBlockHeightAndPartitionedRewards {
-            distribution_starting_block_height,
-            stake_rewards_by_partition: ref recalculated_rewards,
-        }) = bank.epoch_reward_status
+        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
+            StartBlockHeightAndPartitionedRewards {
+                distribution_starting_block_height,
+                all_stake_rewards: ref recalculated_rewards,
+                ref partition_indices,
+            },
+        )) = bank.epoch_reward_status
         else {
             panic!("{:?} not active", bank.epoch_reward_status);
         };
@@ -999,15 +1027,20 @@ mod tests {
             distribution_starting_block_height
         );
 
+        let recalculated_rewards =
+            build_partitioned_stake_rewards(recalculated_rewards, partition_indices);
+
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
-        let expected_stake_rewards = hash_rewards_into_partitions(
-            expected_stake_rewards,
+        let expected_partition_indices = hash_rewards_into_partitions(
+            &expected_stake_rewards,
             &epoch_rewards_sysvar.parent_blockhash,
             epoch_rewards_sysvar.num_partitions as usize,
         );
+        let expected_stake_rewards =
+            build_partitioned_stake_rewards(&expected_stake_rewards, &expected_partition_indices);
 
         assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
-        compare_stake_rewards(&expected_stake_rewards, recalculated_rewards);
+        compare_stake_rewards(&expected_stake_rewards, &recalculated_rewards);
 
         let sysvar = bank.get_epoch_rewards_sysvar();
         assert_eq!(point_value.rewards, sysvar.total_rewards);
@@ -1017,13 +1050,27 @@ mod tests {
             Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), SLOTS_PER_EPOCH + 1);
 
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
-        let EpochRewardStatus::Partitioned(StartBlockHeightAndPartitionedRewards {
-            distribution_starting_block_height,
-            stake_rewards_by_partition: ref recalculated_rewards,
-        }) = bank.epoch_reward_status
+        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
+            StartBlockHeightAndPartitionedRewards {
+                distribution_starting_block_height,
+                all_stake_rewards: ref recalculated_rewards,
+                ref partition_indices,
+            },
+        )) = bank.epoch_reward_status
         else {
             panic!("{:?} not active", bank.epoch_reward_status);
         };
+
+        // Note that recalculated rewards are **NOT** the same as expected
+        // rewards, which were calculated before any distribution. This is
+        // because "Recalculated rewards" doesn't include already distributed
+        // stake rewards. Therefore, the partition_indices are different too.
+        // However, the actual rewards for the remaining partitions should be
+        // the same. The following code use the test helper function to build
+        // the partitioned stake rewards for the remaining partitions and verify
+        // that they are the same.
+        let recalculated_rewards =
+            build_partitioned_stake_rewards(recalculated_rewards, partition_indices);
         assert_eq!(
             expected_starting_block_height,
             distribution_starting_block_height

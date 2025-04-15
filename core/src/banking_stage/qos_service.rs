@@ -343,7 +343,7 @@ impl QosService {
                 );
                 saturating_add_assign!(
                     batched_transaction_details.costs.batched_data_bytes_cost,
-                    cost.data_bytes_cost()
+                    u64::from(cost.data_bytes_cost())
                 );
                 saturating_add_assign!(
                     batched_transaction_details
@@ -961,7 +961,7 @@ mod tests {
         // should only accumulate half of the costs that are OK
         let expected_signatures = signature_cost * (num_txs / 2);
         let expected_write_locks = write_lock_cost * (num_txs / 2);
-        let expected_data_bytes = data_bytes_cost * (num_txs / 2);
+        let expected_data_bytes = u64::from(data_bytes_cost) * (num_txs / 2);
         let expected_programs_execution_costs = programs_execution_cost * (num_txs / 2);
         let batched_transaction_details =
             QosService::accumulate_batched_transaction_costs(tx_cost_results.iter());

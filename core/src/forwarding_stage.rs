@@ -11,7 +11,6 @@ use {
     solana_connection_cache::client_connection::ClientConnection,
     solana_cost_model::cost_model::CostModel,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
-    solana_net_utils::bind_to_unspecified,
     solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{
@@ -125,14 +124,14 @@ trait ForwardingClient: Send + Sync + 'static {
 }
 
 struct VoteClient {
-    udp_socket: UdpSocket,
+    bind_socket: UdpSocket,
     forward_address_getter: ForwardAddressGetter,
 }
 
 impl VoteClient {
-    fn new(forward_address_getter: ForwardAddressGetter) -> Self {
+    fn new(bind_socket: UdpSocket, forward_address_getter: ForwardAddressGetter) -> Self {
         Self {
-            udp_socket: bind_to_unspecified().unwrap(),
+            bind_socket,
             forward_address_getter,
         }
     }
@@ -156,7 +155,7 @@ impl ForwardingClient for VoteClient {
         let batch_with_addresses = wire_transactions
             .iter()
             .map(|bytes| (bytes, current_address));
-        batch_send(&self.udp_socket, batch_with_addresses)?;
+        batch_send(&self.bind_socket, batch_with_addresses)?;
         Ok(())
     }
 }
@@ -205,11 +204,12 @@ impl ForwardingClient for ConnectionCacheClient {
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
     connection_cache: Arc<ConnectionCache>,
+    vote_client_udp_socket: UdpSocket,
     root_bank_cache: RootBankCache,
     forward_address_getter: ForwardAddressGetter,
     data_budget: DataBudget,
 ) -> JoinHandle<()> {
-    let vote_client = VoteClient::new(forward_address_getter.clone());
+    let vote_client = VoteClient::new(vote_client_udp_socket, forward_address_getter.clone());
 
     let non_vote_client = ConnectionCacheClient::new(connection_cache, forward_address_getter);
     let forwarding_stage = ForwardingStage::new(

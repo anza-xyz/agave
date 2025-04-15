@@ -8,79 +8,12 @@ use {
         ancestors::Ancestors,
     },
     solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
+        account::{AccountSharedData, WritableAccount},
         clock::Slot,
         hash::Hash,
-        pubkey::Pubkey,
-        sysvar::epoch_schedule::EpochSchedule,
     },
-    std::{
-        collections::HashSet,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
-        time::Instant,
-    },
+    std::{collections::HashSet, time::Instant},
 };
-
-#[test]
-fn test_shrink_and_clean() {
-    solana_logger::setup();
-
-    // repeat the whole test scenario
-    for _ in 0..5 {
-        let accounts = Arc::new(AccountsDb::new_single_for_tests());
-        let accounts_for_shrink = accounts.clone();
-
-        // spawn the slot shrinking background thread
-        let exit = Arc::new(AtomicBool::default());
-        let exit_for_shrink = exit.clone();
-        let shrink_thread = std::thread::spawn(move || loop {
-            if exit_for_shrink.load(Ordering::Relaxed) {
-                break;
-            }
-            accounts_for_shrink.shrink_all_slots(false, &EpochSchedule::default(), None);
-        });
-
-        let mut alive_accounts = vec![];
-        let owner = Pubkey::default();
-
-        // populate the AccountsDb with plenty of food for slot shrinking
-        // also this simulates realistic some heavy spike account updates in the wild
-        for current_slot in 0..100 {
-            while alive_accounts.len() <= 10 {
-                alive_accounts.push((
-                    solana_pubkey::new_rand(),
-                    AccountSharedData::new(thread_rng().gen_range(0..50), 0, &owner),
-                ));
-            }
-
-            alive_accounts.retain(|(_pubkey, account)| account.lamports() >= 1);
-
-            for (pubkey, account) in alive_accounts.iter_mut() {
-                account.checked_sub_lamports(1).unwrap();
-
-                accounts.store_cached((current_slot, &[(&*pubkey, &*account)][..]), None);
-            }
-            accounts.add_root(current_slot);
-            accounts.flush_accounts_cache(true, Some(current_slot));
-            // `flush` populates uncleaned_pubkeys, but this test fails if
-            // uncleaned_pubkeys is not empty.
-            accounts.uncleaned_pubkeys().clear();
-        }
-
-        // let's dance.
-        for _ in 0..10 {
-            accounts.clean_accounts_for_tests();
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-
-        // cleanup
-        exit.store(true, Ordering::Relaxed);
-        shrink_thread.join().unwrap();
-    }
-}
 
 #[test]
 fn test_bad_bank_hash() {

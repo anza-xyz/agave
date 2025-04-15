@@ -6,7 +6,7 @@ use {
         account_storage::meta::{AccountMeta, StoredMeta},
         accounts_file::AccountsFileProvider,
         accounts_hash::MERKLE_FANOUT,
-        accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
+        accounts_index::{tests::*, AccountIndex, AccountSecondaryIndexesIncludeExclude},
         ancient_append_vecs,
         append_vec::{
             aligned_stored_size, test_utils::TempFile, AppendVec, AppendVecStoredAccountMeta,
@@ -235,6 +235,29 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
         0,
         append_vec.alive_bytes_exclude_zero_lamport_single_ref_accounts()
     );
+}
+
+#[test]
+fn test_generate_index_duplicates_within_slot_with_secondary_indexes() {
+    let secondary_indexes = AccountSecondaryIndexes {
+        keys: None,
+        indexes: HashSet::from([
+            AccountIndex::ProgramId,
+            AccountIndex::SplTokenMint,
+            AccountIndex::SplTokenOwner,
+        ]),
+    };
+    let accounts_db_config = AccountsDbConfig {
+        account_indexes: Some(secondary_indexes),
+        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+    };
+    let accounts_db = AccountsDb::new_with_config(
+        Vec::new(),
+        Some(accounts_db_config),
+        None,
+        AtomicBool::new(false).into(),
+    );
+    run_generate_index_duplicates_within_slot_test(accounts_db, false);
 }
 
 fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
@@ -7475,7 +7498,7 @@ fn test_combine_ancient_slots_append() {
                     }
                     let original_pubkey = original
                         .accounts
-                        .get_stored_account_meta_callback(0, |account| *account.pubkey())
+                        .get_stored_account_callback(0, |account| *account.pubkey())
                         .unwrap();
                     let slot = ancient_slot + 1 + (count_marked_dead as Slot);
                     _ = db.purge_keys_exact(
@@ -7519,7 +7542,7 @@ fn test_combine_ancient_slots_append() {
             for original in &originals {
                 let i = original
                     .accounts
-                    .get_stored_account_meta_callback(0, |original| {
+                    .get_stored_account_callback(0, |original| {
                         after_stored_accounts
                             .iter()
                             .enumerate()

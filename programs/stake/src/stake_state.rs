@@ -32,6 +32,14 @@ use {
     std::{collections::HashSet, convert::TryFrom},
 };
 
+// feature_set::reduce_stake_warmup_cooldown changed the warmup/cooldown from
+// 25% to 9%. this number is necessary to calculate historical effective stake from
+// stake history, but we only care that stake we are dealing with in the present
+// epoch has been fully (de)activated. this means, as long as one epoch has
+// passed since activation where all prior stake had escaped warmup/cooldown,
+// we can pretend the rate has always beein 9% without issue. so we do that
+const PERPETUAL_NEW_WARMUP_COOLDOWN_RATE_EPOCH: Option<u64> = Some(0);
+
 // utility function, used by Stakes, tests
 pub fn from<T: ReadableAccount + StateMut<StakeStateV2>>(account: &T) -> Option<StakeStateV2> {
     account.state().ok()
@@ -57,14 +65,8 @@ pub fn meta_from(account: &AccountSharedData) -> Option<Meta> {
     from(account).and_then(|state: StakeStateV2| state.meta())
 }
 
-pub(crate) fn new_warmup_cooldown_rate_epoch(invoke_context: &InvokeContext) -> Option<Epoch> {
-    let epoch_schedule = invoke_context
-        .get_sysvar_cache()
-        .get_epoch_schedule()
-        .unwrap();
-    invoke_context
-        .get_feature_set()
-        .new_warmup_cooldown_rate_epoch(epoch_schedule.as_ref())
+pub(crate) fn new_warmup_cooldown_rate_epoch() -> Option<Epoch> {
+    PERPETUAL_NEW_WARMUP_COOLDOWN_RATE_EPOCH
 }
 
 fn checked_add(a: u64, b: u64) -> Result<u64, InstructionError> {
@@ -80,12 +82,11 @@ fn get_stake_status(
     Ok(stake.delegation.stake_activating_and_deactivating(
         clock.epoch,
         stake_history.as_ref(),
-        new_warmup_cooldown_rate_epoch(invoke_context),
+        new_warmup_cooldown_rate_epoch(),
     ))
 }
 
 fn redelegate_stake(
-    invoke_context: &InvokeContext,
     stake: &mut Stake,
     stake_lamports: u64,
     voter_pubkey: &Pubkey,
@@ -93,7 +94,7 @@ fn redelegate_stake(
     clock: &Clock,
     stake_history: &StakeHistory,
 ) -> Result<(), StakeError> {
-    let new_rate_activation_epoch = new_warmup_cooldown_rate_epoch(invoke_context);
+    let new_rate_activation_epoch = new_warmup_cooldown_rate_epoch();
     // If stake is currently active:
     if stake.stake(clock.epoch, stake_history, new_rate_activation_epoch) != 0 {
         // If pubkey of new voter is the same as current,
@@ -310,7 +311,6 @@ pub fn authorize_with_seed(
 
 #[allow(clippy::too_many_arguments)]
 pub fn delegate(
-    invoke_context: &InvokeContext,
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account_index: IndexOfAccount,
@@ -349,7 +349,6 @@ pub fn delegate(
             let ValidatedDelegatedInfo { stake_amount } =
                 validate_delegated_amount(&stake_account, &meta, feature_set)?;
             redelegate_stake(
-                invoke_context,
                 &mut stake,
                 stake_amount,
                 &vote_pubkey,
@@ -364,7 +363,6 @@ pub fn delegate(
 }
 
 pub fn deactivate(
-    _invoke_context: &InvokeContext,
     stake_account: &mut BorrowedAccount,
     clock: &Clock,
     signers: &HashSet<Pubkey>,
@@ -1106,7 +1104,7 @@ impl MergeKind {
                 let status = stake.delegation.stake_activating_and_deactivating(
                     clock.epoch,
                     stake_history,
-                    new_warmup_cooldown_rate_epoch(invoke_context),
+                    new_warmup_cooldown_rate_epoch(),
                 );
 
                 match (status.effective, status.activating, status.deactivating) {

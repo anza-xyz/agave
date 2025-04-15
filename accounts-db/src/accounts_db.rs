@@ -986,7 +986,7 @@ impl LoadedAccountAccessor<'_> {
                 // was still in the storage map. This means even if the storage entry is removed
                 // from the storage map after we grabbed the storage entry, the recycler should not
                 // reset the storage entry until we drop the reference to the storage entry.
-                maybe_storage_entry.get_account_shared_data(*offset).expect(
+                maybe_storage_entry.accounts.get_account_shared_data(*offset).expect(
                     "If a storage entry was found in the storage map, it must not have been reset \
                      yet",
                 )
@@ -1354,10 +1354,6 @@ impl AccountStorageEntry {
 
     pub fn flush(&self) -> Result<(), AccountsFileError> {
         self.accounts.flush()
-    }
-
-    fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
-        self.accounts.get_account_shared_data(offset)
     }
 
     fn add_accounts(&self, num_accounts: usize, num_bytes: usize) {
@@ -4935,6 +4931,27 @@ impl AccountsDb {
         R: Send,
         B: Send + Default + Sync,
     {
+        self.scan_cache_storage_fallback(slot, cache_map_func, |retval, storage| {
+            storage.scan_accounts(|account| {
+                let loaded_account = LoadedAccount::Stored(account);
+                let data = (scan_account_storage_data == ScanAccountStorageData::DataRefForStorage)
+                    .then_some(loaded_account.data());
+                storage_scan_func(retval, &loaded_account, data)
+            });
+        })
+    }
+
+    /// Scan the cache with a fallback to storage for a specific slot.
+    pub fn scan_cache_storage_fallback<R, B>(
+        &self,
+        slot: Slot,
+        cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
+        storage_fallback_func: impl Fn(&B, &AccountsFile) + Sync,
+    ) -> ScanStorageResult<R, B>
+    where
+        R: Send,
+        B: Send + Default + Sync,
+    {
         if let Some(slot_cache) = self.accounts_cache.slot_cache(slot) {
             // If we see the slot in the cache, then all the account information
             // is in this cached slot
@@ -4979,13 +4996,7 @@ impl AccountsDb {
                 .storage
                 .get_slot_storage_entry_shrinking_in_progress_ok(slot)
             {
-                storage.accounts.scan_accounts(|account| {
-                    let loaded_account = LoadedAccount::Stored(account);
-                    let data = (scan_account_storage_data
-                        == ScanAccountStorageData::DataRefForStorage)
-                        .then_some(loaded_account.data());
-                    storage_scan_func(&retval, &loaded_account, data)
-                });
+                storage_fallback_func(&retval, &storage.accounts);
             }
 
             ScanStorageResult::Stored(retval)
@@ -7458,13 +7469,14 @@ impl AccountsDb {
 
     /// Returns all of the accounts' pubkeys for a given slot
     pub fn get_pubkeys_for_slot(&self, slot: Slot) -> Vec<Pubkey> {
-        let scan_result = self.scan_account_storage(
+        let scan_result = self.scan_cache_storage_fallback(
             slot,
             |loaded_account| Some(*loaded_account.pubkey()),
-            |accum: &DashSet<_>, loaded_account, _data| {
-                accum.insert(*loaded_account.pubkey());
+            |accum: &DashSet<Pubkey>, storage| {
+                storage.scan_pubkeys(|pubkey| {
+                    accum.insert(*pubkey);
+                });
             },
-            ScanAccountStorageData::NoData,
         );
         match scan_result {
             ScanStorageResult::Cached(cached_result) => cached_result,
@@ -8536,17 +8548,13 @@ impl AccountsDb {
         };
         if secondary {
             // scan storage a second time to update the secondary index
-            storage
-                .accounts
-                .scan_accounts_stored_meta(|stored_account| {
-                    stored_size_alive += stored_account.stored_size();
-                    let pubkey = stored_account.pubkey();
-                    self.accounts_index.update_secondary_indexes(
-                        pubkey,
-                        &stored_account,
-                        &self.account_indexes,
-                    );
-                });
+            storage.accounts.scan_accounts(|stored_account| {
+                self.accounts_index.update_secondary_indexes(
+                    stored_account.pubkey(),
+                    &stored_account,
+                    &self.account_indexes,
+                );
+            });
         }
 
         if let Some(duplicates_this_slot) = std::mem::take(&mut generate_index_results.duplicates) {
@@ -8554,18 +8562,20 @@ impl AccountsDb {
             // Some were not inserted. This means some info like stored data is off.
             duplicates_this_slot
                 .into_iter()
-                .for_each(|(pubkey, (_slot, info))| {
-                    storage
-                        .accounts
-                        .get_stored_account_meta_callback(info.offset(), |duplicate| {
-                            assert_eq!(&pubkey, duplicate.pubkey());
-                            stored_size_alive =
-                                stored_size_alive.saturating_sub(duplicate.stored_size());
-                            if !duplicate.is_zero_lamport() {
-                                accounts_data_len =
-                                    accounts_data_len.saturating_sub(duplicate.data().len() as u64);
-                            }
-                        });
+                .filter_map(|(pubkey, (_slot, info))| {
+                    let duplicate = storage.accounts.get_account_index_info(info.offset());
+                    duplicate
+                        .as_ref()
+                        .inspect(|duplicate| assert_eq!(pubkey, duplicate.index_info.pubkey));
+                    duplicate
+                })
+                .for_each(|duplicate| {
+                    stored_size_alive =
+                        stored_size_alive.saturating_sub(duplicate.stored_size_aligned);
+                    if !duplicate.is_zero_lamport() {
+                        accounts_data_len =
+                            accounts_data_len.saturating_sub(duplicate.index_info.data_len);
+                    }
                 });
         }
 
@@ -8726,8 +8736,8 @@ impl AccountsDb {
                             // verify index matches expected and measure the time to get all items
                             assert!(verify);
                             let mut lookup_time = Measure::start("lookup_time");
-                            storage.accounts.scan_accounts_stored_meta(|account_info| {
-                                let key = account_info.pubkey();
+                            storage.accounts.scan_index(|account_info| {
+                                let key = &account_info.index_info.pubkey;
                                 let index_entry = self.accounts_index.get_cloned(key).unwrap();
                                 let slot_list = index_entry.slot_list.read().unwrap();
                                 let mut count = 0;
@@ -8737,7 +8747,7 @@ impl AccountsDb {
                                         let ai = AccountInfo::new(
                                             StorageLocation::AppendVec(
                                                 store_id,
-                                                account_info.offset(),
+                                                account_info.index_info.offset,
                                             ), // will never be cached
                                             account_info.is_zero_lamport(),
                                         );

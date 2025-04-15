@@ -53,8 +53,9 @@ use {
     solana_net_utils::{
         bind_common_in_range_with_config, bind_common_with_config, bind_in_range,
         bind_in_range_with_config, bind_more_with_config, bind_to_localhost, bind_to_unspecified,
-        bind_two_in_range_with_offset_and_config, find_available_port_in_range,
-        multi_bind_in_range_with_config, PortRange, SocketConfig, VALIDATOR_PORT_RANGE,
+        bind_to_with_config, bind_two_in_range_with_offset_and_config,
+        find_available_port_in_range, multi_bind_in_range_with_config, PortRange, SocketConfig,
+        VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -136,7 +137,7 @@ const MIN_NUM_STAKED_NODES: usize = 500;
 
 // Must have at least one socket to monitor the TVU port
 pub const MINIMUM_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
-pub const DEFAULT_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = NonZeroUsize::new(8).unwrap();
+pub const DEFAULT_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = MINIMUM_NUM_TVU_RECEIVE_SOCKETS;
 pub const MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 pub const DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS: NonZeroUsize = NonZeroUsize::new(12).unwrap();
 
@@ -2380,6 +2381,9 @@ pub struct Sockets {
     pub tpu_quic: Vec<UdpSocket>,
     pub tpu_forwards_quic: Vec<UdpSocket>,
     pub tpu_vote_quic: Vec<UdpSocket>,
+
+    /// Client-side socket for ForwardingStage.
+    pub tpu_vote_forwards_client: UdpSocket,
 }
 
 pub struct NodeConfig {
@@ -2465,6 +2469,8 @@ impl Node {
         let ancestor_hashes_requests = bind_to_unspecified().unwrap();
         let ancestor_hashes_requests_quic = bind_to_unspecified().unwrap();
 
+        let tpu_vote_forwards_client = bind_to_localhost().unwrap();
+
         let mut info = ContactInfo::new(
             *pubkey,
             timestamp(), // wallclock
@@ -2541,6 +2547,7 @@ impl Node {
                 tpu_quic,
                 tpu_forwards_quic,
                 tpu_vote_quic,
+                tpu_vote_forwards_client,
             },
         }
     }
@@ -2572,6 +2579,7 @@ impl Node {
         bind_in_range_with_config(bind_ip_addr, port_range, config).expect("Failed to bind")
     }
 
+    #[deprecated(since = "2.3.0", note = "Please use `new_with_external_ip` instead.")]
     pub fn new_single_bind(
         pubkey: &Pubkey,
         gossip_addr: &SocketAddr,
@@ -2643,6 +2651,9 @@ impl Node {
         let rpc_port = find_available_port_in_range(bind_ip_addr, port_range).unwrap();
         let rpc_pubsub_port = find_available_port_in_range(bind_ip_addr, port_range).unwrap();
 
+        // These are client sockets, so the port is set to be 0 because it must be ephimeral.
+        let tpu_vote_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+
         let addr = gossip_addr.ip();
         let mut info = ContactInfo::new(
             *pubkey,
@@ -2704,6 +2715,7 @@ impl Node {
                 tpu_quic,
                 tpu_forwards_quic,
                 tpu_vote_quic,
+                tpu_vote_forwards_client,
             },
         }
     }
@@ -2774,8 +2786,7 @@ impl Node {
                 .expect("tpu_vote multi_bind");
 
         let (tpu_vote_quic_port, tpu_vote_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-
+            Self::bind_with_config(bind_ip_addr, port_range, socket_config_reuseport);
         let tpu_vote_quic = bind_more_with_config(
             tpu_vote_quic,
             num_quic_endpoints.get(),
@@ -2807,6 +2818,9 @@ impl Node {
             Self::bind_with_config(bind_ip_addr, port_range, socket_config);
         let (_, ancestor_hashes_requests_quic) =
             Self::bind_with_config(bind_ip_addr, port_range, socket_config);
+
+        // These are client sockets, so the port is set to be 0 because it must be ephimeral.
+        let tpu_vote_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,
@@ -2851,6 +2865,7 @@ impl Node {
             tpu_quic,
             tpu_forwards_quic,
             tpu_vote_quic,
+            tpu_vote_forwards_client,
         };
 
         info!("Bound all network sockets as follows: {:#?}", &sockets);

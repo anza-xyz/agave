@@ -137,7 +137,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             instruction_context.check_number_of_instruction_accounts(5)?;
             drop(me);
             delegate(
-                invoke_context,
                 transaction_context,
                 instruction_context,
                 0,
@@ -210,14 +209,14 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 } else {
                     None
                 },
-                new_warmup_cooldown_rate_epoch(invoke_context),
+                new_warmup_cooldown_rate_epoch(),
             )
         }
         StakeInstruction::Deactivate => {
             let mut me = get_stake_account()?;
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, instruction_context, 1)?;
-            deactivate(invoke_context, &mut me, &clock, &signers)
+            deactivate(&mut me, &clock, &signers)
         }
         StakeInstruction::SetLockup(lockup) => {
             let mut me = get_stake_account()?;
@@ -337,42 +336,28 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             Err(InstructionError::InvalidInstructionData)
         }
         StakeInstruction::MoveStake(lamports) => {
-            if invoke_context
-                .get_feature_set()
-                .is_active(&agave_feature_set::move_stake_and_move_lamports_ixs::id())
-            {
-                instruction_context.check_number_of_instruction_accounts(3)?;
-                move_stake(
-                    invoke_context,
-                    transaction_context,
-                    instruction_context,
-                    0,
-                    lamports,
-                    1,
-                    2,
-                )
-            } else {
-                Err(InstructionError::InvalidInstructionData)
-            }
+            instruction_context.check_number_of_instruction_accounts(3)?;
+            move_stake(
+                invoke_context,
+                transaction_context,
+                instruction_context,
+                0,
+                lamports,
+                1,
+                2,
+            )
         }
         StakeInstruction::MoveLamports(lamports) => {
-            if invoke_context
-                .get_feature_set()
-                .is_active(&agave_feature_set::move_stake_and_move_lamports_ixs::id())
-            {
-                instruction_context.check_number_of_instruction_accounts(3)?;
-                move_lamports(
-                    invoke_context,
-                    transaction_context,
-                    instruction_context,
-                    0,
-                    lamports,
-                    1,
-                    2,
-                )
-            } else {
-                Err(InstructionError::InvalidInstructionData)
-            }
+            instruction_context.check_number_of_instruction_accounts(3)?;
+            move_lamports(
+                invoke_context,
+                transaction_context,
+                instruction_context,
+                0,
+                lamports,
+                1,
+                2,
+            )
         }
     }
 });
