@@ -2388,6 +2388,8 @@ pub struct Sockets {
     pub quic_forwards_client: UdpSocket,
     /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket,
+    /// Client-side socket for RPC/SendTransactionService.
+    pub rpc_sts_client: UdpSocket,
 }
 
 pub struct NodeConfig {
@@ -2476,6 +2478,7 @@ impl Node {
         let tpu_vote_forwards_client = bind_to_localhost().unwrap();
         let quic_forwards_client = bind_to_localhost().unwrap();
         let quic_vote_client = bind_to_localhost().unwrap();
+        let rpc_sts_client = bind_to_localhost().unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,
@@ -2556,6 +2559,7 @@ impl Node {
                 tpu_vote_forwards_client,
                 quic_forwards_client,
                 quic_vote_client,
+                rpc_sts_client,
             },
         }
     }
@@ -2663,6 +2667,7 @@ impl Node {
         let tpu_vote_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
         let quic_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
         let quic_vote_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        let rpc_sts_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
 
         let addr = gossip_addr.ip();
         let mut info = ContactInfo::new(
@@ -2728,6 +2733,7 @@ impl Node {
                 tpu_vote_forwards_client,
                 quic_vote_client,
                 quic_forwards_client,
+                rpc_sts_client,
             },
         }
     }
@@ -2835,6 +2841,7 @@ impl Node {
         let tpu_vote_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
         let quic_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
         let quic_vote_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        let rpc_sts_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,
@@ -2882,6 +2889,7 @@ impl Node {
             tpu_vote_forwards_client,
             quic_vote_client,
             quic_forwards_client,
+            rpc_sts_client,
         };
         info!("Bound all network sockets as follows: {:#?}", &sockets);
         Node { info, sockets }

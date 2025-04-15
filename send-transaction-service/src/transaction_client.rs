@@ -14,7 +14,7 @@ use {
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
     },
     std::{
-        net::{Ipv4Addr, SocketAddr},
+        net::{SocketAddr, UdpSocket},
         sync::{atomic::Ordering, Arc, Mutex},
         time::{Duration, Instant},
     },
@@ -227,14 +227,32 @@ where
 /// * Update the validator identity keypair and propagate the changes to the
 ///   scheduler. Most of the complexity of this structure arises from this
 ///   functionality.
-#[derive(Clone)]
 pub struct TpuClientNextClient {
     runtime_handle: Handle,
     sender: mpsc::Sender<TransactionBatch>,
+    bind_socket: UdpSocket,
     // This handle is needed to implement `NotifyKeyUpdate` trait. It's only
     // method takes &self and thus we need to wrap with Mutex.
     join_and_cancel: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
     leader_forward_count: u64,
+}
+
+// Implement Clone manually because `UdpSocket` implements only `try_clone`.
+impl Clone for TpuClientNextClient {
+    fn clone(&self) -> Self {
+        let bind_socket = self
+            .bind_socket
+            .try_clone()
+            .expect("Cloning bind socket should always finish successfully.");
+
+        TpuClientNextClient {
+            runtime_handle: self.runtime_handle.clone(),
+            sender: self.sender.clone(),
+            bind_socket,
+            join_and_cancel: self.join_and_cancel.clone(),
+            leader_forward_count: self.leader_forward_count,
+        }
+    }
 }
 
 type TpuClientJoinHandle =
@@ -249,6 +267,7 @@ impl TpuClientNextClient {
         leader_info: Option<T>,
         leader_forward_count: u64,
         identity: Option<&Keypair>,
+        bind_socket: UdpSocket,
     ) -> Self
     where
         T: TpuInfoWithSendStatic + Clone,
@@ -266,7 +285,12 @@ impl TpuClientNextClient {
                 my_tpu_address,
                 tpu_peers,
             };
-        let config = Self::create_config(identity, leader_forward_count as usize);
+        let config = {
+            let bind_socket = bind_socket
+                .try_clone()
+                .expect("Cloning bind socket should always finish successfully.");
+            Self::create_config(bind_socket, identity, leader_forward_count as usize)
+        };
         let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
@@ -280,16 +304,17 @@ impl TpuClientNextClient {
             join_and_cancel: Arc::new(Mutex::new((Some(handle), cancel))),
             sender,
             leader_forward_count,
+            bind_socket,
         }
     }
 
     fn create_config(
+        bind_socket: UdpSocket,
         stake_identity: Option<&Keypair>,
         leader_forward_count: usize,
     ) -> ConnectionWorkersSchedulerConfig {
-        let address = SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0);
         ConnectionWorkersSchedulerConfig {
-            bind: BindTarget::Address(address),
+            bind: BindTarget::Socket(bind_socket),
             stake_identity: stake_identity.map(Into::into),
             num_connections: MAX_CONNECTIONS,
             skip_check_transaction_age: true,
@@ -314,7 +339,15 @@ impl TpuClientNextClient {
 
     async fn do_update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let runtime_handle = self.runtime_handle.clone();
-        let config = Self::create_config(Some(identity), self.leader_forward_count as usize);
+        let bind_socket = self
+            .bind_socket
+            .try_clone()
+            .expect("Cloning bind socket should always finish successfully.");
+        let config = Self::create_config(
+            bind_socket,
+            Some(identity),
+            self.leader_forward_count as usize,
+        );
         let handle = self.join_and_cancel.clone();
 
         let join_handle = {

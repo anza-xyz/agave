@@ -1182,7 +1182,10 @@ impl Validator {
                 max_complete_rewards_slot,
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 client_option: if config.use_tpu_client_next {
-                    ClientOption::TpuClientNext(Arc::as_ref(&identity_keypair))
+                    ClientOption::TpuClientNext(
+                        Arc::as_ref(&identity_keypair),
+                        node.sockets.rpc_sts_client,
+                    )
                 } else {
                     ClientOption::ConnectionCache(connection_cache.clone())
                 },

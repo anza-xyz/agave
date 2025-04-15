@@ -9944,6 +9944,7 @@ dependencies = [
  "solana-logger",
  "solana-measure",
  "solana-metrics",
+ "solana-net-utils",
  "solana-runtime",
  "solana-sdk",
  "solana-tpu-client-next",
