@@ -12,7 +12,6 @@ use {
     solana_connection_cache::client_connection::ClientConnection,
     solana_cost_model::cost_model::CostModel,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
-    solana_net_utils::bind_to_unspecified,
     solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{bank::Bank, root_bank_cache::RootBankCache},
@@ -25,13 +24,13 @@ use {
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_tpu_client_next::{
-        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
+        connection_workers_scheduler::{BindTarget, ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
     },
     std::{
-        net::{Ipv4Addr, SocketAddr, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         sync::{Arc, Mutex, RwLock},
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -150,6 +149,7 @@ pub(crate) fn spawn_forwarding_stage(
                 runtime_handle,
                 forward_address_getter,
                 Some(stake_identity),
+                tpu_client_socket,
             );
             let forwarding_stage = ForwardingStage::new(
                 receiver,
@@ -540,13 +540,30 @@ impl LeaderUpdater for ForwardAddressGetter {
 type TpuClientJoinHandle =
     TokioJoinHandle<Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>>;
 
-#[derive(Clone)]
 struct TpuClientNextClient {
     runtime_handle: RuntimeHandle,
     sender: mpsc::Sender<TransactionBatch>,
+    bind_socket: UdpSocket,
     // This handle is needed to implement `NotifyKeyUpdate` trait. It's only
     // method takes &self and thus we need to wrap with Mutex.
     join_and_cancel: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
+}
+
+// Implement Clone manually because `UdpSocket` implements only `try_clone`.
+impl Clone for TpuClientNextClient {
+    fn clone(&self) -> Self {
+        let bind_socket = self
+            .bind_socket
+            .try_clone()
+            .expect("Cloning bind socket should always finish successfully.");
+
+        TpuClientNextClient {
+            runtime_handle: self.runtime_handle.clone(),
+            sender: self.sender.clone(),
+            bind_socket,
+            join_and_cancel: self.join_and_cancel.clone(),
+        }
+    }
 }
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
@@ -556,13 +573,19 @@ impl TpuClientNextClient {
         runtime_handle: tokio::runtime::Handle,
         forward_address_getter: ForwardAddressGetter,
         stake_identity: Option<&Keypair>,
+        bind_socket: UdpSocket,
     ) -> Self {
         // For now use large channel, the more suitable size to be found later.
         let (sender, receiver) = mpsc::channel(128);
         let cancel = CancellationToken::new();
         let leader_updater = forward_address_getter.clone();
 
-        let config = Self::create_config(stake_identity);
+        let config = {
+            let bind_socket = bind_socket
+                .try_clone()
+                .expect("Cloning bind socket should always finish successfully.");
+            Self::create_config(bind_socket, stake_identity)
+        };
         let scheduler: ConnectionWorkersScheduler =
             ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
         // leaking handle to this task, as it will run until the cancel signal is received
@@ -576,6 +599,7 @@ impl TpuClientNextClient {
             runtime_handle,
             join_and_cancel: Arc::new(Mutex::new((Some(handle), cancel))),
             sender,
+            bind_socket,
         }
     }
 
@@ -584,7 +608,7 @@ impl TpuClientNextClient {
         stake_identity: Option<&Keypair>,
     ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
-            bind: bind_socket,
+            bind: BindTarget::Socket(bind_socket),
             stake_identity: stake_identity.map(Into::into),
             // Cache size of 128 covers all nodes above the P90 slot count threshold,
             // which together account for ~75% of total slots in the epoch.
@@ -603,7 +627,11 @@ impl TpuClientNextClient {
 
     async fn do_update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let runtime_handle = self.runtime_handle.clone();
-        let config = Self::create_config(Some(identity));
+        let bind_socket = self
+            .bind_socket
+            .try_clone()
+            .expect("Cloning bind socket should always finish successfully.");
+        let config = Self::create_config(bind_socket, Some(identity));
         let handle = self.join_and_cancel.clone();
 
         let join_handle = {

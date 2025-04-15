@@ -15,7 +15,7 @@ use {
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
-        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
+        connection_workers_scheduler::{BindTarget, ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
@@ -40,8 +40,9 @@ use {
 };
 
 fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
+    let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
     ConnectionWorkersSchedulerConfig {
-        bind: SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0),
+        bind: BindTarget::Address(address),
         stake_identity: stake_identity.map(Into::into),
         num_connections: 1,
         skip_check_transaction_age: false,
