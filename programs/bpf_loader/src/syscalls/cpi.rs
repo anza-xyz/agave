@@ -4,13 +4,8 @@ use {
     scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
-    solana_program_runtime::{
-        invoke_context::SerializedAccountMetadata, serialization::account_data_region_memory_state,
-    },
-    solana_sbpf::{
-        ebpf,
-        memory_region::{MemoryRegion, MemoryState},
-    },
+    solana_program_runtime::invoke_context::SerializedAccountMetadata,
+    solana_sbpf::{ebpf, memory_region::MemoryRegion},
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_transaction_context::BorrowedAccount,
     std::{mem, ptr},
@@ -1076,7 +1071,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     account_infos_len: u64,
     signers_seeds_addr: u64,
     signers_seeds_len: u64,
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
 ) -> Result<u64, Error> {
     // CPI entry.
     //
@@ -1148,12 +1143,12 @@ fn cpi_common<S: SyscallInvokeSigned>(
         // it's better to be safe than sorry.
         for (index_in_caller, caller_account) in accounts.iter() {
             if let Some(caller_account) = caller_account {
-                let callee_account = instruction_context
+                let mut callee_account = instruction_context
                     .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
                 update_caller_account_perms(
                     memory_mapping,
                     caller_account,
-                    &callee_account,
+                    &mut callee_account,
                     is_loader_deprecated,
                 )?;
             }
@@ -1266,9 +1261,9 @@ fn update_callee_account(
 }
 
 fn update_caller_account_perms(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     caller_account: &CallerAccount,
-    callee_account: &BorrowedAccount<'_>,
+    callee_account: &mut BorrowedAccount<'_>,
     is_loader_deprecated: bool,
 ) -> Result<(), Error> {
     let CallerAccount {
@@ -1277,27 +1272,66 @@ fn update_caller_account_perms(
         ..
     } = caller_account;
 
-    if let Some((_region_index, region)) =
+    if let Some((region_index, region)) =
         account_data_region(memory_mapping, *vm_data_addr, *original_data_len)?
     {
-        region
-            .state
-            .set(account_data_region_memory_state(callee_account));
+        let writable = callee_account.can_data_be_changed().is_ok();
+        let shared = callee_account.is_shared();
+        let mut new_region = if writable && !shared {
+            MemoryRegion::new_writable(
+                unsafe {
+                    std::slice::from_raw_parts_mut(
+                        region.host_addr.get() as *mut u8,
+                        region.len as usize,
+                    )
+                },
+                region.vm_addr,
+            )
+        } else {
+            MemoryRegion::new_readonly(
+                unsafe {
+                    std::slice::from_raw_parts(
+                        region.host_addr.get() as *const u8,
+                        region.len as usize,
+                    )
+                },
+                region.vm_addr,
+            )
+        };
+        if writable && shared {
+            new_region.cow_callback_payload = callee_account.get_index_in_transaction() as u32;
+        }
+        memory_mapping.replace_region(region_index, new_region)?;
     }
 
-    if let Some((_region_index, region)) = account_realloc_region(
+    if let Some((region_index, region)) = account_realloc_region(
         memory_mapping,
         *vm_data_addr,
         *original_data_len,
         is_loader_deprecated,
     )? {
-        region
-            .state
-            .set(if callee_account.can_data_be_changed().is_ok() {
-                MemoryState::Writable
-            } else {
-                MemoryState::Readable
-            });
+        let new_region = if callee_account.can_data_be_changed().is_ok() {
+            MemoryRegion::new_writable(
+                unsafe {
+                    std::slice::from_raw_parts_mut(
+                        region.host_addr.get() as *mut u8,
+                        region.len as usize,
+                    )
+                },
+                region.vm_addr,
+            )
+        } else {
+            MemoryRegion::new_readonly(
+                unsafe {
+                    std::slice::from_raw_parts(
+                        region.host_addr.get() as *const u8,
+                        region.len as usize,
+                    )
+                },
+                region.vm_addr,
+            )
+        };
+        memory_mapping.replace_region(region_index, new_region)?;
     }
 
     Ok(())
@@ -1416,9 +1450,9 @@ fn update_caller_account(
                     let (_realloc_region_index, realloc_region) = caller_account
                         .realloc_region(memory_mapping, is_loader_deprecated)?
                         .unwrap(); // unwrapping here is fine, we already asserted !is_loader_deprecated
-                    let original_state = realloc_region.state.replace(MemoryState::Writable);
+                    let original_state = realloc_region.writable.replace(true);
                     defer! {
-                        realloc_region.state.set(original_state);
+                        realloc_region.writable.set(original_state);
                     };
 
                     // We need to zero the unused space in the realloc region, starting after the
@@ -1525,9 +1559,9 @@ fn update_caller_account(
                 let (_realloc_region_index, realloc_region) = caller_account
                     .realloc_region(memory_mapping, is_loader_deprecated)?
                     .unwrap(); // unwrapping here is fine, we asserted !is_loader_deprecated
-                let original_state = realloc_region.state.replace(MemoryState::Writable);
+                let original_state = realloc_region.writable.replace(true);
                 defer! {
-                    realloc_region.state.set(original_state);
+                    realloc_region.writable.set(original_state);
                 };
 
                 translate_slice_mut::<u8>(
@@ -1597,7 +1631,7 @@ fn account_realloc_region<'a>(
     debug_assert!((MAX_PERMITTED_DATA_INCREASE
         ..MAX_PERMITTED_DATA_INCREASE.saturating_add(BPF_ALIGN_OF_U128))
         .contains(&(realloc_region.len as usize)));
-    debug_assert!(!matches!(realloc_region.state.get(), MemoryState::Cow(_)));
+    debug_assert_eq!(realloc_region.cow_callback_payload, u32::MAX);
     Ok(Some((realloc_region_index, realloc_region)))
 }
 

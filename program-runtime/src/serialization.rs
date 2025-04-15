@@ -8,7 +8,7 @@ use {
     solana_sbpf::{
         aligned_memory::{AlignedMemory, Pod},
         ebpf::{HOST_ALIGN, MM_INPUT_START},
-        memory_region::{MemoryRegion, MemoryState},
+        memory_region::MemoryRegion,
     },
     solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
@@ -131,17 +131,18 @@ impl Serializer {
         account: &mut BorrowedAccount<'_>,
     ) -> Result<(), InstructionError> {
         if !account.get_data().is_empty() {
-            let region = match account_data_region_memory_state(account) {
-                MemoryState::Readable => MemoryRegion::new_readonly(account.get_data(), self.vaddr),
-                MemoryState::Writable => {
-                    MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
-                }
-                MemoryState::Cow(index_in_transaction) => {
-                    MemoryRegion::new_cow(account.get_data(), self.vaddr, index_in_transaction)
-                }
+            let writable = account.can_data_be_changed().is_ok();
+            let shared = account.is_shared();
+            let mut new_region = if writable && !shared {
+                MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
+            } else {
+                MemoryRegion::new_readonly(account.get_data(), self.vaddr)
             };
-            self.vaddr += region.len;
-            self.regions.push(region);
+            if writable && shared {
+                new_region.cow_callback_payload = account.get_index_in_transaction() as u32;
+            }
+            self.vaddr += new_region.len;
+            self.regions.push(new_region);
         }
 
         Ok(())
@@ -618,18 +619,6 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
         }
     }
     Ok(())
-}
-
-pub fn account_data_region_memory_state(account: &BorrowedAccount<'_>) -> MemoryState {
-    if account.can_data_be_changed().is_ok() {
-        if account.is_shared() {
-            MemoryState::Cow(account.get_index_in_transaction() as u64)
-        } else {
-            MemoryState::Writable
-        }
-    } else {
-        MemoryState::Readable
-    }
 }
 
 #[cfg(test)]

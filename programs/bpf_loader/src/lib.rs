@@ -357,9 +357,9 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
 
     Ok(MemoryMapping::new_with_cow(
         regions,
-        transaction_context.account_data_write_access_handler(),
         config,
         sbpf_version,
+        transaction_context.account_data_write_access_handler(),
     )?)
 }
 

@@ -498,7 +498,7 @@ impl TransactionContext {
     }
 
     /// Returns a new account data write access handler
-    pub fn account_data_write_access_handler(&self) -> Box<dyn Fn(u64) -> Result<u64, ()>> {
+    pub fn account_data_write_access_handler(&self) -> Box<dyn Fn(u32) -> Result<u64, ()>> {
         let accounts = Rc::clone(&self.accounts);
         Box::new(move |index_in_transaction| {
             // The two calls below can't really fail. If they fail because of a bug,
