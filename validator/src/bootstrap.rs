@@ -143,7 +143,7 @@ fn start_gossip_node(
     ledger_path: &Path,
     gossip_addr: &SocketAddr,
     gossip_socket: UdpSocket,
-    expected_shred_version: Option<u16>,
+    expected_shred_version: u16,
     gossip_validators: Option<HashSet<Pubkey>>,
     should_check_duplicate_instance: bool,
     socket_addr_space: SocketAddrSpace,
@@ -151,7 +151,7 @@ fn start_gossip_node(
     let contact_info = ClusterInfo::gossip_contact_info(
         identity_keypair.pubkey(),
         *gossip_addr,
-        expected_shred_version.unwrap_or(0),
+        expected_shred_version,
     );
     let mut cluster_info = ClusterInfo::new(contact_info, identity_keypair, socket_addr_space);
     cluster_info.set_entrypoints(cluster_entrypoints.to_vec());
@@ -631,7 +631,7 @@ pub fn rpc_bootstrap(
                     .gossip()
                     .expect("Operator must spin up node with valid gossip address"),
                 node.sockets.gossip.try_clone().unwrap(),
-                validator_config.expected_shred_version,
+                validator_config.expected_shred_version.expect("expected_shred_version should not be None"),
                 validator_config.gossip_validators.clone(),
                 should_check_duplicate_instance,
                 socket_addr_space,
