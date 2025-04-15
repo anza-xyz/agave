@@ -1241,7 +1241,11 @@ where
     }
 
     fn is_overgrown(&self) -> bool {
-        self.usage_queue_loader.count() > self.thread_manager.pool.max_usage_queue_count
+        self.thread_manager
+            .pool
+            .upgrade()
+            .map(|pool| self.usage_queue_loader.count() > pool.max_usage_queue_count)
+            .unwrap_or_default()
     }
 }
 
@@ -1253,7 +1257,7 @@ where
 #[derive(Debug)]
 struct ThreadManager<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_id: SchedulerId,
-    pool: Arc<SchedulerPool<S, TH>>,
+    pool: Weak<SchedulerPool<S, TH>>,
     new_task_sender: Sender<NewTaskPayload>,
     new_task_receiver: Option<Receiver<NewTaskPayload>>,
     session_result_sender: Sender<ResultWithTimings>,
@@ -1267,13 +1271,13 @@ struct HandlerPanicked;
 type HandlerResult = std::result::Result<Box<ExecutedTask>, HandlerPanicked>;
 
 impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
-    fn new(pool: Arc<SchedulerPool<S, TH>>) -> Self {
+    fn new(pool: &Arc<SchedulerPool<S, TH>>) -> Self {
         let (new_task_sender, new_task_receiver) = crossbeam_channel::unbounded();
         let (session_result_sender, session_result_receiver) = crossbeam_channel::unbounded();
 
         Self {
             scheduler_id: pool.new_scheduler_id(),
-            pool,
+            pool: Arc::downgrade(pool),
             new_task_sender,
             new_task_receiver: Some(new_task_receiver),
             session_result_sender,
@@ -2170,7 +2174,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         result_with_timings: ResultWithTimings,
     ) -> Self {
         let mut inner = Self::Inner {
-            thread_manager: ThreadManager::new(pool.clone()),
+            thread_manager: ThreadManager::new(&pool),
             usage_queue_loader: UsageQueueLoader::default(),
         };
         inner.thread_manager.start_threads(
@@ -2257,7 +2261,9 @@ where
     TH: TaskHandler,
 {
     fn return_to_pool(self: Box<Self>) {
-        self.thread_manager.pool.clone().return_scheduler(*self);
+        if let Some(pool) = self.thread_manager.pool.upgrade() {
+            pool.clone().return_scheduler(*self);
+        }
     }
 }
 
