@@ -94,7 +94,7 @@ pub(super) struct VoteRewardsAccounts {
 /// result of calculating the stake rewards at end of epoch
 pub(super) struct StakeRewardCalculation {
     /// each individual stake account to reward
-    stake_rewards: PartitionedStakeRewards,
+    stake_rewards: Arc<PartitionedStakeRewards>,
     /// total lamports across all `stake_rewards`
     total_stake_rewards_lamports: u64,
 }
@@ -130,7 +130,7 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// This struct exists so we can have a function which does all the calculation with no
 /// side effects.
 pub(super) struct PartitionedRewardsCalculation {
-    pub(super) vote_account_rewards: VoteRewardsAccounts,
+    pub(super) vote_account_rewards: Arc<VoteRewardsAccounts>,
     pub(super) stake_rewards: StakeRewardCalculation,
     pub(super) validator_rate: f64,
     pub(super) foundation_rate: f64,
@@ -148,7 +148,7 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
     /// vote accounts
     pub(super) point_value: PointValue,
     /// stake rewards that still need to be distributed
-    pub(super) stake_rewards: Vec<PartitionedStakeReward>,
+    pub(super) stake_rewards: Arc<Vec<PartitionedStakeReward>>,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
@@ -186,12 +186,12 @@ impl Bank {
     pub(crate) fn set_epoch_reward_status_calculation(
         &mut self,
         distribution_starting_block_height: u64,
-        stake_rewards: Vec<PartitionedStakeReward>,
+        stake_rewards: Arc<Vec<PartitionedStakeReward>>,
     ) {
         self.epoch_reward_status =
             EpochRewardStatus::Active(EpochRewardPhase::Calculation(StartBlockHeightAndRewards {
                 distribution_starting_block_height,
-                all_stake_rewards: Arc::new(stake_rewards),
+                all_stake_rewards: Arc::clone(&stake_rewards),
             }));
     }
 
