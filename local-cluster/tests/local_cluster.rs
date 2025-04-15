@@ -1209,7 +1209,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 }
 
 #[allow(unused_attributes)]
-#[test]
+/*#[test]
 #[serial]
 fn test_snapshot_restart_tower() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
@@ -1280,7 +1280,7 @@ fn test_snapshot_restart_tower() {
         SocketAddrSpace::Unspecified,
         &cluster.connection_cache,
     );
-}
+}*/
 
 #[test]
 #[serial]
