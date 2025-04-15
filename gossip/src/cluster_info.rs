@@ -53,8 +53,9 @@ use {
     solana_net_utils::{
         bind_common_in_range_with_config, bind_common_with_config, bind_in_range,
         bind_in_range_with_config, bind_more_with_config, bind_to_localhost, bind_to_unspecified,
-        bind_two_in_range_with_offset_and_config, find_available_port_in_range,
-        multi_bind_in_range_with_config, PortRange, SocketConfig, VALIDATOR_PORT_RANGE,
+        bind_to_with_config, bind_two_in_range_with_offset_and_config,
+        find_available_port_in_range, multi_bind_in_range_with_config, PortRange, SocketConfig,
+        VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -2380,6 +2381,9 @@ pub struct Sockets {
     pub tpu_quic: Vec<UdpSocket>,
     pub tpu_forwards_quic: Vec<UdpSocket>,
     pub tpu_vote_quic: Vec<UdpSocket>,
+
+    /// Client-side socket for ForwardingStage.
+    pub tpu_vote_forwards_client: UdpSocket,
 }
 
 pub struct NodeConfig {
@@ -2465,6 +2469,8 @@ impl Node {
         let ancestor_hashes_requests = bind_to_unspecified().unwrap();
         let ancestor_hashes_requests_quic = bind_to_unspecified().unwrap();
 
+        let tpu_vote_forwards_client = bind_to_localhost().unwrap();
+
         let mut info = ContactInfo::new(
             *pubkey,
             timestamp(), // wallclock
@@ -2541,6 +2547,7 @@ impl Node {
                 tpu_quic,
                 tpu_forwards_quic,
                 tpu_vote_quic,
+                tpu_vote_forwards_client,
             },
         }
     }
@@ -2643,6 +2650,9 @@ impl Node {
         let rpc_port = find_available_port_in_range(bind_ip_addr, port_range).unwrap();
         let rpc_pubsub_port = find_available_port_in_range(bind_ip_addr, port_range).unwrap();
 
+        // These are client sockets, so the port is set to be 0 because it must be ephimeral.
+        let tpu_vote_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+
         let addr = gossip_addr.ip();
         let mut info = ContactInfo::new(
             *pubkey,
@@ -2704,6 +2714,7 @@ impl Node {
                 tpu_quic,
                 tpu_forwards_quic,
                 tpu_vote_quic,
+                tpu_vote_forwards_client,
             },
         }
     }
@@ -2808,6 +2819,9 @@ impl Node {
         let (_, ancestor_hashes_requests_quic) =
             Self::bind_with_config(bind_ip_addr, port_range, socket_config);
 
+        // These are client sockets, so the port is set to be 0 because it must be ephimeral.
+        let tpu_vote_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+
         let mut info = ContactInfo::new(
             *pubkey,
             timestamp(), // wallclock
@@ -2854,6 +2868,7 @@ impl Node {
                 tpu_quic,
                 tpu_forwards_quic,
                 tpu_vote_quic,
+                tpu_vote_forwards_client,
             },
         }
     }
