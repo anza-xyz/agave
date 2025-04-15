@@ -324,7 +324,11 @@ fn memset_non_contiguous(
     )?;
     for item in dst_chunk_iter {
         let (dst_region, dst_vm_addr, dst_len) = item?;
-        let dst_host_addr = Result::from(dst_region.vm_to_host(dst_vm_addr, dst_len as u64))?;
+        let dst_host_addr = dst_region
+            .vm_to_host(dst_vm_addr, dst_len as u64)
+            .ok_or_else(|| {
+                EbpfError::AccessViolation(AccessType::Store, dst_vm_addr, dst_len as u64, "")
+            })?;
         unsafe { slice::from_raw_parts_mut(dst_host_addr as *mut u8, dst_len).fill(c) }
     }
 
@@ -413,8 +417,21 @@ where
             };
 
             (
-                Result::from(src_region.vm_to_host(src_addr, chunk_len as u64))?,
-                Result::from(dst_region.vm_to_host(dst_addr, chunk_len as u64))?,
+                src_region
+                    .vm_to_host(src_addr, chunk_len as u64)
+                    .ok_or_else(|| {
+                        EbpfError::AccessViolation(AccessType::Load, src_addr, chunk_len as u64, "")
+                    })?,
+                dst_region
+                    .vm_to_host(dst_addr, chunk_len as u64)
+                    .ok_or_else(|| {
+                        EbpfError::AccessViolation(
+                            AccessType::Store,
+                            dst_addr,
+                            chunk_len as u64,
+                            "",
+                        )
+                    })?,
             )
         };
 
