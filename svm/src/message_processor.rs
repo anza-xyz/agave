@@ -96,7 +96,6 @@ pub(crate) fn process_message(
 mod tests {
     use {
         super::*,
-        agave_feature_set::FeatureSet,
         agave_reserved_account_keys::ReservedAccountKeys,
         openssl::{
             ec::{EcGroup, EcKey},
@@ -115,7 +114,7 @@ mod tests {
         solana_program_runtime::{
             declare_process_instruction,
             execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
-            invoke_context::EnvironmentConfig,
+            invoke_context::{EnvironmentConfig, RuntimeFeatures},
             loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
             sysvar_cache::SysvarCache,
         },
@@ -241,7 +240,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(RuntimeFeatures::all_enabled()),
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -295,7 +294,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(RuntimeFeatures::all_enabled()),
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -339,7 +338,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(RuntimeFeatures::all_enabled()),
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -474,7 +473,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(RuntimeFeatures::all_enabled()),
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -513,7 +512,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(RuntimeFeatures::all_enabled()),
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -549,7 +548,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(RuntimeFeatures::all_enabled()),
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -675,7 +674,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(RuntimeFeatures::all_enabled()),
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(

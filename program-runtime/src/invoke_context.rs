@@ -8,9 +8,6 @@ use {
         stable_log,
         sysvar_cache::SysvarCache,
     },
-    agave_feature_set::{
-        lift_cpi_caller_restriction, remove_accounts_executable_flag_checks, FeatureSet,
-    },
     solana_account::{create_account_shared_data_for_test, AccountSharedData},
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
@@ -43,6 +40,87 @@ use {
         rc::Rc,
     },
 };
+
+#[derive(Clone, Copy, Default)]
+pub struct RuntimeFeatures {
+    pub lift_cpi_caller_restriction: Option<Slot>,
+    pub move_precompile_verification_to_svm: Option<Slot>,
+    pub remove_accounts_executable_flag_checks: Option<Slot>,
+    pub bpf_account_data_direct_mapping: Option<Slot>,
+    pub enable_bpf_loader_set_authority_checked_ix: Option<Slot>,
+    pub enable_loader_v4: Option<Slot>,
+    pub deplete_cu_meter_on_vm_failure: Option<Slot>,
+    pub abort_on_invalid_curve: Option<Slot>,
+    pub blake3_syscall_enabled: Option<Slot>,
+    pub curve25519_syscall_enabled: Option<Slot>,
+    pub disable_deploy_of_alloc_free_syscall: Option<Slot>,
+    pub disable_fees_sysvar: Option<Slot>,
+    pub disable_sbpf_v0_execution: Option<Slot>,
+    pub enable_alt_bn128_compression_syscall: Option<Slot>,
+    pub enable_alt_bn128_syscall: Option<Slot>,
+    pub enable_big_mod_exp_syscall: Option<Slot>,
+    pub enable_get_epoch_stake_syscall: Option<Slot>,
+    pub enable_poseidon_syscall: Option<Slot>,
+    pub enable_sbpf_v1_deployment_and_execution: Option<Slot>,
+    pub enable_sbpf_v2_deployment_and_execution: Option<Slot>,
+    pub enable_sbpf_v3_deployment_and_execution: Option<Slot>,
+    pub get_sysvar_syscall_enabled: Option<Slot>,
+    pub last_restart_slot_sysvar: Option<Slot>,
+    pub reenable_sbpf_v0_execution: Option<Slot>,
+    pub remaining_compute_units_syscall_enabled: Option<Slot>,
+    pub remove_bpf_loader_incorrect_program_id: Option<Slot>,
+    pub move_stake_and_move_lamports_ixs: Option<Slot>,
+    pub stake_raise_minimum_delegation_to_1_sol: Option<Slot>,
+    pub deprecate_legacy_vote_ixs: Option<Slot>,
+    pub mask_out_rent_epoch_in_vm_serialization: Option<Slot>,
+    pub simplify_alt_bn128_syscall_error_codes: Option<Slot>,
+    pub fix_alt_bn128_multiplication_input_length: Option<Slot>,
+    pub loosen_cpi_size_restriction: Option<Slot>,
+    pub increase_tx_account_lock_limit: Option<Slot>,
+    pub disable_rent_fees_collection: Option<Slot>,
+}
+
+impl RuntimeFeatures {
+    pub fn all_enabled() -> Self {
+        Self {
+            lift_cpi_caller_restriction: Some(0),
+            move_precompile_verification_to_svm: Some(0),
+            remove_accounts_executable_flag_checks: Some(0),
+            bpf_account_data_direct_mapping: Some(0),
+            enable_bpf_loader_set_authority_checked_ix: Some(0),
+            enable_loader_v4: Some(0),
+            deplete_cu_meter_on_vm_failure: Some(0),
+            abort_on_invalid_curve: Some(0),
+            blake3_syscall_enabled: Some(0),
+            curve25519_syscall_enabled: Some(0),
+            disable_deploy_of_alloc_free_syscall: Some(0),
+            disable_fees_sysvar: Some(0),
+            disable_sbpf_v0_execution: Some(0),
+            enable_alt_bn128_compression_syscall: Some(0),
+            enable_alt_bn128_syscall: Some(0),
+            enable_big_mod_exp_syscall: Some(0),
+            enable_get_epoch_stake_syscall: Some(0),
+            enable_poseidon_syscall: Some(0),
+            enable_sbpf_v1_deployment_and_execution: Some(0),
+            enable_sbpf_v2_deployment_and_execution: Some(0),
+            enable_sbpf_v3_deployment_and_execution: Some(0),
+            get_sysvar_syscall_enabled: Some(0),
+            last_restart_slot_sysvar: Some(0),
+            reenable_sbpf_v0_execution: Some(0),
+            remaining_compute_units_syscall_enabled: Some(0),
+            remove_bpf_loader_incorrect_program_id: Some(0),
+            move_stake_and_move_lamports_ixs: Some(0),
+            stake_raise_minimum_delegation_to_1_sol: Some(0),
+            deprecate_legacy_vote_ixs: Some(0),
+            mask_out_rent_epoch_in_vm_serialization: Some(0),
+            simplify_alt_bn128_syscall_error_codes: Some(0),
+            fix_alt_bn128_multiplication_input_length: Some(0),
+            loosen_cpi_size_restriction: Some(0),
+            increase_tx_account_lock_limit: Some(0),
+            disable_rent_fees_collection: Some(0),
+        }
+    }
+}
 
 pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static>>;
 
@@ -147,7 +225,7 @@ pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
-    pub feature_set: Arc<FeatureSet>,
+    pub feature_set: Arc<RuntimeFeatures>,
     sysvar_cache: &'a SysvarCache,
 }
 impl<'a> EnvironmentConfig<'a> {
@@ -155,7 +233,7 @@ impl<'a> EnvironmentConfig<'a> {
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
-        feature_set: Arc<FeatureSet>,
+        feature_set: Arc<RuntimeFeatures>,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
@@ -426,9 +504,7 @@ impl<'a> InvokeContext<'a> {
 
         // Find and validate executables / program accounts
         let callee_program_id = instruction.program_id;
-        let program_account_index = if self
-            .get_feature_set()
-            .is_active(&lift_cpi_caller_restriction::id())
+        let program_account_index = if self.get_feature_set().lift_cpi_caller_restriction.is_some()
         {
             self.transaction_context
                 .find_index_of_program_account(&callee_program_id)
@@ -446,9 +522,10 @@ impl<'a> InvokeContext<'a> {
             let borrowed_program_account = instruction_context
                 .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
             #[allow(deprecated)]
-            if !self
+            if self
                 .get_feature_set()
-                .is_active(&remove_accounts_executable_flag_checks::id())
+                .remove_accounts_executable_flag_checks
+                .is_none()
                 && !borrowed_program_account.is_executable()
             {
                 ic_msg!(self, "Account {} is not executable", callee_program_id);
@@ -521,7 +598,8 @@ impl<'a> InvokeContext<'a> {
                 *borrowed_root_account.get_key()
             } else if self
                 .get_feature_set()
-                .is_active(&remove_accounts_executable_flag_checks::id())
+                .remove_accounts_executable_flag_checks
+                .is_some()
             {
                 if bpf_loader_deprecated::check_id(owner_id)
                     || bpf_loader::check_id(owner_id)
@@ -646,15 +724,30 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get the current feature set.
-    pub fn get_feature_set(&self) -> &FeatureSet {
+    pub fn get_feature_set(&self) -> &RuntimeFeatures {
         &self.environment_config.feature_set
     }
 
     /// Set feature set.
     ///
     /// Only use for tests and benchmarks.
-    pub fn mock_set_feature_set(&mut self, feature_set: Arc<FeatureSet>) {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn mock_set_feature_set(&mut self, feature_set: Arc<RuntimeFeatures>) {
         self.environment_config.feature_set = feature_set;
+    }
+
+    pub fn is_stake_raise_minimum_delegation_to_1_sol_active(&self) -> bool {
+        self.environment_config
+            .feature_set
+            .stake_raise_minimum_delegation_to_1_sol
+            .is_some()
+    }
+
+    pub fn is_deprecate_legacy_vote_ixs_active(&self) -> bool {
+        self.environment_config
+            .feature_set
+            .deprecate_legacy_vote_ixs
+            .is_some()
     }
 
     /// Get cached sysvars
@@ -738,14 +831,13 @@ macro_rules! with_mock_invoke_context {
         $transaction_accounts:expr $(,)?
     ) => {
         use {
-            agave_feature_set::FeatureSet,
             solana_log_collector::LogCollector,
             solana_svm_callback::InvokeContextCallback,
             solana_type_overrides::sync::Arc,
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
-                invoke_context::{EnvironmentConfig, InvokeContext},
+                invoke_context::{EnvironmentConfig, InvokeContext, RuntimeFeatures},
                 loaded_programs::ProgramCacheForTxBatch,
                 sysvar_cache::SysvarCache,
             },
@@ -783,7 +875,7 @@ macro_rules! with_mock_invoke_context {
             Hash::default(),
             0,
             &MockInvokeContextCallback {},
-            Arc::new(FeatureSet::all_enabled()),
+            Arc::new(RuntimeFeatures::all_enabled()),
             &sysvar_cache,
         );
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();

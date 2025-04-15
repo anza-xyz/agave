@@ -140,6 +140,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
+ "solana-program-runtime",
  "solana-pubkey",
  "solana-sha256-hasher",
 ]
@@ -6857,7 +6858,6 @@ dependencies = [
 name = "solana-bpf-loader-program"
 version = "2.3.0"
 dependencies = [
- "agave-feature-set",
  "assert_matches",
  "bincode",
  "criterion",
@@ -9100,7 +9100,6 @@ dependencies = [
 name = "solana-program-runtime"
 version = "2.3.0"
 dependencies = [
- "agave-feature-set",
  "assert_matches",
  "base64 0.22.1",
  "bincode",

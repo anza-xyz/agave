@@ -3,7 +3,6 @@
 #[allow(deprecated)]
 use solana_sdk::sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
-    agave_feature_set::FeatureSet,
     solana_bpf_loader_program::syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
         SyscallLog, SyscallMemcpy, SyscallMemset, SyscallSetReturnData,
@@ -11,7 +10,7 @@ use {
     solana_fee_structure::{FeeDetails, FeeStructure},
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
-        invoke_context::InvokeContext,
+        invoke_context::{InvokeContext, RuntimeFeatures},
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
         solana_sbpf::{
             program::{BuiltinProgram, SBPFVersion},
@@ -60,7 +59,7 @@ impl ForkGraph for MockForkGraph {
 
 #[derive(Default, Clone)]
 pub struct MockBankCallback {
-    pub feature_set: Arc<FeatureSet>,
+    pub feature_set: Arc<RuntimeFeatures>,
     pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
     #[allow(clippy::type_complexity)]
     pub inspected_accounts:
@@ -128,7 +127,7 @@ impl MockBankCallback {
     }
 
     #[allow(unused)]
-    pub fn override_feature_set(&mut self, new_set: FeatureSet) {
+    pub fn override_feature_set(&mut self, new_set: RuntimeFeatures) {
         self.feature_set = Arc::new(new_set)
     }
 

@@ -113,7 +113,8 @@ fn bench_process_deprecated_vote_instruction(
             |invoke_context| {
                 let mut deprecated_feature_set = FeatureSet::all_enabled();
                 deprecated_feature_set.deactivate(&deprecate_legacy_vote_ixs::id());
-                invoke_context.mock_set_feature_set(Arc::new(deprecated_feature_set));
+                invoke_context
+                    .mock_set_feature_set(Arc::new(deprecated_feature_set.runtime_features()));
             },
             |_invoke_context| {},
         );

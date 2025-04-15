@@ -218,10 +218,15 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         ..SVMTransactionExecutionBudget::default()
     };
 
-    let v1_environment =
-        create_program_runtime_environment_v1(&feature_set, &compute_budget, false, false).unwrap();
+    let v1_environment = create_program_runtime_environment_v1(
+        &feature_set.runtime_features(),
+        &compute_budget,
+        false,
+        false,
+    )
+    .unwrap();
 
-    mock_bank.override_feature_set(feature_set);
+    mock_bank.override_feature_set(feature_set.runtime_features());
 
     let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
     let batch_processor = TransactionBatchProcessor::new(

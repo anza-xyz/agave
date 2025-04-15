@@ -10,20 +10,10 @@ pub use self::{
         SyscallGetSysvar,
     },
 };
+use solana_program_runtime::invoke_context::RuntimeFeatures;
 #[allow(deprecated)]
 use {
     crate::syscalls::mem_ops::is_nonoverlapping,
-    agave_feature_set::{
-        self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
-        bpf_account_data_direct_mapping, curve25519_syscall_enabled,
-        disable_deploy_of_alloc_free_syscall, disable_fees_sysvar, disable_sbpf_v0_execution,
-        enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall, enable_big_mod_exp_syscall,
-        enable_get_epoch_stake_syscall, enable_poseidon_syscall,
-        enable_sbpf_v1_deployment_and_execution, enable_sbpf_v2_deployment_and_execution,
-        enable_sbpf_v3_deployment_and_execution, get_sysvar_syscall_enabled,
-        last_restart_slot_sysvar, reenable_sbpf_v0_execution,
-        remaining_compute_units_syscall_enabled, FeatureSet,
-    },
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
@@ -332,40 +322,48 @@ pub(crate) fn morph_into_deployment_environment_v1(
 }
 
 pub fn create_program_runtime_environment_v1<'a>(
-    feature_set: &FeatureSet,
+    feature_set: &RuntimeFeatures,
     compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
 ) -> Result<BuiltinProgram<InvokeContext<'a>>, Error> {
-    let enable_alt_bn128_syscall = feature_set.is_active(&enable_alt_bn128_syscall::id());
+    let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall.is_some();
     let enable_alt_bn128_compression_syscall =
-        feature_set.is_active(&enable_alt_bn128_compression_syscall::id());
-    let enable_big_mod_exp_syscall = feature_set.is_active(&enable_big_mod_exp_syscall::id());
-    let blake3_syscall_enabled = feature_set.is_active(&blake3_syscall_enabled::id());
-    let curve25519_syscall_enabled = feature_set.is_active(&curve25519_syscall_enabled::id());
-    let disable_fees_sysvar = feature_set.is_active(&disable_fees_sysvar::id());
+        feature_set.enable_alt_bn128_compression_syscall.is_some();
+    let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall.is_some();
+    let blake3_syscall_enabled = feature_set.blake3_syscall_enabled.is_some();
+    let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled.is_some();
+    let disable_fees_sysvar = feature_set.disable_fees_sysvar.is_some();
     let disable_deploy_of_alloc_free_syscall = reject_deployment_of_broken_elfs
-        && feature_set.is_active(&disable_deploy_of_alloc_free_syscall::id());
-    let last_restart_slot_syscall_enabled = feature_set.is_active(&last_restart_slot_sysvar::id());
-    let enable_poseidon_syscall = feature_set.is_active(&enable_poseidon_syscall::id());
-    let remaining_compute_units_syscall_enabled =
-        feature_set.is_active(&remaining_compute_units_syscall_enabled::id());
-    let get_sysvar_syscall_enabled = feature_set.is_active(&get_sysvar_syscall_enabled::id());
-    let enable_get_epoch_stake_syscall =
-        feature_set.is_active(&enable_get_epoch_stake_syscall::id());
-    let min_sbpf_version = if !feature_set.is_active(&disable_sbpf_v0_execution::id())
-        || feature_set.is_active(&reenable_sbpf_v0_execution::id())
+        && feature_set.disable_deploy_of_alloc_free_syscall.is_some();
+    let last_restart_slot_syscall_enabled = feature_set.last_restart_slot_sysvar.is_some();
+    let enable_poseidon_syscall = feature_set.enable_poseidon_syscall.is_some();
+    let remaining_compute_units_syscall_enabled = feature_set
+        .remaining_compute_units_syscall_enabled
+        .is_some();
+    let get_sysvar_syscall_enabled = feature_set.get_sysvar_syscall_enabled.is_some();
+    let enable_get_epoch_stake_syscall = feature_set.enable_get_epoch_stake_syscall.is_some();
+    let min_sbpf_version = if feature_set.disable_sbpf_v0_execution.is_none()
+        || feature_set.reenable_sbpf_v0_execution.is_some()
     {
         SBPFVersion::V0
     } else {
         SBPFVersion::V3
     };
-    let max_sbpf_version = if feature_set.is_active(&enable_sbpf_v3_deployment_and_execution::id())
+    let max_sbpf_version = if feature_set
+        .enable_sbpf_v3_deployment_and_execution
+        .is_some()
     {
         SBPFVersion::V3
-    } else if feature_set.is_active(&enable_sbpf_v2_deployment_and_execution::id()) {
+    } else if feature_set
+        .enable_sbpf_v2_deployment_and_execution
+        .is_some()
+    {
         SBPFVersion::V2
-    } else if feature_set.is_active(&enable_sbpf_v1_deployment_and_execution::id()) {
+    } else if feature_set
+        .enable_sbpf_v1_deployment_and_execution
+        .is_some()
+    {
         SBPFVersion::V1
     } else {
         SBPFVersion::V0
@@ -376,7 +374,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: !feature_set.is_active(&bpf_account_data_direct_mapping::id()),
+        enable_stack_frame_gaps: feature_set.bpf_account_data_direct_mapping.is_none(),
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_instruction_tracing: debugging_features,
@@ -386,7 +384,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
-        aligned_memory_mapping: !feature_set.is_active(&bpf_account_data_direct_mapping::id()),
+        aligned_memory_mapping: feature_set.bpf_account_data_direct_mapping.is_none(),
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
     let mut result = BuiltinProgram::new_loader(config);
@@ -1093,7 +1091,8 @@ declare_builtin_function!(
             _ => {
                 if invoke_context
                     .get_feature_set()
-                    .is_active(&abort_on_invalid_curve::id())
+                    .abort_on_invalid_curve
+                    .is_some()
                 {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
@@ -1208,7 +1207,8 @@ declare_builtin_function!(
                 _ => {
                     if invoke_context
                         .get_feature_set()
-                        .is_active(&abort_on_invalid_curve::id())
+                        .abort_on_invalid_curve
+                        .is_some()
                     {
                         Err(SyscallError::InvalidAttribute.into())
                     } else {
@@ -1307,7 +1307,8 @@ declare_builtin_function!(
                 _ => {
                     if invoke_context
                         .get_feature_set()
-                        .is_active(&abort_on_invalid_curve::id())
+                        .abort_on_invalid_curve
+                        .is_some()
                     {
                         Err(SyscallError::InvalidAttribute.into())
                     } else {
@@ -1319,7 +1320,8 @@ declare_builtin_function!(
             _ => {
                 if invoke_context
                     .get_feature_set()
-                    .is_active(&abort_on_invalid_curve::id())
+                    .abort_on_invalid_curve
+                    .is_some()
                 {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
@@ -1432,7 +1434,8 @@ declare_builtin_function!(
             _ => {
                 if invoke_context
                     .get_feature_set()
-                    .is_active(&abort_on_invalid_curve::id())
+                    .abort_on_invalid_curve
+                    .is_some()
                 {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
@@ -1778,7 +1781,7 @@ declare_builtin_function!(
             ALT_BN128_MUL => {
                 let fix_alt_bn128_multiplication_input_length = invoke_context
                     .get_feature_set()
-                    .is_active(&feature_set::fix_alt_bn128_multiplication_input_length::id());
+                    .fix_alt_bn128_multiplication_input_length.is_some();
                 if fix_alt_bn128_multiplication_input_length {
                     alt_bn128_multiplication
                 } else {
@@ -1793,7 +1796,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+            .simplify_alt_bn128_syscall_error_codes.is_some();
 
         let result_point = match calculation(input) {
             Ok(result_point) => result_point,
@@ -1946,7 +1949,8 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+            .simplify_alt_bn128_syscall_error_codes
+            .is_some();
 
         let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
             Ok(hash) => hash,
@@ -2041,7 +2045,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+            .simplify_alt_bn128_syscall_error_codes.is_some();
 
         match op {
             ALT_BN128_G1_COMPRESS => {
@@ -2726,7 +2730,6 @@ mod tests {
         // many small unaligned allocs
         {
             prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            invoke_context.mock_set_feature_set(Arc::new(FeatureSet::default()));
             mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
             let mut vm = vm.unwrap();
             let invoke_context = &mut vm.context_object_pointer;
@@ -4934,7 +4937,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::<FeatureSet>::default(),
+            Arc::<RuntimeFeatures>::default(),
             &sysvar_cache,
         );
 
@@ -4995,7 +4998,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::<FeatureSet>::default(),
+            Arc::<RuntimeFeatures>::default(),
             &sysvar_cache,
         );
 

@@ -1582,7 +1582,7 @@ impl Bank {
             drop(program_cache);
             let mut program_cache = self.transaction_processor.program_cache.write().unwrap();
             let program_runtime_environment_v1 = create_program_runtime_environment_v1(
-                &upcoming_feature_set,
+                &upcoming_feature_set.runtime_features(),
                 &compute_budget,
                 false, /* deployment */
                 false, /* debugging_features */
@@ -2449,9 +2449,11 @@ impl Bank {
             .is_active(&feature_set::stake_minimum_delegation_for_rewards::id())
         {
             let num_stake_delegations = stakes.stake_delegations().len();
-            let min_stake_delegation =
-                solana_stake_program::get_minimum_delegation(&self.feature_set)
-                    .max(LAMPORTS_PER_SOL);
+            let min_stake_delegation = solana_stake_program::get_minimum_delegation(
+                self.feature_set
+                    .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+            )
+            .max(LAMPORTS_PER_SOL);
 
             let (stake_delegations, filter_time_us) = measure_us!(stakes
                 .stake_delegations()
@@ -3435,7 +3437,7 @@ impl Bank {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake: self.get_current_epoch_total_stake(),
-            feature_set: Arc::clone(&self.feature_set),
+            feature_set: Arc::new(self.feature_set.runtime_features()),
             rent_collector: Some(&rent_collector_with_metrics),
         };
 
@@ -4172,7 +4174,7 @@ impl Bank {
         for (pubkey, account, _loaded_slot) in accounts.iter_mut() {
             let rent_epoch_pre = account.rent_epoch();
             let (rent_collected_info, collect_rent_us) = measure_us!(collect_rent_from_account(
-                &self.feature_set,
+                &self.feature_set.runtime_features(),
                 &self.rent_collector,
                 pubkey,
                 account
@@ -4965,7 +4967,7 @@ impl Bank {
             .configure_program_runtime_environments(
                 Some(Arc::new(
                     create_program_runtime_environment_v1(
-                        &self.feature_set,
+                        &self.feature_set.runtime_features(),
                         &self.compute_budget().unwrap_or_default().to_budget(),
                         false, /* deployment */
                         false, /* debugging_features */

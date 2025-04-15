@@ -23,7 +23,10 @@ use {
     solana_svm_callback::InvokeContextCallback,
     solana_transaction_context::TransactionContext,
     source_buffer::SourceBuffer,
-    std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
+    std::{
+        cmp::Ordering,
+        sync::{atomic::Ordering::Relaxed, Arc},
+    },
     target_builtin::TargetBuiltin,
     target_core_bpf::TargetCoreBpf,
 };
@@ -169,7 +172,7 @@ impl Bank {
                     Hash::default(),
                     0,
                     &MockCallback {},
-                    self.feature_set.clone(),
+                    Arc::new(self.feature_set.runtime_features()),
                     &sysvar_cache,
                 ),
                 None,

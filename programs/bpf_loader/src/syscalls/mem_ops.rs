@@ -85,7 +85,7 @@ declare_builtin_function!(
 
         if invoke_context
             .get_feature_set()
-            .is_active(&agave_feature_set::bpf_account_data_direct_mapping::id())
+            .bpf_account_data_direct_mapping.is_some()
         {
             let cmp_result = translate_type_mut::<i32>(
                 memory_mapping,
@@ -143,7 +143,7 @@ declare_builtin_function!(
 
         if invoke_context
             .get_feature_set()
-            .is_active(&agave_feature_set::bpf_account_data_direct_mapping::id())
+            .bpf_account_data_direct_mapping.is_some()
         {
             let syscall_context = invoke_context.get_syscall_context()?;
 
@@ -170,7 +170,8 @@ fn memmove(
 ) -> Result<u64, Error> {
     if invoke_context
         .get_feature_set()
-        .is_active(&agave_feature_set::bpf_account_data_direct_mapping::id())
+        .bpf_account_data_direct_mapping
+        .is_some()
     {
         let syscall_context = invoke_context.get_syscall_context()?;
 

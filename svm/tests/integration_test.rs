@@ -115,7 +115,7 @@ impl SvmTestEnvironment<'_> {
 
         let processing_environment = TransactionProcessingEnvironment {
             blockhash: LAST_BLOCKHASH,
-            feature_set: feature_set.into(),
+            feature_set: Arc::new(feature_set.runtime_features()),
             blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
             ..TransactionProcessingEnvironment::default()
         };

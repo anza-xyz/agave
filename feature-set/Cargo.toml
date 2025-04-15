@@ -19,6 +19,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-hash = { workspace = true }
+solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false }
 solana-sha256-hasher = { workspace = true }
 

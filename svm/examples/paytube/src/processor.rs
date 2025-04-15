@@ -1,12 +1,12 @@
 //! A helper to initialize Solana SVM API's `TransactionBatchProcessor`.
 
 use {
-    agave_feature_set::FeatureSet,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_fee_structure::FeeDetails,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget,
+        invoke_context::RuntimeFeatures,
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
     },
     solana_sdk::{clock::Slot, transaction},
@@ -38,7 +38,7 @@ impl ForkGraph for PayTubeForkGraph {
 /// cache, then adding the System program to the processor's builtins.
 pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    feature_set: &FeatureSet,
+    feature_set: &RuntimeFeatures,
     compute_budget: &SVMTransactionExecutionBudget,
     fork_graph: Arc<RwLock<PayTubeForkGraph>>,
 ) -> TransactionBatchProcessor<PayTubeForkGraph> {

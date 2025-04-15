@@ -78,6 +78,7 @@ dependencies = [
  "ahash 0.8.11",
  "solana-epoch-schedule",
  "solana-hash",
+ "solana-program-runtime",
  "solana-pubkey",
  "solana-sha256-hasher",
 ]
@@ -5484,7 +5485,6 @@ dependencies = [
 name = "solana-bpf-loader-program"
 version = "2.3.0"
 dependencies = [
- "agave-feature-set",
  "bincode",
  "libsecp256k1 0.6.0",
  "num-traits",
@@ -7073,7 +7073,6 @@ dependencies = [
 name = "solana-program-runtime"
 version = "2.3.0"
 dependencies = [
- "agave-feature-set",
  "base64 0.22.1",
  "bincode",
  "enum-iterator",
@@ -8584,7 +8583,6 @@ dependencies = [
 name = "solana-svm"
 version = "2.3.0"
 dependencies = [
- "agave-feature-set",
  "ahash 0.8.11",
  "itertools 0.12.1",
  "log",

@@ -7,20 +7,17 @@
     allow(dead_code, unused_imports)
 )]
 
-use {
-    agave_feature_set::bpf_account_data_direct_mapping, solana_sdk::signer::keypair::Keypair,
-    std::slice,
-};
+use {solana_sdk::signer::keypair::Keypair, std::slice};
 
 extern crate test;
 
 use {
-    agave_feature_set::FeatureSet,
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
     solana_bpf_loader_program::{create_vm, syscalls::create_program_runtime_environment_v1},
     solana_measure::measure::Measure,
     solana_program_runtime::{
-        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
+        execution_budget::SVMTransactionExecutionBudget,
+        invoke_context::{InvokeContext, RuntimeFeatures},
         serialization::serialize_parameters,
     },
     solana_runtime::{
@@ -92,7 +89,7 @@ fn bench_program_create_executable(bencher: &mut Bencher) {
     let elf = load_program_from_file("bench_alu");
 
     let program_runtime_environment = create_program_runtime_environment_v1(
-        &FeatureSet::default(),
+        &RuntimeFeatures::default(),
         &SVMTransactionExecutionBudget::default(),
         true,
         false,
@@ -235,7 +232,8 @@ fn bench_create_vm(bencher: &mut Bencher) {
 
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&bpf_account_data_direct_mapping::id());
+        .bpf_account_data_direct_mapping
+        .is_some();
     let program_runtime_environment = create_program_runtime_environment_v1(
         invoke_context.get_feature_set(),
         &SVMTransactionExecutionBudget::default(),
@@ -281,7 +279,8 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
 
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&bpf_account_data_direct_mapping::id());
+        .bpf_account_data_direct_mapping
+        .is_some();
 
     // Serialize account data
     let (_serialized, regions, account_lengths) = serialize_parameters(
