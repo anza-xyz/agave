@@ -131,6 +131,7 @@ members = [
     "tps-client",
     "tpu-client",
     "tpu-client-next",
+    "transaction-context",
     "transaction-dos",
     "transaction-metrics-tracker",
     "transaction-status",
