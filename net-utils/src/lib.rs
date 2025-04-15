@@ -183,6 +183,25 @@ pub fn parse_port_or_addr(optstr: Option<&str>, default_addr: SocketAddr) -> Soc
     }
 }
 
+pub fn get_gossip_port(
+    gossip_addr: &SocketAddr,
+    port_range: PortRange,
+    bind_ip_addr: IpAddr,
+) -> (u16, (UdpSocket, TcpListener)) {
+    let config = SocketConfig::default();
+    if gossip_addr.port() != 0 {
+        (
+            gossip_addr.port(),
+            bind_common_with_config(bind_ip_addr, gossip_addr.port(), config).unwrap_or_else(|e| {
+                panic!("gossip_addr bind_to port {}: {}", gossip_addr.port(), e)
+            }),
+        )
+    } else {
+        bind_common_in_range_with_config(bind_ip_addr, port_range, config)
+            .expect("Failed to bind gossip port")
+    }
+}
+
 pub fn parse_port_range(port_range: &str) -> Option<PortRange> {
     let ports: Vec<&str> = port_range.split('-').collect();
     if ports.len() != 2 {
@@ -313,12 +332,13 @@ fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
     Ok(sock)
 }
 
-// Find a port in the given range with a socket config that is available for both TCP and UDP
+/// Find a port in the given range with a socket config that is available for both TCP and UDP
 pub fn bind_common_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
-    config: SocketConfig,
+    mut config: SocketConfig,
 ) -> io::Result<(u16, (UdpSocket, TcpListener))> {
+    config.reuseport = false;
     for port in range.0..range.1 {
         if let Ok((sock, listener)) = bind_common_with_config(ip_addr, port, config) {
             return Result::Ok((sock.local_addr().unwrap().port(), (sock, listener)));
@@ -351,8 +371,9 @@ pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpS
 pub fn bind_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
-    config: SocketConfig,
+    mut config: SocketConfig,
 ) -> io::Result<(u16, UdpSocket)> {
+    config.reuseport = false;
     let sock = udp_socket_with_config(config)?;
 
     for port in range.0..range.1 {
@@ -394,15 +415,10 @@ pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
 pub fn multi_bind_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
-    config: SocketConfig,
+    mut config: SocketConfig,
     mut num: usize,
 ) -> io::Result<(u16, Vec<UdpSocket>)> {
-    if !config.reuseport {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SocketConfig.reuseport must be true for multi_bind_in_range_with_config",
-        ));
-    }
+    config.reuseport = true;
     if cfg!(windows) && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
@@ -649,8 +665,9 @@ pub fn find_available_ports_in_range(
 pub fn bind_more_with_config(
     socket: UdpSocket,
     num: usize,
-    config: SocketConfig,
+    mut config: SocketConfig,
 ) -> io::Result<Vec<UdpSocket>> {
+    config.reuseport = true;
     let addr = socket.local_addr().unwrap();
     let ip = addr.ip();
     let port = addr.port();
