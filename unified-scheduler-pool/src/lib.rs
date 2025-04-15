@@ -306,7 +306,7 @@ struct BankingStageHandlerContext {
 
 trait_set! {
     pub trait BankingPacketHandler =
-        DynClone + Send + 'static + FnMut(&BankingStageHelper, BankingPacketBatch) -> ScheduleResult;
+        DynClone + Send + 'static + FnMut(&BankingStageHelper, BankingPacketBatch);
 }
 // Make this `Clone`-able so that it can easily propagated to all the handler threads.
 clone_trait_object!(BankingPacketHandler);
@@ -347,10 +347,8 @@ impl BankingStageHelper {
         self.create_new_task(transaction, new_index)
     }
 
-    pub fn send_new_task(&self, task: Task) -> ScheduleResult {
-        self.new_task_sender
-            .send(NewTaskPayload::Payload(task))
-            .map_err(|_| SchedulerAborted)
+    pub fn send_new_task(&self, task: Task) {
+        let _ = self.new_task_sender.send(NewTaskPayload::Payload(task));
     }
 
     fn abort_scheduler(&self) {
@@ -815,7 +813,7 @@ where
                     self.block_verification_handler_count,
                     // Return various type-specific no-op values.
                     never(),
-                    Box::new(|_, _| Ok(())),
+                    Box::new(|_, _| {}),
                     None,
                     None,
                 )
@@ -2154,10 +2152,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 banking_stage_helper.abort_scheduler();
                                 break;
                             };
-                            if let Err(SchedulerAborted) = banking_packet_handler(banking_stage_helper, banking_packet) {
-                                info!("dead new_task_sender");
-                                break;
-                            }
+                            banking_packet_handler(banking_stage_helper, banking_packet);
                             continue;
                         },
                     };
@@ -4390,7 +4385,7 @@ mod tests {
             replay_vote_sender: None,
             prioritization_fee_cache,
             banking_packet_receiver: never(),
-            banking_packet_handler: Box::new(|_, _| Ok(())),
+            banking_packet_handler: Box::new(|_, _| {}),
             banking_stage_helper: None,
             transaction_recorder: None,
         };
@@ -4475,7 +4470,7 @@ mod tests {
             replay_vote_sender: None,
             prioritization_fee_cache,
             banking_packet_receiver: never(),
-            banking_packet_handler: Box::new(|_, _| Ok(())),
+            banking_packet_handler: Box::new(|_, _| {}),
             banking_stage_helper: None,
             transaction_recorder: Some(transaction_recorder),
         };
