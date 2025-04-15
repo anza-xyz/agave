@@ -315,15 +315,15 @@ clone_trait_object!(BankingPacketHandler);
 pub struct BankingStageHelper {
     usage_queue_loader: UsageQueueLoader,
     next_task_id: AtomicUsize,
-    new_task_sender: Weak<Sender<NewTaskPayload>>,
+    new_task_sender: Sender<NewTaskPayload>,
 }
 
 impl BankingStageHelper {
-    fn new(new_task_sender: &Arc<Sender<NewTaskPayload>>) -> Self {
+    fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
         Self {
             usage_queue_loader: UsageQueueLoader::default(),
             next_task_id: AtomicUsize::default(),
-            new_task_sender: Arc::downgrade(new_task_sender),
+            new_task_sender,
         }
     }
 
@@ -348,18 +348,17 @@ impl BankingStageHelper {
     }
 
     pub fn send_new_task(&self, task: Task) -> ScheduleResult {
-        let Some(sender) = self.new_task_sender.upgrade() else {
-            return Err(SchedulerAborted);
-        };
-        sender.send(NewTaskPayload::Payload(task)).unwrap();
-        Ok(())
+        self.new_task_sender
+            .send(NewTaskPayload::Payload(task))
+            .map_err(|_| SchedulerAborted)
     }
 
     fn abort_scheduler(&self) {
-        let Some(sender) = self.new_task_sender.upgrade() else {
-            return;
-        };
-        if sender.send(NewTaskPayload::Disconnect).is_ok() {
+        if self
+            .new_task_sender
+            .send(NewTaskPayload::Disconnect)
+            .is_ok()
+        {
             info!("notified a disconnect from {:?}", thread::current());
         } else {
             // It seems that the scheduler thread has been aborted already...
@@ -583,10 +582,11 @@ where
                             drop(inner);
                             drop(pooled);
                         } else {
-                            pooled.discard_buffered_tasks();
+                            pooled.discard_buffer();
                             // Prevent replay stage's OpenSubchannel from winning the race by
-                            // holding the inner lock for extended duration. Reset must be sent
-                            // only during gaps of subchannels.
+                            // holding the inner lock for extended duration of sending a discard
+                            // message just above. Reset must be sent
+                            // only during gaps of subchannels of the new task channel.
                             drop(inner);
                         }
                     }
@@ -795,7 +795,7 @@ where
     fn create_handler_context(
         &self,
         mode: SchedulingMode,
-        new_task_sender: &Arc<Sender<NewTaskPayload>>,
+        new_task_sender: &Sender<NewTaskPayload>,
     ) -> HandlerContext {
         let (
             thread_count,
@@ -828,7 +828,7 @@ where
                     handler_context.banking_thread_count,
                     handler_context.banking_packet_receiver.clone(),
                     handler_context.banking_packet_handler.clone(),
-                    Some(Arc::new(BankingStageHelper::new(new_task_sender))),
+                    Some(Arc::new(BankingStageHelper::new(new_task_sender.clone()))),
                     Some(handler_context.transaction_recorder.clone()),
                 )
             }
@@ -1465,7 +1465,7 @@ where
 struct ThreadManager<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_id: SchedulerId,
     pool: Arc<SchedulerPool<S, TH>>,
-    new_task_sender: Arc<Sender<NewTaskPayload>>,
+    new_task_sender: Sender<NewTaskPayload>,
     new_task_receiver: Option<Receiver<NewTaskPayload>>,
     session_result_sender: Sender<ResultWithTimings>,
     session_result_receiver: Receiver<ResultWithTimings>,
@@ -1485,7 +1485,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         Self {
             scheduler_id: pool.new_scheduler_id(),
             pool,
-            new_task_sender: Arc::new(new_task_sender),
+            new_task_sender,
             new_task_receiver: Some(new_task_receiver),
             session_result_sender,
             session_result_receiver,
@@ -2353,7 +2353,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 
     fn disconnect_new_task_sender(&mut self) {
-        self.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
+        if self
+            .new_task_sender
+            .send(NewTaskPayload::Disconnect)
+            .is_ok()
+        {
+            info!("notified a disconnect from {:?}", thread::current());
+        } else {
+            // It seems that the scheduler thread has been aborted already...
+            warn!("failed to notify a disconnect from {:?}", thread::current());
+        }
     }
 }
 
@@ -2361,7 +2370,7 @@ pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_trashed(&self) -> bool;
     fn is_overgrown(&self) -> bool;
-    fn discard_buffered_tasks(&self);
+    fn discard_buffer(&self);
     fn ensure_abort(&mut self);
 }
 
@@ -2520,7 +2529,7 @@ where
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count)
     }
 
-    fn discard_buffered_tasks(&self) {
+    fn discard_buffer(&self) {
         self.thread_manager.start_discarding_buffered_tasks();
     }
 
@@ -4209,7 +4218,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn discard_buffered_tasks(&self) {
+        fn discard_buffer(&self) {
             unimplemented!()
         }
 
