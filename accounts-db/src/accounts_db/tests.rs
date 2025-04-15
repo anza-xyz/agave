@@ -4418,7 +4418,7 @@ fn test_accounts_db_cache_clean_dead_slots() {
         if let ScanStorageResult::Stored(slot_accounts) = accounts_db.scan_account_storage(
             *slot as Slot,
             |_| Some(0),
-            |slot_accounts: &DashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
+            |slot_accounts: &mut HashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
                 slot_accounts.insert(*loaded_account.pubkey());
             },
             ScanAccountStorageData::NoData,
@@ -4452,12 +4452,12 @@ fn test_accounts_db_cache_clean() {
         if let ScanStorageResult::Stored(slot_account) = accounts_db.scan_account_storage(
             *slot as Slot,
             |_| Some(0),
-            |slot_account: &RwLock<Pubkey>, loaded_account: &LoadedAccount, _data| {
-                *slot_account.write().unwrap() = *loaded_account.pubkey();
+            |slot_account: &mut Pubkey, loaded_account: &LoadedAccount, _data| {
+                *slot_account = *loaded_account.pubkey();
             },
             ScanAccountStorageData::NoData,
         ) {
-            assert_eq!(*slot_account.read().unwrap(), keys[*slot as usize]);
+            assert_eq!(slot_account, keys[*slot as usize]);
         } else {
             panic!("Everything should have been flushed")
         }
@@ -4517,7 +4517,7 @@ fn run_test_accounts_db_cache_clean_max_root(
                 assert!(*slot > requested_flush_root);
                 Some(*loaded_account.pubkey())
             },
-            |slot_accounts: &DashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
+            |slot_accounts: &mut HashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
                 slot_accounts.insert(*loaded_account.pubkey());
                 if !is_cache_at_limit {
                     // Only true when the limit hasn't been reached and there are still
@@ -4625,17 +4625,14 @@ fn run_flush_rooted_accounts_cache(should_clean: bool) {
     // If no cleaning is specified, then flush everything
     accounts_db.flush_rooted_accounts_cache(None, should_clean);
     for slot in &slots {
-        let slot_accounts = if let ScanStorageResult::Stored(slot_accounts) = accounts_db
-            .scan_account_storage(
-                *slot as Slot,
-                |_| Some(0),
-                |slot_account: &DashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
-                    slot_account.insert(*loaded_account.pubkey());
-                },
-                ScanAccountStorageData::NoData,
-            ) {
-            slot_accounts.into_iter().collect::<HashSet<Pubkey>>()
-        } else {
+        let ScanStorageResult::Stored(slot_accounts) = accounts_db.scan_account_storage(
+            *slot as Slot,
+            |_| Some(0),
+            |slot_account: &mut HashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
+                slot_account.insert(*loaded_account.pubkey());
+            },
+            ScanAccountStorageData::NoData,
+        ) else {
             panic!("All roots should have been flushed to storage");
         };
         let expected_accounts = if !should_clean || slot == slots.last().unwrap() {

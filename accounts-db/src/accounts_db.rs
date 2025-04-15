@@ -4924,7 +4924,7 @@ impl AccountsDb {
         &self,
         slot: Slot,
         cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
-        storage_scan_func: impl Fn(&B, &LoadedAccount, Option<&[u8]>) + Sync,
+        storage_scan_func: impl Fn(&mut B, &LoadedAccount, Option<&[u8]>) + Sync,
         scan_account_storage_data: ScanAccountStorageData,
     ) -> ScanStorageResult<R, B>
     where
@@ -4946,7 +4946,7 @@ impl AccountsDb {
         &self,
         slot: Slot,
         cache_map_func: impl Fn(&LoadedAccount) -> Option<R> + Sync,
-        storage_fallback_func: impl Fn(&B, &AccountsFile) + Sync,
+        storage_fallback_func: impl Fn(&mut B, &AccountsFile) + Sync,
     ) -> ScanStorageResult<R, B>
     where
         R: Send,
@@ -4979,7 +4979,7 @@ impl AccountsDb {
                 )
             }
         } else {
-            let retval = B::default();
+            let mut retval = B::default();
             // If the slot is not in the cache, then all the account information must have
             // been flushed. This is guaranteed because we only remove the rooted slot from
             // the cache *after* we've finished flushing in `flush_slot_cache`.
@@ -4996,7 +4996,7 @@ impl AccountsDb {
                 .storage
                 .get_slot_storage_entry_shrinking_in_progress_ok(slot)
             {
-                storage_fallback_func(&retval, &storage.accounts);
+                storage_fallback_func(&mut retval, &storage.accounts);
             }
 
             ScanStorageResult::Stored(retval)
@@ -7472,7 +7472,7 @@ impl AccountsDb {
         let scan_result = self.scan_cache_storage_fallback(
             slot,
             |loaded_account| Some(*loaded_account.pubkey()),
-            |accum: &DashSet<Pubkey>, storage| {
+            |accum: &mut HashSet<Pubkey>, storage| {
                 storage.scan_pubkeys(|pubkey| {
                     accum.insert(*pubkey);
                 });
@@ -7492,14 +7492,16 @@ impl AccountsDb {
         slot: Slot,
     ) -> (Vec<(Pubkey, AccountHash)>, u64, Measure) {
         let mut scan = Measure::start("scan");
-        let scan_result: ScanStorageResult<(Pubkey, AccountHash), DashMap<Pubkey, AccountHash>> =
+        let scan_result: ScanStorageResult<(Pubkey, AccountHash), HashMap<Pubkey, AccountHash>> =
             self.scan_account_storage(
                 slot,
                 |loaded_account: &LoadedAccount| {
                     // Cache only has one version per key, don't need to worry about versioning
                     Some((*loaded_account.pubkey(), loaded_account.loaded_hash()))
                 },
-                |accum: &DashMap<Pubkey, AccountHash>, loaded_account: &LoadedAccount, _data| {
+                |accum: &mut HashMap<Pubkey, AccountHash>,
+                 loaded_account: &LoadedAccount,
+                 _data| {
                     let mut loaded_hash = loaded_account.loaded_hash();
                     if loaded_hash == AccountHash(Hash::default()) {
                         loaded_hash = Self::hash_account(loaded_account, loaded_account.pubkey())
@@ -7527,7 +7529,7 @@ impl AccountsDb {
                 // Cache only has one version per key, don't need to worry about versioning
                 Some((*loaded_account.pubkey(), loaded_account.take_account()))
             },
-            |accum: &DashMap<_, _>, loaded_account, _data| {
+            |accum: &mut HashMap<_, _>, loaded_account, _data| {
                 // Storage may have duplicates so only keep the latest version for each key
                 accum.insert(*loaded_account.pubkey(), loaded_account.take_account());
             },
@@ -7543,7 +7545,7 @@ impl AccountsDb {
     /// Return all of the accounts for a given slot
     pub fn get_pubkey_hash_account_for_slot(&self, slot: Slot) -> Vec<PubkeyHashAccount> {
         type ScanResult =
-            ScanStorageResult<PubkeyHashAccount, DashMap<Pubkey, (AccountHash, AccountSharedData)>>;
+            ScanStorageResult<PubkeyHashAccount, HashMap<Pubkey, (AccountHash, AccountSharedData)>>;
         let scan_result: ScanResult = self.scan_account_storage(
             slot,
             |loaded_account: &LoadedAccount| {
@@ -7554,7 +7556,7 @@ impl AccountsDb {
                     account: loaded_account.take_account(),
                 })
             },
-            |accum: &DashMap<Pubkey, (AccountHash, AccountSharedData)>,
+            |accum: &mut HashMap<Pubkey, (AccountHash, AccountSharedData)>,
              loaded_account: &LoadedAccount,
              _data| {
                 // Storage may have duplicates so only keep the latest version for each key

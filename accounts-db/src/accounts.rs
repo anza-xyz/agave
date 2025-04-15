@@ -9,7 +9,6 @@ use {
         ancestors::Ancestors,
         storable_accounts::StorableAccounts,
     },
-    dashmap::DashMap,
     log::*,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_address_lookup_table_interface::{
@@ -27,7 +26,7 @@ use {
     solana_transaction_error::TransactionResult as Result,
     std::{
         cmp::Reverse,
-        collections::{BinaryHeap, HashSet},
+        collections::{BinaryHeap, HashMap, HashSet},
         ops::RangeBounds,
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -215,7 +214,7 @@ impl Accounts {
                 // Cache only has one version per key, don't need to worry about versioning
                 func(loaded_account)
             },
-            |accum: &DashMap<Pubkey, B>, loaded_account: &LoadedAccount, _data| {
+            |accum: &mut HashMap<Pubkey, B>, loaded_account: &LoadedAccount, _data| {
                 let loaded_account_pubkey = *loaded_account.pubkey();
                 if let Some(val) = func(loaded_account) {
                     accum.insert(loaded_account_pubkey, val);
@@ -226,10 +225,7 @@ impl Accounts {
 
         match scan_result {
             ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result
-                .into_iter()
-                .map(|(_pubkey, val)| val)
-                .collect(),
+            ScanStorageResult::Stored(stored_result) => stored_result.into_values().collect(),
         }
     }
 
