@@ -1910,10 +1910,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // to measure _actual_ cpu usage easily with the select approach.
                         select_biased! {
                             recv(finished_blocked_task_receiver) -> receiver_result => {
-                                let Ok(handler_result) = receiver_result else {
-                                    assert_matches!(scheduling_mode, BlockProduction);
-                                    break 'nonaborted_main_loop;
-                                };
+                                let handler_result = receiver_result.expect("alive handler");
                                 let Ok(executed_task) = handler_result else {
                                     break 'nonaborted_main_loop;
                                 };
@@ -1969,8 +1966,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                             },
                             recv(finished_idle_task_receiver) -> receiver_result => {
-                                // finished_idle_task_sender won't be disconnected
-                                // unlike finished_blocked_task_sender???
                                 let handler_result = receiver_result.expect("alive handler");
                                 let Ok(executed_task) = handler_result else {
                                     break 'nonaborted_main_loop;
