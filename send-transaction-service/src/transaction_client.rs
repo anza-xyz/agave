@@ -8,7 +8,7 @@ use {
     solana_measure::measure::Measure,
     solana_sdk::quic::NotifyKeyUpdate,
     solana_tpu_client_next::{
-        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
+        connection_workers_scheduler::{BindTarget, ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
@@ -287,8 +287,9 @@ impl TpuClientNextClient {
         stake_identity: Option<&Keypair>,
         leader_forward_count: usize,
     ) -> ConnectionWorkersSchedulerConfig {
+        let address = SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0);
         ConnectionWorkersSchedulerConfig {
-            bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
+            bind: BindTarget::Address(address),
             stake_identity: stake_identity.map(Into::into),
             num_connections: MAX_CONNECTIONS,
             skip_check_transaction_age: true,
