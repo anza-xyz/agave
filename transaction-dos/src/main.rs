@@ -556,17 +556,21 @@ fn main() {
             exit(1)
         });
     }
-    let shred_version = if !skip_gossip {
-        if let Ok(shred_version) = value_t!(matches, "shred_version", u16) {
-            shred_version
+    let shred_version: Option<u16> = if !skip_gossip {
+        if let Ok(version) = value_t!(matches, "shred_version", u16) {
+            Some(version)
         } else {
-            solana_net_utils::get_cluster_shred_version(&entrypoint_addr).unwrap_or_else(|err| {
-                eprintln!("Failed to get shred version: {}", err);
-                exit(1);
-            })
+            Some(
+                solana_net_utils::get_cluster_shred_version(&entrypoint_addr).unwrap_or_else(
+                    |err| {
+                        eprintln!("Failed to get shred version: {}", err);
+                        exit(1);
+                    },
+                ),
+            )
         }
     } else {
-        0
+        None
     };
 
     let just_calculate_fees = matches.is_present("just_calculate_fees");
@@ -622,7 +626,7 @@ fn main() {
             None,                    // find_node_by_pubkey
             Some(&entrypoint_addr),  // find_node_by_gossip_addr
             None,                    // my_gossip_addr
-            shred_version,           // my_shred_version
+            shred_version.unwrap(),  // my_shred_version
             SocketAddrSpace::Unspecified,
         )
         .unwrap_or_else(|err| {
