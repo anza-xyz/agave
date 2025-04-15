@@ -1418,8 +1418,7 @@ where
         // assert that this is called after ::into_inner()
         assert_matches!(self.session_result_with_timings, None);
 
-        // Ensure to initiate thread shutdown via disconnected new_task_receiver by replacing the
-        // current new_task_sender with a random one...
+        // Ensure to initiate thread shutdown by disconnected new_task_receiver
         self.disconnect_new_task_sender();
 
         self.ensure_join_threads(true);
@@ -2326,12 +2325,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .unwrap();
     }
 
-    fn start_discarding_buffered_tasks(&self) {
-        if let Err(err) = self.new_task_sender.send(NewTaskPayload::Reset) {
-            warn!("failed to send a reset due to error: {err:?}");
-        }
-    }
-
     fn start_session(
         &mut self,
         context: SchedulingContext,
@@ -2345,6 +2338,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 result_with_timings,
             ))))
             .expect("no new session after aborted");
+    }
+
+    fn discard_buffered_tasks(&self) {
+        if let Err(err) = self.new_task_sender.send(NewTaskPayload::Reset) {
+            warn!("failed to send a reset due to error: {err:?}");
+        }
     }
 
     fn disconnect_new_task_sender(&mut self) {
@@ -2525,7 +2524,7 @@ where
     }
 
     fn discard_buffer(&self) {
-        self.thread_manager.start_discarding_buffered_tasks();
+        self.thread_manager.discard_buffered_tasks();
     }
 
     fn ensure_abort(&mut self) {
