@@ -931,7 +931,7 @@ impl AppendVec {
     /// return an `AccountSharedData` for an account at `offset`.
     /// This fn can efficiently return exactly what is needed by a caller.
     /// This is on the critical path of tx processing for accounts not in the read or write caches.
-    pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
+    pub fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
         match &self.backing {
             AppendVecFileBacking::Mmap(_) => self
                 .get_stored_account_meta_callback(offset, |account| {
