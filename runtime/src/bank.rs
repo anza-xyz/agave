@@ -2519,12 +2519,14 @@ impl Bank {
     fn update_reward_history(
         &self,
         stake_rewards: StakeRewards,
-        mut vote_rewards: Vec<(Pubkey, RewardInfo)>,
+        vote_rewards: &[(Pubkey, RewardInfo)],
     ) {
         let additional_reserve = stake_rewards.len() + vote_rewards.len();
         let mut rewards = self.rewards.write().unwrap();
         rewards.reserve(additional_reserve);
-        rewards.append(&mut vote_rewards);
+        vote_rewards.iter().for_each(|(vote_pubkey, vote_reward)| {
+            rewards.push((vote_pubkey.clone(), vote_reward.clone()));
+        });
         stake_rewards
             .into_iter()
             .filter(|x| x.get_stake_reward() > 0)
