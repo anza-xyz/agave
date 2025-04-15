@@ -511,7 +511,7 @@ impl<'a> MemoryChunkIterator<'a> {
 
     fn region(&mut self, vm_addr: u64) -> Result<&'a MemoryRegion, Error> {
         match self.memory_mapping.region(self.access_type, vm_addr) {
-            Ok(region) => Ok(region),
+            Ok((_region_index, region)) => Ok(region),
             Err(error) => match error {
                 EbpfError::AccessViolation(access_type, _vm_addr, _len, name) => Err(Box::new(
                     EbpfError::AccessViolation(access_type, self.initial_vm_addr, self.len, name),

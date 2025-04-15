@@ -365,7 +365,7 @@ impl<'a> CallerAccount<'a> {
         &self,
         memory_mapping: &'a MemoryMapping<'_>,
         is_loader_deprecated: bool,
-    ) -> Result<Option<&'a MemoryRegion>, Error> {
+    ) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
         account_realloc_region(
             memory_mapping,
             self.vm_data_addr,
@@ -1277,19 +1277,20 @@ fn update_caller_account_perms(
         ..
     } = caller_account;
 
-    let data_region = account_data_region(memory_mapping, *vm_data_addr, *original_data_len)?;
-    if let Some(region) = data_region {
+    if let Some((_region_index, region)) =
+        account_data_region(memory_mapping, *vm_data_addr, *original_data_len)?
+    {
         region
             .state
             .set(account_data_region_memory_state(callee_account));
     }
-    let realloc_region = account_realloc_region(
+
+    if let Some((_region_index, region)) = account_realloc_region(
         memory_mapping,
         *vm_data_addr,
         *original_data_len,
         is_loader_deprecated,
-    )?;
-    if let Some(region) = realloc_region {
+    )? {
         region
             .state
             .set(if callee_account.can_data_be_changed().is_ok() {
@@ -1323,7 +1324,7 @@ fn update_caller_account(
 
     let mut zero_all_mapped_spare_capacity = false;
     if direct_mapping {
-        if let Some(region) = account_data_region(
+        if let Some((_region_index, region)) = account_data_region(
             memory_mapping,
             caller_account.vm_data_addr,
             caller_account.original_data_len,
@@ -1412,7 +1413,7 @@ fn update_caller_account(
 
                     // Temporarily configure the realloc region as writable then set it back to
                     // whatever state it had.
-                    let realloc_region = caller_account
+                    let (_realloc_region_index, realloc_region) = caller_account
                         .realloc_region(memory_mapping, is_loader_deprecated)?
                         .unwrap(); // unwrapping here is fine, we already asserted !is_loader_deprecated
                     let original_state = realloc_region.state.replace(MemoryState::Writable);
@@ -1521,7 +1522,7 @@ fn update_caller_account(
                 //
                 // Therefore we temporarily configure the realloc region as writable
                 // then set it back to whatever state it had.
-                let realloc_region = caller_account
+                let (_realloc_region_index, realloc_region) = caller_account
                     .realloc_region(memory_mapping, is_loader_deprecated)?
                     .unwrap(); // unwrapping here is fine, we asserted !is_loader_deprecated
                 let original_state = realloc_region.state.replace(MemoryState::Writable);
@@ -1566,17 +1567,17 @@ fn account_data_region<'a>(
     memory_mapping: &'a MemoryMapping<'_>,
     vm_data_addr: u64,
     original_data_len: usize,
-) -> Result<Option<&'a MemoryRegion>, Error> {
+) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
     if original_data_len == 0 {
         return Ok(None);
     }
 
     // We can trust vm_data_addr to point to the correct region because we
     // enforce that in CallerAccount::from_(sol_)account_info.
-    let data_region = memory_mapping.region(AccessType::Load, vm_data_addr)?;
+    let (data_region_index, data_region) = memory_mapping.region(AccessType::Load, vm_data_addr)?;
     // vm_data_addr must always point to the beginning of the region
     debug_assert_eq!(data_region.vm_addr, vm_data_addr);
-    Ok(Some(data_region))
+    Ok(Some((data_region_index, data_region)))
 }
 
 fn account_realloc_region<'a>(
@@ -1584,19 +1585,20 @@ fn account_realloc_region<'a>(
     vm_data_addr: u64,
     original_data_len: usize,
     is_loader_deprecated: bool,
-) -> Result<Option<&'a MemoryRegion>, Error> {
+) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
     if is_loader_deprecated {
         return Ok(None);
     }
 
     let realloc_vm_addr = vm_data_addr.saturating_add(original_data_len as u64);
-    let realloc_region = memory_mapping.region(AccessType::Load, realloc_vm_addr)?;
+    let (realloc_region_index, realloc_region) =
+        memory_mapping.region(AccessType::Load, realloc_vm_addr)?;
     debug_assert_eq!(realloc_region.vm_addr, realloc_vm_addr);
     debug_assert!((MAX_PERMITTED_DATA_INCREASE
         ..MAX_PERMITTED_DATA_INCREASE.saturating_add(BPF_ALIGN_OF_U128))
         .contains(&(realloc_region.len as usize)));
     debug_assert!(!matches!(realloc_region.state.get(), MemoryState::Cow(_)));
-    Ok(Some(realloc_region))
+    Ok(Some((realloc_region_index, realloc_region)))
 }
 
 #[allow(clippy::indexing_slicing)]
