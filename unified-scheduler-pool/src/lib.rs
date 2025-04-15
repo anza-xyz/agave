@@ -613,8 +613,8 @@ where
                         // assert that block production scheduler isn't taken anymore and has been
                         // returned to the pool
                         inner.take_pooled();
+                        break;
                     }
-                    break;
                 }
             }
         };
