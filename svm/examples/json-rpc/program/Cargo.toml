@@ -1,6 +1,6 @@
 [package]
 name = "json-rpc-example-program"
-version = "2.2.10"
+version = "2.2.11"
 edition = "2021"
 
 [features]
