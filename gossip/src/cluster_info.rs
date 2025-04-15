@@ -1974,7 +1974,7 @@ impl ClusterInfo {
         let self_pubkey = self.id();
         // Filter out values if the shred-versions are different.
         let self_shred_version = self.my_shred_version();
-        if self_shred_version != 0 {
+        {
             let gossip_crds = self.gossip.crds.read().unwrap();
             let discard_different_shred_version = |msg| {
                 discard_different_shred_version(msg, self_shred_version, &gossip_crds, &self.stats)
