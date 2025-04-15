@@ -109,10 +109,10 @@ impl Bank {
             metrics,
         );
         let total_vote_rewards = vote_account_rewards.total_vote_rewards_lamports;
-        let vote_rewards = self.store_vote_accounts_partitioned(vote_account_rewards, metrics);
+        self.store_vote_accounts_partitioned(&vote_account_rewards, metrics);
 
         // update reward history of JUST vote_rewards, stake_rewards is vec![] here
-        self.update_reward_history(vec![], vote_rewards);
+        self.update_reward_history(vec![], &vote_account_rewards.rewards[..]);
 
         let StakeRewardCalculation {
             stake_rewards,
@@ -167,9 +167,9 @@ impl Bank {
 
     fn store_vote_accounts_partitioned(
         &self,
-        vote_account_rewards: VoteRewardsAccounts,
+        vote_account_rewards: &VoteRewardsAccounts,
         metrics: &RewardsMetrics,
-    ) -> Vec<(Pubkey, RewardInfo)> {
+    ) {
         let (_, measure_us) = measure_us!({
             self.store_accounts((self.slot(), &vote_account_rewards.accounts_to_store[..]));
         });
@@ -177,8 +177,6 @@ impl Bank {
         metrics
             .store_vote_accounts_us
             .fetch_add(measure_us, Relaxed);
-
-        vote_account_rewards.rewards
     }
 
     /// Calculate rewards from previous epoch to prepare for partitioned distribution.
@@ -212,7 +210,7 @@ impl Bank {
             .unwrap_or_default();
 
         PartitionedRewardsCalculation {
-            vote_account_rewards,
+            vote_account_rewards: Arc::new(vote_account_rewards),
             stake_rewards,
             validator_rate,
             foundation_rate,
@@ -397,7 +395,7 @@ impl Bank {
         (
             vote_rewards,
             StakeRewardCalculation {
-                stake_rewards,
+                stake_rewards: Arc::new(stake_rewards),
                 total_stake_rewards_lamports: total_stake_rewards.load(Relaxed),
             },
         )
@@ -466,7 +464,7 @@ impl Bank {
             );
             self.set_epoch_reward_status_distribution(
                 epoch_rewards_sysvar.distribution_starting_block_height,
-                Arc::new(stake_rewards),
+                stake_rewards,
                 partition_indices,
             );
         }
@@ -480,7 +478,7 @@ impl Bank {
         epoch_rewards_sysvar: &EpochRewards,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         thread_pool: &ThreadPool,
-    ) -> (Vec<PartitionedStakeReward>, Vec<Vec<usize>>) {
+    ) -> (Arc<Vec<PartitionedStakeReward>>, Vec<Vec<usize>>) {
         assert!(epoch_rewards_sysvar.active);
         // If rewards are active, the rewarded epoch is always the immediately
         // preceding epoch.
@@ -534,7 +532,7 @@ mod tests {
                     StartBlockHeightAndPartitionedRewards,
                 },
                 tests::create_genesis_config,
-                VoteReward,
+                RewardInfo, VoteReward,
             },
             stake_account::StakeAccount,
             stakes::Stakes,
@@ -579,9 +577,11 @@ mod tests {
         let metrics = RewardsMetrics::default();
 
         let total_vote_rewards = vote_rewards_account.total_vote_rewards_lamports;
-        let stored_vote_accounts =
-            bank.store_vote_accounts_partitioned(vote_rewards_account, &metrics);
-        assert_eq!(expected_vote_rewards_num, stored_vote_accounts.len());
+        bank.store_vote_accounts_partitioned(&vote_rewards_account, &metrics);
+        assert_eq!(
+            expected_vote_rewards_num,
+            vote_rewards_account.accounts_to_store.len()
+        );
         assert_eq!(
             vote_rewards
                 .iter()
@@ -614,8 +614,8 @@ mod tests {
         let metrics = RewardsMetrics::default();
         let total_vote_rewards = vote_rewards.total_vote_rewards_lamports;
 
-        let stored_vote_accounts = bank.store_vote_accounts_partitioned(vote_rewards, &metrics);
-        assert_eq!(expected, stored_vote_accounts.len());
+        bank.store_vote_accounts_partitioned(&vote_rewards, &metrics);
+        assert_eq!(expected, vote_rewards.accounts_to_store.len());
         assert_eq!(0, total_vote_rewards);
     }
 
