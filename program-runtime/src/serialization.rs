@@ -99,7 +99,20 @@ impl Serializer {
         } else {
             self.push_region(true);
             let vaddr = self.vaddr;
-            self.push_account_data_region(account)?;
+            if !account.get_data().is_empty() {
+                let writable = account.can_data_be_changed().is_ok();
+                let shared = account.is_shared();
+                let mut new_region = if writable && !shared {
+                    MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
+                } else {
+                    MemoryRegion::new_readonly(account.get_data(), self.vaddr)
+                };
+                if writable && shared {
+                    new_region.cow_callback_payload = account.get_index_in_transaction() as u32;
+                }
+                self.vaddr += new_region.len;
+                self.regions.push(new_region);
+            }
             vaddr
         };
 
@@ -124,28 +137,6 @@ impl Serializer {
         }
 
         Ok(vm_data_addr)
-    }
-
-    fn push_account_data_region(
-        &mut self,
-        account: &mut BorrowedAccount<'_>,
-    ) -> Result<(), InstructionError> {
-        if !account.get_data().is_empty() {
-            let writable = account.can_data_be_changed().is_ok();
-            let shared = account.is_shared();
-            let mut new_region = if writable && !shared {
-                MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
-            } else {
-                MemoryRegion::new_readonly(account.get_data(), self.vaddr)
-            };
-            if writable && shared {
-                new_region.cow_callback_payload = account.get_index_in_transaction() as u32;
-            }
-            self.vaddr += new_region.len;
-            self.regions.push(new_region);
-        }
-
-        Ok(())
     }
 
     fn push_region(&mut self, writable: bool) {
