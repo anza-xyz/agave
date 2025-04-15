@@ -504,9 +504,7 @@ impl ClusterInfo {
                     .rpc()
                     .filter(|addr| self.socket_addr_space.check(addr))?;
                 let node_version = self.get_node_version(node.pubkey());
-                if my_shred_version != 0
-                    && (node.shred_version() != 0 && node.shred_version() != my_shred_version)
-                {
+                if node.shred_version() != 0 && node.shred_version() != my_shred_version {
                     return None;
                 }
                 let rpc_addr = node_rpc.ip();
