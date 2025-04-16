@@ -259,8 +259,10 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::tests::{create_genesis_config, new_bank_from_parent_with_bank_forks},
-            bank::{Epoch, Slot},
+            bank::{
+                tests::{create_genesis_config, new_bank_from_parent_with_bank_forks},
+                Epoch, Slot,
+            },
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
