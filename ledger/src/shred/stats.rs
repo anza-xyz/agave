@@ -53,6 +53,8 @@ pub struct ShredFetchStats {
     pub(super) bad_shred_type: usize,
     pub(super) shred_version_mismatch: usize,
     pub(super) bad_parent_offset: usize,
+    pub(super) flags_bad_deserialize: usize,
+    pub(super) bad_data_complete_index: usize,
     since: Option<Instant>,
 }
 
@@ -166,6 +168,8 @@ impl ShredFetchStats {
             ("bad_shred_type", self.bad_shred_type, i64),
             ("shred_version_mismatch", self.shred_version_mismatch, i64),
             ("bad_parent_offset", self.bad_parent_offset, i64),
+            ("flags_bad_deserialize", self.flags_bad_deserialize, i64),
+            ("bad_data_complete_index", self.bad_data_complete_index, i64),
         );
         *self = Self {
             since: Some(Instant::now()),

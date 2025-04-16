@@ -924,6 +924,15 @@ pub fn should_discard_shred(
                 stats.slot_out_of_range += 1;
                 return true;
             }
+            let Ok(flags) = layout::get_flags(shred) else {
+                stats.flags_bad_deserialize += 1;
+                return true;
+            };
+            if flags.contains(ShredFlags::DATA_COMPLETE_SHRED) && (index % 32 != 31) {
+                // Erasure batches are all expected to be exactly 32:32
+                stats.bad_data_complete_index += 1;
+                return true;
+            }
         }
     }
     match shred_variant {
