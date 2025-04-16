@@ -372,9 +372,8 @@ mod tests {
                 .lock()
                 .unwrap()
                 .get(&epoch)
-                .map(|m| m.get(&parent_slot))
-                .flatten()
-                .map(|m| m.clone())
+                .and_then(|m| m.get(&parent_slot))
+                .cloned()
         }
 
         fn get_epoch_rewards_cache_size(&self) -> usize {

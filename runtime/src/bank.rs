@@ -2545,7 +2545,7 @@ impl Bank {
         let mut rewards = self.rewards.write().unwrap();
         rewards.reserve(additional_reserve);
         vote_rewards.iter().for_each(|(vote_pubkey, vote_reward)| {
-            rewards.push((vote_pubkey.clone(), vote_reward.clone()));
+            rewards.push((*vote_pubkey, *vote_reward));
         });
         stake_rewards
             .into_iter()
