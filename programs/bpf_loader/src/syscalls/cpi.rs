@@ -4,7 +4,9 @@ use {
     scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
-    solana_program_runtime::invoke_context::SerializedAccountMetadata,
+    solana_program_runtime::{
+        invoke_context::SerializedAccountMetadata, serialization::create_memory_region_of_account,
+    },
     solana_sbpf::{ebpf, memory_region::MemoryRegion},
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_transaction_context::BorrowedAccount,
@@ -1198,60 +1200,20 @@ fn update_caller_account_perms(
     callee_account: &mut BorrowedAccount<'_>,
     is_loader_deprecated: bool,
 ) -> Result<(), Error> {
-    let CallerAccount {
-        original_data_len,
-        vm_data_addr,
-        ..
-    } = caller_account;
+    let address_space_reserved_for_account = if is_loader_deprecated {
+        caller_account.original_data_len
+    } else {
+        caller_account
+            .original_data_len
+            .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+    };
 
-    if let Some((region_index, region)) =
-        account_data_region(memory_mapping, *vm_data_addr, *original_data_len)?
-    {
-        let writable = callee_account.can_data_be_changed().is_ok();
-        let shared = callee_account.is_shared();
-        let mut new_region = if writable && !shared {
-            MemoryRegion::new_writable(
-                unsafe {
-                    std::slice::from_raw_parts_mut(region.host_addr as *mut u8, region.len as usize)
-                },
-                region.vm_addr,
-            )
-        } else {
-            MemoryRegion::new_readonly(
-                unsafe {
-                    std::slice::from_raw_parts(region.host_addr as *const u8, region.len as usize)
-                },
-                region.vm_addr,
-            )
-        };
-        if writable && shared {
-            new_region.access_violation_handler_payload =
-                Some(callee_account.get_index_in_transaction());
-        }
-        memory_mapping.replace_region(region_index, new_region)?;
-    }
-
-    if let Some((region_index, region)) = account_realloc_region(
+    if let Some((region_index, region)) = account_data_region(
         memory_mapping,
-        *vm_data_addr,
-        *original_data_len,
-        is_loader_deprecated,
+        caller_account.vm_data_addr,
+        address_space_reserved_for_account,
     )? {
-        let new_region = if callee_account.can_data_be_changed().is_ok() {
-            MemoryRegion::new_writable(
-                unsafe {
-                    std::slice::from_raw_parts_mut(region.host_addr as *mut u8, region.len as usize)
-                },
-                region.vm_addr,
-            )
-        } else {
-            MemoryRegion::new_readonly(
-                unsafe {
-                    std::slice::from_raw_parts(region.host_addr as *const u8, region.len as usize)
-                },
-                region.vm_addr,
-            )
-        };
+        let new_region = create_memory_region_of_account(callee_account, region.vm_addr)?;
         memory_mapping.replace_region(region_index, new_region)?;
     }
 
@@ -1523,9 +1485,9 @@ fn update_caller_account(
 fn account_data_region<'a>(
     memory_mapping: &'a mut MemoryMapping<'_>,
     vm_data_addr: u64,
-    original_data_len: usize,
+    address_space_reserved_for_account: usize,
 ) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
-    if original_data_len == 0 {
+    if address_space_reserved_for_account == 0 {
         return Ok(None);
     }
 
