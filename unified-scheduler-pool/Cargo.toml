@@ -35,6 +35,7 @@ solana-transaction-error = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 static_assertions = { workspace = true }
 trait-set = { workspace = true }
+unwrap_none = { workspace = true }
 vec_extract_if_polyfill = { workspace = true }
 
 [dev-dependencies]

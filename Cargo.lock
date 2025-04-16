@@ -11044,6 +11044,7 @@ dependencies = [
  "static_assertions",
  "test-case",
  "trait-set",
+ "unwrap_none",
  "vec_extract_if_polyfill",
 ]
 

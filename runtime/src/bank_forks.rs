@@ -234,18 +234,7 @@ impl BankForks {
 
         let bank = Arc::new(bank);
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
-            let context = SchedulingContext::new_with_mode(mode, bank.clone());
-            let scheduler = scheduler_pool.take_scheduler(context);
-            let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
-            // Skip registering for block production. Both the tvu main loop in the replay stage
-            // and PohRecorder don't support _concurrent block production_ at all. It's strongly
-            // assumed that block is produced in singleton way and it's actually desired, while
-            // ignoring the opportunity cost of (hopefully rare!) fork switching...
-            if matches!(mode, SchedulingMode::BlockVerification) {
-                scheduler_pool
-                    .register_timeout_listener(bank_with_scheduler.create_timeout_listener());
-            }
-            bank_with_scheduler
+            Self::install_scheduler_into_bank(scheduler_pool, mode, bank)
         } else {
             BankWithScheduler::new_without_scheduler(bank)
         };
@@ -257,6 +246,24 @@ impl BankForks {
             self.descendants.entry(parent).or_default().insert(slot);
         }
         bank
+    }
+
+    fn install_scheduler_into_bank(
+        scheduler_pool: &InstalledSchedulerPoolArc,
+        mode: SchedulingMode,
+        bank: Arc<Bank>,
+    ) -> BankWithScheduler {
+        let context = SchedulingContext::new_with_mode(mode, bank.clone());
+        let scheduler = scheduler_pool.take_scheduler(context);
+        let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
+        // Skip registering for block production. Both the tvu main loop in the replay stage
+        // and PohRecorder don't support _concurrent block production_ at all. It's strongly
+        // assumed that block is produced in singleton way and it's actually desired, while
+        // ignoring the opportunity cost of (hopefully rare!) fork switching...
+        if matches!(mode, SchedulingMode::BlockVerification) {
+            scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
+        }
+        bank_with_scheduler
     }
 
     pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
