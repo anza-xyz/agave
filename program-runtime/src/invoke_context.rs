@@ -225,7 +225,7 @@ pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
-    pub feature_set: Arc<RuntimeFeatures>,
+    feature_set: Arc<RuntimeFeatures>,
     sysvar_cache: &'a SysvarCache,
 }
 impl<'a> EnvironmentConfig<'a> {

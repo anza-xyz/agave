@@ -467,8 +467,7 @@ mod tests {
             expected_result,
             Entrypoint::vm,
             |invoke_context| {
-                invoke_context.environment_config.feature_set =
-                    Arc::new(feature_set.runtime_features());
+                invoke_context.mock_set_feature_set(Arc::new(feature_set.runtime_features()))
             },
             |_invoke_context| {},
         )
@@ -6983,8 +6982,7 @@ mod tests {
             Ok(()),
             Entrypoint::vm,
             |invoke_context| {
-                invoke_context.environment_config.feature_set =
-                    Arc::new(feature_set.runtime_features());
+                invoke_context.mock_set_feature_set(Arc::new(feature_set.runtime_features()));
             },
             |invoke_context| {
                 let expected_minimum_delegation = crate::get_minimum_delegation(
