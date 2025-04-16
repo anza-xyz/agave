@@ -2396,10 +2396,43 @@ fn program_cache_create_account(remove_accounts_executable_flag_checks: bool) {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+enum Inspect<'a> {
+    LiveRead(&'a AccountSharedData),
+    LiveWrite(&'a AccountSharedData),
+    #[allow(dead_code)]
+    DeadRead,
+    DeadWrite,
+}
+impl From<Inspect<'_>> for (Option<AccountSharedData>, bool) {
+    fn from(inspect: Inspect) -> Self {
+        match inspect {
+            Inspect::LiveRead(account) => (Some(account.clone()), false),
+            Inspect::LiveWrite(account) => (Some(account.clone()), true),
+            Inspect::DeadRead => (None, false),
+            Inspect::DeadWrite => (None, true),
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct InspectedAccounts(pub HashMap<Pubkey, Vec<(Option<AccountSharedData>, bool)>>);
+impl InspectedAccounts {
+    fn inspect(&mut self, pubkey: Pubkey, inspect: Inspect) {
+        self.0.entry(pubkey).or_default().push(inspect.into())
+    }
+
+    fn inspect_n(&mut self, pubkey: Pubkey, inspect: Inspect, times: usize) {
+        for _ in 0..times {
+            self.inspect(pubkey, inspect.clone());
+        }
+    }
+}
+
 #[test]
 fn svm_inspect_account() {
     let mut initial_test_entry = SvmTestEntry::default();
-    let mut expected_inspected_accounts: HashMap<_, Vec<_>> = HashMap::new();
+    let mut expected_inspected_accounts = InspectedAccounts::default();
 
     let fee_payer_keypair = Keypair::new();
     let sender_keypair = Keypair::new();
@@ -2415,28 +2448,19 @@ fn svm_inspect_account() {
     fee_payer_account.set_lamports(85_000);
     fee_payer_account.set_rent_epoch(u64::MAX);
     initial_test_entry.add_initial_account(fee_payer, &fee_payer_account);
-    expected_inspected_accounts
-        .entry(fee_payer)
-        .or_default()
-        .push((Some(fee_payer_account.clone()), true));
+    expected_inspected_accounts.inspect(fee_payer, Inspect::LiveWrite(&fee_payer_account));
 
     // sender
     let mut sender_account = AccountSharedData::default();
     sender_account.set_lamports(11_000_000);
     sender_account.set_rent_epoch(u64::MAX);
     initial_test_entry.add_initial_account(sender, &sender_account);
-    expected_inspected_accounts
-        .entry(sender)
-        .or_default()
-        .push((Some(sender_account.clone()), true));
+    expected_inspected_accounts.inspect(sender, Inspect::LiveWrite(&sender_account));
 
     // recipient -- initially dead
-    expected_inspected_accounts
-        .entry(recipient)
-        .or_default()
-        .push((None, true));
+    expected_inspected_accounts.inspect(recipient, Inspect::DeadWrite);
 
-    // system, inspected twice due to owner checks
+    // system program
     let system_account = AccountSharedData::create(
         5000,
         "system_program".as_bytes().to_vec(),
@@ -2444,14 +2468,11 @@ fn svm_inspect_account() {
         true,
         0,
     );
-
-    {
-        let system_entry = expected_inspected_accounts
-            .entry(system_program::id())
-            .or_default();
-        system_entry.push((Some(system_account.clone()), false));
-        system_entry.push((Some(system_account.clone()), false));
-    }
+    expected_inspected_accounts.inspect_n(
+        system_program::id(),
+        Inspect::LiveRead(&system_account),
+        2,
+    );
 
     let transfer_amount = 1_000_000;
     let transaction = Transaction::new_signed_with_payer(
@@ -2483,40 +2504,41 @@ fn svm_inspect_account() {
     // do another transfer; recipient should be alive now
 
     // fee payer
-    let intermediate_fee_payer_account = initial_test_entry.final_accounts.get(&fee_payer).cloned();
-    assert!(intermediate_fee_payer_account.is_some());
-
-    expected_inspected_accounts
-        .entry(fee_payer)
-        .or_default()
-        .push((intermediate_fee_payer_account, true));
+    let intermediate_fee_payer_account = initial_test_entry
+        .final_accounts
+        .get(&fee_payer)
+        .cloned()
+        .unwrap();
+    expected_inspected_accounts.inspect(
+        fee_payer,
+        Inspect::LiveWrite(&intermediate_fee_payer_account),
+    );
 
     // sender
-    let intermediate_sender_account = initial_test_entry.final_accounts.get(&sender).cloned();
-    assert!(intermediate_sender_account.is_some());
-
-    expected_inspected_accounts
-        .entry(sender)
-        .or_default()
-        .push((intermediate_sender_account, true));
+    let intermediate_sender_account = initial_test_entry
+        .final_accounts
+        .get(&sender)
+        .cloned()
+        .unwrap();
+    expected_inspected_accounts.inspect(sender, Inspect::LiveWrite(&intermediate_sender_account));
 
     // recipient -- now alive
-    let intermediate_recipient_account = initial_test_entry.final_accounts.get(&recipient).cloned();
-    assert!(intermediate_recipient_account.is_some());
+    let intermediate_recipient_account = initial_test_entry
+        .final_accounts
+        .get(&recipient)
+        .cloned()
+        .unwrap();
+    expected_inspected_accounts.inspect(
+        recipient,
+        Inspect::LiveWrite(&intermediate_recipient_account),
+    );
 
-    expected_inspected_accounts
-        .entry(recipient)
-        .or_default()
-        .push((intermediate_recipient_account, true));
-
-    // system
-    {
-        let system_entry = expected_inspected_accounts
-            .entry(system_program::id())
-            .or_default();
-        system_entry.push((Some(system_account.clone()), false));
-        system_entry.push((Some(system_account.clone()), false));
-    }
+    // system program
+    expected_inspected_accounts.inspect_n(
+        system_program::id(),
+        Inspect::LiveRead(&system_account),
+        2,
+    );
 
     let mut final_test_entry = SvmTestEntry {
         initial_accounts: initial_test_entry.final_accounts.clone(),
@@ -2548,7 +2570,7 @@ fn svm_inspect_account() {
 
     // Ensure all the expected inspected accounts were inspected
     let actual_inspected_accounts = env.mock_bank.inspected_accounts.read().unwrap().clone();
-    for (expected_pubkey, expected_account) in &expected_inspected_accounts {
+    for (expected_pubkey, expected_account) in &expected_inspected_accounts.0 {
         let actual_account = actual_inspected_accounts.get(expected_pubkey).unwrap();
         assert_eq!(
             expected_account, actual_account,
@@ -2557,7 +2579,7 @@ fn svm_inspect_account() {
     }
 
     let num_expected_inspected_accounts: usize =
-        expected_inspected_accounts.values().map(Vec::len).sum();
+        expected_inspected_accounts.0.values().map(Vec::len).sum();
     let num_actual_inspected_accounts: usize =
         actual_inspected_accounts.values().map(Vec::len).sum();
 
