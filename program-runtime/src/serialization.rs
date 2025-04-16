@@ -108,7 +108,8 @@ impl Serializer {
                     MemoryRegion::new_readonly(account.get_data(), self.vaddr)
                 };
                 if writable && shared {
-                    new_region.cow_callback_payload = account.get_index_in_transaction() as u32;
+                    new_region.access_violation_handler_payload =
+                        Some(account.get_index_in_transaction());
                 }
                 self.vaddr += new_region.len;
                 self.regions.push(new_region);
@@ -1328,7 +1329,7 @@ mod tests {
         let mut mem = AlignedMemory::zero_filled(len);
         for region in regions {
             let host_slice = unsafe {
-                slice::from_raw_parts(region.host_addr.get() as *const u8, region.len as usize)
+                slice::from_raw_parts(region.host_addr as *const u8, region.len as usize)
             };
             mem.as_slice_mut()[(region.vm_addr - MM_INPUT_START) as usize..][..region.len as usize]
                 .copy_from_slice(host_slice)
