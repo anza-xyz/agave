@@ -166,7 +166,7 @@ fn memmove(
     dst_addr: u64,
     src_addr: u64,
     n: u64,
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
 ) -> Result<u64, Error> {
     if invoke_context
         .get_feature_set()
@@ -208,7 +208,7 @@ fn memmove_non_contiguous(
     src_addr: u64,
     n: u64,
     accounts: &[SerializedAccountMetadata],
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     resize_area: bool,
 ) -> Result<u64, Error> {
     let reverse = dst_addr.wrapping_sub(src_addr) < n;
@@ -247,7 +247,7 @@ fn memcmp_non_contiguous(
     dst_addr: u64,
     n: u64,
     accounts: &[SerializedAccountMetadata],
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     resize_area: bool,
 ) -> Result<i32, Error> {
     let memcmp_chunk = |s1_addr, s2_addr, chunk_len| {
@@ -311,7 +311,7 @@ fn memset_non_contiguous(
     c: u8,
     n: u64,
     accounts: &[SerializedAccountMetadata],
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
 ) -> Result<u64, Error> {
     let dst_chunk_iter = MemoryChunkIterator::new(
@@ -325,7 +325,7 @@ fn memset_non_contiguous(
     for item in dst_chunk_iter {
         let (dst_region, dst_vm_addr, dst_len) = item?;
         let dst_host_addr = dst_region
-            .vm_to_host(dst_vm_addr, dst_len as u64)
+            .vm_to_host(AccessType::Store, dst_vm_addr, dst_len as u64)
             .ok_or_else(|| {
                 EbpfError::AccessViolation(AccessType::Store, dst_vm_addr, dst_len as u64, "")
             })?;
@@ -343,7 +343,7 @@ fn iter_memory_pair_chunks<T, F>(
     dst_addr: u64,
     n_bytes: u64,
     accounts: &[SerializedAccountMetadata],
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     reverse: bool,
     resize_area: bool,
     mut fun: F,
@@ -418,19 +418,14 @@ where
 
             (
                 src_region
-                    .vm_to_host(src_addr, chunk_len as u64)
+                    .vm_to_host(src_access, src_addr, chunk_len as u64)
                     .ok_or_else(|| {
-                        EbpfError::AccessViolation(AccessType::Load, src_addr, chunk_len as u64, "")
+                        EbpfError::AccessViolation(src_access, src_addr, chunk_len as u64, "")
                     })?,
                 dst_region
-                    .vm_to_host(dst_addr, chunk_len as u64)
+                    .vm_to_host(dst_access, dst_addr, chunk_len as u64)
                     .ok_or_else(|| {
-                        EbpfError::AccessViolation(
-                            AccessType::Store,
-                            dst_addr,
-                            chunk_len as u64,
-                            "",
-                        )
+                        EbpfError::AccessViolation(dst_access, dst_addr, chunk_len as u64, "")
                     })?,
             )
         };
@@ -466,7 +461,7 @@ where
 }
 
 struct MemoryChunkIterator<'a> {
-    memory_mapping: &'a MemoryMapping<'a>,
+    memory_mapping: &'a mut MemoryMapping<'a>,
     accounts: &'a [SerializedAccountMetadata],
     access_type: AccessType,
     initial_vm_addr: u64,
@@ -481,7 +476,7 @@ struct MemoryChunkIterator<'a> {
 
 impl<'a> MemoryChunkIterator<'a> {
     fn new(
-        memory_mapping: &'a MemoryMapping,
+        memory_mapping: &'a mut MemoryMapping,
         accounts: &'a [SerializedAccountMetadata],
         access_type: AccessType,
         vm_addr: u64,
@@ -510,9 +505,11 @@ impl<'a> MemoryChunkIterator<'a> {
     }
 
     fn region(&mut self, vm_addr: u64) -> Result<&'a MemoryRegion, Error> {
-        match self.memory_mapping.region(self.access_type, vm_addr) {
-            Ok((_region_index, region)) => Ok(region),
-            Err(error) => match error {
+        match self.memory_mapping.map(self.access_type, vm_addr, self.len) {
+            solana_sbpf::error::ProgramResult::Ok(_) => {
+                Ok(self.memory_mapping.find_region(vm_addr).unwrap().1)
+            }
+            solana_sbpf::error::ProgramResult::Err(error) => match error {
                 EbpfError::AccessViolation(access_type, _vm_addr, _len, name) => Err(Box::new(
                     EbpfError::AccessViolation(access_type, self.initial_vm_addr, self.len, name),
                 )),
@@ -582,11 +579,12 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
         }
 
         let vm_addr = self.vm_addr_start;
+        let region_vm_addr_end = region.vm_addr_range().end;
 
-        let chunk_len = if region.vm_addr_end <= self.vm_addr_end {
+        let chunk_len = if region_vm_addr_end <= self.vm_addr_end {
             // consume the whole region
-            let len = region.vm_addr_end.saturating_sub(self.vm_addr_start);
-            self.vm_addr_start = region.vm_addr_end;
+            let len = region_vm_addr_end.saturating_sub(self.vm_addr_start);
+            self.vm_addr_start = region_vm_addr_end;
             len
         } else {
             // consume part of the region
@@ -691,10 +689,11 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
+        let mut memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
 
         let mut src_chunk_iter =
-            MemoryChunkIterator::new(&memory_mapping, &[], AccessType::Load, 0, 1, true).unwrap();
+            MemoryChunkIterator::new(&mut memory_mapping, &[], AccessType::Load, 0, 1, true)
+                .unwrap();
         src_chunk_iter.next().unwrap().unwrap();
     }
 
@@ -705,11 +704,17 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
+        let mut memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
 
-        let mut src_chunk_iter =
-            MemoryChunkIterator::new(&memory_mapping, &[], AccessType::Load, u64::MAX, 1, true)
-                .unwrap();
+        let mut src_chunk_iter = MemoryChunkIterator::new(
+            &mut memory_mapping,
+            &[],
+            AccessType::Load,
+            u64::MAX,
+            1,
+            true,
+        )
+        .unwrap();
         src_chunk_iter.next().unwrap().unwrap();
     }
 
@@ -720,7 +725,7 @@ mod tests {
             ..Config::default()
         };
         let mem1 = vec![0xFF; 42];
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(&mem1, MM_RODATA_START)],
             &config,
             SBPFVersion::V3,
@@ -729,7 +734,7 @@ mod tests {
 
         // check oob at the lower bound on the first next()
         let mut src_chunk_iter = MemoryChunkIterator::new(
-            &memory_mapping,
+            &mut memory_mapping,
             &[],
             AccessType::Load,
             MM_RODATA_START - 1,
@@ -745,7 +750,7 @@ mod tests {
         // check oob at the upper bound. Since the memory mapping isn't empty,
         // this always happens on the second next().
         let mut src_chunk_iter = MemoryChunkIterator::new(
-            &memory_mapping,
+            &mut memory_mapping,
             &[],
             AccessType::Load,
             MM_RODATA_START,
@@ -761,7 +766,7 @@ mod tests {
 
         // check oob at the upper bound on the first next_back()
         let mut src_chunk_iter = MemoryChunkIterator::new(
-            &memory_mapping,
+            &mut memory_mapping,
             &[],
             AccessType::Load,
             MM_RODATA_START,
@@ -777,7 +782,7 @@ mod tests {
 
         // check oob at the upper bound on the 2nd next_back()
         let mut src_chunk_iter = MemoryChunkIterator::new(
-            &memory_mapping,
+            &mut memory_mapping,
             &[],
             AccessType::Load,
             MM_RODATA_START - 1,
@@ -800,7 +805,7 @@ mod tests {
             ..Config::default()
         };
         let mem1 = vec![0xFF; 42];
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(&mem1, MM_RODATA_START)],
             &config,
             SBPFVersion::V3,
@@ -809,7 +814,7 @@ mod tests {
 
         // check lower bound
         let mut src_chunk_iter = MemoryChunkIterator::new(
-            &memory_mapping,
+            &mut memory_mapping,
             &[],
             AccessType::Load,
             MM_RODATA_START - 1,
@@ -821,7 +826,7 @@ mod tests {
 
         // check upper bound
         let mut src_chunk_iter = MemoryChunkIterator::new(
-            &memory_mapping,
+            &mut memory_mapping,
             &[],
             AccessType::Load,
             MM_RODATA_START + 42,
@@ -840,7 +845,7 @@ mod tests {
         ] {
             for rev in [true, false] {
                 let iter = MemoryChunkIterator::new(
-                    &memory_mapping,
+                    &mut memory_mapping,
                     &[],
                     AccessType::Load,
                     vm_addr,
@@ -870,7 +875,7 @@ mod tests {
         };
         let mem1 = vec![0x11; 8];
         let mem2 = vec![0x22; 4];
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&mem1, MM_RODATA_START),
                 MemoryRegion::new_readonly(&mem2, MM_RODATA_START + 8),
@@ -891,7 +896,7 @@ mod tests {
         ] {
             for rev in [false, true] {
                 let iter = MemoryChunkIterator::new(
-                    &memory_mapping,
+                    &mut memory_mapping,
                     &[],
                     AccessType::Load,
                     vm_addr,
@@ -919,7 +924,7 @@ mod tests {
         };
         let mem1 = vec![0x11; 8];
         let mem2 = vec![0x22; 4];
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&mem1, MM_RODATA_START),
                 MemoryRegion::new_readonly(&mem2, MM_RODATA_START + 8),
@@ -938,7 +943,7 @@ mod tests {
                 MM_RODATA_START + 8,
                 8,
                 &[],
-                &memory_mapping,
+                &mut memory_mapping,
                 false,
                 true,
                 |_src, _dst, _len| Ok::<_, Error>(0),
@@ -955,7 +960,7 @@ mod tests {
                 MM_RODATA_START + 2,
                 3,
                 &[],
-                &memory_mapping,
+                &mut memory_mapping,
                 false,
                 true,
                 |_src, _dst, _len| Ok::<_, Error>(0),
@@ -973,7 +978,7 @@ mod tests {
         };
         let mem1 = vec![0x11; 8];
         let mem2 = vec![0x22; 4];
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&mem1, MM_RODATA_START),
                 MemoryRegion::new_readonly(&mem2, MM_RODATA_START + 8),
@@ -988,7 +993,7 @@ mod tests {
             MM_RODATA_START + 8,
             4,
             &[],
-            &memory_mapping,
+            &mut memory_mapping,
             true,
         )
         .unwrap();
@@ -1039,7 +1044,7 @@ mod tests {
             MM_RODATA_START + src_offset as u64,
             len as u64,
             &[],
-            &memory_mapping,
+            &mut memory_mapping,
             true,
         )
         .unwrap();
@@ -1060,7 +1065,7 @@ mod tests {
         };
         let mut mem1 = vec![0x11; 8];
         let mem2 = vec![0x22; 4];
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_writable(&mut mem1, MM_RODATA_START),
                 MemoryRegion::new_readonly(&mem2, MM_RODATA_START + 8),
@@ -1071,7 +1076,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            memset_non_contiguous(MM_RODATA_START, 0x33, 9, &[], &memory_mapping, true).unwrap(),
+            memset_non_contiguous(MM_RODATA_START, 0x33, 9, &[], &mut memory_mapping, true)
+                .unwrap(),
             0
         );
     }
@@ -1086,7 +1092,7 @@ mod tests {
         let mut mem2 = vec![0x22; 2];
         let mut mem3 = vec![0x33; 3];
         let mut mem4 = vec![0x44; 4];
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&mem1, MM_RODATA_START),
                 MemoryRegion::new_writable(&mut mem2, MM_RODATA_START + 1),
@@ -1099,7 +1105,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            memset_non_contiguous(MM_RODATA_START + 1, 0x55, 7, &[], &memory_mapping, true)
+            memset_non_contiguous(MM_RODATA_START + 1, 0x55, 7, &[], &mut memory_mapping, true)
                 .unwrap(),
             0
         );
@@ -1118,7 +1124,7 @@ mod tests {
         let mem1 = b"foo".to_vec();
         let mem2 = b"barbad".to_vec();
         let mem3 = b"foobarbad".to_vec();
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![
                 MemoryRegion::new_readonly(&mem1, MM_RODATA_START),
                 MemoryRegion::new_readonly(&mem2, MM_RODATA_START + 3),
@@ -1136,7 +1142,7 @@ mod tests {
                 MM_RODATA_START + 9,
                 9,
                 &[],
-                &memory_mapping,
+                &mut memory_mapping,
                 true
             )
             .unwrap(),
@@ -1150,7 +1156,7 @@ mod tests {
                 MM_RODATA_START + 1,
                 8,
                 &[],
-                &memory_mapping,
+                &mut memory_mapping,
                 true
             )
             .unwrap(),
@@ -1164,7 +1170,7 @@ mod tests {
                 MM_RODATA_START + 11,
                 5,
                 &[],
-                &memory_mapping,
+                &mut memory_mapping,
                 true
             )
             .unwrap(),
@@ -1192,7 +1198,7 @@ mod tests {
             offset += *region_len;
         }
 
-        let memory_mapping = MemoryMapping::new(regs, config, SBPFVersion::V3).unwrap();
+        let mut memory_mapping = MemoryMapping::new(regs, config, SBPFVersion::V3).unwrap();
 
         (mem, memory_mapping)
     }

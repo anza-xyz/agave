@@ -269,7 +269,7 @@ impl<T> VmSlice<T> {
     /// Returns a slice using a mapped physical address
     pub fn translate(
         &self,
-        memory_mapping: &MemoryMapping,
+        memory_mapping: &mut MemoryMapping,
         check_aligned: bool,
     ) -> Result<&[T], Error> {
         translate_slice::<T>(memory_mapping, self.ptr, self.len, check_aligned)
@@ -277,7 +277,7 @@ impl<T> VmSlice<T> {
 
     pub fn translate_mut(
         &mut self,
-        memory_mapping: &MemoryMapping,
+        memory_mapping: &mut MemoryMapping,
         check_aligned: bool,
     ) -> Result<&mut [T], Error> {
         translate_slice_mut::<T>(memory_mapping, self.ptr, self.len, check_aligned)
@@ -587,7 +587,7 @@ fn address_is_aligned<T>(address: u64) -> bool {
 }
 
 fn translate(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     access_type: AccessType,
     vm_addr: u64,
     len: u64,
@@ -599,7 +599,7 @@ fn translate(
 }
 
 fn translate_type_inner<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     access_type: AccessType,
     vm_addr: u64,
     check_aligned: bool,
@@ -614,14 +614,14 @@ fn translate_type_inner<'a, T>(
     }
 }
 fn translate_type_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
 ) -> Result<&'a mut T, Error> {
     translate_type_inner::<T>(memory_mapping, AccessType::Store, vm_addr, check_aligned)
 }
 fn translate_type<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
 ) -> Result<&'a T, Error> {
@@ -630,7 +630,7 @@ fn translate_type<'a, T>(
 }
 
 fn translate_slice_inner<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     access_type: AccessType,
     vm_addr: u64,
     len: u64,
@@ -653,7 +653,7 @@ fn translate_slice_inner<'a, T>(
     Ok(unsafe { from_raw_parts_mut(host_addr as *mut T, len as usize) })
 }
 fn translate_slice_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
@@ -667,7 +667,7 @@ fn translate_slice_mut<'a, T>(
     )
 }
 fn translate_slice<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
@@ -683,7 +683,7 @@ fn translate_slice<'a, T>(
 }
 
 fn translate_slice_of_slices_inner<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     access_type: AccessType,
     vm_addr: u64,
     len: u64,
@@ -708,7 +708,7 @@ fn translate_slice_of_slices_inner<'a, T>(
 
 #[allow(dead_code)]
 fn translate_slice_of_slices_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
@@ -723,7 +723,7 @@ fn translate_slice_of_slices_mut<'a, T>(
 }
 
 fn translate_slice_of_slices<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
@@ -741,7 +741,7 @@ fn translate_slice_of_slices<'a, T>(
 /// Take a virtual pointer to a string (points to SBF VM memory space), translate it
 /// pass it to a user-defined work function
 fn translate_string_and_do(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     addr: u64,
     len: u64,
     check_aligned: bool,
@@ -2290,7 +2290,7 @@ mod tests {
         let data = vec![0u8; LENGTH as usize];
         let addr = data.as_ptr() as u64;
         let config = Config::default();
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(&data, START)],
             &config,
             SBPFVersion::V3,
@@ -2316,11 +2316,11 @@ mod tests {
         for (ok, start, length, value) in cases {
             if ok {
                 assert_eq!(
-                    translate(&memory_mapping, AccessType::Load, start, length).unwrap(),
+                    translate(&mut memory_mapping, AccessType::Load, start, length).unwrap(),
                     value
                 )
             } else {
-                assert!(translate(&memory_mapping, AccessType::Load, start, length).is_err())
+                assert!(translate(&mut memory_mapping, AccessType::Load, start, length).is_err())
             }
         }
     }
@@ -2331,14 +2331,14 @@ mod tests {
 
         // Pubkey
         let pubkey = solana_pubkey::new_rand();
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(bytes_of(&pubkey), 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
         let translated_pubkey =
-            translate_type::<Pubkey>(&memory_mapping, 0x100000000, true).unwrap();
+            translate_type::<Pubkey>(&mut memory_mapping, 0x100000000, true).unwrap();
         assert_eq!(pubkey, *translated_pubkey);
 
         // Instruction
@@ -2349,16 +2349,16 @@ mod tests {
         );
         let instruction = StableInstruction::from(instruction);
         let memory_region = MemoryRegion::new_readonly(bytes_of(&instruction), 0x100000000);
-        let memory_mapping =
+        let mut memory_mapping =
             MemoryMapping::new(vec![memory_region], &config, SBPFVersion::V3).unwrap();
         let translated_instruction =
-            translate_type::<StableInstruction>(&memory_mapping, 0x100000000, true).unwrap();
+            translate_type::<StableInstruction>(&mut memory_mapping, 0x100000000, true).unwrap();
         assert_eq!(instruction, *translated_instruction);
 
         let memory_region = MemoryRegion::new_readonly(&bytes_of(&instruction)[..1], 0x100000000);
-        let memory_mapping =
+        let mut memory_mapping =
             MemoryMapping::new(vec![memory_region], &config, SBPFVersion::V3).unwrap();
-        assert!(translate_type::<Instruction>(&memory_mapping, 0x100000000, true).is_err());
+        assert!(translate_type::<Instruction>(&mut memory_mapping, 0x100000000, true).is_err());
     }
 
     #[test]
@@ -2369,42 +2369,47 @@ mod tests {
         let good_data = vec![1u8, 2, 3, 4, 5];
         let data: Vec<u8> = vec![];
         assert_eq!(0x1 as *const u8, data.as_ptr());
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(&good_data, 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
         let translated_data =
-            translate_slice::<u8>(&memory_mapping, data.as_ptr() as u64, 0, true).unwrap();
+            translate_slice::<u8>(&mut memory_mapping, data.as_ptr() as u64, 0, true).unwrap();
         assert_eq!(data, translated_data);
         assert_eq!(0, translated_data.len());
 
         // u8
         let mut data = vec![1u8, 2, 3, 4, 5];
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(&data, 0x100000000)],
             &config,
             SBPFVersion::V3,
         )
         .unwrap();
         let translated_data =
-            translate_slice::<u8>(&memory_mapping, 0x100000000, data.len() as u64, true).unwrap();
+            translate_slice::<u8>(&mut memory_mapping, 0x100000000, data.len() as u64, true)
+                .unwrap();
         assert_eq!(data, translated_data);
         *data.first_mut().unwrap() = 10;
         assert_eq!(data, translated_data);
         assert!(
-            translate_slice::<u8>(&memory_mapping, data.as_ptr() as u64, u64::MAX, true).is_err()
-        );
-
-        assert!(
-            translate_slice::<u8>(&memory_mapping, 0x100000000 - 1, data.len() as u64, true,)
+            translate_slice::<u8>(&mut memory_mapping, data.as_ptr() as u64, u64::MAX, true)
                 .is_err()
         );
 
+        assert!(translate_slice::<u8>(
+            &mut memory_mapping,
+            0x100000000 - 1,
+            data.len() as u64,
+            true,
+        )
+        .is_err());
+
         // u64
         let mut data = vec![1u64, 2, 3, 4, 5];
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(
                 bytes_of_slice(&data),
                 0x100000000,
@@ -2414,15 +2419,16 @@ mod tests {
         )
         .unwrap();
         let translated_data =
-            translate_slice::<u64>(&memory_mapping, 0x100000000, data.len() as u64, true).unwrap();
+            translate_slice::<u64>(&mut memory_mapping, 0x100000000, data.len() as u64, true)
+                .unwrap();
         assert_eq!(data, translated_data);
         *data.first_mut().unwrap() = 10;
         assert_eq!(data, translated_data);
-        assert!(translate_slice::<u64>(&memory_mapping, 0x100000000, u64::MAX, true).is_err());
+        assert!(translate_slice::<u64>(&mut memory_mapping, 0x100000000, u64::MAX, true).is_err());
 
         // Pubkeys
         let mut data = vec![solana_pubkey::new_rand(); 5];
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(
                 unsafe {
                     slice::from_raw_parts(data.as_ptr() as *const u8, mem::size_of::<Pubkey>() * 5)
@@ -2434,7 +2440,7 @@ mod tests {
         )
         .unwrap();
         let translated_data =
-            translate_slice::<Pubkey>(&memory_mapping, 0x100000000, data.len() as u64, true)
+            translate_slice::<Pubkey>(&mut memory_mapping, 0x100000000, data.len() as u64, true)
                 .unwrap();
         assert_eq!(data, translated_data);
         *data.first_mut().unwrap() = solana_pubkey::new_rand(); // Both should point to same place
@@ -2445,7 +2451,7 @@ mod tests {
     fn test_translate_string_and_do() {
         let string = "Gaggablaghblagh!";
         let config = Config::default();
-        let memory_mapping = MemoryMapping::new(
+        let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(string.as_bytes(), 0x100000000)],
             &config,
             SBPFVersion::V3,
@@ -2454,7 +2460,7 @@ mod tests {
         assert_eq!(
             42,
             translate_string_and_do(
-                &memory_mapping,
+                &mut memory_mapping,
                 0x100000000,
                 string.len() as u64,
                 true,
@@ -4506,7 +4512,7 @@ mod tests {
         )
         .unwrap();
         let processed_sibling_instruction = translate_type_mut::<ProcessedSiblingInstruction>(
-            &memory_mapping,
+            &mut memory_mapping,
             VM_BASE_ADDRESS,
             true,
         )
@@ -4514,20 +4520,20 @@ mod tests {
         processed_sibling_instruction.data_len = 1;
         processed_sibling_instruction.accounts_len = 1;
         let program_id = translate_type_mut::<Pubkey>(
-            &memory_mapping,
+            &mut memory_mapping,
             VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
             true,
         )
         .unwrap();
         let data = translate_slice_mut::<u8>(
-            &memory_mapping,
+            &mut memory_mapping,
             VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
             processed_sibling_instruction.data_len,
             true,
         )
         .unwrap();
         let accounts = translate_slice_mut::<AccountMeta>(
-            &memory_mapping,
+            &mut memory_mapping,
             VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
             processed_sibling_instruction.accounts_len,
             true,
