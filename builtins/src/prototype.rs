@@ -1,7 +1,7 @@
 //! Prototype layouts for builtins.
 
 use {
-    crate::core_bpf_migration::CoreBpfMigrationConfig, solana_hash::Hash,
+    crate::core_bpf_migration::CoreBpfMigrationConfig,
     solana_program_runtime::invoke_context::BuiltinFunctionWithContext, solana_pubkey::Pubkey,
 };
 
@@ -43,6 +43,4 @@ pub struct StatelessBuiltinPrototype {
     pub program_id: Pubkey,
     /// The program's name, ie "feature_gate_program".
     pub name: &'static str,
-    /// The expected verified build hash.
-    pub verified_build_hash: Hash,
 }

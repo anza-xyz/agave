@@ -69,6 +69,7 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
             source_buffer_address: buffer_accounts::stake_program::id(),
             upgrade_authority_address: None,
             feature_id: agave_feature_set::migrate_stake_program_to_core_bpf::id(),
+            verified_build_hash: None,
             migration_target: CoreBpfMigrationTargetType::Builtin,
             datapoint_name: "migrate_builtin_to_core_bpf_stake_program",
         }),
@@ -133,12 +134,12 @@ pub static STATELESS_BUILTINS: &[StatelessBuiltinPrototype] = &[StatelessBuiltin
         source_buffer_address: buffer_accounts::slashing_program::id(),
         upgrade_authority_address: None,
         feature_id: feature_set::enshrine_slashing_program::id(),
+        verified_build_hash: Some(buffer_accounts::slashing_program::VERIFIED_BUILD_HASH),
         migration_target: CoreBpfMigrationTargetType::Stateless,
         datapoint_name: "enshrine_slashing_program",
     }),
     program_id: buffer_accounts::slashing_program::PROGRAM_ID,
     name: "solana_slashing_program",
-    verified_build_hash: buffer_accounts::slashing_program::VERIFIED_BUILD_HASH,
 }];
 
 /// Live source buffer accounts for builtin migrations.
@@ -188,6 +189,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_system_program",
         };
     }
@@ -207,6 +209,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_vote_program",
         };
     }
@@ -226,6 +229,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_bpf_loader_deprecated_program",
         };
     }
@@ -245,6 +249,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_bpf_loader_program",
         };
     }
@@ -264,6 +269,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_bpf_loader_upgradeable_program",
         };
     }
@@ -283,6 +289,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_compute_budget_program",
         };
     }
@@ -302,6 +309,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_zk_token_proof_program",
         };
     }
@@ -321,6 +329,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_loader_v4_program",
         };
     }
@@ -340,6 +349,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_zk_elgamal_proof_program",
         };
     }

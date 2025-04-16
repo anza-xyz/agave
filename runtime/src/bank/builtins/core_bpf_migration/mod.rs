@@ -213,14 +213,13 @@ impl Bank {
     pub(crate) fn migrate_builtin_to_core_bpf(
         &mut self,
         builtin_program_id: &Pubkey,
-        verified_build_hash: Option<Hash>,
         config: &CoreBpfMigrationConfig,
     ) -> Result<(), CoreBpfMigrationError> {
         datapoint_info!(config.datapoint_name, ("slot", self.slot, i64));
 
         let target =
             TargetBuiltin::new_checked(self, builtin_program_id, &config.migration_target)?;
-        let source = if let Some(expected_hash) = verified_build_hash {
+        let source = if let Some(expected_hash) = config.verified_build_hash {
             SourceBuffer::new_checked_with_verified_build_hash(
                 self,
                 &config.source_buffer_address,
@@ -657,12 +656,13 @@ pub(crate) mod tests {
             upgrade_authority_address,
             feature_id: Pubkey::new_unique(),
             migration_target: CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "test_migrate_builtin",
         };
 
         // Perform the migration.
         let migration_slot = bank.slot();
-        bank.migrate_builtin_to_core_bpf(&builtin_id, None, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
             .unwrap();
 
         // Run the post-migration program checks.
@@ -711,28 +711,24 @@ pub(crate) mod tests {
         ) = test_context
             .calculate_post_migration_capitalization_and_accounts_data_size_delta_off_chain(&bank);
 
-        let core_bpf_migration_config = CoreBpfMigrationConfig {
-            source_buffer_address,
-            upgrade_authority_address,
-            feature_id: Pubkey::new_unique(),
-            migration_target: CoreBpfMigrationTargetType::Stateless,
-            datapoint_name: "test_migrate_stateless_builtin",
-        };
-
         let expected_hash = {
             let data = test_elf();
             let end_offset = data.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
             solana_sha256_hasher::hash(&data[..end_offset])
         };
+        let core_bpf_migration_config = CoreBpfMigrationConfig {
+            source_buffer_address,
+            upgrade_authority_address,
+            feature_id: Pubkey::new_unique(),
+            verified_build_hash: Some(expected_hash),
+            migration_target: CoreBpfMigrationTargetType::Stateless,
+            datapoint_name: "test_migrate_stateless_builtin",
+        };
 
         // Perform the migration.
         let migration_slot = bank.slot();
-        bank.migrate_builtin_to_core_bpf(
-            &builtin_id,
-            Some(expected_hash),
-            &core_bpf_migration_config,
-        )
-        .unwrap();
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+            .unwrap();
 
         // Run the post-migration program checks.
         test_context.run_program_checks(&bank, migration_slot);
@@ -790,11 +786,12 @@ pub(crate) mod tests {
             upgrade_authority_address: Some(Pubkey::new_unique()), // Mismatch.
             feature_id: Pubkey::new_unique(),
             migration_target: CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "test_migrate_builtin",
         };
 
         assert_matches!(
-            bank.migrate_builtin_to_core_bpf(&builtin_id, None, &core_bpf_migration_config)
+            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
                 .unwrap_err(),
             CoreBpfMigrationError::UpgradeAuthorityMismatch(_, _)
         )
@@ -840,16 +837,13 @@ pub(crate) mod tests {
             upgrade_authority_address: None,
             feature_id: Pubkey::new_unique(),
             migration_target: CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: Some(Hash::default()),
             datapoint_name: "test_migrate_builtin",
         };
 
         assert_matches!(
-            bank.migrate_builtin_to_core_bpf(
-                &builtin_id,
-                Some(Hash::default()),
-                &core_bpf_migration_config
-            )
-            .unwrap_err(),
+            bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
+                .unwrap_err(),
             CoreBpfMigrationError::BuildHashMismatch(_, _)
         )
     }
@@ -903,10 +897,11 @@ pub(crate) mod tests {
             upgrade_authority_address: None, // None.
             feature_id: Pubkey::new_unique(),
             migration_target: CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "test_migrate_builtin",
         };
 
-        bank.migrate_builtin_to_core_bpf(&builtin_id, None, &core_bpf_migration_config)
+        bank.migrate_builtin_to_core_bpf(&builtin_id, &core_bpf_migration_config)
             .unwrap();
 
         let program_data_address = get_program_data_address(&builtin_id);

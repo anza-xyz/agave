@@ -6730,11 +6730,9 @@ impl Bank {
                 // to the bank's builtins. The migration will remove it from
                 // the builtins list and the cache.
                 if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
-                    if let Err(e) = self.migrate_builtin_to_core_bpf(
-                        &builtin.program_id,
-                        None,
-                        core_bpf_migration_config,
-                    ) {
+                    if let Err(e) = self
+                        .migrate_builtin_to_core_bpf(&builtin.program_id, core_bpf_migration_config)
+                    {
                         warn!(
                             "Failed to migrate builtin {} to Core BPF: {}",
                             builtin.name, e
@@ -6783,7 +6781,6 @@ impl Bank {
                 if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
                     if let Err(e) = self.migrate_builtin_to_core_bpf(
                         &stateless_builtin.program_id,
-                        Some(stateless_builtin.verified_build_hash),
                         core_bpf_migration_config,
                     ) {
                         warn!(
