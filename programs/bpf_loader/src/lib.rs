@@ -349,11 +349,11 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
     .chain(additional_regions)
     .collect();
 
-    Ok(MemoryMapping::new_with_cow(
+    Ok(MemoryMapping::new_with_access_violation_handler(
         regions,
         config,
         sbpf_version,
-        transaction_context.account_data_write_access_handler(),
+        transaction_context.access_violation_handler(),
     )?)
 }
 
