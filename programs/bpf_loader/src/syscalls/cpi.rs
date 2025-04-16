@@ -1589,7 +1589,9 @@ fn account_data_region<'a>(
 
     // We can trust vm_data_addr to point to the correct region because we
     // enforce that in CallerAccount::from_(sol_)account_info.
-    let (data_region_index, data_region) = memory_mapping.region(AccessType::Load, vm_data_addr)?;
+    let (data_region_index, data_region) = memory_mapping
+        .find_region(vm_data_addr)
+        .ok_or_else(|| Box::new(InstructionError::MissingAccount))?;
     // vm_data_addr must always point to the beginning of the region
     debug_assert_eq!(data_region.vm_addr, vm_data_addr);
     Ok(Some((data_region_index, data_region)))
@@ -1606,8 +1608,9 @@ fn account_realloc_region<'a>(
     }
 
     let realloc_vm_addr = vm_data_addr.saturating_add(original_data_len as u64);
-    let (realloc_region_index, realloc_region) =
-        memory_mapping.region(AccessType::Load, realloc_vm_addr)?;
+    let (realloc_region_index, realloc_region) = memory_mapping
+        .find_region(realloc_vm_addr)
+        .ok_or_else(|| Box::new(InstructionError::MissingAccount))?;
     debug_assert_eq!(realloc_region.vm_addr, realloc_vm_addr);
     debug_assert!((MAX_PERMITTED_DATA_INCREASE
         ..MAX_PERMITTED_DATA_INCREASE.saturating_add(BPF_ALIGN_OF_U128))

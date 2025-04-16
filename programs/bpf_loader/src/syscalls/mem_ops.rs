@@ -325,7 +325,7 @@ fn memset_non_contiguous(
     for item in dst_chunk_iter {
         let (dst_region, dst_vm_addr, dst_len) = item?;
         let dst_host_addr = dst_region
-            .vm_to_host(dst_vm_addr, dst_len as u64)
+            .vm_to_host(AccessType::Store, dst_vm_addr, dst_len as u64)
             .ok_or_else(|| {
                 EbpfError::AccessViolation(AccessType::Store, dst_vm_addr, dst_len as u64, "")
             })?;
@@ -418,19 +418,14 @@ where
 
             (
                 src_region
-                    .vm_to_host(src_addr, chunk_len as u64)
+                    .vm_to_host(src_access, src_addr, chunk_len as u64)
                     .ok_or_else(|| {
-                        EbpfError::AccessViolation(AccessType::Load, src_addr, chunk_len as u64, "")
+                        EbpfError::AccessViolation(src_access, src_addr, chunk_len as u64, "")
                     })?,
                 dst_region
-                    .vm_to_host(dst_addr, chunk_len as u64)
+                    .vm_to_host(dst_access, dst_addr, chunk_len as u64)
                     .ok_or_else(|| {
-                        EbpfError::AccessViolation(
-                            AccessType::Store,
-                            dst_addr,
-                            chunk_len as u64,
-                            "",
-                        )
+                        EbpfError::AccessViolation(dst_access, dst_addr, chunk_len as u64, "")
                     })?,
             )
         };
@@ -510,7 +505,10 @@ impl<'a> MemoryChunkIterator<'a> {
     }
 
     fn region(&mut self, vm_addr: u64) -> Result<&'a MemoryRegion, Error> {
-        match self.memory_mapping.region(self.access_type, vm_addr) {
+        match self
+            .memory_mapping
+            .region(self.access_type, vm_addr, self.len)
+        {
             Ok((_region_index, region)) => Ok(region),
             Err(error) => match error {
                 EbpfError::AccessViolation(access_type, _vm_addr, _len, name) => Err(Box::new(
@@ -582,11 +580,12 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
         }
 
         let vm_addr = self.vm_addr_start;
+        let region_vm_addr_end = region.vm_addr_range().end;
 
-        let chunk_len = if region.vm_addr_end <= self.vm_addr_end {
+        let chunk_len = if region_vm_addr_end <= self.vm_addr_end {
             // consume the whole region
-            let len = region.vm_addr_end.saturating_sub(self.vm_addr_start);
-            self.vm_addr_start = region.vm_addr_end;
+            let len = region_vm_addr_end.saturating_sub(self.vm_addr_start);
+            self.vm_addr_start = region_vm_addr_end;
             len
         } else {
             // consume part of the region

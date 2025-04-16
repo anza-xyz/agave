@@ -1328,7 +1328,7 @@ mod tests {
         let mut mem = AlignedMemory::zero_filled(len);
         for region in regions {
             let host_slice = unsafe {
-                slice::from_raw_parts(region.host_addr.get() as *const u8, region.len as usize)
+                slice::from_raw_parts(region.host_addr as *const u8, region.len as usize)
             };
             mem.as_slice_mut()[(region.vm_addr - MM_INPUT_START) as usize..][..region.len as usize]
                 .copy_from_slice(host_slice)
