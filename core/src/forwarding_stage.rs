@@ -44,9 +44,8 @@ mod packet_container;
 /// [`ForwardingClientOption`] enum represents the available client types for TPU
 /// communication:
 /// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
-///       connections efficiently.
-/// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate and
-///       requires a reference to a [`Keypair`].
+///       connections.
+/// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate.
 pub enum ForwardingClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
     TpuClientNext((&'a Keypair, UdpSocket, RuntimeHandle)),
