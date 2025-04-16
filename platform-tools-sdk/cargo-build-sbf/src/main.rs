@@ -397,7 +397,6 @@ fn link_solana_toolchain(config: &Config) {
 
 fn build_solana_package(
     config: &Config,
-    target_directory: &Path,
     package: &cargo_metadata::Package,
     metadata: &cargo_metadata::Metadata,
 ) {
@@ -587,8 +586,6 @@ fn build_solana_package(
     if config.verbose {
         debug!("{}", output);
     }
-
-    post_process(config, package, target_directory);
 }
 
 // allow user to set proper `rustc` into RUSTC or into PATH
@@ -599,6 +596,47 @@ fn check_solana_target_installed(target: &str) {
     if !output.contains(target) {
         error!("Provided {:?} does not have {} target. The Solana rustc must be available in $PATH or the $RUSTC environment variable for the build to succeed.", rustc, target);
         exit(1);
+    }
+}
+
+fn generate_program_name(package: &cargo_metadata::Package) -> Option<String> {
+    let cdylib_targets = package
+        .targets
+        .iter()
+        .filter_map(|target| {
+            if target.crate_types.contains(&"cdylib".to_string()) {
+                let other_crate_type = if target.crate_types.contains(&"rlib".to_string()) {
+                    Some("rlib")
+                } else if target.crate_types.contains(&"lib".to_string()) {
+                    Some("lib")
+                } else {
+                    None
+                };
+
+                if let Some(other_crate) = other_crate_type {
+                    warn!("Package '{}' has two crate types defined: cdylib and {}. \
+                        This setting precludes link-time optimizations (LTO). Use cdylib for programs \
+                        to be deployed and rlib for packages to be imported by other programs as libraries.",
+                        package.name, other_crate);
+                }
+
+                Some(&target.name)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    match cdylib_targets.len() {
+        0 => None,
+        1 => Some(cdylib_targets[0].replace('-', "_")),
+        _ => {
+            error!(
+                "{} crate contains multiple cdylib targets: {:?}",
+                package.name, cdylib_targets
+            );
+            exit(1);
+        }
     }
 }
 
@@ -623,7 +661,9 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
 
     if let Some(root_package) = metadata.root_package() {
         if !config.workspace {
-            build_solana_package(&config, target_dir.as_ref(), root_package, &metadata);
+            let program_name = generate_program_name(root_package);
+            build_solana_package(&config, root_package, &metadata);
+            post_process(&config, target_dir.as_ref(), program_name);
             return;
         }
     }
@@ -644,7 +684,9 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
         .collect::<Vec<_>>();
 
     for package in all_sbf_packages {
-        build_solana_package(&config, target_dir.as_ref(), package, &metadata);
+        let program_name = generate_program_name(package);
+        build_solana_package(&config, package, &metadata);
+        post_process(&config, target_dir.as_ref(), program_name);
     }
 }
 

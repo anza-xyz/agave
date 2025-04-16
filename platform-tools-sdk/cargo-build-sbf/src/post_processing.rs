@@ -13,52 +13,7 @@ use {
     },
 };
 
-pub(crate) fn post_process(
-    config: &Config,
-    package: &cargo_metadata::Package,
-    target_directory: &Path,
-) {
-    let program_name = {
-        let cdylib_targets = package
-            .targets
-            .iter()
-            .filter_map(|target| {
-                if target.crate_types.contains(&"cdylib".to_string()) {
-                    let other_crate_type = if target.crate_types.contains(&"rlib".to_string()) {
-                        Some("rlib")
-                    } else if target.crate_types.contains(&"lib".to_string()) {
-                        Some("lib")
-                    } else {
-                        None
-                    };
-
-                    if let Some(other_crate) = other_crate_type {
-                        warn!("Package '{}' has two crate types defined: cdylib and {}. \
-                        This setting precludes link-time optimizations (LTO). Use cdylib for programs \
-                        to be deployed and rlib for packages to be imported by other programs as libraries.",
-                        package.name, other_crate);
-                    }
-
-                    Some(&target.name)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        match cdylib_targets.len() {
-            0 => None,
-            1 => Some(cdylib_targets[0].replace('-', "_")),
-            _ => {
-                error!(
-                    "{} crate contains multiple cdylib targets: {:?}",
-                    package.name, cdylib_targets
-                );
-                exit(1);
-            }
-        }
-    };
-
+pub(crate) fn post_process(config: &Config, target_directory: &Path, program_name: Option<String>) {
     let sbf_out_dir = config
         .sbf_out_dir
         .as_ref()
