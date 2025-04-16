@@ -143,6 +143,7 @@ impl Tpu {
             transactions_forwards_quic: transactions_forwards_quic_sockets,
             vote_quic: tpu_vote_quic_sockets,
             vote_forwards_client: vote_forwards_client_socket,
+            ..
         } = sockets;
 
         let (packet_sender, packet_receiver) = unbounded();

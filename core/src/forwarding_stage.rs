@@ -30,13 +30,13 @@ use {
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_tpu_client_next::{
-        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
+        connection_workers_scheduler::{BindTarget, ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler,
     },
     std::{
-        net::{Ipv4Addr, SocketAddr, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
@@ -55,7 +55,7 @@ mod packet_container;
 ///       requires a reference to a [`Keypair`].
 pub enum ForwardingClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext((&'a Keypair, RuntimeHandle)),
+    TpuClientNext((&'a Keypair, UdpSocket, RuntimeHandle)),
 }
 
 /// Value chosen because it was used historically, at some point
@@ -247,11 +247,16 @@ pub(crate) fn spawn_forwarding_stage(
                 .spawn(move || forwarding_stage.run())
                 .unwrap()
         }
-        ForwardingClientOption::TpuClientNext((stake_identity, runtime_handle)) => {
+        ForwardingClientOption::TpuClientNext((
+            stake_identity,
+            tpu_client_socket,
+            runtime_handle,
+        )) => {
             let non_vote_client = TpuClientNextClient::new(
                 runtime_handle,
                 forward_address_getter,
                 Some(stake_identity),
+                tpu_client_socket,
             );
             let forwarding_stage = ForwardingStage::new(
                 receiver,
@@ -516,9 +521,24 @@ impl LeaderUpdater for ForwardAddressGetter {
     async fn stop(&mut self) {}
 }
 
-#[derive(Clone)]
 struct TpuClientNextClient {
     sender: mpsc::Sender<TransactionBatch>,
+    bind_socket: UdpSocket,
+}
+
+// Implement Clone manually because `UdpSocket` implements only `try_clone`.
+impl Clone for TpuClientNextClient {
+    fn clone(&self) -> Self {
+        let bind_socket = self
+            .bind_socket
+            .try_clone()
+            .expect("Cloning bind socket should always finish successfully.");
+
+        TpuClientNextClient {
+            sender: self.sender.clone(),
+            bind_socket,
+        }
+    }
 }
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
@@ -528,13 +548,19 @@ impl TpuClientNextClient {
         runtime_handle: tokio::runtime::Handle,
         forward_address_getter: ForwardAddressGetter,
         stake_identity: Option<&Keypair>,
+        bind_socket: UdpSocket,
     ) -> Self {
         // For now use large channel, the more suitable size to be found later.
         let (sender, receiver) = mpsc::channel(128);
         let cancel = CancellationToken::new();
         let leader_updater = forward_address_getter.clone();
 
-        let config = Self::create_config(stake_identity);
+        let config = {
+            let bind_socket = bind_socket
+                .try_clone()
+                .expect("Cloning bind socket should always finish successfully.");
+            Self::create_config(bind_socket, stake_identity)
+        };
         let scheduler: ConnectionWorkersScheduler =
             ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
         // leaking handle to this task, as it will run until the cancel signal is received
@@ -544,12 +570,18 @@ impl TpuClientNextClient {
             cancel.clone(),
         ));
         let _handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
-        Self { sender }
+        Self {
+            sender,
+            bind_socket,
+        }
     }
 
-    fn create_config(stake_identity: Option<&Keypair>) -> ConnectionWorkersSchedulerConfig {
+    fn create_config(
+        bind_socket: UdpSocket,
+        stake_identity: Option<&Keypair>,
+    ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
-            bind: SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
+            bind: BindTarget::Socket(bind_socket),
             stake_identity: stake_identity.map(Into::into),
             // Cache size of 128 covers all nodes above the P90 slot count threshold,
             // which together account for ~75% of total slots in the epoch.
