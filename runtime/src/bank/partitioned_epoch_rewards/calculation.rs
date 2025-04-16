@@ -100,9 +100,8 @@ impl Bank {
             .lock()
             .unwrap()
             .get(&self.epoch)
-            .map(|m| m.get(&self.parent_slot))
-            .flatten()
-            .map(|m| m.clone());
+            .and_then(|m| m.get(&self.parent_slot))
+            .cloned();
 
         if reward_calculation.is_none() {
             let calculation = self.calculate_rewards_for_partitioning(
