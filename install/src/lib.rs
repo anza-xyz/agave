@@ -1,7 +1,4 @@
 #![allow(clippy::arithmetic_side_effects)]
-#[macro_use]
-extern crate lazy_static;
-
 use {
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_clap_utils::{
