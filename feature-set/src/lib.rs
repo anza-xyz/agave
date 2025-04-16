@@ -1030,6 +1030,10 @@ pub mod mask_out_rent_epoch_in_vm_serialization {
     solana_pubkey::declare_id!("RENtePQcDLrAbxAsP3k8dwVcnNYQ466hi2uKvALjnXx");
 }
 
+pub mod remove_fee_rate_governor_from_fee_calculation {
+    solana_pubkey::declare_id!("2dsTvEsgS6K5eV82Bn6hNCDm76rZUWcWeKvHjGqtUmgE");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1263,6 +1267,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (require_static_nonce_account::id(), "SIMD-0242: Static Nonce Account Only"),
         (raise_block_limits_to_60m::id(), "Raise block limit to 60M SIMD-0256"),
         (mask_out_rent_epoch_in_vm_serialization::id(), "SIMD-0267: Sets rent_epoch to a constant in the VM"),
+        (remove_fee_rate_governor_from_fee_calculation::id(), "Remove obsoleted FeeRateGovernor from fee calculation #5782"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
