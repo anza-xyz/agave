@@ -2589,7 +2589,6 @@ impl Node {
         bind_in_range_with_config(bind_ip_addr, port_range, config).expect("Failed to bind")
     }
 
-    #[deprecated(since = "2.3.0", note = "Please use `new_with_external_ip` instead.")]
     pub fn new_single_bind(
         pubkey: &Pubkey,
         gossip_addr: &SocketAddr,
@@ -2802,7 +2801,8 @@ impl Node {
                 .expect("tpu_vote multi_bind");
 
         let (tpu_vote_quic_port, tpu_vote_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config_reuseport);
+            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
+
         let tpu_vote_quic = bind_more_with_config(
             tpu_vote_quic,
             num_quic_endpoints.get(),
