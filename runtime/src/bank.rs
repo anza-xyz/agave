@@ -146,7 +146,7 @@ use {
         slot_hashes::SlotHashes,
         slot_history::{Check, SlotHistory},
         stake::state::Delegation,
-        system_program, system_transaction,
+        system_transaction,
         sysvar::{self, last_restart_slot::LastRestartSlot, Sysvar, SysvarId},
         timing::years_as_slots,
         transaction::{
@@ -6647,37 +6647,6 @@ impl Bank {
             // AccountHash for modified accounts, and can stop the background account hasher.
             self.rc.accounts.accounts_db.stop_background_hasher();
         }
-
-        if new_feature_activations.contains(&feature_set::enshrine_slashing_program::id()) {
-            const SLASHING_PROGRAM_KEY: Pubkey =
-                Pubkey::from_str_const("S1ashing11111111111111111111111111111111111");
-            const BUFFER_KEY: Pubkey =
-                Pubkey::from_str_const("S1asHs4je6wPb2kWiHqNNdpNRiDaBEDQyfyCThhsrgv");
-            // 192ed727334abe822d5accba8b886e25f88b03c76973c2e7290cfb55b9e1115f
-            const HASH_BYTES: [u8; 32] = [
-                0x19, 0x2e, 0xd7, 0x27, 0x33, 0x4a, 0xbe, 0x82, 0x2d, 0x5a, 0xcc, 0xba, 0x8b, 0x88,
-                0x6e, 0x25, 0xf8, 0x8b, 0x03, 0xc7, 0x69, 0x73, 0xc2, 0xe7, 0x29, 0x0c, 0xfb, 0x55,
-                0xb9, 0xe1, 0x11, 0x5f,
-            ];
-            const VERIFIED_BUILD_HASH: Hash = Hash::new_from_array(HASH_BYTES);
-            const UPGRADE_AUTHORITY: Pubkey = system_program::id();
-
-            info!(
-                "Enshrining slashing program (SIMD-0204) epoch {}",
-                self.epoch
-            );
-            if let Err(e) = self.add_new_core_bpf_program(
-                &SLASHING_PROGRAM_KEY,
-                &BUFFER_KEY,
-                VERIFIED_BUILD_HASH,
-                UPGRADE_AUTHORITY,
-                "slashing",
-            ) {
-                error!("Unable to enshrine slashing program: {e:?}");
-            } else {
-                info!("Successfully enshrined slashing program at {SLASHING_PROGRAM_KEY}");
-            }
-        }
     }
 
     fn apply_updated_hashes_per_tick(&mut self, hashes_per_tick: u64) {
@@ -6761,9 +6730,11 @@ impl Bank {
                 // to the bank's builtins. The migration will remove it from
                 // the builtins list and the cache.
                 if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
-                    if let Err(e) = self
-                        .migrate_builtin_to_core_bpf(&builtin.program_id, core_bpf_migration_config)
-                    {
+                    if let Err(e) = self.migrate_builtin_to_core_bpf(
+                        &builtin.program_id,
+                        None,
+                        core_bpf_migration_config,
+                    ) {
                         warn!(
                             "Failed to migrate builtin {} to Core BPF: {}",
                             builtin.name, e
@@ -6812,6 +6783,7 @@ impl Bank {
                 if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
                     if let Err(e) = self.migrate_builtin_to_core_bpf(
                         &stateless_builtin.program_id,
+                        Some(stateless_builtin.verified_build_hash),
                         core_bpf_migration_config,
                     ) {
                         warn!(
