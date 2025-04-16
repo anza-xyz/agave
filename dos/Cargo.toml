@@ -30,7 +30,7 @@ solana-perf = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
-solana-sdk = "=2.2.2"
+solana-sdk = "=2.2.1"
 solana-streamer = { workspace = true }
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true }

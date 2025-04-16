@@ -500,7 +500,9 @@ impl TransactionContext {
     /// Returns a new account data write access handler
     pub fn account_data_write_access_handler(&self) -> Box<dyn Fn(u32) -> Result<u64, ()>> {
         let accounts = Rc::clone(&self.accounts);
-        Box::new(move |index_in_transaction| {
+        Box::new(move |region_index| {
+            let index_in_transaction = region_index & 0xFF;
+            let original_data_len = (region_index.wrapping_shr(8) & 0xFFFFFF) as usize;
             // The two calls below can't really fail. If they fail because of a bug,
             // whatever is writing will trigger an EbpfError::AccessViolation like
             // if the region was readonly, and the transaction will fail gracefully.
@@ -514,12 +516,24 @@ impl TransactionContext {
                 .touch(index_in_transaction as IndexOfAccount)
                 .map_err(|_| ())?;
 
-            if account.is_shared() {
-                // See BorrowedAccount::make_data_mut() as to why we reserve extra
-                // MAX_PERMITTED_DATA_INCREASE bytes here.
-                account.reserve(MAX_PERMITTED_DATA_INCREASE);
-            }
-            Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
+            // Makes shared ZEROED_REALLOC_PADDING unique by allocating and zeroing the realloc region.
+            let current_len = account.data().len();
+            let extra_bytes = original_data_len
+                .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+                .saturating_sub(current_len);
+            account.extend_from_slice(&vec![0u8; extra_bytes]);
+            unsafe { account.data_mut().set_len(current_len) };
+
+            // TODO: We also need to update the host_addr of the account data region as that might have
+            // been reallocated too. To reduce the probability of that occuring, for now we always grow
+            // to the full realloc region, even if only the account region was touched so far.
+
+            Ok(unsafe {
+                account
+                    .data_as_mut_slice()
+                    .as_mut_ptr()
+                    .add(original_data_len)
+            } as u64)
         })
     }
 }
@@ -969,7 +983,7 @@ impl BorrowedAccount<'_> {
 
     /// Resizes the account data (transaction wide)
     ///
-    /// Fills it with zeros at the end if is extended or truncates at the end otherwise.
+    /// This keeps the data in the spare capacity intact.
     #[cfg(not(target_os = "solana"))]
     pub fn set_data_length(&mut self, new_length: usize) -> Result<(), InstructionError> {
         self.can_data_be_resized(new_length)?;
@@ -980,7 +994,18 @@ impl BorrowedAccount<'_> {
         }
         self.touch()?;
         self.update_accounts_resize_delta(new_length)?;
-        self.account.resize(new_length, 0);
+        unsafe {
+            let vec = self.account.data_mut();
+            if new_length > vec.len() {
+                // Keep spare capacity untouched
+                vec.set_len(new_length.min(vec.capacity()));
+                // Potentially realloc and only fill zeros in for groth beyond capacity
+                vec.resize(new_length, 0);
+            } else {
+                // Drop bytes and potentially realloc
+                vec.truncate(new_length);
+            }
+        }
         Ok(())
     }
 
