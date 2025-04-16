@@ -370,6 +370,7 @@ pub(crate) mod tests {
 
     struct TestNotification {
         _meta: TransactionStatusMeta,
+        post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
         transaction: SanitizedTransaction,
     }
 
@@ -393,7 +394,7 @@ pub(crate) mod tests {
             signature: &Signature,
             transaction_status_meta: &TransactionStatusMeta,
             transaction: &SanitizedTransaction,
-            _post_accounts_states: &[(Pubkey, AccountSharedData)],
+            post_accounts_states: &[(Pubkey, AccountSharedData)],
         ) {
             self.notifications.insert(
                 TestNotifierKey {
@@ -403,6 +404,7 @@ pub(crate) mod tests {
                 },
                 TestNotification {
                     _meta: transaction_status_meta.clone(),
+                    post_accounts_states: post_accounts_states.to_vec(),
                     transaction: transaction.clone(),
                 },
             );
@@ -469,7 +471,7 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits,
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            post_accounts_states,
+            post_accounts_states: post_accounts_states.clone(),
         });
 
         let balances = TransactionBalancesSet {
@@ -550,6 +552,7 @@ pub(crate) mod tests {
             expected_transaction.signature(),
             result.transaction.signature()
         );
+        assert_eq!(post_accounts_states, result.post_accounts_states);
     }
 
     #[test]
