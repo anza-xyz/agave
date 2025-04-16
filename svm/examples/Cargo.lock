@@ -7426,8 +7426,7 @@ checksum = "61f1bc1357b8188d9c4a3af3fc55276e56987265eb7ad073ae6f8180ee54cecf"
 [[package]]
 name = "solana-sbpf"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87e98d6559bd2d5664ed8ee28c7dbc2a813c2a78188a76b07cc64df021b6dd69"
+source = "git+https://github.com/anza-xyz/sbpf.git?branch=refactor%2Faccess_violation_handler#80efb16867257d2eb4843928fdda35d812d4a0e0"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
