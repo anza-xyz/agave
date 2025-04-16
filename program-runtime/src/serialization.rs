@@ -99,18 +99,26 @@ impl Serializer {
         } else {
             self.push_region(true);
             let vaddr = self.vaddr;
-            if !account.get_data().is_empty() {
-                let writable = account.can_data_be_changed().is_ok();
-                let shared = account.is_shared();
-                let mut new_region = if writable && !shared {
+            let address_space_reserved_for_account = if self.aligned {
+                account
+                    .get_data()
+                    .len()
+                    .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+            } else {
+                account.get_data().len()
+            };
+            if address_space_reserved_for_account > 0 {
+                let can_data_be_changed = account.can_data_be_changed().is_ok();
+                let mut new_region = if can_data_be_changed && !account.is_shared() {
                     MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
                 } else {
                     MemoryRegion::new_readonly(account.get_data(), self.vaddr)
                 };
-                if writable && shared {
-                    new_region.cow_callback_payload = account.get_index_in_transaction() as u32;
+                if can_data_be_changed {
+                    new_region.cow_callback_payload = (account.get_index_in_transaction() as u32)
+                        | (address_space_reserved_for_account as u32).wrapping_shl(8);
                 }
-                self.vaddr += new_region.len;
+                self.vaddr += address_space_reserved_for_account as u64;
                 self.regions.push(new_region);
             }
             vaddr
@@ -123,8 +131,6 @@ impl Serializer {
                 self.fill_write(MAX_PERMITTED_DATA_INCREASE + align_offset, 0)
                     .map_err(|_| InstructionError::InvalidArgument)?;
             } else {
-                // put the realloc padding in its own region
-                self.push_region(account.can_data_be_changed().is_ok());
                 // The deserialization code is going to align the vm_addr to
                 // BPF_ALIGN_OF_U128. Always add one BPF_ALIGN_OF_U128 worth of
                 // padding and shift the start of the next region, so that once

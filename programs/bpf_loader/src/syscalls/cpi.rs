@@ -1266,71 +1266,29 @@ fn update_caller_account_perms(
     callee_account: &mut BorrowedAccount<'_>,
     is_loader_deprecated: bool,
 ) -> Result<(), Error> {
-    let CallerAccount {
-        original_data_len,
-        vm_data_addr,
-        ..
-    } = caller_account;
+    let address_space_reserved_for_account = if is_loader_deprecated {
+        caller_account.original_data_len
+    } else {
+        caller_account
+            .original_data_len
+            .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+    };
 
-    if let Some((region_index, region)) =
-        account_data_region(memory_mapping, *vm_data_addr, *original_data_len)?
-    {
-        let writable = callee_account.can_data_be_changed().is_ok();
-        let shared = callee_account.is_shared();
-        let mut new_region = if writable && !shared {
-            MemoryRegion::new_writable(
-                unsafe {
-                    std::slice::from_raw_parts_mut(
-                        region.host_addr.get() as *mut u8,
-                        region.len as usize,
-                    )
-                },
-                region.vm_addr,
-            )
-        } else {
-            MemoryRegion::new_readonly(
-                unsafe {
-                    std::slice::from_raw_parts(
-                        region.host_addr.get() as *const u8,
-                        region.len as usize,
-                    )
-                },
-                region.vm_addr,
-            )
-        };
-        if writable && shared {
-            new_region.cow_callback_payload = callee_account.get_index_in_transaction() as u32;
-        }
-        memory_mapping.replace_region(region_index, new_region)?;
-    }
-
-    if let Some((region_index, region)) = account_realloc_region(
+    if let Some((region_index, region)) = account_data_region(
         memory_mapping,
-        *vm_data_addr,
-        *original_data_len,
-        is_loader_deprecated,
+        caller_account.vm_data_addr,
+        address_space_reserved_for_account,
     )? {
-        let new_region = if callee_account.can_data_be_changed().is_ok() {
-            MemoryRegion::new_writable(
-                unsafe {
-                    std::slice::from_raw_parts_mut(
-                        region.host_addr.get() as *mut u8,
-                        region.len as usize,
-                    )
-                },
-                region.vm_addr,
-            )
+        let can_data_be_changed = callee_account.can_data_be_changed().is_ok();
+        let mut new_region = if can_data_be_changed && !callee_account.is_shared() {
+            MemoryRegion::new_writable(callee_account.get_data_mut()?, region.vm_addr)
         } else {
-            MemoryRegion::new_readonly(
-                unsafe {
-                    std::slice::from_raw_parts(
-                        region.host_addr.get() as *const u8,
-                        region.len as usize,
-                    )
-                },
-                region.vm_addr,
-            )
+            MemoryRegion::new_readonly(callee_account.get_data(), region.vm_addr)
         };
+        if can_data_be_changed {
+            new_region.cow_callback_payload = (callee_account.get_index_in_transaction() as u32)
+                | (address_space_reserved_for_account as u32).wrapping_shl(8);
+        }
         memory_mapping.replace_region(region_index, new_region)?;
     }
 
@@ -1600,9 +1558,9 @@ fn update_caller_account(
 fn account_data_region<'a>(
     memory_mapping: &'a MemoryMapping<'_>,
     vm_data_addr: u64,
-    original_data_len: usize,
+    address_space_reserved_for_account: usize,
 ) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
-    if original_data_len == 0 {
+    if address_space_reserved_for_account == 0 {
         return Ok(None);
     }
 
