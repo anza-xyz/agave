@@ -4941,8 +4941,7 @@ impl AccountsDb {
         self.scan_cache_storage_fallback(slot, cache_map_func, |retval, storage| {
             match scan_account_storage_data {
                 ScanAccountStorageData::NoData => {
-                    storage.scan_accounts(|account| {
-                        let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
+                    storage.scan_accounts_without_data(|account_without_data| {
                         storage_scan_func(retval, &account_without_data, None);
                     });
                 }

@@ -8,7 +8,7 @@ use {
     crate::{
         account_storage::{
             meta::{AccountMeta, StoredAccountMeta, StoredMeta},
-            stored_account_info::StoredAccountInfo,
+            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         accounts_file::{
             AccountsFileError, InternalsForArchive, MatchAccountOwnerError, Result, StorageAccess,
@@ -1100,6 +1100,29 @@ impl AppendVec {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Note that account data is not read/passed to the callback.
+    pub fn scan_accounts_without_data(
+        &self,
+        mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
+    ) {
+        self.scan_stored_accounts_no_data(|stored_account| {
+            let account = StoredAccountInfoWithoutData {
+                pubkey: stored_account.pubkey(),
+                lamports: stored_account.lamports(),
+                owner: stored_account.owner(),
+                data_len: stored_account.data_len() as usize,
+                executable: stored_account.executable(),
+                rent_epoch: stored_account.rent_epoch(),
+            };
+            callback(account);
+        })
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts_without_data() when account data is not needed,
+    /// as it can potentially read less and be faster.
     pub fn scan_accounts(&self, mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>)) {
         self.scan_accounts_stored_meta(|stored_account_meta| {
             let account = StoredAccountInfo {

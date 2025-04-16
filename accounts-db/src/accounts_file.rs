@@ -3,7 +3,7 @@ use crate::account_storage::meta::StoredAccountMeta;
 use {
     crate::{
         account_info::AccountInfo,
-        account_storage::stored_account_info::StoredAccountInfo,
+        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
         accounts_update_notifier_interface::AccountForGeyser,
         append_vec::{AppendVec, AppendVecError, IndexInfo},
@@ -265,6 +265,26 @@ impl AccountsFile {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Note that account data is not read/passed to the callback.
+    pub fn scan_accounts_without_data(
+        &self,
+        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
+    ) {
+        match self {
+            Self::AppendVec(av) => av.scan_accounts_without_data(callback),
+            Self::TieredStorage(ts) => {
+                if let Some(reader) = ts.reader() {
+                    _ = reader.scan_accounts_without_data(callback);
+                }
+            }
+        }
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts_without_data() when account data is not needed,
+    /// as it can potentially read less and be faster.
     pub fn scan_accounts(&self, callback: impl for<'local> FnMut(StoredAccountInfo<'local>)) {
         match self {
             Self::AppendVec(av) => av.scan_accounts(callback),

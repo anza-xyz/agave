@@ -1,6 +1,9 @@
 use {
     crate::{
-        account_storage::{meta::StoredAccountMeta, stored_account_info::StoredAccountInfo},
+        account_storage::{
+            meta::StoredAccountMeta,
+            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        },
         accounts_file::MatchAccountOwnerError,
         append_vec::{IndexInfo, IndexInfoInner},
         tiered_storage::{
@@ -168,6 +171,30 @@ impl TieredStorageReader {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Note that account data is not read/passed to the callback.
+    pub fn scan_accounts_without_data(
+        &self,
+        mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
+    ) -> TieredStorageResult<()> {
+        // Note, this should be reimplemented to not read account data
+        self.scan_accounts(|stored_account| {
+            let account = StoredAccountInfoWithoutData {
+                pubkey: stored_account.pubkey(),
+                lamports: stored_account.lamports(),
+                owner: stored_account.owner(),
+                data_len: stored_account.data().len(),
+                executable: stored_account.executable(),
+                rent_epoch: stored_account.rent_epoch(),
+            };
+            callback(account);
+        })
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts_without_data() when account data is not needed,
+    /// as it can potentially read less and be faster.
     pub fn scan_accounts(
         &self,
         mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>),
