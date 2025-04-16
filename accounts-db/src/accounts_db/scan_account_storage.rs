@@ -1,7 +1,6 @@
 use {
     super::{AccountStorageEntry, AccountsDb, BinnedHashData, LoadedAccount, SplitAncientStorages},
     crate::{
-        account_storage::stored_account_info::StoredAccountInfo,
         accounts_hash::{
             AccountHash, CalcAccountsHashConfig, CalculateHashIntermediate, HashStats,
         },
@@ -366,24 +365,21 @@ impl AccountsDb {
     where
         S: AppendVecScan,
     {
-        storage
-            .accounts
-            .scan_accounts_stored_meta(|stored_account_meta| {
-                if scanner.filter(stored_account_meta.pubkey())
-                    && !storage
-                        .is_account_dead(stored_account_meta.offset(), Some(scanner.max_slot()))
-                {
-                    let account = StoredAccountInfo {
-                        pubkey: stored_account_meta.pubkey(),
-                        lamports: stored_account_meta.lamports(),
-                        owner: stored_account_meta.owner(),
-                        data: stored_account_meta.data(),
-                        executable: stored_account_meta.executable(),
-                        rent_epoch: stored_account_meta.rent_epoch(),
-                    };
-                    scanner.found_account(&LoadedAccount::Stored(account))
-                }
-            });
+        storage.accounts.scan_index(|stored_account_meta| {
+            if scanner.filter(&stored_account_meta.index_info.pubkey)
+                && !storage.is_account_dead(
+                    stored_account_meta.index_info.offset,
+                    Some(scanner.max_slot()),
+                )
+            {
+                storage.accounts.get_stored_account_callback(
+                    stored_account_meta.index_info.offset,
+                    |account| {
+                        scanner.found_account(&LoadedAccount::Stored(account));
+                    },
+                );
+            }
+        });
     }
 }
 

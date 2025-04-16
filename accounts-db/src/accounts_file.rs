@@ -1,7 +1,9 @@
+#[cfg(feature = "dev-context-only-utils")]
+use crate::account_storage::meta::StoredAccountMeta;
 use {
     crate::{
         account_info::AccountInfo,
-        account_storage::{meta::StoredAccountMeta, stored_account_info::StoredAccountInfo},
+        account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::AccountsFileId,
         accounts_update_notifier_interface::AccountForGeyser,
         append_vec::{AppendVec, AppendVecError, IndexInfo},
@@ -278,6 +280,7 @@ impl AccountsFile {
     ///
     /// Prefer scan_accounts() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn scan_accounts_stored_meta(
         &self,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),

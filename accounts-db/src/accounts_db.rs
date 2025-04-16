@@ -6541,9 +6541,9 @@ impl AccountsDb {
             // Find all the zero lamport accounts that were added and mark them
             if self.track_dead_accounts {
                 let storage = storage.unwrap();
-                storage.accounts.scan_accounts_stored_meta(|account| {
-                    if account.lamports() == 0 {
-                        self.zero_lamport_single_ref_found(slot, account.offset());
+                storage.accounts.scan_index(|account| {
+                    if account.index_info.lamports == 0 {
+                        self.zero_lamport_single_ref_found(slot, account.index_info.offset);
                         flush_stats.num_zero_lamport_accounts_flushed += 1;
                     }
                 });
