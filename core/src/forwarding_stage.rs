@@ -260,7 +260,7 @@ pub(crate) fn spawn_forwarding_stage(
             let forwarding_stage = ForwardingStage::new(
                 receiver,
                 vote_client,
-                non_vote_client.clone(),
+                non_vote_client,
                 root_bank_cache,
                 data_budget,
             );
@@ -522,22 +522,6 @@ impl LeaderUpdater for ForwardAddressGetter {
 
 struct TpuClientNextClient {
     sender: mpsc::Sender<TransactionBatch>,
-    bind_socket: UdpSocket,
-}
-
-// Implement Clone manually because `UdpSocket` implements only `try_clone`.
-impl Clone for TpuClientNextClient {
-    fn clone(&self) -> Self {
-        let bind_socket = self
-            .bind_socket
-            .try_clone()
-            .expect("Cloning bind socket should always finish successfully.");
-
-        TpuClientNextClient {
-            sender: self.sender.clone(),
-            bind_socket,
-        }
-    }
 }
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
@@ -554,12 +538,7 @@ impl TpuClientNextClient {
         let cancel = CancellationToken::new();
         let leader_updater = forward_address_getter.clone();
 
-        let config = {
-            let bind_socket = bind_socket
-                .try_clone()
-                .expect("Cloning bind socket should always finish successfully.");
-            Self::create_config(bind_socket, stake_identity)
-        };
+        let config = Self::create_config(bind_socket, stake_identity);
         let scheduler: ConnectionWorkersScheduler =
             ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
         // leaking handle to this task, as it will run until the cancel signal is received
@@ -569,10 +548,7 @@ impl TpuClientNextClient {
             cancel.clone(),
         ));
         let _handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
-        Self {
-            sender,
-            bind_socket,
-        }
+        Self { sender }
     }
 
     fn create_config(
@@ -603,13 +579,9 @@ impl ForwardingClient for TpuClientNextClient {
         &self,
         wire_transactions: Vec<Vec<u8>>,
     ) -> Result<(), ForwardingClientError> {
-        let res = self
-            .sender
-            .try_send(TransactionBatch::new(wire_transactions));
-        if res.is_err() {
-            return Err(ForwardingClientError::Failed);
-        }
-        Ok(())
+        self.sender
+            .try_send(TransactionBatch::new(wire_transactions))
+            .map_err(|_e| ForwardingClientError::Failed)
     }
 }
 
