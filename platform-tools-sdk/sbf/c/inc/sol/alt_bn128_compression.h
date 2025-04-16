@@ -59,7 +59,7 @@ extern "C" {
  * @return 0 if executed successfully
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/alt_bn128_compression.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 uint64_t sol_alt_bn128_compression(
         const uint64_t op,
         const uint8_t *input,

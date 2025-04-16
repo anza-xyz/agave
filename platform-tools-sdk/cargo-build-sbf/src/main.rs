@@ -21,7 +21,7 @@ use {
     tar::Archive,
 };
 
-const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.46";
+const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.47";
 
 #[derive(Debug)]
 struct Config<'a> {

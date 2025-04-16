@@ -18,4 +18,10 @@ solana-pubkey = "=2.2.0"
 [lib]
 crate-type = ["cdylib"]
 
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(feature, values("custom-panic", "custom-heap"))'
+]
+
 [workspace]

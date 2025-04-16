@@ -13,7 +13,7 @@ extern "C" {
  * Get Last Restart Slot
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/last_restart_slot.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 u64 sol_get_last_restart_slot(uint8_t *result);
 #else
 typedef u64(*sol_get_last_restart_slot_pointer_type)(uint8_t *result);
