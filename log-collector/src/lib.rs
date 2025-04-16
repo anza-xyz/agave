@@ -64,8 +64,7 @@ impl LogCollector {
 #[macro_export]
 macro_rules! ic_logger_msg {
     ($log_collector:expr, $message:expr) => {
-        $crate::log::debug!(
-            target: "solana_runtime::message_processor::stable_log",
+        println!(
             "{}",
             $message
         );
@@ -76,8 +75,7 @@ macro_rules! ic_logger_msg {
         }
     };
     ($log_collector:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::log::debug!(
-            target: "solana_runtime::message_processor::stable_log",
+        println!(
             $fmt,
             $($arg)*
         );

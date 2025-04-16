@@ -31,7 +31,7 @@ solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { version = "=2.2.2", features = ["openssl-vendored"] }
+solana-sdk = { version = "=2.2.1", features = ["openssl-vendored"] }
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
