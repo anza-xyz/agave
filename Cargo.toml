@@ -332,7 +332,7 @@ pickledb = { version = "0.5.1", default-features = false }
 predicates = "2.1"
 pretty-hex = "0.3.0"
 prio-graph = "0.3.0"
-proc-macro2 = "1.0.94"
+proc-macro2 = "1.0.95"
 proptest = "1.6"
 prost = "0.11.9"
 prost-build = "0.11.9"
