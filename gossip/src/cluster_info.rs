@@ -1390,27 +1390,9 @@ impl ClusterInfo {
                 }
             }
         }
-        // Adopt an entrypoint's `shred_version` if ours is unset
-        if self.my_shred_version() == 0 {
-            if let Some(entrypoint) = entrypoints
-                .iter()
-                .find(|entrypoint| entrypoint.shred_version() != 0)
-            {
-                info!(
-                    "Setting shred version to {:?} from entrypoint {:?}",
-                    entrypoint.shred_version(),
-                    entrypoint.pubkey()
-                );
-                self.my_contact_info
-                    .write()
-                    .unwrap()
-                    .set_shred_version(entrypoint.shred_version());
-            }
-        }
-        self.my_shred_version() != 0
-            && entrypoints
-                .iter()
-                .all(|entrypoint| entrypoint.pubkey() != &Pubkey::default())
+        entrypoints
+            .iter()
+            .all(|entrypoint| entrypoint.pubkey() != &Pubkey::default())
     }
 
     fn handle_purge(
@@ -3963,89 +3945,6 @@ mod tests {
         let slots = cluster_info.get_epoch_slots(&mut Cursor::default());
         let slots: Vec<_> = slots.iter().flat_map(|x| x.to_slots(0)).collect();
         assert_eq!(slots, range);
-    }
-
-    #[test]
-    fn test_process_entrypoint_adopt_shred_version() {
-        let node_keypair = Arc::new(Keypair::new());
-        let cluster_info = Arc::new(ClusterInfo::new(
-            ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
-            node_keypair,
-            SocketAddrSpace::Unspecified,
-        ));
-        assert_eq!(cluster_info.my_shred_version(), 0);
-
-        // Simulating starting up with two entrypoints, no known id, only a gossip
-        // address
-        let entrypoint1_gossip_addr = socketaddr!("127.0.0.2:1234");
-        let mut entrypoint1 = ContactInfo::new_localhost(&Pubkey::default(), timestamp());
-        entrypoint1.set_gossip(entrypoint1_gossip_addr).unwrap();
-        assert_eq!(entrypoint1.shred_version(), 0);
-
-        let entrypoint2_gossip_addr = socketaddr!("127.0.0.2:5678");
-        let mut entrypoint2 = ContactInfo::new_localhost(&Pubkey::default(), timestamp());
-        entrypoint2.set_gossip(entrypoint2_gossip_addr).unwrap();
-        assert_eq!(entrypoint2.shred_version(), 0);
-        cluster_info.set_entrypoints(vec![entrypoint1, entrypoint2]);
-
-        // Simulate getting entrypoint ContactInfo from gossip with an entrypoint1 shred version of
-        // 0
-        let mut gossiped_entrypoint1_info =
-            ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
-        gossiped_entrypoint1_info
-            .set_gossip(entrypoint1_gossip_addr)
-            .unwrap();
-        gossiped_entrypoint1_info.set_shred_version(0);
-        cluster_info.insert_info(gossiped_entrypoint1_info.clone());
-        assert!(!cluster_info
-            .entrypoints
-            .read()
-            .unwrap()
-            .iter()
-            .any(|entrypoint| *entrypoint == gossiped_entrypoint1_info));
-
-        // Adopt the entrypoint's gossiped contact info and verify
-        let entrypoints_processed = ClusterInfo::process_entrypoints(&cluster_info);
-        assert_eq!(cluster_info.entrypoints.read().unwrap().len(), 2);
-        assert!(cluster_info
-            .entrypoints
-            .read()
-            .unwrap()
-            .iter()
-            .any(|entrypoint| *entrypoint == gossiped_entrypoint1_info));
-
-        assert!(!entrypoints_processed); // <--- entrypoint processing incomplete because shred adoption still pending
-        assert_eq!(cluster_info.my_shred_version(), 0); // <-- shred version still 0
-
-        // Simulate getting entrypoint ContactInfo from gossip with an entrypoint2 shred version of
-        // !0
-        let mut gossiped_entrypoint2_info =
-            ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
-        gossiped_entrypoint2_info
-            .set_gossip(entrypoint2_gossip_addr)
-            .unwrap();
-        gossiped_entrypoint2_info.set_shred_version(1);
-        cluster_info.insert_info(gossiped_entrypoint2_info.clone());
-        assert!(!cluster_info
-            .entrypoints
-            .read()
-            .unwrap()
-            .iter()
-            .any(|entrypoint| *entrypoint == gossiped_entrypoint2_info));
-
-        // Adopt the entrypoint's gossiped contact info and verify
-        error!("Adopt the entrypoint's gossiped contact info and verify");
-        let entrypoints_processed = ClusterInfo::process_entrypoints(&cluster_info);
-        assert_eq!(cluster_info.entrypoints.read().unwrap().len(), 2);
-        assert!(cluster_info
-            .entrypoints
-            .read()
-            .unwrap()
-            .iter()
-            .any(|entrypoint| *entrypoint == gossiped_entrypoint2_info));
-
-        assert!(entrypoints_processed);
-        assert_eq!(cluster_info.my_shred_version(), 1); // <-- shred version now adopted from entrypoint2
     }
 
     #[test]
