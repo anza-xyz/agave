@@ -1955,9 +1955,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     }
                                     Ok(NewTaskPayload::OpenSubchannel(_)
                                        | NewTaskPayload::UnpauseOpenedSubchannel
-                                       | NewTaskPayload::Reset) =>
+                                       | NewTaskPayload::Reset)
+                                       | Err(RecvError) =>
                                         unreachable!(),
-                                    Ok(NewTaskPayload::Disconnect) | Err(RecvError) => {
+                                    Ok(NewTaskPayload::Disconnect) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
                                         // abandoned forks...
                                         // This short-circuiting is tested with test_scheduler_drop_short_circuiting.
@@ -2063,12 +2064,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // This match arm can be hit if context.is_preallocated()
                                 info!("ignoring duplicate CloseSubchannel...");
                             }
-                            Ok(NewTaskPayload::Disconnect) | Err(RecvError) => {
+                            Ok(NewTaskPayload::Disconnect) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
                                 // Initialize result_with_timings with a harmless value...
                                 result_with_timings = initialized_result_with_timings();
                                 break 'nonaborted_main_loop;
                             }
+                            Err(RecvError) => unreachable!(),
                             Ok(NewTaskPayload::Reset) => {
                                 assert_matches!(scheduling_mode, BlockProduction);
                                 discard_on_reset = true;
@@ -2144,7 +2146,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
-                                //banking_stage_helper.abort_scheduler();
+                                banking_stage_helper.abort_scheduler();
                                 handler_context.banking_packet_receiver = never();
                                 continue;
                             };
