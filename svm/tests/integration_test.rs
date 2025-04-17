@@ -12,11 +12,10 @@ use {
     solana_account::PROGRAM_OWNERS,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_fee_structure::FeeDetails,
-    solana_program_runtime::{loaded_programs::{LoadProgramMetrics, ProgramCacheEntry}, execution_budget::SVMTransactionExecutionAndFeeBudgetLimits},
+    solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader_upgradeable,
-        bpf_loader,
+        bpf_loader, bpf_loader_upgradeable,
         clock::Slot,
         compute_budget::ComputeBudgetInstruction,
         entrypoint::MAX_PERMITTED_DATA_INCREASE,
@@ -48,7 +47,7 @@ use {
     solana_transaction_context::TransactionReturnData,
     solana_type_overrides::sync::{Arc, RwLock},
     spl_generic_token::{generic_token, token},
-    std::{fs::{self, File}, io::Read, collections::HashMap},
+    std::collections::HashMap,
     test_case::test_case,
 };
 
@@ -2704,7 +2703,8 @@ impl Transfer {
     }
 }
 
-static SPL_TOKEN_BYTES: &[u8] = include_bytes!("../../program-test/src/programs/spl_token-3.5.0.so");
+static SPL_TOKEN_BYTES: &[u8] =
+    include_bytes!("../../program-test/src/programs/spl_token-3.5.0.so");
 
 #[repr(C)]
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -2744,13 +2744,17 @@ fn svm_collect_balances(use_tokens: bool) {
     );
 
     let mut token_initial_data = vec![0; 165];
-    bincode::serialize_into(&mut token_initial_data[..], &Token { mint, owner: fee_payer, amount: STARTING_BALANCE, state: 1, ..Token::default() }).unwrap();
-
-    /* XXX
-    bincode::serialize_into(&mut token_initial_data[..], &(mint, fee_payer, u64::MAX / 2)).unwrap();
-    token_initial_data[32 + 32 + 8 + 4 + 32] = 1;
-    println!("HANA {:?}\n     {:?}\n     {:?}", &token_initial_data[0..32], &token_initial_data[32..64], &token_initial_data[64..96], );
-    */
+    bincode::serialize_into(
+        &mut token_initial_data[..],
+        &Token {
+            mint,
+            owner: fee_payer,
+            amount: STARTING_BALANCE,
+            state: 1,
+            ..Token::default()
+        },
+    )
+    .unwrap();
 
     let token_state = AccountSharedData::create(
         LAMPORTS_PER_SOL,
@@ -2760,38 +2764,16 @@ fn svm_collect_balances(use_tokens: bool) {
         u64::MAX,
     );
 
-    let spl_token_state = AccountSharedData::create(
-        1,
+    let spl_token = AccountSharedData::create(
+        LAMPORTS_PER_SOL,
         SPL_TOKEN_BYTES.to_vec(),
         bpf_loader::id(),
         true,
         u64::MAX,
     );
 
-    /* XXX
-    let spl_token = if use_tokens {
-        // TODO HANA fix for windows
-        let path = "../program-test/src/programs/spl_token-3.5.0.so";
-        let mut file = File::open(path).expect("file not found");
-        let metadata = fs::metadata(path).expect("Unable to read metadata");
-        let mut data = vec![0u8; metadata.len() as usize];
-        file.read_exact(&mut data).expect("Buffer overflow");
-        data
-
-        AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            data,
-            bpf_loader::id(),
-            true,
-            u64::MAX,
-        )
-    } else {
-        // XXX AccountSharedData::default()
-        vec![]
-    };
-        */
-
-    for _ in 0..1 { // XXX
+    for _ in 0..1 {
+        // XXX
         let mut test_entry = SvmTestEntry::default();
         test_entry.add_initial_account(fee_payer, &native_state.clone());
 
@@ -2800,7 +2782,7 @@ fn svm_collect_balances(use_tokens: bool) {
             test_entry.add_initial_account(bob, &token_state);
             test_entry.add_initial_account(charlie, &token_state);
 
-            test_entry.add_initial_account(token::id(), &spl_token_state);
+            test_entry.add_initial_account(token::id(), &spl_token);
         } else {
             test_entry.add_initial_account(alice, &native_state);
             test_entry.add_initial_account(bob, &native_state);
@@ -2813,7 +2795,8 @@ fn svm_collect_balances(use_tokens: bool) {
         user_balances.insert(charlie, STARTING_BALANCE);
         let mut user_balance_history = vec![(Transfer::default(), user_balances.clone())];
 
-        for _ in 0..5 { // XXX
+        for _ in 0..5 {
+            // XXX
             // TODO fail transactions
             let transfer = Transfer::new_rand(&[alice, bob, charlie]);
 
@@ -2869,28 +2852,6 @@ fn svm_collect_balances(use_tokens: bool) {
         env.processing_config
             .recording_config
             .enable_transaction_balance_recording = true;
-
-
-/*
-        if use_tokens {
-        unsafe {
-            let mut program_cache = env.batch_processor.program_cache.write().unwrap();
-            let spl_token_entry = ProgramCacheEntry::reload(
-                &bpf_loader::id(),
-                program_cache.environments.program_runtime_v1.clone(),
-                0,
-                0,
-                &spl_token,
-                spl_token.len(),
-                &mut LoadProgramMetrics::default(),
-            ).unwrap();
-            program_cache.assign_program(token::id(), Arc::new(spl_token_entry));
-        }
-}
-*/
-
-
-
         let batch_output = env.execute();
 
         // since we used test entry, `execute()` confirmed final balances in `user_balances` match the final bank state

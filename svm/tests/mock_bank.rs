@@ -6,9 +6,8 @@ use {
     agave_feature_set::FeatureSet,
     solana_bpf_loader_program::syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
-        SyscallMemcmp,
-        SyscallMemmove,
-        SyscallLog, SyscallMemcpy, SyscallMemset, SyscallSetReturnData,
+        SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset,
+        SyscallSetReturnData,
     },
     solana_fee_structure::{FeeDetails, FeeStructure},
     solana_program_runtime::{
