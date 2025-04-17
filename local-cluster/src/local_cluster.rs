@@ -16,7 +16,7 @@ use {
     solana_gossip::{
         cluster_info::Node,
         contact_info::{ContactInfo, Protocol},
-        gossip_service::discover_cluster,
+        gossip_service::{discover, discover_cluster},
     },
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
     solana_net_utils::bind_to_unspecified,
@@ -65,6 +65,7 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
+        time::Duration,
     },
 };
 
@@ -328,7 +329,7 @@ impl LocalCluster {
             leader_config.max_genesis_archive_unpacked_size,
         );
 
-        let leader_contact_info = leader_node.info.clone();
+        // let leader_contact_info = leader_node.info.clone();
         leader_config.rpc_addrs = Some((
             leader_node.info.rpc().unwrap(),
             leader_node.info.rpc_pubsub().unwrap(),
@@ -356,6 +357,7 @@ impl LocalCluster {
         )
         .expect("assume successful validator start");
 
+        let leader_contact_info = leader_server.cluster_info.my_contact_info();
         let mut validators = HashMap::new();
         let leader_info = ValidatorInfo {
             keypair: leader_keypair,
@@ -373,7 +375,7 @@ impl LocalCluster {
 
         let mut cluster = Self {
             funding_keypair: mint_keypair,
-            entry_point_info: leader_contact_info,
+            entry_point_info: leader_contact_info.clone(),
             validators,
             genesis_config,
             connection_cache,
@@ -416,9 +418,15 @@ impl LocalCluster {
             );
         });
 
-        discover_cluster(
-            &cluster.entry_point_info.gossip().unwrap(),
-            config.node_stakes.len() + config.num_listeners as usize,
+        discover(
+            None,
+            Some(&cluster.entry_point_info.gossip().unwrap()),
+            Some(config.node_stakes.len() + config.num_listeners as usize),
+            Duration::from_secs(120),
+            None,
+            None,
+            None,
+            leader_contact_info.shred_version(),
             socket_addr_space,
         )
         .unwrap();
@@ -713,7 +721,7 @@ impl LocalCluster {
                 return Ok(None);
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(400));
+            std::thread::sleep(Duration::from_millis(400));
         }
     }
 
