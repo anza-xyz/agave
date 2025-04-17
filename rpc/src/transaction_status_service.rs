@@ -309,8 +309,8 @@ pub(crate) mod tests {
 
     struct TestNotification {
         _meta: TransactionStatusMeta,
-        post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
         transaction: SanitizedTransaction,
+        post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
     }
 
     struct TestTransactionNotifier {
