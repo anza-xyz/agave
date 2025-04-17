@@ -318,10 +318,6 @@ pub fn bind_common_in_range_with_config(
     range: PortRange,
     config: SocketConfig,
 ) -> io::Result<(u16, (UdpSocket, TcpListener))> {
-    assert!(
-        !config.reuseport,
-        "SO_REUSEPORT will allow this function to accidentally bind to occupied ports"
-    );
     for port in range.0..range.1 {
         if let Ok((sock, listener)) = bind_common_with_config(ip_addr, port, config) {
             return Result::Ok((sock.local_addr().unwrap().port(), (sock, listener)));
@@ -356,11 +352,8 @@ pub fn bind_in_range_with_config(
     range: PortRange,
     config: SocketConfig,
 ) -> io::Result<(u16, UdpSocket)> {
-    assert!(
-        !config.reuseport,
-        "SO_REUSEPORT will allow this function to accidentally bind to occupied ports"
-    );
     let sock = udp_socket_with_config(config)?;
+
     for port in range.0..range.1 {
         let addr = SocketAddr::new(ip_addr, port);
 
