@@ -40,7 +40,6 @@ solana-client = { workspace = true }
 solana-clock = "=2.2.1"
 solana-cluster-type = "=2.2.1"
 solana-commitment-config = "=2.2.1"
-solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { version = "=2.2.1", features = ["borsh"] }
 solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-connection-cache = { workspace = true }
