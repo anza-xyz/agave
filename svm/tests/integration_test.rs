@@ -9,7 +9,7 @@ use {
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     rand0_7::prelude::*,
-    solana_account::PROGRAM_OWNERS,
+    solana_account::{state_traits::StateMut, PROGRAM_OWNERS},
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_fee_structure::FeeDetails,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
@@ -2708,7 +2708,7 @@ static SPL_TOKEN_BYTES: &[u8] =
 
 #[repr(C)]
 #[derive(Default, serde::Serialize, serde::Deserialize)]
-struct Token {
+struct SplTokenAccount {
     mint: Pubkey,
     owner: Pubkey,
     amount: u64,
@@ -2743,26 +2743,18 @@ fn svm_collect_balances(use_tokens: bool) {
         u64::MAX,
     );
 
-    let mut token_initial_data = vec![0; 165];
-    bincode::serialize_into(
-        &mut token_initial_data[..],
-        &Token {
+    let mut token_state =
+        AccountSharedData::create(LAMPORTS_PER_SOL, vec![0; 165], token::id(), false, u64::MAX);
+    token_state
+        .set_state(&SplTokenAccount {
             mint,
             owner: fee_payer,
             amount: STARTING_BALANCE,
             state: 1,
-            ..Token::default()
-        },
-    )
-    .unwrap();
-
-    let token_state = AccountSharedData::create(
-        LAMPORTS_PER_SOL,
-        token_initial_data,
-        token::id(),
-        false,
-        u64::MAX,
-    );
+            ..SplTokenAccount::default()
+        })
+        .unwrap();
+    let token_state = token_state;
 
     let spl_token = AccountSharedData::create(
         LAMPORTS_PER_SOL,
@@ -2827,6 +2819,31 @@ fn svm_collect_balances(use_tokens: bool) {
 
         if use_tokens {
             //todo!()
+            let mut token_account = SplTokenAccount {
+                mint,
+                owner: fee_payer,
+                state: 1,
+                ..SplTokenAccount::default()
+            };
+            let mut final_token_state = AccountSharedData::create(
+                LAMPORTS_PER_SOL,
+                vec![0; 165],
+                token::id(),
+                false,
+                u64::MAX,
+            );
+
+            token_account.amount = *user_balances.get(&alice).unwrap();
+            final_token_state.set_state(&token_account).unwrap();
+            test_entry.update_expected_account_data(alice, &final_token_state);
+
+            token_account.amount = *user_balances.get(&bob).unwrap();
+            final_token_state.set_state(&token_account).unwrap();
+            test_entry.update_expected_account_data(bob, &final_token_state);
+
+            token_account.amount = *user_balances.get(&charlie).unwrap();
+            final_token_state.set_state(&token_account).unwrap();
+            test_entry.update_expected_account_data(charlie, &final_token_state);
         } else {
             let mut alice_final_state = native_state.clone();
             alice_final_state.set_lamports(*user_balances.get(&alice).unwrap());
