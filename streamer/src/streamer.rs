@@ -200,8 +200,8 @@ fn recv_loop(
                         Err(TrySendError::Full(_)) => {
                             stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
                         }
-                        Err(TrySendError::Disconnected(b)) => {
-                            return Err(StreamerError::Send(SendError(b)))
+                        Err(TrySendError::Disconnected(err)) => {
+                            return Err(StreamerError::Send(SendError(err)))
                         }
                     }
                 }
