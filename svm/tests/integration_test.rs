@@ -2668,10 +2668,6 @@ impl Transfer {
         Self { from, to, amount }
     }
 
-    // XXX ok when back!! change tokens to be self-signed
-    // mpove system rando signer to last position in args
-    // then i think just impl token stuff and add fail transactions
-
     fn to_system_transaction(&self, fee_payer: &Keypair, from_signer: &Keypair) -> Transaction {
         Transaction::new_signed_with_payer(
             &[system_instruction::transfer(
@@ -2685,19 +2681,19 @@ impl Transfer {
         )
     }
 
-    fn to_token_transaction(&self, fee_payer: &Keypair) -> Transaction {
+    fn to_token_transaction(&self, fee_payer: &Keypair, from_signer: &Keypair) -> Transaction {
         Transaction::new_signed_with_payer(
             &[Instruction {
                 program_id: token::id(),
                 accounts: vec![
-                    AccountMeta::new(self.from, false),
+                    AccountMeta::new(self.from, true),
                     AccountMeta::new(self.to, false),
                     AccountMeta::new(fee_payer.pubkey(), true),
                 ],
                 data: bincode::serialize(&(3u8, self.amount)).unwrap(),
             }],
             Some(&fee_payer.pubkey()),
-            &[fee_payer],
+            &[fee_payer, from_signer],
             Hash::default(),
         )
     }
@@ -2827,28 +2823,25 @@ fn svm_collect_balances(use_tokens: bool) {
         user_balances.insert(charlie, STARTING_BALANCE);
         let mut user_balance_history = vec![(Transfer::default(), user_balances.clone())];
 
-        for _ in 0..1 {
+        for _ in 0..5 {
             // XXX
             // TODO fail transactions
             let transfer = Transfer::new_rand(&[alice, bob, charlie]);
+            let from_signer = vec![&alice_keypair, &bob_keypair, &charlie_keypair]
+                .into_iter()
+                .find(|k| k.pubkey() == transfer.from)
+                .unwrap();
 
             let transaction = if use_tokens {
-                transfer.to_token_transaction(&fee_payer_keypair)
+                transfer.to_token_transaction(&fee_payer_keypair, from_signer)
             } else {
-                test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
-
-                let from_signer = vec![&alice_keypair, &bob_keypair, &charlie_keypair]
-                    .into_iter()
-                    .find(|k| k.pubkey() == transfer.from)
-                    .unwrap();
-
                 transfer.to_system_transaction(&fee_payer_keypair, from_signer)
             };
 
             println!("HANA transaction: {:#?}", transaction);
 
             test_entry.push_transaction(transaction);
-            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
 
             println!("HANA transfer: {:#?}", transfer);
 
@@ -2917,11 +2910,12 @@ fn svm_collect_balances(use_tokens: bool) {
 
             let pre_tupls: Vec<_> = pre_vecs
                 .iter()
-                .map(|bals| (bals[1].amount, bals[0].amount))
+                .map(|bals| (bals[0].amount, bals[1].amount))
                 .collect();
+
             let post_tupls: Vec<_> = post_vecs
                 .iter()
-                .map(|bals| (bals[1].amount, bals[0].amount))
+                .map(|bals| (bals[0].amount, bals[1].amount))
                 .collect();
 
             (pre_tupls, post_tupls)
