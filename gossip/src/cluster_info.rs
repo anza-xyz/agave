@@ -54,8 +54,8 @@ use {
         bind_common_in_range_with_config, bind_common_with_config, bind_in_range,
         bind_in_range_with_config, bind_more_with_config, bind_to_localhost, bind_to_unspecified,
         bind_to_with_config, bind_two_in_range_with_offset_and_config,
-        find_available_port_in_range, multi_bind_in_range_with_config, PortRange, SocketConfig,
-        VALIDATOR_PORT_RANGE,
+        find_available_port_in_range, multi_bind_in_range_with_config,
+        sockets::localhost_port_range_for_tests, PortRange, SocketConfig, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -2425,8 +2425,7 @@ impl Node {
         num_quic_endpoints: usize,
     ) -> Self {
         let localhost_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let port_range = (1024, 65535);
-
+        let port_range = localhost_port_range_for_tests();
         let udp_config = SocketConfig::default();
         let quic_config = SocketConfig::default().reuseport(true);
         let ((_tpu_port, tpu), (_tpu_quic_port, tpu_quic)) =
