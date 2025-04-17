@@ -10,7 +10,6 @@ pub use self::{
         SyscallGetSysvar,
     },
 };
-use solana_program_runtime::invoke_context::RuntimeFeatures;
 #[allow(deprecated)]
 use {
     crate::syscalls::mem_ops::is_nonoverlapping,
@@ -47,6 +46,7 @@ use {
         Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
     },
     solana_sha256_hasher::Hasher,
+    solana_svm_feature_set::SVMFeatureSet,
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
@@ -322,48 +322,36 @@ pub(crate) fn morph_into_deployment_environment_v1(
 }
 
 pub fn create_program_runtime_environment_v1<'a>(
-    feature_set: &RuntimeFeatures,
+    feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
 ) -> Result<BuiltinProgram<InvokeContext<'a>>, Error> {
-    let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall.is_some();
-    let enable_alt_bn128_compression_syscall =
-        feature_set.enable_alt_bn128_compression_syscall.is_some();
-    let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall.is_some();
-    let blake3_syscall_enabled = feature_set.blake3_syscall_enabled.is_some();
-    let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled.is_some();
-    let disable_fees_sysvar = feature_set.disable_fees_sysvar.is_some();
-    let disable_deploy_of_alloc_free_syscall = reject_deployment_of_broken_elfs
-        && feature_set.disable_deploy_of_alloc_free_syscall.is_some();
-    let last_restart_slot_syscall_enabled = feature_set.last_restart_slot_sysvar.is_some();
-    let enable_poseidon_syscall = feature_set.enable_poseidon_syscall.is_some();
-    let remaining_compute_units_syscall_enabled = feature_set
-        .remaining_compute_units_syscall_enabled
-        .is_some();
-    let get_sysvar_syscall_enabled = feature_set.get_sysvar_syscall_enabled.is_some();
-    let enable_get_epoch_stake_syscall = feature_set.enable_get_epoch_stake_syscall.is_some();
-    let min_sbpf_version = if feature_set.disable_sbpf_v0_execution.is_none()
-        || feature_set.reenable_sbpf_v0_execution.is_some()
-    {
-        SBPFVersion::V0
-    } else {
+    let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall;
+    let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
+    let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
+    let blake3_syscall_enabled = feature_set.blake3_syscall_enabled;
+    let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled;
+    let disable_fees_sysvar = feature_set.disable_fees_sysvar;
+    let disable_deploy_of_alloc_free_syscall =
+        reject_deployment_of_broken_elfs && feature_set.disable_deploy_of_alloc_free_syscall;
+    let last_restart_slot_syscall_enabled = feature_set.last_restart_slot_sysvar;
+    let enable_poseidon_syscall = feature_set.enable_poseidon_syscall;
+    let remaining_compute_units_syscall_enabled =
+        feature_set.remaining_compute_units_syscall_enabled;
+    let get_sysvar_syscall_enabled = feature_set.get_sysvar_syscall_enabled;
+    let enable_get_epoch_stake_syscall = feature_set.enable_get_epoch_stake_syscall;
+    let min_sbpf_version =
+        if !feature_set.disable_sbpf_v0_execution || feature_set.reenable_sbpf_v0_execution {
+            SBPFVersion::V0
+        } else {
+            SBPFVersion::V3
+        };
+    let max_sbpf_version = if feature_set.enable_sbpf_v3_deployment_and_execution {
         SBPFVersion::V3
-    };
-    let max_sbpf_version = if feature_set
-        .enable_sbpf_v3_deployment_and_execution
-        .is_some()
-    {
-        SBPFVersion::V3
-    } else if feature_set
-        .enable_sbpf_v2_deployment_and_execution
-        .is_some()
-    {
+    } else if feature_set.enable_sbpf_v2_deployment_and_execution {
         SBPFVersion::V2
-    } else if feature_set
-        .enable_sbpf_v1_deployment_and_execution
-        .is_some()
-    {
+    } else if feature_set.enable_sbpf_v1_deployment_and_execution {
         SBPFVersion::V1
     } else {
         SBPFVersion::V0
@@ -374,7 +362,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: feature_set.bpf_account_data_direct_mapping.is_none(),
+        enable_stack_frame_gaps: !feature_set.bpf_account_data_direct_mapping,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_instruction_tracing: debugging_features,
@@ -384,7 +372,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
-        aligned_memory_mapping: feature_set.bpf_account_data_direct_mapping.is_none(),
+        aligned_memory_mapping: !feature_set.bpf_account_data_direct_mapping,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
     let mut result = BuiltinProgram::new_loader(config);
@@ -1089,11 +1077,7 @@ declare_builtin_function!(
                 }
             }
             _ => {
-                if invoke_context
-                    .get_feature_set()
-                    .abort_on_invalid_curve
-                    .is_some()
-                {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
                     Ok(1)
@@ -1205,11 +1189,7 @@ declare_builtin_function!(
                     }
                 }
                 _ => {
-                    if invoke_context
-                        .get_feature_set()
-                        .abort_on_invalid_curve
-                        .is_some()
-                    {
+                    if invoke_context.get_feature_set().abort_on_invalid_curve {
                         Err(SyscallError::InvalidAttribute.into())
                     } else {
                         Ok(1)
@@ -1305,11 +1285,7 @@ declare_builtin_function!(
                     }
                 }
                 _ => {
-                    if invoke_context
-                        .get_feature_set()
-                        .abort_on_invalid_curve
-                        .is_some()
-                    {
+                    if invoke_context.get_feature_set().abort_on_invalid_curve {
                         Err(SyscallError::InvalidAttribute.into())
                     } else {
                         Ok(1)
@@ -1318,11 +1294,7 @@ declare_builtin_function!(
             },
 
             _ => {
-                if invoke_context
-                    .get_feature_set()
-                    .abort_on_invalid_curve
-                    .is_some()
-                {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
                     Ok(1)
@@ -1432,11 +1404,7 @@ declare_builtin_function!(
             }
 
             _ => {
-                if invoke_context
-                    .get_feature_set()
-                    .abort_on_invalid_curve
-                    .is_some()
-                {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
                     Ok(1)
@@ -1781,7 +1749,7 @@ declare_builtin_function!(
             ALT_BN128_MUL => {
                 let fix_alt_bn128_multiplication_input_length = invoke_context
                     .get_feature_set()
-                    .fix_alt_bn128_multiplication_input_length.is_some();
+                    .fix_alt_bn128_multiplication_input_length;
                 if fix_alt_bn128_multiplication_input_length {
                     alt_bn128_multiplication
                 } else {
@@ -1796,7 +1764,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes.is_some();
+            .simplify_alt_bn128_syscall_error_codes;
 
         let result_point = match calculation(input) {
             Ok(result_point) => result_point,
@@ -1949,8 +1917,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes
-            .is_some();
+            .simplify_alt_bn128_syscall_error_codes;
 
         let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
             Ok(hash) => hash,
@@ -2045,7 +2012,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes.is_some();
+            .simplify_alt_bn128_syscall_error_codes;
 
         match op {
             ALT_BN128_G1_COMPRESS => {
@@ -4937,7 +4904,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::<RuntimeFeatures>::default(),
+            Arc::<SVMFeatureSet>::default(),
             &sysvar_cache,
         );
 
@@ -4998,7 +4965,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::<RuntimeFeatures>::default(),
+            Arc::<SVMFeatureSet>::default(),
             &sysvar_cache,
         );
 

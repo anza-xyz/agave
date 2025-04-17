@@ -113,8 +113,7 @@ impl<'a> CallerAccount<'a> {
     ) -> Result<CallerAccount<'a>, Error> {
         let direct_mapping = invoke_context
             .get_feature_set()
-            .bpf_account_data_direct_mapping
-            .is_some();
+            .bpf_account_data_direct_mapping;
 
         if direct_mapping {
             check_account_info_pointer(
@@ -258,8 +257,7 @@ impl<'a> CallerAccount<'a> {
     ) -> Result<CallerAccount<'a>, Error> {
         let direct_mapping = invoke_context
             .get_feature_set()
-            .bpf_account_data_direct_mapping
-            .is_some();
+            .bpf_account_data_direct_mapping;
 
         if direct_mapping {
             check_account_info_pointer(
@@ -449,11 +447,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
 
         check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
 
-        if invoke_context
-            .get_feature_set()
-            .loosen_cpi_size_restriction
-            .is_some()
-        {
+        if invoke_context.get_feature_set().loosen_cpi_size_restriction {
             consume_compute_meter(
                 invoke_context,
                 (data.len() as u64)
@@ -668,11 +662,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
 
         check_instruction_size(ix_c.accounts_len as usize, data.len(), invoke_context)?;
 
-        if invoke_context
-            .get_feature_set()
-            .loosen_cpi_size_restriction
-            .is_some()
-        {
+        if invoke_context.get_feature_set().loosen_cpi_size_restriction {
             consume_compute_meter(
                 invoke_context,
                 (data.len() as u64)
@@ -804,8 +794,7 @@ where
 {
     let direct_mapping = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping
-        .is_some();
+        .bpf_account_data_direct_mapping;
 
     // In the same vein as the other check_account_info_pointer() checks, we don't lock
     // this pointer to a specific address but we don't want it to be inside accounts, or
@@ -879,8 +868,7 @@ where
 
     let direct_mapping = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping
-        .is_some();
+        .bpf_account_data_direct_mapping;
 
     for (instruction_account_index, instruction_account) in instruction_accounts.iter().enumerate()
     {
@@ -974,11 +962,7 @@ fn check_instruction_size(
     data_len: usize,
     invoke_context: &mut InvokeContext,
 ) -> Result<(), Error> {
-    if invoke_context
-        .get_feature_set()
-        .loosen_cpi_size_restriction
-        .is_some()
-    {
+    if invoke_context.get_feature_set().loosen_cpi_size_restriction {
         let data_len = data_len as u64;
         let max_data_len = MAX_CPI_INSTRUCTION_DATA_LEN;
         if data_len > max_data_len {
@@ -1012,15 +996,10 @@ fn check_account_infos(
     num_account_infos: usize,
     invoke_context: &mut InvokeContext,
 ) -> Result<(), Error> {
-    if invoke_context
-        .get_feature_set()
-        .loosen_cpi_size_restriction
-        .is_some()
-    {
+    if invoke_context.get_feature_set().loosen_cpi_size_restriction {
         let max_cpi_account_infos = if invoke_context
             .get_feature_set()
             .increase_tx_account_lock_limit
-            .is_some()
         {
             MAX_CPI_ACCOUNT_INFOS
         } else {
@@ -1060,7 +1039,6 @@ fn check_authorized_program(
                 || (invoke_context
                     .get_feature_set()
                     .enable_bpf_loader_set_authority_checked_ix
-                    .is_some()
                     && bpf_loader_upgradeable::is_set_authority_checked_instruction(
                         instruction_data,
                     ))
@@ -1143,8 +1121,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     // Synchronize the callee's account changes so the caller can see them.
     let direct_mapping = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping
-        .is_some();
+        .bpf_account_data_direct_mapping;
 
     if direct_mapping {
         // Update all perms at once before doing account data updates. This
@@ -1699,8 +1676,8 @@ mod tests {
                 .map(|a| (a.0, a.1))
                 .collect::<Vec<TransactionAccount>>();
             with_mock_invoke_context!($invoke_context, $transaction_context, transaction_accounts);
-            let mut feature_set = RuntimeFeatures::all_enabled();
-            feature_set.bpf_account_data_direct_mapping = None;
+            let mut feature_set = SVMFeatureSet::all_enabled();
+            feature_set.bpf_account_data_direct_mapping = false;
             $invoke_context.mock_set_feature_set(Arc::new(feature_set));
             $invoke_context
                 .transaction_context

@@ -40,6 +40,7 @@ solana-rent = { workspace = true }
 solana-sdk = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-svm-callback = { workspace = true }
+solana-svm-feature-set = { workspace = true }
 
 [lib]
 crate-type = ["lib"]

@@ -6,7 +6,6 @@ use {
     solana_fee_structure::FeeDetails,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget,
-        invoke_context::RuntimeFeatures,
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
     },
     solana_sdk::{clock::Slot, transaction},
@@ -14,6 +13,7 @@ use {
         account_loader::CheckedTransactionDetails, transaction_processor::TransactionBatchProcessor,
     },
     solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_feature_set::SVMFeatureSet,
     solana_system_program::system_processor,
     std::sync::{Arc, RwLock},
 };
@@ -38,7 +38,7 @@ impl ForkGraph for PayTubeForkGraph {
 /// cache, then adding the System program to the processor's builtins.
 pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    feature_set: &RuntimeFeatures,
+    feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
     fork_graph: Arc<RwLock<PayTubeForkGraph>>,
 ) -> TransactionBatchProcessor<PayTubeForkGraph> {

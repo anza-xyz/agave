@@ -85,7 +85,7 @@ declare_builtin_function!(
 
         if invoke_context
             .get_feature_set()
-            .bpf_account_data_direct_mapping.is_some()
+            .bpf_account_data_direct_mapping
         {
             let cmp_result = translate_type_mut::<i32>(
                 memory_mapping,
@@ -143,7 +143,7 @@ declare_builtin_function!(
 
         if invoke_context
             .get_feature_set()
-            .bpf_account_data_direct_mapping.is_some()
+            .bpf_account_data_direct_mapping
         {
             let syscall_context = invoke_context.get_syscall_context()?;
 
@@ -171,7 +171,6 @@ fn memmove(
     if invoke_context
         .get_feature_set()
         .bpf_account_data_direct_mapping
-        .is_some()
     {
         let syscall_context = invoke_context.get_syscall_context()?;
 

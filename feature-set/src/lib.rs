@@ -4,9 +4,9 @@ use {
     ahash::{AHashMap, AHashSet},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_program_runtime::invoke_context::RuntimeFeatures,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::Hasher,
+    solana_svm_feature_set::SVMFeatureSet,
     std::sync::LazyLock,
 };
 
@@ -100,62 +100,58 @@ impl FeatureSet {
             .map(|slot| epoch_schedule.get_epoch(slot))
     }
 
-    pub fn runtime_features(&self) -> RuntimeFeatures {
-        RuntimeFeatures {
-            lift_cpi_caller_restriction: self.activated_slot(&lift_cpi_caller_restriction::id()),
+    pub fn runtime_features(&self) -> SVMFeatureSet {
+        SVMFeatureSet {
+            lift_cpi_caller_restriction: self.is_active(&lift_cpi_caller_restriction::id()),
             move_precompile_verification_to_svm: self
-                .activated_slot(&move_precompile_verification_to_svm::id()),
+                .is_active(&move_precompile_verification_to_svm::id()),
             remove_accounts_executable_flag_checks: self
-                .activated_slot(&remove_accounts_executable_flag_checks::id()),
-            bpf_account_data_direct_mapping: self
-                .activated_slot(&bpf_account_data_direct_mapping::id()),
+                .is_active(&remove_accounts_executable_flag_checks::id()),
+            bpf_account_data_direct_mapping: self.is_active(&bpf_account_data_direct_mapping::id()),
             enable_bpf_loader_set_authority_checked_ix: self
-                .activated_slot(&enable_bpf_loader_set_authority_checked_ix::id()),
-            enable_loader_v4: self.activated_slot(&enable_loader_v4::id()),
-            deplete_cu_meter_on_vm_failure: self
-                .activated_slot(&deplete_cu_meter_on_vm_failure::id()),
-            abort_on_invalid_curve: self.activated_slot(&abort_on_invalid_curve::id()),
-            blake3_syscall_enabled: self.activated_slot(&blake3_syscall_enabled::id()),
-            curve25519_syscall_enabled: self.activated_slot(&curve25519_syscall_enabled::id()),
+                .is_active(&enable_bpf_loader_set_authority_checked_ix::id()),
+            enable_loader_v4: self.is_active(&enable_loader_v4::id()),
+            deplete_cu_meter_on_vm_failure: self.is_active(&deplete_cu_meter_on_vm_failure::id()),
+            abort_on_invalid_curve: self.is_active(&abort_on_invalid_curve::id()),
+            blake3_syscall_enabled: self.is_active(&blake3_syscall_enabled::id()),
+            curve25519_syscall_enabled: self.is_active(&curve25519_syscall_enabled::id()),
             disable_deploy_of_alloc_free_syscall: self
-                .activated_slot(&disable_deploy_of_alloc_free_syscall::id()),
-            disable_fees_sysvar: self.activated_slot(&disable_fees_sysvar::id()),
-            disable_sbpf_v0_execution: self.activated_slot(&disable_sbpf_v0_execution::id()),
+                .is_active(&disable_deploy_of_alloc_free_syscall::id()),
+            disable_fees_sysvar: self.is_active(&disable_fees_sysvar::id()),
+            disable_sbpf_v0_execution: self.is_active(&disable_sbpf_v0_execution::id()),
             enable_alt_bn128_compression_syscall: self
-                .activated_slot(&enable_alt_bn128_compression_syscall::id()),
-            enable_alt_bn128_syscall: self.activated_slot(&enable_alt_bn128_syscall::id()),
-            enable_big_mod_exp_syscall: self.activated_slot(&enable_big_mod_exp_syscall::id()),
-            enable_get_epoch_stake_syscall: self
-                .activated_slot(&enable_get_epoch_stake_syscall::id()),
-            enable_poseidon_syscall: self.activated_slot(&enable_poseidon_syscall::id()),
+                .is_active(&enable_alt_bn128_compression_syscall::id()),
+            enable_alt_bn128_syscall: self.is_active(&enable_alt_bn128_syscall::id()),
+            enable_big_mod_exp_syscall: self.is_active(&enable_big_mod_exp_syscall::id()),
+            enable_get_epoch_stake_syscall: self.is_active(&enable_get_epoch_stake_syscall::id()),
+            enable_poseidon_syscall: self.is_active(&enable_poseidon_syscall::id()),
             enable_sbpf_v1_deployment_and_execution: self
-                .activated_slot(&enable_sbpf_v1_deployment_and_execution::id()),
+                .is_active(&enable_sbpf_v1_deployment_and_execution::id()),
             enable_sbpf_v2_deployment_and_execution: self
-                .activated_slot(&enable_sbpf_v2_deployment_and_execution::id()),
+                .is_active(&enable_sbpf_v2_deployment_and_execution::id()),
             enable_sbpf_v3_deployment_and_execution: self
-                .activated_slot(&enable_sbpf_v3_deployment_and_execution::id()),
-            get_sysvar_syscall_enabled: self.activated_slot(&get_sysvar_syscall_enabled::id()),
-            last_restart_slot_sysvar: self.activated_slot(&last_restart_slot_sysvar::id()),
-            reenable_sbpf_v0_execution: self.activated_slot(&reenable_sbpf_v0_execution::id()),
+                .is_active(&enable_sbpf_v3_deployment_and_execution::id()),
+            get_sysvar_syscall_enabled: self.is_active(&get_sysvar_syscall_enabled::id()),
+            last_restart_slot_sysvar: self.is_active(&last_restart_slot_sysvar::id()),
+            reenable_sbpf_v0_execution: self.is_active(&reenable_sbpf_v0_execution::id()),
             remaining_compute_units_syscall_enabled: self
-                .activated_slot(&remaining_compute_units_syscall_enabled::id()),
+                .is_active(&remaining_compute_units_syscall_enabled::id()),
             remove_bpf_loader_incorrect_program_id: self
-                .activated_slot(&remove_bpf_loader_incorrect_program_id::id()),
+                .is_active(&remove_bpf_loader_incorrect_program_id::id()),
             move_stake_and_move_lamports_ixs: self
-                .activated_slot(&move_stake_and_move_lamports_ixs::id()),
+                .is_active(&move_stake_and_move_lamports_ixs::id()),
             stake_raise_minimum_delegation_to_1_sol: self
-                .activated_slot(&stake_raise_minimum_delegation_to_1_sol::id()),
-            deprecate_legacy_vote_ixs: self.activated_slot(&deprecate_legacy_vote_ixs::id()),
+                .is_active(&stake_raise_minimum_delegation_to_1_sol::id()),
+            deprecate_legacy_vote_ixs: self.is_active(&deprecate_legacy_vote_ixs::id()),
             mask_out_rent_epoch_in_vm_serialization: self
-                .activated_slot(&mask_out_rent_epoch_in_vm_serialization::id()),
+                .is_active(&mask_out_rent_epoch_in_vm_serialization::id()),
             simplify_alt_bn128_syscall_error_codes: self
-                .activated_slot(&simplify_alt_bn128_syscall_error_codes::id()),
+                .is_active(&simplify_alt_bn128_syscall_error_codes::id()),
             fix_alt_bn128_multiplication_input_length: self
-                .activated_slot(&fix_alt_bn128_multiplication_input_length::id()),
-            loosen_cpi_size_restriction: self.activated_slot(&loosen_cpi_size_restriction::id()),
-            increase_tx_account_lock_limit: self
-                .activated_slot(&increase_tx_account_lock_limit::id()),
-            disable_rent_fees_collection: self.activated_slot(&disable_rent_fees_collection::id()),
+                .is_active(&fix_alt_bn128_multiplication_input_length::id()),
+            loosen_cpi_size_restriction: self.is_active(&loosen_cpi_size_restriction::id()),
+            increase_tx_account_lock_limit: self.is_active(&increase_tx_account_lock_limit::id()),
+            disable_rent_fees_collection: self.is_active(&disable_rent_fees_collection::id()),
         }
     }
 }

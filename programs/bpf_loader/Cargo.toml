@@ -41,6 +41,7 @@ solana-sdk-ids = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-stable-layout = { workspace = true }
+solana-svm-feature-set = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }

@@ -55,6 +55,7 @@ solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
 solana-svm-callback = { workspace = true }
+solana-svm-feature-set = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-type-overrides = { workspace = true }

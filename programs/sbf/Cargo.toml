@@ -67,6 +67,7 @@ solana-sbpf = "=0.11.0"
 solana-secp256k1-recover = "=2.2.1"
 solana-svm = { path = "../../svm", version = "=2.3.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=2.3.0" }
+solana-svm-feature-set = { path = "../../svm-feature-set", version = "=2.3.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=2.3.0" }
 solana-timings = { path = "../../timings", version = "=2.3.0" }
 solana-transaction-context = { path = "../../transaction-context", version = "=2.3.0" }
@@ -142,6 +143,7 @@ solana-sbpf = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
+solana-svm-feature-set = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }

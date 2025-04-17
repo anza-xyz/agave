@@ -67,15 +67,14 @@ use {
         create_transaction_batch_processor, get_transaction_check_results, PayTubeForkGraph,
     },
     solana_client::rpc_client::RpcClient,
-    solana_program_runtime::{
-        execution_budget::SVMTransactionExecutionBudget, invoke_context::RuntimeFeatures,
-    },
+    solana_program_runtime::execution_budget::SVMTransactionExecutionBudget,
     solana_sdk::{
         fee::FeeStructure, hash::Hash, rent_collector::RentCollector, signature::Keypair,
     },
     solana_svm::transaction_processor::{
         TransactionProcessingConfig, TransactionProcessingEnvironment,
     },
+    solana_svm_feature_set::SVMFeatureSet,
     std::sync::{Arc, RwLock},
     transaction::create_svm_transactions,
 };
@@ -116,7 +115,7 @@ impl PayTubeChannel {
         //
         // For example purposes, they are provided as defaults here.
         let compute_budget = SVMTransactionExecutionBudget::default();
-        let feature_set = RuntimeFeatures::all_enabled();
+        let feature_set = SVMFeatureSet::all_enabled();
         let fee_structure = FeeStructure::default();
         let rent_collector = RentCollector::default();
 

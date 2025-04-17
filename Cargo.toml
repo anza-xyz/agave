@@ -124,6 +124,7 @@ members = [
     "svm",
     "svm-callback",
     "svm-conformance",
+    "svm-feature-set",
     "svm-rent-collector",
     "svm-transaction",
     "test-validator",
@@ -545,6 +546,7 @@ solana-streamer = { path = "streamer", version = "=2.3.0" }
 solana-svm = { path = "svm", version = "=2.3.0" }
 solana-svm-callback = { path = "svm-callback", version = "=2.3.0" }
 solana-svm-conformance = { path = "svm-conformance", version = "=2.3.0" }
+solana-svm-feature-set = { path = "svm-feature-set", version = "=2.3.0" }
 solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.3.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.3.0" }
 solana-system-interface = "1.0"
@@ -558,7 +560,7 @@ solana-transaction = "2.2.2"
 solana-transaction-error = "2.2.1"
 solana-tpu-client = { path = "tpu-client", version = "=2.3.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=2.3.0" }
-solana-transaction-context = { path = "transaction-context", version = "=2.3.0", features = [ "bincode", "debug-signature" ] }
+solana-transaction-context = { path = "transaction-context", version = "=2.3.0", features = ["bincode", "debug-signature"] }
 solana-transaction-status = { path = "transaction-status", version = "=2.3.0" }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=2.3.0" }
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.3.0" }

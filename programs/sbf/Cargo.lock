@@ -78,9 +78,9 @@ dependencies = [
  "ahash 0.8.11",
  "solana-epoch-schedule",
  "solana-hash",
- "solana-program-runtime",
  "solana-pubkey",
  "solana-sha256-hasher",
+ "solana-svm-feature-set",
 ]
 
 [[package]]
@@ -5516,6 +5516,7 @@ dependencies = [
  "solana-secp256k1-recover",
  "solana-sha256-hasher",
  "solana-stable-layout",
+ "solana-svm-feature-set",
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
@@ -7100,6 +7101,7 @@ dependencies = [
  "solana-slot-hashes",
  "solana-stable-layout",
  "solana-svm-callback",
+ "solana-svm-feature-set",
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
@@ -7637,6 +7639,7 @@ dependencies = [
  "solana-sdk",
  "solana-svm",
  "solana-svm-callback",
+ "solana-svm-feature-set",
  "solana-svm-transaction",
  "solana-timings",
  "solana-transaction-context 2.3.0",
@@ -8612,6 +8615,7 @@ dependencies = [
  "solana-sdk",
  "solana-sdk-ids",
  "solana-svm-callback",
+ "solana-svm-feature-set",
  "solana-svm-rent-collector",
  "solana-svm-transaction",
  "solana-timings",
@@ -8629,6 +8633,10 @@ dependencies = [
  "solana-precompile-error",
  "solana-pubkey",
 ]
+
+[[package]]
+name = "solana-svm-feature-set"
+version = "2.3.0"
 
 [[package]]
 name = "solana-svm-rent-collector"

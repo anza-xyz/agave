@@ -35,7 +35,7 @@ use {
     },
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionCost,
-        invoke_context::{EnvironmentConfig, InvokeContext, RuntimeFeatures},
+        invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
@@ -47,6 +47,7 @@ use {
     solana_rent_collector::RentCollector,
     solana_sdk_ids::{native_loader, system_program},
     solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
@@ -128,7 +129,7 @@ pub struct TransactionProcessingEnvironment<'a> {
     /// The total stake for the current epoch.
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
-    pub feature_set: Arc<RuntimeFeatures>,
+    pub feature_set: Arc<SVMFeatureSet>,
     /// Rent collector to use for the transaction batch.
     pub rent_collector: Option<&'a dyn SVMRentCollector>,
 }
@@ -822,8 +823,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         transaction_context.set_remove_accounts_executable_flag_checks(
             environment
                 .feature_set
-                .remove_accounts_executable_flag_checks
-                .is_some(),
+                .remove_accounts_executable_flag_checks,
         );
         #[cfg(debug_assertions)]
         transaction_context.set_signature(tx.signature());
@@ -1195,7 +1195,7 @@ mod tests {
             AccountLoader::new_with_account_cache_capacity(
                 None,
                 callbacks,
-                Arc::<RuntimeFeatures>::default(),
+                Arc::<SVMFeatureSet>::default(),
                 0,
             )
         }

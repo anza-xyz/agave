@@ -411,7 +411,6 @@ pub(crate) fn process_instruction_inner(
                 if invoke_context
                     .get_feature_set()
                     .remove_accounts_executable_flag_checks
-                    .is_some()
                 {
                     InstructionError::UnsupportedProgramId
                 } else {
@@ -425,10 +424,9 @@ pub(crate) fn process_instruction_inner(
 
     // Program Invocation
     #[allow(deprecated)]
-    if invoke_context
+    if !invoke_context
         .get_feature_set()
         .remove_accounts_executable_flag_checks
-        .is_none()
         && !program_account.is_executable()
     {
         ic_logger_msg!(log_collector, "Program is not executable");
@@ -444,7 +442,6 @@ pub(crate) fn process_instruction_inner(
             if invoke_context
                 .get_feature_set()
                 .remove_accounts_executable_flag_checks
-                .is_some()
             {
                 InstructionError::UnsupportedProgramId
             } else {
@@ -464,7 +461,6 @@ pub(crate) fn process_instruction_inner(
             let instruction_error = if invoke_context
                 .get_feature_set()
                 .remove_accounts_executable_flag_checks
-                .is_some()
             {
                 InstructionError::UnsupportedProgramId
             } else {
@@ -477,7 +473,6 @@ pub(crate) fn process_instruction_inner(
             let instruction_error = if invoke_context
                 .get_feature_set()
                 .remove_accounts_executable_flag_checks
-                .is_some()
             {
                 InstructionError::UnsupportedProgramId
             } else {
@@ -742,10 +737,9 @@ fn process_loader_upgradeable_instruction(
             let program =
                 instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
             #[allow(deprecated)]
-            if invoke_context
+            if !invoke_context
                 .get_feature_set()
                 .remove_accounts_executable_flag_checks
-                .is_none()
                 && !program.is_executable()
             {
                 ic_logger_msg!(log_collector, "Program account not executable");
@@ -984,10 +978,9 @@ fn process_loader_upgradeable_instruction(
             ic_logger_msg!(log_collector, "New authority {:?}", new_authority);
         }
         UpgradeableLoaderInstruction::SetAuthorityChecked => {
-            if invoke_context
+            if !invoke_context
                 .get_feature_set()
                 .enable_bpf_loader_set_authority_checked_ix
-                .is_none()
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
@@ -1320,7 +1313,7 @@ fn process_loader_upgradeable_instruction(
             );
         }
         UpgradeableLoaderInstruction::Migrate => {
-            if invoke_context.get_feature_set().enable_loader_v4.is_none() {
+            if !invoke_context.get_feature_set().enable_loader_v4 {
                 return Err(InstructionError::InvalidInstructionData);
             }
 
@@ -1554,12 +1547,10 @@ fn execute<'a, 'b: 'a>(
     let use_jit = executable.get_compiled_program().is_some();
     let direct_mapping = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping
-        .is_some();
+        .bpf_account_data_direct_mapping;
     let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
-        .mask_out_rent_epoch_in_vm_serialization
-        .is_some();
+        .mask_out_rent_epoch_in_vm_serialization;
 
     let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
@@ -1673,10 +1664,9 @@ fn execute<'a, 'b: 'a>(
 
                             error = EbpfError::SyscallError(Box::new(
                                 #[allow(deprecated)]
-                                if invoke_context
+                                if !invoke_context
                                     .get_feature_set()
                                     .remove_accounts_executable_flag_checks
-                                    .is_none()
                                     && account.is_executable()
                                 {
                                     InstructionError::ExecutableDataModified
@@ -1948,7 +1938,7 @@ mod tests {
             Entrypoint::vm,
             |invoke_context| {
                 let mut feature_set = *invoke_context.get_feature_set();
-                feature_set.remove_accounts_executable_flag_checks = None;
+                feature_set.remove_accounts_executable_flag_checks = false;
                 invoke_context.mock_set_feature_set(Arc::new(feature_set));
                 test_utils::load_all_invoked_programs(invoke_context);
             },
@@ -2642,7 +2632,7 @@ mod tests {
             Entrypoint::vm,
             |invoke_context| {
                 let mut feature_set = *invoke_context.get_feature_set();
-                feature_set.remove_accounts_executable_flag_checks = None;
+                feature_set.remove_accounts_executable_flag_checks = false;
                 invoke_context.mock_set_feature_set(Arc::new(feature_set));
                 test_utils::load_all_invoked_programs(invoke_context);
             },

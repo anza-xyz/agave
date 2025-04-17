@@ -16,8 +16,7 @@ use {
     solana_bpf_loader_program::{create_vm, syscalls::create_program_runtime_environment_v1},
     solana_measure::measure::Measure,
     solana_program_runtime::{
-        execution_budget::SVMTransactionExecutionBudget,
-        invoke_context::{InvokeContext, RuntimeFeatures},
+        execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
         serialization::serialize_parameters,
     },
     solana_runtime::{
@@ -41,6 +40,7 @@ use {
         pubkey::Pubkey,
         signature::Signer,
     },
+    solana_svm_feature_set::SVMFeatureSet,
     solana_transaction_context::InstructionAccount,
     std::{mem, sync::Arc},
     test::Bencher,
@@ -89,7 +89,7 @@ fn bench_program_create_executable(bencher: &mut Bencher) {
     let elf = load_program_from_file("bench_alu");
 
     let program_runtime_environment = create_program_runtime_environment_v1(
-        &RuntimeFeatures::default(),
+        &SVMFeatureSet::default(),
         &SVMTransactionExecutionBudget::default(),
         true,
         false,
@@ -232,8 +232,7 @@ fn bench_create_vm(bencher: &mut Bencher) {
 
     let direct_mapping = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping
-        .is_some();
+        .bpf_account_data_direct_mapping;
     let program_runtime_environment = create_program_runtime_environment_v1(
         invoke_context.get_feature_set(),
         &SVMTransactionExecutionBudget::default(),
@@ -279,8 +278,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
 
     let direct_mapping = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping
-        .is_some();
+        .bpf_account_data_direct_mapping;
 
     // Serialize account data
     let (_serialized, regions, account_lengths) = serialize_parameters(
