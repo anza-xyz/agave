@@ -54,7 +54,7 @@ use {
         bind_common_in_range_with_config, bind_common_with_config, bind_in_range,
         bind_in_range_with_config, bind_more_with_config, bind_to_localhost, bind_to_unspecified,
         bind_to_with_config, bind_two_in_range_with_offset_and_config,
-        find_available_port_in_range, multi_bind_in_range_with_config,
+        find_available_ports_in_range, multi_bind_in_range_with_config,
         sockets::localhost_port_range_for_tests, PortRange, SocketConfig, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
@@ -2461,10 +2461,9 @@ impl Node {
 
         let repair = bind_to_localhost().unwrap();
         let repair_quic = bind_to_localhost().unwrap();
-        let rpc_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
-        let rpc_addr = SocketAddr::new(localhost_ip_addr, rpc_port);
-        let rpc_pubsub_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
-        let rpc_pubsub_addr = SocketAddr::new(localhost_ip_addr, rpc_pubsub_port);
+        let rpc_ports = find_available_ports_in_range(localhost_ip_addr, port_range, 2).unwrap();
+        let rpc_addr = SocketAddr::new(localhost_ip_addr, rpc_ports[0]);
+        let rpc_pubsub_addr = SocketAddr::new(localhost_ip_addr, rpc_ports[1]);
         let broadcast = vec![bind_to_unspecified().unwrap()];
         let retransmit_socket = bind_to_unspecified().unwrap();
         let serve_repair = bind_to_localhost().unwrap();
@@ -2656,8 +2655,9 @@ impl Node {
         let (_, ancestor_hashes_requests_quic) =
             Self::bind_with_config(bind_ip_addr, port_range, socket_config);
 
-        let rpc_port = find_available_port_in_range(bind_ip_addr, port_range).unwrap();
-        let rpc_pubsub_port = find_available_port_in_range(bind_ip_addr, port_range).unwrap();
+        let rpc_ports = find_available_ports_in_range(bind_ip_addr, port_range, 2).unwrap();
+        let rpc_port = rpc_ports[0];
+        let rpc_pubsub_port = rpc_ports[1];
 
         // These are client sockets, so the port is set to be 0 because it must be ephimeral.
         let tpu_vote_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
