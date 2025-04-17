@@ -262,7 +262,6 @@ pub struct Blockstore {
     optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots>,
     orphans_cf: LedgerColumn<cf::Orphans>,
     perf_samples_cf: LedgerColumn<cf::PerfSamples>,
-    program_costs_cf: LedgerColumn<cf::ProgramCosts>,
     rewards_cf: LedgerColumn<cf::Rewards>,
     roots_cf: LedgerColumn<cf::Root>,
     transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
@@ -410,7 +409,6 @@ impl Blockstore {
         let optimistic_slots_cf = db.column();
         let orphans_cf = db.column();
         let perf_samples_cf = db.column();
-        let program_costs_cf = db.column();
         let rewards_cf = db.column();
         let roots_cf = db.column();
         let transaction_memos_cf = db.column();
@@ -445,7 +443,6 @@ impl Blockstore {
             optimistic_slots_cf,
             orphans_cf,
             perf_samples_cf,
-            program_costs_cf,
             rewards_cf,
             roots_cf,
             transaction_memos_cf,
@@ -866,7 +863,6 @@ impl Blockstore {
         self.blocktime_cf.submit_rocksdb_cf_metrics();
         self.perf_samples_cf.submit_rocksdb_cf_metrics();
         self.block_height_cf.submit_rocksdb_cf_metrics();
-        self.program_costs_cf.submit_rocksdb_cf_metrics();
         self.bank_hash_cf.submit_rocksdb_cf_metrics();
         self.optimistic_slots_cf.submit_rocksdb_cf_metrics();
         self.merkle_root_meta_cf.submit_rocksdb_cf_metrics();
@@ -3557,26 +3553,6 @@ impl Blockstore {
         let bytes =
             serialize(&perf_sample).expect("`PerfSampleV2` can be serialized with `bincode`");
         self.perf_samples_cf.put_bytes(index, &bytes)
-    }
-
-    pub fn read_program_costs(&self) -> Result<Vec<(Pubkey, u64)>> {
-        Ok(self
-            .program_costs_cf
-            .iter(IteratorMode::End)?
-            .map(|(pubkey, data)| {
-                let program_cost: ProgramCost = deserialize(&data).unwrap();
-                (pubkey, program_cost.cost)
-            })
-            .collect())
-    }
-
-    pub fn write_program_cost(&self, key: &Pubkey, value: &u64) -> Result<()> {
-        self.program_costs_cf
-            .put(*key, &ProgramCost { cost: *value })
-    }
-
-    pub fn delete_program_cost(&self, key: &Pubkey) -> Result<()> {
-        self.program_costs_cf.delete(*key)
     }
 
     /// Returns the entry vector for the slot starting with `shred_start_index`
@@ -11105,124 +11081,6 @@ pub mod tests {
             }
 
             assert!(Arc::strong_count(&blockstore) == 1);
-        }
-    }
-
-    #[test]
-    fn test_read_write_cost_table() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let num_entries: usize = 10;
-        let mut cost_table: HashMap<Pubkey, u64> = HashMap::new();
-        for x in 1..num_entries + 1 {
-            cost_table.insert(Pubkey::new_unique(), (x + 100) as u64);
-        }
-
-        // write to db
-        for (key, cost) in cost_table.iter() {
-            blockstore
-                .write_program_cost(key, cost)
-                .expect("write a program");
-        }
-
-        // read back from db
-        let read_back = blockstore.read_program_costs().expect("read programs");
-        // verify
-        assert_eq!(read_back.len(), cost_table.len());
-        for (read_key, read_cost) in read_back {
-            assert_eq!(read_cost, *cost_table.get(&read_key).unwrap());
-        }
-
-        // update value, write to db
-        for val in cost_table.values_mut() {
-            *val += 100;
-        }
-        for (key, cost) in cost_table.iter() {
-            blockstore
-                .write_program_cost(key, cost)
-                .expect("write a program");
-        }
-        // add a new record
-        let new_program_key = Pubkey::new_unique();
-        let new_program_cost = 999;
-        blockstore
-            .write_program_cost(&new_program_key, &new_program_cost)
-            .unwrap();
-
-        // confirm value updated
-        let read_back = blockstore.read_program_costs().expect("read programs");
-        // verify
-        assert_eq!(read_back.len(), cost_table.len() + 1);
-        for (key, cost) in cost_table.iter() {
-            assert_eq!(*cost, read_back.iter().find(|(k, _v)| k == key).unwrap().1);
-        }
-        assert_eq!(
-            new_program_cost,
-            read_back
-                .iter()
-                .find(|(k, _v)| *k == new_program_key)
-                .unwrap()
-                .1
-        );
-
-        // test delete
-        blockstore
-            .delete_program_cost(&new_program_key)
-            .expect("delete a progrma");
-        let read_back = blockstore.read_program_costs().expect("read programs");
-        // verify
-        assert_eq!(read_back.len(), cost_table.len());
-        for (read_key, read_cost) in read_back {
-            assert_eq!(read_cost, *cost_table.get(&read_key).unwrap());
-        }
-    }
-
-    #[test]
-    fn test_delete_old_records_from_cost_table() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let num_entries: usize = 10;
-        let mut cost_table: HashMap<Pubkey, u64> = HashMap::new();
-        for x in 1..num_entries + 1 {
-            cost_table.insert(Pubkey::new_unique(), (x + 100) as u64);
-        }
-
-        // write to db
-        for (key, cost) in cost_table.iter() {
-            blockstore
-                .write_program_cost(key, cost)
-                .expect("write a program");
-        }
-
-        // remove a record
-        let mut removed_key = Pubkey::new_unique();
-        for (key, cost) in cost_table.iter() {
-            if *cost == 101_u64 {
-                removed_key = *key;
-                break;
-            }
-        }
-        cost_table.remove(&removed_key);
-
-        // delete records from blockstore if they are no longer in cost_table
-        let db_records = blockstore.read_program_costs().expect("read programs");
-        db_records.iter().for_each(|(pubkey, _)| {
-            if !cost_table.iter().any(|(key, _)| key == pubkey) {
-                assert_eq!(*pubkey, removed_key);
-                blockstore
-                    .delete_program_cost(pubkey)
-                    .expect("delete old program");
-            }
-        });
-
-        // read back from db
-        let read_back = blockstore.read_program_costs().expect("read programs");
-        // verify
-        assert_eq!(read_back.len(), cost_table.len());
-        for (read_key, read_cost) in read_back {
-            assert_eq!(read_cost, *cost_table.get(&read_key).unwrap());
         }
     }
 
