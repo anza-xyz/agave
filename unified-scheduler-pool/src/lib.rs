@@ -125,6 +125,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     weak_self: Weak<Self>,
     next_scheduler_id: AtomicSchedulerId,
     max_usage_queue_count: usize,
+    cleaner_thread: JoinHandle<()>,
     _phantom: PhantomData<TH>,
 }
 
@@ -304,7 +305,7 @@ impl BankingStageHelper {
 pub type DefaultSchedulerPool =
     SchedulerPool<PooledScheduler<DefaultTaskHandler>, DefaultTaskHandler>;
 
-const DEFAULT_POOL_CLEANER_INTERVAL: Duration = Duration::from_secs(10);
+const DEFAULT_POOL_CLEANER_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_MAX_POOLING_DURATION: Duration = Duration::from_secs(180);
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 // Rough estimate of max UsageQueueLoader size in bytes:
@@ -362,6 +363,109 @@ where
         max_usage_queue_count: usize,
         timeout_duration: Duration,
     ) -> Arc<Self> {
+        let (scheduler_pool_sender, scheduler_pool_receiver) = crossbeam_channel::bounded(1);
+
+        let cleaner_main_loop = {
+            move || {
+                let weak_scheduler_pool: Weak<Self> =
+                    scheduler_pool_receiver.into_iter().next().unwrap();
+
+                loop {
+                    sleep(pool_cleaner_interval);
+
+                    let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
+                        info!("scheduler pool cleaner exited...");
+                        break;
+                    };
+
+                    let now = Instant::now();
+
+                    let idle_inner_count = {
+                        // Pre-allocate rather large capacity to avoid reallocation inside the lock.
+                        let mut idle_inners = Vec::with_capacity(128);
+
+                        let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock()
+                        else {
+                            break;
+                        };
+                        // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
+                        // using a polyfill and allowing unstable_name_collisions, because it's
+                        // simplest to code and fastest to run (= O(n); single linear pass and no
+                        // reallocation).
+                        //
+                        // Note that this critical section could block the latency-sensitive replay
+                        // code-path via ::take_scheduler().
+                        idle_inners.extend(MakeExtractIf::extract_if(
+                            scheduler_inners.deref_mut(),
+                            |(_inner, pooled_at)| {
+                                now.duration_since(*pooled_at) > max_pooling_duration
+                            },
+                        ));
+                        drop(scheduler_inners);
+
+                        let idle_inner_count = idle_inners.len();
+                        drop(idle_inners);
+                        idle_inner_count
+                    };
+
+                    let trashed_inner_count = {
+                        let Ok(mut trashed_scheduler_inners) =
+                            scheduler_pool.trashed_scheduler_inners.lock()
+                        else {
+                            break;
+                        };
+                        let trashed_inners: Vec<_> = mem::take(&mut *trashed_scheduler_inners);
+                        drop(trashed_scheduler_inners);
+
+                        let trashed_inner_count = trashed_inners.len();
+                        drop(trashed_inners);
+                        trashed_inner_count
+                    };
+
+                    let triggered_timeout_listener_count = {
+                        // Pre-allocate rather large capacity to avoid reallocation inside the lock.
+                        let mut expired_listeners = Vec::with_capacity(128);
+                        let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock()
+                        else {
+                            break;
+                        };
+                        expired_listeners.extend(MakeExtractIf::extract_if(
+                            timeout_listeners.deref_mut(),
+                            |(_callback, registered_at)| {
+                                now.duration_since(*registered_at) > timeout_duration
+                            },
+                        ));
+                        drop(timeout_listeners);
+
+                        let count = expired_listeners.len();
+                        // Now triggers all expired listeners. Usually, triggering timeouts does
+                        // nothing because the callbacks will be no-op if already successfully
+                        // `wait_for_termination()`-ed.
+                        for (timeout_listener, _registered_at) in expired_listeners {
+                            timeout_listener.trigger(scheduler_pool.clone());
+                        }
+                        count
+                    };
+
+                    info!(
+                    "Scheduler pool (sc:{}) cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners",
+                    Arc::strong_count(&scheduler_pool),
+                    idle_inner_count, trashed_inner_count, triggered_timeout_listener_count,
+                );
+                    sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
+                    sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
+                    sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
+                        triggered_timeout_listener_count,
+                    ));
+                }
+            }
+        };
+
+        let cleaner_thread = thread::Builder::new()
+            .name("solScCleaner".to_owned())
+            .spawn_tracked(cleaner_main_loop)
+            .unwrap();
+
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
             scheduler_inners: Mutex::default(),
             block_production_scheduler_inner: Mutex::default(),
@@ -378,100 +482,12 @@ where
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
+            cleaner_thread,
             _phantom: PhantomData,
         });
 
-        let cleaner_main_loop = {
-            let weak_scheduler_pool = Arc::downgrade(&scheduler_pool);
-
-            move || loop {
-                sleep(pool_cleaner_interval);
-
-                let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
-                    break;
-                };
-
-                let now = Instant::now();
-
-                let idle_inner_count = {
-                    // Pre-allocate rather large capacity to avoid reallocation inside the lock.
-                    let mut idle_inners = Vec::with_capacity(128);
-
-                    let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock() else {
-                        break;
-                    };
-                    // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
-                    // using a polyfill and allowing unstable_name_collisions, because it's
-                    // simplest to code and fastest to run (= O(n); single linear pass and no
-                    // reallocation).
-                    //
-                    // Note that this critical section could block the latency-sensitive replay
-                    // code-path via ::take_scheduler().
-                    idle_inners.extend(MakeExtractIf::extract_if(
-                        scheduler_inners.deref_mut(),
-                        |(_inner, pooled_at)| now.duration_since(*pooled_at) > max_pooling_duration,
-                    ));
-                    drop(scheduler_inners);
-
-                    let idle_inner_count = idle_inners.len();
-                    drop(idle_inners);
-                    idle_inner_count
-                };
-
-                let trashed_inner_count = {
-                    let Ok(mut trashed_scheduler_inners) =
-                        scheduler_pool.trashed_scheduler_inners.lock()
-                    else {
-                        break;
-                    };
-                    let trashed_inners: Vec<_> = mem::take(&mut *trashed_scheduler_inners);
-                    drop(trashed_scheduler_inners);
-
-                    let trashed_inner_count = trashed_inners.len();
-                    drop(trashed_inners);
-                    trashed_inner_count
-                };
-
-                let triggered_timeout_listener_count = {
-                    // Pre-allocate rather large capacity to avoid reallocation inside the lock.
-                    let mut expired_listeners = Vec::with_capacity(128);
-                    let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock() else {
-                        break;
-                    };
-                    expired_listeners.extend(MakeExtractIf::extract_if(
-                        timeout_listeners.deref_mut(),
-                        |(_callback, registered_at)| {
-                            now.duration_since(*registered_at) > timeout_duration
-                        },
-                    ));
-                    drop(timeout_listeners);
-
-                    let count = expired_listeners.len();
-                    // Now triggers all expired listeners. Usually, triggering timeouts does
-                    // nothing because the callbacks will be no-op if already successfully
-                    // `wait_for_termination()`-ed.
-                    for (timeout_listener, _registered_at) in expired_listeners {
-                        timeout_listener.trigger(scheduler_pool.clone());
-                    }
-                    count
-                };
-
-                info!(
-                    "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners",
-                    idle_inner_count, trashed_inner_count, triggered_timeout_listener_count,
-                );
-                sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
-                sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
-                sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
-                    triggered_timeout_listener_count,
-                ));
-            }
-        };
-
-        // No need to join; the spawned main loop will gracefully exit.
-        thread::Builder::new()
-            .name("solScCleaner".to_owned())
-            .spawn_tracked(cleaner_main_loop)
+        scheduler_pool_sender
+            .send(Arc::downgrade(&scheduler_pool))
             .unwrap();
 
         scheduler_pool
@@ -732,6 +748,40 @@ where
             .lock()
             .unwrap()
             .push((timeout_listener, Instant::now()));
+    }
+
+    fn uninstalled_from_bank_forks(self: Arc<Self>) {
+        trace!("uninstalling: {}", Arc::strong_count(&self));
+
+        // Drop all schedulers in the pool
+        for (timeout_listener, _registered_at) in
+            mem::take(&mut *self.timeout_listeners.lock().unwrap())
+        {
+            timeout_listener.trigger(self.clone());
+        }
+        mem::take(&mut *self.scheduler_inners.lock().unwrap());
+        mem::take(&mut *self.block_production_scheduler_inner.lock().unwrap());
+        mem::take(&mut *self.trashed_scheduler_inners.lock().unwrap());
+
+        // At this point, there should be only 1 strong rerefence, take pool out of  Arc...
+        let mut this = self;
+        let pool: Self = loop {
+            match Arc::try_unwrap(this) {
+                Ok(pool) => {
+                    break pool;
+                }
+                Err(that) => {
+                    // seems solScCleaner is active... retry later
+                    this = that;
+                    sleep(Duration::from_millis(100));
+                    continue;
+                }
+            }
+        };
+        // join the cleaner thread as an extra sanity cleaning up.
+        pool.cleaner_thread.join().unwrap();
+
+        info!("uninstalled");
     }
 }
 
