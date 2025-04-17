@@ -6,6 +6,8 @@ use {
     agave_feature_set::FeatureSet,
     solana_bpf_loader_program::syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
+        SyscallMemcmp,
+        SyscallMemmove,
         SyscallLog, SyscallMemcpy, SyscallMemset, SyscallSetReturnData,
     },
     solana_fee_structure::{FeeDetails, FeeStructure},
@@ -377,6 +379,12 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         .expect("Registration failed");
     loader
         .register_function("sol_memset_", SyscallMemset::vm)
+        .expect("Registration failed");
+    loader
+        .register_function("sol_memcmp_", SyscallMemcmp::vm)
+        .expect("Registration failed");
+    loader
+        .register_function("sol_memmove_", SyscallMemmove::vm)
         .expect("Registration failed");
     loader
         .register_function("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
