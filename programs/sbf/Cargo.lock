@@ -9171,6 +9171,7 @@ name = "solana-version"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
+ "rand 0.8.5",
  "semver",
  "serde",
  "serde_derive",
