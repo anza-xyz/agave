@@ -3,14 +3,15 @@
 
 use {
     crate::{
-        packet::{self, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
+        packet::{
+            self, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch, PACKETS_PER_BATCH,
+        },
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
     itertools::Itertools,
-    solana_packet::Packet,
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
@@ -84,7 +85,7 @@ pub enum StreamerError {
     RecvTimeout(#[from] RecvTimeoutError),
 
     #[error("send packets error")]
-    Send(#[from] SendError<PacketBatch>),
+    Send(#[from] SendError<PinnedPacketBatch>),
 
     #[error(transparent)]
     SendPktsError(#[from] SendPktsError),
@@ -158,9 +159,9 @@ fn recv_loop(
 ) -> Result<()> {
     loop {
         let mut packet_batch = if use_pinned_memory {
-            PacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
+            PinnedPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
         } else {
-            PacketBatch::with_capacity(PACKETS_PER_BATCH)
+            PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH)
         };
         loop {
             // Check for exit signal, even if socket is busy
@@ -195,7 +196,9 @@ fn recv_loop(
                     packet_batch
                         .iter_mut()
                         .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
-                    if let Err(TrySendError::Full(_)) = packet_batch_sender.try_send(packet_batch) {
+                    if let Err(TrySendError::Full(_)) =
+                        packet_batch_sender.try_send(packet_batch.into())
+                    {
                         stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
                     }
                 }
@@ -340,7 +343,7 @@ impl StreamerSendStats {
         };
     }
 
-    fn record(&mut self, pkt: &Packet) {
+    fn record(&mut self, pkt: PacketRef) {
         let ent = self.host_map.entry(pkt.meta().addr).or_default();
         ent.count += 1;
         ent.bytes += pkt.data(..).map(<[u8]>::len).unwrap_or_default() as u64;
@@ -505,7 +508,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{Packet, PacketBatch, PACKET_DATA_SIZE},
+            packet::{Packet, PinnedPacketBatch, PACKET_DATA_SIZE},
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
@@ -540,7 +543,7 @@ mod test {
     #[test]
     fn streamer_debug() {
         write!(io::sink(), "{:?}", Packet::default()).unwrap();
-        write!(io::sink(), "{:?}", PacketBatch::default()).unwrap();
+        write!(io::sink(), "{:?}", PinnedPacketBatch::default()).unwrap();
     }
     #[test]
     fn streamer_send_test() {
@@ -574,7 +577,7 @@ mod test {
                 SocketAddrSpace::Unspecified,
                 None,
             );
-            let mut packet_batch = PacketBatch::default();
+            let mut packet_batch = PinnedPacketBatch::default();
             for i in 0..NUM_PACKETS {
                 let mut p = Packet::default();
                 {
@@ -584,6 +587,7 @@ mod test {
                 }
                 packet_batch.push(p);
             }
+            let packet_batch = PacketBatch::from(packet_batch);
             s_responder.send(packet_batch).expect("send");
             t_responder
         };

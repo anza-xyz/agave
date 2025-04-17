@@ -1,6 +1,9 @@
 use {
-    lazy_static::lazy_static, log::*, rand::Rng, solana_packet::Packet,
-    solana_perf::sigverify::PacketError, solana_short_vec::decode_shortu16_len,
+    lazy_static::lazy_static,
+    log::*,
+    rand::Rng,
+    solana_perf::{packet::BytesPacket, sigverify::PacketError},
+    solana_short_vec::decode_shortu16_len,
     solana_signature::SIGNATURE_BYTES,
 };
 
@@ -23,7 +26,7 @@ pub fn should_track_transaction(signature: &[u8; SIGNATURE_BYTES]) -> bool {
 /// This does a rudimentry verification to make sure the packet at least
 /// contains the signature data and it returns the reference to the signature.
 pub fn signature_if_should_track_packet(
-    packet: &Packet,
+    packet: &BytesPacket,
 ) -> Result<Option<&[u8; SIGNATURE_BYTES]>, PacketError> {
     let signature = get_signature_from_packet(packet)?;
     Ok(should_track_transaction(signature).then_some(signature))
@@ -32,7 +35,9 @@ pub fn signature_if_should_track_packet(
 /// Get the signature of the transaction packet
 /// This does a rudimentry verification to make sure the packet at least
 /// contains the signature data and it returns the reference to the signature.
-pub fn get_signature_from_packet(packet: &Packet) -> Result<&[u8; SIGNATURE_BYTES], PacketError> {
+pub fn get_signature_from_packet(
+    packet: &BytesPacket,
+) -> Result<&[u8; SIGNATURE_BYTES], PacketError> {
     let (sig_len_untrusted, sig_start) = packet
         .data(..)
         .and_then(|bytes| decode_shortu16_len(bytes).ok())
@@ -54,14 +59,18 @@ pub fn get_signature_from_packet(packet: &Packet) -> Result<&[u8; SIGNATURE_BYTE
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_hash::Hash, solana_keypair::Keypair, solana_signature::Signature,
+        super::*,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_perf::packet::{bytes::Bytes, Meta},
+        solana_signature::Signature,
         solana_system_transaction as system_transaction,
     };
 
     #[test]
     fn test_get_signature_from_packet() {
         // Default invalid txn packet
-        let packet = Packet::default();
+        let packet = BytesPacket::default();
         let sig = get_signature_from_packet(&packet);
         assert_eq!(sig, Err(PacketError::InvalidShortVec));
 
@@ -72,13 +81,15 @@ mod tests {
             1,
             Hash::new_unique(),
         );
-        let mut packet = Packet::from_data(None, tx).unwrap();
+        let packet = BytesPacket::from_data(None, tx.clone()).unwrap();
 
         let sig = get_signature_from_packet(&packet);
         assert!(sig.is_ok());
 
         // Invalid signature length
-        packet.buffer_mut()[0] = 0x0;
+        let mut data = bincode::serialize(&tx).unwrap();
+        data[0] = 0x0;
+        let packet = BytesPacket::new(Bytes::from(data), Meta::default());
         let sig = get_signature_from_packet(&packet);
         assert_eq!(sig, Err(PacketError::InvalidSignatureLen));
     }
@@ -105,7 +116,7 @@ mod tests {
     #[test]
     fn test_signature_if_should_track_packet() {
         // Default invalid txn packet
-        let packet = Packet::default();
+        let packet = BytesPacket::default();
         let sig = signature_if_should_track_packet(&packet);
         assert_eq!(sig, Err(PacketError::InvalidShortVec));
 
@@ -116,7 +127,7 @@ mod tests {
             1,
             Hash::new_unique(),
         );
-        let packet = Packet::from_data(None, tx).unwrap();
+        let packet = BytesPacket::from_data(None, tx).unwrap();
         let sig = signature_if_should_track_packet(&packet);
         assert_eq!(Ok(None), sig);
 
@@ -133,7 +144,7 @@ mod tests {
 
         let sig = Signature::from(sig);
         tx.signatures[0] = sig;
-        let mut packet = Packet::from_data(None, tx).unwrap();
+        let packet = BytesPacket::from_data(None, tx.clone()).unwrap();
         let sig2 = signature_if_should_track_packet(&packet);
 
         match sig2 {
@@ -144,7 +155,9 @@ mod tests {
         }
 
         // Invalid signature length
-        packet.buffer_mut()[0] = 0x0;
+        let mut data = bincode::serialize(&tx).unwrap();
+        data[0] = 0x0;
+        let packet = BytesPacket::new(Bytes::from(data), Meta::default());
         let sig = signature_if_should_track_packet(&packet);
         assert_eq!(sig, Err(PacketError::InvalidSignatureLen));
     }

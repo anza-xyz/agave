@@ -262,7 +262,7 @@ impl SigVerifyStage {
             });
         }
         // Discard excess packets from each address.
-        for packet in addrs.into_values().flatten() {
+        for mut packet in addrs.into_values().flatten() {
             packet.meta_mut().set_discard(true);
         }
     }
@@ -436,7 +436,7 @@ mod tests {
         crate::{banking_trace::BankingTracer, sigverify::TransactionSigVerifier},
         crossbeam_channel::unbounded,
         solana_perf::{
-            packet::{to_packet_batches, Packet},
+            packet::{to_packet_batches, Packet, PinnedPacketBatch},
             test_tx::test_tx,
         },
     };
@@ -453,20 +453,20 @@ mod tests {
     fn test_packet_discard() {
         solana_logger::setup();
         let batch_size = 10;
-        let mut batch = PacketBatch::with_capacity(batch_size);
+        let mut batch = PinnedPacketBatch::with_capacity(batch_size);
         let packet = Packet::default();
         batch.resize(batch_size, packet);
         batch[3].meta_mut().addr = std::net::IpAddr::from([1u16; 8]);
         batch[3].meta_mut().set_discard(true);
         batch[4].meta_mut().addr = std::net::IpAddr::from([2u16; 8]);
-        let mut batches = vec![batch];
+        let mut batches = vec![PacketBatch::from(batch)];
         let max = 3;
         SigVerifyStage::discard_excess_packets(&mut batches, max);
         let total_non_discard = count_non_discard(&batches);
         assert_eq!(total_non_discard, max);
-        assert!(!batches[0][0].meta().discard());
-        assert!(batches[0][3].meta().discard());
-        assert!(!batches[0][4].meta().discard());
+        assert!(!batches[0].get(0).unwrap().meta().discard());
+        assert!(batches[0].get(3).unwrap().meta().discard());
+        assert!(!batches[0].get(4).unwrap().meta().discard());
     }
 
     fn gen_batches(
@@ -563,7 +563,7 @@ mod tests {
         {
             let mut index = 0;
             batches.iter_mut().for_each(|batch| {
-                batch.iter_mut().for_each(|p| {
+                batch.iter_mut().for_each(|mut p| {
                     if ((index + 1) as f64 / num_packets as f64) < MAX_DISCARDED_PACKET_RATE {
                         p.meta_mut().set_discard(true);
                     }
@@ -575,7 +575,13 @@ mod tests {
         assert_eq!(SigVerifyStage::maybe_shrink_batches(&mut batches).1, 0);
 
         // discard one more to exceed shrink threshold
-        batches.last_mut().unwrap()[0].meta_mut().set_discard(true);
+        batches
+            .last_mut()
+            .unwrap()
+            .first_mut()
+            .unwrap()
+            .meta_mut()
+            .set_discard(true);
 
         let expected_num_shrunk_batches =
             1.max((num_generated_batches as f64 * MAX_DISCARDED_PACKET_RATE) as usize);

@@ -84,7 +84,7 @@ impl Vortexor {
     }
 
     pub fn create_sigverify_stage(
-        tpu_receiver: Receiver<solana_perf::packet::PacketBatch>,
+        tpu_receiver: Receiver<PacketBatch>,
         non_vote_sender: TracedSender,
     ) -> SigVerifyStage {
         let verifier = TransactionSigVerifier::new(non_vote_sender, None);

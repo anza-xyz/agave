@@ -232,7 +232,11 @@ mod tests {
         let transactions = vec![random_transfer(), random_transfer()];
         let mut packet_batches = to_packet_batches(&transactions, 1);
         assert_eq!(packet_batches.len(), 2);
-        packet_batches[0][0].meta_mut().set_discard(true);
+        packet_batches[0]
+            .first_mut()
+            .unwrap()
+            .meta_mut()
+            .set_discard(true);
 
         let packet_count: usize = packet_batches.iter().map(|x| x.len()).sum();
         let results = PacketDeserializer::deserialize_and_collect_packets(
