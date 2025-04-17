@@ -816,6 +816,8 @@ impl TaskHandler for DefaultTaskHandler {
                 // via the replaying stage.
                 // Refer `record_token_balances` in `execute_batch()` as this treatment is mirrored
                 // from it.
+                // This is code path is directly corresponds to the pre_commit_callback in
+                // execute_batch().
                 vec![]
             }
         };

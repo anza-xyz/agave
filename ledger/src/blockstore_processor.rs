@@ -200,6 +200,8 @@ pub fn execute_batch<'a>(
                 let [result] = processing_results else {
                     panic!("unexpected result count: {}", processing_results.len());
                 };
+                // transaction_indexes is intended to be populated later; so barely-initialized vec
+                // should be provided.
                 assert!(transaction_indexes.is_empty());
 
                 // From now on, we need to freeze-lock the tpu bank, in order to prevent it from
@@ -214,6 +216,8 @@ pub fn execute_batch<'a>(
                 let committed_index = extra_pre_commit_callback(result)?;
 
                 // The callback succeeded. Optionally, update transaction_indexes as well.
+                // Refer to TaskHandler::handle()'s transaction_indexes initialization for further
+                // background.
                 if let Some(index) = committed_index {
                     let transaction_indexes = transaction_indexes.to_mut();
                     // Adjust the empty new vec with the exact needed capacity. Otherwise, excess
