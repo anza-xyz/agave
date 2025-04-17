@@ -2648,7 +2648,7 @@ fn svm_metrics_accumulation() {
 
 const STARTING_BALANCE: u64 = LAMPORTS_PER_SOL * 10;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Transfer {
     from: Pubkey,
     to: Pubkey,
@@ -2707,7 +2707,7 @@ static SPL_TOKEN_BYTES: &[u8] =
     include_bytes!("../../program-test/src/programs/spl_token-3.5.0.so");
 
 #[repr(C)]
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct SplTokenAccount {
     mint: Pubkey,
     owner: Pubkey,
@@ -2715,6 +2715,39 @@ struct SplTokenAccount {
     delegate_tag: u32,
     delegate: Pubkey,
     state: u8,
+}
+impl Default for SplTokenAccount {
+    fn default() -> Self {
+        Self {
+            mint: Pubkey::default(),
+            owner: Pubkey::default(),
+            amount: STARTING_BALANCE,
+            delegate_tag: 0,
+            delegate: Pubkey::default(),
+            state: 1,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SplTokenMint {
+    authority_tag: u32,
+    authority: Pubkey,
+    supply: u64,
+    decimals: u8,
+    initialized: bool,
+}
+impl Default for SplTokenMint {
+    fn default() -> Self {
+        Self {
+            authority_tag: 0,
+            authority: Pubkey::default(),
+            supply: 0,
+            decimals: 9,
+            initialized: true,
+        }
+    }
 }
 
 #[allow(unused)] // XXX
@@ -2729,11 +2762,10 @@ fn svm_collect_balances(use_tokens: bool) {
     let charlie_keypair = Keypair::new();
 
     let fee_payer = fee_payer_keypair.pubkey();
+    let mint = Pubkey::new_unique();
     let alice = alice_keypair.pubkey();
     let bob = bob_keypair.pubkey();
     let charlie = charlie_keypair.pubkey();
-
-    let mint = Pubkey::new_unique();
 
     let native_state = AccountSharedData::create(
         STARTING_BALANCE,
@@ -2743,14 +2775,17 @@ fn svm_collect_balances(use_tokens: bool) {
         u64::MAX,
     );
 
+    let mut mint_state =
+        AccountSharedData::create(LAMPORTS_PER_SOL, vec![0; 82], token::id(), false, u64::MAX);
+    mint_state.set_state(&SplTokenMint::default()).unwrap();
+    let mint_state = mint_state;
+
     let mut token_state =
         AccountSharedData::create(LAMPORTS_PER_SOL, vec![0; 165], token::id(), false, u64::MAX);
     token_state
         .set_state(&SplTokenAccount {
             mint,
             owner: fee_payer,
-            amount: STARTING_BALANCE,
-            state: 1,
             ..SplTokenAccount::default()
         })
         .unwrap();
@@ -2764,17 +2799,22 @@ fn svm_collect_balances(use_tokens: bool) {
         u64::MAX,
     );
 
+    println!(
+        "HANA payer {}, alice {}, bob {}, charlie {}",
+        fee_payer, alice, bob, charlie
+    );
+
     for _ in 0..1 {
         // XXX
         let mut test_entry = SvmTestEntry::default();
         test_entry.add_initial_account(fee_payer, &native_state.clone());
 
         if use_tokens {
+            test_entry.add_initial_account(token::id(), &spl_token);
+            test_entry.add_initial_account(mint, &mint_state);
             test_entry.add_initial_account(alice, &token_state);
             test_entry.add_initial_account(bob, &token_state);
             test_entry.add_initial_account(charlie, &token_state);
-
-            test_entry.add_initial_account(token::id(), &spl_token);
         } else {
             test_entry.add_initial_account(alice, &native_state);
             test_entry.add_initial_account(bob, &native_state);
@@ -2787,7 +2827,7 @@ fn svm_collect_balances(use_tokens: bool) {
         user_balances.insert(charlie, STARTING_BALANCE);
         let mut user_balance_history = vec![(Transfer::default(), user_balances.clone())];
 
-        for _ in 0..5 {
+        for _ in 0..1 {
             // XXX
             // TODO fail transactions
             let transfer = Transfer::new_rand(&[alice, bob, charlie]);
@@ -2805,8 +2845,12 @@ fn svm_collect_balances(use_tokens: bool) {
                 transfer.to_system_transaction(&fee_payer_keypair, from_signer)
             };
 
+            println!("HANA transaction: {:#?}", transaction);
+
             test_entry.push_transaction(transaction);
             test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+            println!("HANA transfer: {:#?}", transfer);
 
             user_balances
                 .entry(transfer.from)
@@ -2818,11 +2862,9 @@ fn svm_collect_balances(use_tokens: bool) {
         }
 
         if use_tokens {
-            //todo!()
             let mut token_account = SplTokenAccount {
                 mint,
                 owner: fee_payer,
-                state: 1,
                 ..SplTokenAccount::default()
             };
             let mut final_token_state = AccountSharedData::create(
@@ -2858,13 +2900,6 @@ fn svm_collect_balances(use_tokens: bool) {
             test_entry.update_expected_account_data(charlie, &charlie_final_state);
         }
 
-        /* XXX
-        println!(
-            "HANA payer {}, alice {}, bob {}, charlie {}",
-            fee_payer, alice, bob, charlie
-        );
-        */
-
         let mut env = SvmTestEnvironment::create(test_entry);
         env.processing_config
             .recording_config
@@ -2875,10 +2910,32 @@ fn svm_collect_balances(use_tokens: bool) {
         // now we test that every step in `user_balance_history` matches the svm recorded balances
         // in other words, the test effectively has three balance trackers and we can test they *all* agree
         let (batch_pre, batch_post) = if use_tokens {
-            todo!()
+            let (_, _, pre_vecs, post_vecs) = batch_output.balance_collector.unwrap().into_vecs();
+
+            println!("HANA pre {:#?}", pre_vecs);
+            println!("HANA post {:#?}", post_vecs);
+
+            let pre_tupls: Vec<_> = pre_vecs
+                .iter()
+                .map(|bals| (bals[1].amount, bals[0].amount))
+                .collect();
+            let post_tupls: Vec<_> = post_vecs
+                .iter()
+                .map(|bals| (bals[1].amount, bals[0].amount))
+                .collect();
+
+            (pre_tupls, post_tupls)
+
+            // XXX TODO FIXME this is wrong
+            // i was going to try to parse token accounts but we have SvmTokenInfo already
+            // however i need to make a fake mint for account loader to pick up
         } else {
-            let (pre, post, _, _) = batch_output.balance_collector.unwrap().into_vecs();
-            (pre, post)
+            let (pre_vecs, post_vecs, _, _) = batch_output.balance_collector.unwrap().into_vecs();
+
+            let pre_tupls: Vec<_> = pre_vecs.iter().map(|bals| (bals[1], bals[2])).collect();
+            let post_tupls: Vec<_> = post_vecs.iter().map(|bals| (bals[1], bals[2])).collect();
+
+            (pre_tupls, post_tupls)
         };
 
         // these two asserts are trivially true. we include them just to make it clearer what these vecs are
@@ -2900,20 +2957,20 @@ fn svm_collect_balances(use_tokens: bool) {
             let (ref transfer, ref expected_post_balances) = user_balance_history[i + 1];
 
             assert_eq!(
-                svm_pre_balances[1],
+                svm_pre_balances.0,
                 *expected_pre_balances.get(&transfer.from).unwrap()
             );
             assert_eq!(
-                svm_pre_balances[2],
+                svm_pre_balances.1,
                 *expected_pre_balances.get(&transfer.to).unwrap()
             );
 
             assert_eq!(
-                svm_post_balances[1],
+                svm_post_balances.0,
                 *expected_post_balances.get(&transfer.from).unwrap()
             );
             assert_eq!(
-                svm_post_balances[2],
+                svm_post_balances.1,
                 *expected_post_balances.get(&transfer.to).unwrap()
             );
         }
