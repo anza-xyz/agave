@@ -1,9 +1,11 @@
 use {
     crate::crypto_provider,
     rustls::{
+        client::danger::HandshakeSignatureValid,
+        crypto::CryptoProvider,
         pki_types::{CertificateDer, UnixTime},
-        server::danger::ClientCertVerified,
-        DistinguishedName,
+        server::danger::{ClientCertVerified, ClientCertVerifier},
+        DigitallySignedStruct, DistinguishedName, Error, SignatureScheme,
     },
     std::{fmt::Debug, sync::Arc},
 };
@@ -11,21 +13,21 @@ use {
 /// Implementation of [`ClientCertVerifier`] that ignores the server
 /// certificate. Yet still checks the TLS signatures.
 #[derive(Debug)]
-pub struct SkipClientVerification(Arc<rustls::crypto::CryptoProvider>);
+pub struct SkipClientVerification(Arc<CryptoProvider>);
 
 impl SkipClientVerification {
     pub fn new() -> Arc<Self> {
         Arc::new(Self(Arc::new(crypto_provider())))
     }
 }
-impl rustls::server::danger::ClientCertVerifier for SkipClientVerification {
+impl ClientCertVerifier for SkipClientVerification {
     fn verify_client_cert(
         &self,
         _end_entity: &CertificateDer,
         _intermediates: &[CertificateDer],
         _now: UnixTime,
-    ) -> Result<ClientCertVerified, rustls::Error> {
-        Ok(rustls::server::danger::ClientCertVerified::assertion())
+    ) -> Result<ClientCertVerified, Error> {
+        Ok(ClientCertVerified::assertion())
     }
 
     fn root_hint_subjects(&self) -> &[DistinguishedName] {
@@ -35,9 +37,9 @@ impl rustls::server::danger::ClientCertVerifier for SkipClientVerification {
     fn verify_tls12_signature(
         &self,
         message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, Error> {
         rustls::crypto::verify_tls12_signature(
             message,
             cert,
@@ -49,9 +51,9 @@ impl rustls::server::danger::ClientCertVerifier for SkipClientVerification {
     fn verify_tls13_signature(
         &self,
         message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, Error> {
         rustls::crypto::verify_tls13_signature(
             message,
             cert,
@@ -60,7 +62,7 @@ impl rustls::server::danger::ClientCertVerifier for SkipClientVerification {
         )
     }
 
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.0.signature_verification_algorithms.supported_schemes()
     }
 
