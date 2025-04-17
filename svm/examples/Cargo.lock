@@ -7620,7 +7620,6 @@ dependencies = [
  "solana-sdk",
  "solana-tpu-client-next",
  "tokio",
- "tokio-util 0.7.14",
 ]
 
 [[package]]
