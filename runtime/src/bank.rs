@@ -1408,10 +1408,7 @@ impl Bank {
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
-            epoch_reward_calculation_results: Arc::new(Mutex::new(HashMap::<
-                Epoch,
-                HashMap<Slot, PartitionedRewardsCalculation>,
-            >::default())),
+            epoch_reward_calculation_results: parent.epoch_reward_calculation_results.clone(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
