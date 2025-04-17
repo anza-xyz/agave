@@ -8,6 +8,7 @@ use {
         WALLCLOCK_TIME,
     },
     agave_feature_set::{self as feature_set, FeatureSet},
+    rand0_7::prelude::*,
     solana_account::PROGRAM_OWNERS,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_fee_structure::FeeDetails,
@@ -37,13 +38,15 @@ use {
         transaction_execution_result::TransactionExecutionDetails,
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
         transaction_processor::{
-            ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
+            ExecutionRecordingConfig, LoadAndExecuteSanitizedTransactionsOutput,
+            TransactionBatchProcessor, TransactionProcessingConfig,
             TransactionProcessingEnvironment,
         },
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::TransactionReturnData,
     solana_type_overrides::sync::{Arc, RwLock},
+    spl_generic_token::{generic_token, token},
     std::collections::HashMap,
     test_case::test_case,
 };
@@ -131,7 +134,7 @@ impl SvmTestEnvironment<'_> {
         }
     }
 
-    pub fn execute(&self) {
+    pub fn execute(&self) -> LoadAndExecuteSanitizedTransactionsOutput {
         let (transactions, check_results) = self.test_entry.prepare_transactions();
         let batch_output = self
             .batch_processor
@@ -281,6 +284,8 @@ impl SvmTestEnvironment<'_> {
         // merge new account states into the bank for multi-batch tests
         let mut mock_bank_accounts = self.mock_bank.account_shared_data.write().unwrap();
         mock_bank_accounts.extend(final_accounts_actual);
+
+        batch_output
     }
 }
 
@@ -2630,5 +2635,209 @@ fn svm_metrics_accumulation() {
                 .0,
             0
         );
+    }
+}
+
+// XXX HANA OK wtf am i doing this time
+// we have an spl token so in the repo so just be evil and dump it in an account
+// spl xfer is discriminator 3 followed by a u64 amount
+// spl account is mint pubkey, owner pubkey, amount. the coption delegate (all 0) and the number 1 for init
+// spl mint... we actually dont need a mint. haha that rules
+// so that means set up the test env, fee payer and say three accounts
+// dump the token program and two pseudo-accounts, make the instruction by hand
+
+const STARTING_BALANCE: u64 = LAMPORTS_PER_SOL * 10;
+
+#[derive(Default)]
+struct Transfer {
+    from: Pubkey,
+    to: Pubkey,
+    amount: u64,
+}
+
+impl Transfer {
+    fn new_rand(users: &[Pubkey]) -> Self {
+        let mut rng = rand0_7::thread_rng();
+        let mut users = users.to_vec();
+        let (i, from) = users.iter().enumerate().choose(&mut rng).unwrap();
+        let from = *from;
+        users.remove(i);
+        let to = *users.iter().choose(&mut rng).unwrap();
+        let amount = rng.gen_range(1, STARTING_BALANCE / 100);
+
+        Self { from, to, amount }
+    }
+
+    // XXX ok when back!! change tokens to be self-signed
+    // mpove system rando signer to last position in args
+    // then i think just impl token stuff and add fail transactions
+
+    fn to_system_transaction(&self, signer: &Keypair, fee_payer: &Keypair) -> Transaction {
+        Transaction::new_signed_with_payer(
+            &[system_instruction::transfer(
+                &self.from,
+                &self.to,
+                self.amount,
+            )],
+            Some(&fee_payer.pubkey()),
+            &[fee_payer, signer],
+            Hash::default(),
+        )
+    }
+
+    fn to_token_transaction(&self, signer: &Keypair, fee_payer: &Keypair) -> Transaction {
+        Transaction::new_signed_with_payer(
+            &[Instruction {
+                program_id: token::id(),
+                accounts: vec![
+                    AccountMeta::new(self.from, false),
+                    AccountMeta::new(self.to, false),
+                    AccountMeta::new(self.from, true),
+                ],
+                data: bincode::serialize(&(3u32, self.amount)).unwrap(),
+            }],
+            Some(&fee_payer.pubkey()),
+            &[fee_payer, signer],
+            Hash::default(),
+        )
+    }
+}
+
+#[allow(unused)] // XXX
+#[test_case(false; "native")]
+#[test_case(true; "token")]
+fn svm_collect_balances(use_tokens: bool) {
+    let mut rng = rand0_7::thread_rng();
+
+    let fee_payer_keypair = Keypair::new();
+    let alice_keypair = Keypair::new();
+    let bob_keypair = Keypair::new();
+    let charlie_keypair = Keypair::new();
+
+    let fee_payer = fee_payer_keypair.pubkey();
+    let alice = alice_keypair.pubkey();
+    let bob = bob_keypair.pubkey();
+    let charlie = charlie_keypair.pubkey();
+
+    let mint = Pubkey::new_unique();
+
+    /* XXX
+        let mut alice_account = (mint, alice, STARTING_BALANCE, vec![0u8; 36], 1);
+        let mut bob_account = (mint, bob, STARTING_BALANCE, vec![0u8; 36], 1);
+        let mut charlie_account = (mint, charlie, STARTING_BALANCE, vec![0u8; 36], 1);
+
+        let alice_account_data = bincode::serialize(&alice_account);
+    */
+
+    let native_state = AccountSharedData::create(
+        STARTING_BALANCE,
+        vec![],
+        system_program::id(),
+        false,
+        u64::MAX,
+    );
+
+    for _ in 0..1 {
+        // XXX
+        let mut test_entry = SvmTestEntry::default();
+        test_entry.add_initial_account(fee_payer, &native_state.clone());
+        test_entry.add_initial_account(alice, &native_state.clone());
+        test_entry.add_initial_account(bob, &native_state.clone());
+        test_entry.add_initial_account(charlie, &native_state.clone());
+
+        let mut user_balances = HashMap::new();
+        user_balances.insert(alice, STARTING_BALANCE);
+        user_balances.insert(bob, STARTING_BALANCE);
+        user_balances.insert(charlie, STARTING_BALANCE);
+        let mut user_balance_history = vec![(Transfer::default(), user_balances.clone())];
+
+        for _ in 0..5 {
+            // XXX
+            // TODO fail transactions
+            let transfer = Transfer::new_rand(&[alice, bob, charlie]);
+            let signer = vec![&alice_keypair, &bob_keypair, &charlie_keypair]
+                .into_iter()
+                .find(|k| k.pubkey() == transfer.from)
+                .unwrap();
+
+            let transaction = transfer.to_system_transaction(signer, &fee_payer_keypair);
+            test_entry.push_transaction(transaction);
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+            user_balances
+                .entry(transfer.from)
+                .and_modify(|v| *v -= transfer.amount);
+            user_balances
+                .entry(transfer.to)
+                .and_modify(|v| *v += transfer.amount);
+            user_balance_history.push((transfer, user_balances.clone()));
+        }
+
+        let mut alice_final_state = native_state.clone();
+        alice_final_state.set_lamports(*user_balances.get(&alice).unwrap());
+        test_entry.update_expected_account_data(alice, &alice_final_state);
+
+        let mut bob_final_state = native_state.clone();
+        bob_final_state.set_lamports(*user_balances.get(&bob).unwrap());
+        test_entry.update_expected_account_data(bob, &bob_final_state);
+
+        let mut charlie_final_state = native_state.clone();
+        charlie_final_state.set_lamports(*user_balances.get(&charlie).unwrap());
+        test_entry.update_expected_account_data(charlie, &charlie_final_state);
+
+        /* XXX
+        println!(
+            "HANA payer {}, alice {}, bob {}, charlie {}",
+            fee_payer, alice, bob, charlie
+        );
+        */
+
+        let mut env = SvmTestEnvironment::create(test_entry);
+        env.processing_config
+            .recording_config
+            .enable_transaction_balance_recording = true;
+        let batch_output = env.execute();
+
+        // since we used test entry, `execute()` confirmed final balances in `user_balances` match the final bank state
+        // now we test that every step in `user_balance_history` matches the svm recorded balances
+        // in other words, the test effectively has three balance trackers and we can test they *all* agree
+        let (batch_pre, batch_post, _, _) = batch_output.balance_collector.unwrap().into_vecs();
+
+        // these two asserts are trivially true. we include them just to make it clearer what these vecs are
+        // for n transactions, we have n pre-balance sets and n post-balance sets from svm
+        // but we have *n+1* test balance sets: we push initial state, and then push post-tx bals once per tx
+        // this mismatch is not strange at all. we also only have n+1 distinct svm timesteps despite 2n records
+        // pre-balances: (0 1 2 3)
+        // post-balances:  (1 2 3 4)
+        // this does not mean time-overlapping svm records are equal. svm only captures the two accounts used by transfer
+        // whereas our test balances capture all three accounts at every timestep, so we require no pre/post separation
+        assert_eq!(user_balance_history.len(), batch_pre.len() + 1);
+        assert_eq!(user_balance_history.len(), batch_post.len() + 1);
+
+        // these are the real tests
+        for (i, (svm_pre_balances, svm_post_balances)) in
+            batch_pre.into_iter().zip(batch_post).enumerate()
+        {
+            let (_, ref expected_pre_balances) = user_balance_history[i];
+            let (ref transfer, ref expected_post_balances) = user_balance_history[i + 1];
+
+            assert_eq!(
+                svm_pre_balances[1],
+                *expected_pre_balances.get(&transfer.from).unwrap()
+            );
+            assert_eq!(
+                svm_pre_balances[2],
+                *expected_pre_balances.get(&transfer.to).unwrap()
+            );
+
+            assert_eq!(
+                svm_post_balances[1],
+                *expected_post_balances.get(&transfer.from).unwrap()
+            );
+            assert_eq!(
+                svm_post_balances[2],
+                *expected_post_balances.get(&transfer.to).unwrap()
+            );
+        }
     }
 }
