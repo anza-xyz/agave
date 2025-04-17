@@ -78,7 +78,6 @@ impl BalanceCollector {
 
         let has_token_program = transaction.account_keys().iter().any(is_known_spl_token_id);
 
-        println!("HANA account keys: {:?}", transaction.account_keys());
         for (index, key) in transaction.account_keys().iter().enumerate() {
             let Some(account) = account_loader
                 .load_account(key, false)
@@ -95,7 +94,6 @@ impl BalanceCollector {
                 && !is_known_spl_token_id(key)
                 && is_known_spl_token_id(account.owner())
             {
-                println!("HANA loading {} for index {}", key, index);
                 if let Some(token_info) =
                     SvmTokenInfo::unpack_token_account(account_loader, &account, index)
                 {
@@ -158,7 +156,6 @@ impl BalanceCollectionRoutines for Option<BalanceCollector> {
 
 // this contains all the information we can provide to construct TransactionTokenBalance
 // that type, in ledger, depends on UiTokenAmount from account-decoder, so we cannot build it here
-#[derive(Debug)] // XXX
 pub struct SvmTokenInfo {
     pub account_index: u8,
     pub mint: Pubkey,

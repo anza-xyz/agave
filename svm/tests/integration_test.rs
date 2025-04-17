@@ -46,7 +46,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::TransactionReturnData,
     solana_type_overrides::sync::{Arc, RwLock},
-    spl_generic_token::{generic_token, token},
+    spl_generic_token::token,
     std::collections::HashMap,
     test_case::test_case,
 };
@@ -2638,13 +2638,9 @@ fn svm_metrics_accumulation() {
     }
 }
 
-// XXX HANA OK wtf am i doing this time
-// we have an spl token so in the repo so just be evil and dump it in an account
-// spl xfer is discriminator 3 followed by a u64 amount
-// spl account is mint pubkey, owner pubkey, amount. the coption delegate (all 0) and the number 1 for init
-// spl mint... we actually dont need a mint. haha that rules
-// so that means set up the test env, fee payer and say three accounts
-// dump the token program and two pseudo-accounts, make the instruction by hand
+// HANA TODO move this fucking shit to its own file, its a disease
+// maybe set up token in mock_bank instead. maybe also token22
+// also maybe add some failing transaction... it might be a bit messy
 
 const STARTING_BALANCE: u64 = LAMPORTS_PER_SOL * 10;
 
@@ -2682,6 +2678,10 @@ impl Transfer {
     }
 
     fn to_token_transaction(&self, fee_payer: &Keypair, from_signer: &Keypair) -> Transaction {
+        // true tokenkeg connoisseurs will note we shouldnt have to sign the sender
+        // we use a common account owner, the fee-payer, to conveniently reuse account state
+        // so why do we sign? to force the sender and receiver to be in a consistent order on the transaction
+        // so we can grab them by index in our final test instead of searching by key
         Transaction::new_signed_with_payer(
             &[Instruction {
                 program_id: token::id(),
@@ -2703,7 +2703,7 @@ static SPL_TOKEN_BYTES: &[u8] =
     include_bytes!("../../program-test/src/programs/spl_token-3.5.0.so");
 
 #[repr(C)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct SplTokenAccount {
     mint: Pubkey,
     owner: Pubkey,
@@ -2726,7 +2726,7 @@ impl Default for SplTokenAccount {
 }
 
 #[repr(C)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct SplTokenMint {
     authority_tag: u32,
     authority: Pubkey,
@@ -2746,7 +2746,7 @@ impl Default for SplTokenMint {
     }
 }
 
-#[allow(unused)] // XXX
+#[allow(unused)] // HANA remove this
 #[test_case(false; "native")]
 #[test_case(true; "token")]
 fn svm_collect_balances(use_tokens: bool) {
@@ -2795,13 +2795,7 @@ fn svm_collect_balances(use_tokens: bool) {
         u64::MAX,
     );
 
-    println!(
-        "HANA payer {}, alice {}, bob {}, charlie {}",
-        fee_payer, alice, bob, charlie
-    );
-
-    for _ in 0..1 {
-        // XXX
+    for _ in 0..100 {
         let mut test_entry = SvmTestEntry::default();
         test_entry.add_initial_account(fee_payer, &native_state.clone());
 
@@ -2823,9 +2817,7 @@ fn svm_collect_balances(use_tokens: bool) {
         user_balances.insert(charlie, STARTING_BALANCE);
         let mut user_balance_history = vec![(Transfer::default(), user_balances.clone())];
 
-        for _ in 0..5 {
-            // XXX
-            // TODO fail transactions
+        for _ in 0..50 {
             let transfer = Transfer::new_rand(&[alice, bob, charlie]);
             let from_signer = vec![&alice_keypair, &bob_keypair, &charlie_keypair]
                 .into_iter()
@@ -2838,12 +2830,8 @@ fn svm_collect_balances(use_tokens: bool) {
                 transfer.to_system_transaction(&fee_payer_keypair, from_signer)
             };
 
-            println!("HANA transaction: {:#?}", transaction);
-
             test_entry.push_transaction(transaction);
             test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
-
-            println!("HANA transfer: {:#?}", transfer);
 
             user_balances
                 .entry(transfer.from)
@@ -2905,9 +2893,6 @@ fn svm_collect_balances(use_tokens: bool) {
         let (batch_pre, batch_post) = if use_tokens {
             let (_, _, pre_vecs, post_vecs) = batch_output.balance_collector.unwrap().into_vecs();
 
-            println!("HANA pre {:#?}", pre_vecs);
-            println!("HANA post {:#?}", post_vecs);
-
             let pre_tupls: Vec<_> = pre_vecs
                 .iter()
                 .map(|bals| (bals[0].amount, bals[1].amount))
@@ -2919,10 +2904,6 @@ fn svm_collect_balances(use_tokens: bool) {
                 .collect();
 
             (pre_tupls, post_tupls)
-
-            // XXX TODO FIXME this is wrong
-            // i was going to try to parse token accounts but we have SvmTokenInfo already
-            // however i need to make a fake mint for account loader to pick up
         } else {
             let (pre_vecs, post_vecs, _, _) = batch_output.balance_collector.unwrap().into_vecs();
 
