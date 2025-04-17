@@ -744,6 +744,11 @@ mod tests {
                     RewardInterval::InsideInterval
                 );
 
+                assert!(curr_bank
+                    .get_epoch_rewards_from_cache(curr_bank.epoch, starting_slot)
+                    .is_some());
+                assert_eq!(curr_bank.get_epoch_rewards_cache_size(), 1);
+
                 // 1st reward distribution block, state should be partitioned.
                 assert!(curr_bank.is_partitioned());
 
