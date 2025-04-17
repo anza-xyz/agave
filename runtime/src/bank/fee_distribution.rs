@@ -29,9 +29,15 @@ enum DepositFeeError {
 }
 
 #[derive(Default)]
-struct FeeDistribution {
+pub struct FeeDistribution {
     deposit: u64,
     burn: u64,
+}
+
+impl FeeDistribution {
+    pub fn get_deposit(&self) -> u64 {
+        self.deposit
+    }
 }
 
 impl Bank {
