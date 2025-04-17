@@ -109,118 +109,6 @@ impl ForwardAddressGetter {
     }
 }
 
-/// [`ForwardingClientError`] enum represents failure when sending transactions
-/// over the network.
-#[derive(Debug)]
-enum ForwardingClientError {
-    /// Failed to send transaction to the provided host.
-    Failed,
-    /// Failed to send the transaction because no contact information was found
-    /// for any of the next `NUM_LOOKAHEAD_LEADERS` scheduled leaders.
-    LeaderContactMissing,
-}
-
-impl From<SendPktsError> for ForwardingClientError {
-    fn from(_err: SendPktsError) -> Self {
-        ForwardingClientError::Failed
-    }
-}
-
-impl From<TransportError> for ForwardingClientError {
-    fn from(_err: TransportError) -> Self {
-        ForwardingClientError::Failed
-    }
-}
-
-/// [`ForwardingClient`] trait defines a generic interface for clients that can
-/// forward transactions to other validators.
-trait ForwardingClient: Send + Sync + 'static {
-    /// Sends a batch of serialized transactions to the currently configured
-    /// address.
-    fn send_transactions_in_batch(
-        &self,
-        wire_transactions: Vec<Vec<u8>>,
-    ) -> Result<(), ForwardingClientError>;
-}
-
-struct VoteClient {
-    bind_socket: UdpSocket,
-    forward_address_getter: ForwardAddressGetter,
-}
-
-impl VoteClient {
-    fn new(bind_socket: UdpSocket, forward_address_getter: ForwardAddressGetter) -> Self {
-        Self {
-            bind_socket,
-            forward_address_getter,
-        }
-    }
-
-    fn get_next_valid_leader(&self) -> Option<SocketAddr> {
-        let node_addresses = self
-            .forward_address_getter
-            .get_vote_forwarding_addresses(NUM_LOOKAHEAD_LEADERS);
-        node_addresses.first().copied()
-    }
-}
-
-impl ForwardingClient for VoteClient {
-    fn send_transactions_in_batch(
-        &self,
-        wire_transactions: Vec<Vec<u8>>,
-    ) -> Result<(), ForwardingClientError> {
-        let Some(current_address) = self.get_next_valid_leader() else {
-            return Err(ForwardingClientError::LeaderContactMissing);
-        };
-        let batch_with_addresses = wire_transactions
-            .iter()
-            .map(|bytes| (bytes, current_address));
-        batch_send(&self.bind_socket, batch_with_addresses)?;
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
-struct ConnectionCacheClient {
-    connection_cache: Arc<ConnectionCache>,
-    forward_address_getter: ForwardAddressGetter,
-}
-
-impl ConnectionCacheClient {
-    fn new(
-        connection_cache: Arc<ConnectionCache>,
-        forward_address_getter: ForwardAddressGetter,
-    ) -> Self {
-        Self {
-            connection_cache,
-            forward_address_getter,
-        }
-    }
-    fn get_next_valid_leader(&self) -> Option<SocketAddr> {
-        let node_addresses = self
-            .forward_address_getter
-            .get_non_vote_forwarding_addresses(
-                NUM_LOOKAHEAD_LEADERS,
-                self.connection_cache.protocol(),
-            );
-        node_addresses.first().copied()
-    }
-}
-
-impl ForwardingClient for ConnectionCacheClient {
-    fn send_transactions_in_batch(
-        &self,
-        wire_transactions: Vec<Vec<u8>>,
-    ) -> Result<(), ForwardingClientError> {
-        let Some(current_address) = self.get_next_valid_leader() else {
-            return Err(ForwardingClientError::LeaderContactMissing);
-        };
-        let conn = self.connection_cache.get_connection(&current_address);
-        conn.send_data_batch_async(wire_transactions)?;
-        Ok(())
-    }
-}
-
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
     client: ForwardingClientOption<'_>,
@@ -508,6 +396,118 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 MAX_BYTES_BUDGET,
             )
         });
+    }
+}
+
+/// [`ForwardingClientError`] enum represents failure when sending transactions
+/// over the network.
+#[derive(Debug)]
+enum ForwardingClientError {
+    /// Failed to send transaction to the provided host.
+    Failed,
+    /// Failed to send the transaction because no contact information was found
+    /// for any of the next `NUM_LOOKAHEAD_LEADERS` scheduled leaders.
+    LeaderContactMissing,
+}
+
+impl From<SendPktsError> for ForwardingClientError {
+    fn from(_err: SendPktsError) -> Self {
+        ForwardingClientError::Failed
+    }
+}
+
+impl From<TransportError> for ForwardingClientError {
+    fn from(_err: TransportError) -> Self {
+        ForwardingClientError::Failed
+    }
+}
+
+/// [`ForwardingClient`] trait defines a generic interface for clients that can
+/// forward transactions to other validators.
+trait ForwardingClient: Send + Sync + 'static {
+    /// Sends a batch of serialized transactions to the currently configured
+    /// address.
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+    ) -> Result<(), ForwardingClientError>;
+}
+
+struct VoteClient {
+    bind_socket: UdpSocket,
+    forward_address_getter: ForwardAddressGetter,
+}
+
+impl VoteClient {
+    fn new(bind_socket: UdpSocket, forward_address_getter: ForwardAddressGetter) -> Self {
+        Self {
+            bind_socket,
+            forward_address_getter,
+        }
+    }
+
+    fn get_next_valid_leader(&self) -> Option<SocketAddr> {
+        let node_addresses = self
+            .forward_address_getter
+            .get_vote_forwarding_addresses(NUM_LOOKAHEAD_LEADERS);
+        node_addresses.first().copied()
+    }
+}
+
+impl ForwardingClient for VoteClient {
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+    ) -> Result<(), ForwardingClientError> {
+        let Some(current_address) = self.get_next_valid_leader() else {
+            return Err(ForwardingClientError::LeaderContactMissing);
+        };
+        let batch_with_addresses = wire_transactions
+            .iter()
+            .map(|bytes| (bytes, current_address));
+        batch_send(&self.bind_socket, batch_with_addresses)?;
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct ConnectionCacheClient {
+    connection_cache: Arc<ConnectionCache>,
+    forward_address_getter: ForwardAddressGetter,
+}
+
+impl ConnectionCacheClient {
+    fn new(
+        connection_cache: Arc<ConnectionCache>,
+        forward_address_getter: ForwardAddressGetter,
+    ) -> Self {
+        Self {
+            connection_cache,
+            forward_address_getter,
+        }
+    }
+    fn get_next_valid_leader(&self) -> Option<SocketAddr> {
+        let node_addresses = self
+            .forward_address_getter
+            .get_non_vote_forwarding_addresses(
+                NUM_LOOKAHEAD_LEADERS,
+                self.connection_cache.protocol(),
+            );
+        node_addresses.first().copied()
+    }
+}
+
+impl ForwardingClient for ConnectionCacheClient {
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+    ) -> Result<(), ForwardingClientError> {
+        let Some(current_address) = self.get_next_valid_leader() else {
+            return Err(ForwardingClientError::LeaderContactMissing);
+        };
+        let conn = self.connection_cache.get_connection(&current_address);
+        conn.send_data_batch_async(wire_transactions)?;
+        Ok(())
     }
 }
 
