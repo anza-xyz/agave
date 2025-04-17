@@ -2028,7 +2028,7 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
     test_entry.add_initial_program(program_name);
 
     // 0/1: a rent-paying fee-payer goes to zero lamports on an executed transaction, the batch sees it as deallocated
-    // 2/3: the same, except if fee-only transactions are enabled, it goes to zero lamports from a a fee-only transaction
+    // 2/3: the same, except if fee-only transactions are enabled, it goes to zero lamports from a fee-only transaction
     for do_fee_only_transaction in [false, true] {
         let dealloc_fee_payer_keypair = Keypair::new();
         let dealloc_fee_payer = dealloc_fee_payer_keypair.pubkey();
