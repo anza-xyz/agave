@@ -1,6 +1,6 @@
 [package]
 name = "write-to-account"
-version = "2.2.11"
+version = "2.2.12"
 edition = "2021"
 
 [dependencies]
