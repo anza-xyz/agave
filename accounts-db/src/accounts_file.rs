@@ -191,16 +191,9 @@ impl AccountsFile {
     ) -> Option<Ret> {
         match self {
             Self::AppendVec(av) => av.get_stored_account_meta_callback(offset, callback),
-            // Note: The conversion here is needed as the AccountsDB currently
-            // assumes all offsets are multiple of 8 while TieredStorage uses
-            // IndexOffset that is equivalent to AccountInfo::reduced_offset.
-            Self::TieredStorage(ts) => ts
-                .reader()?
-                .get_stored_account_meta_callback(
-                    IndexOffset(AccountInfo::get_reduced_offset(offset)),
-                    callback,
-                )
-                .ok()?,
+            Self::TieredStorage(_) => {
+                unimplemented!("StoredAccountMeta is only implemented for AppendVec")
+            }
         }
     }
 
@@ -307,10 +300,8 @@ impl AccountsFile {
     ) {
         match self {
             Self::AppendVec(av) => av.scan_accounts_stored_meta(callback),
-            Self::TieredStorage(ts) => {
-                if let Some(reader) = ts.reader() {
-                    _ = reader.scan_accounts_stored_meta(callback);
-                }
+            Self::TieredStorage(_) => {
+                unimplemented!("StoredAccountMeta is only implemented for AppendVec")
             }
         }
     }

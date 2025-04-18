@@ -4196,11 +4196,11 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
     // Flushing cache should only create one storage entry
     let storage0 = accounts_db.get_and_assert_single_storage(slot);
 
-    storage0.accounts.scan_accounts_stored_meta(|account| {
+    storage0.accounts.scan_index(|account| {
         let before_size = storage0.alive_bytes();
         let account_info = accounts_db
             .accounts_index
-            .get_cloned(account.pubkey())
+            .get_cloned(&account.index_info.pubkey)
             .unwrap()
             .slot_list
             .read()
@@ -4217,7 +4217,7 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
             // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
             assert_eq!(after_size, 0);
         } else {
-            assert_eq!(before_size, after_size + account.stored_size());
+            assert_eq!(before_size, after_size + account.stored_size_aligned);
         }
     });
 });
