@@ -134,7 +134,6 @@ impl Committer {
                 .iter()
                 .map(|tx| tx.as_sanitized_transaction().into_owned())
                 .collect_vec();
-            let (balances, token_balances) = compile_collected_balances(balance_collector);
             let mut transaction_index = starting_transaction_index.unwrap_or_default();
             let (batch_transaction_indexes, tx_costs): (Vec<_>, Vec<_>) = commit_results
                 .iter()
@@ -160,6 +159,9 @@ impl Committer {
                     }
                 })
                 .unzip();
+
+            let (balances, token_balances) =
+                compile_collected_balances(balance_collector, sanitized_transactions.len());
 
             transaction_status_sender.send_transaction_status_batch(
                 bank.slot(),

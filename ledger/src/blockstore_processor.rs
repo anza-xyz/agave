@@ -250,7 +250,6 @@ pub fn execute_batch<'a>(
         check_block_costs_elapsed.as_us(),
     );
     let tx_costs = tx_costs?;
-    let (balances, token_balances) = compile_collected_balances(balance_collector);
 
     bank_utils::find_and_send_votes(
         batch.sanitized_transactions(),
@@ -270,6 +269,10 @@ pub fn execute_batch<'a>(
             .iter()
             .map(|tx| tx.as_sanitized_transaction().into_owned())
             .collect();
+
+        let (balances, token_balances) =
+            compile_collected_balances(balance_collector, batch.sanitized_transactions().len());
+
         // The length of costs vector needs to be consistent with all other
         // vectors that are sent over (such as `transactions`). So, replace the
         // None elements with Some(0)

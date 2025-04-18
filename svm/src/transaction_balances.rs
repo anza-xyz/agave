@@ -157,7 +157,7 @@ impl BalanceCollectionRoutines for Option<BalanceCollector> {
 
 // this contains all the information we can provide to construct TransactionTokenBalance
 // that type, in ledger, depends on UiTokenAmount from account-decoder, so we cannot build it here
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SvmTokenInfo {
     pub account_index: u8,
     pub mint: Pubkey,
