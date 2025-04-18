@@ -46,7 +46,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::TransactionReturnData,
     solana_type_overrides::sync::{Arc, RwLock},
-    spl_generic_token::token,
+    spl_generic_token::{token, token_2022},
     std::collections::HashMap,
     test_case::test_case,
 };
@@ -2664,38 +2664,32 @@ impl Transfer {
         Self { from, to, amount }
     }
 
-    fn to_system_transaction(&self, fee_payer: &Keypair, from_signer: &Keypair) -> Transaction {
-        Transaction::new_signed_with_payer(
-            &[system_instruction::transfer(
-                &self.from,
-                &self.to,
-                self.amount,
-            )],
-            Some(&fee_payer.pubkey()),
-            &[fee_payer, from_signer],
-            Hash::default(),
-        )
+    fn to_system_instruction(&self) -> Instruction {
+        system_instruction::transfer(&self.from, &self.to, self.amount)
     }
 
-    fn to_token_transaction(&self, fee_payer: &Keypair, from_signer: &Keypair) -> Transaction {
+    fn to_token_instruction(&self, fee_payer: Pubkey) -> Instruction {
         // true tokenkeg connoisseurs will note we shouldnt have to sign the sender
         // we use a common account owner, the fee-payer, to conveniently reuse account state
-        // so why do we sign? to force the sender and receiver to be in a consistent order on the transaction
-        // so we can grab them by index in our final test instead of searching by key
-        Transaction::new_signed_with_payer(
-            &[Instruction {
-                program_id: token::id(),
-                accounts: vec![
-                    AccountMeta::new(self.from, true),
-                    AccountMeta::new(self.to, false),
-                    AccountMeta::new(fee_payer.pubkey(), true),
-                ],
-                data: bincode::serialize(&(3u8, self.amount)).unwrap(),
-            }],
-            Some(&fee_payer.pubkey()),
-            &[fee_payer, from_signer],
-            Hash::default(),
-        )
+        // so why do we sign? to force the sender and receiver to be in a consistent order in account keys
+        // which means we can grab them by index in our final test instead of searching by key
+        Instruction {
+            program_id: token::id(),
+            accounts: vec![
+                AccountMeta::new(self.from, true),
+                AccountMeta::new(self.to, false),
+                AccountMeta::new(fee_payer, true),
+            ],
+            data: bincode::serialize(&(3u8, self.amount)).unwrap(),
+        }
+    }
+
+    fn to_instruction(&self, fee_payer: Pubkey, use_tokens: bool) -> Instruction {
+        if use_tokens {
+            self.to_token_instruction(fee_payer)
+        } else {
+            self.to_system_instruction()
+        }
     }
 }
 
@@ -2753,11 +2747,13 @@ fn svm_collect_balances(use_tokens: bool) {
     let mut rng = rand0_7::thread_rng();
 
     let fee_payer_keypair = Keypair::new();
+    let fake_fee_payer_keypair = Keypair::new();
     let alice_keypair = Keypair::new();
     let bob_keypair = Keypair::new();
     let charlie_keypair = Keypair::new();
 
     let fee_payer = fee_payer_keypair.pubkey();
+    let fake_fee_payer = fake_fee_payer_keypair.pubkey();
     let mint = Pubkey::new_unique();
     let alice = alice_keypair.pubkey();
     let bob = bob_keypair.pubkey();
@@ -2795,7 +2791,7 @@ fn svm_collect_balances(use_tokens: bool) {
         u64::MAX,
     );
 
-    for _ in 0..100 {
+    for _ in 0..10 {
         let mut test_entry = SvmTestEntry::default();
         test_entry.add_initial_account(fee_payer, &native_state.clone());
 
@@ -2818,27 +2814,74 @@ fn svm_collect_balances(use_tokens: bool) {
         let mut user_balance_history = vec![(Transfer::default(), user_balances.clone())];
 
         for _ in 0..50 {
-            let transfer = Transfer::new_rand(&[alice, bob, charlie]);
+            let expected_status = match rng.gen::<f64>() {
+                n if n < 0.85 => ExecutionStatus::Succeeded,
+                n if n < 0.90 => ExecutionStatus::ExecutedFailed,
+                n if n < 0.95 => ExecutionStatus::ProcessedFailed,
+                _ => ExecutionStatus::Discarded,
+            };
+
+            let mut transfer = Transfer::new_rand(&[alice, bob, charlie]);
             let from_signer = vec![&alice_keypair, &bob_keypair, &charlie_keypair]
                 .into_iter()
                 .find(|k| k.pubkey() == transfer.from)
                 .unwrap();
 
-            let transaction = if use_tokens {
-                transfer.to_token_transaction(&fee_payer_keypair, from_signer)
-            } else {
-                transfer.to_system_transaction(&fee_payer_keypair, from_signer)
+            let instructions = match expected_status {
+                ExecutionStatus::Succeeded => {
+                    user_balances
+                        .entry(transfer.from)
+                        .and_modify(|v| *v -= transfer.amount);
+                    user_balances
+                        .entry(transfer.to)
+                        .and_modify(|v| *v += transfer.amount);
+
+                    vec![transfer.to_instruction(fee_payer, use_tokens)]
+                }
+                ExecutionStatus::ExecutedFailed => {
+                    transfer.amount = u64::MAX / 2;
+                    let instruction = transfer.to_instruction(fee_payer, use_tokens);
+                    transfer.amount = 0;
+
+                    vec![instruction]
+                }
+                ExecutionStatus::ProcessedFailed => {
+                    let mut instruction = transfer.to_instruction(fee_payer, use_tokens);
+                    instruction.program_id = token_2022::id();
+                    transfer.amount = 0;
+
+                    vec![instruction]
+                }
+                ExecutionStatus::Discarded => {
+                    let mut instruction = transfer.to_instruction(fee_payer, use_tokens);
+                    if use_tokens {
+                        instruction.accounts[2].pubkey = fake_fee_payer;
+                    }
+                    transfer.amount = 0;
+
+                    vec![instruction]
+                }
             };
 
-            test_entry.push_transaction(transaction);
-            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+            let transaction = if expected_status.discarded() {
+                Transaction::new_signed_with_payer(
+                    &instructions,
+                    Some(&fake_fee_payer),
+                    &[&fake_fee_payer_keypair, from_signer],
+                    Hash::default(),
+                )
+            } else {
+                test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
 
-            user_balances
-                .entry(transfer.from)
-                .and_modify(|v| *v -= transfer.amount);
-            user_balances
-                .entry(transfer.to)
-                .and_modify(|v| *v += transfer.amount);
+                Transaction::new_signed_with_payer(
+                    &instructions,
+                    Some(&fee_payer),
+                    &[&fee_payer_keypair, from_signer],
+                    Hash::default(),
+                )
+            };
+
+            test_entry.push_transaction_with_status(transaction, expected_status);
             user_balance_history.push((transfer, user_balances.clone()));
         }
 
