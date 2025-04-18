@@ -8131,9 +8131,7 @@ impl AccountsDb {
 
         let mut total_data = 0;
         (0..accounts.len()).for_each(|index| {
-            accounts.account(index, |account| {
-                total_data += account.data().len();
-            })
+            total_data += accounts.data_len(index);
         });
 
         self.stats
