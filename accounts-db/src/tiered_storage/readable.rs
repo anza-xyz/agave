@@ -103,19 +103,11 @@ impl TieredStorageReader {
     pub fn get_stored_account_callback<Ret>(
         &self,
         index_offset: IndexOffset,
-        mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
+        callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
     ) -> TieredStorageResult<Option<Ret>> {
-        self.get_stored_account_meta_callback(index_offset, |stored_account_meta| {
-            let account = StoredAccountInfo {
-                pubkey: stored_account_meta.pubkey(),
-                lamports: stored_account_meta.lamports(),
-                owner: stored_account_meta.owner(),
-                data: stored_account_meta.data(),
-                executable: stored_account_meta.executable(),
-                rent_epoch: stored_account_meta.rent_epoch(),
-            };
-            callback(account)
-        })
+        match self {
+            Self::Hot(hot) => hot.get_stored_account_callback(index_offset, callback),
+        }
     }
 
     /// calls `callback` with the account located at the specified index offset.
