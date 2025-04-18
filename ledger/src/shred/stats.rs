@@ -118,6 +118,22 @@ impl ProcessShredsStats {
             ("num_data_shreds_63", self.num_data_shreds_hist[3], i64),
             ("num_data_shreds_64", self.num_data_shreds_hist[4], i64),
             ("coalesce_elapsed", self.coalesce_elapsed, i64),
+            ("coalesce_exited_hit_max", self.coalesce_exited_hit_max, i64),
+            (
+                "coalesce_exited_tightly_packed",
+                self.coalesce_exited_tightly_packed,
+                i64
+            ),
+            (
+                "coalesce_exited_slot_ended",
+                self.coalesce_exited_slot_ended,
+                i64
+            ),
+            (
+                "coalesce_exited_rcv_timeout",
+                self.coalesce_exited_rcv_timeout,
+                i64
+            ),
         );
         *self = Self::default();
     }
