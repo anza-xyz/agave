@@ -64,6 +64,9 @@ where
     ) -> Ret {
         callback(self.1[index].1.into())
     }
+    fn pubkey(&self, index: usize) -> &Pubkey {
+        self.1[index].0
+    }
     fn slot(&self, index: usize) -> Slot {
         // note that this could be different than 'target_slot()' PER account
         self.1[index].2
