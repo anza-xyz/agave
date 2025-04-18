@@ -152,6 +152,10 @@ impl CiphertextCommitmentEqualityProof {
         transcript.validate_and_append_point(b"Y_2", &self.Y_2)?;
 
         let c = transcript.challenge_scalar(b"c");
+
+        transcript.append_scalar(b"z_s", &self.z_s);
+        transcript.append_scalar(b"z_x", &self.z_x);
+        transcript.append_scalar(b"z_r", &self.z_r);
         let w = transcript.challenge_scalar(b"w"); // w used for batch verification
         let ww = &w * &w;
 
