@@ -470,6 +470,7 @@ fn main() {
         rpc_bigtable_config,
         faucet_addr: Some(faucet_addr),
         account_indexes,
+        test_request_processor: true,
         ..JsonRpcConfig::default_for_test()
     });
 

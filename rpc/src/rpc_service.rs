@@ -1,5 +1,9 @@
 //! The `rpc_service` module implements the Solana JSON RPC service.
 
+use crate::rpc::JsonRpcRequestProcessor;
+use jsonrpc_core::Params;
+use solana_pubkey::Pubkey;
+use solana_sdk::account::{AccountSharedData, WritableAccount};
 use {
     crate::{
         cluster_tpu_info::ClusterTpuInfo,
@@ -697,26 +701,51 @@ impl JsonRpcService {
         let max_request_body_size = config
             .max_request_body_size
             .unwrap_or(MAX_REQUEST_BODY_SIZE);
-        let (request_processor, receiver) = JsonRpcRequestProcessor::new(
-            config,
-            snapshot_config.clone(),
-            bank_forks.clone(),
-            block_commitment_cache,
-            blockstore,
-            validator_exit.clone(),
-            health.clone(),
-            cluster_info.clone(),
-            genesis_hash,
-            bigtable_ledger_storage,
-            optimistically_confirmed_bank,
-            largest_accounts_cache,
-            max_slots,
-            leader_schedule_cache,
-            max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
-            prioritization_fee_cache,
-            Arc::clone(&runtime),
-        );
+        let (request_processor, receiver) = if config.test_request_processor {
+            let (rp, rc) = TestJsonRpcRequestProcessor::new(
+                config,
+                snapshot_config.clone(),
+                bank_forks.clone(),
+                block_commitment_cache,
+                blockstore,
+                validator_exit.clone(),
+                health.clone(),
+                cluster_info.clone(),
+                genesis_hash,
+                bigtable_ledger_storage,
+                optimistically_confirmed_bank,
+                largest_accounts_cache,
+                max_slots,
+                leader_schedule_cache,
+                max_complete_transaction_status_slot,
+                max_complete_rewards_slot,
+                prioritization_fee_cache,
+                Arc::clone(&runtime),
+            );
+            (Box::new(rp) as Box<dyn JsonRpcRequestProcessor>, rc)
+        } else {
+            let (rp, rc) = LiveJsonRpcRequestProcessor::new(
+                config,
+                snapshot_config.clone(),
+                bank_forks.clone(),
+                block_commitment_cache,
+                blockstore,
+                validator_exit.clone(),
+                health.clone(),
+                cluster_info.clone(),
+                genesis_hash,
+                bigtable_ledger_storage,
+                optimistically_confirmed_bank,
+                largest_accounts_cache,
+                max_slots,
+                leader_schedule_cache,
+                max_complete_transaction_status_slot,
+                max_complete_rewards_slot,
+                prioritization_fee_cache,
+                Arc::clone(&runtime),
+            );
+            (Box::new(rp) as Box<dyn JsonRpcRequestProcessor>, rc)
+        };
 
         let _send_transaction_service = Arc::new(SendTransactionService::new_with_client(
             &bank_forks,
@@ -737,7 +766,8 @@ impl JsonRpcService {
             .spawn(move || {
                 renice_this_thread(rpc_niceness_adj).unwrap();
 
-                let mut io = MetaIoHandler::default();
+                let mut io: MetaIoHandler<Box<dyn JsonRpcRequestProcessor>, _> =
+                    MetaIoHandler::default();
 
                 io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
                 if full_api {
@@ -747,32 +777,151 @@ impl JsonRpcService {
                     io.extend_with(rpc_full::FullImpl.to_delegate());
                 }
 
+                let rp_clone = request_processor.clone();
+
+                io.add_sync_method("setAccount", move |params: Params| {
+                    let param_array = params.parse::<Vec<serde_json::Value>>()?;
+                    if param_array.len() != 2 {
+                        return Err(jsonrpc_core::Error::invalid_params(
+                            "Expected exactly 2 parameters: [address, accountData]",
+                        ));
+                    }
+
+                    // Parse the address
+                    let address_str = param_array[0].as_str().ok_or_else(|| {
+                        jsonrpc_core::Error::invalid_params("Address must be a string")
+                    })?;
+                    let address = address_str.parse::<Pubkey>().map_err(|err| {
+                        jsonrpc_core::Error::invalid_params(format!("Invalid address: {}", err))
+                    })?;
+
+                    // Parse the account data
+                    let account_value = &param_array[1];
+
+                    // Extract account fields from the JSON
+                    let lamports = account_value
+                        .get("lamports")
+                        .and_then(|v| v.as_u64())
+                        .ok_or_else(|| {
+                            jsonrpc_core::Error::invalid_params(
+                                "Missing or invalid 'lamports' field",
+                            )
+                        })?;
+
+                    let owner_str = account_value
+                        .get("owner")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            jsonrpc_core::Error::invalid_params("Missing or invalid 'owner' field")
+                        })?;
+                    let owner = owner_str.parse::<Pubkey>().map_err(|err| {
+                        jsonrpc_core::Error::invalid_params(format!(
+                            "Invalid owner pubkey: {}",
+                            err
+                        ))
+                    })?;
+
+                    let executable = account_value
+                        .get("executable")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    let rent_epoch = account_value
+                        .get("rentEpoch")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+
+                    // Parse data field which is expected to be [<base64 string>, "base64"]
+                    let data = account_value
+                        .get("data")
+                        .and_then(|v| v.as_array())
+                        .ok_or_else(|| {
+                            jsonrpc_core::Error::invalid_params("Missing or invalid 'data' field")
+                        })?;
+
+                    if data.len() != 2 || data[1].as_str() != Some("base64") {
+                        return Err(jsonrpc_core::Error::invalid_params(
+                            "Data field must be in format [<base64 string>, \"base64\"]",
+                        ));
+                    }
+
+                    let data_base64 = data[0].as_str().ok_or_else(|| {
+                        jsonrpc_core::Error::invalid_params("Data base64 string must be a string")
+                    })?;
+
+                    let account_data = base64::decode(data_base64).map_err(|err| {
+                        jsonrpc_core::Error::invalid_params(format!("Invalid base64 data: {}", err))
+                    })?;
+
+                    let mut account = AccountSharedData::new(lamports, account_data.len(), &owner);
+                    account.set_executable(executable);
+                    account.set_rent_epoch(rent_epoch);
+                    account.set_data(account_data);
+
+                    rp_clone.set_account(&address, &account)?;
+
+                    Ok(jsonrpc_core::Value::String(format!(
+                        "Account {} updated successfully",
+                        address
+                    )))
+                });
+
+                let rp_clone2 = request_processor.clone();
+
+                io.add_sync_method("cloneAccountFromCluster", move |params: Params| {
+                    let param_array = params.parse::<Vec<serde_json::Value>>()?;
+                    if param_array.len() != 2 {
+                        return Err(jsonrpc_core::Error::invalid_params(
+                            "Expected exactly 2 parameters: [address, url]",
+                        ));
+                    }
+
+                    let address_str = param_array[0].as_str().ok_or_else(|| {
+                        jsonrpc_core::Error::invalid_params("Address must be a string")
+                    })?;
+                    let address = address_str.parse::<Pubkey>().map_err(|err| {
+                        jsonrpc_core::Error::invalid_params(format!("Invalid address: {}", err))
+                    })?;
+
+                    let url = param_array[1].as_str().ok_or_else(|| {
+                        jsonrpc_core::Error::invalid_params("URL must be a string")
+                    })?;
+
+                    rp_clone2.clone_account_from_cluster(&address, url)?;
+
+                    Ok(jsonrpc_core::Value::String(format!(
+                        "Account {} cloned successfully",
+                        address
+                    )))
+                });
+
                 let request_middleware = RpcRequestMiddleware::new(
                     ledger_path,
                     snapshot_config,
                     bank_forks.clone(),
                     health.clone(),
                 );
-                let server = ServerBuilder::with_meta_extractor(
-                    io,
-                    move |req: &hyper::Request<hyper::Body>| {
-                        let xbigtable = req.headers().get("x-bigtable");
-                        if xbigtable.is_some_and(|v| v == "disabled") {
-                            request_processor.clone_without_bigtable()
-                        } else {
-                            request_processor.clone()
-                        }
-                    },
-                )
-                .event_loop_executor(runtime.handle().clone())
-                .threads(1)
-                .cors(DomainsValidation::AllowOnly(vec![
-                    AccessControlAllowOrigin::Any,
-                ]))
-                .cors_max_age(86400)
-                .request_middleware(request_middleware)
-                .max_request_body_size(max_request_body_size)
-                .start_http(&rpc_addr);
+                let server =
+                    ServerBuilder::<Box<dyn JsonRpcRequestProcessor>, _>::with_meta_extractor(
+                        io,
+                        move |req: &hyper::Request<hyper::Body>| {
+                            let xbigtable = req.headers().get("x-bigtable");
+                            if xbigtable.is_some_and(|v| v == "disabled") {
+                                request_processor.clone_without_bigtable()
+                            } else {
+                                request_processor.clone()
+                            }
+                        },
+                    )
+                    .event_loop_executor(runtime.handle().clone())
+                    .threads(1)
+                    .cors(DomainsValidation::AllowOnly(vec![
+                        AccessControlAllowOrigin::Any,
+                    ]))
+                    .cors_max_age(86400)
+                    .request_middleware(request_middleware)
+                    .max_request_body_size(max_request_body_size)
+                    .start_http(&rpc_addr);
 
                 if let Err(e) = server {
                     warn!(

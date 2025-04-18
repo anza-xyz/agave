@@ -1,4 +1,5 @@
 //! The `rpc` module implements the Solana RPC interface.
+use async_trait::async_trait;
 #[cfg(feature = "dev-context-only-utils")]
 use solana_runtime::installed_scheduler_pool::BankWithScheduler;
 use {
@@ -173,6 +174,7 @@ pub struct JsonRpcConfig {
     pub max_request_body_size: Option<usize>,
     /// Disable the health check, used for tests and TestValidator
     pub disable_health_check: bool,
+    pub test_request_processor: bool,
 }
 
 impl Default for JsonRpcConfig {
@@ -193,6 +195,7 @@ impl Default for JsonRpcConfig {
             rpc_scan_and_fix_roots: Default::default(),
             max_request_body_size: Option::default(),
             disable_health_check: Default::default(),
+            test_request_processor: bool::default(),
         }
     }
 }
@@ -231,7 +234,7 @@ impl Default for RpcBigtableConfig {
 }
 
 #[derive(Clone)]
-pub struct JsonRpcRequestProcessor {
+pub struct LiveJsonRpcRequestProcessor {
     bank_forks: Arc<RwLock<BankForks>>,
     block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
     blockstore: Arc<Blockstore>,
@@ -253,35 +256,37 @@ pub struct JsonRpcRequestProcessor {
     prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     runtime: Arc<Runtime>,
 }
-impl Metadata for JsonRpcRequestProcessor {}
 
-impl JsonRpcRequestProcessor {
-    pub fn clone_without_bigtable(&self) -> JsonRpcRequestProcessor {
-        Self {
-            bigtable_ledger_storage: None, // Disable BigTable
-            ..self.clone()
-        }
-    }
+#[derive(Clone)]
+pub struct TestJsonRpcRequestProcessor {
+    bank_forks: Arc<RwLock<BankForks>>,
+    block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+    blockstore: Arc<Blockstore>,
+    config: JsonRpcConfig,
+    snapshot_config: Option<SnapshotConfig>,
+    #[allow(dead_code)]
+    validator_exit: Arc<RwLock<Exit>>,
+    health: Arc<RpcHealth>,
+    cluster_info: Arc<ClusterInfo>,
+    genesis_hash: Hash,
+    transaction_sender: Sender<TransactionInfo>,
+    bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
+    optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+    largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
+    max_slots: Arc<MaxSlots>,
+    leader_schedule_cache: Arc<LeaderScheduleCache>,
+    max_complete_transaction_status_slot: Arc<AtomicU64>,
+    max_complete_rewards_slot: Arc<AtomicU64>,
+    prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    runtime: Arc<Runtime>,
 }
 
-impl JsonRpcRequestProcessor {
-    fn get_bank_with_config(&self, config: RpcContextConfig) -> Result<Arc<Bank>> {
-        let RpcContextConfig {
-            commitment,
-            min_context_slot,
-        } = config;
-        let bank = self.bank(commitment);
-        if let Some(min_context_slot) = min_context_slot {
-            if bank.slot() < min_context_slot {
-                return Err(RpcCustomError::MinContextSlotNotReached {
-                    context_slot: bank.slot(),
-                }
-                .into());
-            }
-        }
-        Ok(bank)
-    }
+impl Metadata for Box<dyn JsonRpcRequestProcessor> {}
+impl Metadata for LiveJsonRpcRequestProcessor {}
 
+impl Metadata for TestJsonRpcRequestProcessor {}
+
+impl LiveJsonRpcRequestProcessor {
     fn check_if_transaction_history_enabled(&self) -> Result<()> {
         if !self.config.enable_rpc_transaction_history {
             return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
@@ -300,43 +305,787 @@ impl JsonRpcRequestProcessor {
             .expect("Failed to spawn blocking task")
     }
 
-    pub async fn get_filtered_indexed_accounts(
+    fn genesis_creation_time(&self) -> UnixTimestamp {
+        self.bank(None).genesis_creation_time()
+    }
+
+    fn filter_map_rewards<'a, F>(
+        rewards: &'a Option<Rewards>,
+        slot: Slot,
+        addresses: &'a [String],
+        reward_type_filter: &'a F,
+    ) -> HashMap<String, (Reward, Slot)>
+    where
+        F: Fn(RewardType) -> bool,
+    {
+        Self::filter_rewards(rewards, reward_type_filter)
+            .filter(|reward| addresses.contains(&reward.pubkey))
+            .map(|reward| (reward.pubkey.clone(), (reward.clone(), slot)))
+            .collect()
+    }
+
+    fn filter_rewards<'a, F>(
+        rewards: &'a Option<Rewards>,
+        reward_type_filter: &'a F,
+    ) -> impl Iterator<Item = &'a Reward>
+    where
+        F: Fn(RewardType) -> bool,
+    {
+        rewards
+            .iter()
+            .flatten()
+            .filter(move |reward| reward.reward_type.is_some_and(reward_type_filter))
+    }
+
+    fn get_cached_largest_accounts(
         &self,
-        bank: &Arc<Bank>,
-        index_key: &IndexKey,
-        program_id: &Pubkey,
-        filters: Vec<RpcFilterType>,
-        sort_results: bool,
-    ) -> ScanResult<Vec<TransactionAccount>> {
-        let scan_order = if sort_results {
-            ScanOrder::Sorted
+        filter: &Option<RpcLargestAccountsFilter>,
+    ) -> Option<(u64, Vec<RpcAccountBalance>)> {
+        let largest_accounts_cache = self.largest_accounts_cache.read().unwrap();
+        largest_accounts_cache.get_largest_accounts(filter)
+    }
+
+    fn set_cached_largest_accounts(
+        &self,
+        filter: &Option<RpcLargestAccountsFilter>,
+        slot: u64,
+        accounts: &[RpcAccountBalance],
+    ) {
+        let mut largest_accounts_cache = self.largest_accounts_cache.write().unwrap();
+        largest_accounts_cache.set_largest_accounts(filter, slot, accounts)
+    }
+
+    fn check_blockstore_root<T>(
+        &self,
+        result: &std::result::Result<T, BlockstoreError>,
+        slot: Slot,
+    ) -> Result<()> {
+        if let Err(err) = result {
+            debug!(
+                "check_blockstore_root, slot: {:?}, max root: {:?}, err: {:?}",
+                slot,
+                self.blockstore.max_root(),
+                err
+            );
+            if slot >= self.blockstore.max_root() {
+                return Err(RpcCustomError::BlockNotAvailable { slot }.into());
+            }
+            if self.blockstore.is_skipped(slot) {
+                return Err(RpcCustomError::SlotSkipped { slot }.into());
+            }
+        }
+        Ok(())
+    }
+
+    fn check_slot_cleaned_up<T>(
+        &self,
+        result: &std::result::Result<T, BlockstoreError>,
+        slot: Slot,
+    ) -> Result<()> {
+        let first_available_block = self
+            .blockstore
+            .get_first_available_block()
+            .unwrap_or_default();
+        let err: Error = RpcCustomError::BlockCleanedUp {
+            slot,
+            first_available_block,
+        }
+        .into();
+        if let Err(BlockstoreError::SlotCleanedUp) = result {
+            return Err(err);
+        }
+        if slot < first_available_block {
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    fn check_bigtable_result<T>(
+        &self,
+        result: &std::result::Result<T, solana_storage_bigtable::Error>,
+    ) -> Result<()> {
+        if let Err(solana_storage_bigtable::Error::BlockNotFound(slot)) = result {
+            return Err(RpcCustomError::LongTermStorageSlotSkipped { slot: *slot }.into());
+        }
+        Ok(())
+    }
+
+    fn check_blockstore_writes_complete(&self, slot: Slot) -> Result<()> {
+        if slot
+            > self
+                .max_complete_transaction_status_slot
+                .load(Ordering::SeqCst)
+            || slot > self.max_complete_rewards_slot.load(Ordering::SeqCst)
+        {
+            Err(RpcCustomError::BlockStatusNotAvailableYet { slot }.into())
         } else {
-            ScanOrder::Unsorted
+            Ok(())
+        }
+    }
+
+    fn get_transaction_status(
+        &self,
+        signature: Signature,
+        bank: &Bank,
+    ) -> Option<TransactionStatus> {
+        let (slot, status) = bank.get_signature_status_slot(&signature)?;
+
+        let optimistically_confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+        let optimistically_confirmed =
+            optimistically_confirmed_bank.get_signature_status_slot(&signature);
+
+        let r_block_commitment_cache = self.block_commitment_cache.read().unwrap();
+        let confirmations = if r_block_commitment_cache.root() >= slot
+            && is_finalized(&r_block_commitment_cache, bank, &self.blockstore, slot)
+        {
+            None
+        } else {
+            r_block_commitment_cache
+                .get_confirmation_count(slot)
+                .or(Some(0))
         };
-        let bank = Arc::clone(bank);
-        let index_key = index_key.to_owned();
-        let program_id = program_id.to_owned();
-        self.runtime
-            .spawn_blocking(move || {
-                bank.get_filtered_indexed_accounts(
-                    &index_key,
-                    |account| {
-                        // The program-id account index checks for Account owner on inclusion.
-                        // However, due to the current AccountsDb implementation, an account may
-                        // remain in storage as a zero-lamport AccountSharedData::Default() after
-                        // being wiped and reinitialized in later updates. We include the redundant
-                        // filters here to avoid returning these accounts.
-                        account.owner().eq(&program_id)
-                            && filters
+        let err = status.clone().err();
+        Some(TransactionStatus {
+            slot,
+            status,
+            confirmations,
+            err,
+            confirmation_status: if confirmations.is_none() {
+                Some(TransactionConfirmationStatus::Finalized)
+            } else if optimistically_confirmed.is_some() {
+                Some(TransactionConfirmationStatus::Confirmed)
+            } else {
+                Some(TransactionConfirmationStatus::Processed)
+            },
+        })
+    }
+
+    /// Use a set of filters to get an iterator of keyed program accounts from a bank
+    async fn get_filtered_program_accounts(
+        &self,
+        bank: Arc<Bank>,
+        program_id: Pubkey,
+        mut filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> RpcCustomResult<Vec<(Pubkey, AccountSharedData)>> {
+        optimize_filters(&mut filters);
+        if self
+            .config
+            .account_indexes
+            .contains(&AccountIndex::ProgramId)
+        {
+            if !self.config.account_indexes.include_key(&program_id) {
+                return Err(RpcCustomError::KeyExcludedFromSecondaryIndex {
+                    index_key: program_id.to_string(),
+                });
+            }
+            self.get_filtered_indexed_accounts(
+                &bank,
+                &IndexKey::ProgramId(program_id),
+                &program_id,
+                filters,
+                sort_results,
+            )
+            .await
+            .map_err(|e| RpcCustomError::ScanError {
+                message: e.to_string(),
+            })
+        } else {
+            // this path does not need to provide a mb limit because we only want to support secondary indexes
+            let scan_order = if sort_results {
+                ScanOrder::Sorted
+            } else {
+                ScanOrder::Unsorted
+            };
+            self.runtime
+                .spawn_blocking(move || {
+                    bank.get_filtered_program_accounts(
+                        &program_id,
+                        |account: &AccountSharedData| {
+                            filters
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
-                    },
-                    &ScanConfig::new(scan_order),
-                    bank.byte_limit_for_scans(),
-                )
+                        },
+                        &ScanConfig::new(scan_order),
+                    )
+                    .map_err(|e| RpcCustomError::ScanError {
+                        message: e.to_string(),
+                    })
+                })
+                .await
+                .expect("Failed to spawn blocking task")
+        }
+    }
+
+    /// Get an iterator of spl-token accounts by owner address
+    async fn get_filtered_spl_token_accounts_by_owner(
+        &self,
+        bank: Arc<Bank>,
+        program_id: Pubkey,
+        owner_key: Pubkey,
+        mut filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> RpcCustomResult<Vec<(Pubkey, AccountSharedData)>> {
+        // The by-owner accounts index checks for Token Account state and Owner address on
+        // inclusion. However, due to the current AccountsDb implementation, an account may remain
+        // in storage as a zero-lamport AccountSharedData::Default() after being wiped and reinitialized in
+        // later updates. We include the redundant filters here to avoid returning these accounts.
+        //
+        // Filter on Token Account state
+        filters.push(RpcFilterType::TokenAccountState);
+        // Filter on Owner address
+        filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+            SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
+            owner_key.to_bytes().into(),
+        )));
+
+        if self
+            .config
+            .account_indexes
+            .contains(&AccountIndex::SplTokenOwner)
+        {
+            if !self.config.account_indexes.include_key(&owner_key) {
+                return Err(RpcCustomError::KeyExcludedFromSecondaryIndex {
+                    index_key: owner_key.to_string(),
+                });
+            }
+            self.get_filtered_indexed_accounts(
+                &bank,
+                &IndexKey::SplTokenOwner(owner_key),
+                &program_id,
+                filters,
+                sort_results,
+            )
+            .await
+            .map_err(|e| RpcCustomError::ScanError {
+                message: e.to_string(),
             })
+        } else {
+            self.get_filtered_program_accounts(bank, program_id, filters, sort_results)
+                .await
+        }
+    }
+
+    /// Get an iterator of spl-token accounts by mint address
+    async fn get_filtered_spl_token_accounts_by_mint(
+        &self,
+        bank: Arc<Bank>,
+        program_id: Pubkey,
+        mint_key: Pubkey,
+        mut filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> RpcCustomResult<Vec<(Pubkey, AccountSharedData)>> {
+        // The by-mint accounts index checks for Token Account state and Mint address on inclusion.
+        // However, due to the current AccountsDb implementation, an account may remain in storage
+        // as be zero-lamport AccountSharedData::Default() after being wiped and reinitialized in later
+        // updates. We include the redundant filters here to avoid returning these accounts.
+        //
+        // Filter on Token Account state
+        filters.push(RpcFilterType::TokenAccountState);
+        // Filter on Mint address
+        filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+            SPL_TOKEN_ACCOUNT_MINT_OFFSET,
+            mint_key.to_bytes().into(),
+        )));
+        if self
+            .config
+            .account_indexes
+            .contains(&AccountIndex::SplTokenMint)
+        {
+            if !self.config.account_indexes.include_key(&mint_key) {
+                return Err(RpcCustomError::KeyExcludedFromSecondaryIndex {
+                    index_key: mint_key.to_string(),
+                });
+            }
+            self.get_filtered_indexed_accounts(
+                &bank,
+                &IndexKey::SplTokenMint(mint_key),
+                &program_id,
+                filters,
+                sort_results,
+            )
+            .await
+            .map_err(|e| RpcCustomError::ScanError {
+                message: e.to_string(),
+            })
+        } else {
+            self.get_filtered_program_accounts(bank, program_id, filters, sort_results)
+                .await
+        }
+    }
+}
+
+impl TestJsonRpcRequestProcessor {
+    fn check_if_transaction_history_enabled(&self) -> Result<()> {
+        if !self.config.enable_rpc_transaction_history {
+            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
+        }
+        Ok(())
+    }
+
+    async fn calculate_non_circulating_supply(
+        &self,
+        bank: &Arc<Bank>,
+    ) -> ScanResult<NonCirculatingSupply> {
+        let bank = Arc::clone(bank);
+        self.runtime
+            .spawn_blocking(move || calculate_non_circulating_supply(&bank))
             .await
             .expect("Failed to spawn blocking task")
+    }
+    fn genesis_creation_time(&self) -> UnixTimestamp {
+        self.bank(None).genesis_creation_time()
+    }
+
+    fn filter_map_rewards<'a, F>(
+        rewards: &'a Option<Rewards>,
+        slot: Slot,
+        addresses: &'a [String],
+        reward_type_filter: &'a F,
+    ) -> HashMap<String, (Reward, Slot)>
+    where
+        F: Fn(RewardType) -> bool,
+    {
+        Self::filter_rewards(rewards, reward_type_filter)
+            .filter(|reward| addresses.contains(&reward.pubkey))
+            .map(|reward| (reward.pubkey.clone(), (reward.clone(), slot)))
+            .collect()
+    }
+
+    fn filter_rewards<'a, F>(
+        rewards: &'a Option<Rewards>,
+        reward_type_filter: &'a F,
+    ) -> impl Iterator<Item = &'a Reward>
+    where
+        F: Fn(RewardType) -> bool,
+    {
+        rewards
+            .iter()
+            .flatten()
+            .filter(move |reward| reward.reward_type.is_some_and(reward_type_filter))
+    }
+    fn get_cached_largest_accounts(
+        &self,
+        filter: &Option<RpcLargestAccountsFilter>,
+    ) -> Option<(u64, Vec<RpcAccountBalance>)> {
+        let largest_accounts_cache = self.largest_accounts_cache.read().unwrap();
+        largest_accounts_cache.get_largest_accounts(filter)
+    }
+
+    fn set_cached_largest_accounts(
+        &self,
+        filter: &Option<RpcLargestAccountsFilter>,
+        slot: u64,
+        accounts: &[RpcAccountBalance],
+    ) {
+        let mut largest_accounts_cache = self.largest_accounts_cache.write().unwrap();
+        largest_accounts_cache.set_largest_accounts(filter, slot, accounts)
+    }
+    fn check_blockstore_root<T>(
+        &self,
+        result: &std::result::Result<T, BlockstoreError>,
+        slot: Slot,
+    ) -> Result<()> {
+        if let Err(err) = result {
+            debug!(
+                "check_blockstore_root, slot: {:?}, max root: {:?}, err: {:?}",
+                slot,
+                self.blockstore.max_root(),
+                err
+            );
+            if slot >= self.blockstore.max_root() {
+                return Err(RpcCustomError::BlockNotAvailable { slot }.into());
+            }
+            if self.blockstore.is_skipped(slot) {
+                return Err(RpcCustomError::SlotSkipped { slot }.into());
+            }
+        }
+        Ok(())
+    }
+
+    fn check_slot_cleaned_up<T>(
+        &self,
+        result: &std::result::Result<T, BlockstoreError>,
+        slot: Slot,
+    ) -> Result<()> {
+        let first_available_block = self
+            .blockstore
+            .get_first_available_block()
+            .unwrap_or_default();
+        let err: Error = RpcCustomError::BlockCleanedUp {
+            slot,
+            first_available_block,
+        }
+        .into();
+        if let Err(BlockstoreError::SlotCleanedUp) = result {
+            return Err(err);
+        }
+        if slot < first_available_block {
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    fn check_bigtable_result<T>(
+        &self,
+        result: &std::result::Result<T, solana_storage_bigtable::Error>,
+    ) -> Result<()> {
+        if let Err(solana_storage_bigtable::Error::BlockNotFound(slot)) = result {
+            return Err(RpcCustomError::LongTermStorageSlotSkipped { slot: *slot }.into());
+        }
+        Ok(())
+    }
+
+    fn check_blockstore_writes_complete(&self, slot: Slot) -> Result<()> {
+        if slot
+            > self
+                .max_complete_transaction_status_slot
+                .load(Ordering::SeqCst)
+            || slot > self.max_complete_rewards_slot.load(Ordering::SeqCst)
+        {
+            Err(RpcCustomError::BlockStatusNotAvailableYet { slot }.into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn get_transaction_status(
+        &self,
+        signature: Signature,
+        bank: &Bank,
+    ) -> Option<TransactionStatus> {
+        let (slot, status) = bank.get_signature_status_slot(&signature)?;
+
+        let optimistically_confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+        let optimistically_confirmed =
+            optimistically_confirmed_bank.get_signature_status_slot(&signature);
+
+        let r_block_commitment_cache = self.block_commitment_cache.read().unwrap();
+        let confirmations = if r_block_commitment_cache.root() >= slot
+            && is_finalized(&r_block_commitment_cache, bank, &self.blockstore, slot)
+        {
+            None
+        } else {
+            r_block_commitment_cache
+                .get_confirmation_count(slot)
+                .or(Some(0))
+        };
+        let err = status.clone().err();
+        Some(TransactionStatus {
+            slot,
+            status,
+            confirmations,
+            err,
+            confirmation_status: if confirmations.is_none() {
+                Some(TransactionConfirmationStatus::Finalized)
+            } else if optimistically_confirmed.is_some() {
+                Some(TransactionConfirmationStatus::Confirmed)
+            } else {
+                Some(TransactionConfirmationStatus::Processed)
+            },
+        })
+    }
+
+    /// Use a set of filters to get an iterator of keyed program accounts from a bank
+    async fn get_filtered_program_accounts(
+        &self,
+        bank: Arc<Bank>,
+        program_id: Pubkey,
+        mut filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> RpcCustomResult<Vec<(Pubkey, AccountSharedData)>> {
+        optimize_filters(&mut filters);
+        if self
+            .config
+            .account_indexes
+            .contains(&AccountIndex::ProgramId)
+        {
+            if !self.config.account_indexes.include_key(&program_id) {
+                return Err(RpcCustomError::KeyExcludedFromSecondaryIndex {
+                    index_key: program_id.to_string(),
+                });
+            }
+            self.get_filtered_indexed_accounts(
+                &bank,
+                &IndexKey::ProgramId(program_id),
+                &program_id,
+                filters,
+                sort_results,
+            )
+            .await
+            .map_err(|e| RpcCustomError::ScanError {
+                message: e.to_string(),
+            })
+        } else {
+            // this path does not need to provide a mb limit because we only want to support secondary indexes
+            let scan_order = if sort_results {
+                ScanOrder::Sorted
+            } else {
+                ScanOrder::Unsorted
+            };
+            self.runtime
+                .spawn_blocking(move || {
+                    bank.get_filtered_program_accounts(
+                        &program_id,
+                        |account: &AccountSharedData| {
+                            filters
+                                .iter()
+                                .all(|filter_type| filter_allows(filter_type, account))
+                        },
+                        &ScanConfig::new(scan_order),
+                    )
+                    .map_err(|e| RpcCustomError::ScanError {
+                        message: e.to_string(),
+                    })
+                })
+                .await
+                .expect("Failed to spawn blocking task")
+        }
+    }
+
+    /// Get an iterator of spl-token accounts by owner address
+    async fn get_filtered_spl_token_accounts_by_owner(
+        &self,
+        bank: Arc<Bank>,
+        program_id: Pubkey,
+        owner_key: Pubkey,
+        mut filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> RpcCustomResult<Vec<(Pubkey, AccountSharedData)>> {
+        // The by-owner accounts index checks for Token Account state and Owner address on
+        // inclusion. However, due to the current AccountsDb implementation, an account may remain
+        // in storage as a zero-lamport AccountSharedData::Default() after being wiped and reinitialized in
+        // later updates. We include the redundant filters here to avoid returning these accounts.
+        //
+        // Filter on Token Account state
+        filters.push(RpcFilterType::TokenAccountState);
+        // Filter on Owner address
+        filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+            SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
+            owner_key.to_bytes().into(),
+        )));
+
+        if self
+            .config
+            .account_indexes
+            .contains(&AccountIndex::SplTokenOwner)
+        {
+            if !self.config.account_indexes.include_key(&owner_key) {
+                return Err(RpcCustomError::KeyExcludedFromSecondaryIndex {
+                    index_key: owner_key.to_string(),
+                });
+            }
+            self.get_filtered_indexed_accounts(
+                &bank,
+                &IndexKey::SplTokenOwner(owner_key),
+                &program_id,
+                filters,
+                sort_results,
+            )
+            .await
+            .map_err(|e| RpcCustomError::ScanError {
+                message: e.to_string(),
+            })
+        } else {
+            self.get_filtered_program_accounts(bank, program_id, filters, sort_results)
+                .await
+        }
+    }
+
+    /// Get an iterator of spl-token accounts by mint address
+    async fn get_filtered_spl_token_accounts_by_mint(
+        &self,
+        bank: Arc<Bank>,
+        program_id: Pubkey,
+        mint_key: Pubkey,
+        mut filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> RpcCustomResult<Vec<(Pubkey, AccountSharedData)>> {
+        // The by-mint accounts index checks for Token Account state and Mint address on inclusion.
+        // However, due to the current AccountsDb implementation, an account may remain in storage
+        // as be zero-lamport AccountSharedData::Default() after being wiped and reinitialized in later
+        // updates. We include the redundant filters here to avoid returning these accounts.
+        //
+        // Filter on Token Account state
+        filters.push(RpcFilterType::TokenAccountState);
+        // Filter on Mint address
+        filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+            SPL_TOKEN_ACCOUNT_MINT_OFFSET,
+            mint_key.to_bytes().into(),
+        )));
+        if self
+            .config
+            .account_indexes
+            .contains(&AccountIndex::SplTokenMint)
+        {
+            if !self.config.account_indexes.include_key(&mint_key) {
+                return Err(RpcCustomError::KeyExcludedFromSecondaryIndex {
+                    index_key: mint_key.to_string(),
+                });
+            }
+            self.get_filtered_indexed_accounts(
+                &bank,
+                &IndexKey::SplTokenMint(mint_key),
+                &program_id,
+                filters,
+                sort_results,
+            )
+            .await
+            .map_err(|e| RpcCustomError::ScanError {
+                message: e.to_string(),
+            })
+        } else {
+            self.get_filtered_program_accounts(bank, program_id, filters, sort_results)
+                .await
+        }
+    }
+}
+
+#[async_trait]
+impl JsonRpcRequestProcessor for LiveJsonRpcRequestProcessor {
+    fn clone_account_from_cluster(&self, _address: &Pubkey, _url: &str) -> Result<()> {
+        Err(Error::invalid_params(
+            "clone_account_from_cluster is only available in test validator mode",
+        ))
+    }
+
+    fn set_account(&self, _address: &Pubkey, _account: &AccountSharedData) -> Result<()> {
+        Err(Error::invalid_params(
+            "set_account is only available in test validator mode",
+        ))
+    }
+    fn clone_without_bigtable(&self) -> Box<dyn JsonRpcRequestProcessor> {
+        Box::new(Self {
+            bigtable_ledger_storage: None, // Disable BigTable
+            ..self.clone()
+        })
+    }
+
+    fn get_bank_with_config(&self, config: RpcContextConfig) -> Result<Arc<Bank>> {
+        let RpcContextConfig {
+            commitment,
+            min_context_slot,
+        } = config;
+        let bank = self.bank(commitment);
+        if let Some(min_context_slot) = min_context_slot {
+            if bank.slot() < min_context_slot {
+                return Err(RpcCustomError::MinContextSlotNotReached {
+                    context_slot: bank.slot(),
+                }
+                .into());
+            }
+        }
+        Ok(bank)
+    }
+
+    fn genesis_hash(&self) -> &Hash {
+        &self.genesis_hash
+    }
+
+    fn health(&self) -> &Arc<RpcHealth> {
+        &self.health
+    }
+
+    fn cluster_info(&self) -> &Arc<ClusterInfo> {
+        &self.cluster_info
+    }
+
+    fn get_slot(&self, config: RpcContextConfig) -> Result<Slot> {
+        let bank = self.get_bank_with_config(config)?;
+        Ok(bank.slot())
+    }
+
+    fn snapshot_config(&self) -> Option<SnapshotConfig> {
+        self.snapshot_config.clone()
+    }
+
+    fn get_transaction_count(&self, config: RpcContextConfig) -> Result<u64> {
+        let bank = self.get_bank_with_config(config)?;
+        Ok(bank.transaction_count())
+    }
+
+    fn get_block_height(&self, config: RpcContextConfig) -> Result<u64> {
+        let bank = self.get_bank_with_config(config)?;
+        Ok(bank.block_height())
+    }
+
+    fn get_vote_accounts(
+        &self,
+        config: Option<RpcGetVoteAccountsConfig>,
+    ) -> Result<RpcVoteAccountStatus> {
+        let config = config.unwrap_or_default();
+
+        let filter_by_vote_pubkey = if let Some(ref vote_pubkey) = config.vote_pubkey {
+            Some(verify_pubkey(vote_pubkey)?)
+        } else {
+            None
+        };
+
+        let bank = self.bank(config.commitment);
+        let vote_accounts = bank.vote_accounts();
+        let epoch_vote_accounts = bank
+            .epoch_vote_accounts(bank.get_epoch_and_slot_index(bank.slot()).0)
+            .ok_or_else(Error::invalid_request)?;
+        let delinquent_validator_slot_distance = config
+            .delinquent_slot_distance
+            .unwrap_or(DELINQUENT_VALIDATOR_SLOT_DISTANCE);
+        let (current_vote_accounts, delinquent_vote_accounts): (
+            Vec<RpcVoteAccountInfo>,
+            Vec<RpcVoteAccountInfo>,
+        ) = vote_accounts
+            .iter()
+            .filter_map(|(vote_pubkey, (activated_stake, account))| {
+                if let Some(filter_by_vote_pubkey) = filter_by_vote_pubkey {
+                    if *vote_pubkey != filter_by_vote_pubkey {
+                        return None;
+                    }
+                }
+
+                let vote_state_view = account.vote_state_view();
+                let last_vote = vote_state_view.last_voted_slot().unwrap_or(0);
+                let num_epoch_credits = vote_state_view.num_epoch_credits();
+                let epoch_credits = vote_state_view
+                    .epoch_credits_iter()
+                    .skip(
+                        num_epoch_credits
+                            .saturating_sub(MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY),
+                    )
+                    .map(Into::into)
+                    .collect();
+
+                Some(RpcVoteAccountInfo {
+                    vote_pubkey: vote_pubkey.to_string(),
+                    node_pubkey: vote_state_view.node_pubkey().to_string(),
+                    activated_stake: *activated_stake,
+                    commission: vote_state_view.commission(),
+                    root_slot: vote_state_view.root_slot().unwrap_or(0),
+                    epoch_credits,
+                    epoch_vote_account: epoch_vote_accounts.contains_key(vote_pubkey),
+                    last_vote,
+                })
+            })
+            .partition(|vote_account_info| {
+                if bank.slot() >= delinquent_validator_slot_distance {
+                    vote_account_info.last_vote > bank.slot() - delinquent_validator_slot_distance
+                } else {
+                    vote_account_info.last_vote > 0
+                }
+            });
+
+        let keep_unstaked_delinquents = config.keep_unstaked_delinquents.unwrap_or_default();
+        let delinquent_vote_accounts = if !keep_unstaked_delinquents {
+            delinquent_vote_accounts
+                .into_iter()
+                .filter(|vote_account_info| vote_account_info.activated_stake > 0)
+                .collect::<Vec<_>>()
+        } else {
+            delinquent_vote_accounts
+        };
+
+        Ok(RpcVoteAccountStatus {
+            current: current_vote_accounts,
+            delinquent: delinquent_vote_accounts,
+        })
     }
 
     #[allow(deprecated)]
@@ -392,12 +1141,274 @@ impl JsonRpcRequestProcessor {
         })
     }
 
-    fn genesis_creation_time(&self) -> UnixTimestamp {
-        self.bank(None).genesis_creation_time()
+    fn leader_schedule_cache(&self) -> &Arc<LeaderScheduleCache> {
+        &self.leader_schedule_cache
+    }
+    async fn get_filtered_indexed_accounts(
+        &self,
+        bank: &Arc<Bank>,
+        index_key: &IndexKey,
+        program_id: &Pubkey,
+        filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> ScanResult<Vec<TransactionAccount>> {
+        let scan_order = if sort_results {
+            ScanOrder::Sorted
+        } else {
+            ScanOrder::Unsorted
+        };
+        let bank = Arc::clone(bank);
+        let index_key = index_key.to_owned();
+        let program_id = program_id.to_owned();
+        self.runtime
+            .spawn_blocking(move || {
+                bank.get_filtered_indexed_accounts(
+                    &index_key,
+                    |account| {
+                        // The program-id account index checks for Account owner on inclusion.
+                        // However, due to the current AccountsDb implementation, an account may
+                        // remain in storage as a zero-lamport AccountSharedData::Default() after
+                        // being wiped and reinitialized in later updates. We include the redundant
+                        // filters here to avoid returning these accounts.
+                        account.owner().eq(&program_id)
+                            && filters
+                                .iter()
+                                .all(|filter_type| filter_allows(filter_type, account))
+                    },
+                    &ScanConfig::new(scan_order),
+                    bank.byte_limit_for_scans(),
+                )
+            })
+            .await
+            .expect("Failed to spawn blocking task")
     }
 
+    fn get_recent_prioritization_fees(
+        &self,
+        pubkeys: Vec<Pubkey>,
+    ) -> Result<Vec<RpcPrioritizationFee>> {
+        Ok(self
+            .prioritization_fee_cache
+            .get_prioritization_fees(&pubkeys)
+            .into_iter()
+            .map(|(slot, prioritization_fee)| RpcPrioritizationFee {
+                slot,
+                prioritization_fee,
+            })
+            .collect())
+    }
+
+    fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
+        let bank = self.get_bank_with_config(config)?;
+        let stake_minimum_delegation =
+            solana_stake_program::get_minimum_delegation(&bank.feature_set);
+        Ok(new_response(&bank, stake_minimum_delegation))
+    }
+
+    fn get_latest_blockhash(&self, config: RpcContextConfig) -> Result<RpcResponse<RpcBlockhash>> {
+        let bank = self.get_bank_with_config(config)?;
+        let blockhash = bank.last_blockhash();
+        let last_valid_block_height = bank
+            .get_blockhash_last_valid_block_height(&blockhash)
+            .expect("bank blockhash queue should contain blockhash");
+        Ok(new_response(
+            &bank,
+            RpcBlockhash {
+                blockhash: blockhash.to_string(),
+                last_valid_block_height,
+            },
+        ))
+    }
+
+    fn minimum_ledger_slot(&self) -> Result<Slot> {
+        match self.blockstore.slot_meta_iterator(0) {
+            Ok(mut metas) => match metas.next() {
+                Some((slot, _meta)) => Ok(slot),
+                None => Err(Error::invalid_request()),
+            },
+            Err(err) => {
+                warn!("slot_meta_iterator failed: {:?}", err);
+                Err(Error::invalid_request())
+            }
+        }
+    }
+
+    fn config(&self) -> &JsonRpcConfig {
+        &self.config
+    }
+
+    fn get_max_shred_insert_slot(&self) -> Slot {
+        self.max_slots.shred_insert.load(Ordering::Relaxed)
+    }
+
+    fn get_max_retransmit_slot(&self) -> Slot {
+        self.max_slots.retransmit.load(Ordering::Relaxed)
+    }
+
+    fn blockstore(&self) -> &Arc<Blockstore> {
+        &self.blockstore
+    }
+
+    async fn get_supply(
+        &self,
+        config: Option<RpcSupplyConfig>,
+    ) -> RpcCustomResult<RpcResponse<RpcSupply>> {
+        let config = config.unwrap_or_default();
+        let bank = self.bank(config.commitment);
+        let non_circulating_supply =
+            self.calculate_non_circulating_supply(&bank)
+                .await
+                .map_err(|e| RpcCustomError::ScanError {
+                    message: e.to_string(),
+                })?;
+        let total_supply = bank.capitalization();
+        let non_circulating_accounts = if config.exclude_non_circulating_accounts_list {
+            vec![]
+        } else {
+            non_circulating_supply
+                .accounts
+                .iter()
+                .map(|pubkey| pubkey.to_string())
+                .collect()
+        };
+
+        Ok(new_response(
+            &bank,
+            RpcSupply {
+                total: total_supply,
+                circulating: total_supply - non_circulating_supply.lamports,
+                non_circulating: non_circulating_supply.lamports,
+                non_circulating_accounts,
+            },
+        ))
+    }
+
+    async fn get_largest_accounts(
+        &self,
+        config: Option<RpcLargestAccountsConfig>,
+    ) -> RpcCustomResult<RpcResponse<Vec<RpcAccountBalance>>> {
+        let config = config.unwrap_or_default();
+        let bank = self.bank(config.commitment);
+        let sort_results = config.sort_results.unwrap_or(true);
+
+        if let Some((slot, accounts)) = self.get_cached_largest_accounts(&config.filter) {
+            Ok(RpcResponse {
+                context: RpcResponseContext::new(slot),
+                value: accounts,
+            })
+        } else {
+            let (addresses, address_filter) = if let Some(filter) = config.clone().filter {
+                let non_circulating_supply = self
+                    .calculate_non_circulating_supply(&bank)
+                    .await
+                    .map_err(|e| RpcCustomError::ScanError {
+                        message: e.to_string(),
+                    })?;
+                let addresses = non_circulating_supply.accounts.into_iter().collect();
+                let address_filter = match filter {
+                    RpcLargestAccountsFilter::Circulating => AccountAddressFilter::Exclude,
+                    RpcLargestAccountsFilter::NonCirculating => AccountAddressFilter::Include,
+                };
+                (addresses, address_filter)
+            } else {
+                (HashSet::new(), AccountAddressFilter::Exclude)
+            };
+            let accounts = self
+                .runtime
+                .spawn_blocking({
+                    let bank = Arc::clone(&bank);
+                    move || {
+                        bank.get_largest_accounts(
+                            NUM_LARGEST_ACCOUNTS,
+                            &addresses,
+                            address_filter,
+                            sort_results,
+                        )
+                    }
+                })
+                .await
+                .expect("Failed to spawn blocking task")
+                .map_err(|e| RpcCustomError::ScanError {
+                    message: e.to_string(),
+                })?
+                .into_iter()
+                .map(|(address, lamports)| RpcAccountBalance {
+                    address: address.to_string(),
+                    lamports,
+                })
+                .collect::<Vec<RpcAccountBalance>>();
+
+            self.set_cached_largest_accounts(&config.filter, bank.slot(), &accounts);
+            Ok(new_response(&bank, accounts))
+        }
+    }
+
+    fn get_block_commitment(&self, block: Slot) -> RpcBlockCommitment<BlockCommitmentArray> {
+        let r_block_commitment = self.block_commitment_cache.read().unwrap();
+        RpcBlockCommitment {
+            commitment: r_block_commitment
+                .get_block_commitment(block)
+                .map(|block_commitment| block_commitment.commitment),
+            total_stake: r_block_commitment.total_stake(),
+        }
+    }
+
+    fn get_slot_leaders(
+        &self,
+        commitment: Option<CommitmentConfig>,
+        start_slot: Slot,
+        limit: usize,
+    ) -> Result<Vec<Pubkey>> {
+        let bank = self.bank(commitment);
+
+        let (mut epoch, mut slot_index) =
+            bank.epoch_schedule().get_epoch_and_slot_index(start_slot);
+
+        let mut slot_leaders = Vec::with_capacity(limit);
+        while slot_leaders.len() < limit {
+            if let Some(leader_schedule) =
+                self.leader_schedule_cache.get_epoch_leader_schedule(epoch)
+            {
+                slot_leaders.extend(
+                    leader_schedule
+                        .get_slot_leaders()
+                        .iter()
+                        .skip(slot_index as usize)
+                        .take(limit.saturating_sub(slot_leaders.len())),
+                );
+            } else {
+                return Err(Error::invalid_params(format!(
+                    "Invalid slot range: leader schedule for epoch {epoch} is unavailable"
+                )));
+            }
+
+            epoch += 1;
+            slot_index = 0;
+        }
+
+        Ok(slot_leaders)
+    }
+
+    fn is_blockhash_valid(
+        &self,
+        blockhash: &Hash,
+        config: RpcContextConfig,
+    ) -> Result<RpcResponse<bool>> {
+        let bank = self.get_bank_with_config(config)?;
+        let is_valid = bank.is_blockhash_valid(blockhash);
+        Ok(new_response(&bank, is_valid))
+    }
+
+    fn get_slot_leader(&self, config: RpcContextConfig) -> Result<String> {
+        let bank = self.get_bank_with_config(config)?;
+        Ok(bank.collector_id().to_string())
+    }
+
+    fn transaction_sender(&self) -> &Sender<TransactionInfo> {
+        &self.transaction_sender
+    }
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    fn new(
         config: JsonRpcConfig,
         snapshot_config: Option<SnapshotConfig>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -443,9 +1454,8 @@ impl JsonRpcRequestProcessor {
             transaction_receiver,
         )
     }
-
     #[cfg(test)]
-    pub fn new_from_bank<Client: ClientWithCreator>(
+    fn new_from_bank<Client: ClientWithCreator>(
         bank: Bank,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
@@ -529,8 +1539,7 @@ impl JsonRpcRequestProcessor {
             runtime,
         }
     }
-
-    pub async fn get_account_info(
+    async fn get_account_info(
         &self,
         pubkey: Pubkey,
         config: Option<RpcAccountInfoConfig>,
@@ -557,8 +1566,7 @@ impl JsonRpcRequestProcessor {
             .expect("rpc: get_encoded_account panicked")?;
         Ok(new_response(&bank, response))
     }
-
-    pub async fn get_multiple_accounts(
+    async fn get_multiple_accounts(
         &self,
         pubkeys: Vec<Pubkey>,
         config: Option<RpcAccountInfoConfig>,
@@ -589,8 +1597,7 @@ impl JsonRpcRequestProcessor {
         }
         Ok(new_response(&bank, accounts))
     }
-
-    pub fn get_minimum_balance_for_rent_exemption(
+    fn get_minimum_balance_for_rent_exemption(
         &self,
         data_len: usize,
         commitment: Option<CommitmentConfig>,
@@ -598,8 +1605,7 @@ impl JsonRpcRequestProcessor {
         self.bank(commitment)
             .get_minimum_balance_for_rent_exemption(data_len)
     }
-
-    pub async fn get_program_accounts(
+    async fn get_program_accounts(
         &self,
         program_id: Pubkey,
         config: Option<RpcAccountInfoConfig>,
@@ -668,36 +1674,7 @@ impl JsonRpcRequestProcessor {
             false => OptionalContext::NoContext(accounts),
         })
     }
-
-    fn filter_map_rewards<'a, F>(
-        rewards: &'a Option<Rewards>,
-        slot: Slot,
-        addresses: &'a [String],
-        reward_type_filter: &'a F,
-    ) -> HashMap<String, (Reward, Slot)>
-    where
-        F: Fn(RewardType) -> bool,
-    {
-        Self::filter_rewards(rewards, reward_type_filter)
-            .filter(|reward| addresses.contains(&reward.pubkey))
-            .map(|reward| (reward.pubkey.clone(), (reward.clone(), slot)))
-            .collect()
-    }
-
-    fn filter_rewards<'a, F>(
-        rewards: &'a Option<Rewards>,
-        reward_type_filter: &'a F,
-    ) -> impl Iterator<Item = &'a Reward>
-    where
-        F: Fn(RewardType) -> bool,
-    {
-        rewards
-            .iter()
-            .flatten()
-            .filter(move |reward| reward.reward_type.is_some_and(reward_type_filter))
-    }
-
-    pub async fn get_inflation_reward(
+    async fn get_inflation_reward(
         &self,
         addresses: Vec<Pubkey>,
         config: Option<RpcEpochConfig>,
@@ -889,15 +1866,10 @@ impl JsonRpcRequestProcessor {
 
         Ok(rewards)
     }
-
-    pub fn get_inflation_governor(
-        &self,
-        commitment: Option<CommitmentConfig>,
-    ) -> RpcInflationGovernor {
+    fn get_inflation_governor(&self, commitment: Option<CommitmentConfig>) -> RpcInflationGovernor {
         self.bank(commitment).inflation().into()
     }
-
-    pub fn get_inflation_rate(&self) -> RpcInflationRate {
+    fn get_inflation_rate(&self) -> RpcInflationRate {
         let bank = self.bank(None);
         let epoch = bank.epoch();
         let inflation = bank.inflation();
@@ -910,24 +1882,17 @@ impl JsonRpcRequestProcessor {
             epoch,
         }
     }
-
-    pub fn get_epoch_schedule(&self) -> EpochSchedule {
+    fn get_epoch_schedule(&self) -> EpochSchedule {
         // Since epoch schedule data comes from the genesis config, any commitment level should be
         // fine
         let bank = self.bank(Some(CommitmentConfig::finalized()));
         bank.epoch_schedule().clone()
     }
-
-    pub fn get_balance(
-        &self,
-        pubkey: &Pubkey,
-        config: RpcContextConfig,
-    ) -> Result<RpcResponse<u64>> {
+    fn get_balance(&self, pubkey: &Pubkey, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
         let bank = self.get_bank_with_config(config)?;
         Ok(new_response(&bank, bank.get_balance(pubkey)))
     }
-
-    pub fn confirm_transaction(
+    fn confirm_transaction(
         &self,
         signature: &Signature,
         commitment: Option<CommitmentConfig>,
@@ -939,354 +1904,7 @@ impl JsonRpcRequestProcessor {
             None => Ok(new_response(&bank, false)),
         }
     }
-
-    fn get_block_commitment(&self, block: Slot) -> RpcBlockCommitment<BlockCommitmentArray> {
-        let r_block_commitment = self.block_commitment_cache.read().unwrap();
-        RpcBlockCommitment {
-            commitment: r_block_commitment
-                .get_block_commitment(block)
-                .map(|block_commitment| block_commitment.commitment),
-            total_stake: r_block_commitment.total_stake(),
-        }
-    }
-
-    fn get_slot(&self, config: RpcContextConfig) -> Result<Slot> {
-        let bank = self.get_bank_with_config(config)?;
-        Ok(bank.slot())
-    }
-
-    fn get_block_height(&self, config: RpcContextConfig) -> Result<u64> {
-        let bank = self.get_bank_with_config(config)?;
-        Ok(bank.block_height())
-    }
-
-    fn get_max_retransmit_slot(&self) -> Slot {
-        self.max_slots.retransmit.load(Ordering::Relaxed)
-    }
-
-    fn get_max_shred_insert_slot(&self) -> Slot {
-        self.max_slots.shred_insert.load(Ordering::Relaxed)
-    }
-
-    fn get_slot_leader(&self, config: RpcContextConfig) -> Result<String> {
-        let bank = self.get_bank_with_config(config)?;
-        Ok(bank.collector_id().to_string())
-    }
-
-    fn get_slot_leaders(
-        &self,
-        commitment: Option<CommitmentConfig>,
-        start_slot: Slot,
-        limit: usize,
-    ) -> Result<Vec<Pubkey>> {
-        let bank = self.bank(commitment);
-
-        let (mut epoch, mut slot_index) =
-            bank.epoch_schedule().get_epoch_and_slot_index(start_slot);
-
-        let mut slot_leaders = Vec::with_capacity(limit);
-        while slot_leaders.len() < limit {
-            if let Some(leader_schedule) =
-                self.leader_schedule_cache.get_epoch_leader_schedule(epoch)
-            {
-                slot_leaders.extend(
-                    leader_schedule
-                        .get_slot_leaders()
-                        .iter()
-                        .skip(slot_index as usize)
-                        .take(limit.saturating_sub(slot_leaders.len())),
-                );
-            } else {
-                return Err(Error::invalid_params(format!(
-                    "Invalid slot range: leader schedule for epoch {epoch} is unavailable"
-                )));
-            }
-
-            epoch += 1;
-            slot_index = 0;
-        }
-
-        Ok(slot_leaders)
-    }
-
-    fn minimum_ledger_slot(&self) -> Result<Slot> {
-        match self.blockstore.slot_meta_iterator(0) {
-            Ok(mut metas) => match metas.next() {
-                Some((slot, _meta)) => Ok(slot),
-                None => Err(Error::invalid_request()),
-            },
-            Err(err) => {
-                warn!("slot_meta_iterator failed: {:?}", err);
-                Err(Error::invalid_request())
-            }
-        }
-    }
-
-    fn get_transaction_count(&self, config: RpcContextConfig) -> Result<u64> {
-        let bank = self.get_bank_with_config(config)?;
-        Ok(bank.transaction_count())
-    }
-
-    fn get_cached_largest_accounts(
-        &self,
-        filter: &Option<RpcLargestAccountsFilter>,
-    ) -> Option<(u64, Vec<RpcAccountBalance>)> {
-        let largest_accounts_cache = self.largest_accounts_cache.read().unwrap();
-        largest_accounts_cache.get_largest_accounts(filter)
-    }
-
-    fn set_cached_largest_accounts(
-        &self,
-        filter: &Option<RpcLargestAccountsFilter>,
-        slot: u64,
-        accounts: &[RpcAccountBalance],
-    ) {
-        let mut largest_accounts_cache = self.largest_accounts_cache.write().unwrap();
-        largest_accounts_cache.set_largest_accounts(filter, slot, accounts)
-    }
-
-    async fn get_largest_accounts(
-        &self,
-        config: Option<RpcLargestAccountsConfig>,
-    ) -> RpcCustomResult<RpcResponse<Vec<RpcAccountBalance>>> {
-        let config = config.unwrap_or_default();
-        let bank = self.bank(config.commitment);
-        let sort_results = config.sort_results.unwrap_or(true);
-
-        if let Some((slot, accounts)) = self.get_cached_largest_accounts(&config.filter) {
-            Ok(RpcResponse {
-                context: RpcResponseContext::new(slot),
-                value: accounts,
-            })
-        } else {
-            let (addresses, address_filter) = if let Some(filter) = config.clone().filter {
-                let non_circulating_supply = self
-                    .calculate_non_circulating_supply(&bank)
-                    .await
-                    .map_err(|e| RpcCustomError::ScanError {
-                        message: e.to_string(),
-                    })?;
-                let addresses = non_circulating_supply.accounts.into_iter().collect();
-                let address_filter = match filter {
-                    RpcLargestAccountsFilter::Circulating => AccountAddressFilter::Exclude,
-                    RpcLargestAccountsFilter::NonCirculating => AccountAddressFilter::Include,
-                };
-                (addresses, address_filter)
-            } else {
-                (HashSet::new(), AccountAddressFilter::Exclude)
-            };
-            let accounts = self
-                .runtime
-                .spawn_blocking({
-                    let bank = Arc::clone(&bank);
-                    move || {
-                        bank.get_largest_accounts(
-                            NUM_LARGEST_ACCOUNTS,
-                            &addresses,
-                            address_filter,
-                            sort_results,
-                        )
-                    }
-                })
-                .await
-                .expect("Failed to spawn blocking task")
-                .map_err(|e| RpcCustomError::ScanError {
-                    message: e.to_string(),
-                })?
-                .into_iter()
-                .map(|(address, lamports)| RpcAccountBalance {
-                    address: address.to_string(),
-                    lamports,
-                })
-                .collect::<Vec<RpcAccountBalance>>();
-
-            self.set_cached_largest_accounts(&config.filter, bank.slot(), &accounts);
-            Ok(new_response(&bank, accounts))
-        }
-    }
-
-    async fn get_supply(
-        &self,
-        config: Option<RpcSupplyConfig>,
-    ) -> RpcCustomResult<RpcResponse<RpcSupply>> {
-        let config = config.unwrap_or_default();
-        let bank = self.bank(config.commitment);
-        let non_circulating_supply =
-            self.calculate_non_circulating_supply(&bank)
-                .await
-                .map_err(|e| RpcCustomError::ScanError {
-                    message: e.to_string(),
-                })?;
-        let total_supply = bank.capitalization();
-        let non_circulating_accounts = if config.exclude_non_circulating_accounts_list {
-            vec![]
-        } else {
-            non_circulating_supply
-                .accounts
-                .iter()
-                .map(|pubkey| pubkey.to_string())
-                .collect()
-        };
-
-        Ok(new_response(
-            &bank,
-            RpcSupply {
-                total: total_supply,
-                circulating: total_supply - non_circulating_supply.lamports,
-                non_circulating: non_circulating_supply.lamports,
-                non_circulating_accounts,
-            },
-        ))
-    }
-
-    fn get_vote_accounts(
-        &self,
-        config: Option<RpcGetVoteAccountsConfig>,
-    ) -> Result<RpcVoteAccountStatus> {
-        let config = config.unwrap_or_default();
-
-        let filter_by_vote_pubkey = if let Some(ref vote_pubkey) = config.vote_pubkey {
-            Some(verify_pubkey(vote_pubkey)?)
-        } else {
-            None
-        };
-
-        let bank = self.bank(config.commitment);
-        let vote_accounts = bank.vote_accounts();
-        let epoch_vote_accounts = bank
-            .epoch_vote_accounts(bank.get_epoch_and_slot_index(bank.slot()).0)
-            .ok_or_else(Error::invalid_request)?;
-        let delinquent_validator_slot_distance = config
-            .delinquent_slot_distance
-            .unwrap_or(DELINQUENT_VALIDATOR_SLOT_DISTANCE);
-        let (current_vote_accounts, delinquent_vote_accounts): (
-            Vec<RpcVoteAccountInfo>,
-            Vec<RpcVoteAccountInfo>,
-        ) = vote_accounts
-            .iter()
-            .filter_map(|(vote_pubkey, (activated_stake, account))| {
-                if let Some(filter_by_vote_pubkey) = filter_by_vote_pubkey {
-                    if *vote_pubkey != filter_by_vote_pubkey {
-                        return None;
-                    }
-                }
-
-                let vote_state_view = account.vote_state_view();
-                let last_vote = vote_state_view.last_voted_slot().unwrap_or(0);
-                let num_epoch_credits = vote_state_view.num_epoch_credits();
-                let epoch_credits = vote_state_view
-                    .epoch_credits_iter()
-                    .skip(
-                        num_epoch_credits
-                            .saturating_sub(MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY),
-                    )
-                    .map(Into::into)
-                    .collect();
-
-                Some(RpcVoteAccountInfo {
-                    vote_pubkey: vote_pubkey.to_string(),
-                    node_pubkey: vote_state_view.node_pubkey().to_string(),
-                    activated_stake: *activated_stake,
-                    commission: vote_state_view.commission(),
-                    root_slot: vote_state_view.root_slot().unwrap_or(0),
-                    epoch_credits,
-                    epoch_vote_account: epoch_vote_accounts.contains_key(vote_pubkey),
-                    last_vote,
-                })
-            })
-            .partition(|vote_account_info| {
-                if bank.slot() >= delinquent_validator_slot_distance {
-                    vote_account_info.last_vote > bank.slot() - delinquent_validator_slot_distance
-                } else {
-                    vote_account_info.last_vote > 0
-                }
-            });
-
-        let keep_unstaked_delinquents = config.keep_unstaked_delinquents.unwrap_or_default();
-        let delinquent_vote_accounts = if !keep_unstaked_delinquents {
-            delinquent_vote_accounts
-                .into_iter()
-                .filter(|vote_account_info| vote_account_info.activated_stake > 0)
-                .collect::<Vec<_>>()
-        } else {
-            delinquent_vote_accounts
-        };
-
-        Ok(RpcVoteAccountStatus {
-            current: current_vote_accounts,
-            delinquent: delinquent_vote_accounts,
-        })
-    }
-
-    fn check_blockstore_root<T>(
-        &self,
-        result: &std::result::Result<T, BlockstoreError>,
-        slot: Slot,
-    ) -> Result<()> {
-        if let Err(err) = result {
-            debug!(
-                "check_blockstore_root, slot: {:?}, max root: {:?}, err: {:?}",
-                slot,
-                self.blockstore.max_root(),
-                err
-            );
-            if slot >= self.blockstore.max_root() {
-                return Err(RpcCustomError::BlockNotAvailable { slot }.into());
-            }
-            if self.blockstore.is_skipped(slot) {
-                return Err(RpcCustomError::SlotSkipped { slot }.into());
-            }
-        }
-        Ok(())
-    }
-
-    fn check_slot_cleaned_up<T>(
-        &self,
-        result: &std::result::Result<T, BlockstoreError>,
-        slot: Slot,
-    ) -> Result<()> {
-        let first_available_block = self
-            .blockstore
-            .get_first_available_block()
-            .unwrap_or_default();
-        let err: Error = RpcCustomError::BlockCleanedUp {
-            slot,
-            first_available_block,
-        }
-        .into();
-        if let Err(BlockstoreError::SlotCleanedUp) = result {
-            return Err(err);
-        }
-        if slot < first_available_block {
-            return Err(err);
-        }
-        Ok(())
-    }
-
-    fn check_bigtable_result<T>(
-        &self,
-        result: &std::result::Result<T, solana_storage_bigtable::Error>,
-    ) -> Result<()> {
-        if let Err(solana_storage_bigtable::Error::BlockNotFound(slot)) = result {
-            return Err(RpcCustomError::LongTermStorageSlotSkipped { slot: *slot }.into());
-        }
-        Ok(())
-    }
-
-    fn check_blockstore_writes_complete(&self, slot: Slot) -> Result<()> {
-        if slot
-            > self
-                .max_complete_transaction_status_slot
-                .load(Ordering::SeqCst)
-            || slot > self.max_complete_rewards_slot.load(Ordering::SeqCst)
-        {
-            Err(RpcCustomError::BlockStatusNotAvailableYet { slot }.into())
-        } else {
-            Ok(())
-        }
-    }
-
-    pub async fn get_block(
+    async fn get_block(
         &self,
         slot: Slot,
         config: Option<RpcEncodingConfigWrapper<RpcBlockConfig>>,
@@ -1404,8 +2022,7 @@ impl JsonRpcRequestProcessor {
 
         Err(RpcCustomError::BlockNotAvailable { slot }.into())
     }
-
-    pub async fn get_blocks(
+    async fn get_blocks(
         &self,
         start_slot: Slot,
         end_slot: Option<Slot>,
@@ -1498,8 +2115,7 @@ impl JsonRpcRequestProcessor {
 
         Ok(blocks)
     }
-
-    pub async fn get_blocks_with_limit(
+    async fn get_blocks_with_limit(
         &self,
         start_slot: Slot,
         limit: usize,
@@ -1577,8 +2193,7 @@ impl JsonRpcRequestProcessor {
 
         Ok(blocks)
     }
-
-    pub async fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
+    async fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
         if slot == 0 {
             return Ok(Some(self.genesis_creation_time()));
         }
@@ -1611,8 +2226,7 @@ impl JsonRpcRequestProcessor {
             }
         }
     }
-
-    pub fn get_signature_confirmation_status(
+    fn get_signature_confirmation_status(
         &self,
         signature: Signature,
         commitment: Option<CommitmentConfig>,
@@ -1630,8 +2244,7 @@ impl JsonRpcRequestProcessor {
                 }
             }))
     }
-
-    pub fn get_signature_status(
+    fn get_signature_status(
         &self,
         signature: Signature,
         commitment: Option<CommitmentConfig>,
@@ -1641,8 +2254,7 @@ impl JsonRpcRequestProcessor {
             .get_signature_status_slot(&signature)
             .map(|(_, status)| status))
     }
-
-    pub async fn get_signature_statuses(
+    async fn get_signature_statuses(
         &self,
         signatures: Vec<Signature>,
         config: Option<RpcSignatureStatusConfig>,
@@ -1700,45 +2312,7 @@ impl JsonRpcRequestProcessor {
         }
         Ok(new_response(&bank, statuses))
     }
-
-    fn get_transaction_status(
-        &self,
-        signature: Signature,
-        bank: &Bank,
-    ) -> Option<TransactionStatus> {
-        let (slot, status) = bank.get_signature_status_slot(&signature)?;
-
-        let optimistically_confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
-        let optimistically_confirmed =
-            optimistically_confirmed_bank.get_signature_status_slot(&signature);
-
-        let r_block_commitment_cache = self.block_commitment_cache.read().unwrap();
-        let confirmations = if r_block_commitment_cache.root() >= slot
-            && is_finalized(&r_block_commitment_cache, bank, &self.blockstore, slot)
-        {
-            None
-        } else {
-            r_block_commitment_cache
-                .get_confirmation_count(slot)
-                .or(Some(0))
-        };
-        let err = status.clone().err();
-        Some(TransactionStatus {
-            slot,
-            status,
-            confirmations,
-            err,
-            confirmation_status: if confirmations.is_none() {
-                Some(TransactionConfirmationStatus::Finalized)
-            } else if optimistically_confirmed.is_some() {
-                Some(TransactionConfirmationStatus::Confirmed)
-            } else {
-                Some(TransactionConfirmationStatus::Processed)
-            },
-        })
-    }
-
-    pub async fn get_transaction(
+    async fn get_transaction(
         &self,
         signature: Signature,
         config: Option<RpcEncodingConfigWrapper<RpcTransactionConfig>>,
@@ -1772,9 +2346,9 @@ impl JsonRpcRequestProcessor {
             .expect("Failed to spawn blocking task");
 
         let encode_transaction =
-                |confirmed_tx_with_meta: ConfirmedTransactionWithStatusMeta| -> Result<EncodedConfirmedTransactionWithStatusMeta> {
-                    Ok(confirmed_tx_with_meta.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from)?)
-                };
+            |confirmed_tx_with_meta: ConfirmedTransactionWithStatusMeta| -> Result<EncodedConfirmedTransactionWithStatusMeta> {
+                Ok(confirmed_tx_with_meta.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from)?)
+            };
 
         match confirmed_transaction.unwrap_or(None) {
             Some(mut confirmed_transaction) => {
@@ -1816,8 +2390,7 @@ impl JsonRpcRequestProcessor {
 
         Ok(None)
     }
-
-    pub async fn get_signatures_for_address(
+    async fn get_signatures_for_address(
         &self,
         address: Pubkey,
         before: Option<Signature>,
@@ -1921,8 +2494,8 @@ impl JsonRpcRequestProcessor {
                             // In the upload race condition, latest address-signatures in
                             // long-term storage may include original `before` signature...
                             if before != Some(bigtable_result.signature)
-                                    // ...or earlier Blockstore signatures
-                                    && !results_set.contains(&bigtable_result.signature)
+                                // ...or earlier Blockstore signatures
+                                && !results_set.contains(&bigtable_result.signature)
                             {
                                 results.push(bigtable_result);
                             }
@@ -1939,8 +2512,7 @@ impl JsonRpcRequestProcessor {
 
         Ok(map_results(results))
     }
-
-    pub async fn get_first_available_block(&self) -> Slot {
+    async fn get_first_available_block(&self) -> Slot {
         let slot = self
             .blockstore
             .get_first_available_block()
@@ -1959,8 +2531,7 @@ impl JsonRpcRequestProcessor {
         }
         slot
     }
-
-    pub fn get_token_account_balance(
+    fn get_token_account_balance(
         &self,
         pubkey: &Pubkey,
         commitment: Option<CommitmentConfig>,
@@ -1983,8 +2554,7 @@ impl JsonRpcRequestProcessor {
         let balance = token_amount_to_ui_amount_v3(token_account.base.amount, &data);
         Ok(new_response(&bank, balance))
     }
-
-    pub fn get_token_supply(
+    fn get_token_supply(
         &self,
         mint: &Pubkey,
         commitment: Option<CommitmentConfig>,
@@ -2022,8 +2592,7 @@ impl JsonRpcRequestProcessor {
         );
         Ok(new_response(&bank, supply))
     }
-
-    pub async fn get_token_largest_accounts(
+    async fn get_token_largest_accounts(
         &self,
         mint: Pubkey,
         commitment: Option<CommitmentConfig>,
@@ -2078,8 +2647,7 @@ impl JsonRpcRequestProcessor {
 
         Ok(new_response(&bank, token_balances))
     }
-
-    pub async fn get_token_accounts_by_owner(
+    async fn get_token_accounts_by_owner(
         &self,
         owner: Pubkey,
         token_account_filter: TokenAccountsFilter,
@@ -2132,8 +2700,7 @@ impl JsonRpcRequestProcessor {
         };
         Ok(new_response(&bank, accounts))
     }
-
-    pub async fn get_token_accounts_by_delegate(
+    async fn get_token_accounts_by_delegate(
         &self,
         delegate: Pubkey,
         token_account_filter: TokenAccountsFilter,
@@ -2198,159 +2765,287 @@ impl JsonRpcRequestProcessor {
         };
         Ok(new_response(&bank, accounts))
     }
+}
 
-    /// Use a set of filters to get an iterator of keyed program accounts from a bank
-    async fn get_filtered_program_accounts(
-        &self,
-        bank: Arc<Bank>,
-        program_id: Pubkey,
-        mut filters: Vec<RpcFilterType>,
-        sort_results: bool,
-    ) -> RpcCustomResult<Vec<(Pubkey, AccountSharedData)>> {
-        optimize_filters(&mut filters);
-        if self
-            .config
-            .account_indexes
-            .contains(&AccountIndex::ProgramId)
-        {
-            if !self.config.account_indexes.include_key(&program_id) {
-                return Err(RpcCustomError::KeyExcludedFromSecondaryIndex {
-                    index_key: program_id.to_string(),
-                });
+#[async_trait]
+impl JsonRpcRequestProcessor for TestJsonRpcRequestProcessor {
+    fn clone_account_from_cluster(&self, address: &Pubkey, url: &str) -> Result<()> {
+        use solana_client::rpc_client::RpcClient;
+        use solana_sdk::account::{ReadableAccount, WritableAccount};
+
+        let client = RpcClient::new(url.to_string());
+
+        let account = client.get_account(address).map_err(|err| {
+            Error::invalid_params(format!("Failed to fetch account from {}: {}", url, err))
+        })?;
+
+        let mut account_data =
+            AccountSharedData::new(account.lamports(), account.data().len(), account.owner());
+        account_data.set_data(account.data().to_vec());
+        account_data.set_executable(account.executable());
+        account_data.set_rent_epoch(account.rent_epoch());
+
+        // Store the account in the test validator
+        let bank_forks = self.bank_forks.read().unwrap();
+        let bank = bank_forks.working_bank();
+        bank.store_account(address, &account_data);
+        Ok(())
+    }
+
+    fn set_account(&self, address: &Pubkey, account: &AccountSharedData) -> Result<()> {
+        let bank_forks = self.bank_forks.read().unwrap();
+        let bank = bank_forks.working_bank();
+        bank.store_account(address, account);
+        Ok(())
+    }
+    fn clone_without_bigtable(&self) -> Box<dyn JsonRpcRequestProcessor> {
+        Box::new(Self {
+            bigtable_ledger_storage: None, // Disable BigTable
+            ..self.clone()
+        })
+    }
+
+    fn get_bank_with_config(&self, config: RpcContextConfig) -> Result<Arc<Bank>> {
+        let RpcContextConfig {
+            commitment,
+            min_context_slot,
+        } = config;
+        let bank = self.bank(commitment);
+        if let Some(min_context_slot) = min_context_slot {
+            if bank.slot() < min_context_slot {
+                return Err(RpcCustomError::MinContextSlotNotReached {
+                    context_slot: bank.slot(),
+                }
+                .into());
             }
-            self.get_filtered_indexed_accounts(
-                &bank,
-                &IndexKey::ProgramId(program_id),
-                &program_id,
-                filters,
-                sort_results,
-            )
-            .await
-            .map_err(|e| RpcCustomError::ScanError {
-                message: e.to_string(),
-            })
+        }
+        Ok(bank)
+    }
+
+    fn genesis_hash(&self) -> &Hash {
+        &self.genesis_hash
+    }
+    fn health(&self) -> &Arc<RpcHealth> {
+        &self.health
+    }
+
+    fn cluster_info(&self) -> &Arc<ClusterInfo> {
+        &self.cluster_info
+    }
+
+    fn get_slot(&self, config: RpcContextConfig) -> Result<Slot> {
+        let bank = self.get_bank_with_config(config)?;
+        Ok(bank.slot())
+    }
+
+    fn snapshot_config(&self) -> Option<SnapshotConfig> {
+        self.snapshot_config.clone()
+    }
+
+    fn get_transaction_count(&self, config: RpcContextConfig) -> Result<u64> {
+        let bank = self.get_bank_with_config(config)?;
+        Ok(bank.transaction_count())
+    }
+
+    fn get_block_height(&self, config: RpcContextConfig) -> Result<u64> {
+        let bank = self.get_bank_with_config(config)?;
+        Ok(bank.block_height())
+    }
+
+    fn get_vote_accounts(
+        &self,
+        config: Option<RpcGetVoteAccountsConfig>,
+    ) -> Result<RpcVoteAccountStatus> {
+        let config = config.unwrap_or_default();
+
+        let filter_by_vote_pubkey = if let Some(ref vote_pubkey) = config.vote_pubkey {
+            Some(verify_pubkey(vote_pubkey)?)
         } else {
-            // this path does not need to provide a mb limit because we only want to support secondary indexes
-            let scan_order = if sort_results {
-                ScanOrder::Sorted
-            } else {
-                ScanOrder::Unsorted
-            };
-            self.runtime
-                .spawn_blocking(move || {
-                    bank.get_filtered_program_accounts(
-                        &program_id,
-                        |account: &AccountSharedData| {
-                            filters
+            None
+        };
+
+        let bank = self.bank(config.commitment);
+        let vote_accounts = bank.vote_accounts();
+        let epoch_vote_accounts = bank
+            .epoch_vote_accounts(bank.get_epoch_and_slot_index(bank.slot()).0)
+            .ok_or_else(Error::invalid_request)?;
+        let delinquent_validator_slot_distance = config
+            .delinquent_slot_distance
+            .unwrap_or(DELINQUENT_VALIDATOR_SLOT_DISTANCE);
+        let (current_vote_accounts, delinquent_vote_accounts): (
+            Vec<RpcVoteAccountInfo>,
+            Vec<RpcVoteAccountInfo>,
+        ) = vote_accounts
+            .iter()
+            .filter_map(|(vote_pubkey, (activated_stake, account))| {
+                if let Some(filter_by_vote_pubkey) = filter_by_vote_pubkey {
+                    if *vote_pubkey != filter_by_vote_pubkey {
+                        return None;
+                    }
+                }
+
+                let vote_state_view = account.vote_state_view();
+                let last_vote = vote_state_view.last_voted_slot().unwrap_or(0);
+                let num_epoch_credits = vote_state_view.num_epoch_credits();
+                let epoch_credits = vote_state_view
+                    .epoch_credits_iter()
+                    .skip(
+                        num_epoch_credits
+                            .saturating_sub(MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY),
+                    )
+                    .map(Into::into)
+                    .collect();
+
+                Some(RpcVoteAccountInfo {
+                    vote_pubkey: vote_pubkey.to_string(),
+                    node_pubkey: vote_state_view.node_pubkey().to_string(),
+                    activated_stake: *activated_stake,
+                    commission: vote_state_view.commission(),
+                    root_slot: vote_state_view.root_slot().unwrap_or(0),
+                    epoch_credits,
+                    epoch_vote_account: epoch_vote_accounts.contains_key(vote_pubkey),
+                    last_vote,
+                })
+            })
+            .partition(|vote_account_info| {
+                if bank.slot() >= delinquent_validator_slot_distance {
+                    vote_account_info.last_vote > bank.slot() - delinquent_validator_slot_distance
+                } else {
+                    vote_account_info.last_vote > 0
+                }
+            });
+
+        let keep_unstaked_delinquents = config.keep_unstaked_delinquents.unwrap_or_default();
+        let delinquent_vote_accounts = if !keep_unstaked_delinquents {
+            delinquent_vote_accounts
+                .into_iter()
+                .filter(|vote_account_info| vote_account_info.activated_stake > 0)
+                .collect::<Vec<_>>()
+        } else {
+            delinquent_vote_accounts
+        };
+
+        Ok(RpcVoteAccountStatus {
+            current: current_vote_accounts,
+            delinquent: delinquent_vote_accounts,
+        })
+    }
+
+    #[allow(deprecated)]
+    fn bank(&self, commitment: Option<CommitmentConfig>) -> Arc<Bank> {
+        debug!("RPC commitment_config: {:?}", commitment);
+
+        let commitment = commitment.unwrap_or_default();
+        if commitment.is_confirmed() {
+            let bank = self
+                .optimistically_confirmed_bank
+                .read()
+                .unwrap()
+                .bank
+                .clone();
+            debug!("RPC using optimistically confirmed slot: {:?}", bank.slot());
+            return bank;
+        }
+
+        let slot = self
+            .block_commitment_cache
+            .read()
+            .unwrap()
+            .slot_with_commitment(commitment.commitment);
+
+        match commitment.commitment {
+            CommitmentLevel::Processed => {
+                debug!("RPC using the heaviest slot: {:?}", slot);
+            }
+            CommitmentLevel::Finalized => {
+                debug!("RPC using block: {:?}", slot);
+            }
+            CommitmentLevel::Confirmed => unreachable!(), // SingleGossip variant is deprecated
+        };
+
+        let r_bank_forks = self.bank_forks.read().unwrap();
+        r_bank_forks.get(slot).unwrap_or_else(|| {
+            // We log a warning instead of returning an error, because all known error cases
+            // are due to known bugs that should be fixed instead.
+            //
+            // The slot may not be found as a result of a known bug in snapshot creation, where
+            // the bank at the given slot was not included in the snapshot.
+            // Also, it may occur after an old bank has been purged from BankForks and a new
+            // BlockCommitmentCache has not yet arrived. To make this case impossible,
+            // BlockCommitmentCache should hold an `Arc<Bank>` everywhere it currently holds
+            // a slot.
+            //
+            // For more information, see https://github.com/solana-labs/solana/issues/11078
+            warn!(
+                "Bank with {:?} not found at slot: {:?}",
+                commitment.commitment, slot
+            );
+            r_bank_forks.root_bank()
+        })
+    }
+
+    fn leader_schedule_cache(&self) -> &Arc<LeaderScheduleCache> {
+        &self.leader_schedule_cache
+    }
+    async fn get_filtered_indexed_accounts(
+        &self,
+        bank: &Arc<Bank>,
+        index_key: &IndexKey,
+        program_id: &Pubkey,
+        filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> ScanResult<Vec<TransactionAccount>> {
+        let scan_order = if sort_results {
+            ScanOrder::Sorted
+        } else {
+            ScanOrder::Unsorted
+        };
+        let bank = Arc::clone(bank);
+        let index_key = index_key.to_owned();
+        let program_id = program_id.to_owned();
+        self.runtime
+            .spawn_blocking(move || {
+                bank.get_filtered_indexed_accounts(
+                    &index_key,
+                    |account| {
+                        // The program-id account index checks for Account owner on inclusion.
+                        // However, due to the current AccountsDb implementation, an account may
+                        // remain in storage as a zero-lamport AccountSharedData::Default() after
+                        // being wiped and reinitialized in later updates. We include the redundant
+                        // filters here to avoid returning these accounts.
+                        account.owner().eq(&program_id)
+                            && filters
                                 .iter()
                                 .all(|filter_type| filter_allows(filter_type, account))
-                        },
-                        &ScanConfig::new(scan_order),
-                    )
-                    .map_err(|e| RpcCustomError::ScanError {
-                        message: e.to_string(),
-                    })
-                })
-                .await
-                .expect("Failed to spawn blocking task")
-        }
+                    },
+                    &ScanConfig::new(scan_order),
+                    bank.byte_limit_for_scans(),
+                )
+            })
+            .await
+            .expect("Failed to spawn blocking task")
     }
 
-    /// Get an iterator of spl-token accounts by owner address
-    async fn get_filtered_spl_token_accounts_by_owner(
+    fn get_recent_prioritization_fees(
         &self,
-        bank: Arc<Bank>,
-        program_id: Pubkey,
-        owner_key: Pubkey,
-        mut filters: Vec<RpcFilterType>,
-        sort_results: bool,
-    ) -> RpcCustomResult<Vec<(Pubkey, AccountSharedData)>> {
-        // The by-owner accounts index checks for Token Account state and Owner address on
-        // inclusion. However, due to the current AccountsDb implementation, an account may remain
-        // in storage as a zero-lamport AccountSharedData::Default() after being wiped and reinitialized in
-        // later updates. We include the redundant filters here to avoid returning these accounts.
-        //
-        // Filter on Token Account state
-        filters.push(RpcFilterType::TokenAccountState);
-        // Filter on Owner address
-        filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
-            SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
-            owner_key.to_bytes().into(),
-        )));
-
-        if self
-            .config
-            .account_indexes
-            .contains(&AccountIndex::SplTokenOwner)
-        {
-            if !self.config.account_indexes.include_key(&owner_key) {
-                return Err(RpcCustomError::KeyExcludedFromSecondaryIndex {
-                    index_key: owner_key.to_string(),
-                });
-            }
-            self.get_filtered_indexed_accounts(
-                &bank,
-                &IndexKey::SplTokenOwner(owner_key),
-                &program_id,
-                filters,
-                sort_results,
-            )
-            .await
-            .map_err(|e| RpcCustomError::ScanError {
-                message: e.to_string(),
+        pubkeys: Vec<Pubkey>,
+    ) -> Result<Vec<RpcPrioritizationFee>> {
+        Ok(self
+            .prioritization_fee_cache
+            .get_prioritization_fees(&pubkeys)
+            .into_iter()
+            .map(|(slot, prioritization_fee)| RpcPrioritizationFee {
+                slot,
+                prioritization_fee,
             })
-        } else {
-            self.get_filtered_program_accounts(bank, program_id, filters, sort_results)
-                .await
-        }
+            .collect())
     }
 
-    /// Get an iterator of spl-token accounts by mint address
-    async fn get_filtered_spl_token_accounts_by_mint(
-        &self,
-        bank: Arc<Bank>,
-        program_id: Pubkey,
-        mint_key: Pubkey,
-        mut filters: Vec<RpcFilterType>,
-        sort_results: bool,
-    ) -> RpcCustomResult<Vec<(Pubkey, AccountSharedData)>> {
-        // The by-mint accounts index checks for Token Account state and Mint address on inclusion.
-        // However, due to the current AccountsDb implementation, an account may remain in storage
-        // as be zero-lamport AccountSharedData::Default() after being wiped and reinitialized in later
-        // updates. We include the redundant filters here to avoid returning these accounts.
-        //
-        // Filter on Token Account state
-        filters.push(RpcFilterType::TokenAccountState);
-        // Filter on Mint address
-        filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
-            SPL_TOKEN_ACCOUNT_MINT_OFFSET,
-            mint_key.to_bytes().into(),
-        )));
-        if self
-            .config
-            .account_indexes
-            .contains(&AccountIndex::SplTokenMint)
-        {
-            if !self.config.account_indexes.include_key(&mint_key) {
-                return Err(RpcCustomError::KeyExcludedFromSecondaryIndex {
-                    index_key: mint_key.to_string(),
-                });
-            }
-            self.get_filtered_indexed_accounts(
-                &bank,
-                &IndexKey::SplTokenMint(mint_key),
-                &program_id,
-                filters,
-                sort_results,
-            )
-            .await
-            .map_err(|e| RpcCustomError::ScanError {
-                message: e.to_string(),
-            })
-        } else {
-            self.get_filtered_program_accounts(bank, program_id, filters, sort_results)
-                .await
-        }
+    fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
+        let bank = self.get_bank_with_config(config)?;
+        let stake_minimum_delegation =
+            solana_stake_program::get_minimum_delegation(&bank.feature_set);
+        Ok(new_response(&bank, stake_minimum_delegation))
     }
 
     fn get_latest_blockhash(&self, config: RpcContextConfig) -> Result<RpcResponse<RpcBlockhash>> {
@@ -2368,6 +3063,175 @@ impl JsonRpcRequestProcessor {
         ))
     }
 
+    fn minimum_ledger_slot(&self) -> Result<Slot> {
+        match self.blockstore.slot_meta_iterator(0) {
+            Ok(mut metas) => match metas.next() {
+                Some((slot, _meta)) => Ok(slot),
+                None => Err(Error::invalid_request()),
+            },
+            Err(err) => {
+                warn!("slot_meta_iterator failed: {:?}", err);
+                Err(Error::invalid_request())
+            }
+        }
+    }
+
+    fn config(&self) -> &JsonRpcConfig {
+        &self.config
+    }
+
+    fn get_max_shred_insert_slot(&self) -> Slot {
+        self.max_slots.shred_insert.load(Ordering::Relaxed)
+    }
+
+    fn get_max_retransmit_slot(&self) -> Slot {
+        self.max_slots.retransmit.load(Ordering::Relaxed)
+    }
+
+    fn blockstore(&self) -> &Arc<Blockstore> {
+        &self.blockstore
+    }
+
+    async fn get_supply(
+        &self,
+        config: Option<RpcSupplyConfig>,
+    ) -> RpcCustomResult<RpcResponse<RpcSupply>> {
+        let config = config.unwrap_or_default();
+        let bank = self.bank(config.commitment);
+        let non_circulating_supply =
+            self.calculate_non_circulating_supply(&bank)
+                .await
+                .map_err(|e| RpcCustomError::ScanError {
+                    message: e.to_string(),
+                })?;
+        let total_supply = bank.capitalization();
+        let non_circulating_accounts = if config.exclude_non_circulating_accounts_list {
+            vec![]
+        } else {
+            non_circulating_supply
+                .accounts
+                .iter()
+                .map(|pubkey| pubkey.to_string())
+                .collect()
+        };
+
+        Ok(new_response(
+            &bank,
+            RpcSupply {
+                total: total_supply,
+                circulating: total_supply - non_circulating_supply.lamports,
+                non_circulating: non_circulating_supply.lamports,
+                non_circulating_accounts,
+            },
+        ))
+    }
+
+    async fn get_largest_accounts(
+        &self,
+        config: Option<RpcLargestAccountsConfig>,
+    ) -> RpcCustomResult<RpcResponse<Vec<RpcAccountBalance>>> {
+        let config = config.unwrap_or_default();
+        let bank = self.bank(config.commitment);
+        let sort_results = config.sort_results.unwrap_or(true);
+
+        if let Some((slot, accounts)) = self.get_cached_largest_accounts(&config.filter) {
+            Ok(RpcResponse {
+                context: RpcResponseContext::new(slot),
+                value: accounts,
+            })
+        } else {
+            let (addresses, address_filter) = if let Some(filter) = config.clone().filter {
+                let non_circulating_supply = self
+                    .calculate_non_circulating_supply(&bank)
+                    .await
+                    .map_err(|e| RpcCustomError::ScanError {
+                        message: e.to_string(),
+                    })?;
+                let addresses = non_circulating_supply.accounts.into_iter().collect();
+                let address_filter = match filter {
+                    RpcLargestAccountsFilter::Circulating => AccountAddressFilter::Exclude,
+                    RpcLargestAccountsFilter::NonCirculating => AccountAddressFilter::Include,
+                };
+                (addresses, address_filter)
+            } else {
+                (HashSet::new(), AccountAddressFilter::Exclude)
+            };
+            let accounts = self
+                .runtime
+                .spawn_blocking({
+                    let bank = Arc::clone(&bank);
+                    move || {
+                        bank.get_largest_accounts(
+                            NUM_LARGEST_ACCOUNTS,
+                            &addresses,
+                            address_filter,
+                            sort_results,
+                        )
+                    }
+                })
+                .await
+                .expect("Failed to spawn blocking task")
+                .map_err(|e| RpcCustomError::ScanError {
+                    message: e.to_string(),
+                })?
+                .into_iter()
+                .map(|(address, lamports)| RpcAccountBalance {
+                    address: address.to_string(),
+                    lamports,
+                })
+                .collect::<Vec<RpcAccountBalance>>();
+
+            self.set_cached_largest_accounts(&config.filter, bank.slot(), &accounts);
+            Ok(new_response(&bank, accounts))
+        }
+    }
+
+    fn get_block_commitment(&self, block: Slot) -> RpcBlockCommitment<BlockCommitmentArray> {
+        let r_block_commitment = self.block_commitment_cache.read().unwrap();
+        RpcBlockCommitment {
+            commitment: r_block_commitment
+                .get_block_commitment(block)
+                .map(|block_commitment| block_commitment.commitment),
+            total_stake: r_block_commitment.total_stake(),
+        }
+    }
+
+    fn get_slot_leaders(
+        &self,
+        commitment: Option<CommitmentConfig>,
+        start_slot: Slot,
+        limit: usize,
+    ) -> Result<Vec<Pubkey>> {
+        let bank = self.bank(commitment);
+
+        let (mut epoch, mut slot_index) =
+            bank.epoch_schedule().get_epoch_and_slot_index(start_slot);
+
+        let mut slot_leaders = Vec::with_capacity(limit);
+        while slot_leaders.len() < limit {
+            if let Some(leader_schedule) =
+                self.leader_schedule_cache.get_epoch_leader_schedule(epoch)
+            {
+                slot_leaders.extend(
+                    leader_schedule
+                        .get_slot_leaders()
+                        .iter()
+                        .skip(slot_index as usize)
+                        .take(limit.saturating_sub(slot_leaders.len())),
+                );
+            } else {
+                return Err(Error::invalid_params(format!(
+                    "Invalid slot range: leader schedule for epoch {epoch} is unavailable"
+                )));
+            }
+
+            epoch += 1;
+            slot_index = 0;
+        }
+
+        Ok(slot_leaders)
+    }
+
     fn is_blockhash_valid(
         &self,
         blockhash: &Hash,
@@ -2378,26 +3242,1621 @@ impl JsonRpcRequestProcessor {
         Ok(new_response(&bank, is_valid))
     }
 
-    fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
+    fn get_slot_leader(&self, config: RpcContextConfig) -> Result<String> {
         let bank = self.get_bank_with_config(config)?;
-        let stake_minimum_delegation =
-            solana_stake_program::get_minimum_delegation(&bank.feature_set);
-        Ok(new_response(&bank, stake_minimum_delegation))
+        Ok(bank.collector_id().to_string())
     }
+
+    fn transaction_sender(&self) -> &Sender<TransactionInfo> {
+        &self.transaction_sender
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        config: JsonRpcConfig,
+        snapshot_config: Option<SnapshotConfig>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+        blockstore: Arc<Blockstore>,
+        validator_exit: Arc<RwLock<Exit>>,
+        health: Arc<RpcHealth>,
+        cluster_info: Arc<ClusterInfo>,
+        genesis_hash: Hash,
+        bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
+        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
+        max_slots: Arc<MaxSlots>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_rewards_slot: Arc<AtomicU64>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        runtime: Arc<Runtime>,
+    ) -> (Self, Receiver<TransactionInfo>) {
+        let (transaction_sender, transaction_receiver) = unbounded();
+        (
+            Self {
+                config,
+                snapshot_config,
+                bank_forks,
+                block_commitment_cache,
+                blockstore,
+                validator_exit,
+                health,
+                cluster_info,
+                genesis_hash,
+                transaction_sender,
+                bigtable_ledger_storage,
+                optimistically_confirmed_bank,
+                largest_accounts_cache,
+                max_slots,
+                leader_schedule_cache,
+                max_complete_transaction_status_slot,
+                max_complete_rewards_slot,
+                prioritization_fee_cache,
+                runtime,
+            },
+            transaction_receiver,
+        )
+    }
+    #[cfg(test)]
+    fn new_from_bank<Client: ClientWithCreator>(
+        bank: Bank,
+        socket_addr_space: SocketAddrSpace,
+    ) -> Self {
+        use crate::rpc_service::service_runtime;
+
+        let genesis_hash = bank.hash();
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let bank = bank_forks.read().unwrap().root_bank();
+        let blockstore = Arc::new(Blockstore::open(&get_tmp_ledger_path!()).unwrap());
+        let exit = Arc::new(AtomicBool::new(false));
+        let cluster_info = Arc::new({
+            let keypair = Arc::new(Keypair::new());
+            let contact_info = ContactInfo::new_localhost(
+                &keypair.pubkey(),
+                solana_sdk::timing::timestamp(), // wallclock
+            );
+            ClusterInfo::new(contact_info, keypair, socket_addr_space)
+        });
+        // QUIC is the default TPU protocol and is used by ConnectionCache
+        // by default (see `DEFAULT_CONNECTION_CACHE_USE_QUIC`).
+        // Therefore, explicitly specifying QUIC here does not change the test behavior.
+        let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
+        let (transaction_sender, transaction_receiver) = unbounded();
+
+        let config = JsonRpcConfig::default();
+        let JsonRpcConfig {
+            rpc_threads,
+            rpc_blocking_threads,
+            rpc_niceness_adj,
+            ..
+        } = config;
+        let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
+        let client = Client::create_client(Some(runtime.handle().clone()), my_tpu_address, None, 1);
+
+        SendTransactionService::new_with_client(
+            &bank_forks,
+            transaction_receiver,
+            client,
+            SendTransactionServiceConfig {
+                retry_rate_ms: 1_000,
+                leader_forward_count: 1,
+                ..SendTransactionServiceConfig::default()
+            },
+            exit.clone(),
+        );
+
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
+        let slot = bank.slot();
+        let optimistically_confirmed_bank =
+            Arc::new(RwLock::new(OptimisticallyConfirmedBank { bank }));
+        Self {
+            config,
+            snapshot_config: None,
+            bank_forks,
+            block_commitment_cache: Arc::new(RwLock::new(BlockCommitmentCache::new(
+                HashMap::new(),
+                0,
+                CommitmentSlots::new_from_slot(slot),
+            ))),
+            blockstore: Arc::clone(&blockstore),
+            validator_exit: create_validator_exit(exit.clone()),
+            health: Arc::new(RpcHealth::new(
+                Arc::clone(&optimistically_confirmed_bank),
+                blockstore,
+                0,
+                exit,
+                startup_verification_complete,
+            )),
+            cluster_info,
+            genesis_hash,
+            transaction_sender,
+            bigtable_ledger_storage: None,
+            optimistically_confirmed_bank,
+            largest_accounts_cache: Arc::new(RwLock::new(LargestAccountsCache::new(30))),
+            max_slots: Arc::new(MaxSlots::default()),
+            leader_schedule_cache,
+            max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
+            max_complete_rewards_slot: Arc::new(AtomicU64::default()),
+            prioritization_fee_cache: Arc::new(PrioritizationFeeCache::default()),
+            runtime,
+        }
+    }
+    async fn get_account_info(
+        &self,
+        pubkey: Pubkey,
+        config: Option<RpcAccountInfoConfig>,
+    ) -> Result<RpcResponse<Option<UiAccount>>> {
+        let RpcAccountInfoConfig {
+            encoding,
+            data_slice,
+            commitment,
+            min_context_slot,
+        } = config.unwrap_or_default();
+        let bank = self.get_bank_with_config(RpcContextConfig {
+            commitment,
+            min_context_slot,
+        })?;
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
+
+        let response = self
+            .runtime
+            .spawn_blocking({
+                let bank = Arc::clone(&bank);
+                move || get_encoded_account(&bank, &pubkey, encoding, data_slice, None)
+            })
+            .await
+            .expect("rpc: get_encoded_account panicked")?;
+        Ok(new_response(&bank, response))
+    }
+    async fn get_multiple_accounts(
+        &self,
+        pubkeys: Vec<Pubkey>,
+        config: Option<RpcAccountInfoConfig>,
+    ) -> Result<RpcResponse<Vec<Option<UiAccount>>>> {
+        let RpcAccountInfoConfig {
+            encoding,
+            data_slice,
+            commitment,
+            min_context_slot,
+        } = config.unwrap_or_default();
+        let bank = self.get_bank_with_config(RpcContextConfig {
+            commitment,
+            min_context_slot,
+        })?;
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Base64);
+
+        let mut accounts = Vec::with_capacity(pubkeys.len());
+        for pubkey in pubkeys {
+            let bank = Arc::clone(&bank);
+            accounts.push(
+                self.runtime
+                    .spawn_blocking(move || {
+                        get_encoded_account(&bank, &pubkey, encoding, data_slice, None)
+                    })
+                    .await
+                    .expect("rpc: get_encoded_account panicked")?,
+            );
+        }
+        Ok(new_response(&bank, accounts))
+    }
+    fn get_minimum_balance_for_rent_exemption(
+        &self,
+        data_len: usize,
+        commitment: Option<CommitmentConfig>,
+    ) -> u64 {
+        self.bank(commitment)
+            .get_minimum_balance_for_rent_exemption(data_len)
+    }
+    async fn get_program_accounts(
+        &self,
+        program_id: Pubkey,
+        config: Option<RpcAccountInfoConfig>,
+        mut filters: Vec<RpcFilterType>,
+        with_context: bool,
+        sort_results: bool,
+    ) -> Result<OptionalContext<Vec<RpcKeyedAccount>>> {
+        let RpcAccountInfoConfig {
+            encoding,
+            data_slice: data_slice_config,
+            commitment,
+            min_context_slot,
+        } = config.unwrap_or_default();
+        let bank = self.get_bank_with_config(RpcContextConfig {
+            commitment,
+            min_context_slot,
+        })?;
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
+        optimize_filters(&mut filters);
+        let keyed_accounts = {
+            if let Some(owner) = get_spl_token_owner_filter(&program_id, &filters) {
+                self.get_filtered_spl_token_accounts_by_owner(
+                    Arc::clone(&bank),
+                    program_id,
+                    owner,
+                    filters,
+                    sort_results,
+                )
+                .await?
+            } else if let Some(mint) = get_spl_token_mint_filter(&program_id, &filters) {
+                self.get_filtered_spl_token_accounts_by_mint(
+                    Arc::clone(&bank),
+                    program_id,
+                    mint,
+                    filters,
+                    sort_results,
+                )
+                .await?
+            } else {
+                self.get_filtered_program_accounts(
+                    Arc::clone(&bank),
+                    program_id,
+                    filters,
+                    sort_results,
+                )
+                .await?
+            }
+        };
+        let accounts = if is_known_spl_token_id(&program_id)
+            && encoding == UiAccountEncoding::JsonParsed
+        {
+            get_parsed_token_accounts(Arc::clone(&bank), keyed_accounts.into_iter()).collect()
+        } else {
+            keyed_accounts
+                .into_iter()
+                .map(|(pubkey, account)| {
+                    Ok(RpcKeyedAccount {
+                        pubkey: pubkey.to_string(),
+                        account: encode_account(&account, &pubkey, encoding, data_slice_config)?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+        Ok(match with_context {
+            true => OptionalContext::Context(new_response(&bank, accounts)),
+            false => OptionalContext::NoContext(accounts),
+        })
+    }
+    async fn get_inflation_reward(
+        &self,
+        addresses: Vec<Pubkey>,
+        config: Option<RpcEpochConfig>,
+    ) -> Result<Vec<Option<RpcInflationReward>>> {
+        let config = config.unwrap_or_default();
+        let epoch_schedule = self.get_epoch_schedule();
+        let first_available_block = self.get_first_available_block().await;
+        let context_config = RpcContextConfig {
+            commitment: config.commitment,
+            min_context_slot: config.min_context_slot,
+        };
+        let epoch = match config.epoch {
+            Some(epoch) => epoch,
+            None => epoch_schedule
+                .get_epoch(self.get_slot(context_config)?)
+                .saturating_sub(1),
+        };
+
+        // Rewards for this epoch are found in the first confirmed block of the next epoch
+        let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch.saturating_add(1));
+        if first_slot_in_epoch < first_available_block {
+            if self.bigtable_ledger_storage.is_some() {
+                return Err(RpcCustomError::LongTermStorageSlotSkipped {
+                    slot: first_slot_in_epoch,
+                }
+                .into());
+            } else {
+                return Err(RpcCustomError::BlockCleanedUp {
+                    slot: first_slot_in_epoch,
+                    first_available_block,
+                }
+                .into());
+            }
+        }
+
+        let first_confirmed_block_in_epoch = *self
+            .get_blocks_with_limit(first_slot_in_epoch, 1, Some(context_config))
+            .await?
+            .first()
+            .ok_or(RpcCustomError::BlockNotAvailable {
+                slot: first_slot_in_epoch,
+            })?;
+
+        // Determine if partitioned epoch rewards were enabled for the desired
+        // epoch
+        let bank = self.get_bank_with_config(context_config)?;
+
+        // Get first block in the epoch
+        let Ok(Some(epoch_boundary_block)) = self
+            .get_block(
+                first_confirmed_block_in_epoch,
+                Some(RpcBlockConfig::rewards_with_commitment(config.commitment).into()),
+            )
+            .await
+        else {
+            return Err(RpcCustomError::BlockNotAvailable {
+                slot: first_confirmed_block_in_epoch,
+            }
+            .into());
+        };
+
+        // If there is a gap in blockstore or long-term historical storage that
+        // includes the epoch boundary, the `get_blocks_with_limit()` call above
+        // will return the slot of the block at the end of that gap, not a
+        // legitimate epoch-boundary block. Therefore, verify that the parent of
+        // `epoch_boundary_block` occurred before the `first_slot_in_epoch`. If
+        // it didn't, return an error; it will be impossible to locate
+        // rewards properly.
+        if epoch_boundary_block.parent_slot >= first_slot_in_epoch {
+            return Err(RpcCustomError::SlotNotEpochBoundary {
+                slot: first_confirmed_block_in_epoch,
+            }
+            .into());
+        }
+
+        let epoch_has_partitioned_rewards = epoch_boundary_block.num_reward_partitions.is_some();
+
+        // Collect rewards from first block in the epoch if partitioned epoch
+        // rewards not enabled, or address is a vote account
+        let mut reward_map: HashMap<String, (Reward, Slot)> = {
+            let addresses: Vec<String> =
+                addresses.iter().map(|pubkey| pubkey.to_string()).collect();
+            Self::filter_map_rewards(
+                &epoch_boundary_block.rewards,
+                first_confirmed_block_in_epoch,
+                &addresses,
+                &|reward_type| -> bool {
+                    reward_type == RewardType::Voting
+                        || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
+                },
+            )
+        };
+
+        // Append stake account rewards from partitions if partitions epoch
+        // rewards is enabled
+        if epoch_has_partitioned_rewards {
+            let num_partitions = epoch_boundary_block.num_reward_partitions.expect(
+                "epoch-boundary block should have num_reward_partitions for epochs with \
+                 partitioned rewards enabled",
+            );
+
+            let num_partitions = usize::try_from(num_partitions)
+                .expect("num_partitions should never exceed usize::MAX");
+            let hasher = EpochRewardsHasher::new(
+                num_partitions,
+                &Hash::from_str(&epoch_boundary_block.previous_blockhash)
+                    .expect("UiConfirmedBlock::previous_blockhash should be properly formed"),
+            );
+            let mut partition_index_addresses: HashMap<usize, Vec<String>> = HashMap::new();
+            for address in addresses.iter() {
+                let address_string = address.to_string();
+                // Skip this address if (Voting) rewards were already found in
+                // the first block of the epoch
+                if !reward_map.contains_key(&address_string) {
+                    let partition_index = hasher.clone().hash_address_to_partition(address);
+                    partition_index_addresses
+                        .entry(partition_index)
+                        .and_modify(|list| list.push(address_string.clone()))
+                        .or_insert(vec![address_string]);
+                }
+            }
+
+            let block_list = self
+                .get_blocks_with_limit(
+                    first_confirmed_block_in_epoch + 1,
+                    num_partitions,
+                    Some(context_config),
+                )
+                .await?;
+
+            for (partition_index, addresses) in partition_index_addresses.iter() {
+                let slot = *block_list.get(*partition_index).ok_or_else(|| {
+                    // If block_list.len() too short to contain
+                    // partition_index, the epoch rewards period must be
+                    // currently active.
+                    let rewards_complete_block_height = epoch_boundary_block
+                        .block_height
+                        .map(|block_height| {
+                            block_height
+                                .saturating_add(num_partitions as u64)
+                                .saturating_add(1)
+                        })
+                        .expect(
+                            "every block after partitioned_epoch_reward_enabled should have a \
+                             populated block_height",
+                        );
+                    RpcCustomError::EpochRewardsPeriodActive {
+                        slot: bank.slot(),
+                        current_block_height: bank.block_height(),
+                        rewards_complete_block_height,
+                    }
+                })?;
+
+                let Ok(Some(block)) = self
+                    .get_block(
+                        slot,
+                        Some(RpcBlockConfig::rewards_with_commitment(config.commitment).into()),
+                    )
+                    .await
+                else {
+                    return Err(RpcCustomError::BlockNotAvailable { slot }.into());
+                };
+
+                let index_reward_map = Self::filter_map_rewards(
+                    &block.rewards,
+                    slot,
+                    addresses,
+                    &|reward_type| -> bool { reward_type == RewardType::Staking },
+                );
+                reward_map.extend(index_reward_map);
+            }
+        }
+
+        let rewards = addresses
+            .iter()
+            .map(|address| {
+                if let Some((reward, slot)) = reward_map.get(&address.to_string()) {
+                    return Some(RpcInflationReward {
+                        epoch,
+                        effective_slot: *slot,
+                        amount: reward.lamports.unsigned_abs(),
+                        post_balance: reward.post_balance,
+                        commission: reward.commission,
+                    });
+                }
+                None
+            })
+            .collect();
+
+        Ok(rewards)
+    }
+    fn get_inflation_governor(&self, commitment: Option<CommitmentConfig>) -> RpcInflationGovernor {
+        self.bank(commitment).inflation().into()
+    }
+    fn get_inflation_rate(&self) -> RpcInflationRate {
+        let bank = self.bank(None);
+        let epoch = bank.epoch();
+        let inflation = bank.inflation();
+        let slot_in_year = bank.slot_in_year_for_inflation();
+
+        RpcInflationRate {
+            total: inflation.total(slot_in_year),
+            validator: inflation.validator(slot_in_year),
+            foundation: inflation.foundation(slot_in_year),
+            epoch,
+        }
+    }
+    fn get_epoch_schedule(&self) -> EpochSchedule {
+        // Since epoch schedule data comes from the genesis config, any commitment level should be
+        // fine
+        let bank = self.bank(Some(CommitmentConfig::finalized()));
+        bank.epoch_schedule().clone()
+    }
+    fn get_balance(&self, pubkey: &Pubkey, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
+        let bank = self.get_bank_with_config(config)?;
+        Ok(new_response(&bank, bank.get_balance(pubkey)))
+    }
+    fn confirm_transaction(
+        &self,
+        signature: &Signature,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<RpcResponse<bool>> {
+        let bank = self.bank(commitment);
+        let status = bank.get_signature_status(signature);
+        match status {
+            Some(status) => Ok(new_response(&bank, status.is_ok())),
+            None => Ok(new_response(&bank, false)),
+        }
+    }
+    async fn get_block(
+        &self,
+        slot: Slot,
+        config: Option<RpcEncodingConfigWrapper<RpcBlockConfig>>,
+    ) -> Result<Option<UiConfirmedBlock>> {
+        self.check_if_transaction_history_enabled()?;
+
+        let config = config
+            .map(|config| config.convert_to_current())
+            .unwrap_or_default();
+        let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json);
+        let encoding_options = BlockEncodingOptions {
+            transaction_details: config.transaction_details.unwrap_or_default(),
+            show_rewards: config.rewards.unwrap_or(true),
+            max_supported_transaction_version: config.max_supported_transaction_version,
+        };
+        let commitment = config.commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
+        // Block is old enough to be finalized
+        if slot
+            <= self
+                .block_commitment_cache
+                .read()
+                .unwrap()
+                .highest_super_majority_root()
+        {
+            self.check_blockstore_writes_complete(slot)?;
+            let result = self
+                .runtime
+                .spawn_blocking({
+                    let blockstore = Arc::clone(&self.blockstore);
+                    move || blockstore.get_rooted_block(slot, true)
+                })
+                .await
+                .expect("Failed to spawn blocking task");
+            self.check_blockstore_root(&result, slot)?;
+            let encode_block = |confirmed_block: ConfirmedBlock| async move {
+                let mut encoded_block = self
+                    .runtime
+                    .spawn_blocking(move || {
+                        confirmed_block
+                            .encode_with_options(encoding, encoding_options)
+                            .map_err(RpcCustomError::from)
+                    })
+                    .await
+                    .expect("Failed to spawn blocking task")?;
+                if slot == 0 {
+                    encoded_block.block_time = Some(self.genesis_creation_time());
+                    encoded_block.block_height = Some(0);
+                }
+                Ok::<UiConfirmedBlock, Error>(encoded_block)
+            };
+            if result.is_err() {
+                if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                    let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
+                    self.check_bigtable_result(&bigtable_result)?;
+                    let encoded_block_future: OptionFuture<_> =
+                        bigtable_result.ok().map(encode_block).into();
+                    return encoded_block_future.await.transpose();
+                }
+            }
+            self.check_slot_cleaned_up(&result, slot)?;
+            let encoded_block_future: OptionFuture<_> = result
+                .ok()
+                .map(ConfirmedBlock::from)
+                .map(encode_block)
+                .into();
+            return encoded_block_future.await.transpose();
+        } else if commitment.is_confirmed() {
+            // Check if block is confirmed
+            let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+            if confirmed_bank.status_cache_ancestors().contains(&slot) {
+                self.check_blockstore_writes_complete(slot)?;
+                let result = self
+                    .runtime
+                    .spawn_blocking({
+                        let blockstore = Arc::clone(&self.blockstore);
+                        move || blockstore.get_complete_block(slot, true)
+                    })
+                    .await
+                    .expect("Failed to spawn blocking task");
+                let encoded_block_future: OptionFuture<_> = result
+                    .ok()
+                    .map(ConfirmedBlock::from)
+                    .map(|mut confirmed_block| async move {
+                        if confirmed_block.block_time.is_none()
+                            || confirmed_block.block_height.is_none()
+                        {
+                            let r_bank_forks = self.bank_forks.read().unwrap();
+                            if let Some(bank) = r_bank_forks.get(slot) {
+                                if confirmed_block.block_time.is_none() {
+                                    confirmed_block.block_time = Some(bank.clock().unix_timestamp);
+                                }
+                                if confirmed_block.block_height.is_none() {
+                                    confirmed_block.block_height = Some(bank.block_height());
+                                }
+                            }
+                        }
+                        let encoded_block = self
+                            .runtime
+                            .spawn_blocking(move || {
+                                confirmed_block
+                                    .encode_with_options(encoding, encoding_options)
+                                    .map_err(RpcCustomError::from)
+                            })
+                            .await
+                            .expect("Failed to spawn blocking task")?;
+
+                        Ok(encoded_block)
+                    })
+                    .into();
+                return encoded_block_future.await.transpose();
+            }
+        }
+
+        Err(RpcCustomError::BlockNotAvailable { slot }.into())
+    }
+    async fn get_blocks(
+        &self,
+        start_slot: Slot,
+        end_slot: Option<Slot>,
+        config: Option<RpcContextConfig>,
+    ) -> Result<Vec<Slot>> {
+        let config = config.unwrap_or_default();
+        let commitment = config.commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
+        let highest_super_majority_root = self
+            .block_commitment_cache
+            .read()
+            .unwrap()
+            .highest_super_majority_root();
+
+        let min_context_slot = config.min_context_slot.unwrap_or_default();
+        if commitment.is_finalized() && highest_super_majority_root < min_context_slot {
+            return Err(RpcCustomError::MinContextSlotNotReached {
+                context_slot: highest_super_majority_root,
+            }
+            .into());
+        }
+
+        let end_slot = min(
+            end_slot.unwrap_or_else(|| start_slot.saturating_add(MAX_GET_CONFIRMED_BLOCKS_RANGE)),
+            if commitment.is_finalized() {
+                highest_super_majority_root
+            } else {
+                self.get_bank_with_config(config)?.slot()
+            },
+        );
+        if end_slot < start_slot {
+            return Ok(vec![]);
+        }
+        if end_slot - start_slot > MAX_GET_CONFIRMED_BLOCKS_RANGE {
+            return Err(Error::invalid_params(format!(
+                "Slot range too large; max {MAX_GET_CONFIRMED_BLOCKS_RANGE}"
+            )));
+        }
+
+        let lowest_blockstore_slot = self
+            .blockstore
+            .get_first_available_block()
+            .unwrap_or_default();
+        if start_slot < lowest_blockstore_slot {
+            // If the starting slot is lower than what's available in blockstore assume the entire
+            // [start_slot..end_slot] can be fetched from BigTable. This range should not ever run
+            // into unfinalized confirmed blocks due to MAX_GET_CONFIRMED_BLOCKS_RANGE
+            if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                return bigtable_ledger_storage
+                    .get_confirmed_blocks(start_slot, (end_slot - start_slot) as usize + 1) // increment limit by 1 to ensure returned range is inclusive of both start_slot and end_slot
+                    .await
+                    .map(|mut bigtable_blocks| {
+                        bigtable_blocks.retain(|&slot| slot <= end_slot);
+                        bigtable_blocks
+                    })
+                    .map_err(|_| {
+                        Error::invalid_params(
+                            "BigTable query failed (maybe timeout due to too large range?)"
+                                .to_string(),
+                        )
+                    });
+            }
+        }
+
+        // Finalized blocks
+        let mut blocks: Vec<_> = self
+            .blockstore
+            .rooted_slot_iterator(max(start_slot, lowest_blockstore_slot))
+            .map_err(|_| Error::internal_error())?
+            .filter(|&slot| slot <= end_slot && slot <= highest_super_majority_root)
+            .collect();
+        let last_element = blocks
+            .last()
+            .cloned()
+            .unwrap_or_else(|| start_slot.saturating_sub(1));
+
+        // Maybe add confirmed blocks
+        if commitment.is_confirmed() {
+            let confirmed_bank = self.get_bank_with_config(config)?;
+            if last_element < end_slot {
+                let mut confirmed_blocks = confirmed_bank
+                    .status_cache_ancestors()
+                    .into_iter()
+                    .filter(|&slot| slot <= end_slot && slot > last_element)
+                    .collect();
+                blocks.append(&mut confirmed_blocks);
+            }
+        }
+
+        Ok(blocks)
+    }
+    async fn get_blocks_with_limit(
+        &self,
+        start_slot: Slot,
+        limit: usize,
+        config: Option<RpcContextConfig>,
+    ) -> Result<Vec<Slot>> {
+        let config = config.unwrap_or_default();
+        let commitment = config.commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
+        if limit > MAX_GET_CONFIRMED_BLOCKS_RANGE as usize {
+            return Err(Error::invalid_params(format!(
+                "Limit too large; max {MAX_GET_CONFIRMED_BLOCKS_RANGE}"
+            )));
+        }
+
+        let lowest_blockstore_slot = self
+            .blockstore
+            .get_first_available_block()
+            .unwrap_or_default();
+
+        if start_slot < lowest_blockstore_slot {
+            // If the starting slot is lower than what's available in blockstore assume the entire
+            // range can be fetched from BigTable. This range should not ever run into unfinalized
+            // confirmed blocks due to MAX_GET_CONFIRMED_BLOCKS_RANGE
+            if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                return Ok(bigtable_ledger_storage
+                    .get_confirmed_blocks(start_slot, limit)
+                    .await
+                    .unwrap_or_default());
+            }
+        }
+
+        let highest_super_majority_root = self
+            .block_commitment_cache
+            .read()
+            .unwrap()
+            .highest_super_majority_root();
+
+        if commitment.is_finalized() {
+            let min_context_slot = config.min_context_slot.unwrap_or_default();
+            if highest_super_majority_root < min_context_slot {
+                return Err(RpcCustomError::MinContextSlotNotReached {
+                    context_slot: highest_super_majority_root,
+                }
+                .into());
+            }
+        }
+
+        // Finalized blocks
+        let mut blocks: Vec<_> = self
+            .blockstore
+            .rooted_slot_iterator(max(start_slot, lowest_blockstore_slot))
+            .map_err(|_| Error::internal_error())?
+            .take(limit)
+            .filter(|&slot| slot <= highest_super_majority_root)
+            .collect();
+
+        // Maybe add confirmed blocks
+        if commitment.is_confirmed() {
+            let confirmed_bank = self.get_bank_with_config(config)?;
+            if blocks.len() < limit {
+                let last_element = blocks
+                    .last()
+                    .cloned()
+                    .unwrap_or_else(|| start_slot.saturating_sub(1));
+                let mut confirmed_blocks = confirmed_bank
+                    .status_cache_ancestors()
+                    .into_iter()
+                    .filter(|&slot| slot > last_element)
+                    .collect();
+                blocks.append(&mut confirmed_blocks);
+                blocks.truncate(limit);
+            }
+        }
+
+        Ok(blocks)
+    }
+    async fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
+        if slot == 0 {
+            return Ok(Some(self.genesis_creation_time()));
+        }
+        if slot
+            <= self
+                .block_commitment_cache
+                .read()
+                .unwrap()
+                .highest_super_majority_root()
+        {
+            let result = self.blockstore.get_rooted_block_time(slot);
+            self.check_blockstore_root(&result, slot)?;
+            if result.is_err() {
+                if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                    let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
+                    self.check_bigtable_result(&bigtable_result)?;
+                    return Ok(bigtable_result
+                        .ok()
+                        .and_then(|confirmed_block| confirmed_block.block_time));
+                }
+            }
+            self.check_slot_cleaned_up(&result, slot)?;
+            Ok(result.ok())
+        } else {
+            let r_bank_forks = self.bank_forks.read().unwrap();
+            if let Some(bank) = r_bank_forks.get(slot) {
+                Ok(Some(bank.clock().unix_timestamp))
+            } else {
+                Err(RpcCustomError::BlockNotAvailable { slot }.into())
+            }
+        }
+    }
+    fn get_signature_confirmation_status(
+        &self,
+        signature: Signature,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<Option<RpcSignatureConfirmation>> {
+        let bank = self.bank(commitment);
+        Ok(self
+            .get_transaction_status(signature, &bank)
+            .map(|transaction_status| {
+                let confirmations = transaction_status
+                    .confirmations
+                    .unwrap_or(MAX_LOCKOUT_HISTORY + 1);
+                RpcSignatureConfirmation {
+                    confirmations,
+                    status: transaction_status.status,
+                }
+            }))
+    }
+    fn get_signature_status(
+        &self,
+        signature: Signature,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<Option<transaction::Result<()>>> {
+        let bank = self.bank(commitment);
+        Ok(bank
+            .get_signature_status_slot(&signature)
+            .map(|(_, status)| status))
+    }
+    async fn get_signature_statuses(
+        &self,
+        signatures: Vec<Signature>,
+        config: Option<RpcSignatureStatusConfig>,
+    ) -> Result<RpcResponse<Vec<Option<TransactionStatus>>>> {
+        let search_transaction_history = config
+            .map(|x| x.search_transaction_history)
+            .unwrap_or(false);
+        if search_transaction_history {
+            self.check_if_transaction_history_enabled()?;
+        }
+
+        let bank = self.bank(Some(CommitmentConfig::processed()));
+        let mut statuses: Vec<Option<TransactionStatus>> = vec![];
+
+        for signature in signatures {
+            let status = if let Some(status) = self.get_transaction_status(signature, &bank) {
+                Some(status)
+            } else if search_transaction_history {
+                if let Some(status) = self
+                    .blockstore
+                    .get_rooted_transaction_status(signature)
+                    .map_err(|_| Error::internal_error())?
+                    .filter(|(slot, _status_meta)| {
+                        slot <= &self
+                            .block_commitment_cache
+                            .read()
+                            .unwrap()
+                            .highest_super_majority_root()
+                    })
+                    .map(|(slot, status_meta)| {
+                        let err = status_meta.status.clone().err();
+                        TransactionStatus {
+                            slot,
+                            status: status_meta.status,
+                            confirmations: None,
+                            err,
+                            confirmation_status: Some(TransactionConfirmationStatus::Finalized),
+                        }
+                    })
+                {
+                    Some(status)
+                } else if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                    bigtable_ledger_storage
+                        .get_signature_status(&signature)
+                        .await
+                        .map(Some)
+                        .unwrap_or(None)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            statuses.push(status);
+        }
+        Ok(new_response(&bank, statuses))
+    }
+    async fn get_transaction(
+        &self,
+        signature: Signature,
+        config: Option<RpcEncodingConfigWrapper<RpcTransactionConfig>>,
+    ) -> Result<Option<EncodedConfirmedTransactionWithStatusMeta>> {
+        self.check_if_transaction_history_enabled()?;
+
+        let config = config
+            .map(|config| config.convert_to_current())
+            .unwrap_or_default();
+        let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Json);
+        let max_supported_transaction_version = config.max_supported_transaction_version;
+        let commitment = config.commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
+        let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
+        let confirmed_transaction = self
+            .runtime
+            .spawn_blocking({
+                let blockstore = Arc::clone(&self.blockstore);
+                let confirmed_bank = Arc::clone(&confirmed_bank);
+                move || {
+                    if commitment.is_confirmed() {
+                        let highest_confirmed_slot = confirmed_bank.slot();
+                        blockstore.get_complete_transaction(signature, highest_confirmed_slot)
+                    } else {
+                        blockstore.get_rooted_transaction(signature)
+                    }
+                }
+            })
+            .await
+            .expect("Failed to spawn blocking task");
+
+        let encode_transaction =
+            |confirmed_tx_with_meta: ConfirmedTransactionWithStatusMeta| -> Result<EncodedConfirmedTransactionWithStatusMeta> {
+                Ok(confirmed_tx_with_meta.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from)?)
+            };
+
+        match confirmed_transaction.unwrap_or(None) {
+            Some(mut confirmed_transaction) => {
+                if commitment.is_confirmed()
+                    && confirmed_bank // should be redundant
+                        .status_cache_ancestors()
+                        .contains(&confirmed_transaction.slot)
+                {
+                    if confirmed_transaction.block_time.is_none() {
+                        let r_bank_forks = self.bank_forks.read().unwrap();
+                        confirmed_transaction.block_time = r_bank_forks
+                            .get(confirmed_transaction.slot)
+                            .map(|bank| bank.clock().unix_timestamp);
+                    }
+                    return Ok(Some(encode_transaction(confirmed_transaction)?));
+                }
+
+                if confirmed_transaction.slot
+                    <= self
+                        .block_commitment_cache
+                        .read()
+                        .unwrap()
+                        .highest_super_majority_root()
+                {
+                    return Ok(Some(encode_transaction(confirmed_transaction)?));
+                }
+            }
+            None => {
+                if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                    return bigtable_ledger_storage
+                        .get_confirmed_transaction(&signature)
+                        .await
+                        .unwrap_or(None)
+                        .map(encode_transaction)
+                        .transpose();
+                }
+            }
+        }
+
+        Ok(None)
+    }
+    async fn get_signatures_for_address(
+        &self,
+        address: Pubkey,
+        before: Option<Signature>,
+        until: Option<Signature>,
+        mut limit: usize,
+        config: RpcContextConfig,
+    ) -> Result<Vec<RpcConfirmedTransactionStatusWithSignature>> {
+        self.check_if_transaction_history_enabled()?;
+
+        let commitment = config.commitment.unwrap_or_default();
+        check_is_at_least_confirmed(commitment)?;
+
+        let highest_super_majority_root = self
+            .block_commitment_cache
+            .read()
+            .unwrap()
+            .highest_super_majority_root();
+        let highest_slot = if commitment.is_confirmed() {
+            let confirmed_bank = self.get_bank_with_config(config)?;
+            confirmed_bank.slot()
+        } else {
+            let min_context_slot = config.min_context_slot.unwrap_or_default();
+            if highest_super_majority_root < min_context_slot {
+                return Err(RpcCustomError::MinContextSlotNotReached {
+                    context_slot: highest_super_majority_root,
+                }
+                .into());
+            }
+            highest_super_majority_root
+        };
+
+        let SignatureInfosForAddress {
+            infos: mut results,
+            found_before,
+        } = self
+            .blockstore
+            .get_confirmed_signatures_for_address2(address, highest_slot, before, until, limit)
+            .map_err(|err| Error::invalid_params(format!("{err}")))?;
+
+        let map_results = |results: Vec<ConfirmedTransactionStatusWithSignature>| {
+            results
+                .into_iter()
+                .map(|x| {
+                    let mut item: RpcConfirmedTransactionStatusWithSignature = x.into();
+                    if item.slot <= highest_super_majority_root {
+                        item.confirmation_status = Some(TransactionConfirmationStatus::Finalized);
+                    } else {
+                        item.confirmation_status = Some(TransactionConfirmationStatus::Confirmed);
+                        if item.block_time.is_none() {
+                            let r_bank_forks = self.bank_forks.read().unwrap();
+                            item.block_time = r_bank_forks
+                                .get(item.slot)
+                                .map(|bank| bank.clock().unix_timestamp);
+                        }
+                    }
+                    item
+                })
+                .collect()
+        };
+
+        if results.len() < limit {
+            if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                let mut bigtable_before = before;
+                if !results.is_empty() {
+                    limit -= results.len();
+                    bigtable_before = results.last().map(|x| x.signature);
+                }
+
+                // If the oldest address-signature found in Blockstore has not yet been
+                // uploaded to long-term storage, modify the storage query to return all latest
+                // signatures to prevent erroring on RowNotFound. This can race with upload.
+                if found_before && bigtable_before.is_some() {
+                    match bigtable_ledger_storage
+                        .get_signature_status(&bigtable_before.unwrap())
+                        .await
+                    {
+                        Err(StorageError::SignatureNotFound) => {
+                            bigtable_before = None;
+                        }
+                        Err(err) => {
+                            warn!("Failed to query Bigtable: {:?}", err);
+                            return Err(RpcCustomError::LongTermStorageUnreachable.into());
+                        }
+                        Ok(_) => {}
+                    }
+                }
+
+                let bigtable_results = bigtable_ledger_storage
+                    .get_confirmed_signatures_for_address(
+                        &address,
+                        bigtable_before.as_ref(),
+                        until.as_ref(),
+                        limit,
+                    )
+                    .await;
+                match bigtable_results {
+                    Ok(bigtable_results) => {
+                        let results_set: HashSet<_> =
+                            results.iter().map(|result| result.signature).collect();
+                        for (bigtable_result, _) in bigtable_results {
+                            // In the upload race condition, latest address-signatures in
+                            // long-term storage may include original `before` signature...
+                            if before != Some(bigtable_result.signature)
+                                // ...or earlier Blockstore signatures
+                                && !results_set.contains(&bigtable_result.signature)
+                            {
+                                results.push(bigtable_result);
+                            }
+                        }
+                    }
+                    Err(StorageError::SignatureNotFound) => {}
+                    Err(err) => {
+                        warn!("Failed to query Bigtable: {:?}", err);
+                        return Err(RpcCustomError::LongTermStorageUnreachable.into());
+                    }
+                }
+            }
+        }
+
+        Ok(map_results(results))
+    }
+    async fn get_first_available_block(&self) -> Slot {
+        let slot = self
+            .blockstore
+            .get_first_available_block()
+            .unwrap_or_default();
+
+        if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+            let bigtable_slot = bigtable_ledger_storage
+                .get_first_available_block()
+                .await
+                .unwrap_or(None)
+                .unwrap_or(slot);
+
+            if bigtable_slot < slot {
+                return bigtable_slot;
+            }
+        }
+        slot
+    }
+    fn get_token_account_balance(
+        &self,
+        pubkey: &Pubkey,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<RpcResponse<UiTokenAmount>> {
+        let bank = self.bank(commitment);
+        let account = bank.get_account(pubkey).ok_or_else(|| {
+            Error::invalid_params("Invalid param: could not find account".to_string())
+        })?;
+
+        if !is_known_spl_token_id(account.owner()) {
+            return Err(Error::invalid_params(
+                "Invalid param: not a Token account".to_string(),
+            ));
+        }
+        let token_account = StateWithExtensions::<TokenAccount>::unpack(account.data())
+            .map_err(|_| Error::invalid_params("Invalid param: not a Token account".to_string()))?;
+        let mint = &Pubkey::from_str(&token_account.base.mint.to_string())
+            .expect("Token account mint should be convertible to Pubkey");
+        let (_, data) = get_mint_owner_and_additional_data(&bank, mint)?;
+        let balance = token_amount_to_ui_amount_v3(token_account.base.amount, &data);
+        Ok(new_response(&bank, balance))
+    }
+    fn get_token_supply(
+        &self,
+        mint: &Pubkey,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<RpcResponse<UiTokenAmount>> {
+        let bank = self.bank(commitment);
+        let mint_account = bank.get_account(mint).ok_or_else(|| {
+            Error::invalid_params("Invalid param: could not find account".to_string())
+        })?;
+        if !is_known_spl_token_id(mint_account.owner()) {
+            return Err(Error::invalid_params(
+                "Invalid param: not a Token mint".to_string(),
+            ));
+        }
+        let mint = StateWithExtensions::<Mint>::unpack(mint_account.data()).map_err(|_| {
+            Error::invalid_params("Invalid param: mint could not be unpacked".to_string())
+        })?;
+
+        let interest_bearing_config = mint
+            .get_extension::<InterestBearingConfig>()
+            .map(|x| (*x, bank.clock().unix_timestamp))
+            .ok();
+
+        let scaled_ui_amount_config = mint
+            .get_extension::<ScaledUiAmountConfig>()
+            .map(|x| (*x, bank.clock().unix_timestamp))
+            .ok();
+
+        let supply = token_amount_to_ui_amount_v3(
+            mint.base.supply,
+            &SplTokenAdditionalDataV2 {
+                decimals: mint.base.decimals,
+                interest_bearing_config,
+                scaled_ui_amount_config,
+            },
+        );
+        Ok(new_response(&bank, supply))
+    }
+    async fn get_token_largest_accounts(
+        &self,
+        mint: Pubkey,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<RpcResponse<Vec<RpcTokenAccountBalance>>> {
+        let bank = self.bank(commitment);
+        let (mint_owner, data) = get_mint_owner_and_additional_data(&bank, &mint)?;
+        if !is_known_spl_token_id(&mint_owner) {
+            return Err(Error::invalid_params(
+                "Invalid param: not a Token mint".to_string(),
+            ));
+        }
+
+        let mut token_balances =
+            BinaryHeap::<Reverse<(u64, Pubkey)>>::with_capacity(NUM_LARGEST_ACCOUNTS);
+        for (address, account) in self
+            .get_filtered_spl_token_accounts_by_mint(
+                Arc::clone(&bank),
+                mint_owner,
+                mint,
+                vec![],
+                true,
+            )
+            .await?
+        {
+            let amount = StateWithExtensions::<TokenAccount>::unpack(account.data())
+                .map(|account| account.base.amount)
+                .unwrap_or(0);
+
+            let new_entry = (amount, address);
+            if token_balances.len() >= NUM_LARGEST_ACCOUNTS {
+                let Reverse(entry) = token_balances
+                    .peek()
+                    .expect("BinaryHeap::peek should succeed when len > 0");
+                if *entry >= new_entry {
+                    continue;
+                }
+                token_balances.pop();
+            }
+            token_balances.push(Reverse(new_entry));
+        }
+
+        let token_balances = token_balances
+            .into_sorted_vec()
+            .into_iter()
+            .map(|Reverse((amount, address))| {
+                Ok(RpcTokenAccountBalance {
+                    address: address.to_string(),
+                    amount: token_amount_to_ui_amount_v3(amount, &data),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(new_response(&bank, token_balances))
+    }
+    async fn get_token_accounts_by_owner(
+        &self,
+        owner: Pubkey,
+        token_account_filter: TokenAccountsFilter,
+        config: Option<RpcAccountInfoConfig>,
+        sort_results: bool,
+    ) -> Result<RpcResponse<Vec<RpcKeyedAccount>>> {
+        let RpcAccountInfoConfig {
+            encoding,
+            data_slice: data_slice_config,
+            commitment,
+            min_context_slot,
+        } = config.unwrap_or_default();
+        let bank = self.get_bank_with_config(RpcContextConfig {
+            commitment,
+            min_context_slot,
+        })?;
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
+        let (token_program_id, mint) = get_token_program_id_and_mint(&bank, token_account_filter)?;
+
+        let mut filters = vec![];
+        if let Some(mint) = mint {
+            // Optional filter on Mint address
+            filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+                0,
+                mint.to_bytes().into(),
+            )));
+        }
+
+        let keyed_accounts = self
+            .get_filtered_spl_token_accounts_by_owner(
+                Arc::clone(&bank),
+                token_program_id,
+                owner,
+                filters,
+                sort_results,
+            )
+            .await?;
+        let accounts = if encoding == UiAccountEncoding::JsonParsed {
+            get_parsed_token_accounts(bank.clone(), keyed_accounts.into_iter()).collect()
+        } else {
+            keyed_accounts
+                .into_iter()
+                .map(|(pubkey, account)| {
+                    Ok(RpcKeyedAccount {
+                        pubkey: pubkey.to_string(),
+                        account: encode_account(&account, &pubkey, encoding, data_slice_config)?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+        Ok(new_response(&bank, accounts))
+    }
+    async fn get_token_accounts_by_delegate(
+        &self,
+        delegate: Pubkey,
+        token_account_filter: TokenAccountsFilter,
+        config: Option<RpcAccountInfoConfig>,
+        sort_results: bool,
+    ) -> Result<RpcResponse<Vec<RpcKeyedAccount>>> {
+        let RpcAccountInfoConfig {
+            encoding,
+            data_slice: data_slice_config,
+            commitment,
+            min_context_slot,
+        } = config.unwrap_or_default();
+        let bank = self.get_bank_with_config(RpcContextConfig {
+            commitment,
+            min_context_slot,
+        })?;
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
+        let (token_program_id, mint) = get_token_program_id_and_mint(&bank, token_account_filter)?;
+
+        let mut filters = vec![
+            // Filter on Delegate is_some()
+            RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+                72,
+                bincode::serialize(&1u32).unwrap(),
+            )),
+            // Filter on Delegate address
+            RpcFilterType::Memcmp(Memcmp::new_raw_bytes(76, delegate.to_bytes().into())),
+        ];
+        // Optional filter on Mint address, uses mint account index for scan
+        let keyed_accounts = if let Some(mint) = mint {
+            self.get_filtered_spl_token_accounts_by_mint(
+                Arc::clone(&bank),
+                token_program_id,
+                mint,
+                filters,
+                sort_results,
+            )
+            .await?
+        } else {
+            // Filter on Token Account state
+            filters.push(RpcFilterType::TokenAccountState);
+            self.get_filtered_program_accounts(
+                Arc::clone(&bank),
+                token_program_id,
+                filters,
+                sort_results,
+            )
+            .await?
+        };
+        let accounts = if encoding == UiAccountEncoding::JsonParsed {
+            get_parsed_token_accounts(bank.clone(), keyed_accounts.into_iter()).collect()
+        } else {
+            keyed_accounts
+                .into_iter()
+                .map(|(pubkey, account)| {
+                    Ok(RpcKeyedAccount {
+                        pubkey: pubkey.to_string(),
+                        account: encode_account(&account, &pubkey, encoding, data_slice_config)?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+        Ok(new_response(&bank, accounts))
+    }
+}
+
+#[async_trait]
+pub trait JsonRpcRequestProcessor: JsonRpcRequestProcessorClone + Send + Sync {
+    fn clone_account_from_cluster(&self, address: &Pubkey, url: &str) -> Result<()>;
+
+    fn set_account(&self, _address: &Pubkey, _account: &AccountSharedData) -> Result<()>;
+    fn clone_without_bigtable(&self) -> Box<dyn JsonRpcRequestProcessor>;
+
+    fn get_bank_with_config(&self, config: RpcContextConfig) -> Result<Arc<Bank>>;
+
+    fn genesis_hash(&self) -> &Hash;
+
+    fn health(&self) -> &Arc<RpcHealth>;
+
+    fn cluster_info(&self) -> &Arc<ClusterInfo>;
+
+    fn get_slot(&self, config: RpcContextConfig) -> Result<Slot>;
+
+    fn snapshot_config(&self) -> Option<SnapshotConfig>;
+
+    fn get_transaction_count(&self, config: RpcContextConfig) -> Result<u64>;
+
+    fn get_block_height(&self, config: RpcContextConfig) -> Result<u64>;
+
+    fn get_vote_accounts(
+        &self,
+        config: Option<RpcGetVoteAccountsConfig>,
+    ) -> Result<RpcVoteAccountStatus>;
+
+    fn bank(&self, commitment: Option<CommitmentConfig>) -> Arc<Bank>;
+
+    fn leader_schedule_cache(&self) -> &Arc<LeaderScheduleCache>;
+    async fn get_filtered_indexed_accounts(
+        &self,
+        bank: &Arc<Bank>,
+        index_key: &IndexKey,
+        program_id: &Pubkey,
+        filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> ScanResult<Vec<TransactionAccount>>;
 
     fn get_recent_prioritization_fees(
         &self,
         pubkeys: Vec<Pubkey>,
-    ) -> Result<Vec<RpcPrioritizationFee>> {
-        Ok(self
-            .prioritization_fee_cache
-            .get_prioritization_fees(&pubkeys)
-            .into_iter()
-            .map(|(slot, prioritization_fee)| RpcPrioritizationFee {
-                slot,
-                prioritization_fee,
-            })
-            .collect())
+    ) -> Result<Vec<RpcPrioritizationFee>>;
+
+    fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>>;
+
+    fn get_latest_blockhash(&self, config: RpcContextConfig) -> Result<RpcResponse<RpcBlockhash>>;
+
+    fn minimum_ledger_slot(&self) -> Result<Slot>;
+
+    fn config(&self) -> &JsonRpcConfig;
+
+    fn get_max_shred_insert_slot(&self) -> Slot;
+
+    fn get_max_retransmit_slot(&self) -> Slot;
+
+    fn blockstore(&self) -> &Arc<Blockstore>;
+
+    async fn get_supply(
+        &self,
+        config: Option<RpcSupplyConfig>,
+    ) -> RpcCustomResult<RpcResponse<RpcSupply>>;
+
+    async fn get_largest_accounts(
+        &self,
+        config: Option<RpcLargestAccountsConfig>,
+    ) -> RpcCustomResult<RpcResponse<Vec<RpcAccountBalance>>>;
+
+    fn get_block_commitment(&self, block: Slot) -> RpcBlockCommitment<BlockCommitmentArray>;
+
+    fn get_slot_leaders(
+        &self,
+        commitment: Option<CommitmentConfig>,
+        start_slot: Slot,
+        limit: usize,
+    ) -> Result<Vec<Pubkey>>;
+
+    fn is_blockhash_valid(
+        &self,
+        blockhash: &Hash,
+        config: RpcContextConfig,
+    ) -> Result<RpcResponse<bool>>;
+
+    fn get_slot_leader(&self, config: RpcContextConfig) -> Result<String>;
+
+    fn transaction_sender(&self) -> &Sender<TransactionInfo>;
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        config: JsonRpcConfig,
+        snapshot_config: Option<SnapshotConfig>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+        blockstore: Arc<Blockstore>,
+        validator_exit: Arc<RwLock<Exit>>,
+        health: Arc<RpcHealth>,
+        cluster_info: Arc<ClusterInfo>,
+        genesis_hash: Hash,
+        bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
+        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
+        max_slots: Arc<MaxSlots>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_rewards_slot: Arc<AtomicU64>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        runtime: Arc<Runtime>,
+    ) -> (Self, Receiver<TransactionInfo>)
+    where
+        Self: Sized;
+    #[cfg(test)]
+    fn new_from_bank<Client: ClientWithCreator>(
+        bank: Bank,
+        socket_addr_space: SocketAddrSpace,
+    ) -> Self;
+    async fn get_account_info(
+        &self,
+        pubkey: Pubkey,
+        config: Option<RpcAccountInfoConfig>,
+    ) -> Result<RpcResponse<Option<UiAccount>>>;
+    async fn get_multiple_accounts(
+        &self,
+        pubkeys: Vec<Pubkey>,
+        config: Option<RpcAccountInfoConfig>,
+    ) -> Result<RpcResponse<Vec<Option<UiAccount>>>>;
+    fn get_minimum_balance_for_rent_exemption(
+        &self,
+        data_len: usize,
+        commitment: Option<CommitmentConfig>,
+    ) -> u64;
+    async fn get_program_accounts(
+        &self,
+        program_id: Pubkey,
+        config: Option<RpcAccountInfoConfig>,
+        filters: Vec<RpcFilterType>,
+        with_context: bool,
+        sort_results: bool,
+    ) -> Result<OptionalContext<Vec<RpcKeyedAccount>>>;
+    async fn get_inflation_reward(
+        &self,
+        addresses: Vec<Pubkey>,
+        config: Option<RpcEpochConfig>,
+    ) -> Result<Vec<Option<RpcInflationReward>>>;
+    fn get_inflation_governor(&self, commitment: Option<CommitmentConfig>) -> RpcInflationGovernor;
+    fn get_inflation_rate(&self) -> RpcInflationRate;
+    fn get_epoch_schedule(&self) -> EpochSchedule;
+    fn get_balance(&self, pubkey: &Pubkey, config: RpcContextConfig) -> Result<RpcResponse<u64>>;
+    fn confirm_transaction(
+        &self,
+        signature: &Signature,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<RpcResponse<bool>>;
+    async fn get_block(
+        &self,
+        slot: Slot,
+        config: Option<RpcEncodingConfigWrapper<RpcBlockConfig>>,
+    ) -> Result<Option<UiConfirmedBlock>>;
+    async fn get_blocks(
+        &self,
+        start_slot: Slot,
+        end_slot: Option<Slot>,
+        config: Option<RpcContextConfig>,
+    ) -> Result<Vec<Slot>>;
+    async fn get_blocks_with_limit(
+        &self,
+        start_slot: Slot,
+        limit: usize,
+        config: Option<RpcContextConfig>,
+    ) -> Result<Vec<Slot>>;
+    async fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>>;
+    fn get_signature_confirmation_status(
+        &self,
+        signature: Signature,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<Option<RpcSignatureConfirmation>>;
+    fn get_signature_status(
+        &self,
+        signature: Signature,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<Option<transaction::Result<()>>>;
+    async fn get_signature_statuses(
+        &self,
+        signatures: Vec<Signature>,
+        config: Option<RpcSignatureStatusConfig>,
+    ) -> Result<RpcResponse<Vec<Option<TransactionStatus>>>>;
+    async fn get_transaction(
+        &self,
+        signature: Signature,
+        config: Option<RpcEncodingConfigWrapper<RpcTransactionConfig>>,
+    ) -> Result<Option<EncodedConfirmedTransactionWithStatusMeta>>;
+    async fn get_signatures_for_address(
+        &self,
+        address: Pubkey,
+        before: Option<Signature>,
+        until: Option<Signature>,
+        limit: usize,
+        config: RpcContextConfig,
+    ) -> Result<Vec<RpcConfirmedTransactionStatusWithSignature>>;
+    async fn get_first_available_block(&self) -> Slot;
+    fn get_token_account_balance(
+        &self,
+        pubkey: &Pubkey,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<RpcResponse<UiTokenAmount>>;
+    fn get_token_supply(
+        &self,
+        mint: &Pubkey,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<RpcResponse<UiTokenAmount>>;
+    async fn get_token_largest_accounts(
+        &self,
+        mint: Pubkey,
+        commitment: Option<CommitmentConfig>,
+    ) -> Result<RpcResponse<Vec<RpcTokenAccountBalance>>>;
+    async fn get_token_accounts_by_owner(
+        &self,
+        owner: Pubkey,
+        token_account_filter: TokenAccountsFilter,
+        config: Option<RpcAccountInfoConfig>,
+        sort_results: bool,
+    ) -> Result<RpcResponse<Vec<RpcKeyedAccount>>>;
+    async fn get_token_accounts_by_delegate(
+        &self,
+        delegate: Pubkey,
+        token_account_filter: TokenAccountsFilter,
+        config: Option<RpcAccountInfoConfig>,
+        sort_results: bool,
+    ) -> Result<RpcResponse<Vec<RpcKeyedAccount>>>;
+}
+
+pub trait JsonRpcRequestProcessorClone {
+    fn clone_box(&self) -> Box<dyn JsonRpcRequestProcessor>;
+}
+
+impl<T> JsonRpcRequestProcessorClone for T
+where
+    T: 'static + JsonRpcRequestProcessor + Clone,
+{
+    fn clone_box(&self) -> Box<dyn JsonRpcRequestProcessor> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn JsonRpcRequestProcessor> {
+    fn clone(&self) -> Box<dyn JsonRpcRequestProcessor> {
+        self.clone_box()
     }
 }
 
@@ -2681,7 +5140,7 @@ fn get_token_program_id_and_mint(
 }
 
 fn _send_transaction(
-    meta: JsonRpcRequestProcessor,
+    meta: Box<dyn JsonRpcRequestProcessor>,
     signature: Signature,
     wire_transaction: Vec<u8>,
     last_valid_block_height: u64,
@@ -2696,7 +5155,7 @@ fn _send_transaction(
         max_retries,
         None,
     );
-    meta.transaction_sender
+    meta.transaction_sender()
         .send(transaction_info)
         .unwrap_or_else(|err| warn!("Failed to enqueue transaction: {}", err));
 
@@ -2779,7 +5238,7 @@ pub mod rpc_minimal {
 
     pub struct MinimalImpl;
     impl Minimal for MinimalImpl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Box<dyn JsonRpcRequestProcessor>;
 
         fn get_balance(
             &self,
@@ -2804,11 +5263,11 @@ pub mod rpc_minimal {
 
         fn get_genesis_hash(&self, meta: Self::Metadata) -> Result<String> {
             debug!("get_genesis_hash rpc request received");
-            Ok(meta.genesis_hash.to_string())
+            Ok(meta.genesis_hash().to_string())
         }
 
         fn get_health(&self, meta: Self::Metadata) -> Result<String> {
-            match meta.health.check() {
+            match meta.health().check() {
                 RpcHealthStatus::Ok => Ok("ok".to_string()),
                 RpcHealthStatus::Unknown => Err(RpcCustomError::NodeUnhealthy {
                     num_slots_behind: None,
@@ -2824,7 +5283,7 @@ pub mod rpc_minimal {
         fn get_identity(&self, meta: Self::Metadata) -> Result<RpcIdentity> {
             debug!("get_identity rpc request received");
             Ok(RpcIdentity {
-                identity: meta.cluster_info.id().to_string(),
+                identity: meta.cluster_info().id().to_string(),
             })
         }
 
@@ -2845,12 +5304,12 @@ pub mod rpc_minimal {
         fn get_highest_snapshot_slot(&self, meta: Self::Metadata) -> Result<RpcSnapshotSlotInfo> {
             debug!("get_highest_snapshot_slot rpc request received");
 
-            if meta.snapshot_config.is_none() {
+            if meta.snapshot_config().is_none() {
                 return Err(RpcCustomError::NoSnapshot.into());
             }
 
             let (full_snapshot_archives_dir, incremental_snapshot_archives_dir) = meta
-                .snapshot_config
+                .snapshot_config()
                 .map(|snapshot_config| {
                     (
                         snapshot_config.full_snapshot_archives_dir,
@@ -2925,7 +5384,7 @@ pub mod rpc_minimal {
             debug!("get_leader_schedule rpc request received: {:?}", slot);
 
             Ok(meta
-                .leader_schedule_cache
+                .leader_schedule_cache()
                 .get_epoch_leader_schedule(epoch)
                 .map(|leader_schedule| {
                     let mut schedule_by_identity =
@@ -2995,7 +5454,7 @@ pub mod rpc_bank {
 
     pub struct BankDataImpl;
     impl BankData for BankDataImpl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Box<dyn JsonRpcRequestProcessor>;
 
         fn get_minimum_balance_for_rent_exemption(
             &self,
@@ -3210,7 +5669,7 @@ pub mod rpc_accounts {
 
     pub struct AccountsDataImpl;
     impl AccountsData for AccountsDataImpl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Box<dyn JsonRpcRequestProcessor>;
 
         fn get_account_info(
             &self,
@@ -3238,7 +5697,7 @@ pub mod rpc_accounts {
             );
             async move {
                 let max_multiple_accounts = meta
-                    .config
+                    .config()
                     .max_multiple_accounts
                     .unwrap_or(MAX_MULTIPLE_ACCOUNTS);
                 if pubkey_strs.len() > max_multiple_accounts {
@@ -3355,7 +5814,7 @@ pub mod rpc_accounts_scan {
 
     pub struct AccountsScanImpl;
     impl AccountsScan for AccountsScanImpl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Box<dyn JsonRpcRequestProcessor>;
 
         fn get_program_accounts(
             &self,
@@ -3471,6 +5930,7 @@ pub mod rpc_full {
         solana_sdk::message::{SanitizedVersionedMessage, VersionedMessage},
         solana_transaction_status::parse_ui_inner_instructions,
     };
+
     #[rpc]
     pub trait Full {
         type Metadata;
@@ -3627,7 +6087,7 @@ pub mod rpc_full {
 
     pub struct FullImpl;
     impl Full for FullImpl {
-        type Metadata = JsonRpcRequestProcessor;
+        type Metadata = Box<dyn JsonRpcRequestProcessor>;
 
         fn get_recent_performance_samples(
             &self,
@@ -3645,7 +6105,7 @@ pub mod rpc_full {
             }
 
             Ok(meta
-                .blockstore
+                .blockstore()
                 .get_recent_perf_samples(limit)
                 .map_err(|err| {
                     warn!("get_recent_performance_samples failed: {:?}", err);
@@ -3658,7 +6118,7 @@ pub mod rpc_full {
 
         fn get_cluster_nodes(&self, meta: Self::Metadata) -> Result<Vec<RpcContactInfo>> {
             debug!("get_cluster_nodes rpc request received");
-            let cluster_info = &meta.cluster_info;
+            let cluster_info = meta.cluster_info();
             let socket_addr_space = cluster_info.socket_addr_space();
             let my_shred_version = cluster_info.my_shred_version();
             Ok(cluster_info
@@ -3771,7 +6231,10 @@ pub mod rpc_full {
                 &config
             );
 
-            let faucet_addr = meta.config.faucet_addr.ok_or_else(Error::invalid_request)?;
+            let faucet_addr = meta
+                .config()
+                .faucet_addr
+                .ok_or_else(Error::invalid_request)?;
             let pubkey = verify_pubkey(&pubkey_str)?;
 
             let config = config.unwrap_or_default();
@@ -3873,8 +6336,8 @@ pub mod rpc_full {
             if !skip_preflight {
                 verify_transaction(&transaction)?;
 
-                if !meta.config.skip_preflight_health_check {
-                    match meta.health.check() {
+                if !meta.config().skip_preflight_health_check {
+                    match meta.health().check() {
                         RpcHealthStatus::Ok => (),
                         RpcHealthStatus::Unknown => {
                             inc_new_counter_info!("rpc-send-tx_health-unknown", 1);
@@ -4724,8 +7187,8 @@ pub mod tests {
     }
 
     struct RpcHandler {
-        io: MetaIoHandler<JsonRpcRequestProcessor>,
-        meta: JsonRpcRequestProcessor,
+        io: MetaIoHandler<LiveJsonRpcRequestProcessor>,
+        meta: LiveJsonRpcRequestProcessor,
         identity: Pubkey,
         mint_keypair: Keypair,
         leader_vote_keypair: Arc<Keypair>,
@@ -8901,7 +11364,7 @@ pub mod tests {
             Error::invalid_params(format!(
                 "base58 encoded solana_transaction::Transaction too large: {tx58_len} bytes (max: encoded/raw {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
             )
-        ));
+            ));
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         let tx64_len = tx64.len();
@@ -8911,7 +11374,7 @@ pub mod tests {
             Error::invalid_params(format!(
                 "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: encoded/raw {MAX_BASE64_SIZE}/{PACKET_DATA_SIZE})",
             )
-        ));
+            ));
 
         let too_big = PACKET_DATA_SIZE + 1;
         let tx_ser = vec![0x00u8; too_big];

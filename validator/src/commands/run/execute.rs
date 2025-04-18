@@ -668,6 +668,7 @@ pub fn execute(
                 usize
             )),
             skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
+            test_request_processor: false,
         },
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),

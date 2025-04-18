@@ -9383,6 +9383,7 @@ version = "2.3.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "async-trait",
  "base64 0.22.1",
  "bincode",
  "bs58",
