@@ -8,14 +8,13 @@ use {
         WALLCLOCK_TIME,
     },
     agave_feature_set::{self as feature_set, FeatureSet},
-    rand0_7::prelude::*,
-    solana_account::{state_traits::StateMut, PROGRAM_OWNERS},
+    solana_account::PROGRAM_OWNERS,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_fee_structure::FeeDetails,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader, bpf_loader_upgradeable,
+        bpf_loader_upgradeable,
         clock::Slot,
         compute_budget::ComputeBudgetInstruction,
         entrypoint::MAX_PERMITTED_DATA_INCREASE,
@@ -2640,7 +2639,10 @@ fn svm_metrics_accumulation() {
 
 // NOTE this could be moved to its own file in the future, but it requires a total refactor of the test runner
 mod balance_collector {
-    use {super::*, test_case::test_case};
+    use {
+        super::*, rand0_7::prelude::*, solana_account::state_traits::StateMut,
+        solana_sdk::bpf_loader, test_case::test_case,
+    };
 
     // this could be part of mock_bank but so far nothing but this uses it
     static SPL_TOKEN_BYTES: &[u8] =
