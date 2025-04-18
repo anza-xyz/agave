@@ -63,6 +63,7 @@ impl Default for Version {
             minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
             patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
             commit: compute_commit(option_env!("CI_COMMIT"))
+                .or(compute_commit(option_env!("GIT_COMMIT_HASH")))
                 .unwrap_or_else(|| thread_rng().gen::<u32>()),
             feature_set,
             // Other client implementations need to modify this line.
