@@ -369,7 +369,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // if we abort the batch and balance recording is enabled, we wipe the records
                     // this is much better than returning a partial balance set
                     // also much better than pausing abort to load every account for every remaining transaction
-                    // upstream must handle this case itself
+                    // svm consumers must handle the None case themselves
                     balance_collector: None,
                 };
             }

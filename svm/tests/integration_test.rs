@@ -45,7 +45,6 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::TransactionReturnData,
     solana_type_overrides::sync::{Arc, RwLock},
-    spl_generic_token::{token, token_2022},
     std::collections::HashMap,
     test_case::test_case,
 };
@@ -2640,8 +2639,12 @@ fn svm_metrics_accumulation() {
 // NOTE this could be moved to its own file in the future, but it requires a total refactor of the test runner
 mod balance_collector {
     use {
-        super::*, rand0_7::prelude::*, solana_account::state_traits::StateMut,
-        solana_sdk::bpf_loader, test_case::test_case,
+        super::*,
+        rand0_7::prelude::*,
+        solana_account::state_traits::StateMut,
+        solana_sdk::bpf_loader,
+        spl_generic_token::{token, token_2022},
+        test_case::test_case,
     };
 
     // this could be part of mock_bank but so far nothing but this uses it
@@ -2650,9 +2653,9 @@ mod balance_collector {
 
     const STARTING_BALANCE: u64 = LAMPORTS_PER_SOL * 100;
 
-    // a helped for construction a transfer instruction agnostic over system/token
-    // it also pulls double duty as a record of what the *result* of a transfer should have been
-    // so we can make one, gen the instruction, change it to fail, change the record to amount 0
+    // a helper for constructing a transfer instruction, agnostic over system/token
+    // it also pulls double duty as a record of what the *result* of a transfer should be
+    // so we can instantiate a Transfer, gen the instruction, change it to fail, change the record to amount 0
     // and then the final test confirms the pre/post balances are unchanged with no special casing
     #[derive(Debug, Default)]
     struct Transfer {
