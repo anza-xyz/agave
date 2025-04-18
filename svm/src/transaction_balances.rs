@@ -69,7 +69,7 @@ impl BalanceCollector {
 
     // gather native lamport balances for all accounts
     // and token balances for valid, initialized token accounts with valid, initialized mints
-    fn collect_and_return_balances<CB: TransactionProcessingCallback>(
+    fn collect_balances<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
@@ -80,6 +80,7 @@ impl BalanceCollector {
         let has_token_program = transaction.account_keys().iter().any(is_known_spl_token_id);
 
         for (index, key) in transaction.account_keys().iter().enumerate() {
+            // we load as read-only to avoid triggering a bad account inspection
             let Some(account) = account_loader
                 .load_account(key, false)
                 .map(|loaded| loaded.account)
@@ -113,9 +114,7 @@ impl BalanceCollectionRoutines for BalanceCollector {
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
     ) {
-        let (native_balances, token_balances) =
-            self.collect_and_return_balances(account_loader, transaction);
-
+        let (native_balances, token_balances) = self.collect_balances(account_loader, transaction);
         self.native_pre.push(native_balances);
         self.token_pre.push(token_balances);
     }
@@ -125,9 +124,7 @@ impl BalanceCollectionRoutines for BalanceCollector {
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
     ) {
-        let (native_balances, token_balances) =
-            self.collect_and_return_balances(account_loader, transaction);
-
+        let (native_balances, token_balances) = self.collect_balances(account_loader, transaction);
         self.native_post.push(native_balances);
         self.token_post.push(token_balances);
     }
@@ -180,6 +177,7 @@ impl SvmTokenInfo {
             amount,
         } = generic_token::Account::unpack(account.data(), &program_id)?;
 
+        // we load as read-only to avoid triggering a bad account inspection
         let mint_account = account_loader.load_account(&mint, false)?.account;
         if *mint_account.owner() != program_id {
             return None;
