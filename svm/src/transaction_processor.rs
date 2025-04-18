@@ -366,6 +366,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     processing_results: (0..sanitized_txs.len())
                         .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
                         .collect(),
+                    // if we abort the batch and balance recording is enabled, we wipe the records
+                    // this is much better than returning a partial balance set
+                    // also much better than pausing abort to load every account for every remaining transaction
+                    // upstream must handle this case itself
                     balance_collector: None,
                 };
             }
