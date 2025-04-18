@@ -365,7 +365,7 @@ impl Vote {
     }
 
     /// New random Vote for tests and benchmarks.
-    fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
+    pub fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         Self {
             from: pubkey.unwrap_or_else(solana_pubkey::new_rand),
             transaction: Transaction::default(),

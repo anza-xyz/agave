@@ -10976,6 +10976,8 @@ dependencies = [
  "solana-sdk",
  "solana-streamer",
  "solana-tls-utils",
+ "solana-vote",
+ "solana-vote-program",
  "static_assertions",
  "test-case",
  "thiserror 2.0.12",

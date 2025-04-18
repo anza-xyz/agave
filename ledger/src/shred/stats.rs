@@ -19,6 +19,10 @@ pub struct ProcessShredsStats {
     pub coding_send_elapsed: u64,
     pub get_leader_schedule_elapsed: u64,
     pub coalesce_elapsed: u64,
+    pub coalesce_exited_hit_max: u64,
+    pub coalesce_exited_tightly_packed: u64,
+    pub coalesce_exited_slot_ended: u64,
+    pub coalesce_exited_rcv_timeout: u64,
     // Histogram count of num_data_shreds obtained from serializing entries
     // counted in 5 buckets.
     num_data_shreds_hist: [usize; 5],
@@ -188,6 +192,10 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
             coding_send_elapsed,
             get_leader_schedule_elapsed,
             coalesce_elapsed,
+            coalesce_exited_hit_max,
+            coalesce_exited_tightly_packed,
+            coalesce_exited_slot_ended,
+            coalesce_exited_rcv_timeout,
             num_data_shreds_hist,
             num_extant_slots,
             err_unknown_chained_merkle_root,
@@ -209,6 +217,10 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
         self.coding_send_elapsed += coding_send_elapsed;
         self.get_leader_schedule_elapsed += get_leader_schedule_elapsed;
         self.coalesce_elapsed += coalesce_elapsed;
+        self.coalesce_exited_hit_max += coalesce_exited_hit_max;
+        self.coalesce_exited_tightly_packed += coalesce_exited_tightly_packed;
+        self.coalesce_exited_slot_ended += coalesce_exited_slot_ended;
+        self.coalesce_exited_rcv_timeout += coalesce_exited_rcv_timeout;
         self.num_extant_slots += num_extant_slots;
         self.err_unknown_chained_merkle_root += err_unknown_chained_merkle_root;
         self.data_buffer_residual += data_buffer_residual;

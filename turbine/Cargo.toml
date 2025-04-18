@@ -49,6 +49,8 @@ assert_matches = { workspace = true }
 bs58 = { workspace = true }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote = { workspace = true }
+solana-vote-program = { workspace = true }
 test-case = { workspace = true }
 
 [[bench]]
