@@ -121,17 +121,16 @@ pub trait StorableAccounts<'a>: Sync {
         index: usize,
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
-        self.account(index, |account| {
-            callback(if account.lamports() != 0 {
-                account
-            } else {
-                // preserve the pubkey, but use a default value for the account
-                AccountForStorage::AddressAndAccount((
-                    account.pubkey(),
-                    &DEFAULT_ACCOUNT_SHARED_DATA,
-                ))
-            })
-        })
+        // Calling `self.account` may be expensive if backed by disk storage.
+        // Check if the account is zero lamports first.
+        if self.is_zero_lamport(index) {
+            callback(AccountForStorage::AddressAndAccount((
+                self.pubkey(index),
+                &DEFAULT_ACCOUNT_SHARED_DATA,
+            )))
+        } else {
+            self.account(index, callback)
+        }
     }
     // current slot for account at 'index'
     fn slot(&self, index: usize) -> Slot;
