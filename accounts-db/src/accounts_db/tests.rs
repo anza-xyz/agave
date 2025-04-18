@@ -1848,11 +1848,11 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     let pubkey2 = solana_pubkey::new_rand();
 
     // Set up account to be added to secondary index
-    const INITIALIZED_OFFSET: usize = 108;
+    const SPL_TOKEN_INITIALIZED_OFFSET: usize = 108;
     let mint_key = Pubkey::new_unique();
     let mut account_data_with_mint = vec![0; spl_generic_token::token::Account::get_packed_len()];
     account_data_with_mint[..PUBKEY_BYTES].clone_from_slice(&(mint_key.to_bytes()));
-    account_data_with_mint[INITIALIZED_OFFSET] = 1;
+    account_data_with_mint[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
 
     let mut normal_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     normal_account.set_owner(spl_generic_token::token::id());
