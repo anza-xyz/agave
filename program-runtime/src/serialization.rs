@@ -97,20 +97,28 @@ impl Serializer {
             self.write_all(account.get_data());
             vm_data_addr
         } else {
-            self.push_region(true);
+            self.push_region();
             let vaddr = self.vaddr;
-            if !account.get_data().is_empty() {
-                let writable = account.can_data_be_changed().is_ok();
-                let shared = account.is_shared();
-                let mut new_region = if writable && !shared {
+            let address_space_reserved_for_account = if self.aligned {
+                account
+                    .get_data()
+                    .len()
+                    .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+            } else {
+                account.get_data().len()
+            };
+            if address_space_reserved_for_account > 0 {
+                let can_data_be_changed = account.can_data_be_changed().is_ok();
+                let mut new_region = if can_data_be_changed && !account.is_shared() {
                     MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
                 } else {
                     MemoryRegion::new_readonly(account.get_data(), self.vaddr)
                 };
-                if writable && shared {
-                    new_region.cow_callback_payload = account.get_index_in_transaction() as u32;
+                if can_data_be_changed {
+                    new_region.cow_callback_payload = (account.get_index_in_transaction() as u32)
+                        | (address_space_reserved_for_account as u32).wrapping_shl(8);
                 }
-                self.vaddr += new_region.len;
+                self.vaddr += address_space_reserved_for_account as u64;
                 self.regions.push(new_region);
             }
             vaddr
@@ -128,37 +136,27 @@ impl Serializer {
                 // padding and shift the start of the next region, so that once
                 // vm_addr is aligned, the corresponding host_addr is aligned
                 // too.
-                self.fill_write(MAX_PERMITTED_DATA_INCREASE + BPF_ALIGN_OF_U128, 0)
+                self.fill_write(BPF_ALIGN_OF_U128, 0)
                     .map_err(|_| InstructionError::InvalidArgument)?;
                 self.region_start += BPF_ALIGN_OF_U128.saturating_sub(align_offset);
-                // put the realloc padding in its own region
-                self.push_region(account.can_data_be_changed().is_ok());
             }
         }
 
         Ok(vm_data_addr)
     }
 
-    fn push_region(&mut self, writable: bool) {
+    fn push_region(&mut self) {
         let range = self.region_start..self.buffer.len();
-        let region = if writable {
-            MemoryRegion::new_writable(
-                self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
-                self.vaddr,
-            )
-        } else {
-            MemoryRegion::new_readonly(
-                self.buffer.as_slice().get(range.clone()).unwrap(),
-                self.vaddr,
-            )
-        };
-        self.regions.push(region);
+        self.regions.push(MemoryRegion::new_writable(
+            self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
+            self.vaddr,
+        ));
         self.region_start = range.end;
         self.vaddr += range.len() as u64;
     }
 
     fn finish(mut self) -> (AlignedMemory<HOST_ALIGN>, Vec<MemoryRegion>) {
-        self.push_region(true);
+        self.push_region();
         debug_assert_eq!(self.region_start, self.buffer.len());
         (self.buffer, self.regions)
     }
@@ -444,10 +442,11 @@ fn serialize_parameters_aligned(
                 + size_of::<Pubkey>() // owner
                 + size_of::<u64>()  // lamports
                 + size_of::<u64>()  // data len
-                + MAX_PERMITTED_DATA_INCREASE
                 + size_of::<u64>(); // rent epoch
                 if copy_account_data {
-                    size += data_len + (data_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
+                    size += data_len
+                        + MAX_PERMITTED_DATA_INCREASE
+                        + (data_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
                 } else {
                     size += BPF_ALIGN_OF_U128;
                 }
@@ -571,36 +570,20 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                     _ => {}
                 }
                 start += pre_len; // data
+                start += MAX_PERMITTED_DATA_INCREASE; // realloc padding
             } else {
                 // See Serializer::write_account() as to why we have this
                 // padding before the realloc region here.
                 start += BPF_ALIGN_OF_U128.saturating_sub(alignment_offset);
-                let data = buffer
-                    .get(start..start + MAX_PERMITTED_DATA_INCREASE)
-                    .ok_or(InstructionError::InvalidArgument)?;
                 match borrowed_account
                     .can_data_be_resized(post_len)
                     .and_then(|_| borrowed_account.can_data_be_changed())
                 {
-                    Ok(()) => {
-                        borrowed_account.set_data_length(post_len)?;
-                        let allocated_bytes = post_len.saturating_sub(pre_len);
-                        if allocated_bytes > 0 {
-                            borrowed_account
-                                .get_data_mut()?
-                                .get_mut(pre_len..pre_len.saturating_add(allocated_bytes))
-                                .ok_or(InstructionError::InvalidArgument)?
-                                .copy_from_slice(
-                                    data.get(0..allocated_bytes)
-                                        .ok_or(InstructionError::InvalidArgument)?,
-                                );
-                        }
-                    }
+                    Ok(()) => borrowed_account.set_data_length(post_len)?,
                     Err(err) if borrowed_account.get_data().len() != post_len => return Err(err),
                     _ => {}
                 }
             }
-            start += MAX_PERMITTED_DATA_INCREASE;
             start += alignment_offset;
             start += size_of::<u64>(); // rent_epoch
             if borrowed_account.get_owner().to_bytes() != owner {
@@ -1337,7 +1320,7 @@ mod tests {
         let mut mem = AlignedMemory::zero_filled(len);
         for region in regions {
             let host_slice = unsafe {
-                slice::from_raw_parts(region.host_addr.get() as *const u8, region.len as usize)
+                slice::from_raw_parts(region.host_addr as *const u8, region.len as usize)
             };
             mem.as_slice_mut()[(region.vm_addr - MM_INPUT_START) as usize..][..region.len as usize]
                 .copy_from_slice(host_slice)
