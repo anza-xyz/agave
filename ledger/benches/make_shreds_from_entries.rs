@@ -3,7 +3,7 @@ use {
     criterion::{black_box, criterion_group, criterion_main, Criterion},
     rand::Rng,
     solana_entry::entry::Entry,
-    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+    solana_ledger::shred::{self, ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     solana_sdk::{
         hash::Hash, packet::PACKET_DATA_SIZE, pubkey::Pubkey, signer::keypair::Keypair,
         transaction::Transaction,
@@ -123,6 +123,71 @@ fn run_make_shreds_from_entries(
     });
 }
 
+fn run_recover_shreds(
+    name: &str,
+    c: &mut Criterion,
+    num_packets: usize,
+    num_code: usize,
+    is_last_in_slot: bool,
+) {
+    let mut rng = rand::thread_rng();
+    let slot = 315_892_061 + rng.gen_range(0..=100_000);
+    let parent_offset = rng.gen_range(1..=u16::MAX);
+    let shredder = Shredder::new(
+        slot,
+        slot - u64::from(parent_offset), // parent_slot
+        rng.gen_range(0..64),            // reference_tick
+        rng.gen(),                       // shred_version
+    )
+    .unwrap();
+    let keypair = Keypair::new();
+    let data_size = num_packets * PACKET_DATA_SIZE;
+    let entries = make_dummy_entries(&mut rng, data_size);
+    let chained_merkle_root = Some(make_dummy_hash(&mut rng));
+    let reed_solomon_cache = ReedSolomonCache::default();
+    let mut stats = ProcessShredsStats::default();
+    let (data, code) = make_shreds_from_entries(
+        &mut rng,
+        &shredder,
+        &keypair,
+        &entries,
+        is_last_in_slot,
+        chained_merkle_root,
+        &reed_solomon_cache,
+        &mut stats,
+    );
+    let fec_set_index = data[0].fec_set_index();
+    let mut data: Vec<_> = data
+        .into_iter()
+        .filter(|shred| shred.fec_set_index() == fec_set_index)
+        .collect();
+    let mut code: Vec<_> = code
+        .into_iter()
+        .filter(|shred| shred.fec_set_index() == fec_set_index)
+        .collect();
+    let num_code = num_code.min(code.len());
+    for _ in 0..num_code.min(data.len()) {
+        let k = rng.gen_range(0..data.len());
+        data.remove(k);
+    }
+    for i in 0..num_code {
+        let j = rng.gen_range(i..code.len());
+        code.swap(i, j);
+    }
+    code.sort_unstable_by_key(|shred| shred.index());
+    let mut shreds = data;
+    shreds.extend(code);
+    c.bench_function(name, |b| {
+        b.iter(|| {
+            let recovered_shreds = shred::recover(shreds.clone(), &reed_solomon_cache)
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            black_box(recovered_shreds);
+        })
+    });
+}
+
 fn bench_make_shreds_from_entries(c: &mut Criterion) {
     for is_last_in_slot in [false, true] {
         for num_packets in [16, 20, 24, 28, 32, 48, 64, 96, 128, 256] {
@@ -136,5 +201,25 @@ fn bench_make_shreds_from_entries(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_make_shreds_from_entries,);
+fn bench_recover_shreds(c: &mut Criterion) {
+    for is_last_in_slot in [false, true] {
+        for num_packets in [28, 32, 48, 56] {
+            for num_code in [1, 8, 16, 32] {
+                let name = format!(
+                    "bench_recover_shreds_{}{}_{}",
+                    if is_last_in_slot { "last_" } else { "" },
+                    num_packets,
+                    num_code
+                );
+                run_recover_shreds(&name, c, num_packets, num_code, is_last_in_slot);
+            }
+        }
+    }
+}
+
+criterion_group!(
+    benches,
+    bench_make_shreds_from_entries,
+    bench_recover_shreds
+);
 criterion_main!(benches);

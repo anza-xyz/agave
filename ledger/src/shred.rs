@@ -781,7 +781,7 @@ impl TryFrom<u8> for ShredVariant {
     }
 }
 
-pub(crate) fn recover(
+pub fn recover(
     shreds: impl IntoIterator<Item = Shred>,
     reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<impl Iterator<Item = Result<Shred, Error>>, Error> {
