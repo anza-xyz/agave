@@ -34,7 +34,6 @@ solana-vote-program = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
 rand = { workspace = true }
-serial_test = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-entry = { workspace = true }
 solana-keypair = { workspace = true }
