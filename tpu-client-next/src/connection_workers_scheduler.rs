@@ -16,12 +16,16 @@ use {
     log::*,
     quinn::Endpoint,
     solana_keypair::Keypair,
+    solana_tls_utils::tls_client_config_builder,
     std::{
         net::{SocketAddr, UdpSocket},
-        sync::Arc,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
     },
     thiserror::Error,
-    tokio::sync::mpsc,
+    tokio::sync::{mpsc, watch},
     tokio_util::sync::CancellationToken,
 };
 pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
@@ -132,6 +136,12 @@ impl From<StakeIdentity> for QuicClientCertificate {
     }
 }
 
+impl StakeIdentity {
+    pub fn as_certificate(&self) -> &QuicClientCertificate {
+        &self.0
+    }
+}
+
 /// The [`WorkersBroadcaster`] trait defines a customizable mechanism for
 /// sending transaction batches to workers corresponding to the provided list of
 /// addresses. Implementations of this trait are used by the
@@ -149,6 +159,7 @@ pub trait WorkersBroadcaster {
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
+        generation: u64,
     ) -> Result<(), ConnectionWorkersSchedulerError>;
 }
 
@@ -184,10 +195,15 @@ impl ConnectionWorkersScheduler {
     pub async fn run(
         self,
         config: ConnectionWorkersSchedulerConfig,
+        update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
         cancel: CancellationToken,
     ) -> Result<Self, ConnectionWorkersSchedulerError> {
-        self.run_with_broadcaster::<NonblockingBroadcaster>(config, cancel)
-            .await
+        self.run_with_broadcaster::<NonblockingBroadcaster>(
+            update_certificate_receiver,
+            config,
+            cancel,
+        )
+        .await
     }
 
     /// Starts the scheduler, which manages the distribution of transactions to
@@ -196,15 +212,13 @@ impl ConnectionWorkersScheduler {
     ///
     /// Runs the main loop that handles worker scheduling and management for
     /// connections. Returns the error quic statistics per connection address or
-    /// an error along with receiver for transactions. The receiver returned
-    /// back to the user because in some cases we need to re-utilize the same
-    /// receiver for the new scheduler. For example, this happens when the
-    /// identity for the validator is updated.
+    /// an error along with receiver for transactions.
     ///
     /// Importantly, if some transactions were not delivered due to network
     /// problems, they will not be retried when the problem is resolved.
     pub async fn run_with_broadcaster<Broadcaster: WorkersBroadcaster>(
         mut self,
+        mut update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
         ConnectionWorkersSchedulerConfig {
             bind,
             stake_identity,
@@ -217,6 +231,33 @@ impl ConnectionWorkersScheduler {
         cancel: CancellationToken,
     ) -> Result<Self, ConnectionWorkersSchedulerError> {
         let endpoint = Self::setup_endpoint(bind, stake_identity)?;
+
+        let connection_gen = Arc::new(AtomicU64::new(0));
+        tokio::spawn({
+            let cancel = cancel.clone();
+            let connection_gen = connection_gen.clone();
+            let mut endpoint = endpoint.clone();
+            async move {
+                loop {
+                    tokio::select! {
+                        _ = update_certificate_receiver.changed() => {
+                            let stake_identity = update_certificate_receiver.borrow_and_update();
+                            let client_certificate = match stake_identity.as_ref() {
+                                Some(identity) => &identity.as_certificate(),
+                                None => &QuicClientCertificate::new(None),
+                            };
+
+                            let client_config = create_client_config(client_certificate);
+                            endpoint.set_default_client_config(client_config);
+                            connection_gen.fetch_add(1, Ordering::Relaxed);
+                        }
+                        _ = cancel.cancelled() => {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
 
@@ -243,21 +284,30 @@ impl ConnectionWorkersScheduler {
             // add future leaders to the cache to hide the latency of opening
             // the connection.
             for peer in connect_leaders {
-                if !workers.contains(&peer) {
+                let current_connection_gen = connection_gen.load(Ordering::Relaxed);
+                if !workers.contains_and_valid(&peer, current_connection_gen) {
+                    let current_connection_gen = connection_gen.load(Ordering::Relaxed);
                     let worker = Self::spawn_worker(
                         &endpoint,
                         &peer,
                         worker_channel_size,
                         skip_check_transaction_age,
                         max_reconnect_attempts,
+                        current_connection_gen,
                         self.stats.clone(),
                     );
                     maybe_shutdown_worker(workers.push(peer, worker));
                 }
             }
 
-            if let Err(error) =
-                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
+            let current_connection_gen = connection_gen.load(Ordering::Relaxed);
+            if let Err(error) = Broadcaster::send_to_workers(
+                &mut workers,
+                &send_leaders,
+                transaction_batch,
+                current_connection_gen,
+            )
+            .await
             {
                 last_error = Some(error);
                 break;
@@ -283,7 +333,7 @@ impl ConnectionWorkersScheduler {
             Some(identity) => identity.into(),
             None => QuicClientCertificate::new(None),
         };
-        let client_config = create_client_config(client_certificate);
+        let client_config = create_client_config(&client_certificate);
         let endpoint = create_client_endpoint(bind, client_config)?;
         Ok(endpoint)
     }
@@ -295,6 +345,7 @@ impl ConnectionWorkersScheduler {
         worker_channel_size: usize,
         skip_check_transaction_age: bool,
         max_reconnect_attempts: usize,
+        generation: u64,
         stats: Arc<SendTransactionStats>,
     ) -> WorkerInfo {
         let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
@@ -313,7 +364,7 @@ impl ConnectionWorkersScheduler {
             worker.run().await;
         });
 
-        WorkerInfo::new(txs_sender, handle, cancel)
+        WorkerInfo::new(txs_sender, handle, generation, cancel)
     }
 }
 
@@ -328,9 +379,10 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
+        generation: u64,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         for new_leader in leaders {
-            if !workers.contains(new_leader) {
+            if !workers.contains_and_valid(new_leader, generation) {
                 warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
                 continue;
             }

@@ -41,7 +41,10 @@ use {
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::{runtime::Handle as RuntimeHandle, sync::mpsc},
+    tokio::{
+        runtime::Handle as RuntimeHandle,
+        sync::{mpsc, watch},
+    },
     tokio_util::sync::CancellationToken,
 };
 
@@ -547,7 +550,13 @@ impl TpuClientNextClient {
             METRICS_REPORTING_INTERVAL,
             cancel.clone(),
         ));
-        let _handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
+        // For now _update_certificate_sender is unused, will be implemented later.
+        let (_update_certificate_sender, update_certificate_receiver) = watch::channel(None);
+        let _handle = runtime_handle.spawn(scheduler.run(
+            config,
+            update_certificate_receiver,
+            cancel.clone(),
+        ));
         Self { sender }
     }
 

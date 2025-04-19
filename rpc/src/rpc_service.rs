@@ -503,7 +503,7 @@ impl JsonRpcService {
                     config.send_transaction_service_config,
                     config.max_slots,
                     config.leader_schedule_cache,
-                    client.clone(),
+                    client,
                     config.max_complete_transaction_status_slot,
                     config.max_complete_rewards_slot,
                     config.prioritization_fee_cache,
