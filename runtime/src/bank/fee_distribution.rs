@@ -28,6 +28,18 @@ enum DepositFeeError {
     InvalidAccountOwner,
 }
 
+#[derive(Default)]
+pub struct FeeDistribution {
+    deposit: u64,
+    burn: u64,
+}
+
+impl FeeDistribution {
+    pub fn get_deposit(&self) -> u64 {
+        self.deposit
+    }
+}
+
 impl Bank {
     // Distribute collected transaction fees for this slot to collector_id (= current leader).
     //
@@ -50,12 +62,11 @@ impl Bank {
             return;
         }
 
-        let (deposit, mut burn) = self.calculate_reward_and_burn_fee_details(&fee_details);
+        let FeeDistribution { deposit, burn } =
+            self.calculate_reward_and_burn_fee_details(&fee_details);
 
-        if deposit > 0 {
-            self.deposit_or_burn_fee(deposit, &mut burn);
-        }
-        self.capitalization.fetch_sub(burn, Relaxed);
+        let total_burn = self.deposit_or_burn_fee(deposit).saturating_add(burn);
+        self.capitalization.fetch_sub(total_burn, Relaxed);
     }
 
     pub fn calculate_reward_for_transaction(
@@ -72,37 +83,43 @@ impl Bank {
             fee_budget_limits.prioritization_fee,
             FeeFeatures::from(self.feature_set.as_ref()),
         );
-        let (reward, _burn) =
-            self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details));
+        let FeeDistribution {
+            deposit: reward,
+            burn: _,
+        } = self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details));
         reward
     }
 
     pub fn calculate_reward_and_burn_fee_details(
         &self,
         fee_details: &CollectorFeeDetails,
-    ) -> (u64, u64) {
-        let (deposit, burn) = if fee_details.transaction_fee != 0 {
-            self.burn_transaction_fee(fee_details.transaction_fee)
-        } else {
-            (0, 0)
-        };
-        (deposit.saturating_add(fee_details.priority_fee), burn)
-    }
+    ) -> FeeDistribution {
+        if fee_details.transaction_fee == 0 {
+            return FeeDistribution::default();
+        }
 
-    fn burn_transaction_fee(&self, fees: u64) -> (u64, u64) {
-        let burned = fees * self.burn_percent() / 100;
-        (fees - burned, burned)
+        let burn = fee_details.transaction_fee * self.burn_percent() / 100;
+        let deposit = fee_details
+            .priority_fee
+            .saturating_add(fee_details.transaction_fee.saturating_sub(burn));
+        FeeDistribution { deposit, burn }
     }
 
     const fn burn_percent(&self) -> u64 {
         // NOTE: burn percent is statically 50%, in case it needs to change in the future,
         // burn_percent can be bank property that being passed down from bank to bank, without
         // needing fee-rate-governor
+        static_assertions::const_assert!(solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT <= 100);
+
         solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT as u64
     }
 
-    fn deposit_or_burn_fee(&self, deposit: u64, burn: &mut u64) {
-        match self.deposit_fees(&self.collector_id, deposit) {
+    fn deposit_or_burn_fee(&self, deposit: u64) -> u64 {
+        if deposit == 0 {
+            return 0;
+        }
+
+        let burn_undepositable_fund = match self.deposit_fees(&self.collector_id, deposit) {
             Ok(post_balance) => {
                 self.rewards.write().unwrap().push((
                     self.collector_id,
@@ -113,6 +130,7 @@ impl Bank {
                         commission: None,
                     },
                 ));
+                0
             }
             Err(err) => {
                 debug!(
@@ -125,9 +143,10 @@ impl Bank {
                     ("num_lamports", deposit, i64),
                     ("error", err.to_string(), String),
                 );
-                *burn = burn.saturating_add(deposit);
+                deposit
             }
-        }
+        };
+        burn_undepositable_fund
     }
 
     // Deposits fees into a specified account and if successful, returns the new balance of that account
@@ -331,6 +350,13 @@ pub mod tests {
     };
 
     #[test]
+    fn test_deposit_or_burn_zero_fee() {
+        let genesis = create_genesis_config(0);
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        assert_eq!(bank.deposit_or_burn_fee(0), 0);
+    }
+
+    #[test]
     fn test_deposit_or_burn_fee() {
         #[derive(PartialEq)]
         enum Scenario {
@@ -382,7 +408,7 @@ pub mod tests {
 
             let initial_burn = burn;
             let initial_collector_id_balance = bank.get_balance(bank.collector_id());
-            bank.deposit_or_burn_fee(deposit, &mut burn);
+            burn += bank.deposit_or_burn_fee(deposit);
             let new_collector_id_balance = bank.get_balance(bank.collector_id());
 
             if test_case.scenario != Scenario::Normal {
@@ -693,8 +719,8 @@ pub mod tests {
             transaction_fee,
             priority_fee,
         });
-        let (expected_deposit, expected_burn) = bank.burn_transaction_fee(transaction_fee);
-        let expected_rewards = expected_deposit + priority_fee;
+        let expected_burn = transaction_fee * bank.burn_percent() / 100;
+        let expected_rewards = transaction_fee - expected_burn + priority_fee;
 
         let initial_capitalization = bank.capitalization();
         let initial_collector_id_balance = bank.get_balance(bank.collector_id());

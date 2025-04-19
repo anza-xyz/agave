@@ -618,8 +618,9 @@ fn calculate_priority(
         .saturating_mul(bank.fee_structure().lamports_per_signature);
     let fee_details = FeeDetails::new(signature_fee, prioritization_fee);
 
-    let (reward, _burn) =
-        bank.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details));
+    let reward = bank
+        .calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details))
+        .get_deposit();
 
     let cost = CostModel::estimate_cost(
         transaction,
