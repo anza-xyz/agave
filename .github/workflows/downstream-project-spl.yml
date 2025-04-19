@@ -57,6 +57,8 @@ jobs:
           # - token
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - shell: bash
         run: |
@@ -86,6 +88,8 @@ jobs:
           - token-2022
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - shell: bash
         run: |
@@ -125,6 +129,8 @@ jobs:
           # - token
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - shell: bash
         run: |
