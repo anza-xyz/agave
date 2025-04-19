@@ -5,7 +5,8 @@ use solana_sdk::sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBl
 use {
     solana_bpf_loader_program::syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
-        SyscallLog, SyscallMemcpy, SyscallMemset, SyscallSetReturnData,
+        SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset,
+        SyscallSetReturnData,
     },
     solana_fee_structure::{FeeDetails, FeeStructure},
     solana_program_runtime::{
@@ -377,6 +378,12 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         .expect("Registration failed");
     loader
         .register_function("sol_memset_", SyscallMemset::vm)
+        .expect("Registration failed");
+    loader
+        .register_function("sol_memcmp_", SyscallMemcmp::vm)
+        .expect("Registration failed");
+    loader
+        .register_function("sol_memmove_", SyscallMemmove::vm)
         .expect("Registration failed");
     loader
         .register_function("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)

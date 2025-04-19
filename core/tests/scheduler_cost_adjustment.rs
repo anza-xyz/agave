@@ -109,7 +109,6 @@ impl TestSetup {
             .load_execute_and_commit_transactions(
                 &batch,
                 MAX_PROCESSING_AGE,
-                false,
                 ExecutionRecordingConfig::new_single_setting(false),
                 &mut ExecuteTimings::default(),
                 None,
