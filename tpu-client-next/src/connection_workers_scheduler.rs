@@ -16,7 +16,6 @@ use {
     log::*,
     quinn::Endpoint,
     solana_keypair::Keypair,
-    solana_tls_utils::tls_client_config_builder,
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{
@@ -194,8 +193,8 @@ impl ConnectionWorkersScheduler {
     /// over the network.
     pub async fn run(
         self,
-        config: ConnectionWorkersSchedulerConfig,
         update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
+        config: ConnectionWorkersSchedulerConfig,
         cancel: CancellationToken,
     ) -> Result<Self, ConnectionWorkersSchedulerError> {
         self.run_with_broadcaster::<NonblockingBroadcaster>(

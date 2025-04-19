@@ -1,7 +1,7 @@
 use {
     crate::{send_transaction_service_stats::SendTransactionServiceStats, tpu_info::TpuInfo},
     async_trait::async_trait,
-    log::{debug, error, warn},
+    log::warn,
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_keypair::Keypair,
@@ -13,7 +13,7 @@ use {
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
+        ConnectionWorkersScheduler,
     },
     std::{
         net::{SocketAddr, UdpSocket},
@@ -26,7 +26,6 @@ use {
             mpsc::{self},
             watch,
         },
-        task::JoinHandle as TokioJoinHandle,
     },
     tokio_util::sync::CancellationToken,
 };
@@ -48,8 +47,6 @@ pub trait TransactionClient {
 
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     fn protocol(&self) -> Protocol;
-
-    fn exit(&self);
 }
 
 pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
@@ -160,8 +157,6 @@ where
     fn protocol(&self) -> Protocol {
         self.connection_cache.protocol()
     }
-
-    fn exit(&self) {}
 }
 
 impl<T> NotifyKeyUpdate for ConnectionCacheClient<T>
@@ -232,37 +227,14 @@ where
 /// * Update the validator identity keypair and propagate the changes to the
 ///   scheduler. Most of the complexity of this structure arises from this
 ///   functionality.
+#[derive(Clone)]
 pub struct TpuClientNextClient {
     runtime_handle: Handle,
     sender: mpsc::Sender<TransactionBatch>,
     update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
     //handle: TpuClientJoinHandle,
     cancel: CancellationToken,
-    bind_socket: UdpSocket,
-    leader_forward_count: u64,
 }
-
-// Implement Clone manually because `UdpSocket` implements only `try_clone`.
-impl Clone for TpuClientNextClient {
-    fn clone(&self) -> Self {
-        let bind_socket = self
-            .bind_socket
-            .try_clone()
-            .expect("Cloning bind socket should always finish successfully.");
-
-        TpuClientNextClient {
-            runtime_handle: self.runtime_handle.clone(),
-            sender: self.sender.clone(),
-            update_certificate_sender: self.update_certificate_sender.clone(),
-            bind_socket,
-            cancel: self.cancel.clone(),
-            leader_forward_count: self.leader_forward_count,
-        }
-    }
-}
-
-type TpuClientJoinHandle =
-    TokioJoinHandle<Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>>;
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
 impl TpuClientNextClient {
@@ -293,12 +265,8 @@ impl TpuClientNextClient {
                 my_tpu_address,
                 tpu_peers,
             };
-        let config = {
-            let bind_socket = bind_socket
-                .try_clone()
-                .expect("Cloning bind socket should always finish successfully.");
-            Self::create_config(bind_socket, identity, leader_forward_count as usize)
-        };
+        let config = Self::create_config(bind_socket, identity, leader_forward_count as usize);
+
         let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
@@ -308,19 +276,17 @@ impl TpuClientNextClient {
         ));
         // TODO(klykov): store handle in structure later, when move the logic for update to separate structure.
         let _handle = runtime_handle.spawn(scheduler.run(
-            config,
             update_certificate_receiver,
+            config,
             cancel.clone(),
         ));
-        // TODO(klykov): maybe we update keypair here if only scheduler has endpoint copy
+        // TODO(klykov): maybe we update keypair here if only scheduler has endpoint copy?
         Self {
             runtime_handle,
             update_certificate_sender,
             //handle,
             cancel,
             sender,
-            leader_forward_count,
-            bind_socket,
         }
     }
 
@@ -383,23 +349,6 @@ impl TransactionClient for TpuClientNextClient {
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     fn protocol(&self) -> Protocol {
         Protocol::QUIC
-    }
-
-    fn exit(&self) {
-        self.cancel.cancel();
-        /*
-        match self.runtime_handle.block_on(handle) {
-            Ok(result) => match result {
-                Ok(scheduler) => {
-                    debug!(
-                        "tpu-client-next statistics over all the connections: {:?}",
-                        scheduler.get_stats()
-                    );
-                }
-                Err(error) => error!("tpu-client-next exits with error {error}."),
-            },
-            Err(error) => error!("Failed to join task {error}."),
-        }*/
     }
 }
 
