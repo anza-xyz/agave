@@ -696,6 +696,9 @@ pub fn signer_from_source_with_config(
                 .into())
             }
         }
+        SignerSourceKind::Bs58Keypair(keypair_str) => {
+            Ok(Box::new(Keypair::from_base58_string(keypair_str)))
+        }
     }
 }
 
@@ -830,6 +833,11 @@ pub fn resolve_signer_from_source(
             }
         }
         SignerSourceKind::Pubkey(pubkey) => Ok(Some(pubkey.to_string())),
+        SignerSourceKind::Bs58Keypair(keypair_str) => Ok(Some(
+            Keypair::from_base58_string(keypair_str)
+                .pubkey()
+                .to_string(),
+        )),
     }
 }
 
