@@ -20,6 +20,7 @@ use {
 pub struct WorkerInfo {
     sender: mpsc::Sender<TransactionBatch>,
     handle: JoinHandle<()>,
+    generation: u64,
     cancel: CancellationToken,
 }
 
@@ -27,11 +28,13 @@ impl WorkerInfo {
     pub fn new(
         sender: mpsc::Sender<TransactionBatch>,
         handle: JoinHandle<()>,
+        generation: u64,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             sender,
             handle,
+            generation,
             cancel,
         }
     }
@@ -101,8 +104,13 @@ impl WorkersCache {
         }
     }
 
-    pub fn contains(&self, peer: &SocketAddr) -> bool {
-        self.workers.contains(peer)
+    /// Checks if the worker for a given peer exists and it hasn't been
+    /// cancelled.
+    pub fn contains_and_valid(&self, peer: &SocketAddr, generation: u64) -> bool {
+        self.workers
+            .peek(peer)
+            .map(|worker| !worker.cancel.is_cancelled() && worker.generation == generation)
+            .unwrap_or(false)
     }
 
     pub(crate) fn push(
@@ -217,6 +225,7 @@ impl WorkersCache {
         self.cancel.cancel();
 
         while let Some((leader, worker)) = self.workers.pop_lru() {
+            //TODO(klykov): why not doing it using maybe_shutdown_worker?
             let res = worker.shutdown().await;
             if let Err(err) = res {
                 debug!("Error while shutting down worker for {leader}: {err}");
