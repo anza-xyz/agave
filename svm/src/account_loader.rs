@@ -316,12 +316,6 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     }
 }
 
-// HANA TODO i might want to break txpcb into two traits rather than do this
-impl<CB: TransactionProcessingCallback> solana_svm_callback::InvokeContextCallback
-    for AccountLoader<'_, CB>
-{
-}
-
 // Program loaders and parsers require a type that impls TransactionProcessingCallback,
 // because they are used in both SVM and by Bank. We impl it, with the consequence
 // that if we fall back to accounts-db, we cannot store the state for future loads.
@@ -337,6 +331,14 @@ impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for Accoun
             .0
             .and_then(|account| owners.iter().position(|entry| entry == account.owner()))
     }
+}
+
+// NOTE this is a required subtrait of TransactionProcessingCallback.
+// It may make sense to break out a second subtrait just for the above two functions,
+// but this would be a nontrivial breaking change and require careful consideration.
+impl<CB: TransactionProcessingCallback> solana_svm_callback::InvokeContextCallback
+    for AccountLoader<'_, CB>
+{
 }
 
 /// Collect rent from an account if rent is still enabled and regardless of
