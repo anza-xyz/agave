@@ -40,11 +40,12 @@ use {
         rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
-        accounts_background_service::AbsRequestSender, bank_forks::BankForks,
-        commitment::BlockCommitmentCache, prioritization_fee_cache::PrioritizationFeeCache,
+        bank_forks::BankForks, commitment::BlockCommitmentCache,
+        prioritization_fee_cache::PrioritizationFeeCache, snapshot_controller::SnapshotController,
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
+    solana_streamer::evicting_sender::EvictingSender,
     solana_turbine::retransmit_stage::RetransmitStage,
     std::{
         collections::HashSet,
@@ -55,6 +56,13 @@ use {
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
+
+/// Sets the upper bound on the number of batches stored in the retransmit
+/// stage ingress channel.
+/// Allows for a max of 16k batches of up to 64 packets each (NUM_RCVMMSGS).
+/// This translates to about 1 GB of RAM for packet storage in the worst case.
+/// In reality this means about 200K shreds since most batches are not full.
+const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
 
 pub struct Tvu {
     fetch_stage: ShredFetchStage,
@@ -145,7 +153,7 @@ impl Tvu {
         max_slots: &Arc<MaxSlots>,
         block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         wait_to_vote_slot: Option<Slot>,
-        accounts_background_request_sender: AbsRequestSender,
+        snapshot_controller: Option<Arc<SnapshotController>>,
         log_messages_bytes_limit: Option<usize>,
         connection_cache: Option<&Arc<ConnectionCache>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
@@ -191,7 +199,10 @@ impl Tvu {
         );
 
         let (verified_sender, verified_receiver) = unbounded();
-        let (retransmit_sender, retransmit_receiver) = unbounded();
+
+        let (retransmit_sender, retransmit_receiver) =
+            EvictingSender::new_bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
+
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),
             bank_forks.clone(),
@@ -282,7 +293,6 @@ impl Tvu {
         let replay_senders = ReplaySenders {
             rpc_subscriptions: rpc_subscriptions.clone(),
             slot_status_notifier,
-            accounts_background_request_sender,
             transaction_status_sender,
             block_meta_sender,
             entry_notification_sender,
@@ -328,6 +338,7 @@ impl Tvu {
             log_messages_bytes_limit,
             prioritization_fee_cache: prioritization_fee_cache.clone(),
             banking_tracer,
+            snapshot_controller,
         };
 
         let voting_service = VotingService::new(
@@ -496,7 +507,7 @@ pub mod tests {
             .expect("Expected to successfully open ledger");
         let blockstore = Arc::new(blockstore);
         let bank = bank_forks.read().unwrap().working_bank();
-        let (exit, poh_recorder, poh_service, _entry_receiver) =
+        let (exit, poh_recorder, _transaction_recorder, poh_service, _entry_receiver) =
             create_test_recorder(bank.clone(), blockstore.clone(), None, None);
         let vote_keypair = Keypair::new();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
@@ -573,7 +584,7 @@ pub mod tests {
             &Arc::new(MaxSlots::default()),
             None,
             None,
-            AbsRequestSender::default(),
+            None, // snapshot_controller
             None,
             Some(&Arc::new(ConnectionCache::new("connection_cache_test"))),
             &ignored_prioritization_fee_cache,

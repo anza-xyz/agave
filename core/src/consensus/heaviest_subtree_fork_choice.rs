@@ -1033,10 +1033,8 @@ impl HeaviestSubtreeForkChoice {
                     {
                         assert!(if new_vote_slot == old_latest_vote_slot {
                             warn!(
-                                "Got a duplicate vote for
-                                    validator: {},
-                                    slot_hash: {:?}",
-                                pubkey, new_vote_slot_hash
+                                "Got a duplicate vote for validator: {pubkey}, \
+                                 slot_hash: {new_vote_slot_hash:?}",
                             );
                             // If the slots are equal, then the new
                             // vote must be for a smaller hash

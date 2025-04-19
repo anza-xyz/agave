@@ -1,5 +1,6 @@
 use {
     crate::cli_output::CliSignatureVerificationStatus,
+    agave_reserved_account_keys::ReservedAccountKeys,
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono::{DateTime, Local, SecondsFormat, TimeZone, Utc},
     console::style,
@@ -12,7 +13,6 @@ use {
     solana_native_token::lamports_to_sol,
     solana_program::stake,
     solana_pubkey::Pubkey,
-    solana_reserved_account_keys::ReservedAccountKeys,
     solana_signature::Signature,
     solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
     solana_transaction_error::TransactionError,
@@ -817,6 +817,7 @@ mod test {
                 data: vec![1, 2, 3],
             }),
             compute_units_consumed: Some(1234u64),
+            cost_units: Some(5678),
         };
 
         let output = {
@@ -896,6 +897,7 @@ Rewards:
                 data: vec![1, 2, 3],
             }),
             compute_units_consumed: Some(2345u64),
+            cost_units: Some(5678),
         };
 
         let output = {

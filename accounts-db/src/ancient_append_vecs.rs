@@ -233,7 +233,7 @@ impl AncientSlotInfos {
         for (i, info) in self.all_infos.iter().enumerate() {
             cumulative_bytes += info.alive_bytes;
             let ancient_storages_required =
-                div_ceil(cumulative_bytes.0, tuning.ideal_storage_size) as usize;
+                cumulative_bytes.0.div_ceil(tuning.ideal_storage_size.get()) as usize;
             let storages_remaining = total_storages - i - 1;
 
             // if the remaining uncombined storages and the # of resulting
@@ -1191,25 +1191,6 @@ pub fn is_ancient(storage: &AccountsFile) -> bool {
     storage.capacity() >= get_ancient_append_vec_capacity()
 }
 
-/// Divides `x` by `y` and rounds up
-///
-/// # Notes
-///
-/// It is undefined behavior if `x + y` overflows a u64.
-/// Debug builds check this invariant, and will panic if broken.
-fn div_ceil(x: u64, y: NonZeroU64) -> u64 {
-    let y = y.get();
-    debug_assert!(
-        x.checked_add(y).is_some(),
-        "x + y must not overflow! x: {x}, y: {y}",
-    );
-    // SAFETY: The caller guaranteed `x + y` does not overflow
-    // SAFETY: Since `y` is NonZero:
-    // - we know the denominator is > 0, and thus safe (cannot have divide-by-zero)
-    // - we know `x + y` is non-zero, and thus the numerator is safe (cannot underflow)
-    x.div_ceil(y)
-}
-
 #[cfg(test)]
 pub mod tests {
     use {
@@ -1230,10 +1211,7 @@ pub mod tests {
             accounts_file::StorageAccess,
             accounts_hash::AccountHash,
             accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
-            append_vec::{
-                aligned_stored_size, AppendVec, AppendVecStoredAccountMeta,
-                MAXIMUM_APPEND_VEC_FILE_SIZE,
-            },
+            append_vec::{aligned_stored_size, AppendVec, AppendVecStoredAccountMeta},
             storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
         },
         rand::seq::SliceRandom as _,
@@ -1243,7 +1221,6 @@ pub mod tests {
         std::{collections::HashSet, ops::Range},
         strum::IntoEnumIterator,
         strum_macros::EnumIter,
-        test_case::test_case,
     };
 
     fn get_sample_storages(
@@ -2211,7 +2188,7 @@ pub mod tests {
             let account = shrink_in_progress
                 .new_storage()
                 .accounts
-                .get_stored_account_meta_callback(0, |account| {
+                .get_stored_account_callback(0, |account| {
                     assert_eq!(account.pubkey(), pk_with_2_refs);
                     account.to_account_shared_data()
                 })
@@ -2360,7 +2337,7 @@ pub mod tests {
             let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
             let accounts_shrunk_same_slot = storage
                 .accounts
-                .get_stored_account_meta_callback(0, |account| {
+                .get_stored_account_callback(0, |account| {
                     (*account.pubkey(), account.to_account_shared_data())
                 })
                 .unwrap();
@@ -3323,7 +3300,7 @@ pub mod tests {
                             .iter()
                             .map(|storage| {
                                 let mut accounts = Vec::default();
-                                storage.accounts.scan_accounts(|account| {
+                                storage.accounts.scan_accounts_stored_meta(|account| {
                                     accounts.push(AccountFromStorage::new(&account));
                                 });
                                 (storage.slot(), accounts)
@@ -3773,8 +3750,10 @@ pub mod tests {
                         }
                         1 => {
                             // non-empty slot list (but ignored) because slot_list = 1
-                            let slot_list =
-                                vec![(slot, AccountInfo::new(StorageLocation::Cached, lamports))];
+                            let slot_list = vec![(
+                                slot,
+                                AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                            )];
                             alive_accounts.add(2, &account, &slot_list);
                             assert!(alive_accounts.one_ref.accounts.is_empty());
                             assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
@@ -3786,10 +3765,13 @@ pub mod tests {
                         2 => {
                             // multiple slot list, ref_count=2, this is NOT newest alive, so many_refs_old_alive
                             let slot_list = vec![
-                                (slot, AccountInfo::new(StorageLocation::Cached, lamports)),
+                                (
+                                    slot,
+                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                                ),
                                 (
                                     slot + 1,
-                                    AccountInfo::new(StorageLocation::Cached, lamports),
+                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
                                 ),
                             ];
                             alive_accounts.add(2, &account, &slot_list);
@@ -3803,10 +3785,13 @@ pub mod tests {
                         3 => {
                             // multiple slot list, ref_count=2, this is newest
                             let slot_list = vec![
-                                (slot, AccountInfo::new(StorageLocation::Cached, lamports)),
+                                (
+                                    slot,
+                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
+                                ),
                                 (
                                     slot - 1,
-                                    AccountInfo::new(StorageLocation::Cached, lamports),
+                                    AccountInfo::new(StorageLocation::Cached, lamports == 0),
                                 ),
                             ];
                             alive_accounts.add(2, &account, &slot_list);
@@ -4003,30 +3988,5 @@ pub mod tests {
         let max_resulting_storages = tuning.max_resulting_storages.get();
         let expected_all_infos_len = max_resulting_storages * ideal_storage_size / data_size;
         assert_eq!(infos.all_infos.len(), expected_all_infos_len as usize);
-    }
-
-    #[test_case(0, 1 => 0)]
-    #[test_case(1, 1 => 1)]
-    #[test_case(2, 1 => 2)]
-    #[test_case(2, 2 => 1)]
-    #[test_case(2, 3 => 1)]
-    #[test_case(2, 4 => 1)]
-    #[test_case(3, 4 => 1)]
-    #[test_case(4, 4 => 1)]
-    #[test_case(5, 4 => 2)]
-    #[test_case(0, u64::MAX => 0)]
-    #[test_case(MAXIMUM_APPEND_VEC_FILE_SIZE - 1, MAXIMUM_APPEND_VEC_FILE_SIZE => 1)]
-    #[test_case(MAXIMUM_APPEND_VEC_FILE_SIZE + 1, MAXIMUM_APPEND_VEC_FILE_SIZE => 2)]
-    fn test_div_ceil(x: u64, y: u64) -> u64 {
-        div_ceil(x, NonZeroU64::new(y).unwrap())
-    }
-
-    #[should_panic(expected = "x + y must not overflow")]
-    #[test_case(1, u64::MAX)]
-    #[test_case(u64::MAX, 1)]
-    #[test_case(u64::MAX/2 + 2, u64::MAX/2)]
-    #[test_case(u64::MAX/2,     u64::MAX/2 + 2)]
-    fn test_div_ceil_overflow(x: u64, y: u64) {
-        div_ceil(x, NonZeroU64::new(y).unwrap());
     }
 }

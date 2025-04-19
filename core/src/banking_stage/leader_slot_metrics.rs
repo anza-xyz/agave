@@ -1,11 +1,9 @@
 use {
     super::{
         consumer::LeaderProcessedTransactionCounts,
+        latest_unprocessed_votes::VoteBatchInsertionMetrics,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
         packet_deserializer::PacketReceiverStats,
-        unprocessed_transaction_storage::{
-            InsertPacketBatchSummary, UnprocessedTransactionStorage,
-        },
     },
     solana_poh::poh_recorder::BankStart,
     solana_sdk::{clock::Slot, saturating_add_assign},
@@ -47,9 +45,6 @@ pub(crate) struct ProcessTransactionsSummary {
     /// Breakdown of all the transaction errors from transactions passed for
     /// execution
     pub error_counters: TransactionErrorMetrics,
-
-    pub min_prioritization_fees: u64,
-    pub max_prioritization_fees: u64,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -91,50 +86,6 @@ impl CommittedTransactionsCounts {
                 transaction_counts.processed_count
             );
         }
-    }
-}
-
-// Metrics describing prioritization fee information for each transaction storage before processing transactions
-#[derive(Debug, Default)]
-struct LeaderPrioritizationFeesMetrics {
-    // minimum prioritization fees in the MinMaxHeap
-    min_prioritization_fees_per_cu: u64,
-    // maximum prioritization fees in the MinMaxHeap
-    max_prioritization_fees_per_cu: u64,
-}
-
-impl LeaderPrioritizationFeesMetrics {
-    fn new(unprocessed_transaction_storage: Option<&UnprocessedTransactionStorage>) -> Self {
-        if let Some(unprocessed_transaction_storage) = unprocessed_transaction_storage {
-            Self {
-                min_prioritization_fees_per_cu: unprocessed_transaction_storage
-                    .get_min_priority()
-                    .unwrap_or_default(),
-                max_prioritization_fees_per_cu: unprocessed_transaction_storage
-                    .get_max_priority()
-                    .unwrap_or_default(),
-            }
-        } else {
-            Self::default()
-        }
-    }
-
-    fn report(&self, id: &str, slot: Slot) {
-        datapoint_info!(
-            "banking_stage-leader_prioritization_fees_info",
-            "id" => id,
-            ("slot", slot, i64),
-            (
-                "min_prioritization_fees_per_cu",
-                self.min_prioritization_fees_per_cu,
-                i64
-            ),
-            (
-                "max_prioritization_fees_per_cu",
-                self.max_prioritization_fees_per_cu,
-                i64
-            )
-        );
     }
 }
 
@@ -220,10 +171,6 @@ struct LeaderSlotPacketCountMetrics {
     // according to the cost model. These transactions are added back to the buffered queue and are
     // already counted in `self.retrayble_errored_transaction_count`.
     cost_model_throttled_transactions_count: u64,
-    // min prioritization fees for scheduled transactions
-    min_prioritization_fees: u64,
-    // max prioritization fees for scheduled transactions
-    max_prioritization_fees: u64,
 }
 
 impl LeaderSlotPacketCountMetrics {
@@ -341,16 +288,6 @@ impl LeaderSlotPacketCountMetrics {
                 self.end_of_slot_unprocessed_buffer_len,
                 i64
             ),
-            (
-                "min_prioritization_fees",
-                self.min_prioritization_fees,
-                i64
-            ),
-            (
-                "max_prioritization_fees",
-                self.max_prioritization_fees,
-                i64
-            ),
         );
     }
 }
@@ -465,19 +402,12 @@ pub(crate) struct LeaderSlotMetrics {
 
     timing_metrics: LeaderSlotTimingMetrics,
 
-    prioritization_fees_metric: LeaderPrioritizationFeesMetrics,
-
     // Used by tests to check if the `self.report()` method was called
     is_reported: bool,
 }
 
 impl LeaderSlotMetrics {
-    pub(crate) fn new(
-        id: u32,
-        slot: Slot,
-        bank_creation_time: &Instant,
-        unprocessed_transaction_storage: Option<&UnprocessedTransactionStorage>,
-    ) -> Self {
+    pub(crate) fn new(id: u32, slot: Slot, bank_creation_time: &Instant) -> Self {
         Self {
             id: id.to_string(),
             slot,
@@ -485,9 +415,6 @@ impl LeaderSlotMetrics {
             transaction_error_metrics: TransactionErrorMetrics::new(),
             vote_packet_count_metrics: VotePacketCountMetrics::new(),
             timing_metrics: LeaderSlotTimingMetrics::new(bank_creation_time),
-            prioritization_fees_metric: LeaderPrioritizationFeesMetrics::new(
-                unprocessed_transaction_storage,
-            ),
             is_reported: false,
         }
     }
@@ -499,7 +426,6 @@ impl LeaderSlotMetrics {
         report_transaction_error_metrics(&self.transaction_error_metrics, &self.id, self.slot);
         self.packet_count_metrics.report(&self.id, self.slot);
         self.vote_packet_count_metrics.report(&self.id, self.slot);
-        self.prioritization_fees_metric.report(&self.id, self.slot);
     }
 
     /// Returns `Some(self.slot)` if the metrics have been reported, otherwise returns None
@@ -571,7 +497,6 @@ impl LeaderSlotMetricsTracker {
     pub(crate) fn check_leader_slot_boundary(
         &mut self,
         bank_start: Option<&BankStart>,
-        unprocessed_transaction_storage: Option<&UnprocessedTransactionStorage>,
     ) -> MetricsTrackerAction {
         match (self.leader_slot_metrics.as_mut(), bank_start) {
             (None, None) => MetricsTrackerAction::Noop,
@@ -587,7 +512,6 @@ impl LeaderSlotMetricsTracker {
                     self.id,
                     bank_start.working_bank.slot(),
                     &bank_start.bank_creation_time,
-                    unprocessed_transaction_storage,
                 )))
             }
 
@@ -599,7 +523,6 @@ impl LeaderSlotMetricsTracker {
                         self.id,
                         bank_start.working_bank.slot(),
                         &bank_start.bank_creation_time,
-                        unprocessed_transaction_storage,
                     )))
                 } else {
                     MetricsTrackerAction::Noop
@@ -648,8 +571,6 @@ impl LeaderSlotMetricsTracker {
                 cost_model_us,
                 ref execute_and_commit_timings,
                 error_counters,
-                min_prioritization_fees,
-                max_prioritization_fees,
                 ..
             } = process_transactions_summary;
 
@@ -725,41 +646,24 @@ impl LeaderSlotMetricsTracker {
                 .cost_model_us += cost_model_us;
 
             leader_slot_metrics
-                .packet_count_metrics
-                .min_prioritization_fees = std::cmp::min(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .min_prioritization_fees,
-                *min_prioritization_fees,
-            );
-            leader_slot_metrics
-                .packet_count_metrics
-                .max_prioritization_fees = std::cmp::min(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .max_prioritization_fees,
-                *max_prioritization_fees,
-            );
-
-            leader_slot_metrics
                 .timing_metrics
                 .execute_and_commit_timings
                 .accumulate(execute_and_commit_timings);
         }
     }
 
-    pub(crate) fn accumulate_insert_packet_batches_summary(
+    pub(crate) fn accumulate_vote_batch_insertion_metrics(
         &mut self,
-        insert_packet_batches_summary: &InsertPacketBatchSummary,
+        vote_batch_insertion_metrics: &VoteBatchInsertionMetrics,
     ) {
         self.increment_exceeded_buffer_limit_dropped_packets_count(
-            insert_packet_batches_summary.total_dropped_packets() as u64,
+            vote_batch_insertion_metrics.total_dropped_packets() as u64,
         );
         self.increment_dropped_gossip_vote_count(
-            insert_packet_batches_summary.dropped_gossip_packets() as u64,
+            vote_batch_insertion_metrics.dropped_gossip_packets() as u64,
         );
         self.increment_dropped_tpu_vote_count(
-            insert_packet_batches_summary.dropped_tpu_packets() as u64
+            vote_batch_insertion_metrics.dropped_tpu_packets() as u64
         );
     }
 
@@ -1025,7 +929,7 @@ mod tests {
             ..
         } = setup_test_slot_boundary_banks();
         // Test that with no bank being tracked, and no new bank being tracked, nothing is reported
-        let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+        let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
         assert_eq!(
             mem::discriminant(&MetricsTrackerAction::Noop),
             mem::discriminant(&action)
@@ -1045,8 +949,8 @@ mod tests {
         // Test case where the thread has not detected a leader bank, and now sees a leader bank.
         // Metrics should not be reported because leader slot has not ended
         assert!(leader_slot_metrics_tracker.leader_slot_metrics.is_none());
-        let action = leader_slot_metrics_tracker
-            .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+        let action =
+            leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_poh_recorder_bank));
         assert_eq!(
             mem::discriminant(&MetricsTrackerAction::NewTracker(None)),
             mem::discriminant(&action)
@@ -1070,12 +974,12 @@ mod tests {
         {
             // Setup first_bank
             let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+                .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert reporting if slot has ended
-            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndResetTracker),
                 mem::discriminant(&action)
@@ -1088,7 +992,7 @@ mod tests {
         }
         {
             // Assert no-op if still no new bank
-            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::Noop),
                 mem::discriminant(&action)
@@ -1110,13 +1014,13 @@ mod tests {
         {
             // Setup with first_bank
             let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+                .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert nop-op if same bank
             let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+                .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::Noop),
                 mem::discriminant(&action)
@@ -1125,7 +1029,7 @@ mod tests {
         }
         {
             // Assert reporting if slot has ended
-            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndResetTracker),
                 mem::discriminant(&action)
@@ -1154,13 +1058,13 @@ mod tests {
         {
             // Setup with first_bank
             let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+                .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert reporting if new bank
             let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&next_poh_recorder_bank), None);
+                .check_leader_slot_boundary(Some(&next_poh_recorder_bank));
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndNewTracker(None)),
                 mem::discriminant(&action)
@@ -1173,7 +1077,7 @@ mod tests {
         }
         {
             // Assert reporting if slot has ended
-            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndResetTracker),
                 mem::discriminant(&action)
@@ -1201,13 +1105,13 @@ mod tests {
         {
             // Setup with next_bank
             let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&next_poh_recorder_bank), None);
+                .check_leader_slot_boundary(Some(&next_poh_recorder_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert reporting if new bank
             let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+                .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndNewTracker(None)),
                 mem::discriminant(&action)
@@ -1220,7 +1124,7 @@ mod tests {
         }
         {
             // Assert reporting if slot has ended
-            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndResetTracker),
                 mem::discriminant(&action)

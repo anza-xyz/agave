@@ -1,10 +1,9 @@
 use {
     crate::{
-        admin_rpc_service,
-        admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
+        admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
         bootstrap,
         cli::{self},
-        ledger_lockfile, lock_ledger, redirect_stderr_to_file,
+        ledger_lockfile, lock_ledger,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
@@ -46,6 +45,7 @@ use {
         },
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
+    solana_logger::redirect_stderr_to_file,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_rpc::{
@@ -94,7 +94,7 @@ pub fn execute(
     socket_addr_space: SocketAddrSpace,
     ledger_path: &Path,
     operation: Operation,
-) -> Result<(), String> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let cli::thread_args::NumThreadConfig {
         accounts_db_clean_threads,
         accounts_db_foreground_threads,
@@ -107,6 +107,7 @@ pub fn execute(
         rocksdb_compaction_threads,
         rocksdb_flush_threads,
         tvu_receive_threads,
+        tvu_retransmit_threads,
         tvu_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(matches);
 
@@ -397,7 +398,6 @@ pub fn execute(
         };
 
     let mut accounts_index_config = AccountsIndexConfig {
-        started_from_validator: true, // this is the only place this is set
         num_flush_threads: Some(accounts_index_flush_threads),
         ..AccountsIndexConfig::default()
     };
@@ -913,42 +913,55 @@ pub fn execute(
         .transpose()?
         .unwrap_or(SnapshotVersion::default());
 
-    let (full_snapshot_archive_interval_slots, incremental_snapshot_archive_interval_slots) = match (
-        !matches.is_present("no_incremental_snapshots"),
-        value_t_or_exit!(matches, "snapshot_interval_slots", u64),
-    ) {
-        (_, 0) => {
+    let (full_snapshot_archive_interval_slots, incremental_snapshot_archive_interval_slots) =
+        if matches.is_present("no_snapshots") {
             // snapshots are disabled
             (
                 DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
                 DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
             )
-        }
-        (true, incremental_snapshot_interval_slots) => {
-            // incremental snapshots are enabled
-            // use --snapshot-interval-slots for the incremental snapshot interval
-            (
-                value_t_or_exit!(matches, "full_snapshot_interval_slots", u64),
-                incremental_snapshot_interval_slots,
-            )
-        }
-        (false, full_snapshot_interval_slots) => {
-            // incremental snapshots are *disabled*
-            // use --snapshot-interval-slots for the *full* snapshot interval
-            // also warn if --full-snapshot-interval-slots was specified
-            if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
-                warn!(
-                    "Incremental snapshots are disabled, yet --full-snapshot-interval-slots was specified! \
-                     Note that --full-snapshot-interval-slots is *ignored* when incremental snapshots are disabled. \
-                     Use --snapshot-interval-slots instead.",
-                );
+        } else {
+            match (
+                !matches.is_present("no_incremental_snapshots"),
+                value_t_or_exit!(matches, "snapshot_interval_slots", u64),
+            ) {
+                (_, 0) => {
+                    // snapshots are disabled
+                    warn!(
+                        "Snapshot generation was disabled with `--snapshot-interval-slots 0`, \
+                         which is now deprecated. Use `--no-snapshots` instead.",
+                    );
+                    (
+                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+                    )
+                }
+                (true, incremental_snapshot_interval_slots) => {
+                    // incremental snapshots are enabled
+                    // use --snapshot-interval-slots for the incremental snapshot interval
+                    (
+                        value_t_or_exit!(matches, "full_snapshot_interval_slots", u64),
+                        incremental_snapshot_interval_slots,
+                    )
+                }
+                (false, full_snapshot_interval_slots) => {
+                    // incremental snapshots are *disabled*
+                    // use --snapshot-interval-slots for the *full* snapshot interval
+                    // also warn if --full-snapshot-interval-slots was specified
+                    if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
+                        warn!(
+                            "Incremental snapshots are disabled, yet --full-snapshot-interval-slots was specified! \
+                             Note that --full-snapshot-interval-slots is *ignored* when incremental snapshots are disabled. \
+                             Use --snapshot-interval-slots instead.",
+                        );
+                    }
+                    (
+                        full_snapshot_interval_slots,
+                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+                    )
+                }
             }
-            (
-                full_snapshot_interval_slots,
-                DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-            )
-        }
-    };
+        };
 
     validator_config.snapshot_config = SnapshotConfig {
         usage: if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
@@ -965,27 +978,20 @@ pub fn execute(
         snapshot_version,
         maximum_full_snapshot_archives_to_retain,
         maximum_incremental_snapshot_archives_to_retain,
-        accounts_hash_debug_verify: validator_config.accounts_db_test_hash_calculation,
         packager_thread_niceness_adj: snapshot_packager_niceness_adj,
     };
 
-    // The accounts hash interval shall match the snapshot interval
-    validator_config.accounts_hash_interval_slots = std::cmp::min(
-        full_snapshot_archive_interval_slots,
-        incremental_snapshot_archive_interval_slots,
-    );
-
     info!(
-        "Snapshot configuration: full snapshot interval: {} slots, incremental snapshot interval: {} slots",
+        "Snapshot configuration: full snapshot interval: {}, incremental snapshot interval: {}",
         if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
             "disabled".to_string()
         } else {
-            full_snapshot_archive_interval_slots.to_string()
+            format!("{full_snapshot_archive_interval_slots} slots")
         },
         if incremental_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
             "disabled".to_string()
         } else {
-            incremental_snapshot_archive_interval_slots.to_string()
+            format!("{incremental_snapshot_archive_interval_slots} slots")
         },
     );
 
@@ -1001,14 +1007,9 @@ pub fn execute(
         );
     }
 
-    if !is_snapshot_config_valid(
-        &validator_config.snapshot_config,
-        validator_config.accounts_hash_interval_slots,
-    ) {
+    if !is_snapshot_config_valid(&validator_config.snapshot_config) {
         Err(
             "invalid snapshot configuration provided: snapshot intervals are incompatible. \
-             \n\t- full snapshot interval MUST be a multiple of incremental snapshot interval \
-             (if enabled) \
              \n\t- full snapshot interval MUST be larger than incremental snapshot interval \
              (if enabled)"
                 .to_string(),
@@ -1162,7 +1163,8 @@ pub fn execute(
         bind_ip_addr: bind_address,
         public_tpu_addr,
         public_tpu_forwards_addr,
-        num_tvu_sockets: tvu_receive_threads,
+        num_tvu_receive_sockets: tvu_receive_threads,
+        num_tvu_retransmit_sockets: tvu_retransmit_threads,
         num_quic_endpoints,
     };
 

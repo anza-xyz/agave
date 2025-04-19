@@ -1,6 +1,5 @@
 pub use solana_connection_cache::connection_cache::Protocol;
 use {
-    quinn::Endpoint,
     solana_connection_cache::{
         client_connection::ClientConnection,
         connection_cache::{
@@ -16,7 +15,7 @@ use {
     solana_transaction_error::TransportResult,
     solana_udp_client::{UdpConfig, UdpConnectionManager, UdpPool},
     std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
     },
 };
@@ -79,18 +78,18 @@ impl ConnectionCache {
     pub fn new_with_client_options(
         name: &'static str,
         connection_pool_size: usize,
-        client_endpoint: Option<Endpoint>,
+        client_socket: Option<UdpSocket>,
         cert_info: Option<(&Keypair, IpAddr)>,
         stake_info: Option<(&Arc<RwLock<StakedNodes>>, &Pubkey)>,
     ) -> Self {
         // The minimum pool size is 1.
         let connection_pool_size = 1.max(connection_pool_size);
         let mut config = QuicConfig::new().unwrap();
-        if let Some(client_endpoint) = client_endpoint {
-            config.update_client_endpoint(client_endpoint);
-        }
         if let Some(cert_info) = cert_info {
             config.update_client_certificate(cert_info.0, cert_info.1);
+        }
+        if let Some(client_socket) = client_socket {
+            config.update_client_endpoint(client_socket);
         }
         if let Some(stake_info) = stake_info {
             config.set_staked_nodes(stake_info.0, stake_info.1);
@@ -200,68 +199,19 @@ mod tests {
     use {
         super::*,
         crate::connection_cache::ConnectionCache,
-        crossbeam_channel::unbounded,
-        solana_keypair::Keypair,
         solana_net_utils::bind_to_localhost,
-        solana_streamer::{
-            quic::{QuicServerParams, SpawnServerResult},
-            streamer::StakedNodes,
-        },
-        std::{
-            net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
-            sync::{
-                atomic::{AtomicBool, Ordering},
-                Arc, RwLock,
-            },
-        },
+        std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };
-
-    fn server_args() -> (UdpSocket, Arc<AtomicBool>, Keypair) {
-        (
-            bind_to_localhost().unwrap(),
-            Arc::new(AtomicBool::new(false)),
-            Keypair::new(),
-        )
-    }
 
     #[test]
     fn test_connection_with_specified_client_endpoint() {
-        // Start a response receiver:
-        let (response_recv_socket, response_recv_exit, keypair2) = server_args();
-        let (sender2, _receiver2) = unbounded();
-
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
-
-        let SpawnServerResult {
-            endpoints: mut response_recv_endpoints,
-            thread: response_recv_thread,
-            key_updater: _,
-        } = solana_streamer::quic::spawn_server(
-            "solQuicTest",
-            "quic_streamer_test",
-            response_recv_socket,
-            &keypair2,
-            sender2,
-            response_recv_exit.clone(),
-            staked_nodes,
-            QuicServerParams {
-                max_connections_per_peer: 1,
-                max_staked_connections: 10,
-                max_unstaked_connections: 10,
-                ..QuicServerParams::default()
-            },
-        )
-        .unwrap();
-
-        let response_recv_endpoint = response_recv_endpoints
-            .pop()
-            .expect("at least one endpoint");
+        let client_socket = bind_to_localhost().unwrap();
         let connection_cache = ConnectionCache::new_with_client_options(
             "connection_cache_test",
-            1,                            // connection_pool_size
-            Some(response_recv_endpoint), // client_endpoint
-            None,                         // cert_info
-            None,                         // stake_info
+            1,                   // connection_pool_size
+            Some(client_socket), // client_endpoint
+            None,                // cert_info
+            None,                // stake_info
         );
 
         // server port 1:
@@ -275,8 +225,5 @@ mod tests {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port2);
         let conn = connection_cache.get_connection(&addr);
         assert_eq!(conn.server_addr().port(), port2);
-
-        response_recv_exit.store(true, Ordering::Relaxed);
-        response_recv_thread.join().unwrap();
     }
 }

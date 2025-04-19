@@ -137,14 +137,14 @@ where
     let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
         .take(num_keys)
         .collect();
-    let accounts_data: Vec<_> = std::iter::repeat(
+    let accounts_data: Vec<_> = std::iter::repeat_n(
         Account {
             lamports: 1,
             ..Default::default()
         }
         .to_account_shared_data(),
+        num_keys,
     )
-    .take(num_keys)
     .collect();
     let storable_accounts: Vec<_> = pubkeys.iter().zip(accounts_data.iter()).collect();
     accounts.store_accounts_cached((slot, storable_accounts.as_slice()));
@@ -346,7 +346,7 @@ fn bench_sort_and_remove_dups(b: &mut Bencher) {
         // offset has to be 8 byte aligned
         let offset = (i as usize) * std::mem::size_of::<u64>();
         AccountFromStorage {
-            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i as u64),
+            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i == 0),
             data_len: i as u64,
             pubkey: Pubkey::new_from_array([i; 32]),
         }
@@ -368,7 +368,7 @@ fn bench_sort_and_remove_dups_no_dups(b: &mut Bencher) {
         // offset has to be 8 byte aligned
         let offset = (i as usize) * std::mem::size_of::<u64>();
         AccountFromStorage {
-            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i as u64),
+            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i == 0),
             data_len: i as u64,
             pubkey: Pubkey::new_unique(),
         }

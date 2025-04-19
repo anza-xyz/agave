@@ -20,10 +20,9 @@ rand = { workspace = true }
 serde = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-clock = { workspace = true }
-solana-compute-budget = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-feature-set = { workspace = true }
+solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
@@ -36,13 +35,16 @@ solana-last-restart-slot = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true, optional = true }
-solana-precompiles = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-stable-layout = { workspace = true }
+solana-svm-callback = { workspace = true }
+solana-svm-feature-set = { workspace = true }
+solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
@@ -52,8 +54,9 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-compute-budget = { workspace = true, features = ["dev-context-only-utils"] }
+solana-account-info = { workspace = true }
 solana-instruction = { workspace = true, features = ["bincode"] }
+solana-program-runtime = { path = ".", features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-transaction-context = { workspace = true, features = [
     "dev-context-only-utils",
@@ -68,11 +71,11 @@ name = "solana_program_runtime"
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
+dev-context-only-utils = []
 dummy-for-ci-check = ["metrics"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-compute-budget/frozen-abi",
 ]
 metrics = ["dep:solana-metrics"]
 shuttle-test = [

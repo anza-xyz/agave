@@ -1202,11 +1202,11 @@ fn main() {
                 .takes_value(true)
                 .value_name("BYTES")
                 .help(
-                    "Every `n` batches, create a batch of close transactions for
-                    the earliest remaining batch of accounts created.
-                    Note: Should be > 1 to avoid situations where the close \
-                    transactions will be submitted before the corresponding \
-                    create transactions have been confirmed",
+                    "Every `n` batches, create a batch of close transactions for \
+                     the earliest remaining batch of accounts created. \
+                     Note: Should be > 1 to avoid situations where the close \
+                     transactions will be submitted before the corresponding \
+                     create transactions have been confirmed",
                 ),
         )
         .arg(
@@ -1234,6 +1234,14 @@ fn main() {
             Arg::with_name("check_gossip")
                 .long("check-gossip")
                 .help("Just use entrypoint address directly"),
+        )
+        .arg(
+            Arg::with_name("shred_version")
+                .long("shred-version")
+                .takes_value(true)
+                .value_name("VERSION")
+                .requires("check_gossip")
+                .help("The shred version to use for gossip discovery"),
         )
         .arg(
             Arg::with_name("mint")
@@ -1270,7 +1278,6 @@ fn main() {
         .get_matches();
 
     let skip_gossip = !matches.is_present("check_gossip");
-
     let space = value_t!(matches, "space", u64).ok();
     let lamports = value_t!(matches, "lamports", u64).ok();
     let batch_size = value_t!(matches, "batch_size", usize).unwrap_or(4);
@@ -1315,6 +1322,22 @@ fn main() {
             eprintln!("failed to parse entrypoint address: {e}");
             exit(1)
         });
+        let shred_version: Option<u16> = if !skip_gossip {
+            if let Ok(version) = value_t!(matches, "shred_version", u16) {
+                Some(version)
+            } else {
+                Some(
+                    solana_net_utils::get_cluster_shred_version(&entrypoint_addr).unwrap_or_else(
+                        |err| {
+                            eprintln!("Failed to get shred version: {}", err);
+                            exit(1);
+                        },
+                    ),
+                )
+            }
+        } else {
+            None
+        };
 
         let rpc_addr = if !skip_gossip {
             info!("Finding cluster entry: {:?}", entrypoint_addr);
@@ -1326,7 +1349,7 @@ fn main() {
                 None,                    // find_nodes_by_pubkey
                 Some(&entrypoint_addr),  // find_node_by_gossip_addr
                 None,                    // my_gossip_addr
-                0,                       // my_shred_version
+                shred_version.unwrap(),  // my_shred_version
                 SocketAddrSpace::Unspecified,
             )
             .unwrap_or_else(|err| {

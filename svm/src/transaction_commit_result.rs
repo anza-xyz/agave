@@ -1,8 +1,8 @@
 use {
     crate::transaction_execution_result::TransactionLoadedAccountsStats,
-    solana_fee_structure::FeeDetails, solana_rent_debits::RentDebits,
-    solana_sdk::inner_instruction::InnerInstructionsList,
-    solana_transaction_context::TransactionReturnData, solana_transaction_error::TransactionResult,
+    solana_fee_structure::FeeDetails, solana_message::inner_instruction::InnerInstructionsList,
+    solana_rent_debits::RentDebits, solana_transaction_context::TransactionReturnData,
+    solana_transaction_error::TransactionResult,
 };
 
 pub type TransactionCommitResult = TransactionResult<CommittedTransaction>;

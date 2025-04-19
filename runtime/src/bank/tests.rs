@@ -18,6 +18,7 @@ use {
         stakes::InvalidCacheEntryReason,
         status_cache::MAX_CACHE_ENTRIES,
     },
+    agave_feature_set::{self as feature_set, FeatureSet},
     agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
     assert_matches::assert_matches,
     crossbeam_channel::{bounded, unbounded},
@@ -36,15 +37,16 @@ use {
         ancestors::Ancestors,
     },
     solana_compute_budget::{
-        compute_budget::ComputeBudget,
-        compute_budget_limits::{self, ComputeBudgetLimits, MAX_COMPUTE_UNIT_LIMIT},
+        compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
     },
-    solana_cost_model::block_cost_limits::{MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0207},
-    solana_feature_set::{self as feature_set, FeatureSet},
+    solana_cost_model::block_cost_limits::{
+        MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0207, MAX_BLOCK_UNITS_SIMD_0256,
+    },
     solana_inline_spl::token,
     solana_logger,
     solana_program_runtime::{
         declare_process_instruction,
+        execution_budget::{self, MAX_COMPUTE_UNIT_LIMIT},
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
     },
     solana_sdk::{
@@ -101,7 +103,6 @@ use {
             Result, SanitizedTransaction, Transaction, TransactionError,
             TransactionVerificationMode,
         },
-        transaction_context::TransactionAccount,
     },
     solana_stake_program::stake_state::{self, StakeStateV2},
     solana_svm::{
@@ -112,6 +113,7 @@ use {
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::ExecuteTimings,
+    solana_transaction_context::TransactionAccount,
     solana_vote_program::{
         vote_instruction,
         vote_state::{
@@ -158,7 +160,6 @@ impl VoteReward {
             vote_account: validator_vote_account,
             commission: rng.gen_range(1..20),
             vote_rewards: rng.gen_range(1..200),
-            vote_needs_store: rng.gen_range(1..20) > 10,
         }
     }
 }
@@ -1652,13 +1653,20 @@ impl Bank {
 fn test_rent_eager_collect_rent_in_partition(should_collect_rent: bool) {
     solana_logger::setup();
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
-    for feature_id in FeatureSet::default().inactive {
-        if feature_id != solana_feature_set::skip_rent_rewrites::id()
-            && (!should_collect_rent
-                || feature_id != solana_feature_set::disable_rent_fees_collection::id())
-        {
-            activate_feature(&mut genesis_config, feature_id);
-        }
+    activate_all_features(&mut genesis_config);
+    genesis_config
+        .accounts
+        .remove(&feature_set::skip_rent_rewrites::id())
+        .unwrap();
+    genesis_config
+        .accounts
+        .remove(&feature_set::disable_partitioned_rent_collection::id())
+        .unwrap();
+    if should_collect_rent {
+        genesis_config
+            .accounts
+            .remove(&feature_set::disable_rent_fees_collection::id())
+            .unwrap();
     }
 
     let zero_lamport_pubkey = solana_pubkey::new_rand();
@@ -3185,17 +3193,11 @@ fn test_interleaving_locks() {
         .is_ok());
 }
 
-#[test_case(false; "disable fees-only transactions")]
-#[test_case(true; "enable fees-only transactions")]
-fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: bool) {
+#[test]
+fn test_load_and_execute_commit_transactions_fees_only() {
     let GenesisConfigInfo {
         mut genesis_config, ..
     } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
-    if !enable_fees_only_txs {
-        genesis_config
-            .accounts
-            .remove(&solana_sdk::feature_set::enable_transaction_loading_failure_fees::id());
-    }
     genesis_config.rent = Rent::default();
     genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -3257,29 +3259,22 @@ fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: boo
         )
         .0;
 
-    if enable_fees_only_txs {
-        assert_eq!(
-            commit_results,
-            vec![Ok(CommittedTransaction {
-                status: Err(TransactionError::ProgramAccountNotFound),
-                log_messages: None,
-                inner_instructions: None,
-                return_data: None,
-                executed_units: 0,
-                fee_details: FeeDetails::new(5000, 0),
-                rent_debits: RentDebits::default(),
-                loaded_account_stats: TransactionLoadedAccountsStats {
-                    loaded_accounts_count: 2,
-                    loaded_accounts_data_size: nonce_size as u32,
-                },
-            })]
-        );
-    } else {
-        assert_eq!(
-            commit_results,
-            vec![Err(TransactionError::ProgramAccountNotFound)]
-        );
-    }
+    assert_eq!(
+        commit_results,
+        vec![Ok(CommittedTransaction {
+            status: Err(TransactionError::ProgramAccountNotFound),
+            log_messages: None,
+            inner_instructions: None,
+            return_data: None,
+            executed_units: 0,
+            fee_details: FeeDetails::new(5000, 0),
+            rent_debits: RentDebits::default(),
+            loaded_account_stats: TransactionLoadedAccountsStats {
+                loaded_accounts_count: 2,
+                loaded_accounts_data_size: nonce_size as u32,
+            },
+        })]
+    );
 }
 
 #[test]
@@ -3523,7 +3518,7 @@ fn test_bank_hash_internal_state(is_accounts_lt_hash_enabled: bool) {
     bank2.transfer(amount, &mint_keypair, &pubkey2).unwrap();
     bank2.squash();
     bank2.force_flush_accounts_cache();
-    bank2.update_accounts_hash(CalcAccountsHashDataSource::Storages, false, false);
+    bank2.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
     assert!(bank2.verify_accounts_hash(None, VerifyAccountsHashConfig::default_for_test(), None,));
 }
 
@@ -4010,8 +4005,8 @@ fn test_bank_update_sysvar_account() {
         let mut expected_next_slot = expected_previous_slot + 1;
 
         // First, initialize the clock sysvar
-        for feature_id in FeatureSet::default().inactive {
-            activate_feature(&mut genesis_config, feature_id);
+        for feature_id in FeatureSet::default().inactive() {
+            activate_feature(&mut genesis_config, *feature_id);
         }
         let bank1 = Arc::new(Bank::new_for_tests(&genesis_config));
         if pass == 0 {
@@ -4484,7 +4479,10 @@ fn test_bank_cloned_stake_delegations() {
         let rent = &bank.rent_collector().rent;
         let vote_rent_exempt_reserve = rent.minimum_balance(VoteState::size_of());
         let stake_rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
-        let minimum_delegation = solana_stake_program::get_minimum_delegation(&bank.feature_set);
+        let minimum_delegation = solana_stake_program::get_minimum_delegation(
+            bank.feature_set
+                .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+        );
         (
             vote_rent_exempt_reserve,
             stake_rent_exempt_reserve + minimum_delegation,
@@ -6508,7 +6506,7 @@ fn test_bank_hash_consistency() {
     genesis_config.rent.burn_percent = 100;
     activate_feature(
         &mut genesis_config,
-        solana_feature_set::set_exempt_rent_epoch_max::id(),
+        agave_feature_set::set_exempt_rent_epoch_max::id(),
     );
 
     let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -6520,26 +6518,26 @@ fn test_bank_hash_consistency() {
         if bank.slot == 0 {
             assert_eq!(
                 bank.hash().to_string(),
-                "Hn2FoJuoFWXVFVnwcQ6peuT24mUPmhDtXHXVjKD7M4yP",
+                "5b72TRrdMhGED3boghe55CyX8hmnpYt7RTMrwrHTrNpP",
             );
         }
 
         if bank.slot == 32 {
             assert_eq!(
                 bank.hash().to_string(),
-                "Hdrk5wqzRZbofSgZMC3ztfNimrFu6DeYp751JWvtabo"
+                "2k9XFkra1XyobQb4Z73xSEgFsUdp87cmftYfWEpXQoah"
             );
         }
         if bank.slot == 64 {
             assert_eq!(
                 bank.hash().to_string(),
-                "4EcAFkTxymwwPGeCgadhkrkg2hqfAPzuQZoN2NFqPzyg"
+                "GpePwzXm6nomkj9CKPU4qwvrFnBcjYRrs3hSoRgHN5CP"
             );
         }
         if bank.slot == 128 {
             assert_eq!(
                 bank.hash().to_string(),
-                "4BK3VANr5mhyRyrwbUHYb2kmM5m76PBGkhmKMrQ2aq7L"
+                "8GjxSMXwRe7AyFZoF9R7XVcTC5wYoVKvdawU8ysRcBid"
             );
             break;
         }
@@ -6758,7 +6756,7 @@ fn test_shrink_candidate_slots_cached() {
     // No more slots should be shrunk
     assert_eq!(bank2.shrink_candidate_slots(), 0);
     // alive_counts represents the count of alive accounts in the three slots 0,1,2
-    assert_eq!(alive_counts, vec![15, 1, 6]);
+    assert_eq!(alive_counts, vec![13, 1, 6]);
 }
 
 #[test]
@@ -7175,7 +7173,6 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(FeatureSet::all_enabled());
-    bank.deactivate_feature(&solana_feature_set::disable_new_loader_v3_deployments::id());
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
 
@@ -7978,7 +7975,7 @@ fn test_compute_active_feature_set() {
         .parse::<Pubkey>()
         .unwrap();
     let mut feature_set = FeatureSet::default();
-    feature_set.inactive.insert(test_feature);
+    feature_set.inactive_mut().insert(test_feature);
     bank.feature_set = Arc::new(feature_set.clone());
 
     let (feature_set, new_activations) = bank.compute_active_feature_set(true);
@@ -8050,9 +8047,14 @@ fn test_reserved_account_keys() {
 fn test_block_limits() {
     let (bank0, _bank_forks) = create_simple_test_arc_bank(100_000);
     let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+
+    // Ensure increased block limits features are inactive.
     assert!(!bank
         .feature_set
         .is_active(&feature_set::raise_block_limits_to_50m::id()));
+    assert!(!bank
+        .feature_set
+        .is_active(&feature_set::raise_block_limits_to_60m::id()));
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS,
@@ -8081,10 +8083,39 @@ fn test_block_limits() {
     );
 
     // Make sure the limits propagate to the child-bank.
-    let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 2);
+    let mut bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 2);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS_SIMD_0207,
+        "child bank should have new limit"
+    );
+
+    // Activate `raise_block_limits_to_60m` feature
+    bank.store_account(
+        &feature_set::raise_block_limits_to_60m::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+    // apply_feature_activations for `FinishInit` will not cause the block limit to be updated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::FinishInit, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0207,
+        "before activating the feature, bank should have old/default limit"
+    );
+
+    // apply_feature_activations for `NewFromParent` will cause feature to be activated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0256,
+        "after activating the feature, bank should have new limit"
+    );
+
+    // Make sure the limits propagate to the child-bank.
+    let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 3);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0256,
         "child bank should have new limit"
     );
 
@@ -8110,6 +8141,162 @@ fn test_block_limits() {
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS_SIMD_0207,
         "bank created from genesis config should have new limit"
+    );
+
+    activate_feature(
+        &mut genesis_config,
+        feature_set::raise_block_limits_to_60m::id(),
+    );
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert!(bank
+        .feature_set
+        .is_active(&feature_set::raise_block_limits_to_60m::id()));
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0256,
+        "bank created from genesis config should have new limit"
+    );
+}
+
+#[test]
+fn test_block_limits_feature_dual_activation() {
+    let (bank0, _bank_forks) = create_simple_test_arc_bank(100_000);
+    let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+
+    // Ensure increased block limits features are inactive.
+    assert!(!bank
+        .feature_set
+        .is_active(&feature_set::raise_block_limits_to_50m::id()));
+    assert!(!bank
+        .feature_set
+        .is_active(&feature_set::raise_block_limits_to_60m::id()));
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
+
+    // Activate `raise_block_limits_to_50m` feature
+    bank.store_account(
+        &feature_set::raise_block_limits_to_50m::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+
+    // Activate `raise_block_limits_to_60m` feature
+    bank.store_account(
+        &feature_set::raise_block_limits_to_60m::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+
+    // apply_feature_activations for `NewFromParent` will cause `raise_block_limits_to_60m` to be activated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0256,
+        "after activating the feature, bank should have newest limit"
+    );
+
+    // Make sure the limits propagate to the child-bank.
+    let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 2);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0256,
+        "child bank should have newest limit"
+    );
+
+    // Test starting from a genesis config with and without feature account
+    let (mut genesis_config, _keypair) = create_genesis_config(100_000);
+    // Without feature account in genesis, old limits are used.
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
+
+    // Activate `raise_block_limits_to_50m` feature
+    activate_feature(
+        &mut genesis_config,
+        feature_set::raise_block_limits_to_50m::id(),
+    );
+    // Activate `raise_block_limits_to_60m` feature
+    activate_feature(
+        &mut genesis_config,
+        feature_set::raise_block_limits_to_60m::id(),
+    );
+    let bank = Bank::new_for_tests(&genesis_config);
+
+    // `raise_block_limits_to_60m` feature and block limits should be active.
+    assert!(bank
+        .feature_set
+        .is_active(&feature_set::raise_block_limits_to_60m::id()));
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0256,
+        "bank created from genesis config should have newest limit"
+    );
+}
+
+#[test]
+fn test_block_limits_feature_reverse_order() {
+    let (bank0, _bank_forks) = create_simple_test_arc_bank(100_000);
+    let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+
+    // Ensure increased block limits features are inactive.
+    assert!(!bank
+        .feature_set
+        .is_active(&feature_set::raise_block_limits_to_50m::id()));
+    assert!(!bank
+        .feature_set
+        .is_active(&feature_set::raise_block_limits_to_60m::id()));
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
+
+    // Activate `raise_block_limits_to_60m` feature
+    bank.store_account(
+        &feature_set::raise_block_limits_to_60m::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+
+    // apply_feature_activations for `NewFromParent` will cause `raise_block_limits_to_60m` to be activated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0256,
+        "after activating the feature, bank should have new limit"
+    );
+
+    // Make sure the limits propagate to the child-bank.
+    let mut bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 2);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0256,
+        "child bank should have new limit"
+    );
+
+    // "Activate" `raise_block_limits_to_50m` feature
+    bank.store_account(
+        &feature_set::raise_block_limits_to_50m::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+
+    // apply_feature_activations for `NewFromParent`
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0256,
+        "bank should keep the same limit"
+    );
+
+    // Make sure the SIMD-0256 limits are still in place as they take precedence over the SIMD-0207 limits.
+    let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 3);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0256,
+        "child bank should keep the same limit"
     );
 }
 
@@ -8381,6 +8568,46 @@ fn test_program_is_native_loader() {
         )],
         Some(&mint_keypair.pubkey()),
         &[&mint_keypair],
+        bank.last_blockhash(),
+    );
+    assert_eq!(
+        bank.process_transaction(&tx),
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::UnsupportedProgramId
+        ))
+    );
+}
+
+#[test]
+fn test_invoke_non_program_account_owned_by_a_builtin() {
+    let (genesis_config, mint_keypair) = create_genesis_config(10000000);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.activate_feature(&feature_set::remove_accounts_executable_flag_checks::id());
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+    let bogus_program = Pubkey::new_unique();
+    bank.transfer(
+        genesis_config.rent.minimum_balance(0),
+        &mint_keypair,
+        &bogus_program,
+    )
+    .unwrap();
+
+    let created_account_keypair = Keypair::new();
+    let mut ix = system_instruction::create_account(
+        &mint_keypair.pubkey(),
+        &created_account_keypair.pubkey(),
+        genesis_config.rent.minimum_balance(0),
+        0,
+        &system_program::id(),
+    );
+    // Calling an account owned by the system program, instead of calling the system program itself
+    ix.program_id = bogus_program;
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&mint_keypair.pubkey()),
+        &[&mint_keypair, &created_account_keypair],
         bank.last_blockhash(),
     );
     assert_eq!(
@@ -9956,12 +10183,15 @@ fn test_compute_budget_program_noop() {
         Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::vm);
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
-        let compute_budget = invoke_context.get_compute_budget();
+        let compute_budget = ComputeBudget::from_budget_and_cost(
+            invoke_context.get_compute_budget(),
+            invoke_context.get_execution_cost(),
+        );
         assert_eq!(
-            *compute_budget,
+            compute_budget,
             ComputeBudget {
                 compute_unit_limit: u64::from(
-                    compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 ),
                 heap_size: 48 * 1024,
                 ..ComputeBudget::default()
@@ -9973,7 +10203,7 @@ fn test_compute_budget_program_noop() {
     let message = Message::new(
         &[
             ComputeBudgetInstruction::set_compute_unit_limit(
-                compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
             ),
             ComputeBudgetInstruction::request_heap_frame(48 * 1024),
             Instruction::new_with_bincode(program_id, &0, vec![]),
@@ -10001,12 +10231,15 @@ fn test_compute_request_instruction() {
         Bank::new_with_mockup_builtin_for_tests(&genesis_config, program_id, MockBuiltin::vm);
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
-        let compute_budget = invoke_context.get_compute_budget();
+        let compute_budget = ComputeBudget::from_budget_and_cost(
+            invoke_context.get_compute_budget(),
+            invoke_context.get_execution_cost(),
+        );
         assert_eq!(
-            *compute_budget,
+            compute_budget,
             ComputeBudget {
                 compute_unit_limit: u64::from(
-                    compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 ),
                 heap_size: 48 * 1024,
                 ..ComputeBudget::default()
@@ -10018,7 +10251,7 @@ fn test_compute_request_instruction() {
     let message = Message::new(
         &[
             ComputeBudgetInstruction::set_compute_unit_limit(
-                compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
             ),
             ComputeBudgetInstruction::request_heap_frame(48 * 1024),
             Instruction::new_with_bincode(program_id, &0, vec![]),
@@ -10054,12 +10287,15 @@ fn test_failed_compute_request_instruction() {
         .unwrap();
 
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
-        let compute_budget = invoke_context.get_compute_budget();
+        let compute_budget = ComputeBudget::from_budget_and_cost(
+            invoke_context.get_compute_budget(),
+            invoke_context.get_execution_cost(),
+        );
         assert_eq!(
-            *compute_budget,
+            compute_budget,
             ComputeBudget {
                 compute_unit_limit: u64::from(
-                    compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 ),
                 heap_size: 48 * 1024,
                 ..ComputeBudget::default()
@@ -11783,6 +12019,48 @@ fn test_get_rent_paying_pubkeys() {
     );
 }
 
+/// Ensure that accounts rent epoch is updated correctly by rent collection
+#[test_case(true; "enable partitioned rent fees collection")]
+#[test_case(false; "disable partitioned rent fees collection")]
+fn test_partitioned_rent_collection(should_run_partitioned_rent_collection: bool) {
+    let GenesisConfigInfo {
+        mut genesis_config, ..
+    } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
+    genesis_config.rent = Rent::default();
+    if should_run_partitioned_rent_collection {
+        genesis_config
+            .accounts
+            .remove(&agave_feature_set::disable_partitioned_rent_collection::id());
+    }
+
+    let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+    let slot = bank.slot() + bank.slot_count_per_normal_epoch();
+    let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
+
+    // make another bank so that any reclaimed accounts from the previous bank do not impact
+    // this test
+    let slot = bank.slot() + bank.slot_count_per_normal_epoch();
+    let bank: Arc<Bank> = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
+
+    // Store an account into the bank that is rent-exempt
+    let rent_exempt_balance = genesis_config.rent.minimum_balance(0);
+    let account_pubkey = Pubkey::new_unique();
+    let account = AccountSharedData::new(rent_exempt_balance, 0, &Pubkey::default());
+    bank.store_account(&account_pubkey, &account);
+
+    // Run partitioned rent collection. If enabled, partitioned rent collection
+    // will update the rent epoch for any rent exempt accounts whose rent epoch
+    // is not already set to RENT_EXEMPT_RENT_EPOCH.
+    bank.collect_rent_eagerly();
+    let updated_account = bank.get_account(&account_pubkey).unwrap();
+    if should_run_partitioned_rent_collection {
+        assert_eq!(updated_account.rent_epoch(), RENT_EXEMPT_RENT_EPOCH);
+    } else {
+        assert_eq!(updated_account.rent_epoch(), INITIAL_RENT_EPOCH);
+    }
+}
+
 /// Ensure that accounts data size is updated correctly by rent collection
 #[test_case(true; "enable rent fees collection")]
 #[test_case(false; "disable rent fees collection")]
@@ -11794,7 +12072,10 @@ fn test_accounts_data_size_and_rent_collection(should_collect_rent: bool) {
     if should_collect_rent {
         genesis_config
             .accounts
-            .remove(&solana_feature_set::disable_rent_fees_collection::id());
+            .remove(&agave_feature_set::disable_rent_fees_collection::id());
+        genesis_config
+            .accounts
+            .remove(&agave_feature_set::disable_partitioned_rent_collection::id());
     }
 
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -12357,7 +12638,7 @@ fn test_bank_verify_accounts_hash_with_base() {
     // update the base accounts hash
     bank.squash();
     bank.force_flush_accounts_cache();
-    bank.update_accounts_hash(CalcAccountsHashDataSource::Storages, false, false);
+    bank.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
     let base_slot = bank.slot();
     let base_capitalization = bank.capitalization();
 
@@ -12455,7 +12736,7 @@ fn test_system_instruction_allocate() {
         .is_ok());
 }
 
-fn with_create_zero_lamport<F>(callback: F)
+fn with_create_zero_lamport<F>(should_run_partitioned_rent_collection: bool, callback: F)
 where
     F: Fn(&Bank),
 {
@@ -12475,22 +12756,44 @@ where
     let len2 = 456;
 
     // create initial bank and fund the alice account
-    let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(mint_lamports);
+    let (mut genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(mint_lamports);
+    if should_run_partitioned_rent_collection {
+        genesis_config
+            .accounts
+            .remove(&agave_feature_set::disable_partitioned_rent_collection::id());
+    }
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let bank_client = BankClient::new_shared(bank.clone());
     bank_client
         .transfer_and_confirm(mint_lamports, &mint_keypair, &alice_pubkey)
         .unwrap();
 
-    // create and freeze a bank a few epochs in the future to trigger rent
-    // collection to visit (and rewrite) all accounts
+    // create a bank a few epochs in the future..
+    // - when partitioned rent collection is enabled, this will cause a lot of
+    // updated accounts to be added to this bank's accounts db storage entry.
+    // - when partitioned rent collection is disabled, the only account written
+    // will be the stake history sysvar.
     let bank = new_from_parent_next_epoch(bank, &bank_forks, 2);
-    bank.freeze(); // trigger rent collection
 
-    // create zero-lamports account to be cleaned
-    let account = AccountSharedData::new(0, len1, &program);
+    // create the next bank in the current epoch
+    // - when partitioned rent collection is enabled, the runtime won't add any
+    // accounts to the accounts db storage entry so we explicitly store an
+    // account here.
+    // - when partitioned rent collection is disabled, the only account written
+    // will be the epoch rewards sysvar.
     let slot = bank.slot() + 1;
     let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    if should_run_partitioned_rent_collection {
+        bank.store_account(
+            &Pubkey::new_unique(),
+            &AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
+    }
+
+    // create the next bank where we will store a zero-lamport account to be cleaned
+    let slot = bank.slot() + 1;
+    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    let account = AccountSharedData::new(0, len1, &program);
     bank.store_account(&bob_pubkey, &account);
 
     // transfer some to bogus pubkey just to make previous bank (=slot) really cleanable
@@ -12527,22 +12830,36 @@ where
     assert!(r.is_ok());
 }
 
-#[test]
-fn test_create_zero_lamport_with_clean() {
-    with_create_zero_lamport(|bank| {
+#[test_case(true; "enable partitioned rent collection")]
+#[test_case(false; "disable partitioned rent collection")]
+fn test_create_zero_lamport_with_clean(should_run_partitioned_rent_collection: bool) {
+    // DEVELOPER TIP: To debug this test, you may want to add some logging to
+    // `AccountsDb::write_accounts_to_storage` to see what accounts are actually
+    // in the storage entries
+
+    /*
+        for index in 0..accounts_and_meta_to_store.len() {
+            accounts_and_meta_to_store.account(index, |account| {
+                println!("slot {slot} wrote account {}", account.pubkey());
+            })
+        }
+    */
+
+    with_create_zero_lamport(should_run_partitioned_rent_collection, |bank| {
         bank.freeze();
         bank.squash();
         bank.force_flush_accounts_cache();
         // do clean and assert that it actually did its job
-        assert_eq!(5, bank.get_snapshot_storages(None).len());
+        assert_eq!(6, bank.get_snapshot_storages(None).len());
         bank.clean_accounts();
-        assert_eq!(4, bank.get_snapshot_storages(None).len());
+        assert_eq!(5, bank.get_snapshot_storages(None).len());
     });
 }
 
-#[test]
-fn test_create_zero_lamport_without_clean() {
-    with_create_zero_lamport(|_| {
+#[test_case(true; "enable partitioned rent collection")]
+#[test_case(false; "disable partitioned rent collection")]
+fn test_create_zero_lamport_without_clean(should_run_partitioned_rent_collection: bool) {
+    with_create_zero_lamport(should_run_partitioned_rent_collection, |_| {
         // just do nothing; this should behave identically with test_create_zero_lamport_with_clean
     });
 }
@@ -12642,7 +12959,6 @@ fn test_calc_vote_accounts_to_store_overflow() {
             vote_account,
             commission: 0,
             vote_rewards: 1, // enough to overflow
-            vote_needs_store: false,
         },
     );
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
@@ -12651,96 +12967,38 @@ fn test_calc_vote_accounts_to_store_overflow() {
 }
 
 #[test]
-fn test_calc_vote_accounts_to_store_three() {
-    let vote_account_rewards = DashMap::default();
-    let pubkey = solana_pubkey::new_rand();
-    let pubkey2 = solana_pubkey::new_rand();
-    let pubkey3 = solana_pubkey::new_rand();
-    let mut vote_account = AccountSharedData::default();
-    vote_account.set_lamports(u64::MAX);
-    vote_account_rewards.insert(
-        pubkey,
-        VoteReward {
-            vote_account: vote_account.clone(),
-            commission: 0,
-            vote_rewards: 0,
-            vote_needs_store: false, // don't store
-        },
-    );
-    vote_account_rewards.insert(
-        pubkey2,
-        VoteReward {
-            vote_account: vote_account.clone(),
-            commission: 0,
-            vote_rewards: 0,
-            vote_needs_store: true, // this one needs storing
-        },
-    );
-    vote_account_rewards.insert(
-        pubkey3,
-        VoteReward {
-            vote_account: vote_account.clone(),
-            commission: 0,
-            vote_rewards: 0,
-            vote_needs_store: false, // don't store
-        },
-    );
-    let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-    assert_eq!(result.rewards.len(), result.accounts_to_store.len());
-    assert_eq!(result.rewards.len(), 3);
-    result.rewards.iter().enumerate().for_each(|(i, (k, _))| {
-        // pubkey2 is some(account), others should be none
-        if k == &pubkey2 {
-            assert!(accounts_equal(
-                result.accounts_to_store[i].as_ref().unwrap(),
-                &vote_account
-            ));
-        } else {
-            assert!(result.accounts_to_store[i].is_none());
-        }
-    });
-}
-
-#[test]
 fn test_calc_vote_accounts_to_store_normal() {
     let pubkey = solana_pubkey::new_rand();
     for commission in 0..2 {
         for vote_rewards in 0..2 {
-            for vote_needs_store in [false, true] {
-                let vote_account_rewards = DashMap::default();
-                let mut vote_account = AccountSharedData::default();
-                vote_account.set_lamports(1);
-                vote_account_rewards.insert(
-                    pubkey,
-                    VoteReward {
-                        vote_account: vote_account.clone(),
-                        commission,
-                        vote_rewards,
-                        vote_needs_store,
-                    },
-                );
-                let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-                assert_eq!(result.rewards.len(), result.accounts_to_store.len());
-                assert_eq!(result.rewards.len(), 1);
-                let rewards = &result.rewards[0];
-                let account = &result.accounts_to_store[0];
-                _ = vote_account.checked_add_lamports(vote_rewards);
-                if vote_needs_store {
-                    assert!(accounts_equal(account.as_ref().unwrap(), &vote_account));
-                } else {
-                    assert!(account.is_none());
+            let vote_account_rewards = DashMap::default();
+            let mut vote_account = AccountSharedData::default();
+            vote_account.set_lamports(1);
+            vote_account_rewards.insert(
+                pubkey,
+                VoteReward {
+                    vote_account: vote_account.clone(),
+                    commission,
+                    vote_rewards,
+                },
+            );
+            let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
+            assert_eq!(result.rewards.len(), result.accounts_to_store.len());
+            assert_eq!(result.rewards.len(), 1);
+            let rewards = &result.rewards[0];
+            let account = &result.accounts_to_store[0].1;
+            _ = vote_account.checked_add_lamports(vote_rewards);
+            assert!(accounts_equal(account, &vote_account));
+            assert_eq!(
+                rewards.1,
+                RewardInfo {
+                    reward_type: RewardType::Voting,
+                    lamports: vote_rewards as i64,
+                    post_balance: vote_account.lamports(),
+                    commission: Some(commission),
                 }
-                assert_eq!(
-                    rewards.1,
-                    RewardInfo {
-                        reward_type: RewardType::Voting,
-                        lamports: vote_rewards as i64,
-                        post_balance: vote_account.lamports(),
-                        commission: Some(commission),
-                    }
-                );
-                assert_eq!(rewards.0, pubkey);
-            }
+            );
+            assert_eq!(rewards.0, pubkey);
         }
     }
 }
@@ -13211,7 +13469,7 @@ fn test_deploy_last_epoch_slot() {
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     activate_feature(
         &mut genesis_config,
-        solana_feature_set::enable_loader_v4::id(),
+        agave_feature_set::enable_loader_v4::id(),
     );
     genesis_config
         .accounts
@@ -13315,7 +13573,7 @@ fn test_loader_v3_to_v4_migration() {
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     activate_feature(
         &mut genesis_config,
-        solana_feature_set::enable_loader_v4::id(),
+        agave_feature_set::enable_loader_v4::id(),
     );
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.activate_feature(&feature_set::remove_accounts_executable_flag_checks::id());
@@ -13378,11 +13636,14 @@ fn test_loader_v3_to_v4_migration() {
         .unwrap()
         .copy_from_slice(&elf);
     let message = Message::new(
-        &[solana_loader_v3_interface::instruction::migrate_program(
-            &programdata_address,
-            &program_keypair.pubkey(),
-            &program_keypair.pubkey(),
-        )],
+        &[
+            solana_loader_v3_interface::instruction::migrate_program(
+                &programdata_address,
+                &program_keypair.pubkey(),
+                &program_keypair.pubkey(),
+            ),
+            ComputeBudgetInstruction::set_compute_unit_limit(12_000),
+        ],
         Some(&payer_keypair.pubkey()),
     );
     let signers = &[&payer_keypair, &program_keypair];
@@ -13409,11 +13670,14 @@ fn test_loader_v3_to_v4_migration() {
         .unwrap()
         .copy_from_slice(&elf);
     let message = Message::new(
-        &[solana_loader_v3_interface::instruction::migrate_program(
-            &programdata_address,
-            &program_keypair.pubkey(),
-            &upgrade_authority_keypair.pubkey(),
-        )],
+        &[
+            solana_loader_v3_interface::instruction::migrate_program(
+                &programdata_address,
+                &program_keypair.pubkey(),
+                &upgrade_authority_keypair.pubkey(),
+            ),
+            ComputeBudgetInstruction::set_compute_unit_limit(10_000),
+        ],
         Some(&payer_keypair.pubkey()),
     );
     let signers = &[&payer_keypair, &upgrade_authority_keypair];
@@ -13556,7 +13820,7 @@ fn test_loader_v3_to_v4_migration() {
             finalized_migration_transaction.clone(),
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::InvalidInstructionData,
+                InstructionError::UnsupportedProgramId,
             )),
         ),
         (
@@ -13564,7 +13828,7 @@ fn test_loader_v3_to_v4_migration() {
             finalized_migration_transaction.clone(),
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::InvalidInstructionData,
+                InstructionError::UnsupportedProgramId,
             )),
         ),
         (
@@ -13885,4 +14149,68 @@ fn test_rehash_accounts_modified() {
 
     // let the show begin
     bank.rehash();
+}
+
+#[test]
+fn test_should_use_vote_keyed_leader_schedule() {
+    let genesis_config = genesis_utils::create_genesis_config(10_000).genesis_config;
+    let epoch_schedule = &genesis_config.epoch_schedule;
+    let create_test_bank = |bank_epoch: Epoch, feature_activation_slot: Option<Slot>| -> Bank {
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        bank.epoch = bank_epoch;
+        let mut feature_set = FeatureSet::default();
+        if let Some(feature_activation_slot) = feature_activation_slot {
+            let feature_activation_epoch = bank.epoch_schedule().get_epoch(feature_activation_slot);
+            assert!(feature_activation_epoch <= bank_epoch);
+            feature_set.activate(
+                &agave_feature_set::enable_vote_address_leader_schedule::id(),
+                feature_activation_slot,
+            );
+        }
+        bank.feature_set = Arc::new(feature_set);
+        bank
+    };
+
+    // Test feature activation at genesis
+    let test_bank = create_test_bank(0, Some(0));
+    for epoch in 0..10 {
+        assert_eq!(
+            test_bank.should_use_vote_keyed_leader_schedule(epoch),
+            Some(true),
+        );
+    }
+
+    // Test feature activated in previous epoch
+    let slot_in_prev_epoch = epoch_schedule.get_first_slot_in_epoch(1);
+    let test_bank = create_test_bank(2, Some(slot_in_prev_epoch));
+    for epoch in 0..=(test_bank.epoch + 1) {
+        assert_eq!(
+            test_bank.should_use_vote_keyed_leader_schedule(epoch),
+            Some(epoch >= test_bank.epoch),
+        );
+    }
+
+    // Test feature activated in current epoch
+    let current_epoch_slot = epoch_schedule.get_last_slot_in_epoch(1);
+    let test_bank = create_test_bank(1, Some(current_epoch_slot));
+    for epoch in 0..=(test_bank.epoch + 1) {
+        assert_eq!(
+            test_bank.should_use_vote_keyed_leader_schedule(epoch),
+            Some(epoch > test_bank.epoch),
+        );
+    }
+
+    // Test feature not activated yet
+    let test_bank = create_test_bank(1, None);
+    let max_cached_leader_schedule = epoch_schedule.get_leader_schedule_epoch(test_bank.slot());
+    for epoch in 0..=(max_cached_leader_schedule + 1) {
+        if epoch <= max_cached_leader_schedule {
+            assert_eq!(
+                test_bank.should_use_vote_keyed_leader_schedule(epoch),
+                Some(false),
+            );
+        } else {
+            assert_eq!(test_bank.should_use_vote_keyed_leader_schedule(epoch), None);
+        }
+    }
 }

@@ -16,7 +16,7 @@ use {
 // `maybe_runtime` argument is introduced to be able to use runtime from test
 // for the TpuClientNext, while ConnectionCache uses runtime created internally
 // in the quic-client module and it is impossible to pass test runtime there.
-pub trait CreateClient: TransactionClient {
+pub trait CreateClient: TransactionClient + Clone {
     fn create_client(
         maybe_runtime: Option<Handle>,
         my_tpu_address: SocketAddr,
@@ -27,12 +27,11 @@ pub trait CreateClient: TransactionClient {
 
 impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
     fn create_client(
-        maybe_runtime: Option<Handle>,
+        _maybe_runtime: Option<Handle>,
         my_tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_forward_count: u64,
     ) -> Self {
-        assert!(maybe_runtime.is_none());
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
         ConnectionCacheClient::new(
             connection_cache,
@@ -44,7 +43,7 @@ impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
     }
 }
 
-impl CreateClient for TpuClientNextClient<NullTpuInfo> {
+impl CreateClient for TpuClientNextClient {
     fn create_client(
         maybe_runtime: Option<Handle>,
         my_tpu_address: SocketAddr,
@@ -53,13 +52,16 @@ impl CreateClient for TpuClientNextClient<NullTpuInfo> {
     ) -> Self {
         let runtime_handle =
             maybe_runtime.expect("Runtime should be provided for the TpuClientNextClient.");
-        Self::new(
+        let bind_socket = solana_net_utils::bind_to_localhost()
+            .expect("Should be able to open UdpSocket for tests.");
+        Self::new::<NullTpuInfo>(
             runtime_handle,
             my_tpu_address,
             tpu_peers,
             None,
             leader_forward_count,
             None,
+            bind_socket,
         )
     }
 }
@@ -75,10 +77,7 @@ where
     fn stop(&self) {}
 }
 
-impl<T> Stoppable for TpuClientNextClient<T>
-where
-    T: TpuInfoWithSendStatic + Clone,
-{
+impl Stoppable for TpuClientNextClient {
     fn stop(&self) {
         self.cancel().unwrap();
     }

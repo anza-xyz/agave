@@ -1,8 +1,6 @@
 use {
-    solana_sdk::{
-        transaction::TransactionError, transaction_context::TransactionReturnData,
-        transport::TransportError,
-    },
+    solana_sdk::{transaction::TransactionError, transport::TransportError},
+    solana_transaction_context::TransactionReturnData,
     std::io,
     tarpc::client::RpcError,
     thiserror::Error,

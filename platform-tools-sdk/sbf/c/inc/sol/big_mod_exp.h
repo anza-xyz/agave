@@ -15,7 +15,7 @@ extern "C" {
  * @return 0 if executed successfully
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/big_mod_exp.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 uint64_t sol_big_mod_exp(const uint8_t *, uint8_t *);
 #else
 typedef uint64_t(*sol_big_mod_exp_pointer_type)(const uint8_t *, uint8_t *);

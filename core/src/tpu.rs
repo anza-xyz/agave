@@ -1,13 +1,13 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
-pub use solana_sdk::net::DEFAULT_TPU_COALESCE;
 // allow multiple connections for NAT and any open/close overlap
 #[deprecated(
     since = "2.2.0",
     note = "Use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER instead"
 )]
 pub use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER as MAX_QUIC_CONNECTIONS_PER_PEER;
+pub use {crate::forwarding_stage::ForwardingClientOption, solana_sdk::net::DEFAULT_TPU_COALESCE};
 use {
     crate::{
         banking_stage::BankingStage,
@@ -17,7 +17,7 @@ use {
             VerifiedVoteSender, VoteTracker,
         },
         fetch_stage::FetchStage,
-        forwarding_stage::ForwardingStage,
+        forwarding_stage::{spawn_forwarding_stage, ForwardAddressGetter},
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
@@ -33,7 +33,10 @@ use {
         entry_notifier_service::EntryNotifierSender,
     },
     solana_perf::data_budget::DataBudget,
-    solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
+    solana_poh::{
+        poh_recorder::{PohRecorder, WorkingBankEntry},
+        transaction_recorder::TransactionRecorder,
+    },
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotificationSender,
         rpc_subscriptions::RpcSubscriptions,
@@ -68,6 +71,8 @@ pub struct TpuSockets {
     pub transactions_quic: Vec<UdpSocket>,
     pub transactions_forwards_quic: Vec<UdpSocket>,
     pub vote_quic: Vec<UdpSocket>,
+    /// Client-side socket for the forwarding votes.
+    pub vote_forwards_client: UdpSocket,
 }
 
 pub struct Tpu {
@@ -91,6 +96,7 @@ impl Tpu {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        transaction_recorder: TransactionRecorder,
         entry_receiver: Receiver<WorkingBankEntry>,
         retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
@@ -136,6 +142,7 @@ impl Tpu {
             transactions_quic: transactions_quic_sockets,
             transactions_forwards_quic: transactions_forwards_quic_sockets,
             vote_quic: tpu_vote_quic_sockets,
+            vote_forwards_client: vote_forwards_client_socket,
         } = sockets;
 
         let (packet_sender, packet_receiver) = unbounded();
@@ -151,7 +158,7 @@ impl Tpu {
             &forwarded_packet_sender,
             forwarded_packet_receiver,
             poh_recorder,
-            tpu_coalesce,
+            Some(tpu_coalesce),
             Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
             tpu_enable_udp,
         );
@@ -265,6 +272,7 @@ impl Tpu {
             transaction_struct,
             cluster_info,
             poh_recorder,
+            transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
@@ -275,11 +283,14 @@ impl Tpu {
             prioritization_fee_cache,
         );
 
-        let forwarding_stage = ForwardingStage::spawn(
+        let client = ForwardingClientOption::ConnectionCache(connection_cache.clone());
+
+        let forwarding_stage = spawn_forwarding_stage(
             forward_stage_receiver,
-            connection_cache.clone(),
+            client,
+            vote_forwards_client_socket,
             RootBankCache::new(bank_forks.clone()),
-            (cluster_info.clone(), poh_recorder.clone()),
+            ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
             DataBudget::default(),
         );
 

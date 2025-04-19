@@ -839,11 +839,6 @@ pub struct PerfSampleV2 {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct ProgramCost {
-    pub cost: u64,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct OptimisticSlotMetaV0 {
     pub hash: Hash,
     pub timestamp: UnixTimestamp,

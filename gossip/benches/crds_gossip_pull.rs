@@ -10,7 +10,7 @@ use {
         crds_gossip_pull::{CrdsFilter, CrdsGossipPull},
         crds_value::CrdsValue,
     },
-    solana_sdk::hash::Hash,
+    solana_hash::Hash,
     std::sync::RwLock,
     test::Bencher,
 };

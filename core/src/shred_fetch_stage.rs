@@ -2,10 +2,10 @@
 
 use {
     crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
+    agave_feature_set::{self as feature_set, FeatureSet},
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     itertools::Itertools,
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
     solana_perf::packet::{
@@ -31,7 +31,6 @@ use {
     },
 };
 
-const PACKET_COALESCE_DURATION: Duration = Duration::from_millis(1);
 // When running with very short epochs (e.g. for testing), we want to avoid
 // filtering out shreds that we actually need. This value was chosen empirically
 // because it's large enough to protect against observed short epoch problems
@@ -54,6 +53,7 @@ impl ShredFetchStage {
     // updates packets received on a channel and sends them on another channel
     fn modify_packets(
         recvr: PacketBatchReceiver,
+        recvr_stats: Option<Arc<StreamerReceiveStats>>,
         sendr: Sender<PacketBatch>,
         bank_forks: &RwLock<BankForks>,
         shred_version: u16,
@@ -161,7 +161,11 @@ impl ShredFetchStage {
                     packet.meta_mut().flags.insert(flags);
                 }
             }
-            stats.maybe_submit(name, STATS_SUBMIT_CADENCE);
+            if stats.maybe_submit(name, STATS_SUBMIT_CADENCE) {
+                if let Some(stats) = recvr_stats.as_ref() {
+                    stats.report();
+                }
+            }
             if sendr.send(packet_batch).is_err() {
                 break;
             }
@@ -179,11 +183,13 @@ impl ShredFetchStage {
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
         name: &'static str,
+        receiver_name: &'static str,
         flags: PacketFlags,
         repair_context: Option<RepairContext>,
         turbine_disabled: Arc<AtomicBool>,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
         let (packet_sender, packet_receiver) = unbounded();
+        let receiver_stats = Arc::new(StreamerReceiveStats::new(receiver_name));
         let streamers = sockets
             .into_iter()
             .enumerate()
@@ -194,11 +200,11 @@ impl ShredFetchStage {
                     exit.clone(),
                     packet_sender.clone(),
                     recycler.clone(),
-                    Arc::new(StreamerReceiveStats::new("packet_modifier")),
-                    PACKET_COALESCE_DURATION,
-                    true, // use_pinned_memory
-                    None, // in_vote_only_mode
-                    false,
+                    receiver_stats.clone(),
+                    None,  // coalesce
+                    true,  // use_pinned_memory
+                    None,  // in_vote_only_mode
+                    false, // is_staked_service
                 )
             })
             .collect();
@@ -207,6 +213,7 @@ impl ShredFetchStage {
             .spawn(move || {
                 Self::modify_packets(
                     packet_receiver,
+                    Some(receiver_stats),
                     sender,
                     &bank_forks,
                     shred_version,
@@ -251,6 +258,7 @@ impl ShredFetchStage {
             bank_forks.clone(),
             shred_version,
             "shred_fetch",
+            "shred_fetch_receiver",
             PacketFlags::empty(),
             None, // repair_context
             turbine_disabled.clone(),
@@ -266,6 +274,7 @@ impl ShredFetchStage {
             bank_forks.clone(),
             shred_version,
             "shred_fetch_repair",
+            "shred_fetch_repair_receiver",
             PacketFlags::REPAIR,
             Some(repair_context.clone()),
             turbine_disabled.clone(),
@@ -300,6 +309,7 @@ impl ShredFetchStage {
                     .spawn(move || {
                         Self::modify_packets(
                             packet_receiver,
+                            None,
                             sender,
                             &bank_forks,
                             shred_version,
@@ -333,6 +343,7 @@ impl ShredFetchStage {
                 .spawn(move || {
                     Self::modify_packets(
                         packet_receiver,
+                        None,
                         sender,
                         &bank_forks,
                         shred_version,
@@ -387,6 +398,7 @@ pub(crate) fn receive_quic_datagrams(
     exit: Arc<AtomicBool>,
 ) {
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
+    const PACKET_COALESCE_DURATION: Duration = Duration::from_millis(1);
     while !exit.load(Ordering::Relaxed) {
         let entry = match quic_datagrams_receiver.recv_timeout(RECV_TIMEOUT) {
             Ok(entry) => entry,

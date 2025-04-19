@@ -38,8 +38,7 @@ pub fn load_program_from_file(name: &str) -> Vec<u8> {
                 .unwrap(),
         )
     };
-    pathbuf.push("sbpf-solana-solana");
-    pathbuf.push("release");
+    pathbuf.push("deploy");
     pathbuf.push(name);
     pathbuf.set_extension("so");
     let mut file = File::open(&pathbuf).unwrap_or_else(|err| {

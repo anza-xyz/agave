@@ -15,7 +15,7 @@ extern "C" {
  * Prints a string to stdout
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/compute_units.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 uint64_t sol_remaining_compute_units();
 #else
 typedef uint64_t(*sol_remaining_compute_units_pointer_type)();

@@ -1,10 +1,10 @@
 use {
+    agave_feature_set::{deprecate_legacy_vote_ixs, FeatureSet},
     bincode::serialize,
     criterion::{criterion_group, criterion_main, Criterion},
     solana_account::{self as account, create_account_for_test, Account, AccountSharedData},
     solana_clock::{Clock, Slot},
     solana_epoch_schedule::EpochSchedule,
-    solana_feature_set::{deprecate_legacy_vote_ixs, FeatureSet},
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta},
     solana_program_runtime::invoke_context::mock_process_instruction,
@@ -187,7 +187,8 @@ fn process_deprecated_instruction(
         |invoke_context| {
             let mut deprecated_feature_set = FeatureSet::all_enabled();
             deprecated_feature_set.deactivate(&deprecate_legacy_vote_ixs::id());
-            invoke_context.mock_set_feature_set(Arc::new(deprecated_feature_set));
+            invoke_context
+                .mock_set_feature_set(Arc::new(deprecated_feature_set.runtime_features()));
         },
         |_invoke_context| {},
     )

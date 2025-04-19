@@ -51,7 +51,7 @@
 
 #[cfg(test)]
 pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
-pub(crate) use self::{merkle::SIZE_OF_MERKLE_ROOT, payload::serde_bytes_payload};
+pub(crate) use self::{merkle_tree::SIZE_OF_MERKLE_ROOT, payload::serde_bytes_payload};
 pub use {
     self::{
         payload::Payload,
@@ -84,6 +84,7 @@ use {
 mod common;
 mod legacy;
 mod merkle;
+mod merkle_tree;
 mod payload;
 pub mod shred_code;
 mod shred_data;
@@ -276,13 +277,23 @@ pub struct ShredId(Slot, /*shred index:*/ u32, ShredType);
 
 impl ShredId {
     #[inline]
-    pub(crate) fn new(slot: Slot, index: u32, shred_type: ShredType) -> ShredId {
+    pub fn new(slot: Slot, index: u32, shred_type: ShredType) -> ShredId {
         ShredId(slot, index, shred_type)
     }
 
     #[inline]
     pub fn slot(&self) -> Slot {
         self.0
+    }
+
+    #[inline]
+    pub fn index(&self) -> u32 {
+        self.1
+    }
+
+    #[inline]
+    pub fn shred_type(&self) -> ShredType {
+        self.2
     }
 
     #[inline]
@@ -383,6 +394,7 @@ impl Shred {
     dispatch!(pub fn set_index(&mut self, index: u32));
     dispatch!(pub fn set_slot(&mut self, slot: Slot));
 
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn copy_to_packet(&self, packet: &mut Packet) {
         let payload = self.payload();
         let size = payload.len();

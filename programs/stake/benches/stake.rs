@@ -1,9 +1,9 @@
 use {
+    agave_feature_set::FeatureSet,
     bincode::serialize,
     criterion::{black_box, criterion_group, criterion_main, Criterion},
     solana_account::{create_account_shared_data_for_test, AccountSharedData, WritableAccount},
     solana_clock::{Clock, Epoch},
-    solana_feature_set::FeatureSet,
     solana_instruction::AccountMeta,
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_pubkey::Pubkey,
@@ -133,7 +133,7 @@ impl TestSetup {
             Ok(()),
             stake_instruction::Entrypoint::vm,
             |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::clone(&self.feature_set));
+                invoke_context.mock_set_feature_set(Arc::new(self.feature_set.runtime_features()));
             },
             |_invoke_context| {},
         );
@@ -174,7 +174,7 @@ impl TestSetup {
             Ok(()),
             stake_instruction::Entrypoint::vm,
             |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::clone(&self.feature_set));
+                invoke_context.mock_set_feature_set(Arc::new(self.feature_set.runtime_features()));
             },
             |_invoke_context| {},
         );
@@ -193,7 +193,7 @@ impl TestSetup {
             Ok(()), //expected_result,
             stake_instruction::Entrypoint::vm,
             |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::clone(&self.feature_set));
+                invoke_context.mock_set_feature_set(Arc::new(self.feature_set.runtime_features()));
             },
             |_invoke_context| {},
         );

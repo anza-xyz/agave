@@ -25,8 +25,6 @@ pub mod forwarding_stage;
 pub mod gen_keys;
 pub mod next_leader;
 pub mod optimistic_confirmation_verifier;
-pub mod poh_timing_report_service;
-pub mod poh_timing_reporter;
 pub mod repair;
 pub mod replay_stage;
 mod result;

@@ -1,7 +1,7 @@
 use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
-        signature_details::get_precompile_signature_details,
+        instruction_meta::InstructionMeta,
         transaction_meta::{StaticMeta, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
@@ -30,12 +30,15 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
         let is_simple_vote_tx = is_simple_vote_tx
             .unwrap_or_else(|| is_simple_vote_transaction(&sanitized_versioned_tx));
 
-        let precompile_signature_details = get_precompile_signature_details(
+        let InstructionMeta {
+            precompile_signature_details,
+            instruction_data_len,
+        } = InstructionMeta::try_new(
             sanitized_versioned_tx
                 .get_message()
                 .program_instructions_iter()
                 .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
-        );
+        )?;
         let signature_details = TransactionSignatureDetails::new(
             u64::from(
                 sanitized_versioned_tx
@@ -62,6 +65,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
                 is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
                 compute_budget_instruction_details,
+                instruction_data_len,
             },
         })
     }
@@ -153,14 +157,14 @@ impl RuntimeTransaction<SanitizedTransaction> {
 mod tests {
     use {
         super::*,
+        agave_feature_set::FeatureSet,
+        agave_reserved_account_keys::ReservedAccountKeys,
         solana_compute_budget_interface::ComputeBudgetInstruction,
-        solana_feature_set::FeatureSet,
         solana_hash::Hash,
         solana_instruction::Instruction,
         solana_keypair::Keypair,
         solana_message::{Message, SimpleAddressLoader},
         solana_program::vote::{self, state::Vote},
-        solana_reserved_account_keys::ReservedAccountKeys,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{versioned::VersionedTransaction, Transaction},

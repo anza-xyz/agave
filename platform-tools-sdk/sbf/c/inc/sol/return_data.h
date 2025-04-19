@@ -23,7 +23,7 @@ extern "C"
  * @param bytes_len length of byte array. This may not exceed MAX_RETURN_DATA.
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/return_data.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 void sol_set_return_data(const uint8_t *, uint64_t);
 #else
 typedef void(*sol_set_return_data_pointer_type)(const uint8_t *, uint64_t);
@@ -42,7 +42,7 @@ static void sol_set_return_data(const uint8_t * arg1, uint64_t arg2) {
  * @param result length of return data (may exceed bytes_len if the return data is longer)
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/return_data.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 uint64_t sol_get_return_data(uint8_t *, uint64_t, SolPubkey *);
 #else
 typedef uint64_t(*sol_get_return_data_pointer_type)(uint8_t *, uint64_t, SolPubkey *);

@@ -6,9 +6,8 @@ use {
     },
     log::*,
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_accounts_db::{
-        account_storage::meta::StoredAccountMeta,
-        accounts_update_notifier_interface::AccountsUpdateNotifierInterface,
+    solana_accounts_db::accounts_update_notifier_interface::{
+        AccountForGeyser, AccountsUpdateNotifierInterface,
     },
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -41,11 +40,17 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
         self.notify_plugins_of_account_update(account_info, slot, false);
     }
 
-    fn notify_account_restore_from_snapshot(&self, slot: Slot, account: &StoredAccountMeta) {
+    fn notify_account_restore_from_snapshot(
+        &self,
+        slot: Slot,
+        write_version: u64,
+        account: &AccountForGeyser<'_>,
+    ) {
         let mut measure_all = Measure::start("geyser-plugin-notify-account-restore-all");
         let mut measure_copy = Measure::start("geyser-plugin-copy-stored-account-info");
 
-        let account = self.accountinfo_from_stored_account_meta(account);
+        let mut account = self.accountinfo_from_account_for_geyser(account);
+        account.write_version = write_version;
         measure_copy.stop();
 
         inc_new_counter_debug!(
@@ -129,25 +134,18 @@ impl AccountsUpdateNotifierImpl {
         }
     }
 
-    fn accountinfo_from_stored_account_meta<'a>(
+    fn accountinfo_from_account_for_geyser<'a>(
         &self,
-        stored_account_meta: &'a StoredAccountMeta,
+        account: &'a AccountForGeyser<'_>,
     ) -> ReplicaAccountInfoV3<'a> {
-        // We do not need to rely on the specific write_version read from the append vec.
-        // So, overwrite the write_version with something that works.
-        // There is already only entry per pubkey.
-        // write_version is only used to order multiple entries with the same pubkey,
-        // so it doesn't matter what value it gets here.
-        // Passing 0 for everyone's write_version is sufficiently correct.
-        let write_version = 0;
         ReplicaAccountInfoV3 {
-            pubkey: stored_account_meta.pubkey().as_ref(),
-            lamports: stored_account_meta.lamports(),
-            owner: stored_account_meta.owner().as_ref(),
-            executable: stored_account_meta.executable(),
-            rent_epoch: stored_account_meta.rent_epoch(),
-            data: stored_account_meta.data(),
-            write_version,
+            pubkey: account.pubkey.as_ref(),
+            lamports: account.lamports(),
+            owner: account.owner().as_ref(),
+            executable: account.executable(),
+            rent_epoch: account.rent_epoch(),
+            data: account.data(),
+            write_version: 0, // can/will be populated afterwards
             txn: None,
         }
     }

@@ -254,6 +254,25 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                 info: value,
             })
         }
+        ConfidentialMintBurnInstruction::ApplyPendingBurn => {
+            check_num_token_accounts(account_indexes, 2)?;
+            let mut value = json!({
+                "mint": account_keys[account_indexes[0] as usize].to_string(),
+            });
+            let map = value.as_object_mut().unwrap();
+            parse_signers(
+                map,
+                1,
+                account_keys,
+                account_indexes,
+                "owner",
+                "multisigOwner",
+            );
+            Ok(ParsedInstructionEnum {
+                instruction_type: "applyPendingBurn".to_string(),
+                info: value,
+            })
+        }
     }
 }
 
@@ -263,13 +282,13 @@ mod test {
         super::*,
         bytemuck::Zeroable,
         solana_instruction::{AccountMeta, Instruction},
+        solana_message::Message,
         solana_pubkey::Pubkey,
         spl_token_2022::{
             extension::confidential_mint_burn::instruction::{
                 confidential_burn_with_split_proofs, confidential_mint_with_split_proofs,
                 initialize_mint,
             },
-            solana_program::message::Message,
             solana_zk_sdk::{
                 encryption::pod::{
                     auth_encryption::PodAeCiphertext,
@@ -392,7 +411,6 @@ mod test {
                 &spl_token_2022::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
-                None,
                 &PodElGamalCiphertext::default(),
                 &PodElGamalCiphertext::default(),
                 &Pubkey::new_unique(),
@@ -450,7 +468,6 @@ mod test {
                 &spl_token_2022::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
-                None,
                 &PodAeCiphertext::default(),
                 &PodElGamalCiphertext::default(),
                 &PodElGamalCiphertext::default(),

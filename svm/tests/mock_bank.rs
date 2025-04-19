@@ -1,4 +1,5 @@
 #![allow(unused)]
+
 #[allow(deprecated)]
 use solana_sdk::sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
@@ -6,10 +7,9 @@ use {
         SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
         SyscallLog, SyscallMemcpy, SyscallMemset, SyscallSetReturnData,
     },
-    solana_compute_budget::compute_budget::ComputeBudget,
-    solana_feature_set::FeatureSet,
-    solana_fee_structure::FeeDetails,
+    solana_fee_structure::{FeeDetails, FeeStructure},
     solana_program_runtime::{
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
         solana_sbpf::{
@@ -28,10 +28,9 @@ use {
         slot_hashes::Slot,
         sysvar::SysvarId,
     },
-    solana_svm::{
-        transaction_processing_callback::{AccountState, TransactionProcessingCallback},
-        transaction_processor::TransactionBatchProcessor,
-    },
+    solana_svm::transaction_processor::TransactionBatchProcessor,
+    solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_type_overrides::sync::{Arc, RwLock},
     std::{
@@ -61,12 +60,14 @@ impl ForkGraph for MockForkGraph {
 
 #[derive(Default, Clone)]
 pub struct MockBankCallback {
-    pub feature_set: Arc<FeatureSet>,
+    pub feature_set: Arc<SVMFeatureSet>,
     pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
     #[allow(clippy::type_complexity)]
     pub inspected_accounts:
         Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
 }
+
+impl InvokeContextCallback for MockBankCallback {}
 
 impl TransactionProcessingCallback for MockBankCallback {
     fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
@@ -110,14 +111,10 @@ impl TransactionProcessingCallback for MockBankCallback {
             .or_default()
             .push((account, is_writable));
     }
+}
 
-    fn calculate_fee(
-        &self,
-        message: &impl SVMMessage,
-        lamports_per_signature: u64,
-        prioritization_fee: u64,
-        _feature_set: &FeatureSet,
-    ) -> FeeDetails {
+impl MockBankCallback {
+    pub fn calculate_fee_details(message: &impl SVMMessage, prioritization_fee: u64) -> FeeDetails {
         let signature_count = message
             .num_transaction_signatures()
             .saturating_add(message.num_ed25519_signatures())
@@ -125,15 +122,13 @@ impl TransactionProcessingCallback for MockBankCallback {
             .saturating_add(message.num_secp256r1_signatures());
 
         FeeDetails::new(
-            signature_count.saturating_mul(lamports_per_signature),
+            signature_count.saturating_mul(FeeStructure::default().lamports_per_signature),
             prioritization_fee,
         )
     }
-}
 
-impl MockBankCallback {
     #[allow(unused)]
-    pub fn override_feature_set(&mut self, new_set: FeatureSet) {
+    pub fn override_feature_set(&mut self, new_set: SVMFeatureSet) {
         self.feature_set = Arc::new(new_set)
     }
 
@@ -350,7 +345,7 @@ pub fn register_builtins(
 }
 
 pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
-    let compute_budget = ComputeBudget::default();
+    let compute_budget = SVMTransactionExecutionBudget::default();
     let vm_config = Config {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,

@@ -14,9 +14,9 @@ use {
     rayon::prelude::*,
     serde::{Deserialize, Serialize},
     std::{
-        ops::{Index, IndexMut},
+        ops::{Deref, DerefMut, Index, IndexMut},
         os::raw::c_int,
-        slice::{Iter, IterMut, SliceIndex},
+        slice::{Iter, SliceIndex},
         sync::Weak,
     },
 };
@@ -120,20 +120,6 @@ impl<T: Clone + Default + Sized, I: SliceIndex<[T]>> IndexMut<I> for PinnedVec<T
     }
 }
 
-impl<T: Clone + Default + Sized> PinnedVec<T> {
-    pub fn iter(&self) -> Iter<'_, T> {
-        self.x.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
-        self.x.iter_mut()
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.x.capacity()
-    }
-}
-
 impl<'a, T: Clone + Send + Sync + Default + Sized> IntoParallelIterator for &'a PinnedVec<T> {
     type Iter = rayon::slice::Iter<'a, T>;
     type Item = &'a T;
@@ -151,10 +137,6 @@ impl<'a, T: Clone + Send + Sync + Default + Sized> IntoParallelIterator for &'a 
 }
 
 impl<T: Clone + Default + Sized> PinnedVec<T> {
-    pub fn reserve(&mut self, size: usize) {
-        self.x.reserve(size);
-    }
-
     pub fn reserve_and_pin(&mut self, size: usize) {
         if self.x.capacity() < size {
             if self.pinned {
@@ -174,13 +156,6 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
         self.pinnable = true;
     }
 
-    pub fn copy_from_slice(&mut self, data: &[T])
-    where
-        T: Copy,
-    {
-        self.x.copy_from_slice(data);
-    }
-
     pub fn from_vec(source: Vec<T>) -> Self {
         Self {
             x: source,
@@ -192,22 +167,6 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self::from_vec(Vec::with_capacity(capacity))
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.x.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.x.len()
-    }
-
-    pub fn as_ptr(&self) -> *const T {
-        self.x.as_ptr()
-    }
-
-    pub fn as_mut_ptr(&mut self) -> *mut T {
-        self.x.as_mut_ptr()
     }
 
     fn prepare_realloc(&mut self, new_size: usize) -> (*mut T, usize) {
@@ -225,10 +184,6 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
         let (old_ptr, old_capacity) = self.prepare_realloc(self.x.len().saturating_add(1));
         self.x.push(x);
         self.check_ptr(old_ptr, old_capacity, "push");
-    }
-
-    pub fn truncate(&mut self, size: usize) {
-        self.x.truncate(size);
     }
 
     pub fn resize(&mut self, size: usize, elem: T) {
@@ -249,29 +204,6 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
             self.prepare_realloc(self.x.len().saturating_add(other.len()));
         self.x.append(&mut other.x);
         self.check_ptr(old_ptr, old_capacity, "resize");
-    }
-
-    /// Forces the length of the vector to `new_len`.
-    ///
-    /// This is a low-level operation that maintains none of the normal
-    /// invariants of the type. Normally changing the length of a vector
-    /// is done using one of the safe operations instead, such as
-    /// [`truncate`], [`resize`], [`extend`], or [`clear`].
-    ///
-    /// [`truncate`]: Vec::truncate
-    /// [`resize`]: Vec::resize
-    /// [`extend`]: Extend::extend
-    /// [`clear`]: Vec::clear
-    ///
-    /// # Safety
-    ///
-    /// - `new_len` must be less than or equal to [`capacity()`].
-    /// - The elements at `old_len..new_len` must be initialized.
-    ///
-    /// [`capacity()`]: Vec::capacity
-    ///
-    pub unsafe fn set_len(&mut self, size: usize) {
-        self.x.set_len(size);
     }
 
     pub fn shuffle<R: Rng>(&mut self, rng: &mut R) {
@@ -321,6 +253,20 @@ impl<T: Clone + Default + Sized> Clone for PinnedVec<T> {
             pinnable: self.pinnable,
             recycler: self.recycler.clone(),
         }
+    }
+}
+
+impl<T: Sized + Default + Clone> Deref for PinnedVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.x
+    }
+}
+
+impl<T: Sized + Default + Clone> DerefMut for PinnedVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.x
     }
 }
 

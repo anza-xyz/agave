@@ -8,6 +8,7 @@ use {
             heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
             latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
             progress_map::{ForkProgress, ProgressMap},
+            tower_vote_state::TowerVoteState,
             Tower,
         },
         repair::cluster_slot_state_verifier::{
@@ -18,7 +19,6 @@ use {
     },
     crossbeam_channel::unbounded,
     solana_runtime::{
-        accounts_background_service::AbsRequestSender,
         bank::Bank,
         bank_forks::BankForks,
         genesis_utils::{
@@ -27,7 +27,7 @@ use {
     },
     solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signer},
     solana_vote::vote_transaction,
-    solana_vote_program::vote_state::{process_vote_unchecked, Lockout, TowerSync},
+    solana_vote_program::vote_state::{Lockout, TowerSync},
     std::{
         collections::{HashMap, HashSet, VecDeque},
         sync::{Arc, RwLock},
@@ -102,17 +102,10 @@ impl VoteSimulator {
                     let tower_sync = if let Some(vote_account) =
                         parent_bank.get_vote_account(&keypairs.vote_keypair.pubkey())
                     {
-                        let mut vote_state = vote_account.vote_state().clone();
-                        process_vote_unchecked(
-                            &mut vote_state,
-                            solana_vote_program::vote_state::Vote::new(
-                                vec![parent],
-                                parent_bank.hash(),
-                            ),
-                        )
-                        .unwrap();
+                        let mut vote_state = TowerVoteState::from(vote_account.vote_state_view());
+                        vote_state.process_next_vote_slot(parent);
                         TowerSync::new(
-                            vote_state.votes.iter().map(|vote| vote.lockout).collect(),
+                            vote_state.votes,
                             vote_state.root_slot,
                             parent_bank.hash(),
                             Hash::default(),
@@ -140,8 +133,10 @@ impl VoteSimulator {
                     let vote_account = new_bank
                         .get_vote_account(&keypairs.vote_keypair.pubkey())
                         .unwrap();
-                    let state = vote_account.vote_state();
-                    assert!(state.votes.iter().any(|lockout| lockout.slot() == parent));
+                    let vote_state_view = vote_account.vote_state_view();
+                    assert!(vote_state_view
+                        .votes_iter()
+                        .any(|lockout| lockout.slot() == parent));
                 }
             }
             while new_bank.tick_height() < new_bank.max_tick_height() {
@@ -237,7 +232,7 @@ impl VoteSimulator {
             new_root,
             &self.bank_forks,
             &mut self.progress,
-            &AbsRequestSender::default(),
+            None, // snapshot_controller
             None,
             &mut self.heaviest_subtree_fork_choice,
             &mut DuplicateSlotsTracker::default(),

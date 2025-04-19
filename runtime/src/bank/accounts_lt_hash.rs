@@ -1,15 +1,15 @@
 use {
     super::Bank,
+    agave_feature_set as feature_set,
     rayon::prelude::*,
     solana_accounts_db::accounts_db::AccountsDb,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure},
     solana_sdk::{
         account::{accounts_equal, AccountSharedData},
-        feature_set,
         pubkey::Pubkey,
     },
-    solana_svm::transaction_processing_callback::AccountState,
+    solana_svm_callback::AccountState,
     std::{
         ops::AddAssign,
         sync::atomic::{AtomicU64, Ordering},
@@ -886,9 +886,9 @@ mod tests {
         // get all the lt hashes for each version of all accounts
         let mut stored_accounts_map = HashMap::<_, Vec<_>>::new();
         for storage in &storages {
-            storage.accounts.scan_accounts(|stored_account_meta| {
-                let pubkey = stored_account_meta.pubkey();
-                let account_lt_hash = AccountsDb::lt_hash_account(&stored_account_meta, pubkey);
+            storage.accounts.scan_accounts(|account| {
+                let pubkey = account.pubkey();
+                let account_lt_hash = AccountsDb::lt_hash_account(&account, pubkey);
                 stored_accounts_map
                     .entry(*pubkey)
                     .or_default()

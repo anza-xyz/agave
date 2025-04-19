@@ -10,9 +10,13 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
+agave-precompiles = { workspace = true }
+agave-reserved-account-keys = { workspace = true }
 ahash = { workspace = true }
 aquamarine = { workspace = true }
 arrayref = { workspace = true }
+assert_matches = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 blake3 = { workspace = true }
@@ -50,11 +54,10 @@ solana-accounts-db = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-bucket-map = { workspace = true }
 solana-builtins = { workspace = true }
+solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
-solana-config-program = { workspace = true }
 solana-cost-model = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-fee = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -69,18 +72,22 @@ solana-metrics = { workspace = true }
 solana-nohash-hasher = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-perf = { workspace = true }
+solana-precompile-error = { workspace = true }
 solana-program = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk = { workspace = true }
+solana-sha256-hasher = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-svm = { workspace = true }
+solana-svm-callback = { workspace = true }
 solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-program = { workspace = true, optional = true }
 solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 solana-version = { workspace = true }
@@ -101,7 +108,6 @@ name = "solana_runtime"
 
 [dev-dependencies]
 agave-transaction-view = { workspace = true }
-assert_matches = { workspace = true }
 ed25519-dalek = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
@@ -119,6 +125,7 @@ solana-runtime-transaction = { workspace = true, features = [
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
 solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
@@ -130,6 +137,7 @@ dev-context-only-utils = [
     "dep:solana-system-program",
     "solana-svm/dev-context-only-utils",
     "solana-runtime-transaction/dev-context-only-utils",
+    "solana-vote/dev-context-only-utils",
 ]
 frozen-abi = [
     "dep:solana-frozen-abi",

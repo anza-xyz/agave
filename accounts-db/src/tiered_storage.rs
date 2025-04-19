@@ -384,7 +384,7 @@ mod tests {
         let mut max_pubkey = MIN_PUBKEY;
 
         reader
-            .scan_accounts(|stored_account_meta| {
+            .scan_accounts_stored_meta(|stored_account_meta| {
                 if let Some(account) = expected_accounts_map.get(stored_account_meta.pubkey()) {
                     verify_test_account_with_footer(
                         &stored_account_meta,

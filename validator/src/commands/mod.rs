@@ -12,8 +12,28 @@ pub mod set_public_address;
 pub mod staked_nodes_overrides;
 pub mod wait_for_restart_window;
 
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("admin rpc error: {0}")]
+    AdminRpc(#[from] jsonrpc_core_client::RpcError),
+
+    #[error(transparent)]
+    Clap(#[from] clap::Error),
+
+    #[error(transparent)]
+    Dynamic(#[from] Box<dyn std::error::Error>),
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+pub type Result<T> = std::result::Result<T, Error>;
+
 pub trait FromClapArgMatches {
-    fn from_clap_arg_match(matches: &clap::ArgMatches) -> Self;
+    fn from_clap_arg_match(matches: &clap::ArgMatches) -> Result<Self>
+    where
+        Self: Sized;
 }
 
 #[cfg(test)]
@@ -26,7 +46,7 @@ pub mod tests {
     {
         let matches = app.get_matches_from(vec);
         let result = T::from_clap_arg_match(&matches);
-        assert_eq!(result, expected_arg);
+        assert_eq!(result.unwrap(), expected_arg);
     }
 
     pub fn verify_args_struct_by_command_is_error<T>(app: clap::App, vec: Vec<&str>)

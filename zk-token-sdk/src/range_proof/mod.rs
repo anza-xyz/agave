@@ -224,7 +224,7 @@ impl RangeProof {
         let w = transcript.challenge_scalar(b"w");
         let Q = w * &(*G);
 
-        let G_factors: Vec<Scalar> = iter::repeat(Scalar::ONE).take(nm).collect();
+        let G_factors: Vec<Scalar> = iter::repeat_n(Scalar::ONE, nm).collect();
         let H_factors: Vec<Scalar> = util::exp_iter(y.invert()).take(nm).collect();
 
         // generate challenge `c` for consistency with the verifier's transcript

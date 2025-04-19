@@ -3,7 +3,8 @@ use {
     indexmap::IndexMap,
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
-    solana_sdk::{native_token::LAMPORTS_PER_SOL, pubkey::Pubkey},
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_pubkey::Pubkey,
     std::collections::HashMap,
 };
 

@@ -1,6 +1,6 @@
 use {
     serde_derive::{Deserialize, Serialize},
-    solana_config_program::ConfigState,
+    solana_config_program_client::instructions_bincode::ConfigState,
     solana_hash::Hash,
     solana_keypair::signable::Signable,
     solana_pubkey::Pubkey,

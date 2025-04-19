@@ -1,11 +1,8 @@
 use {
-    crate::cli::CliError,
-    solana_commitment_config::CommitmentConfig,
-    solana_message::Message,
-    solana_native_token::lamports_to_sol,
-    solana_pubkey::Pubkey,
+    crate::cli::CliError, solana_commitment_config::CommitmentConfig, solana_message::Message,
+    solana_native_token::lamports_to_sol, solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_rpc_client_api::client_error::{Error as ClientError, Result as ClientResult},
+    solana_rpc_client_api::client_error::Result as ClientResult,
 };
 
 pub fn check_account_for_fee(
@@ -96,9 +93,7 @@ pub fn check_account_for_spend_and_fee_with_commitment(
         account_pubkey,
         required_balance,
         commitment,
-    )
-    .map_err(Into::<ClientError>::into)?
-    {
+    )? {
         if balance > 0 {
             return Err(CliError::InsufficientFundsForSpendAndFee(
                 lamports_to_sol(balance),

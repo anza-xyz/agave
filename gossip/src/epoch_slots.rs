@@ -6,8 +6,9 @@ use {
     bincode::serialized_size,
     bv::BitVec,
     flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress},
+    solana_clock::Slot,
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{clock::Slot, pubkey::Pubkey},
     std::{borrow::Cow, sync::Arc},
 };
 

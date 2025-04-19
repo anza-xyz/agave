@@ -18,14 +18,13 @@ use {
         crds_gossip_push::CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
         crds_value::{CrdsValue, CrdsValueLabel},
     },
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_sdk::{
-        hash::hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        timing::timestamp,
-    },
+    solana_sha256_hasher::hash,
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_time_utils::timestamp,
     std::{
         collections::{HashMap, HashSet},
         net::{Ipv4Addr, SocketAddr},
@@ -307,7 +306,7 @@ fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_conver
     let mut total_bytes = bytes_tx;
     let mut ts = timestamp();
     for _ in 1..num {
-        let start = ((ts + 99) / 100) as usize;
+        let start = ts.div_ceil(100) as usize;
         let end = start + 10;
         let now = (start * 100) as u64;
         ts += 1000;
@@ -613,6 +612,7 @@ fn network_run_pull(
                                 usize::MAX, // output_size_limit
                                 now,
                                 |_| true, // should_retain_crds_value
+                                0,        // network shred version
                                 &GossipStats::default(),
                             )
                             .into_iter()

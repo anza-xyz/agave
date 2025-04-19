@@ -5,7 +5,7 @@ use {
     },
     bincode::deserialize,
     solana_clock::{Epoch, UnixTimestamp},
-    solana_program::stake::state::{Authorized, Delegation, Lockup, Meta, Stake, StakeStateV2},
+    solana_stake_interface::state::{Authorized, Delegation, Lockup, Meta, Stake, StakeStateV2},
 };
 
 pub fn parse_stake(data: &[u8]) -> Result<StakeAccountType, ParseAccountError> {
@@ -119,7 +119,7 @@ pub struct UiDelegation {
     pub deactivation_epoch: StringAmount,
     #[deprecated(
         since = "1.16.7",
-        note = "Please use `solana_program::stake::stake::warmup_cooldown_rate()` instead"
+        note = "Please use `solana_stake_interface::state::warmup_cooldown_rate()` instead"
     )]
     pub warmup_cooldown_rate: f64,
 }
@@ -139,7 +139,7 @@ impl From<Delegation> for UiDelegation {
 
 #[cfg(test)]
 mod test {
-    use {super::*, bincode::serialize, solana_program::stake::stake_flags::StakeFlags};
+    use {super::*, bincode::serialize, solana_stake_interface::stake_flags::StakeFlags};
 
     #[test]
     #[allow(deprecated)]

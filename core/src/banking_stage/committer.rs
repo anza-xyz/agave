@@ -1,6 +1,7 @@
 use {
     super::leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
     itertools::Itertools,
+    solana_cost_model::cost_model::CostModel,
     solana_ledger::{
         blockstore_processor::TransactionStatusSender, token_balances::collect_token_balances,
     },
@@ -16,9 +17,7 @@ use {
     solana_sdk::{pubkey::Pubkey, saturating_add_assign},
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
-        transaction_processing_result::{
-            TransactionProcessingResult, TransactionProcessingResultExtensions,
-        },
+        transaction_processing_result::TransactionProcessingResult,
     },
     solana_transaction_status::{
         token_balances::TransactionTokenBalancesSet, TransactionTokenBalance,
@@ -76,12 +75,6 @@ impl Committer {
         execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
         processed_counts: &ProcessedTransactionCounts,
     ) -> (u64, Vec<CommitTransactionDetails>) {
-        let processed_transactions = processing_results
-            .iter()
-            .zip(batch.sanitized_transactions())
-            .filter_map(|(processing_result, tx)| processing_result.was_processed().then_some(tx))
-            .collect_vec();
-
         let (commit_results, commit_time_us) = measure_us!(bank.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
@@ -112,6 +105,14 @@ impl Committer {
                 &commit_results,
                 Some(&self.replay_vote_sender),
             );
+
+            let committed_transactions = commit_results
+                .iter()
+                .zip(batch.sanitized_transactions())
+                .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx));
+            self.prioritization_fee_cache
+                .update(bank, committed_transactions);
+
             self.collect_balances_and_send_status_batch(
                 commit_results,
                 bank,
@@ -119,8 +120,6 @@ impl Committer {
                 pre_balance_info,
                 starting_transaction_index,
             );
-            self.prioritization_fee_cache
-                .update(bank, processed_transactions.into_iter());
         });
         execute_and_commit_timings.find_and_send_votes_us = find_and_send_votes_us;
         (commit_time_us, commit_transaction_statuses)
@@ -135,29 +134,45 @@ impl Committer {
         starting_transaction_index: Option<usize>,
     ) {
         if let Some(transaction_status_sender) = &self.transaction_status_sender {
+            let sanitized_transactions = batch.sanitized_transactions();
+
             // Clone `SanitizedTransaction` out of `RuntimeTransaction`, this is
             // done to send over the status sender.
-            let txs = batch
-                .sanitized_transactions()
+            let txs = sanitized_transactions
                 .iter()
                 .map(|tx| tx.as_sanitized_transaction().into_owned())
                 .collect_vec();
+
             let post_balances = bank.collect_balances(batch);
             let post_token_balances =
                 collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals);
+
             let mut transaction_index = starting_transaction_index.unwrap_or_default();
-            let batch_transaction_indexes: Vec<_> = commit_results
+            let (batch_transaction_indexes, tx_costs): (Vec<_>, Vec<_>) = commit_results
                 .iter()
-                .map(|commit_result| {
-                    if commit_result.was_committed() {
+                .zip(sanitized_transactions.iter())
+                .map(|(commit_result, tx)| {
+                    if let Ok(committed_tx) = commit_result {
                         let this_transaction_index = transaction_index;
                         saturating_add_assign!(transaction_index, 1);
-                        this_transaction_index
+
+                        let tx_cost = Some(
+                            CostModel::calculate_cost_for_executed_transaction(
+                                tx,
+                                committed_tx.executed_units,
+                                committed_tx.loaded_account_stats.loaded_accounts_data_size,
+                                &bank.feature_set,
+                            )
+                            .sum(),
+                        );
+
+                        (this_transaction_index, tx_cost)
                     } else {
-                        0
+                        (0, Some(0))
                     }
                 })
-                .collect();
+                .unzip();
+
             transaction_status_sender.send_transaction_status_batch(
                 bank.slot(),
                 txs,
@@ -170,6 +185,7 @@ impl Committer {
                     std::mem::take(&mut pre_balance_info.token),
                     post_token_balances,
                 ),
+                tx_costs,
                 batch_transaction_indexes,
             );
         }
