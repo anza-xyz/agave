@@ -97,7 +97,6 @@ impl ConnectionWorker {
         send_txs_stats: Arc<SendTransactionStats>,
     ) -> (Self, CancellationToken) {
         let cancel = CancellationToken::new();
-
         let this = Self {
             endpoint,
             peer,

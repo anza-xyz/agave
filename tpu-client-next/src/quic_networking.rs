@@ -1,7 +1,7 @@
 //! Utility code to handle quic networking.
 
 use {
-    crate::connection_workers_scheduler::BindTarget,
+    crate::connection_workers_scheduler::{BindTarget, StakeIdentity},
     quinn::{
         crypto::rustls::QuicClientConfig, default_runtime, ClientConfig, Connection, Endpoint,
         EndpointConfig, IdleTimeout, TransportConfig,
@@ -19,8 +19,38 @@ pub use {
     solana_tls_utils::QuicClientCertificate,
 };
 
-pub(crate) fn create_client_config(client_certificate: QuicClientCertificate) -> ClientConfig {
-    // adapted from QuicLazyInitializedEndpoint::create_endpoint
+pub(crate) fn create_client_config2(stake_identity: &Option<StakeIdentity>) -> ClientConfig {
+    let client_certificate = match stake_identity {
+        Some(identity) => &identity.as_certificate(),
+        None => &QuicClientCertificate::new(None),
+    };
+    let mut crypto = tls_client_config_builder()
+        .with_client_auth_cert(
+            vec![client_certificate.certificate.clone()],
+            client_certificate.key.clone_key(),
+        )
+        .expect("Failed to set QUIC client certificates");
+    crypto.enable_early_data = true;
+    crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
+
+    let transport_config = {
+        let mut res = TransportConfig::default();
+
+        let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
+        res.max_idle_timeout(Some(timeout));
+        res.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
+        res.send_fairness(QUIC_SEND_FAIRNESS);
+
+        res
+    };
+
+    let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).unwrap()));
+    config.transport_config(Arc::new(transport_config));
+
+    config
+}
+
+pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -> ClientConfig {
     let mut crypto = tls_client_config_builder()
         .with_client_auth_cert(
             vec![client_certificate.certificate.clone()],

@@ -658,3 +658,9 @@ async fn test_rate_limiting_establish_connection() {
     exit.store(true, Ordering::Relaxed);
     server_handle.await.unwrap();
 }
+
+// TODO(klykov): add test that checks that if worker is cancelled, it will not
+// receive any transactions. How to simulate: create worker which fails to
+// connect and breaks it's loop. Next send it new transaction when the server is
+// ready and check that they are received by server which would mean that a new
+// worker has been added and the old one is pop.
