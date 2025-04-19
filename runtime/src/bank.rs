@@ -61,13 +61,10 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
-    ahash::AHashSet,
+    ahash::{AHashSet, RandomState},
     dashmap::{DashMap, DashSet},
     log::*,
-    rayon::{
-        iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
-        ThreadPoolBuilder,
-    },
+    rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     serde::Serialize,
     solana_accounts_db::{
         account_locks::validate_account_locks,
@@ -954,7 +951,7 @@ struct VoteReward {
     vote_rewards: u64,
 }
 
-type VoteRewards = DashMap<Pubkey, VoteReward>;
+type VoteRewards = DashMap<Pubkey, VoteReward, RandomState>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -1644,23 +1641,17 @@ impl Bank {
     ) {
         let epoch = self.epoch();
         let slot = self.slot();
-        let (thread_pool, thread_pool_time_us) = measure_us!(ThreadPoolBuilder::new()
-            .thread_name(|i| format!("solBnkNewEpch{i:02}"))
-            .build()
-            .expect("new rayon threadpool"));
 
-        let (_, apply_feature_activations_time_us) = measure_us!(thread_pool.install(|| {
+        let (_, apply_feature_activations_time_us) = measure_us!(
             self.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false)
-        }));
+        );
 
         // Add new entry to stakes.stake_history, set appropriate epoch and
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
-        let (_, activate_epoch_time_us) = measure_us!(self.stakes_cache.activate_epoch(
-            epoch,
-            &thread_pool,
-            self.new_warmup_cooldown_rate_epoch()
-        ));
+        let (_, activate_epoch_time_us) = measure_us!(self
+            .stakes_cache
+            .activate_epoch(epoch, self.new_warmup_cooldown_rate_epoch()));
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
@@ -1672,7 +1663,6 @@ impl Bank {
         let (_, update_rewards_with_thread_pool_time_us) = measure_us!(self
             .begin_partitioned_rewards(
                 reward_calc_tracer,
-                &thread_pool,
                 parent_epoch,
                 parent_slot,
                 parent_height,
@@ -1684,7 +1674,7 @@ impl Bank {
             slot,
             parent_slot,
             NewEpochTimings {
-                thread_pool_time_us,
+                thread_pool_time_us: 0,
                 apply_feature_activations_time_us,
                 activate_epoch_time_us,
                 update_epoch_stakes_time_us,
@@ -1882,11 +1872,7 @@ impl Bank {
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
 
-        let thread_pool = ThreadPoolBuilder::new()
-            .thread_name(|i| format!("solBnkNewFlds{i:02}"))
-            .build()
-            .expect("new rayon threadpool");
-        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        bank.recalculate_partitioned_rewards(null_tracer());
 
         bank.finish_init(
             genesis_config,
@@ -1933,12 +1919,10 @@ impl Bank {
                     (parent_ancestors, bank.parent_slot)
                 };
                 let (accounts_lt_hash, duration) = meas_dur!({
-                    thread_pool.install(|| {
-                        bank.rc
-                            .accounts
-                            .accounts_db
-                            .calculate_accounts_lt_hash_at_startup_from_index(&ancestors, slot)
-                    })
+                    bank.rc
+                        .accounts
+                        .accounts_db
+                        .calculate_accounts_lt_hash_at_startup_from_index(&ancestors, slot)
                 });
                 calculate_accounts_lt_hash_duration = Some(duration);
                 *bank.accounts_lt_hash.get_mut().unwrap() = accounts_lt_hash;
@@ -2483,9 +2467,7 @@ impl Bank {
     /// - we want this fn to have no side effects (such as actually storing vote accounts) so that we
     ///   can compare the expected results with the current code path
     /// - we want to be able to batch store the vote accounts later for improved performance/cache updating
-    fn calc_vote_accounts_to_store(
-        vote_account_rewards: DashMap<Pubkey, VoteReward>,
-    ) -> VoteRewardsAccounts {
+    fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
         let len = vote_account_rewards.len();
         let mut result = VoteRewardsAccounts {
             rewards: Vec::with_capacity(len),
