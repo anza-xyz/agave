@@ -17,6 +17,10 @@ filter = "package(solana-zk-elgamal-proof-program-tests) & test(/^test_batched_r
 threads-required = "num-cpus"
 
 [[profile.ci.overrides]]
+filter = "package(solana-turbine) | package(solana-gossip)"
+retries = 0
+
+[[profile.ci.overrides]]
 filter = "package(solana-gossip) & test(/^test_star_network_push_star_200/)"
 threads-required = "num-cpus"
 
