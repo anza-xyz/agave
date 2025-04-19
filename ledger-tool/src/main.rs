@@ -72,6 +72,7 @@ use {
         feature::{self, Feature},
         genesis_config::ClusterType,
         inflation::Inflation,
+        instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
         native_token::{lamports_to_sol, sol_to_lamports, Sol},
         pubkey::Pubkey,
         rent::Rent,
@@ -763,7 +764,13 @@ fn record_transactions(
                     let instructions = message
                         .instructions()
                         .iter()
-                        .map(|ix| parse_ui_instruction(ix, &message.account_keys(), None))
+                        .map(|ix| {
+                            parse_ui_instruction(
+                                ix,
+                                &message.account_keys(),
+                                Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
+                            )
+                        })
                         .collect();
 
                     let is_simple_vote_tx = tx.is_simple_vote_transaction();
