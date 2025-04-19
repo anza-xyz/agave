@@ -39,6 +39,10 @@ pub fn tx_loop<T: AsRef<[u8]>>(
         "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
         dev.name()
     );
+
+    // each queue is bound to its own CPU core
+    set_cpu_affinity([cpu_id]).unwrap();
+
     let src_mac = dev.mac_addr().unwrap();
     let src_ip = dev.ipv4_addr().unwrap();
 
@@ -87,9 +91,6 @@ pub fn tx_loop<T: AsRef<[u8]>>(
 
     // get the routing table from netlink
     let router = Router::new().expect("failed to create router");
-
-    // each queue is bound to its own CPU core
-    set_cpu_affinity([cpu_id]).unwrap();
 
     // we don't need higher caps anymore
     for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
