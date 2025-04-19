@@ -28,6 +28,12 @@ pub(crate) struct BuiltinProgramsFilter {
     program_kind: [Option<ProgramKind>; FILTER_SIZE as usize],
 }
 
+impl Default for BuiltinProgramsFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BuiltinProgramsFilter {
     pub(crate) fn new() -> Self {
         BuiltinProgramsFilter {
