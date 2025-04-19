@@ -8606,6 +8606,8 @@ dependencies = [
 name = "solana-log-collector"
 version = "2.3.0"
 dependencies = [
+ "criterion",
+ "criterion-stats",
  "log",
 ]
 
@@ -9104,6 +9106,8 @@ dependencies = [
  "assert_matches",
  "base64 0.22.1",
  "bincode",
+ "criterion",
+ "criterion-stats",
  "enum-iterator",
  "itertools 0.12.1",
  "log",
