@@ -61,11 +61,11 @@ impl XdpSender {
     #[inline]
     pub(crate) fn try_send(
         &self,
-        shred_index: u32,
+        sender_index: u32,
         addr: Vec<SocketAddr>,
         payload: shred::Payload,
     ) -> Result<(), TrySendError<(Vec<SocketAddr>, shred::Payload)>> {
-        self.senders[shred_index as usize % self.senders.len()].try_send((addr.clone(), payload))
+        self.senders[sender_index as usize % self.senders.len()].try_send((addr.clone(), payload))
     }
 }
 
