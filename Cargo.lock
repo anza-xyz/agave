@@ -9699,6 +9699,7 @@ dependencies = [
  "solana-system-program",
  "solana-timings",
  "solana-transaction-context 2.3.0",
+ "solana-transaction-status",
  "solana-transaction-status-client-types",
  "solana-unified-scheduler-logic",
  "solana-version",

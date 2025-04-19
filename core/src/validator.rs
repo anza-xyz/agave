@@ -82,8 +82,7 @@ use {
         block_meta_service::{BlockMetaSender, BlockMetaService},
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
-            BankNotificationSenderConfig, OptimisticallyConfirmedBank,
-            OptimisticallyConfirmedBankTracker,
+            OptimisticallyConfirmedBank, OptimisticallyConfirmedBankTracker,
         },
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
@@ -100,6 +99,7 @@ use {
         },
         bank::Bank,
         bank_forks::BankForks,
+        bank_notification::{BankNotificationSenderConfig, BankNotificationSenderDirect},
         commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
@@ -793,6 +793,13 @@ impl Validator {
             },
         ));
 
+        let (bank_notification_sender, bank_notification_receiver) = config
+            .rpc_addrs
+            .is_some()
+            .then(unbounded)
+            .map(|(s, r)| (Some(s), Some(r)))
+            .unwrap_or((None, None));
+
         let (
             bank_forks,
             blockstore,
@@ -821,6 +828,7 @@ impl Validator {
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
+            bank_notification_sender.clone(),
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1152,7 +1160,6 @@ impl Validator {
                     .rpc_pubsub()
                     .map(|addr| socket_addr_space.check(&addr))
             );
-            let (bank_notification_sender, bank_notification_receiver) = unbounded();
             let confirmed_bank_subscribers = if !bank_notification_senders.is_empty() {
                 Some(Arc::new(RwLock::new(bank_notification_senders)))
             } else {
@@ -1247,7 +1254,8 @@ impl Validator {
 
             let optimistically_confirmed_bank_tracker =
                 Some(OptimisticallyConfirmedBankTracker::new(
-                    bank_notification_receiver,
+                    bank_notification_receiver
+                        .expect("Exected bank notification receiver to be created for this case!"),
                     exit.clone(),
                     bank_forks.clone(),
                     optimistically_confirmed_bank,
@@ -1255,10 +1263,22 @@ impl Validator {
                     confirmed_bank_subscribers,
                     prioritization_fee_cache.clone(),
                 ));
-            let bank_notification_sender_config = Some(BankNotificationSenderConfig {
-                sender: bank_notification_sender,
-                should_send_parents: geyser_plugin_service.is_some(),
-            });
+
+            let bank_notification_sender_config = if let Some(transaction_status_sender) =
+                &transaction_status_sender
+            {
+                BankNotificationSenderConfig::new_indirect_sender(
+                    transaction_status_sender.clone(),
+                    geyser_plugin_service.is_some(), // should_send_parents?
+                )
+            } else {
+                BankNotificationSenderConfig::new_direct_sender(
+                    bank_notification_sender
+                        .expect("Expected bank notification sender to be created for this case!"),
+                    geyser_plugin_service.is_some(), // should_send_parents?
+                )
+            };
+
             (
                 Some(json_rpc_service),
                 pubsub_service,
@@ -1266,7 +1286,7 @@ impl Validator {
                 completed_data_sets_service,
                 rpc_completed_slots_service,
                 optimistically_confirmed_bank_tracker,
-                bank_notification_sender_config,
+                Some(bank_notification_sender_config),
             )
         } else {
             (None, None, None, None, None, None, None)
@@ -2007,6 +2027,7 @@ fn load_blockstore(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
+    bank_notification_sender: Option<BankNotificationSenderDirect>,
 ) -> Result<
     (
         Arc<RwLock<BankForks>>,
@@ -2067,6 +2088,7 @@ fn load_blockstore(
                 enable_rpc_transaction_history,
                 config.rpc_config.enable_extended_tx_metadata_storage,
                 transaction_notifier,
+                bank_notification_sender,
             )
         } else {
             TransactionHistoryServices::default()
@@ -2490,6 +2512,7 @@ fn initialize_rpc_transaction_history_services(
     enable_rpc_transaction_history: bool,
     enable_extended_tx_metadata_storage: bool,
     transaction_notifier: Option<TransactionNotifierArc>,
+    bank_notification_sender: Option<BankNotificationSenderDirect>,
 ) -> TransactionHistoryServices {
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
@@ -2503,6 +2526,7 @@ fn initialize_rpc_transaction_history_services(
         transaction_notifier,
         blockstore.clone(),
         enable_extended_tx_metadata_storage,
+        bank_notification_sender,
         exit.clone(),
     ));
 

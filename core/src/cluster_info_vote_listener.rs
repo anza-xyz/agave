@@ -18,14 +18,12 @@ use {
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_debug,
     solana_perf::packet::{self, PacketBatch},
-    solana_rpc::{
-        optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSender},
-        rpc_subscriptions::RpcSubscriptions,
-    },
+    solana_rpc::rpc_subscriptions::RpcSubscriptions,
     solana_runtime::{
         bank::Bank,
         bank_forks::BankForks,
         bank_hash_cache::{BankHashCache, DumpedSlotSubscription},
+        bank_notification::{BankNotification, BankNotificationSender},
         commitment::VOTE_THRESHOLD_SIZE,
         epoch_stakes::EpochStakes,
         root_bank_cache::RootBankCache,

@@ -27,7 +27,7 @@ use {
     solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime::{
         accounts_background_service::SnapshotRequestKind,
-        bank::{Bank, PreCommitResult, TransactionBalancesSet},
+        bank::{Bank, PreCommitResult},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -2212,71 +2212,9 @@ pub fn process_single_slot(
     Ok(())
 }
 
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
-pub enum TransactionStatusMessage {
-    Batch(TransactionStatusBatch),
-    Freeze(Slot),
-}
-
-#[derive(Debug)]
-pub struct TransactionStatusBatch {
-    pub slot: Slot,
-    pub transactions: Vec<SanitizedTransaction>,
-    pub commit_results: Vec<TransactionCommitResult>,
-    pub balances: TransactionBalancesSet,
-    pub token_balances: TransactionTokenBalancesSet,
-    pub costs: Vec<Option<u64>>,
-    pub transaction_indexes: Vec<usize>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TransactionStatusSender {
-    pub sender: Sender<TransactionStatusMessage>,
-}
-
-impl TransactionStatusSender {
-    pub fn send_transaction_status_batch(
-        &self,
-        slot: Slot,
-        transactions: Vec<SanitizedTransaction>,
-        commit_results: Vec<TransactionCommitResult>,
-        balances: TransactionBalancesSet,
-        token_balances: TransactionTokenBalancesSet,
-        costs: Vec<Option<u64>>,
-        transaction_indexes: Vec<usize>,
-    ) {
-        if let Err(e) = self
-            .sender
-            .send(TransactionStatusMessage::Batch(TransactionStatusBatch {
-                slot,
-                transactions,
-                commit_results,
-                balances,
-                token_balances,
-                costs,
-                transaction_indexes,
-            }))
-        {
-            trace!(
-                "Slot {} transaction_status send batch failed: {:?}",
-                slot,
-                e
-            );
-        }
-    }
-
-    pub fn send_transaction_status_freeze_message(&self, bank: &Arc<Bank>) {
-        let slot = bank.slot();
-        if let Err(e) = self.sender.send(TransactionStatusMessage::Freeze(slot)) {
-            trace!(
-                "Slot {} transaction_status send freeze message failed: {:?}",
-                slot,
-                e
-            );
-        }
-    }
-}
+pub use solana_runtime::transaction_notification::{
+    TransactionStatusBatch, TransactionStatusMessage, TransactionStatusSender,
+};
 
 pub type BlockMetaSender = Sender<Arc<Bank>>;
 

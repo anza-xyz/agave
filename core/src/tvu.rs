@@ -36,13 +36,12 @@ use {
     solana_poh::poh_recorder::PohRecorder,
     solana_rpc::{
         block_meta_service::BlockMetaSender, max_slots::MaxSlots,
-        optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
         rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
-        bank_forks::BankForks, commitment::BlockCommitmentCache,
-        prioritization_fee_cache::PrioritizationFeeCache, snapshot_controller::SnapshotController,
-        vote_sender_types::ReplayVoteSender,
+        bank_forks::BankForks, bank_notification::BankNotificationSenderConfig,
+        commitment::BlockCommitmentCache, prioritization_fee_cache::PrioritizationFeeCache,
+        snapshot_controller::SnapshotController, vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
     solana_streamer::evicting_sender::EvictingSender,
