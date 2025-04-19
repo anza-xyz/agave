@@ -323,34 +323,28 @@ fn retransmit(
             stats,
         )
     };
+
+    let retransmit_socket = || {
+        let socket = xdp_sender.map(RetransmitSocket::Xdp).unwrap_or_else(|| {
+            RetransmitSocket::Socket(
+                &retransmit_sockets
+                    [thread_pool.current_thread_index().unwrap() % retransmit_sockets.len()],
+            )
+        });
+        socket
+    };
+
     let slot_stats = if shreds.len() < PAR_ITER_MIN_NUM_SHREDS {
         stats.num_small_batches += 1;
         shreds
             .into_iter()
-            .filter_map(|shred| {
-                let socket = xdp_sender.map(RetransmitSocket::Xdp).unwrap_or_else(|| {
-                    RetransmitSocket::Socket(
-                        &retransmit_sockets
-                            [thread_pool.current_num_threads() % retransmit_sockets.len()],
-                    )
-                });
-
-                retransmit_shred(shred, socket, stats)
-            })
+            .filter_map(|shred| retransmit_shred(shred, retransmit_socket(), stats))
             .fold(HashMap::new(), record)
     } else {
         thread_pool.install(|| {
             shreds
                 .into_par_iter()
-                .filter_map(|shred| {
-                    let socket = xdp_sender.map(RetransmitSocket::Xdp).unwrap_or_else(|| {
-                        RetransmitSocket::Socket(
-                            &retransmit_sockets
-                                [thread_pool.current_num_threads() % retransmit_sockets.len()],
-                        )
-                    });
-                    retransmit_shred(shred, socket, stats)
-                })
+                .filter_map(|shred| retransmit_shred(shred, retransmit_socket(), stats))
                 .fold(HashMap::new, record)
                 .reduce(HashMap::new, RetransmitSlotStats::merge)
         })
