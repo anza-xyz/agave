@@ -1648,7 +1648,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .value_name("INTERFACE")
             .requires("retransmit_xdp_cpu_cores")
-            .help("EXPERIMENTAL: Enable XDP retransmit on the specified CPU cores"),
+            .help("EXPERIMENTAL: The network interface to use for XDP retransmit"),
     )
     .arg(
         Arg::with_name("retransmit_xdp_cpu_cores")
@@ -1667,6 +1667,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("experimental-retransmit-xdp-zero-copy")
             .takes_value(false)
             .requires("retransmit_xdp_cpu_cores")
-            .help("EXPERIMENTAL: Enable XDP retransmit on the specified CPU cores"),
+            .help("EXPERIMENTAL: Enable XDP zero copy. Requires hardware support"),
     )
 }
