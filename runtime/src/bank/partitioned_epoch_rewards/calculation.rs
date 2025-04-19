@@ -17,6 +17,7 @@ use {
         stake_account::StakeAccount,
         stakes::Stakes,
     },
+    ahash::random_state::RandomState as AHashRandomState,
     dashmap::DashMap,
     log::{debug, info},
     rayon::{
@@ -313,7 +314,13 @@ impl Bank {
         };
 
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-        let vote_account_rewards: VoteRewards = DashMap::new();
+        let estimated_num_vote_accounts = cached_vote_accounts.len();
+        let vote_account_rewards: VoteRewards = DashMap::with_capacity_and_hasher_and_shard_amount(
+            estimated_num_vote_accounts,
+            AHashRandomState::default(),
+            1024, // shard amount
+        );
+
         let total_stake_rewards = AtomicU64::default();
         let (stake_rewards, measure_stake_rewards_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
@@ -1094,5 +1101,11 @@ mod tests {
 
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
         assert_eq!(bank.epoch_reward_status, EpochRewardStatus::Inactive);
+    }
+
+    #[test]
+    fn test_foo() {
+        let d: DashMap<i8, i8> = DashMap::<i8, i8>::new();
+        println!("{}", d.shards().len());
     }
 }
