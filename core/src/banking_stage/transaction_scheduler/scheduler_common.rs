@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::{
         in_flight_tracker::InFlightTracker,
@@ -107,6 +109,7 @@ pub fn select_thread<Tx>(
 }
 
 /// Common scheduler communication structure.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct SchedulingCommon<Tx> {
     pub(crate) consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
     pub(crate) finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,

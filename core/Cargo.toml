@@ -115,6 +115,7 @@ trees = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 criterion = { workspace = true }
 fs_extra = { workspace = true }
+jemallocator = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
@@ -180,6 +181,10 @@ name = "sigverify_stage"
 
 [[bench]]
 name = "receive_and_buffer"
+harness = false
+
+[[bench]]
+name = "scheduler"
 harness = false
 
 [package.metadata.docs.rs]

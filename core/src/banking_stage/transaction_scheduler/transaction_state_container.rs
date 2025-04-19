@@ -191,6 +191,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     /// Insert a new transaction into the container's queues and maps.
     /// Returns `true` if a packet was dropped due to capacity limits.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn insert_new_transaction(
         &mut self,
         transaction: Tx,

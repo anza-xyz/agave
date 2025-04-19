@@ -9,6 +9,7 @@ use {
     solana_sdk::saturating_add_assign,
 };
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     /// Schedule transactions from `container`.
     /// pre-graph and pre-lock filters may be passed to be applied
@@ -47,6 +48,7 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
 }
 
 /// Action to be taken by pre-lock filter.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) enum PreLockFilterAction {
     /// Attempt to schedule the transaction.
     AttemptToSchedule,

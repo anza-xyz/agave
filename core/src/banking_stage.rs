@@ -87,6 +87,7 @@ conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub,
 // Fixed thread size seems to be fastest on GCP setup
 pub const NUM_THREADS: u32 = 6;
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 
 const NUM_VOTE_PROCESSING_THREADS: u32 = 2;

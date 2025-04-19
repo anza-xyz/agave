@@ -7586,6 +7586,7 @@ dependencies = [
  "tempfile",
  "test-case",
  "thiserror 2.0.12",
+ "tikv-jemallocator",
  "tokio",
  "tokio-util 0.7.14",
  "trees",
