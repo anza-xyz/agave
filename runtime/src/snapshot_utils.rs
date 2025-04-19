@@ -978,7 +978,6 @@ fn archive_snapshot(
 ) -> Result<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
     const SNAPSHOTS_DIR: &str = "snapshots";
-    const ACCOUNTS_DIR: &str = "accounts";
     info!("Generating snapshot archive for slot {snapshot_slot}, kind: {snapshot_kind:?}");
 
     let mut timer = Measure::start("snapshot_package-package_snapshots");
@@ -1058,25 +1057,7 @@ fn archive_snapshot(
                 .append_dir_all(SNAPSHOTS_DIR, &staging_snapshots_dir)
                 .map_err(E::ArchiveSnapshotsDir)?;
 
-            for storage in snapshot_storages {
-                let path_in_archive = Path::new(ACCOUNTS_DIR)
-                    .join(AccountsFile::file_name(storage.slot(), storage.id()));
-                match storage.accounts.internals_for_archive() {
-                    InternalsForArchive::Mmap(data) => {
-                        let mut header = tar::Header::new_gnu();
-                        header.set_path(path_in_archive).map_err(|err| {
-                            E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                        })?;
-                        header.set_size(storage.capacity());
-                        header.set_cksum();
-                        archive.append(&header, data)
-                    }
-                    InternalsForArchive::FileIo(path) => {
-                        archive.append_path_with_name(path, path_in_archive)
-                    }
-                }
-                .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
-            }
+            archive_snapshot_storages(&mut archive, snapshot_storages, snapshot_slot)?;
 
             archive.into_inner().map_err(E::FinishArchive)?;
             Ok(())
@@ -1154,6 +1135,95 @@ fn archive_snapshot(
         hash: snapshot_hash,
         archive_format,
     })
+}
+
+fn archive_snapshot_storages(
+    archive: &mut tar::Builder<impl Write>,
+    snapshot_storages: &[Arc<AccountStorageEntry>],
+    snapshot_slot: Slot,
+) -> std::result::Result<(), ArchiveSnapshotPackageError> {
+    const ACCOUNTS_DIR: &str = "accounts";
+    use ArchiveSnapshotPackageError as E;
+
+    for storage in snapshot_storages {
+        let path_in_archive =
+            Path::new(ACCOUNTS_DIR).join(AccountsFile::file_name(storage.slot(), storage.id()));
+
+        let sorted_dead_accounts = {
+            let dead_accounts = storage.get_sorted_dead_accounts();
+            dead_accounts
+                .into_iter()
+                .filter(|&(_, _, slot)| slot <= snapshot_slot)
+                .collect::<Vec<_>>()
+        };
+
+        let mut bytestream = Vec::new();
+
+        match storage.accounts.internals_for_archive() {
+            InternalsForArchive::Mmap(data) => {
+                process_data_from_memory(&mut bytestream, data, &sorted_dead_accounts)
+            }
+            InternalsForArchive::FileIo(path) => {
+                process_data_from_file(&mut bytestream, path, &sorted_dead_accounts)
+            }
+        }
+        .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
+
+        let mut header = tar::Header::new_gnu();
+        header
+            .set_path(path_in_archive)
+            .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
+        header.set_size(bytestream.len() as u64);
+        header.set_cksum();
+
+        archive
+            .append(&header, &bytestream[..])
+            .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
+    }
+
+    Ok(())
+}
+
+fn process_data_from_memory(
+    bytestream: &mut Vec<u8>,
+    data: &[u8],
+    sorted_dead_accounts: &[(usize, usize, u64)],
+) -> std::io::Result<()> {
+    let mut current_offset = 0;
+
+    for &(dead_account_start, dead_account_size, _) in sorted_dead_accounts {
+        bytestream.extend_from_slice(&data[current_offset..dead_account_start]);
+        current_offset = dead_account_start + dead_account_size;
+    }
+
+    bytestream.extend_from_slice(&data[current_offset..]);
+    Ok(())
+}
+
+fn process_data_from_file(
+    bytestream: &mut Vec<u8>,
+    path: &Path,
+    sorted_dead_accounts: &[(usize, usize, u64)],
+) -> std::io::Result<()> {
+    let mut file = fs::File::open(path)?;
+    let mut current_offset = 0;
+
+    for &(dead_account_offset, dead_account_size, _) in sorted_dead_accounts {
+        let length = dead_account_offset - current_offset;
+        file.seek(std::io::SeekFrom::Start(current_offset as u64))?;
+        let mut buffer = vec![0; length];
+        file.read_exact(&mut buffer)?;
+        bytestream.extend_from_slice(&buffer);
+        current_offset = dead_account_offset + dead_account_size;
+    }
+
+    file.seek(std::io::SeekFrom::Start(current_offset as u64))?;
+    let length = file.metadata()?.len() as usize - current_offset;
+    let mut buffer = vec![0; length];
+    file.read_exact(&mut buffer).unwrap();
+    bytestream.extend_from_slice(&buffer);
+
+    Ok(())
 }
 
 /// Get the bank snapshots in a directory

@@ -16,6 +16,7 @@ pub struct SerializableAccountStorageEntry {
 pub(super) trait SerializableStorage {
     fn id(&self) -> SerializedAccountsFileId;
     fn current_len(&self) -> usize;
+    fn set_len(&mut self, len: usize);
 }
 
 impl SerializableStorage for SerializableAccountStorageEntry {
@@ -24,6 +25,9 @@ impl SerializableStorage for SerializableAccountStorageEntry {
     }
     fn current_len(&self) -> usize {
         self.accounts_current_len
+    }
+    fn set_len(&mut self, len: usize) {
+        self.accounts_current_len = len;
     }
 }
 

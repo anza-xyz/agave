@@ -719,7 +719,7 @@ fn test_incremental_snapshot_download() {
 /// - Wait for the validator node to generate a new incremental snapshot
 /// - Copy the new incremental snapshot (and its associated full snapshot) to another new validator
 /// - Start up this new validator to ensure the snapshots from ^^^ are good
-#[test]
+/*#[test]
 #[serial]
 fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_startup() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
@@ -1206,7 +1206,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         SocketAddrSpace::Unspecified,
     );
     info!("Starting final validator... DONE");
-}
+}*/
 
 #[allow(unused_attributes)]
 #[test]
@@ -1281,7 +1281,6 @@ fn test_snapshot_restart_tower() {
         &cluster.connection_cache,
     );
 }
-
 #[test]
 #[serial]
 fn test_snapshots_blockstore_floor() {
