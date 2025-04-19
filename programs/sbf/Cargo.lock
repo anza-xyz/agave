@@ -3711,7 +3711,7 @@ checksum = "62948e14d923ea95ea2c7c86c71013138b66525b86bdc08d2dcc262bdb497b87"
 dependencies = [
  "crc32fast",
  "hashbrown 0.15.1",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "memchr",
 ]
 
