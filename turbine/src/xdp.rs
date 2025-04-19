@@ -21,12 +21,14 @@ pub struct XdpConfig {
     pub interface: Option<String>,
     pub cpus: Vec<usize>,
     pub zero_copy: bool,
-    pub channel_cap: usize,
+    // The capacity of the channel that sits between retransmit stage and each XDP thread that
+    // enqueues packets to the NIC.
+    pub rtx_channel_cap: usize,
 }
 
 impl XdpConfig {
     // A nice round number
-    const DEFAULT_CHANNEL_CAP: usize = 1_000_000;
+    const DEFAULT_RTX_CHANNEL_CAP: usize = 1_000_000;
 }
 
 impl Default for XdpConfig {
@@ -35,7 +37,7 @@ impl Default for XdpConfig {
             interface: None,
             cpus: vec![],
             zero_copy: false,
-            channel_cap: Self::DEFAULT_CHANNEL_CAP,
+            rtx_channel_cap: Self::DEFAULT_RTX_CHANNEL_CAP,
         }
     }
 }
@@ -46,7 +48,7 @@ impl XdpConfig {
             interface: interface.map(|s| s.into()),
             cpus,
             zero_copy,
-            channel_cap: XdpConfig::DEFAULT_CHANNEL_CAP,
+            rtx_channel_cap: XdpConfig::DEFAULT_RTX_CHANNEL_CAP,
         }
     }
 }
@@ -117,7 +119,7 @@ impl XdpRetransmitter {
         }
 
         let (senders, receivers) = (0..config.cpus.len())
-            .map(|_| crossbeam_channel::bounded(config.channel_cap))
+            .map(|_| crossbeam_channel::bounded(config.rtx_channel_cap))
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
         let mut threads = vec![];
