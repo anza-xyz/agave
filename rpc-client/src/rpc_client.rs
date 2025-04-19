@@ -1955,7 +1955,7 @@ impl RpcClient {
     /// # use solana_transaction_status_client_types::UiTransactionEncoding;
     /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// # let slot = rpc_client.get_slot()?;
-    /// let encoding = UiTransactionEncoding::Base58;
+    /// let encoding = UiTransactionEncoding::Base64;
     /// let block = rpc_client.get_block_with_encoding(
     ///     slot,
     ///     encoding,
@@ -1993,7 +1993,7 @@ impl RpcClient {
     /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// # let slot = rpc_client.get_slot()?;
     /// let config = RpcBlockConfig {
-    ///     encoding: Some(UiTransactionEncoding::Base58),
+    ///     encoding: Some(UiTransactionEncoding::Base64),
     ///     transaction_details: Some(TransactionDetails::None),
     ///     rewards: Some(true),
     ///     commitment: None,

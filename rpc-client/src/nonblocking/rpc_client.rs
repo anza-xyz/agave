@@ -2311,7 +2311,7 @@ impl RpcClient {
     /// # futures::executor::block_on(async {
     /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// #     let slot = rpc_client.get_slot().await?;
-    /// let encoding = UiTransactionEncoding::Base58;
+    /// let encoding = UiTransactionEncoding::Base64;
     /// let block = rpc_client.get_block_with_encoding(
     ///     slot,
     ///     encoding,
@@ -2353,7 +2353,7 @@ impl RpcClient {
     /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// #     let slot = rpc_client.get_slot().await?;
     /// let config = RpcBlockConfig {
-    ///     encoding: Some(UiTransactionEncoding::Base58),
+    ///     encoding: Some(UiTransactionEncoding::Base64),
     ///     transaction_details: Some(TransactionDetails::None),
     ///     rewards: Some(true),
     ///     commitment: None,
@@ -4660,7 +4660,6 @@ where
     let serialized = serialize(input)
         .map_err(|e| ClientErrorKind::Custom(format!("Serialization failed: {e}")))?;
     let encoded = match encoding {
-        UiTransactionEncoding::Base58 => bs58::encode(serialized).into_string(),
         UiTransactionEncoding::Base64 => BASE64_STANDARD.encode(serialized),
         _ => {
             return Err(ClientErrorKind::Custom(format!(
