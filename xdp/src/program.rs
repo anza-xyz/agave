@@ -13,21 +13,29 @@ macro_rules! write_fields {
 }
 
 const SHT_NULL: u32 = 0;
+// text section
 const SHT_PROGBITS: u32 = 1;
+// symbol table
 const SHT_SYMTAB: u32 = 2;
+// string table
 const SHT_STRTAB: u32 = 3;
 
+// flags required for the text section
 const SHF_ALLOC: u64 = 1 << 1;
 const SHF_EXECINSTR: u64 = 1 << 2;
 
-const STB_GLOBAL: u8 = 1 << 4; // 0x10
-const STT_FUNC: u8 = 2; // 0x02
+// symbol visibility
+const STB_GLOBAL: u8 = 1 << 4;
+// symbol type
+const STT_FUNC: u8 = 2;
 
+// we just let all packets in
 const XDP_PROG: &[u8] = &[
     0xb7, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, // r0 = XDP_PASS
     0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // exit
 ];
 
+// the string table
 const STRTAB: &[u8] = b"\0xdp\0.symtab\0.strtab\0";
 
 pub fn load_xdp_program(if_index: u32) -> Result<Ebpf, Box<dyn std::error::Error>> {
