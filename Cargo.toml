@@ -17,6 +17,19 @@ split-debuginfo = "unpacked"
 lto = "thin"
 codegen-units = 1
 
+# Enable optimizations for procmacros for faster codegen
+[profile.dev.build-override]
+opt-level = 1
+
+# Enable optimizations for ci unittests to trigger const propagation and inlining
+[profile.ci]
+inherits = "test"
+opt-level = 1
+
+# Disable optimizations for some crates as they interfere with tests there
+[profile.ci.package."solana-gossip"]
+opt-level = 0
+
 [workspace]
 members = [
     "account-decoder",
