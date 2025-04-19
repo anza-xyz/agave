@@ -186,8 +186,9 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
 
     // Load an account either from our own store or accounts-db and inspect it on behalf of Bank.
     // Inspection is required prior to any modifications to the account. This function is used
-    // in transaction loading for that purpose. It returns a different type than other load functions,
-    // which should prevent accidental mix and match of them.
+    // by load_transaction() and validate_transaction_fee_payer() for that purpose. It returns
+    // a different type than other AccountLoader load functions, which should prevent accidental
+    // mix and match of them.
     pub(crate) fn load_transaction_account(
         &mut self,
         account_key: &Pubkey,
