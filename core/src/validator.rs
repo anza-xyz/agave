@@ -1580,6 +1580,7 @@ impl Validator {
                 transactions_forwards_quic: node.sockets.tpu_forwards_quic,
                 vote_quic: node.sockets.tpu_vote_quic,
                 vote_forwards_client: node.sockets.tpu_vote_forwards_client,
+                vortexor_receivers: node.sockets.vortexor_receivers,
             },
             &rpc_subscriptions,
             transaction_status_sender,

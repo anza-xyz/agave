@@ -98,6 +98,7 @@ solana-transaction-status = { workspace = true }
 solana-turbine = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }
+solana-vortexor-receiver = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 solana-wen-restart = { workspace = true }

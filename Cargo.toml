@@ -154,6 +154,7 @@ members = [
     "validator",
     "version",
     "vortexor",
+    "vortexor-receiver",
     "vote",
     "watchtower",
     "wen-restart",
@@ -572,6 +573,7 @@ solana-type-overrides = { path = "type-overrides", version = "=2.3.0" }
 solana-udp-client = { path = "udp-client", version = "=2.3.0" }
 solana-validator-exit = "2.2.1"
 solana-version = { path = "version", version = "=2.3.0" }
+solana-vortexor-receiver = { path = "vortexor-receiver", version = "=2.3.0" }
 solana-vote = { path = "vote", version = "=2.3.0" }
 solana-vote-interface = "2.2.4"
 solana-vote-program = { path = "programs/vote", version = "=2.3.0", default-features = false }
