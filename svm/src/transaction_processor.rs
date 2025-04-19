@@ -571,7 +571,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_address = message.fee_payer();
 
-        let Some(mut loaded_fee_payer) = account_loader.load_account(fee_payer_address, true)
+        // We *must* use load_transaction_account() here because *this* is when the fee-payer
+        // is loaded for the transaction. Transaction loading skips the first account and
+        // loads (and thus inspects) all others normally.
+        let Some(mut loaded_fee_payer) =
+            account_loader.load_transaction_account(fee_payer_address, true)
         else {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
@@ -630,9 +634,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         //
         // Note these checks are *not* obviated by fee-only transactions.
         let nonce_is_valid = account_loader
-            .load_account(nonce_info.address(), true)
-            .and_then(|loaded_nonce| {
-                let current_nonce_account = &loaded_nonce.account;
+            .load_account(nonce_info.address())
+            .and_then(|ref current_nonce_account| {
                 system_program::check_id(current_nonce_account.owner()).then_some(())?;
                 StateMut::<NonceVersions>::state(current_nonce_account).ok()
             })

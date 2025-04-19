@@ -147,13 +147,20 @@ pub struct FeesOnlyTransaction {
     pub fee_details: FeeDetails,
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
+// This is an internal SVM type that tracks account changes throughout a
+// transaction batch and obviates the need to load accounts from accounts-db
+// more than once. It effectively wraps an `impl TransactionProcessingCallback`
+// type, and itself implements `TransactionProcessingCallback`, behaving
+// exactly like the `Bank` impl of this trait but also returns up-to-date
+// account states mid-batch.
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     account_cache: AHashMap<Pubkey, AccountSharedData>,
     callbacks: &'a CB,
     pub(crate) feature_set: &'a SVMFeatureSet,
 }
+
 impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
+    // create a new AccountLoader for the transaction batch
     pub(crate) fn new_with_account_cache_capacity(
         account_overrides: Option<&'a AccountOverrides>,
         callbacks: &'a CB,
@@ -177,26 +184,16 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 
-    pub(crate) fn load_account(
+    // Load an account either from our own store or accounts-db and inspect it on behalf of Bank.
+    // Inspection is required prior to any modifications to the account. This function is used
+    // in transaction loading for that purpose. It returns a different type than other load functions,
+    // which should prevent accidental mix and match of them.
+    pub(crate) fn load_transaction_account(
         &mut self,
         account_key: &Pubkey,
         is_writable: bool,
     ) -> Option<LoadedTransactionAccount> {
-        let account = if let Some(account) = self.account_cache.get(account_key) {
-            // If lamports is 0, a previous transaction deallocated this account.
-            // We return None instead of the account we found so it can be created fresh.
-            // We never evict from the cache, or else we would fetch stale state from accounts-db.
-            if account.lamports() == 0 {
-                None
-            } else {
-                Some(account.clone())
-            }
-        } else if let Some(account) = self.callbacks.get_account_shared_data(account_key) {
-            self.account_cache.insert(*account_key, account.clone());
-            Some(account)
-        } else {
-            None
-        };
+        let account = self.load_account(account_key);
 
         // Inspect prior to collecting rent, since rent collection can modify the account.
         self.callbacks.inspect_account(
@@ -214,6 +211,41 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
             account,
             rent_collected: 0,
         })
+    }
+
+    // Load an account as above, with no inspection and no LoadedTransactionAccount wrapper.
+    // This is a general purpose function suitable for usage outside initial transaction loading.
+    pub(crate) fn load_account(&mut self, account_key: &Pubkey) -> Option<AccountSharedData> {
+        match self.do_load(account_key) {
+            (Some(account), true) => {
+                self.account_cache.insert(*account_key, account.clone());
+                Some(account)
+            }
+            (account, false) => account,
+            (None, true) => unreachable!(),
+        }
+    }
+
+    // Internal helper for core loading logic to prevent code duplication. Returns a bool
+    // indicating whether the account came from accounts-db, which allows wrappers with
+    // &mut self to insert the account. Wrappers with &self ignore it.
+    fn do_load(&self, account_key: &Pubkey) -> (Option<AccountSharedData>, bool) {
+        if let Some(account) = self.account_cache.get(account_key) {
+            // If lamports is 0, a previous transaction deallocated this account.
+            // We return None instead of the account we found so it can be created fresh.
+            // We *never* remove accounts, or else we would fetch stale state from accounts-db.
+            let option_account = if account.lamports() == 0 {
+                None
+            } else {
+                Some(account.clone())
+            };
+
+            (option_account, false)
+        } else if let Some(account) = self.callbacks.get_account_shared_data(account_key) {
+            (Some(account), true)
+        } else {
+            (None, false)
+        }
     }
 
     pub(crate) fn update_accounts_for_executed_tx(
@@ -481,11 +513,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
 
             let program_index = instruction.program_id_index as usize;
 
-            let Some(LoadedTransactionAccount {
-                account: program_account,
-                ..
-            }) = account_loader.load_account(program_id, false)
-            else {
+            let Some(program_account) = account_loader.load_account(program_id) else {
                 error_metrics.account_not_found += 1;
                 return Err(TransactionError::ProgramAccountNotFound);
             };
@@ -522,12 +550,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 // and SIMD-186 are active, we do not need to load loaders at all to comply with consensus rules
                 // we may verify program ids are owned by `PROGRAM_OWNERS` purely as an optimization
                 // this could even be done before loading the rest of the accounts for a transaction
-                if let Some(LoadedTransactionAccount {
-                    account: owner_account,
-                    loaded_size: owner_size,
-                    ..
-                }) = account_loader.load_account(owner_id, false)
-                {
+                if let Some(owner_account) = account_loader.load_account(owner_id) {
                     if !native_loader::check_id(owner_account.owner())
                         || (!account_loader
                             .feature_set
@@ -539,7 +562,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     }
                     accumulate_and_check_loaded_account_data_size(
                         &mut accumulated_accounts_data_size,
-                        owner_size,
+                        owner_account.data().len(),
                         loaded_accounts_bytes_limit,
                         error_metrics,
                     )?;
@@ -578,7 +601,9 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
             account: construct_instructions_account(message),
             rent_collected: 0,
         }
-    } else if let Some(mut loaded_account) = account_loader.load_account(account_key, is_writable) {
+    } else if let Some(mut loaded_account) =
+        account_loader.load_transaction_account(account_key, is_writable)
+    {
         loaded_account.rent_collected = if is_writable {
             collect_rent_from_account(
                 account_loader.feature_set,
@@ -2226,11 +2251,7 @@ mod tests {
             // *not* key0, since it is loaded during fee payer validation
             (address1, vec![(Some(account1), true)]),
             (address2, vec![(None, true)]),
-            (
-                address3,
-                vec![(Some(account3.clone()), false), (Some(account3), false)],
-            ),
-            (bpf_loader::id(), vec![(None, false)]),
+            (address3, vec![(Some(account3), false)]),
         ];
         expected_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
