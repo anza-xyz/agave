@@ -38,7 +38,7 @@ impl NetlinkSocket {
 
         let enable = 1i32;
         // Safety: libc wrapper
-        unsafe {
+        if unsafe {
             setsockopt(
                 sock.as_raw_fd(),
                 SOL_NETLINK,
@@ -46,7 +46,10 @@ impl NetlinkSocket {
                 &enable as *const _ as *const _,
                 mem::size_of::<i32>() as u32,
             )
-        };
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
 
         // Safety: sockaddr_nl is POD so this is safe
         let mut addr = unsafe { mem::zeroed::<sockaddr_nl>() };
@@ -529,49 +532,23 @@ pub fn parse_rtm_newroute(msg: NetlinkMessage) -> Option<RouteEntry> {
     if let Some(gateway_attr) = attrs.get(&RTA_GATEWAY) {
         route.gateway = parse_ip_address(gateway_attr.data, rt_msg.rtm_family);
     }
+
+    let u32_from_ne_bytes = |data: &[u8]| -> Option<u32> {
+        data.get(..4)
+            .map(|data| u32::from_ne_bytes([data[0], data[1], data[2], data[3]]))
+    };
+
     if let Some(oif_attr) = attrs.get(&RTA_OIF) {
-        if oif_attr.data.len() >= 4 {
-            let oif = i32::from_ne_bytes([
-                oif_attr.data[0],
-                oif_attr.data[1],
-                oif_attr.data[2],
-                oif_attr.data[3],
-            ]);
-            route.out_if_index = Some(oif);
-        }
+        route.out_if_index = u32_from_ne_bytes(oif_attr.data).map(|i| i as i32);
     }
     if let Some(iif_attr) = attrs.get(&RTA_IIF) {
-        if iif_attr.data.len() >= 4 {
-            let iif = i32::from_ne_bytes([
-                iif_attr.data[0],
-                iif_attr.data[1],
-                iif_attr.data[2],
-                iif_attr.data[3],
-            ]);
-            route.in_if_index = Some(iif);
-        }
+        route.in_if_index = u32_from_ne_bytes(iif_attr.data).map(|i| i as i32);
     }
     if let Some(priority_attr) = attrs.get(&RTA_PRIORITY) {
-        if priority_attr.data.len() >= 4 {
-            let priority = u32::from_ne_bytes([
-                priority_attr.data[0],
-                priority_attr.data[1],
-                priority_attr.data[2],
-                priority_attr.data[3],
-            ]);
-            route.priority = Some(priority);
-        }
+        route.priority = u32_from_ne_bytes(priority_attr.data);
     }
     if let Some(table_attr) = attrs.get(&RTA_TABLE) {
-        if table_attr.data.len() >= 4 {
-            let table = u32::from_ne_bytes([
-                table_attr.data[0],
-                table_attr.data[1],
-                table_attr.data[2],
-                table_attr.data[3],
-            ]);
-            route.table = Some(table);
-        }
+        route.table = u32_from_ne_bytes(table_attr.data);
     }
     if let Some(prefsrc_attr) = attrs.get(&RTA_PREFSRC) {
         route.pref_src = parse_ip_address(prefsrc_attr.data, rt_msg.rtm_family);
