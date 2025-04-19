@@ -231,10 +231,15 @@ pub fn tx_loop<T: AsRef<[u8]>>(
                     &next_hop.mac_addr.unwrap_or(MacAddress([0u8; 6])).0,
                 );
 
-                write_ip_header(packet, &src_ip, &dst_ip, (UDP_HEADER_SIZE + len) as u16);
+                write_ip_header(
+                    &mut packet[ETH_HEADER_SIZE..],
+                    &src_ip,
+                    &dst_ip,
+                    (UDP_HEADER_SIZE + len) as u16,
+                );
 
                 write_udp_header(
-                    packet,
+                    &mut packet[ETH_HEADER_SIZE + IP_HEADER_SIZE..],
                     &src_ip,
                     src_port,
                     &dst_ip,

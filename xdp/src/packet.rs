@@ -13,29 +13,28 @@ pub fn write_eth_header(packet: &mut [u8], src_mac: &[u8; 6], dst_mac: &[u8; 6])
 }
 
 pub fn write_ip_header(packet: &mut [u8], src_ip: &Ipv4Addr, dst_ip: &Ipv4Addr, udp_len: u16) {
-    let offset = ETH_HEADER_SIZE;
     let total_len = IP_HEADER_SIZE + udp_len as usize;
 
     // version (4) and IHL (5)
-    packet[offset] = 0x45;
+    packet[0] = 0x45;
     // tos
-    packet[offset + 1] = 0;
-    packet[offset + 2..offset + 4].copy_from_slice(&(total_len as u16).to_be_bytes());
+    packet[1] = 0;
+    packet[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
     // identification
-    packet[offset + 4..offset + 6].copy_from_slice(&0u16.to_be_bytes());
+    packet[4..6].copy_from_slice(&0u16.to_be_bytes());
     // flags & frag offset
-    packet[offset + 6..offset + 8].copy_from_slice(&0u16.to_be_bytes());
+    packet[6..8].copy_from_slice(&0u16.to_be_bytes());
     // TTL
-    packet[offset + 8] = 64;
+    packet[8] = 64;
     // protocol (UDP = 17)
-    packet[offset + 9] = 17;
+    packet[9] = 17;
     // checksum
-    packet[offset + 10..offset + 12].copy_from_slice(&0u16.to_be_bytes());
-    packet[offset + 12..offset + 16].copy_from_slice(&src_ip.octets());
-    packet[offset + 16..offset + 20].copy_from_slice(&dst_ip.octets());
+    packet[10..12].copy_from_slice(&0u16.to_be_bytes());
+    packet[12..16].copy_from_slice(&src_ip.octets());
+    packet[16..20].copy_from_slice(&dst_ip.octets());
 
-    let checksum = calculate_ip_checksum(&packet[offset..offset + IP_HEADER_SIZE]);
-    packet[offset + 10..offset + 12].copy_from_slice(&checksum.to_be_bytes());
+    let checksum = calculate_ip_checksum(&packet[..IP_HEADER_SIZE]);
+    packet[10..12].copy_from_slice(&checksum.to_be_bytes());
 }
 
 pub fn write_udp_header(
@@ -47,17 +46,16 @@ pub fn write_udp_header(
     payload_len: u16,
     csum: bool,
 ) {
-    let offset = ETH_HEADER_SIZE + IP_HEADER_SIZE;
     let udp_len = UDP_HEADER_SIZE + payload_len as usize;
 
-    packet[offset..offset + 2].copy_from_slice(&src_port.to_be_bytes());
-    packet[offset + 2..offset + 4].copy_from_slice(&dst_port.to_be_bytes());
-    packet[offset + 4..offset + 6].copy_from_slice(&(udp_len as u16).to_be_bytes());
-    packet[offset + 6..offset + 8].copy_from_slice(&0u16.to_be_bytes());
+    packet[0..2].copy_from_slice(&src_port.to_be_bytes());
+    packet[2..4].copy_from_slice(&dst_port.to_be_bytes());
+    packet[4..6].copy_from_slice(&(udp_len as u16).to_be_bytes());
+    packet[6..8].copy_from_slice(&0u16.to_be_bytes());
 
     if csum {
-        let checksum = calculate_udp_checksum(&packet[offset..offset + udp_len], src_ip, dst_ip);
-        packet[offset + 6..offset + 8].copy_from_slice(&checksum.to_be_bytes());
+        let checksum = calculate_udp_checksum(&packet[..udp_len], src_ip, dst_ip);
+        packet[6..8].copy_from_slice(&checksum.to_be_bytes());
     }
 }
 
