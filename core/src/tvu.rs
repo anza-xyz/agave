@@ -46,7 +46,7 @@ use {
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
     solana_streamer::evicting_sender::EvictingSender,
-    solana_turbine::retransmit_stage::RetransmitStage,
+    solana_turbine::{retransmit_stage::RetransmitStage, xdp::XdpConfig},
     std::{
         collections::HashSet,
         net::{SocketAddr, UdpSocket},
@@ -97,6 +97,7 @@ pub struct TvuConfig {
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
+    pub retransmit_xdp: Option<XdpConfig>,
 }
 
 impl Default for TvuConfig {
@@ -110,6 +111,7 @@ impl Default for TvuConfig {
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+            retransmit_xdp: None,
         }
     }
 }
@@ -223,6 +225,7 @@ impl Tvu {
             max_slots.clone(),
             Some(rpc_subscriptions.clone()),
             slot_status_notifier.clone(),
+            tvu_config.retransmit_xdp.clone(),
         );
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();

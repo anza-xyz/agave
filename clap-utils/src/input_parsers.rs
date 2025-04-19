@@ -14,7 +14,7 @@ use {
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_signature::Signature,
     solana_signer::Signer,
-    std::{rc::Rc, str::FromStr},
+    std::{io, num::ParseIntError, rc::Rc, str::FromStr},
 };
 
 // Sentinel value used to indicate to write to screen instead of file
@@ -192,6 +192,35 @@ pub fn commitment_of(matches: &ArgMatches<'_>, name: &str) -> Option<CommitmentC
     matches
         .value_of(name)
         .map(|value| CommitmentConfig::from_str(value).unwrap_or_default())
+}
+
+// Parse a cpu range in standard cpuset format, eg:
+//
+// 0-4,9
+// 0-2,7,12-14
+pub fn parse_cpu_ranges(data: &str) -> Result<Vec<usize>, io::Error> {
+    data.split(',')
+        .map(|range| {
+            let mut iter = range
+                .split('-')
+                .map(|s| s.parse::<usize>().map_err(|ParseIntError { .. }| range));
+            let start = iter.next().unwrap()?; // str::split always returns at least one element.
+            let end = match iter.next() {
+                None => start,
+                Some(end) => {
+                    if iter.next().is_some() {
+                        return Err(range);
+                    }
+                    end?
+                }
+            };
+            Ok(start..=end)
+        })
+        .try_fold(Vec::new(), |mut cpus, range| {
+            let range = range.map_err(|range| io::Error::new(io::ErrorKind::InvalidData, range))?;
+            cpus.extend(range);
+            Ok(cpus)
+        })
 }
 
 #[cfg(test)]
