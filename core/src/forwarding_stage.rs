@@ -553,8 +553,8 @@ impl TpuClientNextClient {
         // For now _update_certificate_sender is unused, will be implemented later.
         let (_update_certificate_sender, update_certificate_receiver) = watch::channel(None);
         let _handle = runtime_handle.spawn(scheduler.run(
-            config,
             update_certificate_receiver,
+            config,
             cancel.clone(),
         ));
         Self { sender }
