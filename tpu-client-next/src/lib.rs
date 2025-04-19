@@ -1,3 +1,10 @@
+//! Client-side primitives for TPU protocol.
+//!
+//! # Features
+//!
+//! * `client-key-updater`: Enables common client implementation used for identity key update support.
+//! * `metrics`: Enables periodic reporting of connection statistics via `solana-metrics`.
+
 pub(crate) mod connection_worker;
 pub mod connection_workers_scheduler;
 pub mod send_transaction_stats;
@@ -13,3 +20,6 @@ pub mod transaction_batch;
 
 #[cfg(feature = "metrics")]
 pub mod metrics;
+
+#[cfg(feature = "client-key-updater")]
+pub mod client_key_updater;

@@ -22,9 +22,8 @@ solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true, optional = true }
 solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
-solana-tpu-client-next = { workspace = true, features = ["metrics"] }
+solana-tpu-client-next = { workspace = true, features = ["metrics", "client-key-updater"] }
 tokio = { workspace = true, features = ["full"] }
-tokio-util = { workspace = true }
 
 [dev-dependencies]
 solana-logger = { workspace = true }
