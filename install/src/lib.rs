@@ -104,7 +104,7 @@ pub fn main() -> Result<(), String> {
         })
         .subcommand(
             SubCommand::with_name("init")
-                .about("initializes a new installation")
+                .about("Initializes a new installation")
                 .setting(AppSettings::DisableVersion)
                 .arg({
                     let arg = Arg::with_name("data_dir")
@@ -160,12 +160,12 @@ pub fn main() -> Result<(), String> {
                     Arg::with_name("local_info_only")
                         .short("l")
                         .long("local")
-                        .help("only display local information, don't check for updates"),
+                        .help("Only display local information, don't check for updates"),
                 )
                 .arg(
                     Arg::with_name("eval")
                         .long("eval")
-                        .help("display information in a format that can be used with `eval`"),
+                        .help("Display information in a format that can be used with `eval`"),
                 ),
         )
         .subcommand(
@@ -234,7 +234,7 @@ pub fn main() -> Result<(), String> {
                     Arg::with_name("program_arguments")
                         .index(2)
                         .multiple(true)
-                        .help("arguments to supply to the program"),
+                        .help("Arguments to supply to the program"),
                 ),
         )
         .subcommand(SubCommand::with_name("list").about("List installed versions of solana cli"))
