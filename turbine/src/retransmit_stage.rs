@@ -96,6 +96,7 @@ struct RetransmitStats {
     addr_cache_miss: AtomicUsize,
     num_nodes: AtomicUsize,
     num_addrs_failed: AtomicUsize,
+    num_shreds_dropped_xdp_full: AtomicUsize,
     num_loopback_errs: AtomicUsize,
     num_shreds: usize,
     num_shreds_skipped: AtomicUsize,
@@ -134,6 +135,11 @@ impl RetransmitStats {
             ("num_small_batches", self.num_small_batches, i64),
             ("num_nodes", *self.num_nodes.get_mut(), i64),
             ("num_addrs_failed", *self.num_addrs_failed.get_mut(), i64),
+            (
+                "num_shreds_dropped_xdp_full",
+                *self.num_shreds_dropped_xdp_full.get_mut(),
+                i64
+            ),
             ("num_loopback_errs", *self.num_loopback_errs.get_mut(), i64),
             ("num_shreds", self.num_shreds, i64),
             (
@@ -408,19 +414,19 @@ fn retransmit_shred(
                 if num_addrs > 0 {
                     if let Err(e) = sender.try_send(key.index(), addrs.to_vec(), shred) {
                         log::warn!("xdp channel full: {e:?}");
+                        stats
+                            .num_shreds_dropped_xdp_full
+                            .fetch_add(num_addrs, Ordering::Relaxed);
                         sent = 0;
                     }
                 }
                 sent
             }
             RetransmitSocket::Socket(socket) => match multi_target_send(socket, shred, &addrs) {
-                Ok(()) => addrs.len(),
+                Ok(()) => num_addrs,
                 Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                    error!(
-                    "retransmit_to multi_target_send error: {ioerr:?}, {num_failed}/{} packets failed",
-                    addrs.len(),
-                );
-                    addrs.len() - num_failed
+                    error!("retransmit_to multi_target_send error: {ioerr:?}, {num_failed}/{} packets failed", num_addrs);
+                    num_addrs - num_failed
                 }
             },
         },
@@ -677,6 +683,7 @@ impl RetransmitStats {
             addr_cache_miss: AtomicUsize::default(),
             num_nodes: AtomicUsize::default(),
             num_addrs_failed: AtomicUsize::default(),
+            num_shreds_dropped_xdp_full: AtomicUsize::default(),
             num_loopback_errs: AtomicUsize::default(),
             num_shreds: 0usize,
             num_shreds_skipped: AtomicUsize::default(),
