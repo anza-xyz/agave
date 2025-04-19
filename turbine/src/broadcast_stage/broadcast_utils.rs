@@ -53,7 +53,7 @@ fn keep_coalescing_entries(
 
 fn max_coalesce_time(serialized_batch_byte_count: u64, max_batch_byte_count: u64) -> Duration {
     // Compute the fraction of the target batch that has been filled.
-    let ratio = (serialized_batch_byte_count as f64 / max_batch_byte_count as f64).min(0.5);
+    let ratio = (serialized_batch_byte_count as f64 / max_batch_byte_count as f64).min(0.75);
 
     // Scale the base duration: the more data we have (ratio near 1.0), the less we wait.
     ENTRY_COALESCE_DURATION.mul_f64(1.0 - ratio)
