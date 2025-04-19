@@ -57,8 +57,20 @@ $ cd agave
 $ ./cargo build
 ```
 
+## **3a. Build. (macOS)**
+
+```bash
+$ # Install build dependencies
+$ brew install pkg-config libudev protobuf llvm coreutils
+$ ./scripts/cargo-install-all.sh . # This takes a while ~45m
+
+# Include the installed bins in your PATH
+$ export PATH=$PATH:$PWD/bin
+$ ./cargo build
+```
+
 > [!NOTE]
-> Note that this builds a debug version that is **not suitable for running a testnet or mainnet validator**. Please read [`docs/src/cli/install.md`](docs/src/cli/install.md#build-from-source) for instructions to build a release version for test and production uses.
+> Note that these steps build a debug version that is **not suitable for running a testnet or mainnet validator**. Please read [`docs/src/cli/install.md`](docs/src/cli/install.md#build-from-source) for instructions to build a release version for test and production uses.
 
 # Testing
 
