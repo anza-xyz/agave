@@ -5656,6 +5656,31 @@ pub mod tests {
     }
 
     #[test]
+    fn test_batch_size() {
+        let slot = 1;
+        let num_entries = 5000;
+        let entries = create_ticks(num_entries, 1, Hash::new_unique());
+        let (d, c) = Shredder::new(slot, 0, 0, 0).unwrap().entries_to_shreds(
+            &Keypair::new(),
+            &entries,
+            false,
+            // chained_merkle_root
+            Some(Hash::new_from_array(rand::thread_rng().gen())),
+            0, // next_shred_index,
+            0, // next_code_index
+            true,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        );
+        for s in d {
+            assert!(s.index() - s.fec_set_index() <= DATA_SHREDS_PER_FEC_BLOCK as u32);
+        }
+        for s in c {
+            assert!(s.index() - s.fec_set_index() <= DATA_SHREDS_PER_FEC_BLOCK as u32);
+        }
+    }
+
+    #[test]
     fn test_read_shred_bytes() {
         let slot = 0;
         let (shreds, _) = make_slot_entries(slot, 0, 100, /*merkle_variant:*/ true);
@@ -11852,14 +11877,14 @@ pub mod tests {
             setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
                 slot,
                 parent_slot,
-                200,
+                200, // make sure at most one coding batch is made
                 fec_set_index,
                 // Do not set merkle root, so shreds are not signed
                 None,
                 true,
             );
         assert!(first_data_shreds.len() > DATA_SHREDS_PER_FEC_BLOCK);
-        let block_id = first_data_shreds[0].merkle_root().unwrap();
+        let block_id = first_data_shreds.last().unwrap().merkle_root().unwrap();
         blockstore
             .insert_shreds(first_data_shreds, None, false)
             .unwrap();
