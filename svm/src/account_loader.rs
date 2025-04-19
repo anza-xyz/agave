@@ -2546,4 +2546,101 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_account_loader_wrappers() {
+        let fee_payer = Pubkey::new_unique();
+        let message = Message {
+            account_keys: vec![fee_payer],
+            header: MessageHeader::default(),
+            instructions: vec![],
+            recent_blockhash: Hash::default(),
+        };
+        let sanitized_message = new_unchecked_sanitized_message(message);
+
+        let mut fee_payer_account = AccountSharedData::default();
+        fee_payer_account.set_rent_epoch(u64::MAX);
+        fee_payer_account.set_lamports(5000);
+
+        let mut mock_bank = TestCallbacks::default();
+        mock_bank
+            .accounts_map
+            .insert(fee_payer, fee_payer_account.clone());
+
+        // test without stored account
+        let mut account_loader: AccountLoader<_> = (&mock_bank).into();
+        assert_eq!(
+            account_loader
+                .load_transaction_account(&fee_payer, false)
+                .unwrap()
+                .account,
+            fee_payer_account
+        );
+
+        let mut account_loader: AccountLoader<_> = (&mock_bank).into();
+        assert_eq!(
+            account_loader
+                .load_transaction_account(&fee_payer, true)
+                .unwrap()
+                .account,
+            fee_payer_account
+        );
+
+        let mut account_loader: AccountLoader<_> = (&mock_bank).into();
+        assert_eq!(
+            account_loader.load_account(&fee_payer).unwrap(),
+            fee_payer_account
+        );
+
+        let account_loader: AccountLoader<_> = (&mock_bank).into();
+        assert_eq!(
+            account_loader.get_account_shared_data(&fee_payer).unwrap(),
+            fee_payer_account
+        );
+
+        // test with stored account
+        let mut account_loader: AccountLoader<_> = (&mock_bank).into();
+        account_loader.load_account(&fee_payer).unwrap();
+
+        assert_eq!(
+            account_loader
+                .load_transaction_account(&fee_payer, false)
+                .unwrap()
+                .account,
+            fee_payer_account
+        );
+        assert_eq!(
+            account_loader
+                .load_transaction_account(&fee_payer, true)
+                .unwrap()
+                .account,
+            fee_payer_account
+        );
+        assert_eq!(
+            account_loader.load_account(&fee_payer).unwrap(),
+            fee_payer_account
+        );
+        assert_eq!(
+            account_loader.get_account_shared_data(&fee_payer).unwrap(),
+            fee_payer_account
+        );
+
+        // drop the account and ensure all deliver the updated state
+        fee_payer_account.set_lamports(0);
+        account_loader.update_accounts_for_failed_tx(
+            &sanitized_message,
+            &RollbackAccounts::FeePayerOnly { fee_payer_account },
+        );
+
+        assert_eq!(
+            account_loader.load_transaction_account(&fee_payer, false),
+            None
+        );
+        assert_eq!(
+            account_loader.load_transaction_account(&fee_payer, true),
+            None
+        );
+        assert_eq!(account_loader.load_account(&fee_payer), None);
+        assert_eq!(account_loader.get_account_shared_data(&fee_payer), None);
+    }
 }
