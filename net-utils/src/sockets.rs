@@ -5,9 +5,11 @@ use {
         sync::atomic::{AtomicU16, Ordering},
     },
 };
-
+// base port for deconflicted allocations
 const BASE_PORT: u16 = 5000;
-
+// how much to allocate per individual process.
+// we expect to have at most 64 concurrent tests in CI at any moment on a given host.
+const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
 /// Retrieve a free 20-port slice for unit tests
 ///
 /// When running under nextest, this will try to provide
@@ -25,15 +27,14 @@ pub fn localhost_port_range_for_tests() -> (u16, u16) {
             Ok(slot) => {
                 let slot: u16 = slot.parse().unwrap();
                 assert!(
-                    offset < 1000,
-                    "Overrunning into the port range of another test!"
+                    offset < SLICE_PER_PROCESS,
+                    "Overrunning into the port range of another test! Consider using fewer ports per test."
                 );
-
-                BASE_PORT + slot * 1000
+                BASE_PORT + slot * SLICE_PER_PROCESS
             }
             Err(_) => BASE_PORT,
         };
-    assert!(start < 65500, "ran out of port numbers!");
+    assert!(start < u16::MAX - 20, "ran out of port numbers!");
     (start, start + 20)
 }
 
