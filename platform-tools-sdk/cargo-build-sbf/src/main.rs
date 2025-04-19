@@ -640,7 +640,6 @@ fn build_solana_package(
         }
     };
 
-    let legacy_program_feature_present = package.name == "solana-sdk";
     let root_package_dir = &package.manifest_path.parent().unwrap_or_else(|| {
         error!("Unable to get directory of {}", package.manifest_path);
         exit(1);
@@ -690,9 +689,6 @@ fn build_solana_package(
     }
     if !config.features.is_empty() {
         info!("Features: {}", config.features.join(" "));
-    }
-    if legacy_program_feature_present {
-        info!("Legacy program feature detected");
     }
     let arch = if cfg!(target_arch = "aarch64") {
         "aarch64"
@@ -824,12 +820,6 @@ fn build_solana_package(
     for feature in &config.features {
         cargo_build_args.push("--features");
         cargo_build_args.push(feature);
-    }
-    if legacy_program_feature_present {
-        if !config.no_default_features {
-            cargo_build_args.push("--no-default-features");
-        }
-        cargo_build_args.push("--features=program");
     }
     if config.verbose {
         cargo_build_args.push("--verbose");
