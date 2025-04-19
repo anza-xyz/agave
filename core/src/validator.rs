@@ -106,6 +106,7 @@ use {
         bank::Bank,
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
+        event_notification_synchronizer::EventNotificationSynchronizer,
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
@@ -785,6 +786,8 @@ impl Validator {
             },
         ));
 
+        let event_notification_synchronizer = Arc::new(EventNotificationSynchronizer::new());
+
         let (
             bank_forks,
             blockstore,
@@ -810,6 +813,10 @@ impl Validator {
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
+            config
+                .rpc_addrs
+                .is_some()
+                .then(|| event_notification_synchronizer.clone()),
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1280,6 +1287,7 @@ impl Validator {
             let bank_notification_sender_config = Some(BankNotificationSenderConfig {
                 sender: bank_notification_sender,
                 should_send_parents: geyser_plugin_service.is_some(),
+                event_notification_synchronizer: transaction_status_sender.is_some().then(|| event_notification_synchronizer),
             });
             (
                 Some(json_rpc_service),
@@ -2058,6 +2066,7 @@ fn load_blockstore(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
+    event_notification_synchronizer: Option<Arc<EventNotificationSynchronizer>>,
 ) -> Result<
     (
         Arc<RwLock<BankForks>>,
@@ -2117,6 +2126,7 @@ fn load_blockstore(
                 enable_rpc_transaction_history,
                 config.rpc_config.enable_extended_tx_metadata_storage,
                 transaction_notifier,
+                event_notification_synchronizer,
             )
         } else {
             TransactionHistoryServices::default()
@@ -2536,11 +2546,13 @@ fn initialize_rpc_transaction_history_services(
     enable_rpc_transaction_history: bool,
     enable_extended_tx_metadata_storage: bool,
     transaction_notifier: Option<TransactionNotifierArc>,
+    event_notification_synchronizer: Option<Arc<EventNotificationSynchronizer>>,
 ) -> TransactionHistoryServices {
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
     let transaction_status_sender = Some(TransactionStatusSender {
         sender: transaction_status_sender,
+        event_notification_synchronizer: event_notification_synchronizer.clone(),
     });
     let transaction_status_service = Some(TransactionStatusService::new(
         transaction_status_receiver,
@@ -2549,6 +2561,7 @@ fn initialize_rpc_transaction_history_services(
         transaction_notifier,
         blockstore.clone(),
         enable_extended_tx_metadata_storage,
+        event_notification_synchronizer,
         exit.clone(),
     ));
 

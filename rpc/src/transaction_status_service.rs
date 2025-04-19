@@ -13,6 +13,7 @@ use {
         blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
     },
     solana_runtime::bank::{Bank, KeyedRewardsAndNumPartitions},
+    solana_runtime::event_notification_synchronizer::EventNotificationSynchronizer,
     solana_svm::transaction_commit_result::CommittedTransaction,
     solana_transaction_status::{
         extract_and_fmt_memos, map_inner_instructions, Reward, RewardsAndNumPartitions,
@@ -61,6 +62,7 @@ impl TransactionStatusService {
         transaction_notifier: Option<TransactionNotifierArc>,
         blockstore: Arc<Blockstore>,
         enable_extended_tx_metadata_storage: bool,
+        event_notification_synchronizer: Option<Arc<EventNotificationSynchronizer>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let transaction_status_receiver = Arc::new(write_transaction_status_receiver);
@@ -95,6 +97,7 @@ impl TransactionStatusService {
                         transaction_notifier.clone(),
                         &blockstore,
                         enable_extended_tx_metadata_storage,
+                        event_notification_synchronizer.clone(),
                     ) {
                         Ok(_) => {}
                         Err(err) => {
@@ -121,17 +124,21 @@ impl TransactionStatusService {
         transaction_notifier: Option<TransactionNotifierArc>,
         blockstore: &Blockstore,
         enable_extended_tx_metadata_storage: bool,
+        event_notification_synchronizer: Option<Arc<EventNotificationSynchronizer>>,
     ) -> Result<()> {
         match transaction_status_message {
-            TransactionStatusMessage::Batch(TransactionStatusBatch {
-                slot,
-                transactions,
-                commit_results,
-                balances,
-                token_balances,
-                costs,
-                transaction_indexes,
-            }) => {
+            TransactionStatusMessage::Batch((
+                TransactionStatusBatch {
+                    slot,
+                    transactions,
+                    commit_results,
+                    balances,
+                    token_balances,
+                    costs,
+                    transaction_indexes,
+                },
+                event_sequence,
+            )) => {
                 let mut status_and_memos_batch = blockstore.get_write_batch()?;
 
                 for (
@@ -244,6 +251,14 @@ impl TransactionStatusService {
 
                 if enable_rpc_transaction_history {
                     blockstore.write_batch(status_and_memos_batch)?;
+                }
+
+                if let Some(event_notification_synchronizer) =
+                    event_notification_synchronizer.as_ref()
+                {
+                    if let Some(event_sequence) = event_sequence {
+                        event_notification_synchronizer.notify_event(event_sequence);
+                    }
                 }
             }
             TransactionStatusMessage::Freeze(bank) => {

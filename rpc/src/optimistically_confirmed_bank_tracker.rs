@@ -14,7 +14,7 @@ use {
     solana_clock::Slot,
     solana_rpc_client_api::response::{SlotTransactionStats, SlotUpdate},
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
+        bank::Bank, bank_forks::BankForks, event_notification_synchronizer::{self, EventNotificationSynchronizer}, prioritization_fee_cache::PrioritizationFeeCache
     },
     solana_time_utils::timestamp,
     std::{
@@ -71,13 +71,19 @@ impl std::fmt::Debug for BankNotification {
     }
 }
 
-pub type BankNotificationReceiver = Receiver<BankNotification>;
-pub type BankNotificationSender = Sender<BankNotification>;
+pub type BankNotificationWithEventSequence = (
+    BankNotification,
+    Option<u64>, // event_sequence
+);
+
+pub type BankNotificationReceiver = Receiver<BankNotificationWithEventSequence>;
+pub type BankNotificationSender = Sender<BankNotificationWithEventSequence>;
 
 #[derive(Clone)]
 pub struct BankNotificationSenderConfig {
     pub sender: BankNotificationSender,
     pub should_send_parents: bool,
+    pub event_notification_synchronizer: Option<Arc<EventNotificationSynchronizer>>,
 }
 
 pub type SlotNotificationReceiver = Receiver<SlotNotification>;
@@ -129,7 +135,7 @@ impl OptimisticallyConfirmedBankTracker {
 
     #[allow(clippy::too_many_arguments)]
     fn recv_notification(
-        receiver: &Receiver<BankNotification>,
+        receiver: &Receiver<BankNotificationWithEventSequence>,
         bank_forks: &RwLock<BankForks>,
         optimistically_confirmed_bank: &RwLock<OptimisticallyConfirmedBank>,
         subscriptions: &RpcSubscriptions,
@@ -265,7 +271,7 @@ impl OptimisticallyConfirmedBankTracker {
 
     #[allow(clippy::too_many_arguments)]
     pub fn process_notification(
-        notification: BankNotification,
+        notification: BankNotificationWithEventSequence,
         bank_forks: &RwLock<BankForks>,
         optimistically_confirmed_bank: &RwLock<OptimisticallyConfirmedBank>,
         subscriptions: &RpcSubscriptions,
@@ -278,7 +284,7 @@ impl OptimisticallyConfirmedBankTracker {
     ) {
         debug!("received bank notification: {:?}", notification);
         match notification {
-            BankNotification::OptimisticallyConfirmed(slot) => {
+            (BankNotification::OptimisticallyConfirmed(slot), event_sequence) => {
                 let bank = bank_forks.read().unwrap().get(slot);
                 if let Some(bank) = bank {
                     let mut w_optimistically_confirmed_bank =
@@ -319,7 +325,7 @@ impl OptimisticallyConfirmedBankTracker {
                 // functionality to be triggered on optimistic confirmation should go in
                 // `notify_or_defer()` under the `bank.is_frozen()` case instead of here.
             }
-            BankNotification::Frozen(bank) => {
+            (BankNotification::Frozen(bank), event_sequence) => {
                 let frozen_slot = bank.slot();
                 if let Some(parent) = bank.parent() {
                     let num_successful_transactions = bank
@@ -367,7 +373,7 @@ impl OptimisticallyConfirmedBankTracker {
                     drop(w_optimistically_confirmed_bank);
                 }
             }
-            BankNotification::NewRootBank(bank) => {
+            (BankNotification::NewRootBank(bank), event_sequence) => {
                 let root_slot = bank.slot();
                 let mut w_optimistically_confirmed_bank =
                     optimistically_confirmed_bank.write().unwrap();
@@ -378,7 +384,7 @@ impl OptimisticallyConfirmedBankTracker {
 
                 pending_optimistically_confirmed_banks.retain(|&s| s > root_slot);
             }
-            BankNotification::NewRootedChain(mut roots) => {
+            (BankNotification::NewRootedChain(mut roots), event_sequence) => {
                 Self::notify_new_root_slots(
                     &mut roots,
                     newest_root_slot,

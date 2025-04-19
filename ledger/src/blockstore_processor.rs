@@ -34,6 +34,7 @@ use {
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
+        event_notification_synchronizer::EventNotificationSynchronizer,
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
@@ -2159,10 +2160,12 @@ pub fn process_single_slot(
     Ok(())
 }
 
+type EventSequence = u64;
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum TransactionStatusMessage {
-    Batch(TransactionStatusBatch),
+    Batch((TransactionStatusBatch, Option<EventSequence>)),
     Freeze(Arc<Bank>),
 }
 
@@ -2180,6 +2183,7 @@ pub struct TransactionStatusBatch {
 #[derive(Clone, Debug)]
 pub struct TransactionStatusSender {
     pub sender: Sender<TransactionStatusMessage>,
+    pub event_notification_synchronizer: Option<Arc<EventNotificationSynchronizer>>,
 }
 
 impl TransactionStatusSender {
@@ -2193,9 +2197,13 @@ impl TransactionStatusSender {
         costs: Vec<Option<u64>>,
         transaction_indexes: Vec<usize>,
     ) {
-        if let Err(e) = self
-            .sender
-            .send(TransactionStatusMessage::Batch(TransactionStatusBatch {
+        let event_sequence = self
+            .event_notification_synchronizer
+            .as_ref()
+            .and_then(|synchronizer| Some(synchronizer.get_new_event_sequence()));
+
+        if let Err(e) = self.sender.send(TransactionStatusMessage::Batch((
+            TransactionStatusBatch {
                 slot,
                 transactions,
                 commit_results,
@@ -2203,8 +2211,9 @@ impl TransactionStatusSender {
                 token_balances,
                 costs,
                 transaction_indexes,
-            }))
-        {
+            },
+            event_sequence,
+        ))) {
             trace!("Slot {slot} transaction_status send batch failed: {e:?}");
         }
     }
