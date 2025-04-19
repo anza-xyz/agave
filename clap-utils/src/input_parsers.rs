@@ -194,6 +194,10 @@ pub fn commitment_of(matches: &ArgMatches<'_>, name: &str) -> Option<CommitmentC
         .map(|value| CommitmentConfig::from_str(value).unwrap_or_default())
 }
 
+// Parse a cpu range in standard cpuset format, eg:
+//
+// 0-4,9
+// 0-2,7,12-14
 pub fn parse_cpu_ranges(data: &str) -> Result<Vec<usize>, io::Error> {
     data.split(',')
         .map(|range| {
