@@ -316,6 +316,29 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     }
 }
 
+// HANA TODO i might want to break txpcb into two traits rather than do this
+impl<CB: TransactionProcessingCallback> solana_svm_callback::InvokeContextCallback
+    for AccountLoader<'_, CB>
+{
+}
+
+// Program loaders and parsers require a type that impls TransactionProcessingCallback,
+// because they are used in both SVM and by Bank. We impl it, with the consequence
+// that if we fall back to accounts-db, we cannot store the state for future loads.
+// In general, most accounts we load this way should already be in our accounts store.
+// Once SIMD-0186 is implemented, 100% of accounts will be.
+impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for AccountLoader<'_, CB> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        self.do_load(pubkey).0
+    }
+
+    fn account_matches_owners(&self, pubkey: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
+        self.do_load(pubkey)
+            .0
+            .and_then(|account| owners.iter().position(|entry| entry == account.owner()))
+    }
+}
+
 /// Collect rent from an account if rent is still enabled and regardless of
 /// whether rent is enabled, set the rent epoch to u64::MAX if the account is
 /// rent exempt.
