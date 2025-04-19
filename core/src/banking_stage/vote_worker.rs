@@ -37,7 +37,7 @@ use {
 };
 
 // Step-size set to be 64, equal to the maximum batch/entry size.
-pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 64;
+pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
 
 pub struct VoteWorker {
     decision_maker: DecisionMaker,

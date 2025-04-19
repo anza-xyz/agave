@@ -184,7 +184,6 @@ impl Entry {
         entry
     }
 
-    #[cfg(test)]
     pub fn new_tick(num_hashes: u64, hash: &Hash) -> Self {
         Entry {
             num_hashes,

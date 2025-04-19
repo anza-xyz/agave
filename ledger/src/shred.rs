@@ -115,6 +115,8 @@ const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 // each erasure batch depends on the number of shreds obtained from serializing
 // a &[Entry].
 pub const DATA_SHREDS_PER_FEC_BLOCK: usize = 32;
+pub const SHREDS_PER_FEC_BLOCK: usize = 64;
+pub const PROOF_NUM_ENTRIES: u8 = 6;
 
 // For legacy tests and benchmarks.
 const_assert_eq!(LEGACY_SHRED_DATA_CAPACITY, 1051);
