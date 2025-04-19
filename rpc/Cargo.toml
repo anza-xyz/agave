@@ -36,7 +36,6 @@ solana-client = { workspace = true }
 solana-entry = { workspace = true }
 solana-faucet = { workspace = true }
 solana-gossip = { workspace = true }
-solana-inline-spl = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
@@ -61,6 +60,7 @@ solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+spl-generic-token = { workspace = true }
 spl-token = { workspace = true, features = ["no-entrypoint"] }
 spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 stream-cancel = { workspace = true }

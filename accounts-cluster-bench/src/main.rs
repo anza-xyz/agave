@@ -13,7 +13,6 @@ use {
         rpc_request::MAX_GET_CONFIRMED_BLOCKS_RANGE, transaction_executor::TransactionExecutor,
     },
     solana_gossip::gossip_service::discover,
-    solana_inline_spl::token,
     solana_measure::measure::Measure,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::TokenAccountsFilter,
@@ -31,6 +30,7 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_transaction_status::UiTransactionEncoding,
+    spl_generic_token::token,
     spl_token::state::Account,
     std::{
         cmp::min,

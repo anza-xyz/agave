@@ -52,7 +52,6 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-genesis-config = { workspace = true, features = ["serde"] }
 solana-hash = { workspace = true, features = ["serde"] }
-solana-inline-spl = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-lattice-hash = { workspace = true }
 solana-measure = { workspace = true }
@@ -76,6 +75,7 @@ solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true, optional = true }
+spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }

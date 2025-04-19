@@ -878,7 +878,6 @@ mod tests {
             validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
         solana_gossip::cluster_info::{ClusterInfo, Node},
-        solana_inline_spl::token,
         solana_ledger::{
             create_new_tmp_ledger,
             genesis_utils::{
@@ -900,6 +899,7 @@ mod tests {
         },
         solana_streamer::socket::SocketAddrSpace,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
+        spl_generic_token::token,
         spl_token_2022::state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
         std::{collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
     };

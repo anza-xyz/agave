@@ -42,7 +42,6 @@ use {
     solana_cost_model::block_cost_limits::{
         MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0207, MAX_BLOCK_UNITS_SIMD_0256,
     },
-    solana_inline_spl::token,
     solana_logger,
     solana_program_runtime::{
         declare_process_instruction,
@@ -121,6 +120,7 @@ use {
             VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
+    spl_generic_token::token,
     std::{
         collections::{HashMap, HashSet},
         convert::TryInto,
