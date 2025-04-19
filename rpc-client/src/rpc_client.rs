@@ -17,6 +17,7 @@ use {
         nonblocking::{self, rpc_client::get_rpc_request_str},
         rpc_sender::*,
     },
+    reqwest::header,
     serde::Serialize,
     serde_json::Value,
     solana_account::{Account, ReadableAccount},
@@ -374,6 +375,188 @@ impl RpcClient {
     ) -> Self {
         Self::new_sender(
             HttpSender::new_with_timeout(url, timeout),
+            RpcClientConfig {
+                commitment_config,
+                confirm_transaction_initial_timeout: Some(confirm_transaction_initial_timeout),
+            },
+        )
+    }
+
+    /// Create an HTTP `RpcClient` with specified HTTP headers.
+    ///
+    /// The URL is an HTTP URL, usually for port 8899, as in
+    /// "http://localhost:8899".
+    ///
+    /// The client has a default timeout of 30 seconds, and a default [commitment
+    /// level][cl] of [`Finalized`](CommitmentLevel::Finalized).
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use reqwest::header;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// let url = "http://localhost:8899".to_string();
+    /// let mut headers = HeaderMap::new();
+    /// headers.append(header::AUTHORIZATION, header::HeaderValue::from_str("Bearer <token>").unwrap());
+    /// let client = RpcClient::new_with_headers(url, headers);
+    /// ```
+    pub fn new_with_headers(url: String, headers: header::HeaderMap) -> Self {
+        Self::new_with_commitment_and_headers(url, CommitmentConfig::default(), headers)
+    }
+
+    /// Create an HTTP `RpcClient` with specified [commitment level][cl] and HTTP headers.
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// The URL is an HTTP URL, usually for port 8899, as in
+    /// "http://localhost:8899".
+    ///
+    /// The client has a default timeout of 30 seconds, and a user-specified
+    /// [`CommitmentLevel`] via [`CommitmentConfig`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use reqwest::header;
+    /// # use solana_sdk::commitment_config::CommitmentConfig;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// let url = "http://localhost:8899".to_string();
+    /// let commitment_config = CommitmentConfig::processed();
+    /// let mut headers = HeaderMap::new();
+    /// headers.append(header::AUTHORIZATION, header::HeaderValue::from_str("Bearer <token>").unwrap());
+    /// let client = RpcClient::new_with_commitment_and_headers(url, commitment_config, headers);
+    /// ```
+    pub fn new_with_commitment_and_headers(
+        url: String,
+        commitment_config: CommitmentConfig,
+        headers: header::HeaderMap,
+    ) -> Self {
+        Self::new_sender(
+            HttpSender::new_with_headers(url, headers),
+            RpcClientConfig::with_commitment(commitment_config),
+        )
+    }
+
+    /// Create an HTTP `RpcClient` with specified timeout and HTTP headers.
+    ///
+    /// The URL is an HTTP URL, usually for port 8899, as in
+    /// "http://localhost:8899".
+    ///
+    /// The client has and a default [commitment level][cl] of
+    /// [`Finalized`](CommitmentLevel::Finalized).
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use reqwest::header;
+    /// # use std::time::Duration;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// let url = "http://localhost::8899".to_string();
+    /// let timeout = Duration::from_secs(1);
+    /// let mut headers = HeaderMap::new();
+    /// headers.append(header::AUTHORIZATION, header::HeaderValue::from_str("Bearer <token>").unwrap());
+    /// let client = RpcClient::new_with_timeout_and_headers(url, timeout, headers);
+    /// ```
+    pub fn new_with_timeout_and_headers(
+        url: String,
+        timeout: Duration,
+        headers: header::HeaderMap,
+    ) -> Self {
+        Self::new_sender(
+            HttpSender::new_with_timeout_and_headers(url, timeout, headers),
+            RpcClientConfig::with_commitment(CommitmentConfig::default()),
+        )
+    }
+
+    /// Create an HTTP `RpcClient` with specified timeout, [commitment level][cl]
+    /// and HTTP headers.
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// The URL is an HTTP URL, usually for port 8899, as in
+    /// "http://localhost:8899".
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use reqwest::header;
+    /// # use std::time::Duration;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_sdk::commitment_config::CommitmentConfig;
+    /// let url = "http://localhost::8899".to_string();
+    /// let timeout = Duration::from_secs(1);
+    /// let commitment_config = CommitmentConfig::processed();
+    /// let mut headers = HeaderMap::new();
+    /// headers.append(header::AUTHORIZATION, header::HeaderValue::from_str("Bearer <token>").unwrap());
+    /// let client = RpcClient::new_with_timeout_and_commitment_and_headers(
+    ///     url,
+    ///     timeout,
+    ///     commitment_config,
+    ///     headers,
+    /// );
+    /// ```
+    pub fn new_with_timeout_and_commitment_and_headers(
+        url: String,
+        timeout: Duration,
+        commitment_config: CommitmentConfig,
+        headers: header::HeaderMap,
+    ) -> Self {
+        Self::new_sender(
+            HttpSender::new_with_timeout_and_headers(url, timeout, headers),
+            RpcClientConfig::with_commitment(commitment_config),
+        )
+    }
+
+    /// Create an HTTP `RpcClient` with specified timeout, [commitment level][cl]
+    /// and HTTP headers.
+    ///
+    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
+    ///
+    /// The URL is an HTTP URL, usually for port 8899, as in
+    /// "http://localhost:8899".
+    ///
+    /// The `confirm_transaction_initial_timeout` argument specifies the amount of
+    /// time to allow for the server to initially process a transaction, when
+    /// confirming a transaction via one of the `_with_spinner` methods, like
+    /// [`RpcClient::send_and_confirm_transaction_with_spinner`]. In
+    /// other words, setting `confirm_transaction_initial_timeout` to > 0 allows
+    /// `RpcClient` to wait for confirmation of a transaction that the server
+    /// has not "seen" yet.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use reqwest::header;
+    /// # use std::time::Duration;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # use solana_sdk::commitment_config::CommitmentConfig;
+    /// let url = "http://localhost::8899".to_string();
+    /// let timeout = Duration::from_secs(1);
+    /// let commitment_config = CommitmentConfig::processed();
+    /// let confirm_transaction_initial_timeout = Duration::from_secs(10);
+    /// let mut headers = HeaderMap::new();
+    /// headers.append(header::AUTHORIZATION, header::HeaderValue::from_str("Bearer <token>").unwrap());
+    /// let client = RpcClient::new_with_timeouts_and_commitment_and_headers(
+    ///     url,
+    ///     timeout,
+    ///     commitment_config,
+    ///     confirm_transaction_initial_timeout,
+    ///     headers,
+    /// );
+    /// ```
+    pub fn new_with_timeouts_and_commitment_and_headers(
+        url: String,
+        timeout: Duration,
+        commitment_config: CommitmentConfig,
+        confirm_transaction_initial_timeout: Duration,
+        headers: header::HeaderMap,
+    ) -> Self {
+        Self::new_sender(
+            HttpSender::new_with_timeout_and_headers(url, timeout, headers),
             RpcClientConfig {
                 commitment_config,
                 confirm_transaction_initial_timeout: Some(confirm_transaction_initial_timeout),
