@@ -41,7 +41,40 @@ use {
 
 pub const PUBKEY: &str = "7RoSF9fUmdphVCpabEoefH81WwrW7orsWonXWqTXkKV8";
 
-pub type Mocks = HashMap<RpcRequest, Value>;
+#[derive(Default)]
+pub struct Mocks(Vec<(RpcRequest, Value)>);
+
+impl Mocks {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn from<const N: usize>(mocks: [(RpcRequest, Value); N]) -> Self {
+        Self(mocks.to_vec())
+    }
+
+    pub fn insert(&mut self, request: RpcRequest, response: Value) {
+        self.0.push((request, response));
+    }
+
+    pub fn remove(&mut self, request: &RpcRequest) -> Option<Value> {
+        self.0
+            .iter()
+            .position(|(r, _)| r == request)
+            .map(|index| self.0.remove(index).1)
+    }
+}
+
+impl FromIterator<(RpcRequest, Value)> for Mocks {
+    fn from_iter<T: IntoIterator<Item = (RpcRequest, Value)>>(iter: T) -> Self {
+        let mut mocks = Mocks::new();
+        for (request, response) in iter {
+            mocks.insert(request, response);
+        }
+        mocks
+    }
+}
+
 pub struct MockSender {
     mocks: RwLock<Mocks>,
     url: String,
