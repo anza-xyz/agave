@@ -383,7 +383,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let account_keys_in_batch = sanitized_txs.iter().map(|tx| tx.account_keys().len()).sum();
 
         // Create the account loader, which wraps all external account fetching.
-        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+        let mut account_loader = AccountLoader::new_with_loaded_accounts_capacity(
             config.account_overrides,
             callbacks,
             &environment.feature_set,
@@ -1224,7 +1224,7 @@ mod tests {
 
     impl<'a> From<&'a MockBankCallback> for AccountLoader<'a, MockBankCallback> {
         fn from(callbacks: &'a MockBankCallback) -> AccountLoader<'a, MockBankCallback> {
-            AccountLoader::new_with_account_cache_capacity(
+            AccountLoader::new_with_loaded_accounts_capacity(
                 None,
                 callbacks,
                 &callbacks.feature_set,

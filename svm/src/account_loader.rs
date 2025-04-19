@@ -154,31 +154,31 @@ pub struct FeesOnlyTransaction {
 // exactly like the `Bank` impl of this trait but also returns up-to-date
 // account states mid-batch.
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
-    account_cache: AHashMap<Pubkey, AccountSharedData>,
+    loaded_accounts: AHashMap<Pubkey, AccountSharedData>,
     callbacks: &'a CB,
     pub(crate) feature_set: &'a SVMFeatureSet,
 }
 
 impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     // create a new AccountLoader for the transaction batch
-    pub(crate) fn new_with_account_cache_capacity(
+    pub(crate) fn new_with_loaded_accounts_capacity(
         account_overrides: Option<&'a AccountOverrides>,
         callbacks: &'a CB,
         feature_set: &'a SVMFeatureSet,
         capacity: usize,
     ) -> AccountLoader<'a, CB> {
-        let mut account_cache = AHashMap::with_capacity(capacity);
+        let mut loaded_accounts = AHashMap::with_capacity(capacity);
 
         // SlotHistory may be overridden for simulation.
         // No other uses of AccountOverrides are expected.
         if let Some(slot_history) =
             account_overrides.and_then(|overrides| overrides.get(&slot_history::id()))
         {
-            account_cache.insert(slot_history::id(), slot_history.clone());
+            loaded_accounts.insert(slot_history::id(), slot_history.clone());
         }
 
         Self {
-            account_cache,
+            loaded_accounts,
             callbacks,
             feature_set,
         }
@@ -218,7 +218,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     pub(crate) fn load_account(&mut self, account_key: &Pubkey) -> Option<AccountSharedData> {
         match self.do_load(account_key) {
             (Some(account), true) => {
-                self.account_cache.insert(*account_key, account.clone());
+                self.loaded_accounts.insert(*account_key, account.clone());
                 Some(account)
             }
             (account, false) => account,
@@ -230,7 +230,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     // indicating whether the account came from accounts-db, which allows wrappers with
     // &mut self to insert the account. Wrappers with &self ignore it.
     fn do_load(&self, account_key: &Pubkey) -> (Option<AccountSharedData>, bool) {
-        if let Some(account) = self.account_cache.get(account_key) {
+        if let Some(account) = self.loaded_accounts.get(account_key) {
             // If lamports is 0, a previous transaction deallocated this account.
             // We return None instead of the account we found so it can be created fresh.
             // We *never* remove accounts, or else we would fetch stale state from accounts-db.
@@ -274,20 +274,20 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         let fee_payer_address = message.fee_payer();
         match rollback_accounts {
             RollbackAccounts::FeePayerOnly { fee_payer_account } => {
-                self.account_cache
+                self.loaded_accounts
                     .insert(*fee_payer_address, fee_payer_account.clone());
             }
             RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-                self.account_cache
+                self.loaded_accounts
                     .insert(*nonce.address(), nonce.account().clone());
             }
             RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce,
                 fee_payer_account,
             } => {
-                self.account_cache
+                self.loaded_accounts
                     .insert(*nonce.address(), nonce.account().clone());
-                self.account_cache
+                self.loaded_accounts
                     .insert(*fee_payer_address, fee_payer_account.clone());
             }
         }
@@ -311,7 +311,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
                 continue;
             }
 
-            self.account_cache.insert(*address, account.clone());
+            self.loaded_accounts.insert(*address, account.clone());
         }
     }
 }
@@ -789,7 +789,7 @@ mod tests {
 
     impl<'a> From<&'a TestCallbacks> for AccountLoader<'a, TestCallbacks> {
         fn from(callbacks: &'a TestCallbacks) -> AccountLoader<'a, TestCallbacks> {
-            AccountLoader::new_with_account_cache_capacity(
+            AccountLoader::new_with_loaded_accounts_capacity(
                 None,
                 callbacks,
                 &callbacks.feature_set,
@@ -1096,7 +1096,7 @@ mod tests {
             ..Default::default()
         };
         let feature_set = SVMFeatureSet::all_enabled();
-        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+        let mut account_loader = AccountLoader::new_with_loaded_accounts_capacity(
             account_overrides,
             &callbacks,
             &feature_set,
@@ -2368,7 +2368,7 @@ mod tests {
         let feature_set = SVMFeatureSet::default();
         let test_transaction_data_size = |transaction, expected_size| {
             let mut account_loader =
-                AccountLoader::new_with_account_cache_capacity(None, &mock_bank, &feature_set, 0);
+                AccountLoader::new_with_loaded_accounts_capacity(None, &mock_bank, &feature_set, 0);
 
             let loaded_transaction_accounts = load_transaction_accounts(
                 &mut account_loader,
