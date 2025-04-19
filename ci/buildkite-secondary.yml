@@ -8,6 +8,16 @@ steps:
       queue: "release-build"
     timeout_in_minutes: 10
   - wait
+  - name: "publish crate"
+    command: "ci/publish-crate.sh"
+    agents:
+      queue: "release-build"
+    retry:
+      manual:
+        permit_on_passed: true
+    timeout_in_minutes: 240
+    branches: "!master"
+  - wait
   - name: "publish tarball (x86_64-unknown-linux-gnu)"
     command: "ci/publish-tarball.sh"
     agents:
@@ -24,15 +34,6 @@ steps:
     agents:
       queue: "release-build"
     timeout_in_minutes: 60
-  - name: "publish crate"
-    command: "ci/publish-crate.sh"
-    agents:
-      queue: "release-build"
-    retry:
-      manual:
-        permit_on_passed: true
-    timeout_in_minutes: 240
-    branches: "!master"
   - name: "trigger github actions windows build"
     command: ".buildkite/scripts/trigger-github-actions-windows-build.sh"
     agents:
