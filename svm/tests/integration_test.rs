@@ -181,7 +181,10 @@ impl SvmTestEnvironment<'_> {
                     let fee_payer = sanitized_transaction.fee_payer();
 
                     match fees_only_transaction.rollback_accounts.clone() {
-                        RollbackAccounts::FeePayerOnly { fee_payer_account } => {
+                        RollbackAccounts::FeePayerOnly {
+                            fee_payer_account,
+                            fee_payer_address: _,
+                        } => {
                             update_or_dealloc_account(
                                 &mut final_accounts_actual,
                                 *fee_payer,
@@ -198,6 +201,7 @@ impl SvmTestEnvironment<'_> {
                         RollbackAccounts::SeparateNonceAndFeePayer {
                             nonce,
                             fee_payer_account,
+                            fee_payer_address: _,
                         } => {
                             update_or_dealloc_account(
                                 &mut final_accounts_actual,
