@@ -178,16 +178,11 @@ impl LeaderSlotPacketCountMetrics {
         Self::default()
     }
 
-    fn report(&self, id: &str, slot: Slot) {
+    fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_packet_counts",
-            "id" => id,
+            "banking_stage-vote_slot_packet_counts",
             ("slot", slot, i64),
-            (
-                "total_new_valid_packets",
-                self.total_new_valid_packets,
-                i64
-            ),
+            ("total_new_valid_packets", self.total_new_valid_packets, i64),
             (
                 "newly_failed_sigverify_count",
                 self.newly_failed_sigverify_count,
@@ -213,11 +208,7 @@ impl LeaderSlotPacketCountMetrics {
                 self.excessive_precompile_count,
                 i64
             ),
-            (
-                "invalid_votes_count",
-                self.invalid_votes_count,
-                i64
-            ),
+            ("invalid_votes_count", self.invalid_votes_count, i64),
             (
                 "exceeded_buffer_limit_dropped_packets_count",
                 self.exceeded_buffer_limit_dropped_packets_count,
@@ -253,11 +244,7 @@ impl LeaderSlotPacketCountMetrics {
                 self.retryable_errored_transaction_count,
                 i64
             ),
-            (
-                "retryable_packets_count",
-                self.retryable_packets_count,
-                i64
-            ),
+            ("retryable_packets_count", self.retryable_packets_count, i64),
             (
                 "nonretryable_errored_transactions_count",
                 self.nonretryable_errored_transactions_count,
@@ -292,10 +279,9 @@ impl LeaderSlotPacketCountMetrics {
     }
 }
 
-fn report_transaction_error_metrics(errors: &TransactionErrorMetrics, id: &str, slot: Slot) {
+fn report_transaction_error_metrics(errors: &TransactionErrorMetrics, slot: Slot) {
     datapoint_info!(
-        "banking_stage-leader_slot_transaction_errors",
-        "id" => id,
+        "banking_stage-vote_slot_transaction_errors",
         ("slot", slot as i64, i64),
         ("total", errors.total.0 as i64, i64),
         ("account_in_use", errors.account_in_use.0 as i64, i64),
@@ -310,12 +296,24 @@ fn report_transaction_error_metrics(errors: &TransactionErrorMetrics, id: &str, 
             i64
         ),
         ("account_not_found", errors.account_not_found.0 as i64, i64),
-        ("blockhash_not_found", errors.blockhash_not_found.0 as i64, i64),
+        (
+            "blockhash_not_found",
+            errors.blockhash_not_found.0 as i64,
+            i64
+        ),
         ("blockhash_too_old", errors.blockhash_too_old.0 as i64, i64),
-        ("call_chain_too_deep", errors.call_chain_too_deep.0 as i64, i64),
+        (
+            "call_chain_too_deep",
+            errors.call_chain_too_deep.0 as i64,
+            i64
+        ),
         ("already_processed", errors.already_processed.0 as i64, i64),
         ("instruction_error", errors.instruction_error.0 as i64, i64),
-        ("insufficient_funds", errors.insufficient_funds.0 as i64, i64),
+        (
+            "insufficient_funds",
+            errors.insufficient_funds.0 as i64,
+            i64
+        ),
         (
             "invalid_account_for_fee",
             errors.invalid_account_for_fee.0 as i64,
@@ -386,11 +384,6 @@ fn report_transaction_error_metrics(errors: &TransactionErrorMetrics, id: &str, 
 
 #[derive(Debug)]
 pub(crate) struct LeaderSlotMetrics {
-    // banking_stage creates one QosService instance per working threads, that is uniquely
-    // identified by id. This field allows to categorize metrics for gossip votes, TPU votes
-    // and other transactions.
-    id: String,
-
     // aggregate metrics per slot
     slot: Slot,
 
@@ -407,9 +400,8 @@ pub(crate) struct LeaderSlotMetrics {
 }
 
 impl LeaderSlotMetrics {
-    pub(crate) fn new(id: u32, slot: Slot, bank_creation_time: &Instant) -> Self {
+    pub(crate) fn new(slot: Slot, bank_creation_time: &Instant) -> Self {
         Self {
-            id: id.to_string(),
             slot,
             packet_count_metrics: LeaderSlotPacketCountMetrics::new(),
             transaction_error_metrics: TransactionErrorMetrics::new(),
@@ -422,10 +414,10 @@ impl LeaderSlotMetrics {
     pub(crate) fn report(&mut self) {
         self.is_reported = true;
 
-        self.timing_metrics.report(&self.id, self.slot);
-        report_transaction_error_metrics(&self.transaction_error_metrics, &self.id, self.slot);
-        self.packet_count_metrics.report(&self.id, self.slot);
-        self.vote_packet_count_metrics.report(&self.id, self.slot);
+        self.timing_metrics.report(self.slot);
+        report_transaction_error_metrics(&self.transaction_error_metrics, self.slot);
+        self.packet_count_metrics.report(self.slot);
+        self.vote_packet_count_metrics.report(self.slot);
     }
 
     /// Returns `Some(self.slot)` if the metrics have been reported, otherwise returns None
@@ -458,10 +450,9 @@ impl VotePacketCountMetrics {
         Self::default()
     }
 
-    fn report(&self, id: &str, slot: Slot) {
+    fn report(&self, slot: Slot) {
         datapoint_info!(
             "banking_stage-vote_packet_counts",
-            "id" => id,
             ("slot", slot, i64),
             ("dropped_gossip_votes", self.dropped_gossip_votes, i64),
             ("dropped_tpu_votes", self.dropped_tpu_votes, i64)
@@ -477,22 +468,14 @@ pub(crate) enum MetricsTrackerAction {
     ReportAndNewTracker(Option<LeaderSlotMetrics>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LeaderSlotMetricsTracker {
     // Only `Some` if BankingStage detects it's time to construct our leader slot,
     // otherwise `None`
     leader_slot_metrics: Option<LeaderSlotMetrics>,
-    id: u32,
 }
 
 impl LeaderSlotMetricsTracker {
-    pub fn new(id: u32) -> Self {
-        Self {
-            leader_slot_metrics: None,
-            id,
-        }
-    }
-
     // Check leader slot, return MetricsTrackerAction to be applied by apply_action()
     pub(crate) fn check_leader_slot_boundary(
         &mut self,
@@ -509,7 +492,6 @@ impl LeaderSlotMetricsTracker {
             // Our leader slot has begain, time to create a new slot tracker
             (None, Some(bank_start)) => {
                 MetricsTrackerAction::NewTracker(Some(LeaderSlotMetrics::new(
-                    self.id,
                     bank_start.working_bank.slot(),
                     &bank_start.bank_creation_time,
                 )))
@@ -520,7 +502,6 @@ impl LeaderSlotMetricsTracker {
                     // Last slot has ended, new slot has began
                     leader_slot_metrics.mark_slot_end_detected();
                     MetricsTrackerAction::ReportAndNewTracker(Some(LeaderSlotMetrics::new(
-                        self.id,
                         bank_start.working_bank.slot(),
                         &bank_start.bank_creation_time,
                     )))
@@ -910,8 +891,7 @@ mod tests {
             bank_creation_time: Arc::new(Instant::now()),
         };
 
-        let banking_stage_thread_id = 0;
-        let leader_slot_metrics_tracker = LeaderSlotMetricsTracker::new(banking_stage_thread_id);
+        let leader_slot_metrics_tracker = LeaderSlotMetricsTracker::default();
 
         TestSlotBoundaryComponents {
             first_bank,

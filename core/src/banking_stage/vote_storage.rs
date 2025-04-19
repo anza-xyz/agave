@@ -15,18 +15,13 @@ const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
 
 #[derive(Debug)]
 pub struct VoteStorage {
-    latest_unprocessed_votes: Arc<LatestUnprocessedVotes>,
-    vote_source: VoteSource,
+    latest_unprocessed_votes: LatestUnprocessedVotes,
 }
 
 impl VoteStorage {
-    pub fn new(
-        latest_unprocessed_votes: Arc<LatestUnprocessedVotes>,
-        vote_source: VoteSource,
-    ) -> Self {
+    pub fn new(latest_unprocessed_votes: LatestUnprocessedVotes) -> Self {
         Self {
             latest_unprocessed_votes,
-            vote_source,
         }
     }
 
@@ -44,6 +39,7 @@ impl VoteStorage {
 
     pub(crate) fn insert_batch(
         &mut self,
+        vote_source: VoteSource,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
     ) -> VoteBatchInsertionMetrics {
         self.latest_unprocessed_votes.insert_batch(
@@ -52,7 +48,7 @@ impl VoteStorage {
                 .filter_map(|deserialized_packet| {
                     LatestValidatorVotePacket::new_from_immutable(
                         Arc::new(deserialized_packet),
-                        self.vote_source,
+                        vote_source,
                         self.latest_unprocessed_votes
                             .should_deprecate_legacy_vote_ixs(),
                     )
@@ -71,7 +67,7 @@ impl VoteStorage {
             packets.filter_map(|packet| {
                 LatestValidatorVotePacket::new_from_immutable(
                     packet,
-                    self.vote_source,
+                    VoteSource::Tpu, // incorrect, but this bug has been here w/o issue for a long time.
                     self.latest_unprocessed_votes
                         .should_deprecate_legacy_vote_ixs(),
                 )
@@ -90,17 +86,8 @@ impl VoteStorage {
     }
 
     pub fn cache_epoch_boundary_info(&mut self, bank: &Bank) {
-        if matches!(self.vote_source, VoteSource::Gossip) {
-            panic!("Gossip vote thread should not be checking epoch boundary");
-        }
         self.latest_unprocessed_votes
             .cache_epoch_boundary_info(bank);
-    }
-
-    pub fn should_not_process(&self) -> bool {
-        // The gossip vote thread does not need to process or forward any votes, that is
-        // handled by the tpu vote thread
-        matches!(self.vote_source, VoteSource::Gossip)
     }
 }
 
@@ -142,10 +129,12 @@ mod tests {
 
         let latest_unprocessed_votes =
             LatestUnprocessedVotes::new_for_tests(&[vote_keypair.pubkey()]);
-        let mut transaction_storage =
-            VoteStorage::new(Arc::new(latest_unprocessed_votes), VoteSource::Tpu);
+        let mut transaction_storage = VoteStorage::new(latest_unprocessed_votes);
 
-        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(&vote)?]);
+        transaction_storage.insert_batch(
+            VoteSource::Tpu,
+            vec![ImmutableDeserializedPacket::new(&vote)?],
+        );
         assert_eq!(1, transaction_storage.len());
 
         // Drain all packets, then re-insert.
