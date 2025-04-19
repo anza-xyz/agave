@@ -9146,6 +9146,7 @@ dependencies = [
  "solana-unified-scheduler-logic",
  "static_assertions",
  "trait-set",
+ "unwrap_none",
  "vec_extract_if_polyfill",
 ]
 

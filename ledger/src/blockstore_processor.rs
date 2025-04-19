@@ -190,13 +190,18 @@ pub fn execute_batch<'a>(
     let pre_commit_callback = |_timings: &mut _, processing_results: &_| -> PreCommitResult {
         match extra_pre_commit_callback {
             None => {
+                // We're entering into one of the block-verification methods.
                 get_first_error(batch, processing_results)?;
                 Ok(None)
             }
             Some(extra_pre_commit_callback) => {
-                // We're entering into the block-producing unified scheduler special case...
+                // We're entering into the block-production unified scheduler special case...
                 // `processing_results` should always contain exactly only 1 result in that case.
-                assert_eq!(processing_results.len(), 1);
+                let [result] = processing_results else {
+                    panic!("unexpected result count: {}", processing_results.len());
+                };
+                // transaction_indexes is intended to be populated later; so barely-initialized vec
+                // should be provided.
                 assert!(transaction_indexes.is_empty());
 
                 // From now on, we need to freeze-lock the tpu bank, in order to prevent it from
@@ -205,7 +210,15 @@ pub fn execute_batch<'a>(
                 // invariant violation.
                 let freeze_lock = bank.freeze_lock();
 
-                if let Some(index) = extra_pre_commit_callback(&processing_results[0])? {
+                // `result` won't be examined at all here. Rather, `extra_pre_commit_callback` is
+                // responsible for all result handling, including the very basic precondition of
+                // successful execution of transactions as well.
+                let committed_index = extra_pre_commit_callback(result)?;
+
+                // The callback succeeded. Optionally, update transaction_indexes as well.
+                // Refer to TaskHandler::handle()'s transaction_indexes initialization for further
+                // background.
+                if let Some(index) = committed_index {
                     let transaction_indexes = transaction_indexes.to_mut();
                     // Adjust the empty new vec with the exact needed capacity. Otherwise, excess
                     // cap would be reserved on `.push()` in it.
