@@ -1163,7 +1163,7 @@ impl ClusterInfo {
             let mut gossip_crds = self.gossip.crds.write().unwrap();
             gossip_crds.insert(node, timestamp(), GossipRoute::LocalMessage)
         } {
-            error!("refresh_my_gossip_contact_info failed: {err:?}");
+            panic!("refresh_my_gossip_contact_info failed: {err:?}");
         }
     }
 
@@ -4215,7 +4215,6 @@ mod tests {
             let mut node = cluster_info.my_contact_info.write().unwrap();
             node.set_shred_version(42);
         }
-        cluster_info.refresh_my_gossip_contact_info();
         cluster_info.flush_push_queue();
 
         // Should now include the previous heaviest_fork from the other node.
