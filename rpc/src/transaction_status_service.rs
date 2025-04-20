@@ -522,11 +522,15 @@ pub(crate) mod tests {
             Some(test_notifier.clone()),
             blockstore,
             false,
+            None, // No event notification synchronizer
             exit.clone(),
         );
 
         transaction_status_sender
-            .send(TransactionStatusMessage::Batch(transaction_status_batch))
+            .send(TransactionStatusMessage::Batch((
+                transaction_status_batch,
+                None, /* No event sequence */
+            )))
             .unwrap();
 
         transaction_status_service.quiesce_and_join_for_tests(exit);
@@ -625,11 +629,15 @@ pub(crate) mod tests {
             Some(test_notifier.clone()),
             blockstore,
             false,
+            None, // No event notification synchronizer
             exit.clone(),
         );
 
         transaction_status_sender
-            .send(TransactionStatusMessage::Batch(transaction_status_batch))
+            .send(TransactionStatusMessage::Batch((
+                transaction_status_batch,
+                None, /* No event sequence */
+            )))
             .unwrap();
         transaction_status_service.quiesce_and_join_for_tests(exit);
         assert_eq!(test_notifier.notifications.len(), 2);
