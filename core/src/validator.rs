@@ -786,7 +786,7 @@ impl Validator {
             },
         ));
 
-        let event_notification_synchronizer = Arc::new(EventNotificationSynchronizer::new());
+        let event_notification_synchronizer = Arc::new(EventNotificationSynchronizer::default());
 
         let (
             bank_forks,
@@ -1274,6 +1274,9 @@ impl Validator {
                     None
                 };
 
+            let event_notification_synchronizer = transaction_status_sender
+                .is_some()
+                .then_some(event_notification_synchronizer);
             let optimistically_confirmed_bank_tracker =
                 Some(OptimisticallyConfirmedBankTracker::new(
                     bank_notification_receiver,
@@ -1283,11 +1286,12 @@ impl Validator {
                     rpc_subscriptions.clone(),
                     confirmed_bank_subscribers,
                     prioritization_fee_cache.clone(),
+                    event_notification_synchronizer.clone(),
                 ));
             let bank_notification_sender_config = Some(BankNotificationSenderConfig {
                 sender: bank_notification_sender,
                 should_send_parents: geyser_plugin_service.is_some(),
-                event_notification_synchronizer: transaction_status_sender.is_some().then(|| event_notification_synchronizer),
+                event_notification_synchronizer,
             });
             (
                 Some(json_rpc_service),
@@ -1649,7 +1653,7 @@ impl Validator {
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
             replay_vote_sender,
-            bank_notification_sender.map(|sender| sender.sender),
+            bank_notification_sender,
             config.tpu_coalesce,
             duplicate_confirmed_slot_sender,
             forwarding_tpu_client,

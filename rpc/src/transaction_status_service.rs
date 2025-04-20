@@ -257,7 +257,7 @@ impl TransactionStatusService {
                     event_notification_synchronizer.as_ref()
                 {
                     if let Some(event_sequence) = event_sequence {
-                        event_notification_synchronizer.notify_event(event_sequence);
+                        event_notification_synchronizer.notify_event_processed(event_sequence);
                     }
                 }
             }

@@ -2200,7 +2200,7 @@ impl TransactionStatusSender {
         let event_sequence = self
             .event_notification_synchronizer
             .as_ref()
-            .and_then(|synchronizer| Some(synchronizer.get_new_event_sequence()));
+            .map(|synchronizer| synchronizer.get_new_event_sequence());
 
         if let Err(e) = self.sender.send(TransactionStatusMessage::Batch((
             TransactionStatusBatch {
