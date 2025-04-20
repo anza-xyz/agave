@@ -32,10 +32,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{IndexOfAccount, TransactionAccount},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    std::{
-        num::{NonZeroU32, Saturating},
-        sync::Arc,
-    },
+    std::num::{NonZeroU32, Saturating},
 };
 
 // for the load instructions
@@ -154,13 +151,13 @@ pub struct FeesOnlyTransaction {
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     account_cache: AHashMap<Pubkey, AccountSharedData>,
     callbacks: &'a CB,
-    pub(crate) feature_set: Arc<SVMFeatureSet>,
+    pub(crate) feature_set: &'a SVMFeatureSet,
 }
 impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     pub(crate) fn new_with_account_cache_capacity(
         account_overrides: Option<&'a AccountOverrides>,
         callbacks: &'a CB,
-        feature_set: Arc<SVMFeatureSet>,
+        feature_set: &'a SVMFeatureSet,
         capacity: usize,
     ) -> AccountLoader<'a, CB> {
         let mut account_cache = AHashMap::with_capacity(capacity);
@@ -584,7 +581,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     } else if let Some(mut loaded_account) = account_loader.load_account(account_key, is_writable) {
         loaded_account.rent_collected = if is_writable {
             collect_rent_from_account(
-                &account_loader.feature_set,
+                account_loader.feature_set,
                 rent_collector,
                 account_key,
                 &mut loaded_account.account,
@@ -701,7 +698,7 @@ mod tests {
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_context::{TransactionAccount, TransactionContext},
         solana_transaction_error::{TransactionError, TransactionResult as Result},
-        std::{borrow::Cow, cell::RefCell, collections::HashMap, fs::File, io::Read, sync::Arc},
+        std::{borrow::Cow, cell::RefCell, collections::HashMap, fs::File, io::Read},
     };
 
     #[derive(Clone, Default)]
@@ -710,6 +707,7 @@ mod tests {
         #[allow(clippy::type_complexity)]
         inspected_accounts:
             RefCell<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>,
+        feature_set: SVMFeatureSet,
     }
 
     impl InvokeContextCallback for TestCallbacks {}
@@ -746,7 +744,7 @@ mod tests {
             AccountLoader::new_with_account_cache_capacity(
                 None,
                 callbacks,
-                Arc::<SVMFeatureSet>::default(),
+                &callbacks.feature_set,
                 0,
             )
         }
@@ -771,7 +769,7 @@ mod tests {
             ..Default::default()
         };
         let mut account_loader: AccountLoader<TestCallbacks> = (&callbacks).into();
-        account_loader.feature_set = Arc::new(feature_set);
+        account_loader.feature_set = &feature_set;
         load_transaction(
             &mut account_loader,
             &sanitized_tx,
@@ -1049,10 +1047,11 @@ mod tests {
             accounts_map,
             ..Default::default()
         };
+        let feature_set = SVMFeatureSet::all_enabled();
         let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             account_overrides,
             &callbacks,
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             0,
         );
         load_transaction(
@@ -2322,14 +2321,10 @@ mod tests {
         let mut program_accounts = HashMap::new();
         program_accounts.insert(program1, (&loader_v2, 0));
         program_accounts.insert(program2, (&loader_v3, 0));
-
+        let feature_set = SVMFeatureSet::default();
         let test_transaction_data_size = |transaction, expected_size| {
-            let mut account_loader = AccountLoader::new_with_account_cache_capacity(
-                None,
-                &mock_bank,
-                Arc::<SVMFeatureSet>::default(),
-                0,
-            );
+            let mut account_loader =
+                AccountLoader::new_with_account_cache_capacity(None, &mock_bank, &feature_set, 0);
 
             let loaded_transaction_accounts = load_transaction_accounts(
                 &mut account_loader,

@@ -1634,7 +1634,7 @@ mod tests {
         solana_clock::Epoch,
         solana_instruction::Instruction,
         solana_program_runtime::{
-            invoke_context::SerializedAccountMetadata, with_mock_invoke_context,
+            invoke_context::SerializedAccountMetadata, with_mock_invoke_context_with_feature_set,
         },
         solana_sbpf::{
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
@@ -1675,10 +1675,14 @@ mod tests {
                 .into_iter()
                 .map(|a| (a.0, a.1))
                 .collect::<Vec<TransactionAccount>>();
-            with_mock_invoke_context!($invoke_context, $transaction_context, transaction_accounts);
             let mut feature_set = SVMFeatureSet::all_enabled();
             feature_set.bpf_account_data_direct_mapping = false;
-            $invoke_context.mock_set_feature_set(Arc::new(feature_set));
+            with_mock_invoke_context_with_feature_set!(
+                $invoke_context,
+                $transaction_context,
+                feature_set,
+                transaction_accounts
+            );
             $invoke_context
                 .transaction_context
                 .get_next_instruction_context()

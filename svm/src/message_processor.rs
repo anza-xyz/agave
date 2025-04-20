@@ -237,11 +237,12 @@ mod tests {
             ]),
         ));
         let sysvar_cache = SysvarCache::default();
+        let feature_set = SVMFeatureSet::all_enabled();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -295,7 +296,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -339,7 +340,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -470,11 +471,12 @@ mod tests {
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
         let sysvar_cache = SysvarCache::default();
+        let feature_set = SVMFeatureSet::all_enabled();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -513,7 +515,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -549,7 +551,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -670,12 +672,12 @@ mod tests {
                 }
             }
         }
-
+        let feature_set = SVMFeatureSet::all_enabled();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(

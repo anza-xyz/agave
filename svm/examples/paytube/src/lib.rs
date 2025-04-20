@@ -149,7 +149,7 @@ impl PayTubeChannel {
             blockhash: Hash::default(),
             blockhash_lamports_per_signature: fee_structure.lamports_per_signature,
             epoch_total_stake: 0,
-            feature_set: Arc::new(feature_set),
+            feature_set,
             rent_collector: Some(&rent_collector),
         };
 

@@ -129,7 +129,7 @@ pub struct TransactionProcessingEnvironment<'a> {
     /// The total stake for the current epoch.
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
-    pub feature_set: Arc<SVMFeatureSet>,
+    pub feature_set: SVMFeatureSet,
     /// Rent collector to use for the transaction batch.
     pub rent_collector: Option<&'a dyn SVMRentCollector>,
 }
@@ -373,7 +373,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             config.account_overrides,
             callbacks,
-            environment.feature_set.clone(),
+            &environment.feature_set,
             account_keys_in_batch,
         );
 
@@ -551,7 +551,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_loaded_rent_epoch = loaded_fee_payer.account.rent_epoch();
         loaded_fee_payer.rent_collected = collect_rent_from_account(
-            &account_loader.feature_set,
+            account_loader.feature_set,
             rent_collector,
             fee_payer_address,
             &mut loaded_fee_payer.account,
@@ -852,7 +852,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment.blockhash,
                 environment.blockhash_lamports_per_signature,
                 callback,
-                Arc::clone(&environment.feature_set),
+                &environment.feature_set,
                 sysvar_cache,
             ),
             log_collector.clone(),
@@ -1118,6 +1118,7 @@ mod tests {
         #[allow(clippy::type_complexity)]
         inspected_accounts:
             Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
+        feature_set: SVMFeatureSet,
     }
 
     impl InvokeContextCallback for MockBankCallback {}
@@ -1195,7 +1196,7 @@ mod tests {
             AccountLoader::new_with_account_cache_capacity(
                 None,
                 callbacks,
-                Arc::<SVMFeatureSet>::default(),
+                &callbacks.feature_set,
                 0,
             )
         }

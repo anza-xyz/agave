@@ -3437,7 +3437,7 @@ impl Bank {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake: self.get_current_epoch_total_stake(),
-            feature_set: Arc::new(self.feature_set.runtime_features()),
+            feature_set: self.feature_set.runtime_features(),
             rent_collector: Some(&rent_collector_with_metrics),
         };
 

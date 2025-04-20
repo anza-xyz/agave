@@ -23,10 +23,7 @@ use {
     solana_svm_callback::InvokeContextCallback,
     solana_transaction_context::TransactionContext,
     source_buffer::SourceBuffer,
-    std::{
-        cmp::Ordering,
-        sync::{atomic::Ordering::Relaxed, Arc},
-    },
+    std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
     target_builtin::TargetBuiltin,
     target_core_bpf::TargetCoreBpf,
 };
@@ -164,7 +161,7 @@ impl Bank {
 
             struct MockCallback {}
             impl InvokeContextCallback for MockCallback {}
-
+            let feature_set = self.feature_set.runtime_features();
             let mut dummy_invoke_context = InvokeContext::new(
                 &mut dummy_transaction_context,
                 &mut program_cache_for_tx_batch,
@@ -172,7 +169,7 @@ impl Bank {
                     Hash::default(),
                     0,
                     &MockCallback {},
-                    Arc::new(self.feature_set.runtime_features()),
+                    &feature_set,
                     &sysvar_cache,
                 ),
                 None,
