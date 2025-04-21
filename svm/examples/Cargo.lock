@@ -2723,7 +2723,7 @@ dependencies = [
  "solana-sdk",
  "solana-svm",
  "solana-system-program",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-transaction-status",
  "solana-version",
  "spl-token-2022 7.0.0",
@@ -5031,7 +5031,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-sdk",
  "solana-svm-transaction",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "static_assertions",
  "tar",
  "tempfile",
@@ -5074,7 +5074,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey",
  "solana-system-interface",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "thiserror 2.0.11",
 ]
 
@@ -5096,7 +5096,7 @@ dependencies = [
  "solana-banks-interface",
  "solana-program",
  "solana-sdk",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "tarpc",
  "thiserror 2.0.11",
  "tokio",
@@ -5110,7 +5110,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-sdk",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "tarpc",
 ]
 
@@ -5249,7 +5249,7 @@ dependencies = [
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-timings",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-type-overrides",
  "thiserror 2.0.11",
 ]
@@ -5561,7 +5561,7 @@ dependencies = [
  "solana-short-vec",
  "solana-stake-interface",
  "solana-system-interface",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
 ]
 
 [[package]]
@@ -6267,7 +6267,7 @@ dependencies = [
  "solana-svm",
  "solana-svm-transaction",
  "solana-timings",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-transaction-status",
  "solana-vote",
  "solana-vote-program",
@@ -6348,7 +6348,7 @@ dependencies = [
  "solana-pubkey",
  "solana-sbpf",
  "solana-sdk-ids",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-type-overrides",
 ]
 
@@ -6797,7 +6797,7 @@ dependencies = [
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-timings",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-type-overrides",
  "thiserror 2.0.11",
 ]
@@ -6832,7 +6832,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-svm",
  "solana-timings",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-vote-program",
  "thiserror 2.0.11",
  "tokio",
@@ -7068,7 +7068,7 @@ dependencies = [
  "solana-streamer",
  "solana-svm",
  "solana-tpu-client",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-transaction-status",
  "solana-version",
  "solana-vote",
@@ -7232,7 +7232,7 @@ dependencies = [
  "solana-svm-rent-collector",
  "solana-svm-transaction",
  "solana-timings",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-transaction-status-client-types",
  "solana-unified-scheduler-logic",
  "solana-version",
@@ -7634,7 +7634,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-stake-interface",
  "solana-sysvar",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-type-overrides",
  "solana-vote-interface",
 ]
@@ -7696,7 +7696,7 @@ dependencies = [
  "solana-serde",
  "solana-signature",
  "solana-transaction",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-transaction-error",
  "solana-transaction-status",
  "tonic-build",
@@ -7784,7 +7784,7 @@ dependencies = [
  "solana-svm-rent-collector",
  "solana-svm-transaction",
  "solana-timings",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-transaction-error",
  "solana-type-overrides",
  "thiserror 2.0.11",
@@ -7814,7 +7814,7 @@ name = "solana-svm-rent-collector"
 version = "2.2.12"
 dependencies = [
  "solana-sdk",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
 ]
 
 [[package]]
@@ -7865,7 +7865,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-system-interface",
  "solana-sysvar",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-type-overrides",
 ]
 
@@ -8187,7 +8187,7 @@ dependencies = [
  "solana-reward-info",
  "solana-signature",
  "solana-transaction",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-transaction-error",
  "thiserror 2.0.11",
 ]
@@ -8385,7 +8385,7 @@ dependencies = [
  "solana-signer",
  "solana-slot-hashes",
  "solana-transaction",
- "solana-transaction-context 2.2.11",
+ "solana-transaction-context 2.2.12",
  "solana-vote-interface",
  "thiserror 2.0.11",
 ]
