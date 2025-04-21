@@ -5,7 +5,7 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::{
         blockstore::Blockstore,
-        shred::{self, ProcessShredsStats, ShredData},
+        shred::{self, ProcessShredsStats, ShredData, DATA_SHREDS_PER_FEC_BLOCK},
     },
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_runtime::bank::Bank,
@@ -24,19 +24,33 @@ pub(super) struct ReceiveResults {
     pub last_tick_height: u64,
 }
 
+fn keep_coalescing_entries(
+    last_tick_height: u64,
+    max_tick_height: u64,
+    serialized_batch_byte_count: u64,
+    max_batch_byte_count: u64,
+) -> bool {
+    // If we are at the last tick height, we don't need to coalesce anymore.
+    if last_tick_height >= max_tick_height {
+        return false;
+    } else if serialized_batch_byte_count >= max_batch_byte_count {
+        // If we are over the max batch byte count, we don't need to coalesce anymore.
+        return false;
+    }
+    true
+}
+
 pub(super) fn recv_slot_entries(
     receiver: &Receiver<WorkingBankEntry>,
     process_stats: &mut ProcessShredsStats,
 ) -> Result<ReceiveResults> {
-    let target_serialized_batch_byte_count: u64 =
-        32 * ShredData::capacity(/*merkle_proof_size*/ None).unwrap() as u64;
     let timer = Duration::new(1, 0);
     let recv_start = Instant::now();
     let (mut bank, (entry, mut last_tick_height)) = receiver.recv_timeout(timer)?;
     let mut entries = vec![entry];
     assert!(last_tick_height <= bank.max_tick_height());
 
-    // Drain channel
+    // Drain the channel of entries.
     while last_tick_height != bank.max_tick_height() {
         let Ok((try_bank, (entry, tick_height))) = receiver.try_recv() else {
             break;
@@ -54,12 +68,22 @@ pub(super) fn recv_slot_entries(
     }
 
     let mut serialized_batch_byte_count = serialized_size(&entries)?;
+    let target_serialized_batch_byte_count: u64 = (DATA_SHREDS_PER_FEC_BLOCK
+        * ShredData::capacity(/*merkle_proof_size*/ None).unwrap())
+    .try_into()
+    .unwrap();
 
-    // Wait up to `ENTRY_COALESCE_DURATION` to try to coalesce entries into a 32 shred batch
+    // Coalesce entries until one of the following conditions are hit:
+    // 1. We've ticked through the entire slot.
+    // 2. We hit the timeout.
+    // 3. We're over the max data target.
     let mut coalesce_start = Instant::now();
-    while last_tick_height != bank.max_tick_height()
-        && serialized_batch_byte_count < target_serialized_batch_byte_count
-    {
+    while keep_coalescing_entries(
+        last_tick_height,
+        bank.max_tick_height(),
+        serialized_batch_byte_count,
+        target_serialized_batch_byte_count,
+    ) {
         let Ok((try_bank, (entry, tick_height))) =
             receiver.recv_deadline(coalesce_start + ENTRY_COALESCE_DURATION)
         else {
@@ -76,6 +100,8 @@ pub(super) fn recv_slot_entries(
         }
         last_tick_height = tick_height;
         let entry_bytes = serialized_size(&entry)?;
+
+        // Add the entry to the batch.
         serialized_batch_byte_count += entry_bytes;
         entries.push(entry);
         assert!(last_tick_height <= bank.max_tick_height());
