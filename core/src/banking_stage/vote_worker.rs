@@ -36,8 +36,10 @@ use {
     },
 };
 
-// Step-size set to be 64, equal to the maximum batch/entry size.
-pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 64;
+// This vote batch size was selected to balance the following two things:
+// 1. Amortize execution overhead (Larger is better)
+// 2. Constrain max entry size for FEC set packing (Smaller is better)
+pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
 
 pub struct VoteWorker {
     decision_maker: DecisionMaker,
