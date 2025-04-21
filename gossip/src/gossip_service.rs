@@ -164,6 +164,27 @@ pub fn discover_cluster(
     Ok(validators)
 }
 
+pub fn discover_cluster_with_shred_version(
+    entrypoint: &SocketAddr,
+    num_nodes: usize,
+    my_shred_version: u16,
+    socket_addr_space: SocketAddrSpace,
+) -> std::io::Result<Vec<ContactInfo>> {
+    const DISCOVER_CLUSTER_TIMEOUT: Duration = Duration::from_secs(120);
+    let (_all_peers, validators) = discover(
+        None, // keypair
+        Some(entrypoint),
+        Some(num_nodes),
+        DISCOVER_CLUSTER_TIMEOUT,
+        None,             // find_nodes_by_pubkey
+        None,             // find_node_by_gossip_addr
+        None,             // my_gossip_addr
+        my_shred_version, // my_shred_version
+        socket_addr_space,
+    )?;
+    Ok(validators)
+}
+
 pub fn discover(
     keypair: Option<Keypair>,
     entrypoint: Option<&SocketAddr>,

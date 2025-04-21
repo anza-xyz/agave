@@ -16,7 +16,7 @@ use {
         crds_data::{self, CrdsData},
         crds_value::{CrdsValue, CrdsValueLabel},
         gossip_error::GossipError,
-        gossip_service::{self, discover, GossipService},
+        gossip_service::{self, discover_cluster_with_shred_version, GossipService},
     },
     solana_ledger::blockstore::Blockstore,
     solana_rpc_client::rpc_client::RpcClient,
@@ -67,14 +67,9 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
     socket_addr_space: SocketAddrSpace,
     connection_cache: &Arc<ConnectionCache>,
 ) {
-    let (_, cluster_nodes) = discover(
-        None,
-        Some(&entry_point_info.gossip().unwrap()),
-        Some(nodes),
-        Duration::from_secs(120),
-        None,
-        None,
-        None,
+    let cluster_nodes = discover_cluster_with_shred_version(
+        &entry_point_info.gossip().unwrap(),
+        nodes,
         0, /* shred_version */
         socket_addr_space,
     )
@@ -240,14 +235,9 @@ pub fn kill_entry_and_spend_and_verify_rest(
     info!("kill_entry_and_spend_and_verify_rest...");
 
     // Ensure all nodes have spun up and are funded.
-    let (_, cluster_nodes) = discover(
-        None,
-        Some(&entry_point_info.gossip().unwrap()),
-        Some(nodes),
-        Duration::from_secs(120),
-        None,
-        None,
-        None,
+    let cluster_nodes = discover_cluster_with_shred_version(
+        &entry_point_info.gossip().unwrap(),
+        nodes,
         0, /* shred_version */
         socket_addr_space,
     )

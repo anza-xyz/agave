@@ -22,7 +22,7 @@ use {
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
         contact_info::Protocol,
-        gossip_service::discover,
+        gossip_service::discover_cluster_with_shred_version,
         socketaddr,
     },
     solana_ledger::{
@@ -1051,18 +1051,8 @@ impl TestValidator {
 
         // Needed to avoid panics in `solana-responder-gossip` in tests that create a number of
         // test validators concurrently...
-        discover(
-            None,
-            Some(&gossip),
-            Some(1),
-            Duration::from_secs(120),
-            None,
-            None,
-            None,
-            /* shred_version */ 0,
-            socket_addr_space,
-        )
-        .map_err(|err| format!("TestValidator startup failed: {err:?}"))?;
+        discover_cluster_with_shred_version(&gossip, 1, 0, socket_addr_space)
+            .map_err(|err| format!("TestValidator startup failed: {err:?}"))?;
 
         let test_validator = TestValidator {
             ledger_path,

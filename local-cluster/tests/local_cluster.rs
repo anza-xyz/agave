@@ -20,7 +20,7 @@ use {
     },
     solana_download_utils::download_snapshot_archive,
     solana_entry::entry::create_ticks,
-    solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover},
+    solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_cluster_with_shred_version},
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
@@ -337,16 +337,10 @@ fn test_forwarding() {
     };
 
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-
-    let (_, cluster_nodes) = discover(
-        None,
-        Some(&cluster.entry_point_info.gossip().unwrap()),
-        Some(2),
-        Duration::from_secs(120),
-        None,
-        None,
-        None,
-        0, /* shred_version */
+    let cluster_nodes = discover_cluster_with_shred_version(
+        &cluster.entry_point_info.gossip().unwrap(),
+        2,
+        0,
         SocketAddrSpace::Unspecified,
     )
     .unwrap();
@@ -427,15 +421,10 @@ fn test_mainnet_beta_cluster_type() {
         ..ClusterConfig::default()
     };
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    let (_, cluster_nodes) = discover(
-        None,
-        Some(&cluster.entry_point_info.gossip().unwrap()),
-        Some(1),
-        Duration::from_secs(120),
-        None,
-        None,
-        None,
-        0, /* shred_version */
+    let cluster_nodes = discover_cluster_with_shred_version(
+        &cluster.entry_point_info.gossip().unwrap(),
+        1,
+        0,
         SocketAddrSpace::Unspecified,
     )
     .unwrap();
@@ -1351,15 +1340,10 @@ fn test_snapshots_blockstore_floor() {
     let slot_floor = archive_info.slot();
 
     // Start up a new node from a snapshot
-    let (_, cluster_nodes) = discover(
-        None,
-        Some(&cluster.entry_point_info.gossip().unwrap()),
-        Some(1),
-        Duration::from_secs(120),
-        None,
-        None,
-        None,
-        0, /* shred_version */
+    let cluster_nodes = discover_cluster_with_shred_version(
+        &cluster.entry_point_info.gossip().unwrap(),
+        1,
+        0,
         SocketAddrSpace::Unspecified,
     )
     .unwrap();
@@ -4352,15 +4336,10 @@ fn test_listener_startup() {
         ..ClusterConfig::default()
     };
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    let (_, cluster_nodes) = discover(
-        None,
-        Some(&cluster.entry_point_info.gossip().unwrap()),
-        Some(4),
-        Duration::from_secs(120),
-        None,
-        None,
-        None,
-        0, /* shred_version */
+    let cluster_nodes = discover_cluster_with_shred_version(
+        &cluster.entry_point_info.gossip().unwrap(),
+        4,
+        0,
         SocketAddrSpace::Unspecified,
     )
     .unwrap();
