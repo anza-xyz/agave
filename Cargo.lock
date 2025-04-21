@@ -10237,14 +10237,27 @@ name = "solana-stake-accounts"
 version = "2.3.0"
 dependencies = [
  "clap 2.33.3",
+ "solana-account",
  "solana-clap-utils",
  "solana-cli-config",
+ "solana-client-traits",
+ "solana-clock",
+ "solana-fee-calculator",
+ "solana-genesis-config",
+ "solana-instruction",
+ "solana-keypair",
+ "solana-message",
+ "solana-native-token",
+ "solana-pubkey",
  "solana-remote-wallet",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime",
- "solana-sdk",
+ "solana-signature",
+ "solana-signer",
+ "solana-stake-interface",
  "solana-stake-program",
+ "solana-transaction",
  "solana-version",
 ]
 
