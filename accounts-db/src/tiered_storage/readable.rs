@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use crate::account_storage::meta::StoredAccountMeta;
 use {
     crate::{
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
@@ -101,21 +99,6 @@ impl TieredStorageReader {
         }
     }
 
-    /// calls `callback` with the account located at the specified index offset.
-    ///
-    /// Prefer get_stored_account_callback() when possible, as it does not contain file format
-    /// implementation details, and thus potentially can read less and be faster.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn get_stored_account_meta_callback<Ret>(
-        &self,
-        index_offset: IndexOffset,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
-    ) -> TieredStorageResult<Option<Ret>> {
-        match self {
-            Self::Hot(hot) => hot.get_stored_account_meta_callback(index_offset, callback),
-        }
-    }
-
     /// Returns Ok(index_of_matching_owner) if the account owner at
     /// `account_offset` is one of the pubkeys in `owners`.
     ///
@@ -185,20 +168,6 @@ impl TieredStorageReader {
     ) -> TieredStorageResult<()> {
         match self {
             Self::Hot(hot) => hot.scan_accounts(callback),
-        }
-    }
-
-    /// Iterate over all accounts and call `callback` with each account.
-    ///
-    /// Prefer scan_accounts() when possible, as it does not contain file format
-    /// implementation details, and thus potentially can read less and be faster.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub(crate) fn scan_accounts_stored_meta(
-        &self,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
-    ) -> TieredStorageResult<()> {
-        match self {
-            Self::Hot(hot) => hot.scan_accounts_stored_meta(callback),
         }
     }
 
