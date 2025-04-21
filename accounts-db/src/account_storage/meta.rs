@@ -1,80 +1,59 @@
 use {
-    crate::{
-        account_info::AccountInfo,
-        accounts_hash::AccountHash,
-        append_vec::AppendVecStoredAccountMeta,
-        tiered_storage::hot::{HotAccount, HotAccountMeta},
-    },
+    crate::{accounts_hash::AccountHash, append_vec::AppendVecStoredAccountMeta},
     solana_account::ReadableAccount,
     solana_clock::Epoch,
-    solana_hash::Hash,
     solana_pubkey::Pubkey,
 };
 
 pub type StoredMetaWriteVersion = u64;
-
-lazy_static! {
-    static ref DEFAULT_ACCOUNT_HASH: AccountHash = AccountHash(Hash::default());
-}
 
 /// References to account data stored elsewhere. Getting an `Account` requires cloning
 /// (see `StoredAccountMeta::clone_account()`).
 #[derive(PartialEq, Eq, Debug)]
 pub enum StoredAccountMeta<'storage> {
     AppendVec(AppendVecStoredAccountMeta<'storage>),
-    Hot(HotAccount<'storage, HotAccountMeta>),
 }
 
 impl<'storage> StoredAccountMeta<'storage> {
     pub fn pubkey(&self) -> &'storage Pubkey {
         match self {
             Self::AppendVec(av) => av.pubkey(),
-            Self::Hot(hot) => hot.address(),
         }
     }
 
     pub fn hash(&self) -> &'storage AccountHash {
         match self {
             Self::AppendVec(av) => av.hash(),
-            // tiered-storage has deprecated the use of AccountHash
-            Self::Hot(_) => &DEFAULT_ACCOUNT_HASH,
         }
     }
 
     pub fn stored_size(&self) -> usize {
         match self {
             Self::AppendVec(av) => av.stored_size(),
-            Self::Hot(hot) => hot.stored_size(),
         }
     }
 
     pub fn offset(&self) -> usize {
         match self {
             Self::AppendVec(av) => av.offset(),
-            Self::Hot(hot) => AccountInfo::reduced_offset_to_offset(hot.index().0),
         }
     }
 
     pub fn data(&self) -> &'storage [u8] {
         match self {
             Self::AppendVec(av) => av.data(),
-            Self::Hot(hot) => hot.data(),
         }
     }
 
     pub fn data_len(&self) -> usize {
         match self {
             Self::AppendVec(av) => av.data_len() as usize,
-            Self::Hot(hot) => hot.data().len(),
         }
     }
 
     pub fn meta(&self) -> &StoredMeta {
         match self {
             Self::AppendVec(av) => av.meta(),
-            // Hot account does not support this API as it does not
-            // use the same in-memory layout as StoredMeta.
-            Self::Hot(_) => unreachable!(),
         }
     }
 }
@@ -83,31 +62,26 @@ impl ReadableAccount for StoredAccountMeta<'_> {
     fn lamports(&self) -> u64 {
         match self {
             Self::AppendVec(av) => av.lamports(),
-            Self::Hot(hot) => hot.lamports(),
         }
     }
     fn data(&self) -> &[u8] {
         match self {
             Self::AppendVec(av) => av.data(),
-            Self::Hot(hot) => hot.data(),
         }
     }
     fn owner(&self) -> &Pubkey {
         match self {
             Self::AppendVec(av) => av.owner(),
-            Self::Hot(hot) => hot.owner(),
         }
     }
     fn executable(&self) -> bool {
         match self {
             Self::AppendVec(av) => av.executable(),
-            Self::Hot(hot) => hot.executable(),
         }
     }
     fn rent_epoch(&self) -> Epoch {
         match self {
             Self::AppendVec(av) => av.rent_epoch(),
-            Self::Hot(hot) => hot.rent_epoch(),
         }
     }
 }
