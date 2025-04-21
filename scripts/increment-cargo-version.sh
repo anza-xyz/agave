@@ -165,13 +165,13 @@ scripts/cargo-for-all-lock-files.sh tree >/dev/null
   mapfile -t lines <filtered-cargo-lock-patch
   i=0
   total=${#lines[@]}
-  while [ $i -lt $total ]; do
+  while [ "$i" -lt "$total" ]; do
     line="${lines[$i]}"
     ((i++))
 
     # filter out orphaned dependency lines
     if [[ "$line" =~ ^@@.*dependencies ]]; then
-      if [ $i -lt $total ]; then
+      if [ "$i" -lt "$total" ]; then
         next_line="${lines[$i]}"
         if [[ "$next_line" =~ ^[+-] ]]; then
           echo "$line" >>"$tmp_file"
