@@ -114,12 +114,15 @@ impl Bank {
         solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT as u64
     }
 
+    /// Attempts to deposit the given `deposit` amount into the fee collector account.
+    ///
+    /// Returns the original `deposit` amount if the deposit failed and must be burned, otherwise 0.
     fn deposit_or_burn_fee(&self, deposit: u64) -> u64 {
         if deposit == 0 {
             return 0;
         }
 
-        let burn_undepositable_fund = match self.deposit_fees(&self.collector_id, deposit) {
+        match self.deposit_fees(&self.collector_id, deposit) {
             Ok(post_balance) => {
                 self.rewards.write().unwrap().push((
                     self.collector_id,
@@ -145,8 +148,7 @@ impl Bank {
                 );
                 deposit
             }
-        };
-        burn_undepositable_fund
+        }
     }
 
     // Deposits fees into a specified account and if successful, returns the new balance of that account
