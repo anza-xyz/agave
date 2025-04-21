@@ -22,7 +22,6 @@ use {
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
         contact_info::Protocol,
-        gossip_service::discover_validators,
         socketaddr,
     },
     solana_ledger::{
@@ -1033,7 +1032,7 @@ impl TestValidator {
             validator_config.tower_storage = tower_storage.clone();
         }
 
-        let validator = Validator::new(
+        let validator = Some(Validator::new(
             node,
             Arc::new(validator_identity),
             &ledger_path,
@@ -1047,17 +1046,7 @@ impl TestValidator {
             socket_addr_space,
             ValidatorTpuConfig::new_for_tests(config.tpu_enable_udp),
             config.admin_rpc_service_post_init.clone(),
-        )?;
-
-        // Needed to avoid panics in `solana-responder-gossip` in tests that create a number of
-        // test validators concurrently...
-        discover_validators(
-            &gossip,
-            1,
-            validator.cluster_info.my_shred_version(),
-            socket_addr_space,
-        )
-        .map_err(|err| format!("TestValidator startup failed: {err:?}"))?;
+        )?);
 
         let test_validator = TestValidator {
             ledger_path,
@@ -1066,7 +1055,7 @@ impl TestValidator {
             rpc_url,
             tpu,
             gossip,
-            validator: Some(validator),
+            validator,
             vote_account_address,
         };
         Ok(test_validator)
