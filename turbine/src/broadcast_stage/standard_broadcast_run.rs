@@ -21,6 +21,7 @@ pub struct StandardBroadcastRun {
     slot: Slot,
     parent: Slot,
     chained_merkle_root: Hash,
+    carryover_entry: Option<WorkingBankEntry>,
     next_shred_index: u32,
     next_code_index: u32,
     // If last_tick_height has reached bank.max_tick_height() for this slot
@@ -52,6 +53,7 @@ impl StandardBroadcastRun {
             slot: Slot::MAX,
             parent: Slot::MAX,
             chained_merkle_root: Hash::default(),
+            carryover_entry: None,
             next_shred_index: 0,
             next_code_index: 0,
             completed: true,
@@ -438,7 +440,8 @@ impl BroadcastRun for StandardBroadcastRun {
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         let mut process_stats = ProcessShredsStats::default();
-        let receive_results = broadcast_utils::recv_slot_entries(receiver, &mut process_stats)?;
+        let receive_results =
+            broadcast_utils::recv_slot_entries(receiver, &mut self.carryover_entry, &mut process_stats)?;
         // TODO: Confirm that last chunk of coding shreds
         // will not be lost or delayed for too long.
         self.process_receive_results(

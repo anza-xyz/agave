@@ -38,13 +38,18 @@ fn keep_coalescing_entries(
 
 pub(super) fn recv_slot_entries(
     receiver: &Receiver<WorkingBankEntry>,
+    carryover_entry: &mut Option<WorkingBankEntry>,
     process_stats: &mut ProcessShredsStats,
 ) -> Result<ReceiveResults> {
-    let timer = Duration::new(1, 0);
     let recv_start = Instant::now();
-    let (mut bank, (entry, mut last_tick_height)) = receiver.recv_timeout(timer)?;
-    let mut entries = vec![entry];
+
+    // If there is a carryover entry, use it. Else, see if there is a new entry.
+    let (mut bank, (entry, mut last_tick_height)) = match carryover_entry.take() {
+        Some((bank, (entry, tick_height))) => (bank, (entry, tick_height)),
+        None => receiver.recv_timeout(Duration::new(1, 0))?,
+    };
     assert!(last_tick_height <= bank.max_tick_height());
+    let mut entries = vec![entry];
 
     // Drain the channel of entries.
     while last_tick_height != bank.max_tick_height() {
@@ -90,11 +95,18 @@ pub(super) fn recv_slot_entries(
             warn!("Broadcast for slot: {} interrupted", bank.slot());
             entries.clear();
             serialized_batch_byte_count = 8; // Vec len
-            bank = try_bank;
+            bank = try_bank.clone();
             coalesce_start = Instant::now();
         }
         last_tick_height = tick_height;
+
         let entry_bytes = serialized_size(&entry)?;
+        if serialized_batch_byte_count + entry_bytes > target_serialized_batch_byte_count {
+            // This entry will push us over the batch byte limit. Save it for
+            // the next batch.
+            *carryover_entry = Some((try_bank, (entry, tick_height)));
+            break;
+        }
 
         // Add the entry to the batch.
         serialized_batch_byte_count += entry_bytes;
@@ -187,7 +199,7 @@ mod tests {
 
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
-        while let Ok(result) = recv_slot_entries(&r, &mut ProcessShredsStats::default()) {
+        while let Ok(result) = recv_slot_entries(&r, &mut None, &mut ProcessShredsStats::default()) {
             assert_eq!(result.bank.slot(), bank1.slot());
             last_tick_height = result.last_tick_height;
             res_entries.extend(result.entries);
@@ -229,7 +241,7 @@ mod tests {
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
         let mut bank_slot = 0;
-        while let Ok(result) = recv_slot_entries(&r, &mut ProcessShredsStats::default()) {
+        while let Ok(result) = recv_slot_entries(&r, &mut None, &mut ProcessShredsStats::default()) {
             bank_slot = result.bank.slot();
             last_tick_height = result.last_tick_height;
             res_entries = result.entries;
