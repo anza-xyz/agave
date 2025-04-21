@@ -82,14 +82,17 @@ pub type TransactionAccount = (Pubkey, AccountSharedData);
 pub struct TransactionAccounts {
     accounts: Vec<RefCell<AccountSharedData>>,
     touched_flags: RefCell<Box<[bool]>>,
+    resize_delta: RefCell<i64>,
 }
 
 impl TransactionAccounts {
     #[cfg(not(target_os = "solana"))]
     fn new(accounts: Vec<RefCell<AccountSharedData>>) -> TransactionAccounts {
+        let touched_flags = vec![false; accounts.len()].into_boxed_slice();
         TransactionAccounts {
-            touched_flags: RefCell::new(vec![false; accounts.len()].into_boxed_slice()),
             accounts,
+            touched_flags: RefCell::new(touched_flags),
+            resize_delta: RefCell::new(0),
         }
     }
 
@@ -136,7 +139,6 @@ pub struct TransactionContext {
     instruction_trace: Vec<InstructionContext>,
     top_level_instruction_index: usize,
     return_data: TransactionReturnData,
-    accounts_resize_delta: RefCell<i64>,
     #[cfg(not(target_os = "solana"))]
     remove_accounts_executable_flag_checks: bool,
     #[cfg(not(target_os = "solana"))]
@@ -172,7 +174,6 @@ impl TransactionContext {
             instruction_trace: vec![InstructionContext::default()],
             top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
-            accounts_resize_delta: RefCell::new(0),
             remove_accounts_executable_flag_checks: true,
             rent,
             #[cfg(all(
@@ -477,7 +478,8 @@ impl TransactionContext {
 
     /// Returns the accounts resize delta
     pub fn accounts_resize_delta(&self) -> Result<i64, InstructionError> {
-        self.accounts_resize_delta
+        self.accounts
+            .resize_delta
             .try_borrow()
             .map_err(|_| InstructionError::GenericError)
             .map(|value_ref| *value_ref)
@@ -1213,7 +1215,8 @@ impl BorrowedAccount<'_> {
     fn update_accounts_resize_delta(&mut self, new_len: usize) -> Result<(), InstructionError> {
         let mut accounts_resize_delta = self
             .transaction_context
-            .accounts_resize_delta
+            .accounts
+            .resize_delta
             .try_borrow_mut()
             .map_err(|_| InstructionError::GenericError)?;
         *accounts_resize_delta = accounts_resize_delta
@@ -1238,6 +1241,7 @@ impl From<TransactionContext> for ExecutionRecord {
         let TransactionAccounts {
             accounts,
             touched_flags,
+            resize_delta,
         } = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs");
         let accounts = Vec::from(Pin::into_inner(context.account_keys))
@@ -1254,7 +1258,7 @@ impl From<TransactionContext> for ExecutionRecord {
             accounts,
             return_data: context.return_data,
             touched_account_count,
-            accounts_resize_delta: RefCell::into_inner(context.accounts_resize_delta),
+            accounts_resize_delta: RefCell::into_inner(resize_delta),
         }
     }
 }
