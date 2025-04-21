@@ -213,7 +213,7 @@ impl TieredStorageReader {
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> TieredStorageResult<()> {
         match self {
-            Self::Hot(hot) => hot.scan_accounts(callback),
+            Self::Hot(hot) => hot.scan_accounts_stored_meta(callback),
         }
     }
 

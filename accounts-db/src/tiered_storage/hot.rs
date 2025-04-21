@@ -625,7 +625,7 @@ impl HotStorageReader {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
-    pub(crate) fn scan_accounts(
+    pub(crate) fn scan_accounts_stored_meta(
         &self,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> TieredStorageResult<()> {
@@ -1646,7 +1646,7 @@ mod tests {
         // verify everything
         let mut i = 0;
         hot_storage
-            .scan_accounts(|stored_meta| {
+            .scan_accounts_stored_meta(|stored_meta| {
                 storable_accounts.account_default_if_zero_lamport(i, |account| {
                     verify_test_account(
                         &stored_meta,
