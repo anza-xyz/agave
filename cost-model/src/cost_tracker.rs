@@ -216,7 +216,7 @@ impl CostTracker {
         self.transaction_count.0
     }
 
-    pub fn report_stats(&self, bank_slot: solana_clock::Slot) {
+    pub fn report_stats(&self, bank_slot: solana_clock::Slot, is_leader: bool) {
         // skip reporting if block is empty
         if self.transaction_count.0 == 0 {
             return;
@@ -226,6 +226,7 @@ impl CostTracker {
 
         datapoint_info!(
             "cost_tracker_stats",
+            "is_leader" => is_leader.to_string(),
             ("bank_slot", bank_slot as i64, i64),
             ("block_cost", self.block_cost as i64, i64),
             ("vote_cost", self.vote_cost as i64, i64),

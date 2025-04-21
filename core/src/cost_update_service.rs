@@ -11,7 +11,10 @@ use {
     },
 };
 pub enum CostUpdate {
-    FrozenBank { bank: Arc<Bank> },
+    FrozenBank {
+        bank: Arc<Bank>,
+        is_leader_block: bool,
+    },
 }
 
 pub type CostUpdateReceiver = Receiver<CostUpdate>;
@@ -45,7 +48,10 @@ impl CostUpdateService {
     fn service_loop(_blockstore: Arc<Blockstore>, cost_update_receiver: CostUpdateReceiver) {
         for cost_update in cost_update_receiver.iter() {
             match cost_update {
-                CostUpdate::FrozenBank { bank } => {
+                CostUpdate::FrozenBank {
+                    bank,
+                    is_leader_block,
+                } => {
                     for loop_count in 1..=MAX_LOOP_COUNT {
                         {
                             // Release the lock so that the thread that will
@@ -62,7 +68,7 @@ impl CostUpdateService {
                                     "inflight transaction count is {in_flight_transaction_count} \
                                      for slot {slot} after {loop_count} iteration(s)"
                                 );
-                                cost_tracker.report_stats(slot);
+                                cost_tracker.report_stats(slot, is_leader_block);
                                 break;
                             }
                         }
