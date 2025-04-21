@@ -1189,10 +1189,7 @@ fn update_callee_account(
     if direct_mapping {
         let prev_len = callee_account.get_data().len();
         let post_len = *caller_account.ref_to_len_in_vm.get(memory_mapping)? as usize;
-        match callee_account
-            .can_data_be_resized(post_len)
-            .and_then(|_| callee_account.can_data_be_changed())
-        {
+        match callee_account.can_data_be_resized(post_len) {
             Ok(()) => {
                 let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
                 // bpf_loader_deprecated programs don't have a realloc region
@@ -1227,10 +1224,7 @@ fn update_callee_account(
         }
     } else {
         // The redundant check helps to avoid the expensive data comparison if we can
-        match callee_account
-            .can_data_be_resized(caller_account.serialized_data.len())
-            .and_then(|_| callee_account.can_data_be_changed())
-        {
+        match callee_account.can_data_be_resized(caller_account.serialized_data.len()) {
             Ok(()) => callee_account.set_data_from_slice(caller_account.serialized_data)?,
             Err(err) if callee_account.get_data() != caller_account.serialized_data => {
                 return Err(Box::new(err));

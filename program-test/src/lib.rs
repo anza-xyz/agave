@@ -186,7 +186,6 @@ pub fn invoke_builtin_function(
                 if borrowed_account
                     .can_data_be_resized(account_info.data_len())
                     .is_ok()
-                    && borrowed_account.can_data_be_changed().is_ok()
                 {
                     borrowed_account.set_data_from_slice(&account_info.data.borrow())?;
                 }
@@ -307,10 +306,7 @@ impl solana_sdk::program_stubs::SyscallStubs for SyscallStubs {
             }
             let account_info_data = account_info.try_borrow_data().unwrap();
             // The redundant check helps to avoid the expensive data comparison if we can
-            match borrowed_account
-                .can_data_be_resized(account_info_data.len())
-                .and_then(|_| borrowed_account.can_data_be_changed())
-            {
+            match borrowed_account.can_data_be_resized(account_info_data.len()) {
                 Ok(()) => borrowed_account
                     .set_data_from_slice(&account_info_data)
                     .unwrap(),

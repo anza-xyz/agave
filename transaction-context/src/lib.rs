@@ -962,7 +962,6 @@ impl BorrowedAccount<'_> {
     ))]
     pub fn set_data(&mut self, data: Vec<u8>) -> Result<(), InstructionError> {
         self.can_data_be_resized(data.len())?;
-        self.can_data_be_changed()?;
         self.touch()?;
 
         self.update_accounts_resize_delta(data.len())?;
@@ -977,7 +976,6 @@ impl BorrowedAccount<'_> {
     #[cfg(not(target_os = "solana"))]
     pub fn set_data_from_slice(&mut self, data: &[u8]) -> Result<(), InstructionError> {
         self.can_data_be_resized(data.len())?;
-        self.can_data_be_changed()?;
         self.touch()?;
         self.update_accounts_resize_delta(data.len())?;
         // Note that we intentionally don't call self.make_data_mut() here.  make_data_mut() will
@@ -995,7 +993,6 @@ impl BorrowedAccount<'_> {
     #[cfg(not(target_os = "solana"))]
     pub fn set_data_length(&mut self, new_length: usize) -> Result<(), InstructionError> {
         self.can_data_be_resized(new_length)?;
-        self.can_data_be_changed()?;
         // don't touch the account if the length does not change
         if self.get_data().len() == new_length {
             return Ok(());
@@ -1011,7 +1008,6 @@ impl BorrowedAccount<'_> {
     pub fn extend_from_slice(&mut self, data: &[u8]) -> Result<(), InstructionError> {
         let new_len = self.get_data().len().saturating_add(data.len());
         self.can_data_be_resized(new_len)?;
-        self.can_data_be_changed()?;
 
         if data.is_empty() {
             return Ok(());
@@ -1223,7 +1219,8 @@ impl BorrowedAccount<'_> {
         }
         self.transaction_context
             .accounts
-            .can_data_be_resized(old_len, new_len)
+            .can_data_be_resized(old_len, new_len)?;
+        self.can_data_be_changed()
     }
 
     #[cfg(not(target_os = "solana"))]

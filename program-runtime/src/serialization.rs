@@ -395,10 +395,7 @@ fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
                     .get(start..start + pre_len)
                     .ok_or(InstructionError::InvalidArgument)?;
                 // The redundant check helps to avoid the expensive data comparison if we can
-                match borrowed_account
-                    .can_data_be_resized(data.len())
-                    .and_then(|_| borrowed_account.can_data_be_changed())
-                {
+                match borrowed_account.can_data_be_resized(data.len()) {
                     Ok(()) => borrowed_account.set_data_from_slice(data)?,
                     Err(err) if borrowed_account.get_data() != data => return Err(err),
                     _ => {}
@@ -562,10 +559,7 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                 let data = buffer
                     .get(start..start + post_len)
                     .ok_or(InstructionError::InvalidArgument)?;
-                match borrowed_account
-                    .can_data_be_resized(post_len)
-                    .and_then(|_| borrowed_account.can_data_be_changed())
-                {
+                match borrowed_account.can_data_be_resized(post_len) {
                     Ok(()) => borrowed_account.set_data_from_slice(data)?,
                     Err(err) if borrowed_account.get_data() != data => return Err(err),
                     _ => {}
@@ -578,10 +572,7 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                 let data = buffer
                     .get(start..start + MAX_PERMITTED_DATA_INCREASE)
                     .ok_or(InstructionError::InvalidArgument)?;
-                match borrowed_account
-                    .can_data_be_resized(post_len)
-                    .and_then(|_| borrowed_account.can_data_be_changed())
-                {
+                match borrowed_account.can_data_be_resized(post_len) {
                     Ok(()) => {
                         borrowed_account.set_data_length(post_len)?;
                         let allocated_bytes = post_len.saturating_sub(pre_len);
