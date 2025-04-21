@@ -114,6 +114,40 @@ impl TransactionAccounts {
         Ok(())
     }
 
+    fn update_accounts_resize_delta(
+        &self,
+        old_len: usize,
+        new_len: usize,
+    ) -> Result<(), InstructionError> {
+        let mut accounts_resize_delta = self
+            .resize_delta
+            .try_borrow_mut()
+            .map_err(|_| InstructionError::GenericError)?;
+        *accounts_resize_delta =
+            accounts_resize_delta.saturating_add((new_len as i64).saturating_sub(old_len as i64));
+        Ok(())
+    }
+
+    fn can_data_be_resized(&self, old_len: usize, new_len: usize) -> Result<(), InstructionError> {
+        // The new length can not exceed the maximum permitted length
+        if new_len > MAX_PERMITTED_DATA_LENGTH as usize {
+            return Err(InstructionError::InvalidRealloc);
+        }
+        // The resize can not exceed the per-transaction maximum
+        let length_delta = (new_len as i64).saturating_sub(old_len as i64);
+        if self
+            .resize_delta
+            .try_borrow()
+            .map_err(|_| InstructionError::GenericError)
+            .map(|value_ref| *value_ref)?
+            .saturating_add(length_delta)
+            > MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+        {
+            return Err(InstructionError::MaxAccountsDataAllocationsExceeded);
+        }
+        Ok(())
+    }
+
     pub fn try_borrow(
         &self,
         index: IndexOfAccount,
@@ -1181,47 +1215,29 @@ impl BorrowedAccount<'_> {
 
     /// Returns an error if the account data can not be resized to the given length
     #[cfg(not(target_os = "solana"))]
-    pub fn can_data_be_resized(&self, new_length: usize) -> Result<(), InstructionError> {
-        let old_length = self.get_data().len();
+    pub fn can_data_be_resized(&self, new_len: usize) -> Result<(), InstructionError> {
+        let old_len = self.get_data().len();
         // Only the owner can change the length of the data
-        if new_length != old_length && !self.is_owned_by_current_program() {
+        if new_len != old_len && !self.is_owned_by_current_program() {
             return Err(InstructionError::AccountDataSizeChanged);
         }
-        // The new length can not exceed the maximum permitted length
-        if new_length > MAX_PERMITTED_DATA_LENGTH as usize {
-            return Err(InstructionError::InvalidRealloc);
-        }
-        // The resize can not exceed the per-transaction maximum
-        let length_delta = (new_length as i64).saturating_sub(old_length as i64);
-        if self
-            .transaction_context
-            .accounts_resize_delta()?
-            .saturating_add(length_delta)
-            > MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
-        {
-            return Err(InstructionError::MaxAccountsDataAllocationsExceeded);
-        }
-        Ok(())
+        self.transaction_context
+            .accounts
+            .can_data_be_resized(old_len, new_len)
     }
 
     #[cfg(not(target_os = "solana"))]
     fn touch(&self) -> Result<(), InstructionError> {
         self.transaction_context
-            .accounts()
+            .accounts
             .touch(self.index_in_transaction)
     }
 
     #[cfg(not(target_os = "solana"))]
     fn update_accounts_resize_delta(&mut self, new_len: usize) -> Result<(), InstructionError> {
-        let mut accounts_resize_delta = self
-            .transaction_context
+        self.transaction_context
             .accounts
-            .resize_delta
-            .try_borrow_mut()
-            .map_err(|_| InstructionError::GenericError)?;
-        *accounts_resize_delta = accounts_resize_delta
-            .saturating_add((new_len as i64).saturating_sub(self.get_data().len() as i64));
-        Ok(())
+            .update_accounts_resize_delta(self.get_data().len(), new_len)
     }
 }
 
