@@ -197,7 +197,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                         transactions,
                         max_ages: _,
                     },
-                retryable_indexes,
+                mut retryable_indexes,
             }) => {
                 let num_transactions = ids.len();
                 let num_retryable = retryable_indexes.len();
@@ -206,6 +206,8 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                 self.complete_batch(batch_id, &transactions);
 
                 // Retryable transactions should be inserted back into the container
+                // Need to sort because recording failures lead to out-of-order indexes
+                retryable_indexes.sort_unstable();
                 let mut retryable_iter = retryable_indexes.into_iter().peekable();
                 for (index, (id, transaction)) in izip!(ids, transactions).enumerate() {
                     if let Some(retryable_index) = retryable_iter.peek() {
