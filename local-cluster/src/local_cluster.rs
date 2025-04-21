@@ -16,7 +16,7 @@ use {
     solana_gossip::{
         cluster_info::Node,
         contact_info::{ContactInfo, Protocol},
-        gossip_service::{discover, discover_cluster},
+        gossip_service::discover,
     },
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
     solana_net_utils::bind_to_unspecified,
@@ -616,9 +616,15 @@ impl LocalCluster {
             .collect();
         assert!(!alive_node_contact_infos.is_empty());
         info!("{} discovering nodes", test_name);
-        let cluster_nodes = discover_cluster(
-            &alive_node_contact_infos[0].gossip().unwrap(),
-            alive_node_contact_infos.len(),
+        let (_, cluster_nodes) = discover(
+            None,
+            Some(&alive_node_contact_infos[0].gossip().unwrap()),
+            Some(alive_node_contact_infos.len()),
+            Duration::from_secs(120),
+            None,
+            None,
+            None,
+            0, /* shred_version */
             socket_addr_space,
         )
         .unwrap();
@@ -676,9 +682,15 @@ impl LocalCluster {
             .collect();
         assert!(!alive_node_contact_infos.is_empty());
         info!("{} discovering nodes", test_name);
-        let cluster_nodes = discover_cluster(
-            &alive_node_contact_infos[0].gossip().unwrap(),
-            alive_node_contact_infos.len(),
+        let (_, cluster_nodes) = discover(
+            None,
+            Some(&alive_node_contact_infos[0].gossip().unwrap()),
+            Some(alive_node_contact_infos.len()),
+            Duration::from_secs(120),
+            None,
+            None,
+            None,
+            0, /* shred_version */
             socket_addr_space,
         )
         .unwrap();
