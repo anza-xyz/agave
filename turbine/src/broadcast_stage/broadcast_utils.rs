@@ -5,7 +5,7 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::{
         blockstore::Blockstore,
-        shred::{self, ShredData},
+        shred::{self, ProcessShredsStats, ShredData},
     },
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_runtime::bank::Bank,
@@ -20,13 +20,14 @@ const ENTRY_COALESCE_DURATION: Duration = Duration::from_millis(50);
 
 pub(super) struct ReceiveResults {
     pub entries: Vec<Entry>,
-    pub time_elapsed: Duration,
-    pub time_coalesced: Duration,
     pub bank: Arc<Bank>,
     pub last_tick_height: u64,
 }
 
-pub(super) fn recv_slot_entries(receiver: &Receiver<WorkingBankEntry>) -> Result<ReceiveResults> {
+pub(super) fn recv_slot_entries(
+    receiver: &Receiver<WorkingBankEntry>,
+    process_stats: &mut ProcessShredsStats,
+) -> Result<ReceiveResults> {
     let target_serialized_batch_byte_count: u64 =
         32 * ShredData::capacity(/*merkle_proof_size*/ None).unwrap() as u64;
     let timer = Duration::new(1, 0);
@@ -79,13 +80,10 @@ pub(super) fn recv_slot_entries(receiver: &Receiver<WorkingBankEntry>) -> Result
         entries.push(entry);
         assert!(last_tick_height <= bank.max_tick_height());
     }
-    let time_coalesced = coalesce_start.elapsed();
-
-    let time_elapsed = recv_start.elapsed();
+    process_stats.receive_elapsed = recv_start.elapsed().as_micros() as u64;
+    process_stats.coalesce_elapsed = coalesce_start.elapsed().as_micros() as u64;
     Ok(ReceiveResults {
         entries,
-        time_elapsed,
-        time_coalesced,
         bank,
         last_tick_height,
     })
@@ -168,7 +166,7 @@ mod tests {
 
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
-        while let Ok(result) = recv_slot_entries(&r) {
+        while let Ok(result) = recv_slot_entries(&r, &mut ProcessShredsStats::default()) {
             assert_eq!(result.bank.slot(), bank1.slot());
             last_tick_height = result.last_tick_height;
             res_entries.extend(result.entries);
@@ -210,7 +208,7 @@ mod tests {
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
         let mut bank_slot = 0;
-        while let Ok(result) = recv_slot_entries(&r) {
+        while let Ok(result) = recv_slot_entries(&r, &mut ProcessShredsStats::default()) {
             bank_slot = result.bank.slot();
             last_tick_height = result.last_tick_height;
             res_entries = result.entries;
