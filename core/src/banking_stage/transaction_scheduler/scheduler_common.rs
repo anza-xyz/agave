@@ -17,10 +17,10 @@ use {
 };
 
 pub struct Batches<Tx> {
-    pub ids: Vec<Vec<TransactionId>>,
-    pub transactions: Vec<Vec<Tx>>,
-    pub max_ages: Vec<Vec<MaxAge>>,
-    pub total_cus: Vec<u64>,
+    ids: Vec<Vec<TransactionId>>,
+    transactions: Vec<Vec<Tx>>,
+    max_ages: Vec<Vec<MaxAge>>,
+    total_cus: Vec<u64>,
 }
 
 impl<Tx> Batches<Tx> {
@@ -36,7 +36,14 @@ impl<Tx> Batches<Tx> {
         }
     }
 
-    #[cfg(test)]
+    pub fn total_cus(&self) -> &[u64] {
+        &self.total_cus
+    }
+
+    pub fn transactions(&self) -> &[Vec<Tx>] {
+        &self.transactions
+    }
+
     pub fn add_transaction_to_batch(
         &mut self,
         thread_id: ThreadId,
