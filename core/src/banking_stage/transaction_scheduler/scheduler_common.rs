@@ -253,3 +253,82 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {super::*, test_case::test_case};
+
+    #[test_case(
+        ThreadSet::any(4),
+        vec![0, 0, 0, 0],
+        vec![0, 0, 0, 0],
+        vec![vec![], vec![], vec![], vec![]],
+        vec![0, 0, 0, 0],
+        0 ; "test-case::simple")
+    ]
+    #[test_case(
+        ThreadSet::any(4),
+        vec![4, 3, 2, 1],
+        vec![0, 0, 0, 0],
+        vec![vec![()], vec![()], vec![()], vec![()]],
+        vec![0, 0, 0, 0],
+        3 ; "test-case::batch cu select"
+    )]
+    #[test_case(
+        ThreadSet::any(4),
+        vec![4, 4, 4, 4],
+        vec![0, 0, 0, 0],
+        vec![vec![(); 2], vec![(); 3], vec![(); 1], vec![(); 4]],
+        vec![0, 0, 0, 0],
+        2 ; "test-case::batch count select"
+    )]
+    #[test_case(
+        ThreadSet::any(4),
+        vec![0, 0, 0, 0],
+        vec![4, 3, 2, 1],
+        vec![vec![()], vec![()], vec![()], vec![()]],
+        vec![0, 0, 0, 0],
+        3 ; "test-case::in-flight cu select"
+    )]
+    #[test_case(
+        ThreadSet::any(4),
+        vec![0, 0, 0, 0],
+        vec![0, 0, 0, 0],
+        vec![vec![()], vec![()], vec![()], vec![()]],
+        vec![2, 3, 1, 4],
+        2 ; "test-case::in-flight count select"
+    )]
+    #[test_case(
+        ThreadSet::any(4),
+        vec![4, 3, 2, 1],
+        vec![0, 0, 0, 0],
+        vec![vec![()], vec![()], vec![()], vec![()]],
+        vec![2, 3, 1, 4],
+        3 ; "test-case::cus before count"
+    )]
+    #[test_case(
+        ThreadSet::any(4) - ThreadSet::only(3),
+        vec![4, 3, 2, 1],
+        vec![0, 0, 0, 0],
+        vec![vec![()], vec![()], vec![()], vec![()]],
+        vec![2, 3, 1, 4],
+        2 ; "test-case::thread_set"
+    )]
+    fn test_select_thread(
+        thread_set: ThreadSet,
+        batch_cus_per_thread: Vec<u64>,
+        in_flight_cus_per_thread: Vec<u64>,
+        batches_per_thread: Vec<Vec<()>>,
+        in_flight_per_thread: Vec<usize>,
+        expected_thread: ThreadId,
+    ) {
+        let selected_thread = select_thread(
+            thread_set,
+            &batch_cus_per_thread,
+            &in_flight_cus_per_thread,
+            &batches_per_thread,
+            &in_flight_per_thread,
+        );
+        assert_eq!(selected_thread, expected_thread);
+    }
+}
