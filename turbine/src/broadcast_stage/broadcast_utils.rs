@@ -30,11 +30,11 @@ fn keep_coalescing_entries(
     serialized_batch_byte_count: u64,
     max_batch_byte_count: u64,
 ) -> bool {
-    // If we are at the last tick height, we don't need to coalesce anymore.
     if last_tick_height >= max_tick_height {
+        // This slot is over.
         return false;
     } else if serialized_batch_byte_count >= max_batch_byte_count {
-        // If we are over the max batch byte count, we don't need to coalesce anymore.
+        // We are at or over the max batch byte count.
         return false;
     }
     true
