@@ -36,6 +36,21 @@ impl<Tx> Batches<Tx> {
         }
     }
 
+    #[cfg(test)]
+    pub fn add_transaction_to_batch(
+        &mut self,
+        thread_id: ThreadId,
+        transaction_id: TransactionId,
+        transaction: Tx,
+        max_age: MaxAge,
+        cus: u64,
+    ) {
+        self.ids[thread_id].push(transaction_id);
+        self.transactions[thread_id].push(transaction);
+        self.max_ages[thread_id].push(max_age);
+        self.total_cus[thread_id] += cus;
+    }
+
     pub fn take_batch(
         &mut self,
         thread_id: ThreadId,
@@ -256,7 +271,25 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, test_case::test_case};
+    use {
+        super::*,
+        crate::banking_stage::transaction_scheduler::transaction_state_container::TransactionStateContainer,
+        crossbeam_channel::unbounded,
+        solana_keypair::Keypair,
+        solana_pubkey::Pubkey,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_sdk::{hash::Hash, system_transaction, transaction::SanitizedTransaction},
+        test_case::test_case,
+    };
+
+    fn simple_transaction() -> RuntimeTransaction<SanitizedTransaction> {
+        RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            Hash::default(),
+        ))
+    }
 
     #[test_case(
         ThreadSet::any(4),
@@ -330,5 +363,70 @@ mod tests {
             &in_flight_per_thread,
         );
         assert_eq!(selected_thread, expected_thread);
+    }
+
+    #[test]
+    fn test_send_batches() {
+        const DUMMY_COST: u64 = 1;
+        const NUM_WORKERS: usize = 4;
+
+        let mut container = TransactionStateContainer::with_capacity(1024);
+        container.insert_new_transaction(simple_transaction(), MaxAge::MAX, 3, DUMMY_COST);
+        container.insert_new_transaction(simple_transaction(), MaxAge::MAX, 2, DUMMY_COST);
+        container.insert_new_transaction(simple_transaction(), MaxAge::MAX, 1, DUMMY_COST);
+
+        let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
+            (0..NUM_WORKERS).map(|_| unbounded()).unzip();
+        let (_finished_work_sender, finished_work_receiver) = unbounded();
+        let mut common = SchedulingCommon::new(work_senders, finished_work_receiver);
+        let mut batches = Batches::new(NUM_WORKERS, 10);
+
+        let pop_and_add_transaction = |container: &mut TransactionStateContainer<_>,
+                                       batches: &mut Batches<_>,
+                                       thread_id: ThreadId| {
+            let tx_id = container.pop().unwrap();
+            let (tx, max_age) = container
+                .get_mut_transaction_state(tx_id.id)
+                .unwrap()
+                .take_transaction_for_scheduling();
+            batches.add_transaction_to_batch(thread_id, tx_id.id, tx, max_age, DUMMY_COST);
+        };
+
+        pop_and_add_transaction(&mut container, &mut batches, 0);
+        let num_scheduled = common.send_batch(&mut batches, 0, 10).unwrap();
+        assert_eq!(num_scheduled, 1);
+        assert_eq!(work_receivers[0].len(), 1);
+        assert_eq!(
+            common.in_flight_tracker.num_in_flight_per_thread(),
+            &[1, 0, 0, 0]
+        );
+        assert_eq!(
+            common.in_flight_tracker.cus_in_flight_per_thread(),
+            &[DUMMY_COST, 0, 0, 0]
+        );
+
+        let num_scheduled = common.send_batch(&mut batches, 1, 10).unwrap();
+        assert_eq!(num_scheduled, 0);
+        assert_eq!(work_receivers[1].len(), 0); // not actually sent since no transactions.
+
+        work_receivers[0].recv().unwrap();
+
+        // Multiple batches.
+        pop_and_add_transaction(&mut container, &mut batches, 0);
+        pop_and_add_transaction(&mut container, &mut batches, 2);
+
+        common.send_batches(&mut batches, 10).unwrap();
+        assert_eq!(work_receivers[0].len(), 1);
+        assert_eq!(work_receivers[1].len(), 0);
+        assert_eq!(work_receivers[2].len(), 1);
+        assert_eq!(work_receivers[3].len(), 0);
+        assert_eq!(
+            common.in_flight_tracker.num_in_flight_per_thread(),
+            &[2, 0, 1, 0]
+        );
+        assert_eq!(
+            common.in_flight_tracker.cus_in_flight_per_thread(),
+            &[DUMMY_COST * 2, 0, DUMMY_COST, 0]
+        );
     }
 }
