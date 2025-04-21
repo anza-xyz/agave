@@ -54,3 +54,97 @@ impl EventNotificationSynchronizer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::{sync::Arc, thread},
+    };
+
+    #[test]
+    fn test_get_new_event_sequence() {
+        let synchronizer = EventNotificationSynchronizer::default();
+        assert_eq!(synchronizer.get_new_event_sequence(), 0);
+        assert_eq!(synchronizer.get_new_event_sequence(), 1);
+    }
+
+    #[test]
+    fn test_wait_for_event_processed() {
+        let synchronizer = Arc::new(EventNotificationSynchronizer::default());
+        let synchronizer_clone = Arc::clone(&synchronizer);
+
+        let handle = thread::spawn(move || {
+            synchronizer_clone.wait_for_event_processed(1);
+        });
+
+        thread::sleep(std::time::Duration::from_millis(100));
+        synchronizer.notify_event_processed(1);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_notify_event_processed() {
+        let synchronizer = EventNotificationSynchronizer::default();
+        synchronizer.notify_event_processed(1);
+
+        let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
+        assert_eq!(processed_sequence, 1);
+
+        // notify a smaller sequence number, should not change the processed sequence
+        synchronizer.notify_event_processed(0);
+        let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
+        assert_eq!(processed_sequence, 1);
+        // notify a larger sequence number, should change the processed sequence
+        synchronizer.notify_event_processed(2);
+        let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
+        assert_eq!(processed_sequence, 2);
+        // notify the same sequence number, should not change the processed sequence
+        synchronizer.notify_event_processed(2);
+        let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
+        assert_eq!(processed_sequence, 2);
+    }
+
+    #[test]
+    fn test_wait_and_notify_event_processed() {
+        let synchronizer = Arc::new(EventNotificationSynchronizer::default());
+        let synchronizer_clone = Arc::clone(&synchronizer);
+
+        let handle = thread::spawn(move || {
+            synchronizer_clone.wait_and_notify_event_processed(1, 2);
+        });
+
+        thread::sleep(std::time::Duration::from_millis(100));
+        synchronizer.notify_event_processed(1);
+        handle.join().unwrap();
+
+        let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
+        assert_eq!(processed_sequence, 2);
+    }
+
+    #[test]
+    fn test_multiple_threads_wait_and_notify() {
+        let synchronizer = Arc::new(EventNotificationSynchronizer::default());
+        let mut handles = vec![];
+
+        // simulating cascading event, the first thread wait for the event with sequence 0, and it then signal
+        // the next thread with sequence 1, and so on
+        for i in 0..5 {
+            let synchronizer_clone = Arc::clone(&synchronizer);
+            handles.push(thread::spawn(move || {
+                synchronizer_clone.wait_and_notify_event_processed(i, i + 1);
+            }));
+        }
+
+        // Notify the first event
+        thread::sleep(std::time::Duration::from_millis(50));
+        synchronizer.notify_event_processed(0);
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
+        assert_eq!(processed_sequence, 5);
+    }
+}

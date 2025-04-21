@@ -423,7 +423,7 @@ mod tests {
         crossbeam_channel::unbounded,
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_pubkey::Pubkey,
-        solana_runtime::commitment::BlockCommitmentCache,
+        solana_runtime::{commitment::BlockCommitmentCache, event_notification_synchronizer},
         std::sync::atomic::AtomicU64,
     };
 
@@ -453,7 +453,7 @@ mod tests {
         let bank3 = Bank::new_from_parent(bank2, &Pubkey::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
 
-        let optimistically_confirmed_bank =
+        let optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>> =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
 
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
@@ -465,7 +465,7 @@ mod tests {
             block_commitment_cache,
             optimistically_confirmed_bank.clone(),
         ));
-        let mut pending_optimistically_confirmed_banks = HashSet::new();
+        let mut pending_optimistically_confirmed_banks: HashSet<u64> = HashSet::new();
 
         assert_eq!(optimistically_confirmed_bank.read().unwrap().bank.slot(), 0);
 
@@ -718,5 +718,100 @@ mod tests {
         // Obtain the root notifications, we expect 1, which is for bank7 only as its parent bank5 is already notified.
         let notifications = get_root_notifications(&receiver);
         assert_eq!(notifications.len(), 1);
+    }
+
+    #[test]
+    fn test_event_synchronization() {
+        let exit = Arc::new(AtomicBool::new(false));
+        let event_notification_synchronizer: Arc<EventNotificationSynchronizer> =
+            Arc::new(event_notification_synchronizer::EventNotificationSynchronizer::default());
+        let event_sequence_1 = 345;
+        let event_sequence_2 = 678;
+        let synchronizer_clone = event_notification_synchronizer.clone();
+        let handle = thread::spawn(move || {
+            let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
+            let bank = Bank::new_for_tests(&genesis_config);
+            let bank_forks = BankForks::new_rw_arc(bank);
+
+            // Test bank will only be cached when frozen
+            let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+            let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+            bank_forks.write().unwrap().insert(bank1);
+
+            let mut pending_optimistically_confirmed_banks: HashSet<u64> = HashSet::new();
+            let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
+            let max_complete_rewards_slot = Arc::new(AtomicU64::default());
+
+            let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
+
+            let mut highest_confirmed_slot: Slot = 0;
+            let mut newest_root_slot: Slot = 0;
+
+            let mut last_notified_confirmed_slot: Slot = 0;
+
+            let optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>> =
+                OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+
+            let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
+                exit,
+                max_complete_transaction_status_slot,
+                max_complete_rewards_slot,
+                bank_forks.clone(),
+                block_commitment_cache,
+                optimistically_confirmed_bank.clone(),
+            ));
+
+            // confirmed without fronzen received
+            OptimisticallyConfirmedBankTracker::process_notification(
+                (
+                    BankNotification::OptimisticallyConfirmed(1),
+                    Some(event_sequence_1), /* no event sequence */
+                ),
+                &bank_forks,
+                &optimistically_confirmed_bank,
+                &subscriptions,
+                &mut pending_optimistically_confirmed_banks,
+                &mut last_notified_confirmed_slot,
+                &mut highest_confirmed_slot,
+                &mut newest_root_slot,
+                &None,
+                &PrioritizationFeeCache::default(),
+                &Some(synchronizer_clone.clone()),
+            );
+
+            assert_eq!(optimistically_confirmed_bank.read().unwrap().bank.slot(), 0);
+            // highest_confirmed_slot is updated even when we have not received the frozen event
+            assert_eq!(highest_confirmed_slot, 1);
+            assert_eq!(pending_optimistically_confirmed_banks.len(), 1);
+
+            let bank1 = bank_forks.read().unwrap().get(1).unwrap();
+            bank1.freeze();
+
+            OptimisticallyConfirmedBankTracker::process_notification(
+                (
+                    BankNotification::Frozen(bank1),
+                    Some(event_sequence_2), /* no event sequence */
+                ),
+                &bank_forks,
+                &optimistically_confirmed_bank,
+                &subscriptions,
+                &mut pending_optimistically_confirmed_banks,
+                &mut last_notified_confirmed_slot,
+                &mut highest_confirmed_slot,
+                &mut newest_root_slot,
+                &None,
+                &PrioritizationFeeCache::default(),
+                &Some(synchronizer_clone),
+            );
+
+            assert_eq!(optimistically_confirmed_bank.read().unwrap().bank.slot(), 1);
+            assert_eq!(highest_confirmed_slot, 1);
+            assert_eq!(pending_optimistically_confirmed_banks.len(), 0);
+        });
+
+        event_notification_synchronizer.notify_event_processed(event_sequence_1);
+        event_notification_synchronizer.notify_event_processed(event_sequence_2);
+
+        handle.join().unwrap();
     }
 }

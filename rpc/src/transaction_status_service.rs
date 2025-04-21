@@ -621,6 +621,7 @@ pub(crate) mod tests {
 
         let test_notifier = Arc::new(TestTransactionNotifier::new());
 
+        let event_notification_synchronizer = Arc::new(EventNotificationSynchronizer::default());
         let exit = Arc::new(AtomicBool::new(false));
         let transaction_status_service = TransactionStatusService::new(
             transaction_status_receiver,
@@ -629,14 +630,14 @@ pub(crate) mod tests {
             Some(test_notifier.clone()),
             blockstore,
             false,
-            None, // No event notification synchronizer
+            Some(event_notification_synchronizer.clone()),
             exit.clone(),
         );
-
+        let event_sequence = 345;
         transaction_status_sender
             .send(TransactionStatusMessage::Batch((
                 transaction_status_batch,
-                None, /* No event sequence */
+                Some(event_sequence),
             )))
             .unwrap();
         transaction_status_service.quiesce_and_join_for_tests(exit);
@@ -675,5 +676,6 @@ pub(crate) mod tests {
             expected_transaction2.message_hash(),
             &result2.transaction.message.hash(),
         );
+        event_notification_synchronizer.wait_for_event_processed(345);
     }
 }
