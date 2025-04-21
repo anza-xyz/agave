@@ -8,9 +8,7 @@ use {
         accounts_hash::MERKLE_FANOUT,
         accounts_index::{tests::*, AccountIndex, AccountSecondaryIndexesIncludeExclude},
         ancient_append_vecs,
-        append_vec::{
-            aligned_stored_size, test_utils::TempFile, AppendVec, AppendVecStoredAccountMeta,
-        },
+        append_vec::{aligned_stored_size, test_utils::TempFile, AppendVec, StoredAccountMeta},
         storable_accounts::AccountForStorage,
     },
     assert_matches::assert_matches,
@@ -438,7 +436,7 @@ define_accounts_db_test!(test_maybe_unref_accounts_already_in_ancient, |db| {
         pubkey,
         data_len: 43,
     };
-    let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+    let account = StoredAccountMeta {
         meta: &stored_meta,
         // account data
         account_meta: &account_meta,
@@ -446,7 +444,7 @@ define_accounts_db_test!(test_maybe_unref_accounts_already_in_ancient, |db| {
         offset,
         stored_size: account_size,
         hash: &hash,
-    });
+    };
     let account_from_storage = AccountFromStorage::new(&account);
     let map_from_storage = vec![&account_from_storage];
     let alive_total_bytes = account.stored_size();
@@ -536,38 +534,38 @@ fn test_get_keys_to_unref_ancient() {
     let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
     let stored_size = 101;
     let hash = AccountHash(Hash::new_unique());
-    let stored_account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+    let stored_account = StoredAccountMeta {
         meta: &meta,
         account_meta: &account_meta,
         data: &data,
         offset,
         stored_size,
         hash: &hash,
-    });
-    let stored_account2 = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+    };
+    let stored_account2 = StoredAccountMeta {
         meta: &meta2,
         account_meta: &account_meta,
         data: &data,
         offset,
         stored_size,
         hash: &hash,
-    });
-    let stored_account3 = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+    };
+    let stored_account3 = StoredAccountMeta {
         meta: &meta3,
         account_meta: &account_meta,
         data: &data,
         offset,
         stored_size,
         hash: &hash,
-    });
-    let stored_account4 = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+    };
+    let stored_account4 = StoredAccountMeta {
         meta: &meta4,
         account_meta: &account_meta,
         data: &data,
         offset,
         stored_size,
         hash: &hash,
-    });
+    };
     let mut existing_ancient_pubkeys = HashSet::default();
     let account_from_storage = AccountFromStorage::new(&stored_account);
     let accounts_from_storage = [&account_from_storage];
@@ -2334,14 +2332,14 @@ fn test_stored_readable_account() {
     let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
     let stored_size = 101;
     let hash = AccountHash(Hash::new_unique());
-    let stored_account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+    let stored_account = StoredAccountMeta {
         meta: &meta,
         account_meta: &account_meta,
         data: &data,
         offset,
         stored_size,
         hash: &hash,
-    });
+    };
     assert!(accounts_equal(&account, &stored_account));
 }
 
@@ -2380,14 +2378,14 @@ fn test_hash_stored_account() {
         0x92, 0x93,
     ]));
 
-    let stored_account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+    let stored_account = StoredAccountMeta {
         meta: &meta,
         account_meta: &account_meta,
         data: &data,
         offset,
         stored_size: CACHE_VIRTUAL_STORED_SIZE as usize,
         hash: &hash,
-    });
+    };
     let account = stored_account.to_account_shared_data();
 
     let expected_account_hash =

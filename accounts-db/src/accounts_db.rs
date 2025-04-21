@@ -29,7 +29,6 @@ use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
-            meta::StoredAccountMeta,
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
             AccountStorage, AccountStorageStatus, ShrinkInProgress,
         },
@@ -63,7 +62,7 @@ use {
         ancient_append_vecs::{
             get_ancient_append_vec_capacity, is_ancient, AccountsToStore, StorageSelector,
         },
-        append_vec::{aligned_stored_size, STORE_META_OVERHEAD},
+        append_vec::{aligned_stored_size, StoredAccountMeta, STORE_META_OVERHEAD},
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
         contains::Contains,
         epoch_accounts_hash::EpochAccountsHashManager,

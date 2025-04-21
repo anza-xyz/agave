@@ -346,11 +346,11 @@ pub mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            account_storage::meta::{AccountMeta, StoredAccountMeta, StoredMeta},
+            account_storage::meta::{AccountMeta, StoredMeta},
             accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
             accounts_file::AccountsFileProvider,
             accounts_hash::AccountHash,
-            append_vec::AppendVecStoredAccountMeta,
+            append_vec::StoredAccountMeta,
         },
         solana_account::{accounts_equal, AccountSharedData, WritableAccount},
         solana_hash::Hash,
@@ -512,14 +512,14 @@ pub mod tests {
         let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
         let stored_size = 101;
         let hash = AccountHash(Hash::new_unique());
-        let stored_account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+        let stored_account = StoredAccountMeta {
             meta: &meta,
             account_meta: &account_meta,
             data: &data,
             offset,
             stored_size,
             hash: &hash,
-        });
+        };
 
         let account_from_storage = AccountFromStorage::new(&stored_account);
 
@@ -580,14 +580,14 @@ pub mod tests {
                         let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
                         let stored_size = 101;
                         let raw = &raw[entry as usize];
-                        raw2.push(StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+                        raw2.push(StoredAccountMeta {
                             meta: &raw.3,
                             account_meta: &raw.4,
                             data: &data,
                             offset,
                             stored_size,
                             hash: &hash,
-                        }));
+                        });
                         raw4.push((raw.0, raw.1.clone()));
                     }
                     let raw2_accounts_from_storage = build_accounts_from_storage(raw2.iter());
@@ -716,14 +716,14 @@ pub mod tests {
             for entry in 0..entries {
                 let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
                 let stored_size = 101;
-                raw2.push(StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+                raw2.push(StoredAccountMeta {
                     meta: &raw[entry as usize].2,
                     account_meta: &raw[entry as usize].3,
                     data: &data,
                     offset,
                     stored_size,
                     hash: &hashes[entry as usize],
-                }));
+                });
             }
 
             let raw2_account_from_storage = raw2

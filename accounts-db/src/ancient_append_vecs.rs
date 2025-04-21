@@ -1197,7 +1197,7 @@ pub mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            account_storage::meta::{AccountMeta, StoredAccountMeta, StoredMeta},
+            account_storage::meta::{AccountMeta, StoredMeta},
             accounts_db::{
                 get_temp_accounts_paths,
                 tests::{
@@ -1211,7 +1211,7 @@ pub mod tests {
             accounts_file::StorageAccess,
             accounts_hash::AccountHash,
             accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
-            append_vec::{aligned_stored_size, AppendVec, AppendVecStoredAccountMeta},
+            append_vec::{aligned_stored_size, AppendVec, StoredAccountMeta},
             storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
         },
         rand::seq::SliceRandom as _,
@@ -2439,7 +2439,7 @@ pub mod tests {
             pubkey,
             data_len: 43,
         };
-        let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+        let account = StoredAccountMeta {
             meta: &stored_meta,
             // account data
             account_meta: &account_meta,
@@ -2447,7 +2447,7 @@ pub mod tests {
             offset,
             stored_size: account_size,
             hash: &hash,
-        });
+        };
         let map = [&account];
         let map_accounts_from_storage = build_accounts_from_storage(map.iter().copied());
         for (selector, available_bytes) in [

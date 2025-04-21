@@ -7,7 +7,7 @@
 use {
     crate::{
         account_storage::{
-            meta::{AccountMeta, StoredAccountMeta, StoredMeta},
+            meta::{AccountMeta, StoredMeta},
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         accounts_file::{
@@ -123,7 +123,7 @@ impl<'a> ValidSlice<'a> {
 /// References to account data stored elsewhere. Getting an `Account` requires cloning
 /// (see `StoredAccountMeta::clone_account()`).
 #[derive(PartialEq, Eq, Debug)]
-pub struct AppendVecStoredAccountMeta<'append_vec> {
+pub struct StoredAccountMeta<'append_vec> {
     pub meta: &'append_vec StoredMeta,
     /// account data
     pub account_meta: &'append_vec AccountMeta,
@@ -133,7 +133,7 @@ pub struct AppendVecStoredAccountMeta<'append_vec> {
     pub(crate) hash: &'append_vec AccountHash,
 }
 
-impl<'append_vec> AppendVecStoredAccountMeta<'append_vec> {
+impl<'append_vec> StoredAccountMeta<'append_vec> {
     pub fn pubkey(&self) -> &'append_vec Pubkey {
         &self.meta.pubkey
     }
@@ -154,8 +154,8 @@ impl<'append_vec> AppendVecStoredAccountMeta<'append_vec> {
         self.data
     }
 
-    pub fn data_len(&self) -> u64 {
-        self.meta.data_len
+    pub fn data_len(&self) -> usize {
+        self.meta.data_len as usize
     }
 
     pub fn meta(&self) -> &StoredMeta {
@@ -255,7 +255,7 @@ impl IsZeroLamport for StoredAccountNoData<'_> {
     }
 }
 
-impl<'append_vec> ReadableAccount for AppendVecStoredAccountMeta<'append_vec> {
+impl<'append_vec> ReadableAccount for StoredAccountMeta<'append_vec> {
     fn lamports(&self) -> u64 {
         self.account_meta.lamports
     }
@@ -809,16 +809,14 @@ impl AppendVec {
                 let (hash, next) = Self::get_type::<AccountHash>(slice, next)?;
                 let (data, next) = Self::get_slice(slice, next, meta.data_len as usize)?;
                 let stored_size = next - offset;
-                Some(callback(StoredAccountMeta::AppendVec(
-                    AppendVecStoredAccountMeta {
-                        meta,
-                        account_meta,
-                        data,
-                        offset,
-                        stored_size,
-                        hash,
-                    },
-                )))
+                Some(callback(StoredAccountMeta {
+                    meta,
+                    account_meta,
+                    data,
+                    offset,
+                    stored_size,
+                    hash,
+                }))
             }
             AppendVecFileBacking::File(file) => {
                 // 4096 was just picked to be a single page size
@@ -841,14 +839,14 @@ impl AppendVec {
                     // we already read enough data to load this account
                     let (data, next) = Self::get_slice(valid_bytes, next, meta.data_len as usize)?;
                     let stored_size = next;
-                    let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+                    let account = StoredAccountMeta {
                         meta,
                         account_meta,
                         data,
                         offset,
                         stored_size,
                         hash,
-                    });
+                    };
                     callback(account)
                 } else {
                     // not enough was read from file to get `data`
@@ -868,14 +866,14 @@ impl AppendVec {
                     // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
                     let data = unsafe { data.assume_init() };
                     let stored_size = aligned_stored_size(data_len as usize);
-                    let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+                    let account = StoredAccountMeta {
                         meta,
                         account_meta,
                         data: &data[..],
                         offset,
                         stored_size,
                         hash,
-                    });
+                    };
                     callback(account)
                 })
             }
@@ -955,14 +953,14 @@ impl AppendVec {
                     // we already read enough data to load this account
                     let (data, next) = Self::get_slice(valid_bytes, next, meta.data_len as usize)?;
                     let stored_size = next;
-                    let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+                    let account = StoredAccountMeta {
                         meta,
                         account_meta,
                         data,
                         offset,
                         stored_size,
                         hash,
-                    });
+                    };
                     // data is within `buf`, so just allocate a new vec for data
                     account.to_account_shared_data()
                 } else {
@@ -1186,14 +1184,14 @@ impl AppendVec {
                         // we already read enough data to load this account
                         let data = &bytes_subset.0[next..(next + data_len)];
                         let stored_size = aligned_stored_size(data_len);
-                        let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+                        let account = StoredAccountMeta {
                             meta,
                             account_meta,
                             data,
                             offset,
                             stored_size,
                             hash,
-                        });
+                        };
                         callback(account);
                         reader.advance_offset(stored_size);
                     } else if STORE_META_OVERHEAD + data_len <= BUFFER_SIZE {
@@ -1228,14 +1226,14 @@ impl AppendVec {
                         }
                         let data = &data_overflow_buffer[..data_len];
                         let stored_size = aligned_stored_size(data_len);
-                        let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+                        let account = StoredAccountMeta {
                             meta,
                             account_meta,
                             data,
                             offset,
                             stored_size,
                             hash,
-                        });
+                        };
                         callback(account);
                         reader.advance_offset(stored_size);
                     }

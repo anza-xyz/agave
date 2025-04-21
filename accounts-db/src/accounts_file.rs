@@ -1,5 +1,5 @@
 #[cfg(feature = "dev-context-only-utils")]
-use crate::account_storage::meta::StoredAccountMeta;
+use crate::append_vec::StoredAccountMeta;
 use {
     crate::{
         account_info::AccountInfo,
