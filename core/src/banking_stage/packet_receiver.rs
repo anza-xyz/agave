@@ -10,19 +10,17 @@ use {
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
-    solana_sdk::{saturating_add_assign, timing::timestamp},
+    solana_sdk::saturating_add_assign,
     std::{sync::atomic::Ordering, time::Duration},
 };
 
 pub struct PacketReceiver {
-    id: u32,
     packet_deserializer: PacketDeserializer,
 }
 
 impl PacketReceiver {
-    pub fn new(id: u32, banking_packet_receiver: BankingPacketReceiver) -> Self {
+    pub fn new(banking_packet_receiver: BankingPacketReceiver) -> Self {
         Self {
-            id,
             packet_deserializer: PacketDeserializer::new(banking_packet_receiver),
         }
     }
@@ -92,7 +90,6 @@ impl PacketReceiver {
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
         let packet_count = deserialized_packets.len();
-        debug!("@{:?} txs: {} id: {}", timestamp(), packet_count, self.id);
 
         slot_metrics_tracker.increment_received_packet_counts(packet_stats);
 

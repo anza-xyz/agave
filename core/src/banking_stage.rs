@@ -581,8 +581,8 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         vote_storage: VoteStorage,
     ) -> JoinHandle<()> {
-        let tpu_receiver = PacketReceiver::new(1, tpu_receiver);
-        let gossip_receiver = PacketReceiver::new(0, gossip_receiver);
+        let tpu_receiver = PacketReceiver::new(tpu_receiver);
+        let gossip_receiver = PacketReceiver::new(gossip_receiver);
         let consumer = Consumer::new(
             committer,
             transaction_recorder,
