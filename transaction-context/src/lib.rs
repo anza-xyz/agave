@@ -111,16 +111,6 @@ impl TransactionAccounts {
         Ok(())
     }
 
-    #[cfg(not(target_os = "solana"))]
-    pub fn touched_count(&self) -> usize {
-        self.touched_flags
-            .borrow()
-            .iter()
-            .fold(0usize, |accumulator, was_touched| {
-                accumulator.saturating_add(*was_touched as usize)
-            })
-    }
-
     pub fn try_borrow(
         &self,
         index: IndexOfAccount,
@@ -130,13 +120,6 @@ impl TransactionAccounts {
             .ok_or(InstructionError::MissingAccount)?
             .try_borrow()
             .map_err(|_| InstructionError::AccountBorrowFailed)
-    }
-
-    pub fn into_accounts(self) -> Vec<AccountSharedData> {
-        self.accounts
-            .into_iter()
-            .map(|account| account.into_inner())
-            .collect()
     }
 }
 
@@ -215,7 +198,10 @@ impl TransactionContext {
 
         Ok(Rc::try_unwrap(self.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
-            .into_accounts())
+            .accounts
+            .into_iter()
+            .map(RefCell::into_inner)
+            .collect())
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -1249,15 +1235,23 @@ pub struct ExecutionRecord {
 #[cfg(not(target_os = "solana"))]
 impl From<TransactionContext> for ExecutionRecord {
     fn from(context: TransactionContext) -> Self {
-        let accounts = Rc::try_unwrap(context.accounts)
+        let TransactionAccounts {
+            accounts,
+            touched_flags,
+        } = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs");
-        let touched_account_count = accounts.touched_count() as u64;
-        let accounts = accounts.into_accounts();
+        let accounts = Vec::from(Pin::into_inner(context.account_keys))
+            .into_iter()
+            .zip(accounts.into_iter().map(RefCell::into_inner))
+            .collect();
+        let touched_account_count = touched_flags
+            .borrow()
+            .iter()
+            .fold(0usize, |accumulator, was_touched| {
+                accumulator.saturating_add(*was_touched as usize)
+            }) as u64;
         Self {
-            accounts: Vec::from(Pin::into_inner(context.account_keys))
-                .into_iter()
-                .zip(accounts)
-                .collect(),
+            accounts,
             return_data: context.return_data,
             touched_account_count,
             accounts_resize_delta: RefCell::into_inner(context.accounts_resize_delta),
