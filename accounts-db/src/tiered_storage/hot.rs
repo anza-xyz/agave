@@ -639,6 +639,7 @@ impl HotStorageReader {
     ///
     /// Prefer scan_accounts() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
+    #[cfg(feature = "dev-context-only-utils")]
     pub(crate) fn scan_accounts_stored_meta(
         &self,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
