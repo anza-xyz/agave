@@ -625,6 +625,20 @@ impl HotStorageReader {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
+    pub fn scan_accounts(
+        &self,
+        mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>),
+    ) -> TieredStorageResult<()> {
+        for i in 0..self.footer.account_entry_count {
+            self.get_stored_account_callback(IndexOffset(i), &mut callback)?;
+        }
+        Ok(())
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts() when possible, as it does not contain file format
+    /// implementation details, and thus potentially can read less and be faster.
     pub(crate) fn scan_accounts_stored_meta(
         &self,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),

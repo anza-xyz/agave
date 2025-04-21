@@ -189,19 +189,11 @@ impl TieredStorageReader {
     /// as it can potentially read less and be faster.
     pub fn scan_accounts(
         &self,
-        mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>),
+        callback: impl for<'local> FnMut(StoredAccountInfo<'local>),
     ) -> TieredStorageResult<()> {
-        self.scan_accounts_stored_meta(|stored_account_meta| {
-            let account = StoredAccountInfo {
-                pubkey: stored_account_meta.pubkey(),
-                lamports: stored_account_meta.lamports(),
-                owner: stored_account_meta.owner(),
-                data: stored_account_meta.data(),
-                executable: stored_account_meta.executable(),
-                rent_epoch: stored_account_meta.rent_epoch(),
-            };
-            callback(account);
-        })
+        match self {
+            Self::Hot(hot) => hot.scan_accounts(callback),
+        }
     }
 
     /// Iterate over all accounts and call `callback` with each account.
