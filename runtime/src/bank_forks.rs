@@ -259,13 +259,6 @@ impl BankForks {
         bank
     }
 
-    pub fn prepare_to_drop(&mut self) {
-        self.banks.clear();
-        if let Some(sp) = self.scheduler_pool.take() {
-            sp.uninstalled_from_bank_forks();
-        }
-    }
-
     pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
         self.highest_slot_at_startup = std::cmp::max(self.highest_slot_at_startup, bank.slot());
         self.insert(bank)
@@ -653,6 +646,10 @@ impl ForkGraph for BankForks {
 
 impl Drop for BankForks {
     fn drop(&mut self) {
+        self.banks.clear();
+        if let Some(sp) = self.scheduler_pool.take() {
+            sp.uninstalled_from_bank_forks();
+        }
         error!("BankForks::drop(): successfully dropped");
     }
 }

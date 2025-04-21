@@ -1725,7 +1725,7 @@ impl Validator {
             ($expr:expr) => {
                 let label = stringify!($expr);
                 let r = $expr.join().expect(label);
-                trace!("joined {label} with {r:?}");
+                trace!("joined {label} with {r:?} {:?}", std::thread::current());
             };
         }
 
@@ -1814,14 +1814,12 @@ impl Validator {
         }
 
         trace!("dropping bank_forks...");
-        self.bank_forks.write().unwrap().prepare_to_drop();
         let sc = Arc::strong_count(&self.bank_forks);
         if let Some(bank_forks) = Arc::into_inner(self.bank_forks) {
             drop::<BankForks>(bank_forks.into_inner().unwrap());
         } else {
             warn!("seems bankforks are leaking...{}:", sc);
         }
-        trace!("dropped bank_forks...");
 
         trace!("completed joining all services");
     }

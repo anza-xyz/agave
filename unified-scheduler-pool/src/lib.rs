@@ -754,10 +754,8 @@ where
         trace!("uninstalling: {}", Arc::strong_count(&self));
 
         // Drop all schedulers in the pool
-        for (timeout_listener, _registered_at) in
-            mem::take(&mut *self.timeout_listeners.lock().unwrap())
-        {
-            timeout_listener.trigger(self.clone());
+        for (listener, _registered_at) in mem::take(&mut *self.timeout_listeners.lock().unwrap()) {
+            listener.trigger(self.clone());
         }
         mem::take(&mut *self.scheduler_inners.lock().unwrap());
         mem::take(&mut *self.block_production_scheduler_inner.lock().unwrap());
