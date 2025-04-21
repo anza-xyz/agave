@@ -958,6 +958,60 @@ fn get_proof_size(num_shreds: usize) -> u8 {
     u8::try_from(proof_size).unwrap()
 }
 
+// Generates data shreds for the current erasure batch.
+// Updates ShredCommonHeader.index for data shreds of the next batch.
+fn make_shreds_data<'a>(
+    common_header: &'a mut ShredCommonHeader,
+    mut data_header: DataShredHeader,
+    chunks: impl IntoIterator<Item = &'a [u8]> + 'a,
+) -> impl Iterator<Item = ShredData> + 'a {
+    debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleData { .. });
+    chunks.into_iter().map(move |chunk| {
+        debug_assert_matches!(common_header.shred_variant,
+            ShredVariant::MerkleData { proof_size, chained, resigned }
+            if chunk.len() <= ShredData::capacity(proof_size, chained, resigned).unwrap()
+        );
+        let size = ShredData::SIZE_OF_HEADERS + chunk.len();
+        let mut payload = vec![0u8; ShredData::SIZE_OF_PAYLOAD];
+        payload[ShredData::SIZE_OF_HEADERS..size].copy_from_slice(chunk);
+        data_header.size = size as u16;
+        let shred = ShredData {
+            common_header: *common_header,
+            data_header,
+            payload: Payload::from(payload),
+        };
+        common_header.index += 1;
+        shred
+    })
+}
+// Generates coding shreds for the current erasure batch.
+// Updates ShredCommonHeader.index for coding shreds of the next batch.
+fn make_shreds_code(
+    common_header: &mut ShredCommonHeader,
+    num_data_shreds: usize,
+    is_last_in_slot: bool,
+) -> impl Iterator<Item = ShredCode> + '_ {
+    debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. });
+    let erasure_batch_size = shredder::get_erasure_batch_size(num_data_shreds, is_last_in_slot);
+    let num_coding_shreds = erasure_batch_size - num_data_shreds;
+    let mut coding_header = CodingShredHeader {
+        num_data_shreds: num_data_shreds as u16,
+        num_coding_shreds: num_coding_shreds as u16,
+        position: 0,
+    };
+    std::iter::repeat_with(move || {
+        let shred = ShredCode {
+            common_header: *common_header,
+            coding_header,
+            payload: Payload::from(vec![0u8; ShredCode::SIZE_OF_PAYLOAD]),
+        };
+        common_header.index += 1;
+        coding_header.position += 1;
+        shred
+    })
+    .take(num_coding_shreds)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_shreds_from_data(
     thread_pool: &ThreadPool,
@@ -975,59 +1029,6 @@ pub(super) fn make_shreds_from_data(
     reed_solomon_cache: &ReedSolomonCache,
     stats: &mut ProcessShredsStats,
 ) -> Result<Vec<Shred>, Error> {
-    // Generates data shreds for the current erasure batch.
-    // Updates ShredCommonHeader.index for data shreds of the next batch.
-    fn make_shreds_data<'a>(
-        common_header: &'a mut ShredCommonHeader,
-        mut data_header: DataShredHeader,
-        chunks: impl IntoIterator<Item = &'a [u8]> + 'a,
-    ) -> impl Iterator<Item = ShredData> + 'a {
-        debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleData { .. });
-        chunks.into_iter().map(move |chunk| {
-            debug_assert_matches!(common_header.shred_variant,
-                ShredVariant::MerkleData { proof_size, chained, resigned }
-                if chunk.len() <= ShredData::capacity(proof_size, chained, resigned).unwrap()
-            );
-            let size = ShredData::SIZE_OF_HEADERS + chunk.len();
-            let mut payload = vec![0u8; ShredData::SIZE_OF_PAYLOAD];
-            payload[ShredData::SIZE_OF_HEADERS..size].copy_from_slice(chunk);
-            data_header.size = size as u16;
-            let shred = ShredData {
-                common_header: *common_header,
-                data_header,
-                payload: Payload::from(payload),
-            };
-            common_header.index += 1;
-            shred
-        })
-    }
-    // Generates coding shreds for the current erasure batch.
-    // Updates ShredCommonHeader.index for coding shreds of the next batch.
-    fn make_shreds_code(
-        common_header: &mut ShredCommonHeader,
-        num_data_shreds: usize,
-        is_last_in_slot: bool,
-    ) -> impl Iterator<Item = ShredCode> + '_ {
-        debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. });
-        let erasure_batch_size = shredder::get_erasure_batch_size(num_data_shreds, is_last_in_slot);
-        let num_coding_shreds = erasure_batch_size - num_data_shreds;
-        let mut coding_header = CodingShredHeader {
-            num_data_shreds: num_data_shreds as u16,
-            num_coding_shreds: num_coding_shreds as u16,
-            position: 0,
-        };
-        std::iter::repeat_with(move || {
-            let shred = ShredCode {
-                common_header: *common_header,
-                coding_header,
-                payload: Payload::from(vec![0u8; ShredCode::SIZE_OF_PAYLOAD]),
-            };
-            common_header.index += 1;
-            coding_header.position += 1;
-            shred
-        })
-        .take(num_coding_shreds)
-    }
     let now = Instant::now();
     let chained = chained_merkle_root.is_some();
     let resigned = chained && is_last_in_slot;
