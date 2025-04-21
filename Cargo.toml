@@ -513,7 +513,7 @@ solana-rpc-client-api = { path = "rpc-client-api", version = "=2.2.12" }
 solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2.2.12" }
 solana-runtime = { path = "runtime", version = "=2.2.12" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=2.2.12" }
-solana-sbpf = "=0.10.0"
+solana-sbpf = "=0.10.1"
 solana-sdk = "2.2.2"
 solana-sdk-ids = "2.2.1"
 solana-sdk-macro = "2.2.1"
