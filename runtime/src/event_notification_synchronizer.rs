@@ -6,14 +6,20 @@ use std::sync::{atomic::AtomicU64, Condvar, Mutex};
 pub struct EventNotificationSynchronizer {
     /// The current event sequence number
     event_sequence: AtomicU64,
-    /// The processed event sequence number
-    processed_event_sequence: Mutex<u64>,
+    /// The processed event sequence number, if it is None, no event has been processed
+    processed_event_sequence: Mutex<Option<u64>>,
     condvar: Condvar,
+}
+
+fn less_than(a: &Option<u64>, b: u64) -> bool {
+    a.is_none_or(|a| a < b)
 }
 
 impl EventNotificationSynchronizer {
     /// Get the next event sequence number.
-    /// This function will increment the event sequence number and return the new value.
+    /// This function will increment the event sequence number and return the
+    /// the previously stored value as the new value.
+    /// The sequence starts from 0 and increments by 1 each time it is called.
     pub fn get_new_event_sequence(&self) -> u64 {
         self.event_sequence
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -24,7 +30,7 @@ impl EventNotificationSynchronizer {
     /// the expected sequence number.
     pub fn wait_for_event_processed(&self, expected_sequence: u64) {
         let mut sequence = self.processed_event_sequence.lock().unwrap();
-        while *sequence < expected_sequence {
+        while less_than(&sequence, expected_sequence) {
             sequence = self.condvar.wait(sequence).unwrap();
         }
     }
@@ -34,22 +40,28 @@ impl EventNotificationSynchronizer {
     /// sequence is greater than the current sequence.
     pub fn notify_event_processed(&self, sequence: u64) {
         let mut event_sequence = self.processed_event_sequence.lock().unwrap();
-        if *event_sequence < sequence {
-            *event_sequence = sequence;
+        if less_than(&event_sequence, sequence) {
+            *event_sequence = Some(sequence);
             self.condvar.notify_all();
         }
     }
 
-    /// A convient function to wait for the event to be notified with the expected sequence
+    /// A convient function to wait for the event to be notified with the predecessor event sequence
     /// number and notify all waiting threads with the given sequence number if it
-    /// is greater than the current event sequence.
-    pub fn wait_and_notify_event_processed(&self, expected_sequence: u64, sequence: u64) {
-        let mut event_sequence = self.processed_event_sequence.lock().unwrap();
-        while *event_sequence < expected_sequence {
-            event_sequence = self.condvar.wait(event_sequence).unwrap();
+    /// is greater than the current event sequence. The predecessor event sequence number is
+    /// the sequence number minus 1. If the sequence number is 0, it will wait for None as it
+    /// is the first event.
+    pub fn wait_and_notify_event_processed(&self, sequence: u64) {
+        let mut processed_sequence = self.processed_event_sequence.lock().unwrap();
+        if sequence > 0 {
+            let expected_sequence = sequence - 1;
+            while less_than(&processed_sequence, expected_sequence) {
+                processed_sequence = self.condvar.wait(processed_sequence).unwrap();
+            }
         }
-        if *event_sequence < sequence {
-            *event_sequence = sequence;
+
+        if less_than(&processed_sequence, sequence) {
+            *processed_sequence = Some(sequence);
             self.condvar.notify_all();
         }
     }
@@ -61,6 +73,14 @@ mod tests {
         super::*,
         std::{sync::Arc, thread},
     };
+
+    #[test]
+    fn test_less_than() {
+        assert!(less_than(&None, 0));
+        assert!(less_than(&Some(0), 1));
+        assert!(!less_than(&Some(1), 1));
+        assert!(!less_than(&Some(2), 1));
+    }
 
     #[test]
     fn test_get_new_event_sequence() {
@@ -89,20 +109,20 @@ mod tests {
         synchronizer.notify_event_processed(1);
 
         let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
-        assert_eq!(processed_sequence, 1);
+        assert_eq!(processed_sequence, Some(1));
 
         // notify a smaller sequence number, should not change the processed sequence
         synchronizer.notify_event_processed(0);
         let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
-        assert_eq!(processed_sequence, 1);
+        assert_eq!(processed_sequence, Some(1));
         // notify a larger sequence number, should change the processed sequence
         synchronizer.notify_event_processed(2);
         let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
-        assert_eq!(processed_sequence, 2);
+        assert_eq!(processed_sequence, Some(2));
         // notify the same sequence number, should not change the processed sequence
         synchronizer.notify_event_processed(2);
         let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
-        assert_eq!(processed_sequence, 2);
+        assert_eq!(processed_sequence, Some(2));
     }
 
     #[test]
@@ -111,7 +131,7 @@ mod tests {
         let synchronizer_clone = Arc::clone(&synchronizer);
 
         let handle = thread::spawn(move || {
-            synchronizer_clone.wait_and_notify_event_processed(1, 2);
+            synchronizer_clone.wait_and_notify_event_processed(2);
         });
 
         thread::sleep(std::time::Duration::from_millis(100));
@@ -119,7 +139,7 @@ mod tests {
         handle.join().unwrap();
 
         let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
-        assert_eq!(processed_sequence, 2);
+        assert_eq!(processed_sequence, Some(2));
     }
 
     #[test]
@@ -132,7 +152,7 @@ mod tests {
         for i in 0..5 {
             let synchronizer_clone = Arc::clone(&synchronizer);
             handles.push(thread::spawn(move || {
-                synchronizer_clone.wait_and_notify_event_processed(i, i + 1);
+                synchronizer_clone.wait_and_notify_event_processed(i + 1);
             }));
         }
 
@@ -145,6 +165,6 @@ mod tests {
         }
 
         let processed_sequence = *synchronizer.processed_event_sequence.lock().unwrap();
-        assert_eq!(processed_sequence, 5);
+        assert_eq!(processed_sequence, Some(5));
     }
 }

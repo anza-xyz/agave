@@ -289,11 +289,12 @@ impl OptimisticallyConfirmedBankTracker {
         prioritization_fee_cache: &PrioritizationFeeCache,
         event_notification_synchronizer: &Option<Arc<EventNotificationSynchronizer>>,
     ) {
-        debug!("received bank notification: {:?}", notification);
+        debug!("received bank notification: {notification:?} event: {event_sequence:?}");
 
         if let Some(synchronizer) = event_notification_synchronizer.as_ref() {
             if let Some(event_sequence) = event_sequence {
-                synchronizer.wait_and_notify_event_processed(event_sequence - 1, event_sequence);
+                synchronizer.wait_and_notify_event_processed(event_sequence);
+                info!("Predecessor event is processed: {notification:?} event: {event_sequence:?}");
             }
         }
         match notification {
