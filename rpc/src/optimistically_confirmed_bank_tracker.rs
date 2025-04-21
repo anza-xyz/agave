@@ -294,7 +294,6 @@ impl OptimisticallyConfirmedBankTracker {
         if let Some(synchronizer) = event_notification_synchronizer.as_ref() {
             if let Some(event_sequence) = event_sequence {
                 synchronizer.wait_and_notify_event_processed(event_sequence);
-                info!("Predecessor event is processed: {notification:?} event: {event_sequence:?}");
             }
         }
         match notification {
