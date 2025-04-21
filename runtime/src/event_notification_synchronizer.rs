@@ -46,11 +46,10 @@ impl EventNotificationSynchronizer {
         }
     }
 
-    /// A convient function to wait for the event to be notified with the predecessor event sequence
-    /// number and notify all waiting threads with the given sequence number if it
-    /// is greater than the current event sequence. The predecessor event sequence number is
-    /// the sequence number minus 1. If the sequence number is 0, it will wait for None as it
-    /// is the first event.
+    /// A convient function to wait for the predecessor event sequence to be notified
+    /// and notify all waiting threads awaiting this sequence the input event sequence.
+    /// The predecessor event sequence number is the sequence number minus 1.
+    /// If the sequence number is 0, it will wait for None as it is the first event.
     pub fn wait_and_notify_event_processed(&self, sequence: u64) {
         let mut processed_sequence = self.processed_event_sequence.lock().unwrap();
         if sequence > 0 {
