@@ -1,6 +1,6 @@
 use {
     super::{
-        consumer::Consumer,
+        consumer::{Consumer, RetryableIndexKind},
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         leader_slot_metrics::{
@@ -412,7 +412,15 @@ impl VoteWorker {
         ProcessTransactionsSummary {
             reached_max_poh_height,
             transaction_counts: total_transaction_counts,
-            retryable_transaction_indexes,
+            // vote thread does not care about reason for retryable transactions
+            retryable_transaction_indexes: retryable_transaction_indexes
+                .into_iter()
+                .map(|index_kind| match index_kind {
+                    RetryableIndexKind::AccountInUse(index)
+                    | RetryableIndexKind::BlockLimits(index)
+                    | RetryableIndexKind::InvalidBank(index) => index,
+                })
+                .collect(),
             cost_model_throttled_transactions_count,
             cost_model_us,
             execute_and_commit_timings,

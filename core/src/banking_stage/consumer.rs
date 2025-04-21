@@ -34,6 +34,16 @@ use {
 /// Consumer will create chunks of transactions from buffer with up to this size.
 pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
+#[cfg_attr(test, derive(Debug, PartialEq, Eq, PartialOrd, Ord))]
+pub enum RetryableIndexKind {
+    /// Retryable index due to account lock failures (Jito)
+    AccountInUse(usize),
+    /// Retryable index due to block-limits.
+    BlockLimits(usize),
+    /// Retryable index due to recording failure or missing bank i.e. block ended during execution.
+    InvalidBank(usize),
+}
+
 pub struct ProcessTransactionBatchOutput {
     // The number of transactions filtered out by the cost model
     pub(crate) cost_model_throttled_transactions_count: u64,
@@ -48,7 +58,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
     pub(crate) transaction_counts: LeaderProcessedTransactionCounts,
     // Transactions that either were not executed, or were executed and failed to be committed due
     // to the block ending.
-    pub(crate) retryable_transaction_indexes: Vec<usize>,
+    pub(crate) retryable_transaction_indexes: Vec<RetryableIndexKind>,
     // A result that indicates whether transactions were successfully
     // committed into the Poh stream.
     pub commit_transactions_result: Result<Vec<CommitTransactionDetails>, PohRecorderError>,
@@ -274,23 +284,23 @@ impl Consumer {
                 // following are retryable errors
                 Err(TransactionError::AccountInUse) => {
                     error_counters.account_in_use += 1;
-                    Some(index)
+                    Some(RetryableIndexKind::AccountInUse(index))
                 }
                 Err(TransactionError::WouldExceedMaxBlockCostLimit) => {
                     error_counters.would_exceed_max_block_cost_limit += 1;
-                    Some(index)
+                    Some(RetryableIndexKind::BlockLimits(index))
                 }
                 Err(TransactionError::WouldExceedMaxVoteCostLimit) => {
                     error_counters.would_exceed_max_vote_cost_limit += 1;
-                    Some(index)
+                    Some(RetryableIndexKind::BlockLimits(index))
                 }
                 Err(TransactionError::WouldExceedMaxAccountCostLimit) => {
                     error_counters.would_exceed_max_account_cost_limit += 1;
-                    Some(index)
+                    Some(RetryableIndexKind::BlockLimits(index))
                 }
                 Err(TransactionError::WouldExceedAccountDataBlockLimit) => {
                     error_counters.would_exceed_account_data_block_limit += 1;
-                    Some(index)
+                    Some(RetryableIndexKind::BlockLimits(index))
                 }
                 // following are non-retryable errors
                 Err(TransactionError::TooManyAccountLocks) => {
@@ -367,7 +377,11 @@ impl Consumer {
 
         if let Err(recorder_err) = record_transactions_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
-                |(index, processing_result)| processing_result.was_processed().then_some(index),
+                |(index, processing_result)| {
+                    processing_result
+                        .was_processed()
+                        .then_some(RetryableIndexKind::InvalidBank(index))
+                },
             ));
 
             return ExecuteAndCommitTransactionsOutput {
@@ -756,7 +770,10 @@ mod tests {
                 processed_with_successful_result_count: 1,
             }
         );
-        assert_eq!(retryable_transaction_indexes, vec![0]);
+        assert_eq!(
+            retryable_transaction_indexes,
+            vec![RetryableIndexKind::InvalidBank(0)]
+        );
         assert_matches!(
             commit_transactions_result,
             Err(PohRecorderError::MaxHeightReached)
@@ -1131,7 +1148,10 @@ mod tests {
             commit_transactions_result.get(1),
             Some(CommitTransactionDetails::NotCommitted)
         );
-        assert_eq!(retryable_transaction_indexes, vec![1]);
+        assert_eq!(
+            retryable_transaction_indexes,
+            vec![RetryableIndexKind::AccountInUse(1)]
+        );
 
         let expected_block_cost = {
             let (actual_programs_execution_cost, actual_loaded_accounts_data_size_cost) =
@@ -1246,7 +1266,10 @@ mod tests {
                 processed_with_successful_result_count: 1,
             }
         );
-        assert_eq!(retryable_transaction_indexes, vec![1]);
+        assert_eq!(
+            retryable_transaction_indexes,
+            vec![RetryableIndexKind::AccountInUse(1)]
+        );
         assert!(commit_transactions_result.is_ok());
     }
 
@@ -1302,7 +1325,9 @@ mod tests {
 
         assert_eq!(
             execute_and_commit_transactions_output.retryable_transaction_indexes,
-            (1..transactions_len - 1).collect::<Vec<usize>>()
+            (1..transactions_len - 1)
+                .map(RetryableIndexKind::InvalidBank)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1360,7 +1385,9 @@ mod tests {
         // Everything except first of the transactions failed and are retryable
         assert_eq!(
             execute_and_commit_transactions_output.retryable_transaction_indexes,
-            (1..transactions_len).collect::<Vec<usize>>()
+            (1..transactions_len)
+                .map(RetryableIndexKind::AccountInUse)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1447,7 +1474,9 @@ mod tests {
         execute_and_commit_transactions_output
             .retryable_transaction_indexes
             .sort_unstable();
-        let expected: Vec<usize> = (0..transactions.len()).collect();
+        let expected = (0..transactions.len())
+            .map(RetryableIndexKind::InvalidBank)
+            .collect::<Vec<_>>();
         assert_eq!(
             execute_and_commit_transactions_output.retryable_transaction_indexes,
             expected

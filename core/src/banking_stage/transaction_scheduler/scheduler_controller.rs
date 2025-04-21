@@ -253,7 +253,7 @@ where
 
         while transaction_ids.len() < MAX_TRANSACTION_CHECKS {
             let Some(id) = self.container.pop() else {
-                break
+                break;
             };
             transaction_ids.push(id);
         }
@@ -345,7 +345,7 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::{
-            consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
+            consumer::{RetryableIndexKind, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             packet_deserializer::PacketDeserializer,
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
@@ -889,7 +889,7 @@ mod tests {
             .send(FinishedConsumeWork {
                 slot: None,
                 work: consume_work,
-                retryable_indexes: vec![1],
+                retryable_indexes: vec![RetryableIndexKind::InvalidBank(1)],
             })
             .unwrap();
 
@@ -906,10 +906,13 @@ mod tests {
         assert_eq!(message_hashes, vec![&tx1_hash]);
     }
 
-    #[test_case(test_create_sanitized_transaction_receive_and_buffer; "Sdk")]
-    #[test_case(test_create_transaction_view_receive_and_buffer; "View")]
+    #[test_case(test_create_sanitized_transaction_receive_and_buffer, true; "test-case::sdk_immediate_retry")]
+    #[test_case(test_create_transaction_view_receive_and_buffer, true; "test-case::view_immediate_retry")]
+    #[test_case(test_create_sanitized_transaction_receive_and_buffer, false; "test-case::sdk_delayed_retry")]
+    #[test_case(test_create_transaction_view_receive_and_buffer, false; "test-case::view_delayed_retry")]
     fn test_schedule_consume_slot_gated_retry<R: ReceiveAndBuffer>(
         create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
+        immediate_retry: bool,
     ) {
         let (test_frame, mut scheduler_controller) =
             create_test_frame(1, create_receive_and_buffer);
@@ -971,12 +974,16 @@ mod tests {
             .send(FinishedConsumeWork {
                 slot: Some(bank.slot()),
                 work: consume_work,
-                retryable_indexes: vec![1],
+                retryable_indexes: vec![if immediate_retry {
+                    RetryableIndexKind::AccountInUse(1)
+                } else {
+                    RetryableIndexKind::BlockLimits(1)
+                }],
             })
             .unwrap();
 
         // Transaction should NOT be rescheduled
         test_receive_then_schedule(&mut scheduler_controller);
-        assert!(consume_work_receivers[0].is_empty());
+        assert_eq!(consume_work_receivers[0].is_empty(), !immediate_retry);
     }
 }

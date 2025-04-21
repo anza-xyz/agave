@@ -1,6 +1,9 @@
 use {
     super::{
-        consumer::{Consumer, ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
+        consumer::{
+            Consumer, ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput,
+            RetryableIndexKind,
+        },
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
@@ -153,7 +156,9 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
     /// Send transactions back to scheduler as retryable.
     fn retry(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
-        let retryable_indexes: Vec<_> = (0..work.transactions.len()).collect();
+        let retryable_indexes: Vec<_> = (0..work.transactions.len())
+            .map(RetryableIndexKind::InvalidBank)
+            .collect();
         let num_retryable = retryable_indexes.len();
         self.metrics
             .count_metrics
@@ -909,7 +914,10 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, vec![0]);
+        assert_eq!(
+            consumed.retryable_indexes,
+            vec![RetryableIndexKind::InvalidBank(0)]
+        );
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -958,7 +966,7 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -1010,7 +1018,10 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id1, id2]);
         assert_eq!(consumed.work.max_ages, vec![max_age, max_age]);
-        assert_eq!(consumed.retryable_indexes, vec![1]); // id2 is retryable since lock conflict
+        assert_eq!(
+            consumed.retryable_indexes,
+            vec![RetryableIndexKind::AccountInUse(1)]
+        ); // id2 is retryable since lock conflict
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -1079,13 +1090,13 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid1);
         assert_eq!(consumed.work.ids, vec![id1]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
 
         let consumed = consumed_receiver.recv().unwrap();
         assert_eq!(consumed.work.batch_id, bid2);
         assert_eq!(consumed.work.ids, vec![id2]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -1215,7 +1226,7 @@ mod tests {
             .unwrap();
 
         let consumed = consumed_receiver.recv().unwrap();
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
         // all but one succeed. 6 for initial funding
         assert_eq!(bank.transaction_count(), 6 + 5);
 
