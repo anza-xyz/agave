@@ -95,7 +95,7 @@ impl VoteWorker {
                 Ok(()) | Err(RecvTimeoutError::Timeout) => (),
                 Err(RecvTimeoutError::Disconnected) => break,
             }
-            // Check for new packets from the tpu receiver
+            // Check for new packets from the gossip receiver
             match self.gossip_receiver.receive_and_buffer_packets(
                 &mut self.storage,
                 &mut banking_stage_stats,
