@@ -143,7 +143,7 @@ impl GossipService {
 }
 
 /// Discover Validators in a cluster
-#[deprecated(since = "3.0.0", note = "use `discover` instead")]
+#[deprecated(since = "3.0.0", note = "use `discover_validators` instead")]
 pub fn discover_cluster(
     entrypoint: &SocketAddr,
     num_nodes: usize,
@@ -164,7 +164,7 @@ pub fn discover_cluster(
     Ok(validators)
 }
 
-pub fn discover_cluster_with_shred_version(
+pub fn discover_validators(
     entrypoint: &SocketAddr,
     num_nodes: usize,
     my_shred_version: u16,
