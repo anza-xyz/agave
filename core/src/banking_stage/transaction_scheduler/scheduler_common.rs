@@ -219,7 +219,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                         transactions,
                         max_ages: _,
                     },
-                mut retryable_indexes,
+                retryable_indexes,
             }) => {
                 let num_transactions = ids.len();
                 let num_retryable = retryable_indexes.len();
@@ -227,9 +227,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                 // Free the locks
                 self.complete_batch(batch_id, &transactions);
 
-                // Retryable transactions should be inserted back into the container
-                // Need to sort because recording failures lead to out-of-order indexes
-                retryable_indexes.sort_unstable();
+                // Assumption - retryable indexes are in order (sorted by workers).
                 let mut retryable_iter = retryable_indexes.iter().peekable();
                 for (index, (id, transaction)) in izip!(ids, transactions).enumerate() {
                     if let Some(&&retryable_index) = retryable_iter.peek() {
@@ -289,6 +287,9 @@ mod tests {
         test_case::test_case,
     };
 
+    const NUM_WORKERS: usize = 4;
+    const DUMMY_COST: u64 = 1;
+
     fn simple_transaction() -> RuntimeTransaction<SanitizedTransaction> {
         RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &Keypair::new(),
@@ -296,6 +297,54 @@ mod tests {
             1,
             Hash::default(),
         ))
+    }
+
+    fn add_transactions_to_container(
+        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        count: usize,
+    ) {
+        for index in 0..count {
+            container.insert_new_transaction(
+                simple_transaction(),
+                MaxAge::MAX,
+                (count - index) as u64,
+                DUMMY_COST,
+            );
+        }
+    }
+
+    fn pop_and_add_transaction<Tx: TransactionWithMeta>(
+        container: &mut TransactionStateContainer<Tx>,
+        common: &mut SchedulingCommon<Tx>,
+        batches: &mut Batches<Tx>,
+        thread_id: ThreadId,
+    ) {
+        let tx_id = container.pop().unwrap();
+        let (transaction, max_age) = container
+            .get_mut_transaction_state(tx_id.id)
+            .unwrap()
+            .take_transaction_for_scheduling();
+
+        let account_keys = transaction.account_keys();
+        let write_account_locks = account_keys
+            .iter()
+            .enumerate()
+            .filter_map(|(index, key)| transaction.is_writable(index).then_some(key));
+        let read_account_locks = account_keys
+            .iter()
+            .enumerate()
+            .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key));
+
+        common
+            .account_locks
+            .try_lock_accounts(
+                write_account_locks,
+                read_account_locks,
+                ThreadSet::any(NUM_WORKERS),
+                |_thread_set| thread_id,
+            )
+            .unwrap();
+        batches.add_transaction_to_batch(thread_id, tx_id.id, transaction, max_age, DUMMY_COST);
     }
 
     #[test_case(
@@ -374,13 +423,8 @@ mod tests {
 
     #[test]
     fn test_send_batches() {
-        const DUMMY_COST: u64 = 1;
-        const NUM_WORKERS: usize = 4;
-
         let mut container = TransactionStateContainer::with_capacity(1024);
-        container.insert_new_transaction(simple_transaction(), MaxAge::MAX, 3, DUMMY_COST);
-        container.insert_new_transaction(simple_transaction(), MaxAge::MAX, 2, DUMMY_COST);
-        container.insert_new_transaction(simple_transaction(), MaxAge::MAX, 1, DUMMY_COST);
+        add_transactions_to_container(&mut container, 3);
 
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
             (0..NUM_WORKERS).map(|_| unbounded()).unzip();
@@ -388,18 +432,7 @@ mod tests {
         let mut common = SchedulingCommon::new(work_senders, finished_work_receiver);
         let mut batches = Batches::new(NUM_WORKERS, 10);
 
-        let pop_and_add_transaction = |container: &mut TransactionStateContainer<_>,
-                                       batches: &mut Batches<_>,
-                                       thread_id: ThreadId| {
-            let tx_id = container.pop().unwrap();
-            let (tx, max_age) = container
-                .get_mut_transaction_state(tx_id.id)
-                .unwrap()
-                .take_transaction_for_scheduling();
-            batches.add_transaction_to_batch(thread_id, tx_id.id, tx, max_age, DUMMY_COST);
-        };
-
-        pop_and_add_transaction(&mut container, &mut batches, 0);
+        pop_and_add_transaction(&mut container, &mut common, &mut batches, 0);
         let num_scheduled = common.send_batch(&mut batches, 0, 10).unwrap();
         assert_eq!(num_scheduled, 1);
         assert_eq!(work_receivers[0].len(), 1);
@@ -419,8 +452,8 @@ mod tests {
         work_receivers[0].recv().unwrap();
 
         // Multiple batches.
-        pop_and_add_transaction(&mut container, &mut batches, 0);
-        pop_and_add_transaction(&mut container, &mut batches, 2);
+        pop_and_add_transaction(&mut container, &mut common, &mut batches, 0);
+        pop_and_add_transaction(&mut container, &mut common, &mut batches, 2);
 
         common.send_batches(&mut batches, 10).unwrap();
         assert_eq!(work_receivers[0].len(), 1);
@@ -435,5 +468,84 @@ mod tests {
             common.in_flight_tracker.cus_in_flight_per_thread(),
             &[DUMMY_COST * 2, 0, DUMMY_COST, 0]
         );
+    }
+
+    #[test]
+    fn test_receive_completed() {
+        let mut container = TransactionStateContainer::with_capacity(1024);
+        add_transactions_to_container(&mut container, 1);
+
+        let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
+            (0..NUM_WORKERS).map(|_| unbounded()).unzip();
+        let (finished_work_sender, finished_work_receiver) = unbounded();
+        let mut common = SchedulingCommon::new(work_senders, finished_work_receiver);
+        let mut batches = Batches::new(NUM_WORKERS, 10);
+
+        // Send a batch. Return completed work.
+        pop_and_add_transaction(&mut container, &mut common, &mut batches, 0);
+        let num_scheduled = common.send_batch(&mut batches, 0, 10).unwrap();
+
+        let work = work_receivers[0].try_recv().unwrap();
+        assert_eq!(work.ids.len(), num_scheduled);
+        let retryable_indexes = vec![];
+        let finished_work = FinishedConsumeWork {
+            work,
+            retryable_indexes,
+        };
+
+        finished_work_sender.send(finished_work).unwrap();
+        let (num_transactions, num_retryable) =
+            common.try_receive_completed(&mut container).unwrap();
+        assert_eq!(num_transactions, num_scheduled);
+        assert_eq!(num_retryable, 0);
+        assert_eq!(container.buffer_size(), 0);
+
+        // Retryable indexes.
+        add_transactions_to_container(&mut container, 3);
+        pop_and_add_transaction(&mut container, &mut common, &mut batches, 0);
+        pop_and_add_transaction(&mut container, &mut common, &mut batches, 0);
+        pop_and_add_transaction(&mut container, &mut common, &mut batches, 0);
+        let num_scheduled = common.send_batch(&mut batches, 0, 10).unwrap();
+        let work = work_receivers[0].try_recv().unwrap();
+        assert_eq!(work.ids.len(), num_scheduled);
+        let retryable_indexes = vec![0, 1];
+        let finished_work = FinishedConsumeWork {
+            work,
+            retryable_indexes: retryable_indexes.clone(),
+        };
+        finished_work_sender.send(finished_work).unwrap();
+        let (num_transactions, num_retryable) =
+            common.try_receive_completed(&mut container).unwrap();
+        assert_eq!(num_transactions, num_scheduled);
+        assert_eq!(num_retryable, retryable_indexes.len());
+        assert_eq!(container.buffer_size(), retryable_indexes.len());
+    }
+
+    #[test]
+    #[should_panic = "retryable indexes were not in order: [1, 0]"]
+    fn test_receive_completed_out_of_order() {
+        let mut container = TransactionStateContainer::with_capacity(1024);
+
+        let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
+            (0..NUM_WORKERS).map(|_| unbounded()).unzip();
+        let (finished_work_sender, finished_work_receiver) = unbounded();
+        let mut common = SchedulingCommon::new(work_senders, finished_work_receiver);
+        let mut batches = Batches::new(NUM_WORKERS, 10);
+        // Retryable indexes out-of-order.
+        add_transactions_to_container(&mut container, 2);
+        pop_and_add_transaction(&mut container, &mut common, &mut batches, 0);
+        pop_and_add_transaction(&mut container, &mut common, &mut batches, 0);
+        let num_scheduled = common.send_batch(&mut batches, 0, 10).unwrap();
+        let work = work_receivers[0].try_recv().unwrap();
+        assert_eq!(work.ids.len(), num_scheduled);
+        let retryable_indexes = vec![1, 0];
+        let finished_work = FinishedConsumeWork {
+            work,
+            retryable_indexes: retryable_indexes.clone(),
+        };
+        finished_work_sender.send(finished_work).unwrap();
+
+        // This should panic because the retryable indexes are not in order.
+        let _ = common.try_receive_completed(&mut container);
     }
 }
