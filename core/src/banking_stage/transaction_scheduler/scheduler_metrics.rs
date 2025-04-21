@@ -467,7 +467,7 @@ impl SchedulingDetails {
     pub fn maybe_report(&mut self) {
         const REPORT_INTERVAL: Duration = Duration::from_millis(20);
         let now = Instant::now();
-        if self.last_report.duration_since(now) > REPORT_INTERVAL {
+        if now.duration_since(self.last_report) > REPORT_INTERVAL {
             self.last_report = now;
             if self.num_schedule_calls > 0 {
                 let avg_starting_queue_size =
