@@ -1,11 +1,10 @@
+#[cfg(feature = "dev-context-only-utils")]
+use crate::account_storage::meta::StoredAccountMeta;
 use {
     crate::{
-        account_storage::{
-            meta::StoredAccountMeta,
-            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
-        },
+        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::MatchAccountOwnerError,
-        append_vec::{IndexInfo, IndexInfoInner},
+        append_vec::IndexInfo,
         tiered_storage::{
             file::TieredReadableFile,
             footer::{AccountMetaFormat, TieredStorageFooter},
@@ -86,17 +85,9 @@ impl TieredStorageReader {
         &self,
         index_offset: IndexOffset,
     ) -> TieredStorageResult<Option<IndexInfo>> {
-        self.get_stored_account_meta_callback(index_offset, |account| IndexInfo {
-            stored_size_aligned: account.stored_size(),
-            index_info: IndexInfoInner {
-                pubkey: *account.pubkey(),
-                lamports: account.lamports(),
-                offset: account.offset(),
-                data_len: account.data_len() as u64,
-                executable: account.executable(),
-                rent_epoch: account.rent_epoch(),
-            },
-        })
+        match self {
+            Self::Hot(hot) => hot.get_account_index_info(index_offset),
+        }
     }
 
     /// calls `callback` with the account located at the specified index offset.
@@ -114,6 +105,7 @@ impl TieredStorageReader {
     ///
     /// Prefer get_stored_account_callback() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn get_stored_account_meta_callback<Ret>(
         &self,
         index_offset: IndexOffset,
