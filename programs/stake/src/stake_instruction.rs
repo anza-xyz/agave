@@ -468,7 +468,7 @@ mod tests {
             Entrypoint::vm,
             |_invoke_context| {},
             |_invoke_context| {},
-            feature_set.runtime_features(),
+            &feature_set.runtime_features(),
         )
     }
 
@@ -6990,7 +6990,7 @@ mod tests {
                     invoke_context.transaction_context.get_return_data().1;
                 assert_eq!(expected_minimum_delegation, actual_minimum_delegation);
             },
-            feature_set.runtime_features(),
+            &feature_set.runtime_features(),
         );
     }
 

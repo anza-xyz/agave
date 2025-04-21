@@ -189,7 +189,7 @@ fn process_deprecated_instruction(
         Entrypoint::vm,
         |_invoke_context| {},
         |_invoke_context| {},
-        deprecated_feature_set.runtime_features(),
+        &deprecated_feature_set.runtime_features(),
     )
 }
 

@@ -134,7 +134,7 @@ impl TestSetup {
             stake_instruction::Entrypoint::vm,
             |_invoke_context| {},
             |_invoke_context| {},
-            self.feature_set.runtime_features(),
+            &self.feature_set.runtime_features(),
         );
         // update stake account
         self.transaction_accounts[0] = (self.stake_address, accounts[0].clone());
@@ -174,7 +174,7 @@ impl TestSetup {
             stake_instruction::Entrypoint::vm,
             |_invoke_context| {},
             |_invoke_context| {},
-            self.feature_set.runtime_features(),
+            &self.feature_set.runtime_features(),
         );
         self.stake_account = accounts[0].clone();
         self.stake_account.set_lamports(ACCOUNT_BALANCE * 2);
@@ -192,7 +192,7 @@ impl TestSetup {
             stake_instruction::Entrypoint::vm,
             |_invoke_context| {},
             |_invoke_context| {},
-            self.feature_set.runtime_features(),
+            &self.feature_set.runtime_features(),
         );
     }
 }

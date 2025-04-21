@@ -782,7 +782,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             Hash::default(),
             0,
             &MockInvokeContextCallback {},
-            &$feature_set,
+            $feature_set,
             &sysvar_cache,
         );
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
@@ -805,7 +805,7 @@ macro_rules! with_mock_invoke_context {
         $transaction_accounts:expr $(,)?
     ) => {
         use $crate::with_mock_invoke_context_with_feature_set;
-        let feature_set = solana_svm_feature_set::SVMFeatureSet::default();
+        let feature_set = &solana_svm_feature_set::SVMFeatureSet::default();
         with_mock_invoke_context_with_feature_set!(
             $invoke_context,
             $transaction_context,
@@ -829,7 +829,7 @@ pub fn mock_process_instruction_with_feature_set<
     builtin_function: BuiltinFunctionWithContext,
     mut pre_adjustments: F,
     mut post_adjustments: G,
-    feature_set: SVMFeatureSet,
+    feature_set: &SVMFeatureSet,
 ) -> Vec<AccountSharedData> {
     let mut instruction_accounts: Vec<InstructionAccount> =
         Vec::with_capacity(instruction_account_metas.len());
@@ -923,7 +923,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
         builtin_function,
         pre_adjustments,
         post_adjustments,
-        SVMFeatureSet::all_enabled(),
+        &SVMFeatureSet::all_enabled(),
     )
 }
 

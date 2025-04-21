@@ -1945,7 +1945,7 @@ mod tests {
                 test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},
-            feature_set,
+            &feature_set,
         );
         process_instruction(
             &loader_id,
@@ -2641,7 +2641,7 @@ mod tests {
                 test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},
-            feature_set,
+            &feature_set,
         );
         process_instruction(
             transaction_accounts.clone(),

@@ -115,7 +115,7 @@ fn bench_process_deprecated_vote_instruction(
             solana_vote_program::vote_processor::Entrypoint::vm,
             |_invoke_context| {},
             |_invoke_context| {},
-            deprecated_feature_set.runtime_features(),
+            &deprecated_feature_set.runtime_features(),
         );
     });
 }

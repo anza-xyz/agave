@@ -1677,6 +1677,7 @@ mod tests {
                 .collect::<Vec<TransactionAccount>>();
             let mut feature_set = SVMFeatureSet::all_enabled();
             feature_set.bpf_account_data_direct_mapping = false;
+            let feature_set = &feature_set;
             with_mock_invoke_context_with_feature_set!(
                 $invoke_context,
                 $transaction_context,
