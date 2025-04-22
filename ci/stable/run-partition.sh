@@ -27,7 +27,6 @@ fi
 
 ARGS=(
   --profile ci
-  --config-file ./nextest.toml
   --workspace
   --tests
   --jobs "$JOBS"
