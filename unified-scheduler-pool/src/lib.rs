@@ -2069,6 +2069,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // or abort is hinted from task results, before explicit
                                 // session ending is sent from the poh or the replay thread.
                             }
+                            Ok(NewTaskPayload::Reset) => {
+                                assert_matches!(scheduling_mode, BlockProduction);
+                                discard_on_reset = true;
+                            }
                             Ok(NewTaskPayload::Disconnect) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
                                 // Initialize result_with_timings with a harmless value...
@@ -2076,10 +2080,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 break 'nonaborted_main_loop;
                             }
                             Err(RecvError) => unreachable!(),
-                            Ok(NewTaskPayload::Reset) => {
-                                assert_matches!(scheduling_mode, BlockProduction);
-                                discard_on_reset = true;
-                            }
                         }
                     }
                     result_with_timings = new_result_with_timings.unwrap();
@@ -4166,7 +4166,7 @@ mod tests {
                     &task,
                     &pool.create_handler_context(
                         BlockVerification,
-                        &Arc::new(crossbeam_channel::unbounded().0),
+                        &crossbeam_channel::unbounded().0,
                     ),
                 );
                 (result, timings)

@@ -353,13 +353,10 @@ fn check_block_cost_limits<Tx: TransactionWithMeta>(
     tx_costs: &[Option<TransactionCost<'_, Tx>>],
 ) -> Result<()> {
     let mut cost_tracker = bank.write_cost_tracker().unwrap();
-    for tx_cost in tx_costs.iter().flatten() {
-        cost_tracker
-            .try_add(tx_cost)
-            .map_err(TransactionError::from)?;
-    }
-
-    Ok(())
+    tx_costs.iter().flatten().try_for_each(|tx_cost| {
+        cost_tracker.try_add(tx_cost)?;
+        Ok(())
+    })
 }
 
 #[derive(Default)]
