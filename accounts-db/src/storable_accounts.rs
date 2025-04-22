@@ -346,11 +346,13 @@ pub mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            account_storage::meta::{AccountMeta, StoredMeta},
             accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
             accounts_file::AccountsFileProvider,
             accounts_hash::AccountHash,
-            append_vec::StoredAccountMeta,
+            append_vec::{
+                meta::{AccountMeta, StoredMeta},
+                StoredAccountMeta,
+            },
         },
         solana_account::{accounts_equal, AccountSharedData, WritableAccount},
         solana_hash::Hash,

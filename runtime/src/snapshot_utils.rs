@@ -23,10 +23,11 @@ use {
     log::*,
     regex::Regex,
     solana_accounts_db::{
-        account_storage::{meta::StoredMetaWriteVersion, AccountStorageMap},
+        account_storage::AccountStorageMap,
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, InternalsForArchive, StorageAccess},
         accounts_hash::{AccountsDeltaHash, AccountsHash},
+        append_vec::StoredMetaWriteVersion,
         epoch_accounts_hash::EpochAccountsHash,
         hardened_unpack::{self, ParallelSelector, UnpackError},
         shared_buffer_reader::{SharedBuffer, SharedBufferReader},

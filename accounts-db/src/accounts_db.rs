@@ -1880,12 +1880,6 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
     }
 }
 
-impl IsZeroLamport for StoredAccountMeta<'_> {
-    fn is_zero_lamport(&self) -> bool {
-        self.lamports() == 0
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PubkeyHashAccount {
     pub pubkey: Pubkey,

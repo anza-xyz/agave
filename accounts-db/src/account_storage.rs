@@ -8,7 +8,6 @@ use {
     std::sync::Arc,
 };
 
-pub mod meta;
 pub mod stored_account_info;
 
 pub type AccountStorageMap = DashMap<Slot, Arc<AccountStorageEntry>, BuildNoHashHasher<Slot>>;

@@ -1197,7 +1197,6 @@ pub mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            account_storage::meta::{AccountMeta, StoredMeta},
             accounts_db::{
                 get_temp_accounts_paths,
                 tests::{
@@ -1211,7 +1210,11 @@ pub mod tests {
             accounts_file::StorageAccess,
             accounts_hash::AccountHash,
             accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
-            append_vec::{aligned_stored_size, AppendVec, StoredAccountMeta},
+            append_vec::{
+                aligned_stored_size,
+                meta::{AccountMeta, StoredMeta},
+                AppendVec, StoredAccountMeta,
+            },
             storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
         },
         rand::seq::SliceRandom as _,

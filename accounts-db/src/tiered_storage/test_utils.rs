@@ -2,7 +2,9 @@
 //! Helper functions for TieredStorage tests
 use {
     super::footer::TieredStorageFooter,
-    crate::account_storage::{meta::StoredMeta, stored_account_info::StoredAccountInfo},
+    crate::{
+        account_storage::stored_account_info::StoredAccountInfo, append_vec::meta::StoredMeta,
+    },
     solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
