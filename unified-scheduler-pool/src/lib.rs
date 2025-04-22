@@ -204,7 +204,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
         }
     }
 
-    fn peek_pooled(&mut self) -> Option<&mut S::Inner> {
+    fn peek_pooled(&self) -> Option<&S::Inner> {
         match self {
             Self::NotSpawned | Self::Taken(_) => None,
             Self::Pooled(inner) => Some(inner),
@@ -2346,8 +2346,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .expect("no new session after aborted");
     }
 
-    fn discard_buffered_tasks(&mut self) {
-        self.new_task_sender.send(NewTaskPayload::Reset).unwrap();
+    fn discard_buffered_tasks(&self) {
+        // new_task_sender could fail anytime because of uncontrollable timing of abort_scheduler()
+        // by disconnected banking_packet_receiver...
+        if let Err(err) = self.new_task_sender.send(NewTaskPayload::Reset) {
+            warn!("failed to send a reset due to error: {err:?}");
+        }
     }
 
     fn disconnect_new_task_sender(&mut self) {
@@ -2368,7 +2372,7 @@ pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_trashed(&self) -> bool;
     fn is_overgrown(&self) -> bool;
-    fn discard_buffer(&mut self);
+    fn discard_buffer(&self);
     fn ensure_abort(&mut self);
 }
 
@@ -2527,7 +2531,7 @@ where
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count)
     }
 
-    fn discard_buffer(&mut self) {
+    fn discard_buffer(&self) {
         self.thread_manager.discard_buffered_tasks();
     }
 
@@ -4216,7 +4220,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn discard_buffer(&mut self) {
+        fn discard_buffer(&self) {
             unimplemented!()
         }
 
