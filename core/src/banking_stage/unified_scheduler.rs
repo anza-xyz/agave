@@ -64,6 +64,9 @@ pub(crate) fn ensure_banking_stage_setup(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
             let decision = decision_maker.make_consume_or_forward_decision();
             if matches!(decision, BufferedPacketsDecision::Forward) {
+                // discard newly-arriving packets. note that already handled packets (thus buffered
+                // by scheduler internally) will be discarded as well via BankingStageMonitor api
+                // by solScCleaner.
                 return;
             }
             let bank = root_bank_cache.root_bank();
