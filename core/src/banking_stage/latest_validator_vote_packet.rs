@@ -1,11 +1,9 @@
 use {
     super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
+    solana_clock::{Slot, UnixTimestamp},
+    solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        hash::Hash,
-        program_utils::limited_deserialize,
-    },
+    solana_sdk::program_utils::limited_deserialize,
     solana_vote_program::vote_instruction::VoteInstruction,
     std::sync::Arc,
 };
@@ -130,9 +128,11 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
+        solana_packet::PacketFlags,
         solana_perf::packet::{Packet, PacketBatch},
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
-        solana_sdk::{packet::PacketFlags, signer::Signer, system_transaction::transfer},
+        solana_signer::Signer,
+        solana_system_transaction::transfer,
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
     };

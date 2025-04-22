@@ -28,11 +28,12 @@ use {
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_perf::packet::PACKETS_PER_BATCH,
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
+    solana_time_utils::AtomicInterval,
     std::{
         cmp, env,
         ops::Deref,
@@ -696,6 +697,8 @@ mod tests {
         itertools::Itertools,
         solana_entry::entry::{self, Entry, EntrySlice},
         solana_gossip::cluster_info::Node,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{
@@ -710,17 +713,14 @@ mod tests {
             poh_service::PohService,
             transaction_recorder::RecordTransactionsSummary,
         },
+        solana_poh_config::PohConfig,
+        solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            hash::Hash,
-            poh_config::PohConfig,
-            pubkey::Pubkey,
-            signature::{Keypair, Signer},
-            system_transaction,
-            transaction::{SanitizedTransaction, Transaction},
-        },
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
+        solana_system_transaction as system_transaction,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
         std::{

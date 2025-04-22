@@ -11,23 +11,19 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_connection_cache::client_connection::ClientConnection,
     solana_cost_model::cost_model::CostModel,
+    solana_fee_structure::{FeeBudgetLimits, FeeDetails},
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
+    solana_keypair::Keypair,
+    solana_packet as packet,
     solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::PohRecorder,
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
         bank::{Bank, CollectorFeeDetails},
         root_bank_cache::RootBankCache,
     },
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
-    },
-    solana_sdk::{
-        fee::{FeeBudgetLimits, FeeDetails},
-        packet,
-        quic::NotifyKeyUpdate,
-        signer::keypair::Keypair,
-        transaction::MessageHash,
-        transport::TransportError,
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_tpu_client_next::{
@@ -38,6 +34,8 @@ use {
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler,
     },
+    solana_transaction::sanitized::MessageHash,
+    solana_transaction_error::TransportError,
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
@@ -820,10 +818,12 @@ mod tests {
         super::*,
         crossbeam_channel::unbounded,
         packet::PacketFlags,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_perf::packet::{Packet, PacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::create_genesis_config,
-        solana_sdk::{hash::Hash, signature::Keypair, system_transaction},
+        solana_system_transaction as system_transaction,
         std::sync::{Arc, Mutex},
     };
 

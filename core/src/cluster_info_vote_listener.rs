@@ -10,14 +10,17 @@ use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Select, Sender},
     log::*,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         crds::Cursor,
     },
+    solana_hash::Hash,
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_debug,
     solana_perf::packet::{self, PacketBatch},
+    solana_pubkey::Pubkey,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSender},
         rpc_subscriptions::RpcSubscriptions,
@@ -31,14 +34,9 @@ use {
         root_bank_cache::RootBankCache,
         vote_sender_types::ReplayVoteReceiver,
     },
-    solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT},
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::Signature,
-        timing::AtomicInterval,
-        transaction::Transaction,
-    },
+    solana_signature::Signature,
+    solana_time_utils::AtomicInterval,
+    solana_transaction::Transaction,
     solana_vote::{
         vote_parser::{self, ParsedVote},
         vote_transaction::VoteTransaction,
@@ -734,7 +732,10 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_perf::packet,
+        solana_pubkey::Pubkey,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
             bank::Bank,
@@ -744,11 +745,8 @@ mod tests {
             },
             vote_sender_types::ReplayVoteSender,
         },
-        solana_sdk::{
-            hash::Hash,
-            pubkey::Pubkey,
-            signature::{Keypair, Signature, Signer},
-        },
+        solana_signature::Signature,
+        solana_signer::Signer,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{TowerSync, Vote, MAX_LOCKOUT_HISTORY},
         std::{

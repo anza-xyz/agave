@@ -21,19 +21,17 @@ use {
     },
     crate::replay_stage::DUPLICATE_THRESHOLD,
     chrono::prelude::*,
+    solana_clock::{Slot, UnixTimestamp},
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{self, Blockstore},
     },
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE},
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        hash::Hash,
-        instruction::Instruction,
-        pubkey::Pubkey,
-        signature::Keypair,
-        slot_history::{Check, SlotHistory},
-    },
+    solana_slot_history::{Check, SlotHistory},
     solana_vote::{vote_account::VoteAccountsHashMap, vote_transaction::VoteTransaction},
     solana_vote_program::{
         vote_error::VoteError,
@@ -1782,16 +1780,14 @@ pub mod test {
             vote_simulator::VoteSimulator,
         },
         itertools::Itertools,
+        solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        solana_clock::Slot,
+        solana_hash::Hash,
         solana_ledger::{blockstore::make_slot_entries, get_tmp_ledger_path_auto_delete},
+        solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-            clock::Slot,
-            hash::Hash,
-            pubkey::Pubkey,
-            signature::Signer,
-            slot_history::SlotHistory,
-        },
+        solana_signer::Signer,
+        solana_slot_history::SlotHistory,
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{
             process_slot_vote_unchecked, Vote, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
@@ -3413,7 +3409,7 @@ pub mod test {
 
     #[test]
     fn test_adjust_lockouts_after_replay_all_rooted_with_too_old() {
-        use solana_sdk::slot_history::MAX_ENTRIES;
+        use solana_slot_history::MAX_ENTRIES;
 
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower.record_vote(0, Hash::default());
@@ -3539,7 +3535,7 @@ pub mod test {
 
     #[test]
     fn test_adjust_lockouts_after_replay_too_old_tower() {
-        use solana_sdk::slot_history::MAX_ENTRIES;
+        use solana_slot_history::MAX_ENTRIES;
 
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower.record_vote(0, Hash::default());
@@ -3595,7 +3591,7 @@ pub mod test {
 
     #[test]
     fn test_adjust_lockouts_after_replay_out_of_order() {
-        use solana_sdk::slot_history::MAX_ENTRIES;
+        use solana_slot_history::MAX_ENTRIES;
 
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower

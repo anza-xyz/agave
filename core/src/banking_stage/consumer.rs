@@ -6,7 +6,9 @@ use {
         scheduler_messages::MaxAge,
     },
     itertools::Itertools,
+    solana_clock::MAX_PROCESSING_AGE,
     solana_fee::FeeFeatures,
+    solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -19,13 +21,13 @@ use {
         transaction_batch::TransactionBatch,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::{clock::MAX_PROCESSING_AGE, fee::FeeBudgetLimits, transaction::TransactionError},
     solana_svm::{
         account_loader::validate_fee_payer,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
+    solana_transaction_error::TransactionError,
     std::{num::Saturating, sync::Arc},
 };
 
@@ -480,8 +482,17 @@ mod tests {
         },
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::{unbounded, Receiver},
+        solana_account::{state_traits::StateMut, AccountSharedData},
+        solana_address_lookup_table_interface::{
+            self as address_lookup_table,
+            state::{AddressLookupTable, LookupTableMeta},
+        },
         solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
         solana_entry::entry::{next_entry, next_versioned_entry},
+        solana_fee_calculator::FeeCalculator,
+        solana_hash::Hash,
+        solana_instruction::error::InstructionError,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{entries_to_test_shreds, Blockstore},
             blockstore_processor::TransactionStatusSender,
@@ -492,32 +503,23 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
+        solana_message::{
+            v0::{self, MessageAddressTableLookup},
+            MessageHeader, VersionedMessage,
+        },
+        solana_nonce::{self as nonce, state::DurableNonce},
+        solana_nonce_account::verify_nonce_account,
         solana_poh::poh_recorder::{PohRecorder, Record},
+        solana_poh_config::PohConfig,
+        solana_pubkey::Pubkey,
         solana_rpc::transaction_status_service::TransactionStatusService,
         solana_runtime::prioritization_fee_cache::PrioritizationFeeCache,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            account::AccountSharedData,
-            account_utils::StateMut,
-            address_lookup_table::{
-                self,
-                state::{AddressLookupTable, LookupTableMeta},
-            },
-            fee_calculator::FeeCalculator,
-            hash::Hash,
-            instruction::InstructionError,
-            message::{
-                v0::{self, MessageAddressTableLookup},
-                MessageHeader, VersionedMessage,
-            },
-            nonce::{self, state::DurableNonce},
-            nonce_account::verify_nonce_account,
-            poh_config::PohConfig,
-            pubkey::Pubkey,
-            signature::Keypair,
-            signer::Signer,
-            system_program, system_transaction,
-            transaction::{MessageHash, Transaction, VersionedTransaction},
+        solana_signer::Signer,
+        solana_system_interface::program as system_program,
+        solana_system_transaction as system_transaction,
+        solana_transaction::{
+            sanitized::MessageHash, versioned::VersionedTransaction, Transaction,
         },
         solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
         std::{
@@ -599,11 +601,12 @@ mod tests {
     fn store_nonce_account(
         bank: &Bank,
         account_address: Pubkey,
-        nonce_state: nonce::State,
+        nonce_state: nonce::state::State,
     ) -> AccountSharedData {
-        let mut account = AccountSharedData::new(1, nonce::State::size(), &system_program::id());
+        let mut account =
+            AccountSharedData::new(1, nonce::state::State::size(), &system_program::id());
         account
-            .set_state(&nonce::state::Versions::new(nonce_state))
+            .set_state(&nonce::versions::Versions::new(nonce_state))
             .unwrap();
         bank.store_account(&account_address, &account);
 
@@ -780,7 +783,7 @@ mod tests {
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
         let nonce_hash = *durable_nonce.as_hash();
         let nonce_pubkey = Pubkey::new_unique();
-        let nonce_state = nonce::State::Initialized(nonce::state::Data {
+        let nonce_state = nonce::state::State::Initialized(nonce::state::Data {
             authority: mint_keypair.pubkey(),
             durable_nonce,
             fee_calculator: FeeCalculator::new(5000),
@@ -1452,7 +1455,7 @@ mod tests {
             mut genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(solana_sdk::native_token::sol_to_lamports(1000.0));
+        } = create_slow_genesis_config(solana_native_token::sol_to_lamports(1000.0));
         genesis_config.rent.lamports_per_byte_year = 50;
         genesis_config.rent.exemption_threshold = 2.0;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);

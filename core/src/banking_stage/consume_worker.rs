@@ -9,8 +9,8 @@ use {
     solana_poh::leader_bank_notifier::LeaderBankNotifier,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::timing::AtomicInterval,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
+    solana_time_utils::AtomicInterval,
     std::{
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -731,37 +731,37 @@ mod tests {
             tests::{create_slow_genesis_config, sanitize_transactions, simulate_poh},
         },
         crossbeam_channel::unbounded,
+        solana_clock::{Slot, MAX_PROCESSING_AGE},
+        solana_genesis_config::GenesisConfig,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
+        },
+        solana_message::{
+            v0::{self, LoadedAddresses},
+            AddressLookupTableAccount, SimpleAddressLoader, VersionedMessage,
         },
         solana_poh::{
             poh_recorder::{PohRecorder, WorkingBankEntry},
             transaction_recorder::TransactionRecorder,
         },
+        solana_poh_config::PohConfig,
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
             vote_sender_types::ReplayVoteReceiver,
         },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            address_lookup_table::AddressLookupTableAccount,
-            clock::{Slot, MAX_PROCESSING_AGE},
-            genesis_config::GenesisConfig,
-            message::{
-                v0::{self, LoadedAddresses},
-                SimpleAddressLoader, VersionedMessage,
-            },
-            poh_config::PohConfig,
-            pubkey::Pubkey,
-            signature::Keypair,
-            signer::Signer,
-            system_instruction, system_transaction,
-            transaction::{
-                MessageHash, SanitizedTransaction, TransactionError, VersionedTransaction,
-            },
-        },
+        solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMMessage,
+        solana_system_interface::instruction as system_instruction,
+        solana_system_transaction as system_transaction,
+        solana_transaction::{
+            sanitized::{MessageHash, SanitizedTransaction},
+            versioned::VersionedTransaction,
+        },
+        solana_transaction_error::TransactionError,
         std::{
             collections::HashSet,
             sync::{atomic::AtomicBool, RwLock},

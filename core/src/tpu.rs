@@ -30,7 +30,9 @@ use {
     bytes::Bytes,
     crossbeam_channel::{bounded, unbounded, Receiver},
     solana_client::connection_cache::ConnectionCache,
+    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
@@ -40,6 +42,8 @@ use {
         poh_recorder::{PohRecorder, WorkingBankEntry},
         transaction_recorder::TransactionRecorder,
     },
+    solana_pubkey::Pubkey,
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotificationSender,
         rpc_subscriptions::RpcSubscriptions,
@@ -50,7 +54,6 @@ use {
         root_bank_cache::RootBankCache,
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
-    solana_sdk::{clock::Slot, pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
     solana_streamer::{
         quic::{spawn_server_multi, QuicServerParams, SpawnServerResult},
         streamer::StakedNodes,

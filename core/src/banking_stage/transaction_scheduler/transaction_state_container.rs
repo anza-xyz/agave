@@ -10,7 +10,7 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::packet::PACKET_DATA_SIZE,
+    solana_packet::PACKET_DATA_SIZE,
     std::sync::Arc,
 };
 
@@ -348,15 +348,13 @@ mod tests {
         agave_transaction_view::transaction_view::SanitizedTransactionView,
         solana_perf::packet::Packet,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            hash::Hash,
-            message::Message,
-            signature::Keypair,
-            signer::Signer,
-            system_instruction,
-            transaction::{MessageHash, SanitizedTransaction, Transaction},
-        },
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_hash::Hash,
+        solana_message::Message,
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::{sanitized::{MessageHash, SanitizedTransaction}, Transaction},
         std::collections::HashSet,
     };
 

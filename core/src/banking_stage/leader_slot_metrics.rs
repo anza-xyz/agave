@@ -5,8 +5,9 @@ use {
         packet_deserializer::PacketReceiverStats,
         vote_storage::VoteBatchInsertionMetrics,
     },
+    solana_clock::Slot,
     solana_poh::poh_recorder::BankStart,
-    solana_sdk::{clock::Slot, saturating_add_assign},
+    solana_sdk::saturating_add_assign,
     solana_svm::transaction_error_metrics::*,
     std::time::Instant,
 };

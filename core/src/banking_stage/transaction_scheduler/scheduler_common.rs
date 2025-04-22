@@ -286,7 +286,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{hash::Hash, system_transaction, transaction::SanitizedTransaction},
+        solana_hash::Hash, solana_system_transaction as system_transaction, solana_transaction::sanitized::SanitizedTransaction,
         test_case::test_case,
     };
 

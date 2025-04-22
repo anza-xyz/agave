@@ -1,6 +1,9 @@
 use {
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_ledger::blockstore::Blockstore,
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, timing::timestamp},
+    solana_pubkey::Pubkey,
+    solana_time_utils::timestamp,
     std::{
         collections::HashMap,
         net::SocketAddr,

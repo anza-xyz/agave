@@ -20,7 +20,8 @@ use {
     },
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_sdk::{self, clock::MAX_PROCESSING_AGE, saturating_add_assign},
+    solana_clock::MAX_PROCESSING_AGE,
+    solana_sdk::saturating_add_assign,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::sync::{Arc, RwLock},
 };
@@ -360,11 +361,16 @@ mod tests {
         solana_poh::poh_recorder::PohRecorder,
         solana_runtime::bank::Bank,
         solana_runtime_transaction::transaction_meta::StaticMeta,
-        solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, fee_calculator::FeeRateGovernor, hash::Hash,
-            message::Message, poh_config::PohConfig, pubkey::Pubkey, signature::Keypair,
-            signer::Signer, system_instruction, system_transaction, transaction::Transaction,
-        },
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_fee_calculator::FeeRateGovernor,
+        solana_hash::Hash,
+        solana_message::Message,
+        solana_poh_config::PohConfig,
+        solana_pubkey::Pubkey,
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::Transaction,
         std::sync::{atomic::AtomicBool, Arc, RwLock},
         tempfile::TempDir,
         test_case::test_case,
@@ -481,7 +487,7 @@ mod tests {
     ) -> Transaction {
         // Fund the sending key, so that the transaction does not get filtered by the fee-payer check.
         {
-            let transfer = system_transaction::transfer(
+            let transfer = solana_system_transaction::transfer(
                 mint_keypair,
                 &from_keypair.pubkey(),
                 500_000, // just some amount that will always be enough
