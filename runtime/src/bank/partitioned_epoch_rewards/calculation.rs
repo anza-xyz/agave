@@ -1102,10 +1102,4 @@ mod tests {
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
         assert_eq!(bank.epoch_reward_status, EpochRewardStatus::Inactive);
     }
-
-    #[test]
-    fn test_foo() {
-        let d: DashMap<i8, i8> = DashMap::<i8, i8>::new();
-        println!("{}", d.shards().len());
-    }
 }
