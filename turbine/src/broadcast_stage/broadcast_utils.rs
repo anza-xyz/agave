@@ -44,16 +44,25 @@ fn keep_coalescing_entries(
     max_tick_height: u64,
     serialized_batch_byte_count: u64,
     max_batch_byte_count: u64,
+    process_stats: &mut ProcessShredsStats,
 ) -> bool {
-    // This slot is not over.
-    last_tick_height < max_tick_height &&
-    // We have not exceeded max batch byte count.
-    serialized_batch_byte_count < max_batch_byte_count &&
-    {
-        let bytes_to_fill_erasure_batch = data_shred_bytes_per_batch() - (serialized_batch_byte_count % data_shred_bytes_per_batch());
-        // We haven't tightly packed this batch.
-        (bytes_to_fill_erasure_batch as f64) > target_batch_pad_bytes()
+    if last_tick_height >= max_tick_height {
+        // The slot has ended.
+        process_stats.coalesce_exited_slot_ended += 1;
+        return false;
+    } else if serialized_batch_byte_count >= max_batch_byte_count {
+        // Exceeded the max batch byte count.
+        process_stats.coalesce_exited_hit_max += 1;
+        return false;
     }
+    let bytes_to_fill_erasure_batch =
+        data_shred_bytes_per_batch() - (serialized_batch_byte_count % data_shred_bytes_per_batch());
+    if (bytes_to_fill_erasure_batch as f64) < target_batch_pad_bytes() {
+        // We're close enough to tightly packing erasure batches. Just send it.
+        process_stats.coalesce_exited_tightly_packed += 1;
+        return false;
+    }
+    true
 }
 
 // Dynamically determine the coalesce time based on the amount of entry data
@@ -116,10 +125,12 @@ pub(super) fn recv_slot_entries(
         bank.max_tick_height(),
         serialized_batch_byte_count,
         max_batch_byte_count,
+        process_stats,
     ) {
         let Ok((try_bank, (entry, tick_height))) = receiver.recv_deadline(
             coalesce_start + max_coalesce_time(serialized_batch_byte_count, max_batch_byte_count),
         ) else {
+            process_stats.coalesce_exited_rcv_timeout += 1;
             break;
         };
         // If the bank changed, that implies the previous slot was interrupted and we do not have to
@@ -138,6 +149,7 @@ pub(super) fn recv_slot_entries(
             // This entry will push us over the batch byte limit. Save it for
             // the next batch.
             *carryover_entry = Some((try_bank, (entry, tick_height)));
+            process_stats.coalesce_exited_hit_max += 1;
             break;
         }
 
