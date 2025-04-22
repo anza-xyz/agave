@@ -51,8 +51,8 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         // 1) Pull entries from banking stage
-        let mut receive_results =
-            broadcast_utils::recv_slot_entries(receiver, &mut ProcessShredsStats::default())?;
+        let mut stats = ProcessShredsStats::default();
+        let mut receive_results = broadcast_utils::recv_slot_entries(receiver, &mut stats)?;
         let bank = receive_results.bank.clone();
         let last_tick_height = receive_results.last_tick_height;
 
@@ -106,7 +106,7 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
             self.next_code_index,
             true, // merkle_variant
             &self.reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
+            &mut stats,
         );
 
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
@@ -126,7 +126,7 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
                 self.next_code_index,
                 true, // merkle_variant
                 &self.reed_solomon_cache,
-                &mut ProcessShredsStats::default(),
+                &mut stats,
             );
             // Don't mark the last shred as last so that validators won't know
             // that they've gotten all the shreds, and will continue trying to
@@ -140,7 +140,7 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
                 self.next_code_index,
                 true, // merkle_variant
                 &self.reed_solomon_cache,
-                &mut ProcessShredsStats::default(),
+                &mut stats,
             );
             assert_eq!(good_last_data_shred.len(), 1);
             self.chained_merkle_root = good_last_data_shred.last().unwrap().merkle_root().unwrap();

@@ -84,8 +84,8 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         // 1) Pull entries from banking stage
-        let mut receive_results =
-            broadcast_utils::recv_slot_entries(receiver, &mut ProcessShredsStats::default())?;
+        let mut stats = ProcessShredsStats::default();
+        let mut receive_results = broadcast_utils::recv_slot_entries(receiver, &mut stats)?;
         let bank = receive_results.bank.clone();
         let last_tick_height = receive_results.last_tick_height;
 
@@ -187,7 +187,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             self.next_code_index,
             true, // merkle_variant
             &self.reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
+            &mut stats,
         );
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
             self.chained_merkle_root = shred.merkle_root().unwrap();
@@ -207,7 +207,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     self.next_code_index,
                     true, // merkle_variant
                     &self.reed_solomon_cache,
-                    &mut ProcessShredsStats::default(),
+                    &mut stats,
                 );
                 // Don't mark the last shred as last so that validators won't
                 // know that they've gotten all the shreds, and will continue
@@ -221,7 +221,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     self.next_code_index,
                     true, // merkle_variant
                     &self.reed_solomon_cache,
-                    &mut ProcessShredsStats::default(),
+                    &mut stats,
                 );
                 let sigs: Vec<_> = partition_last_data_shred
                     .iter()
