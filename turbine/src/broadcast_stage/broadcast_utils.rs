@@ -5,7 +5,7 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::{
         blockstore::Blockstore,
-        shred::{self, ProcessShredsStats, ShredData, DATA_SHREDS_PER_FEC_BLOCK},
+        shred::{self, ProcessShredsStats, DATA_SHRED_BYTES_PER_BATCH_TYPICAL},
     },
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_runtime::bank::Bank,
@@ -24,6 +24,21 @@ pub(super) struct ReceiveResults {
     pub last_tick_height: u64,
 }
 
+fn data_shred_bytes_per_batch() -> u64 {
+    *DATA_SHRED_BYTES_PER_BATCH_TYPICAL
+}
+
+fn target_batch_bytes_default() -> u64 {
+    // Empirically discovered to be a good balance between avoiding padding and
+    // not delaying broadcast.
+    3 * data_shred_bytes_per_batch()
+}
+
+fn target_batch_pad_bytes() -> f64 {
+    // Less than 5% padding is acceptable overhead. Let's not push our luck.
+    data_shred_bytes_per_batch() as f64 * 0.05
+}
+
 fn keep_coalescing_entries(
     last_tick_height: u64,
     max_tick_height: u64,
@@ -33,7 +48,23 @@ fn keep_coalescing_entries(
     // This slot is not over.
     last_tick_height < max_tick_height &&
     // We have not exceeded max batch byte count.
-    serialized_batch_byte_count < max_batch_byte_count
+    serialized_batch_byte_count < max_batch_byte_count &&
+    {
+        let bytes_to_fill_erasure_batch = data_shred_bytes_per_batch() - (serialized_batch_byte_count % data_shred_bytes_per_batch());
+        // We haven't tightly packed this batch.
+        (bytes_to_fill_erasure_batch as f64) > target_batch_pad_bytes()
+    }
+}
+
+// Dynamically determine the coalesce time based on the amount of entry data
+// that has been built up. If we only have a small amount, we can afford to wait
+// longer and avoid unnecessary padding. If we have a lot, we shouldn't wait as
+// long so we avoid delaying downstream validator replay.
+fn max_coalesce_time(serialized_batch_byte_count: u64, max_batch_byte_count: u64) -> Duration {
+    // Compute the fraction of the target batch that has been filled.
+    // Constrain to 75% to ensure we allow some time for coalescing.
+    let ratio = (serialized_batch_byte_count as f64 / max_batch_byte_count as f64).min(0.75);
+    ENTRY_COALESCE_DURATION.mul_f64(1.0 - ratio)
 }
 
 pub(super) fn recv_slot_entries(
@@ -69,9 +100,10 @@ pub(super) fn recv_slot_entries(
     }
 
     let mut serialized_batch_byte_count = serialized_size(&entries)?;
-    let target_serialized_batch_byte_count: u64 = (DATA_SHREDS_PER_FEC_BLOCK
-        * ShredData::capacity(/*merkle_proof_size*/ None).unwrap())
-        as u64;
+    let next_full_batch_byte_count = serialized_batch_byte_count
+        .div_ceil(data_shred_bytes_per_batch())
+        .saturating_mul(data_shred_bytes_per_batch());
+    let max_batch_byte_count = next_full_batch_byte_count.max(target_batch_bytes_default());
 
     // Coalesce entries until one of the following conditions are hit:
     // 1. We ticked through the entire slot.
@@ -82,11 +114,11 @@ pub(super) fn recv_slot_entries(
         last_tick_height,
         bank.max_tick_height(),
         serialized_batch_byte_count,
-        target_serialized_batch_byte_count,
+        max_batch_byte_count,
     ) {
-        let Ok((try_bank, (entry, tick_height))) =
-            receiver.recv_deadline(coalesce_start + ENTRY_COALESCE_DURATION)
-        else {
+        let Ok((try_bank, (entry, tick_height))) = receiver.recv_deadline(
+            coalesce_start + max_coalesce_time(serialized_batch_byte_count, max_batch_byte_count),
+        ) else {
             break;
         };
         // If the bank changed, that implies the previous slot was interrupted and we do not have to
@@ -101,7 +133,7 @@ pub(super) fn recv_slot_entries(
         last_tick_height = tick_height;
 
         let entry_bytes = serialized_size(&entry)?;
-        if serialized_batch_byte_count + entry_bytes > target_serialized_batch_byte_count {
+        if serialized_batch_byte_count + entry_bytes > max_batch_byte_count {
             // This entry will push us over the batch byte limit. Save it for
             // the next batch.
             *carryover_entry = Some((try_bank, (entry, tick_height)));

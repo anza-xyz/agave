@@ -41,6 +41,9 @@ extern crate eager;
 extern crate solana_metrics;
 
 #[macro_use]
+extern crate lazy_static;
+
+#[macro_use]
 extern crate log;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]

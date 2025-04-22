@@ -51,7 +51,10 @@
 
 #[cfg(test)]
 pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
-pub(crate) use self::{merkle_tree::SIZE_OF_MERKLE_ROOT, payload::serde_bytes_payload};
+pub(crate) use self::{
+    merkle_tree::{MAX_MERKLE_PROOF_ENTRIES, SIZE_OF_MERKLE_ROOT},
+    payload::serde_bytes_payload,
+};
 pub use {
     self::{
         payload::Payload,
@@ -115,6 +118,20 @@ const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 // each erasure batch depends on the number of shreds obtained from serializing
 // a &[Entry].
 pub const DATA_SHREDS_PER_FEC_BLOCK: usize = 32;
+
+// Statically compute the typical data batch size assuming:
+// 1. Maximum number of merkle proofs
+// 2. Merkles are chained
+// 3. No retransmit signature
+lazy_static! {
+    pub static ref DATA_SHRED_BYTES_PER_BATCH_TYPICAL: u64 = {
+        let capacity = ShredData::capacity(Some((MAX_MERKLE_PROOF_ENTRIES, true, false)))
+            .expect("Failed to get shred capacity");
+        (DATA_SHREDS_PER_FEC_BLOCK * capacity)
+            .try_into()
+            .expect("u64 conversion failed")
+    };
+}
 
 // For legacy tests and benchmarks.
 const_assert_eq!(LEGACY_SHRED_DATA_CAPACITY, 1051);
