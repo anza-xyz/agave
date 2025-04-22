@@ -1129,7 +1129,7 @@ impl Validator {
             let connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
                 tpu_connection_pool_size,
-                None,
+                Some(node.sockets.quic_forwards_client),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1153,7 +1153,7 @@ impl Validator {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_vote_quic",
                 tpu_connection_pool_size,
-                None, // client_endpoint
+                Some(node.sockets.quic_vote_client),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1220,7 +1220,10 @@ impl Validator {
                 max_complete_rewards_slot,
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 client_option: if config.use_tpu_client_next {
-                    ClientOption::TpuClientNext(Arc::as_ref(&identity_keypair))
+                    ClientOption::TpuClientNext(
+                        Arc::as_ref(&identity_keypair),
+                        node.sockets.rpc_sts_client,
+                    )
                 } else {
                     ClientOption::ConnectionCache(connection_cache.clone())
                 },
@@ -1614,6 +1617,7 @@ impl Validator {
                 transactions_quic: node.sockets.tpu_quic,
                 transactions_forwards_quic: node.sockets.tpu_forwards_quic,
                 vote_quic: node.sockets.tpu_vote_quic,
+                vote_forwards_client: node.sockets.tpu_vote_forwards_client,
             },
             &rpc_subscriptions,
             transaction_status_sender,

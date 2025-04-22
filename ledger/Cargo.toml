@@ -67,6 +67,7 @@ solana-sdk = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-storage-proto = { workspace = true }
+solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-timings = { workspace = true }

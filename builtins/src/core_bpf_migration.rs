@@ -1,4 +1,4 @@
-use solana_pubkey::Pubkey;
+use {solana_hash::Hash, solana_pubkey::Pubkey};
 
 /// Identifies the type of built-in program targeted for Core BPF migration.
 /// The type of target determines whether the program should have a program
@@ -32,6 +32,9 @@ pub struct CoreBpfMigrationConfig {
     pub feature_id: Pubkey,
     /// The type of target to replace.
     pub migration_target: CoreBpfMigrationTargetType,
+    /// If specified, the expected verifiable build hash of the bpf program.
+    /// This will be checked against the buffer account before migration.
+    pub verified_build_hash: Option<Hash>,
     /// Static message used to emit datapoint logging.
     /// This is used to identify the migration in the logs.
     /// Should be unique to the migration, ie:

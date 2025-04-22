@@ -521,7 +521,11 @@ mod tests {
             &vote_account,
             &validator_identity,
             bootstrap_validator_stake_lamports()
-                + solana_stake_program::get_minimum_delegation(&bank.feature_set),
+                + solana_stake_program::get_minimum_delegation(
+                    bank.feature_set.is_active(
+                        &agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id(),
+                    ),
+                ),
         );
         let node_pubkey = validator_identity.pubkey();
 

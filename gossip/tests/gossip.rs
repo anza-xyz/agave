@@ -155,7 +155,7 @@ fn retransmit_to(
 #[test]
 fn gossip_ring() {
     solana_logger::setup();
-    run_gossip_topo(50, |listen| {
+    run_gossip_topo(40, |listen| {
         let num = listen.len();
         for n in 0..num {
             let y = n % listen.len();

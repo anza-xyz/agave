@@ -120,6 +120,8 @@ impl ZeroCiphertextProof {
         transcript.append_point(b"Y_D", &self.Y_D);
 
         let c = transcript.challenge_scalar(b"c");
+
+        transcript.append_scalar(b"z", &self.z);
         let w = transcript.challenge_scalar(b"w"); // w used for batch verification
 
         let w_negated = -&w;

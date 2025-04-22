@@ -16,7 +16,10 @@ use {
     log::*,
     quinn::Endpoint,
     solana_keypair::Keypair,
-    std::{net::SocketAddr, sync::Arc},
+    std::{
+        net::{SocketAddr, UdpSocket},
+        sync::Arc,
+    },
     thiserror::Error,
     tokio::sync::mpsc,
     tokio_util::sync::CancellationToken,
@@ -72,7 +75,7 @@ pub struct Fanout {
 /// behavior related to transaction handling.
 pub struct ConnectionWorkersSchedulerConfig {
     /// The local address to bind the scheduler to.
-    pub bind: SocketAddr,
+    pub bind: BindTarget,
 
     /// Optional stake identity keypair used in the endpoint certificate for
     /// identifying the sender.
@@ -94,6 +97,13 @@ pub struct ConnectionWorkersSchedulerConfig {
 
     /// Configures the number of leaders to connect to and send transactions to.
     pub leaders_fanout: Fanout,
+}
+
+/// The [`BindTarget`] enum defines how the UDP socket should be bound:
+/// either by providing a [`SocketAddr`] or an existing [`UdpSocket`].
+pub enum BindTarget {
+    Address(SocketAddr),
+    Socket(UdpSocket),
 }
 
 /// The [`StakeIdentity`] structure provides a convenient abstraction for handling
@@ -266,7 +276,7 @@ impl ConnectionWorkersScheduler {
 
     /// Sets up the QUIC endpoint for the scheduler to handle connections.
     fn setup_endpoint(
-        bind: SocketAddr,
+        bind: BindTarget,
         stake_identity: Option<StakeIdentity>,
     ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
         let client_certificate = match stake_identity {

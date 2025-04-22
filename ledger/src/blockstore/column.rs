@@ -14,6 +14,8 @@ use {
     solana_storage_proto::convert::generated,
 };
 
+pub(crate) const DEPRECATED_PROGRAM_COSTS_COLUMN_NAME: &str = "program_costs";
+
 // To add a new column, declare the type below and implement the applicable
 // traits for it. At the very least, Column and ColumnName will be necessary.
 //
@@ -188,13 +190,6 @@ pub mod columns {
     /// * index type: `u64` (see [`SlotColumn`])
     /// * value type: `u64`
     pub struct BlockHeight;
-
-    #[derive(Debug)]
-    /// The program costs column
-    ///
-    /// * index type: [`Pubkey`]
-    /// * value type: [`blockstore_meta::ProgramCost`]
-    pub struct ProgramCosts;
 
     #[derive(Debug)]
     /// The optimistic slot column
@@ -607,34 +602,6 @@ impl ColumnName for columns::BlockHeight {
 }
 impl TypedColumn for columns::BlockHeight {
     type Type = u64;
-}
-
-impl ColumnName for columns::ProgramCosts {
-    const NAME: &'static str = "program_costs";
-}
-impl TypedColumn for columns::ProgramCosts {
-    type Type = blockstore_meta::ProgramCost;
-}
-impl Column for columns::ProgramCosts {
-    type Index = Pubkey;
-    type Key = [u8; PUBKEY_BYTES];
-
-    #[inline]
-    fn key(pubkey: &Self::Index) -> Self::Key {
-        pubkey.to_bytes()
-    }
-
-    fn index(key: &[u8]) -> Self::Index {
-        convert_column_key_bytes_to_index!(key, 0..32 => Pubkey::from)
-    }
-
-    fn slot(_index: Self::Index) -> Slot {
-        unimplemented!()
-    }
-
-    fn as_index(_index: u64) -> Self::Index {
-        Pubkey::default()
-    }
 }
 
 impl Column for columns::ShredCode {

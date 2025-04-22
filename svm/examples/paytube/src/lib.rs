@@ -63,7 +63,6 @@ use {
     crate::{
         loader::PayTubeAccountLoader, settler::PayTubeSettler, transaction::PayTubeTransaction,
     },
-    agave_feature_set::FeatureSet,
     processor::{
         create_transaction_batch_processor, get_transaction_check_results, PayTubeForkGraph,
     },
@@ -75,6 +74,7 @@ use {
     solana_svm::transaction_processor::{
         TransactionProcessingConfig, TransactionProcessingEnvironment,
     },
+    solana_svm_feature_set::SVMFeatureSet,
     std::sync::{Arc, RwLock},
     transaction::create_svm_transactions,
 };
@@ -115,7 +115,7 @@ impl PayTubeChannel {
         //
         // For example purposes, they are provided as defaults here.
         let compute_budget = SVMTransactionExecutionBudget::default();
-        let feature_set = FeatureSet::all_enabled();
+        let feature_set = SVMFeatureSet::all_enabled();
         let fee_structure = FeeStructure::default();
         let rent_collector = RentCollector::default();
 

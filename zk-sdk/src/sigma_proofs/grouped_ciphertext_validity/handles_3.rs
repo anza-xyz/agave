@@ -160,6 +160,9 @@ impl GroupedCiphertext3HandlesValidityProof {
         transcript.append_point(b"Y_3", &self.Y_3);
 
         let c = transcript.challenge_scalar(b"c");
+
+        transcript.append_scalar(b"z_r", &self.z_r);
+        transcript.append_scalar(b"z_x", &self.z_x);
         let w = transcript.challenge_scalar(b"w");
         let ww = &w * &w;
         let www = &w * &ww;

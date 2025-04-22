@@ -42,11 +42,7 @@ impl CostModel {
             TransactionCost::SimpleVote { transaction }
         } else {
             let (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost) =
-                Self::get_transaction_cost(
-                    transaction,
-                    transaction.program_instructions_iter(),
-                    feature_set,
-                );
+                Self::get_transaction_cost(transaction, feature_set);
             Self::calculate_non_vote_transaction_cost(
                 transaction,
                 transaction.program_instructions_iter(),
@@ -74,8 +70,7 @@ impl CostModel {
                 actual_loaded_accounts_data_size_bytes,
                 feature_set,
             );
-            let instructions_data_cost =
-                Self::get_instructions_data_cost(transaction.program_instructions_iter());
+            let instructions_data_cost = Self::get_instructions_data_cost(transaction);
 
             Self::calculate_non_vote_transaction_cost(
                 transaction,
@@ -95,7 +90,7 @@ impl CostModel {
     /// - `num_write_locks` - number of requested write locks
     pub fn estimate_cost<'a, Tx: StaticMeta>(
         transaction: &'a Tx,
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
         num_write_locks: u64,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
@@ -103,7 +98,7 @@ impl CostModel {
             return TransactionCost::SimpleVote { transaction };
         }
         let (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost) =
-            Self::get_transaction_cost(transaction, instructions.clone(), feature_set);
+            Self::get_transaction_cost(transaction, feature_set);
         Self::calculate_non_vote_transaction_cost(
             transaction,
             instructions,
@@ -117,11 +112,11 @@ impl CostModel {
 
     fn calculate_non_vote_transaction_cost<'a, Tx: StaticMeta>(
         transaction: &'a Tx,
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
         num_write_locks: u64,
         programs_execution_cost: u64,
         loaded_accounts_data_size_cost: u64,
-        data_bytes_cost: u64,
+        data_bytes_cost: u16,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
         let signature_cost = Self::get_signature_cost(transaction, feature_set);
@@ -187,12 +182,8 @@ impl CostModel {
     }
 
     /// Return (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost)
-    fn get_transaction_cost<'a>(
-        meta: &impl StaticMeta,
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
-        feature_set: &FeatureSet,
-    ) -> (u64, u64, u64) {
-        let data_bytes_cost = Self::get_instructions_data_cost(instructions);
+    fn get_transaction_cost(meta: &impl StaticMeta, feature_set: &FeatureSet) -> (u64, u64, u16) {
+        let data_bytes_cost = Self::get_instructions_data_cost(meta);
         let (programs_execution_cost, loaded_accounts_data_size_cost) =
             Self::get_estimated_execution_cost(meta, feature_set);
         (
@@ -227,14 +218,8 @@ impl CostModel {
     }
 
     /// Return the instruction data bytes cost.
-    fn get_instructions_data_cost<'a>(
-        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
-    ) -> u64 {
-        let ix_data_bytes_len_total: u64 = instructions
-            .map(|(_, instruction)| instruction.data.len() as u64)
-            .sum();
-
-        ix_data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST
+    fn get_instructions_data_cost(transaction: &impl StaticMeta) -> u16 {
+        transaction.instruction_data_len() / (INSTRUCTION_DATA_BYTES_COST as u16)
     }
 
     pub fn calculate_loaded_accounts_data_size_cost(
@@ -539,11 +524,7 @@ mod tests {
         let feature_set = FeatureSet::default();
         let expected_execution_cost = u64::from(MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT);
         let (program_execution_cost, _loaded_accounts_data_size_cost, _data_bytes_cost) =
-            CostModel::get_transaction_cost(
-                &simple_transaction,
-                simple_transaction.program_instructions_iter(),
-                &feature_set,
-            );
+            CostModel::get_transaction_cost(&simple_transaction, &feature_set);
 
         assert_eq!(expected_execution_cost, program_execution_cost);
     }
@@ -573,11 +554,7 @@ mod tests {
             ),
         ] {
             let (program_execution_cost, _loaded_accounts_data_size_cost, data_bytes_cost) =
-                CostModel::get_transaction_cost(
-                    &token_transaction,
-                    token_transaction.program_instructions_iter(),
-                    &feature_set,
-                );
+                CostModel::get_transaction_cost(&token_transaction, &feature_set);
 
             assert_eq!(expected_execution_cost, program_execution_cost);
             assert_eq!(0, data_bytes_cost);
@@ -630,11 +607,7 @@ mod tests {
             (FeatureSet::all_enabled(), expected_cu_limit as u64),
         ] {
             let (program_execution_cost, _loaded_accounts_data_size_cost, data_bytes_cost) =
-                CostModel::get_transaction_cost(
-                    &token_transaction,
-                    token_transaction.program_instructions_iter(),
-                    &feature_set,
-                );
+                CostModel::get_transaction_cost(&token_transaction, &feature_set);
 
             assert_eq!(expected_execution_cost, program_execution_cost);
             assert_eq!(1, data_bytes_cost);
@@ -674,11 +647,7 @@ mod tests {
 
         for feature_set in [FeatureSet::default(), FeatureSet::all_enabled()] {
             let (program_execution_cost, _loaded_accounts_data_size_cost, _data_bytes_cost) =
-                CostModel::get_transaction_cost(
-                    &token_transaction,
-                    token_transaction.program_instructions_iter(),
-                    &feature_set,
-                );
+                CostModel::get_transaction_cost(&token_transaction, &feature_set);
             assert_eq!(0, program_execution_cost);
         }
     }
@@ -702,7 +671,7 @@ mod tests {
         let feature_set = FeatureSet::default();
         let expected_execution_cost = 2 * u64::from(MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT);
         let (programs_execution_cost, _loaded_accounts_data_size_cost, data_bytes_cost) =
-            CostModel::get_transaction_cost(&tx, tx.program_instructions_iter(), &feature_set);
+            CostModel::get_transaction_cost(&tx, &feature_set);
         assert_eq!(expected_execution_cost, programs_execution_cost);
         assert_eq!(6, data_bytes_cost);
     }
@@ -741,7 +710,7 @@ mod tests {
             ),
         ] {
             let (program_execution_cost, _loaded_accounts_data_size_cost, data_bytes_cost) =
-                CostModel::get_transaction_cost(&tx, tx.program_instructions_iter(), &feature_set);
+                CostModel::get_transaction_cost(&tx, &feature_set);
             assert_eq!(expected_cost, program_execution_cost);
             assert_eq!(0, data_bytes_cost);
         }
@@ -859,11 +828,7 @@ mod tests {
         let expected_execution_cost = u64::from(MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT)
             + u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT);
         let (programs_execution_cost, _loaded_accounts_data_size_cost, _data_bytes_cost) =
-            CostModel::get_transaction_cost(
-                &transaction,
-                transaction.program_instructions_iter(),
-                &feature_set,
-            );
+            CostModel::get_transaction_cost(&transaction, &feature_set);
 
         assert_eq!(expected_execution_cost, programs_execution_cost);
     }
@@ -887,11 +852,7 @@ mod tests {
         let expected_execution_cost = cu_limit as u64;
 
         let (programs_execution_cost, _loaded_accounts_data_size_cost, _data_bytes_cost) =
-            CostModel::get_transaction_cost(
-                &transaction,
-                transaction.program_instructions_iter(),
-                &feature_set,
-            );
+            CostModel::get_transaction_cost(&transaction, &feature_set);
 
         assert_eq!(expected_execution_cost, programs_execution_cost);
     }

@@ -133,7 +133,7 @@ impl TestSetup {
             Ok(()),
             stake_instruction::Entrypoint::vm,
             |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::clone(&self.feature_set));
+                invoke_context.mock_set_feature_set(Arc::new(self.feature_set.runtime_features()));
             },
             |_invoke_context| {},
         );
@@ -174,7 +174,7 @@ impl TestSetup {
             Ok(()),
             stake_instruction::Entrypoint::vm,
             |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::clone(&self.feature_set));
+                invoke_context.mock_set_feature_set(Arc::new(self.feature_set.runtime_features()));
             },
             |_invoke_context| {},
         );
@@ -193,7 +193,7 @@ impl TestSetup {
             Ok(()), //expected_result,
             stake_instruction::Entrypoint::vm,
             |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::clone(&self.feature_set));
+                invoke_context.mock_set_feature_set(Arc::new(self.feature_set.runtime_features()));
             },
             |_invoke_context| {},
         );

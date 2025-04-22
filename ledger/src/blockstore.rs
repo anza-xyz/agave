@@ -49,6 +49,7 @@ use {
         transaction::{SanitizedVersionedTransaction, VersionedTransaction},
     },
     solana_storage_proto::{StoredExtendedRewards, StoredTransactionStatusMeta},
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     solana_transaction_status::{
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, Rewards,
         RewardsAndNumPartitions, TransactionStatusMeta, TransactionWithStatusMeta,
@@ -262,7 +263,6 @@ pub struct Blockstore {
     optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots>,
     orphans_cf: LedgerColumn<cf::Orphans>,
     perf_samples_cf: LedgerColumn<cf::PerfSamples>,
-    program_costs_cf: LedgerColumn<cf::ProgramCosts>,
     rewards_cf: LedgerColumn<cf::Rewards>,
     roots_cf: LedgerColumn<cf::Root>,
     transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
@@ -410,7 +410,6 @@ impl Blockstore {
         let optimistic_slots_cf = db.column();
         let orphans_cf = db.column();
         let perf_samples_cf = db.column();
-        let program_costs_cf = db.column();
         let rewards_cf = db.column();
         let roots_cf = db.column();
         let transaction_memos_cf = db.column();
@@ -445,7 +444,6 @@ impl Blockstore {
             optimistic_slots_cf,
             orphans_cf,
             perf_samples_cf,
-            program_costs_cf,
             rewards_cf,
             roots_cf,
             transaction_memos_cf,
@@ -866,7 +864,6 @@ impl Blockstore {
         self.blocktime_cf.submit_rocksdb_cf_metrics();
         self.perf_samples_cf.submit_rocksdb_cf_metrics();
         self.block_height_cf.submit_rocksdb_cf_metrics();
-        self.program_costs_cf.submit_rocksdb_cf_metrics();
         self.bank_hash_cf.submit_rocksdb_cf_metrics();
         self.optimistic_slots_cf.submit_rocksdb_cf_metrics();
         self.merkle_root_meta_cf.submit_rocksdb_cf_metrics();
@@ -990,7 +987,7 @@ impl Blockstore {
         leader_schedule: Option<&LeaderScheduleCache>,
         reed_solomon_cache: &ReedSolomonCache,
         shred_insertion_tracker: &mut ShredInsertionTracker,
-        retransmit_sender: &Sender<Vec<shred::Payload>>,
+        retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
         is_trusted: bool,
         metrics: &mut BlockstoreInsertionMetrics,
     ) {
@@ -1024,7 +1021,7 @@ impl Blockstore {
             })
             .collect();
         if !recovered_shreds.is_empty() {
-            let _ = retransmit_sender.send(recovered_shreds);
+            let _ = retransmit_sender.try_send(recovered_shreds);
         }
         metrics.num_recovered += recovered_data_shreds.len();
         for shred in recovered_data_shreds {
@@ -1240,7 +1237,7 @@ impl Blockstore {
         // recovered shreds.
         should_recover_shreds: Option<(
             &ReedSolomonCache,
-            &Sender<Vec<shred::Payload>>, // retransmit_sender
+            &EvictingSender<Vec<shred::Payload>>, // retransmit_sender
         )>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
@@ -1321,7 +1318,7 @@ impl Blockstore {
         >,
         leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
-        retransmit_sender: &Sender<Vec<shred::Payload>>,
+        retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
         handle_duplicate: &F,
         reed_solomon_cache: &ReedSolomonCache,
         metrics: &mut BlockstoreInsertionMetrics,
@@ -3557,26 +3554,6 @@ impl Blockstore {
         let bytes =
             serialize(&perf_sample).expect("`PerfSampleV2` can be serialized with `bincode`");
         self.perf_samples_cf.put_bytes(index, &bytes)
-    }
-
-    pub fn read_program_costs(&self) -> Result<Vec<(Pubkey, u64)>> {
-        Ok(self
-            .program_costs_cf
-            .iter(IteratorMode::End)?
-            .map(|(pubkey, data)| {
-                let program_cost: ProgramCost = deserialize(&data).unwrap();
-                (pubkey, program_cost.cost)
-            })
-            .collect())
-    }
-
-    pub fn write_program_cost(&self, key: &Pubkey, value: &u64) -> Result<()> {
-        self.program_costs_cf
-            .put(*key, &ProgramCost { cost: *value })
-    }
-
-    pub fn delete_program_cost(&self, key: &Pubkey) -> Result<()> {
-        self.program_costs_cf.delete(*key)
     }
 
     /// Returns the entry vector for the slot starting with `shred_start_index`
@@ -8145,6 +8122,7 @@ pub mod tests {
                     post_balances.push(i as u64 * 11);
                 }
                 let compute_units_consumed = Some(12345);
+                let cost_units = Some(6789);
                 let signature = transaction.signatures[0];
                 let status = TransactionStatusMeta {
                     status: Ok(()),
@@ -8159,6 +8137,7 @@ pub mod tests {
                     loaded_addresses: LoadedAddresses::default(),
                     return_data: Some(TransactionReturnData::default()),
                     compute_units_consumed,
+                    cost_units,
                 }
                 .into();
                 blockstore
@@ -8178,6 +8157,7 @@ pub mod tests {
                     loaded_addresses: LoadedAddresses::default(),
                     return_data: Some(TransactionReturnData::default()),
                     compute_units_consumed,
+                    cost_units,
                 }
                 .into();
                 blockstore
@@ -8197,6 +8177,7 @@ pub mod tests {
                     loaded_addresses: LoadedAddresses::default(),
                     return_data: Some(TransactionReturnData::default()),
                     compute_units_consumed,
+                    cost_units,
                 }
                 .into();
                 blockstore
@@ -8218,6 +8199,7 @@ pub mod tests {
                         loaded_addresses: LoadedAddresses::default(),
                         return_data: Some(TransactionReturnData::default()),
                         compute_units_consumed,
+                        cost_units,
                     },
                 }
             })
@@ -8341,7 +8323,9 @@ pub mod tests {
             data: vec![1, 2, 3],
         };
         let compute_units_consumed_1 = Some(3812649u64);
+        let cost_units_1 = Some(1234);
         let compute_units_consumed_2 = Some(42u64);
+        let cost_units_2 = Some(5678);
 
         // result not found
         assert!(transaction_status_cf
@@ -8363,6 +8347,7 @@ pub mod tests {
             loaded_addresses: test_loaded_addresses.clone(),
             return_data: Some(test_return_data.clone()),
             compute_units_consumed: compute_units_consumed_1,
+            cost_units: cost_units_1,
         }
         .into();
         assert!(transaction_status_cf
@@ -8383,6 +8368,7 @@ pub mod tests {
             loaded_addresses,
             return_data,
             compute_units_consumed,
+            cost_units,
         } = transaction_status_cf
             .get_protobuf((Signature::default(), 0))
             .unwrap()
@@ -8401,6 +8387,7 @@ pub mod tests {
         assert_eq!(loaded_addresses, test_loaded_addresses);
         assert_eq!(return_data.unwrap(), test_return_data);
         assert_eq!(compute_units_consumed, compute_units_consumed_1);
+        assert_eq!(cost_units, cost_units_1);
 
         // insert value
         let status = TransactionStatusMeta {
@@ -8416,6 +8403,7 @@ pub mod tests {
             loaded_addresses: test_loaded_addresses.clone(),
             return_data: Some(test_return_data.clone()),
             compute_units_consumed: compute_units_consumed_2,
+            cost_units: cost_units_2,
         }
         .into();
         assert!(transaction_status_cf
@@ -8436,6 +8424,7 @@ pub mod tests {
             loaded_addresses,
             return_data,
             compute_units_consumed,
+            cost_units,
         } = transaction_status_cf
             .get_protobuf((Signature::from([2u8; 64]), 9))
             .unwrap()
@@ -8456,6 +8445,7 @@ pub mod tests {
         assert_eq!(loaded_addresses, test_loaded_addresses);
         assert_eq!(return_data.unwrap(), test_return_data);
         assert_eq!(compute_units_consumed, compute_units_consumed_2);
+        assert_eq!(cost_units, cost_units_2);
     }
 
     #[test]
@@ -8552,6 +8542,7 @@ pub mod tests {
             loaded_addresses: LoadedAddresses::default(),
             return_data: Some(TransactionReturnData::default()),
             compute_units_consumed: Some(42u64),
+            cost_units: Some(1234),
         }
         .into();
 
@@ -8728,6 +8719,7 @@ pub mod tests {
             loaded_addresses: LoadedAddresses::default(),
             return_data: Some(TransactionReturnData::default()),
             compute_units_consumed: Some(42u64),
+            cost_units: Some(1234),
         }
         .into();
 
@@ -8855,6 +8847,7 @@ pub mod tests {
             loaded_addresses: LoadedAddresses::default(),
             return_data: Some(TransactionReturnData::default()),
             compute_units_consumed: Some(42u64),
+            cost_units: Some(1234),
         }
         .into();
 
@@ -9024,6 +9017,7 @@ pub mod tests {
                     loaded_addresses: LoadedAddresses::default(),
                     return_data: return_data.clone(),
                     compute_units_consumed: Some(42),
+                    cost_units: Some(1234),
                 }
                 .into();
                 blockstore
@@ -9045,6 +9039,7 @@ pub mod tests {
                         loaded_addresses: LoadedAddresses::default(),
                         return_data,
                         compute_units_consumed: Some(42),
+                        cost_units: Some(1234),
                     },
                 }
             })
@@ -9146,6 +9141,7 @@ pub mod tests {
                     loaded_addresses: LoadedAddresses::default(),
                     return_data: return_data.clone(),
                     compute_units_consumed: Some(42u64),
+                    cost_units: Some(1234),
                 }
                 .into();
                 blockstore
@@ -9167,6 +9163,7 @@ pub mod tests {
                         loaded_addresses: LoadedAddresses::default(),
                         return_data,
                         compute_units_consumed: Some(42u64),
+                        cost_units: Some(1234),
                     },
                 }
             })
@@ -9843,6 +9840,7 @@ pub mod tests {
                 loaded_addresses: LoadedAddresses::default(),
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed: None,
+                cost_units: None,
             }
             .into();
             transaction_status_cf
@@ -10065,7 +10063,7 @@ pub mod tests {
         let (data_shreds, coding_shreds, leader_schedule_cache) =
             setup_erasure_shreds(slot, 0, 100);
 
-        let (dummy_retransmit_sender, _) = crossbeam_channel::bounded(0);
+        let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
         let coding_shreds = coding_shreds
             .into_iter()
             .map(|shred| (Cow::Owned(shred), /*is_repaired:*/ false));
@@ -10649,6 +10647,7 @@ pub mod tests {
                 data: vec![1, 2, 3],
             }),
             compute_units_consumed: Some(23456),
+            cost_units: Some(5678),
         };
         let deprecated_status: StoredTransactionStatusMeta = status.clone().try_into().unwrap();
         let protobuf_status: generated::TransactionStatusMeta = status.into();
@@ -11083,124 +11082,6 @@ pub mod tests {
             }
 
             assert!(Arc::strong_count(&blockstore) == 1);
-        }
-    }
-
-    #[test]
-    fn test_read_write_cost_table() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let num_entries: usize = 10;
-        let mut cost_table: HashMap<Pubkey, u64> = HashMap::new();
-        for x in 1..num_entries + 1 {
-            cost_table.insert(Pubkey::new_unique(), (x + 100) as u64);
-        }
-
-        // write to db
-        for (key, cost) in cost_table.iter() {
-            blockstore
-                .write_program_cost(key, cost)
-                .expect("write a program");
-        }
-
-        // read back from db
-        let read_back = blockstore.read_program_costs().expect("read programs");
-        // verify
-        assert_eq!(read_back.len(), cost_table.len());
-        for (read_key, read_cost) in read_back {
-            assert_eq!(read_cost, *cost_table.get(&read_key).unwrap());
-        }
-
-        // update value, write to db
-        for val in cost_table.values_mut() {
-            *val += 100;
-        }
-        for (key, cost) in cost_table.iter() {
-            blockstore
-                .write_program_cost(key, cost)
-                .expect("write a program");
-        }
-        // add a new record
-        let new_program_key = Pubkey::new_unique();
-        let new_program_cost = 999;
-        blockstore
-            .write_program_cost(&new_program_key, &new_program_cost)
-            .unwrap();
-
-        // confirm value updated
-        let read_back = blockstore.read_program_costs().expect("read programs");
-        // verify
-        assert_eq!(read_back.len(), cost_table.len() + 1);
-        for (key, cost) in cost_table.iter() {
-            assert_eq!(*cost, read_back.iter().find(|(k, _v)| k == key).unwrap().1);
-        }
-        assert_eq!(
-            new_program_cost,
-            read_back
-                .iter()
-                .find(|(k, _v)| *k == new_program_key)
-                .unwrap()
-                .1
-        );
-
-        // test delete
-        blockstore
-            .delete_program_cost(&new_program_key)
-            .expect("delete a progrma");
-        let read_back = blockstore.read_program_costs().expect("read programs");
-        // verify
-        assert_eq!(read_back.len(), cost_table.len());
-        for (read_key, read_cost) in read_back {
-            assert_eq!(read_cost, *cost_table.get(&read_key).unwrap());
-        }
-    }
-
-    #[test]
-    fn test_delete_old_records_from_cost_table() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let num_entries: usize = 10;
-        let mut cost_table: HashMap<Pubkey, u64> = HashMap::new();
-        for x in 1..num_entries + 1 {
-            cost_table.insert(Pubkey::new_unique(), (x + 100) as u64);
-        }
-
-        // write to db
-        for (key, cost) in cost_table.iter() {
-            blockstore
-                .write_program_cost(key, cost)
-                .expect("write a program");
-        }
-
-        // remove a record
-        let mut removed_key = Pubkey::new_unique();
-        for (key, cost) in cost_table.iter() {
-            if *cost == 101_u64 {
-                removed_key = *key;
-                break;
-            }
-        }
-        cost_table.remove(&removed_key);
-
-        // delete records from blockstore if they are no longer in cost_table
-        let db_records = blockstore.read_program_costs().expect("read programs");
-        db_records.iter().for_each(|(pubkey, _)| {
-            if !cost_table.iter().any(|(key, _)| key == pubkey) {
-                assert_eq!(*pubkey, removed_key);
-                blockstore
-                    .delete_program_cost(pubkey)
-                    .expect("delete old program");
-            }
-        });
-
-        // read back from db
-        let read_back = blockstore.read_program_costs().expect("read programs");
-        // verify
-        assert_eq!(read_back.len(), cost_table.len());
-        for (read_key, read_cost) in read_back {
-            assert_eq!(read_cost, *cost_table.get(&read_key).unwrap());
         }
     }
 

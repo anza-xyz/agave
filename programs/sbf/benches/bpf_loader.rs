@@ -7,15 +7,11 @@
     allow(dead_code, unused_imports)
 )]
 
-use {
-    agave_feature_set::bpf_account_data_direct_mapping, solana_sbpf::memory_region::MemoryState,
-    solana_sdk::signer::keypair::Keypair, std::slice,
-};
+use {solana_sdk::signer::keypair::Keypair, std::slice};
 
 extern crate test;
 
 use {
-    agave_feature_set::FeatureSet,
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
     solana_bpf_loader_program::{create_vm, syscalls::create_program_runtime_environment_v1},
     solana_measure::measure::Measure,
@@ -44,6 +40,7 @@ use {
         pubkey::Pubkey,
         signature::Signer,
     },
+    solana_svm_feature_set::SVMFeatureSet,
     solana_transaction_context::InstructionAccount,
     std::{mem, sync::Arc},
     test::Bencher,
@@ -92,7 +89,7 @@ fn bench_program_create_executable(bencher: &mut Bencher) {
     let elf = load_program_from_file("bench_alu");
 
     let program_runtime_environment = create_program_runtime_environment_v1(
-        &FeatureSet::default(),
+        &SVMFeatureSet::default(),
         &SVMTransactionExecutionBudget::default(),
         true,
         false,
@@ -235,7 +232,7 @@ fn bench_create_vm(bencher: &mut Bencher) {
 
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&bpf_account_data_direct_mapping::id());
+        .bpf_account_data_direct_mapping;
     let program_runtime_environment = create_program_runtime_environment_v1(
         invoke_context.get_feature_set(),
         &SVMTransactionExecutionBudget::default(),
@@ -281,7 +278,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
 
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&bpf_account_data_direct_mapping::id());
+        .bpf_account_data_direct_mapping;
 
     // Serialize account data
     let (_serialized, regions, account_lengths) = serialize_parameters(
@@ -337,23 +334,26 @@ fn clone_regions(regions: &[MemoryRegion]) -> Vec<MemoryRegion> {
     unsafe {
         regions
             .iter()
-            .map(|region| match region.state.get() {
-                MemoryState::Readable => MemoryRegion::new_readonly(
-                    slice::from_raw_parts(region.host_addr.get() as *const _, region.len as usize),
-                    region.vm_addr,
-                ),
-                MemoryState::Writable => MemoryRegion::new_writable(
-                    slice::from_raw_parts_mut(
-                        region.host_addr.get() as *mut _,
-                        region.len as usize,
-                    ),
-                    region.vm_addr,
-                ),
-                MemoryState::Cow(id) => MemoryRegion::new_cow(
-                    slice::from_raw_parts(region.host_addr.get() as *const _, region.len as usize),
-                    region.vm_addr,
-                    id,
-                ),
+            .map(|region| {
+                let mut new_region = if region.writable.get() {
+                    MemoryRegion::new_writable(
+                        slice::from_raw_parts_mut(
+                            region.host_addr.get() as *mut _,
+                            region.len as usize,
+                        ),
+                        region.vm_addr,
+                    )
+                } else {
+                    MemoryRegion::new_readonly(
+                        slice::from_raw_parts(
+                            region.host_addr.get() as *const _,
+                            region.len as usize,
+                        ),
+                        region.vm_addr,
+                    )
+                };
+                new_region.cow_callback_payload = region.cow_callback_payload;
+                new_region
             })
             .collect()
     }

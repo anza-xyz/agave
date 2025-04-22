@@ -10,7 +10,6 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-agave-feature-set = { workspace = true }
 ahash = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -43,9 +42,9 @@ solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-rent-collector = { workspace = true }
 solana-rent-debits = { workspace = true }
-solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm-callback = { workspace = true }
+solana-svm-feature-set = { workspace = true }
 solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-timings = { workspace = true }
@@ -59,6 +58,7 @@ crate-type = ["lib"]
 name = "solana_svm"
 
 [dev-dependencies]
+agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }

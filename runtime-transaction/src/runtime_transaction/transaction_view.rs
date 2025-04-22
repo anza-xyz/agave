@@ -1,7 +1,7 @@
 use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
-        signature_details::get_precompile_signature_details,
+        instruction_meta::InstructionMeta,
         transaction_meta::{StaticMeta, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
@@ -51,8 +51,11 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
         let is_simple_vote_tx =
             is_simple_vote_tx.unwrap_or_else(|| is_simple_vote_transaction(&transaction));
 
-        let precompile_signature_details =
-            get_precompile_signature_details(transaction.program_instructions_iter());
+        let InstructionMeta {
+            precompile_signature_details,
+            instruction_data_len,
+        } = InstructionMeta::try_new(transaction.program_instructions_iter())?;
+
         let signature_details = TransactionSignatureDetails::new(
             u64::from(transaction.num_required_signatures()),
             precompile_signature_details.num_secp256k1_instruction_signatures,
@@ -69,6 +72,7 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
                 is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
                 compute_budget_instruction_details,
+                instruction_data_len,
             },
         })
     }

@@ -52,6 +52,8 @@ impl CreateClient for TpuClientNextClient {
     ) -> Self {
         let runtime_handle =
             maybe_runtime.expect("Runtime should be provided for the TpuClientNextClient.");
+        let bind_socket = solana_net_utils::bind_to_localhost()
+            .expect("Should be able to open UdpSocket for tests.");
         Self::new::<NullTpuInfo>(
             runtime_handle,
             my_tpu_address,
@@ -59,6 +61,7 @@ impl CreateClient for TpuClientNextClient {
             None,
             leader_forward_count,
             None,
+            bind_socket,
         )
     }
 }

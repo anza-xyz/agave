@@ -1,5 +1,5 @@
 use {
-    solana_sdk::{instruction::InstructionError, pubkey::Pubkey},
+    solana_sdk::{hash::Hash, instruction::InstructionError, pubkey::Pubkey},
     thiserror::Error,
 };
 
@@ -45,4 +45,7 @@ pub enum CoreBpfMigrationError {
     /// Upgrade authority mismatch
     #[error("Upgrade authority mismatch. Expected: {0:?}, Got: {1:?}")]
     UpgradeAuthorityMismatch(Pubkey, Option<Pubkey>),
+    /// Invalid verified build hash
+    #[error("Invalid build hash. Expected: {0:?}, Got: {1:?}")]
+    BuildHashMismatch(Hash, Hash),
 }

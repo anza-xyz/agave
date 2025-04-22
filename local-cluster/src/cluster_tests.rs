@@ -532,6 +532,7 @@ pub fn start_gossip_voter(
     num_expected_peers: usize,
     refresh_ms: u64,
     max_votes_to_refresh: usize,
+    shred_version: u16,
 ) -> GossipVoter {
     let exit = Arc::new(AtomicBool::new(false));
     let (gossip_service, tcp_listener, cluster_info) = gossip_service::make_gossip_node(
@@ -541,7 +542,7 @@ pub fn start_gossip_voter(
         Some(gossip_addr),
         exit.clone(),
         None,
-        0,
+        shred_version,
         false,
         SocketAddrSpace::Unspecified,
     );

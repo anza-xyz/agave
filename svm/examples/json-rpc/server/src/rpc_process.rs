@@ -544,7 +544,7 @@ impl JsonRpcRequestProcessor {
             blockhash,
             blockhash_lamports_per_signature: lamports_per_signature,
             epoch_total_stake: 0,
-            feature_set: Arc::clone(&bank.feature_set),
+            feature_set: Arc::new(bank.feature_set.runtime_features()),
             rent_collector: None,
         };
 

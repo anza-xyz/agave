@@ -6,7 +6,7 @@ use {
         account_storage::meta::{AccountMeta, StoredMeta},
         accounts_file::AccountsFileProvider,
         accounts_hash::MERKLE_FANOUT,
-        accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
+        accounts_index::{tests::*, AccountIndex, AccountSecondaryIndexesIncludeExclude},
         ancient_append_vecs,
         append_vec::{
             aligned_stored_size, test_utils::TempFile, AppendVec, AppendVecStoredAccountMeta,
@@ -63,6 +63,9 @@ where
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         callback(self.1[index].1.into())
+    }
+    fn pubkey(&self, index: usize) -> &Pubkey {
+        self.1[index].0
     }
     fn slot(&self, index: usize) -> Slot {
         // note that this could be different than 'target_slot()' PER account
@@ -235,6 +238,29 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
         0,
         append_vec.alive_bytes_exclude_zero_lamport_single_ref_accounts()
     );
+}
+
+#[test]
+fn test_generate_index_duplicates_within_slot_with_secondary_indexes() {
+    let secondary_indexes = AccountSecondaryIndexes {
+        keys: None,
+        indexes: HashSet::from([
+            AccountIndex::ProgramId,
+            AccountIndex::SplTokenMint,
+            AccountIndex::SplTokenOwner,
+        ]),
+    };
+    let accounts_db_config = AccountsDbConfig {
+        account_indexes: Some(secondary_indexes),
+        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+    };
+    let accounts_db = AccountsDb::new_with_config(
+        Vec::new(),
+        Some(accounts_db_config),
+        None,
+        AtomicBool::new(false).into(),
+    );
+    run_generate_index_duplicates_within_slot_test(accounts_db, false);
 }
 
 fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
@@ -4173,11 +4199,11 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
     // Flushing cache should only create one storage entry
     let storage0 = accounts_db.get_and_assert_single_storage(slot);
 
-    storage0.accounts.scan_accounts_stored_meta(|account| {
+    storage0.accounts.scan_index(|account| {
         let before_size = storage0.alive_bytes();
         let account_info = accounts_db
             .accounts_index
-            .get_cloned(account.pubkey())
+            .get_cloned(&account.index_info.pubkey)
             .unwrap()
             .slot_list
             .read()
@@ -4194,7 +4220,7 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
             // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
             assert_eq!(after_size, 0);
         } else {
-            assert_eq!(before_size, after_size + account.stored_size());
+            assert_eq!(before_size, after_size + account.stored_size_aligned);
         }
     });
 });
@@ -4395,8 +4421,8 @@ fn test_accounts_db_cache_clean_dead_slots() {
         if let ScanStorageResult::Stored(slot_accounts) = accounts_db.scan_account_storage(
             *slot as Slot,
             |_| Some(0),
-            |slot_accounts: &DashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
-                slot_accounts.insert(*loaded_account.pubkey());
+            |slot_accounts: &mut HashSet<Pubkey>, stored_account, _data| {
+                slot_accounts.insert(*stored_account.pubkey());
             },
             ScanAccountStorageData::NoData,
         ) {
@@ -4429,12 +4455,12 @@ fn test_accounts_db_cache_clean() {
         if let ScanStorageResult::Stored(slot_account) = accounts_db.scan_account_storage(
             *slot as Slot,
             |_| Some(0),
-            |slot_account: &RwLock<Pubkey>, loaded_account: &LoadedAccount, _data| {
-                *slot_account.write().unwrap() = *loaded_account.pubkey();
+            |slot_account: &mut Pubkey, stored_account, _data| {
+                *slot_account = *stored_account.pubkey();
             },
             ScanAccountStorageData::NoData,
         ) {
-            assert_eq!(*slot_account.read().unwrap(), keys[*slot as usize]);
+            assert_eq!(slot_account, keys[*slot as usize]);
         } else {
             panic!("Everything should have been flushed")
         }
@@ -4484,7 +4510,7 @@ fn run_test_accounts_db_cache_clean_max_root(
     for slot in &slots {
         let slot_accounts = accounts_db.scan_account_storage(
             *slot as Slot,
-            |loaded_account: &LoadedAccount| {
+            |loaded_account| {
                 assert!(
                     !is_cache_at_limit,
                     "When cache is at limit, all roots should have been flushed to storage"
@@ -4494,8 +4520,8 @@ fn run_test_accounts_db_cache_clean_max_root(
                 assert!(*slot > requested_flush_root);
                 Some(*loaded_account.pubkey())
             },
-            |slot_accounts: &DashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
-                slot_accounts.insert(*loaded_account.pubkey());
+            |slot_accounts: &mut HashSet<Pubkey>, stored_account, _data| {
+                slot_accounts.insert(*stored_account.pubkey());
                 if !is_cache_at_limit {
                     // Only true when the limit hasn't been reached and there are still
                     // slots left in the cache
@@ -4602,17 +4628,14 @@ fn run_flush_rooted_accounts_cache(should_clean: bool) {
     // If no cleaning is specified, then flush everything
     accounts_db.flush_rooted_accounts_cache(None, should_clean);
     for slot in &slots {
-        let slot_accounts = if let ScanStorageResult::Stored(slot_accounts) = accounts_db
-            .scan_account_storage(
-                *slot as Slot,
-                |_| Some(0),
-                |slot_account: &DashSet<Pubkey>, loaded_account: &LoadedAccount, _data| {
-                    slot_account.insert(*loaded_account.pubkey());
-                },
-                ScanAccountStorageData::NoData,
-            ) {
-            slot_accounts.into_iter().collect::<HashSet<Pubkey>>()
-        } else {
+        let ScanStorageResult::Stored(slot_accounts) = accounts_db.scan_account_storage(
+            *slot as Slot,
+            |_| Some(0),
+            |slot_account: &mut HashSet<Pubkey>, stored_account, _data| {
+                slot_account.insert(*stored_account.pubkey());
+            },
+            ScanAccountStorageData::NoData,
+        ) else {
             panic!("All roots should have been flushed to storage");
         };
         let expected_accounts = if !should_clean || slot == slots.last().unwrap() {
@@ -7475,7 +7498,7 @@ fn test_combine_ancient_slots_append() {
                     }
                     let original_pubkey = original
                         .accounts
-                        .get_stored_account_meta_callback(0, |account| *account.pubkey())
+                        .get_stored_account_callback(0, |account| *account.pubkey())
                         .unwrap();
                     let slot = ancient_slot + 1 + (count_marked_dead as Slot);
                     _ = db.purge_keys_exact(
@@ -7519,7 +7542,7 @@ fn test_combine_ancient_slots_append() {
             for original in &originals {
                 let i = original
                     .accounts
-                    .get_stored_account_meta_callback(0, |original| {
+                    .get_stored_account_callback(0, |original| {
                         after_stored_accounts
                             .iter()
                             .enumerate()

@@ -44,7 +44,7 @@ use {
     },
     solana_storage_bigtable::CredentialType,
     std::{
-        net::SocketAddr,
+        net::{SocketAddr, UdpSocket},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -409,7 +409,7 @@ pub struct JsonRpcServiceConfig<'a> {
 ///       requires a reference to a [`Keypair`].
 pub enum ClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext(&'a Keypair),
+    TpuClientNext(&'a Keypair, UdpSocket),
 }
 
 impl JsonRpcService {
@@ -466,7 +466,7 @@ impl JsonRpcService {
                 )?;
                 Ok(json_rpc_service)
             }
-            ClientOption::TpuClientNext(identity_keypair) => {
+            ClientOption::TpuClientNext(identity_keypair, tpu_client_socket) => {
                 let my_tpu_address = config
                     .cluster_info
                     .my_contact_info()
@@ -482,6 +482,7 @@ impl JsonRpcService {
                     leader_info,
                     config.send_transaction_service_config.leader_forward_count,
                     Some(identity_keypair),
+                    tpu_client_socket,
                 );
 
                 let json_rpc_service = Self::new_with_client(

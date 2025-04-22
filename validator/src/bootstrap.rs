@@ -143,7 +143,7 @@ fn start_gossip_node(
     ledger_path: &Path,
     gossip_addr: &SocketAddr,
     gossip_socket: UdpSocket,
-    expected_shred_version: Option<u16>,
+    expected_shred_version: u16,
     gossip_validators: Option<HashSet<Pubkey>>,
     should_check_duplicate_instance: bool,
     socket_addr_space: SocketAddrSpace,
@@ -151,7 +151,7 @@ fn start_gossip_node(
     let contact_info = ClusterInfo::gossip_contact_info(
         identity_keypair.pubkey(),
         *gossip_addr,
-        expected_shred_version.unwrap_or(0),
+        expected_shred_version,
     );
     let mut cluster_info = ClusterInfo::new(contact_info, identity_keypair, socket_addr_space);
     cluster_info.set_entrypoints(cluster_entrypoints.to_vec());
@@ -173,7 +173,6 @@ fn start_gossip_node(
 
 fn get_rpc_peers(
     cluster_info: &ClusterInfo,
-    cluster_entrypoints: &[ContactInfo],
     validator_config: &ValidatorConfig,
     blacklisted_rpc_nodes: &mut HashSet<Pubkey>,
     blacklist_timeout: &Instant,
@@ -183,21 +182,6 @@ fn get_rpc_peers(
     let shred_version = validator_config
         .expected_shred_version
         .unwrap_or_else(|| cluster_info.my_shred_version());
-    if shred_version == 0 {
-        let all_zero_shred_versions = cluster_entrypoints.iter().all(|cluster_entrypoint| {
-            cluster_entrypoint
-                .gossip()
-                .and_then(|addr| cluster_info.lookup_contact_info_by_gossip_addr(&addr))
-                .is_some_and(|entrypoint| entrypoint.shred_version() == 0)
-        });
-
-        if all_zero_shred_versions {
-            eprintln!("Entrypoint shred version is zero.  Restart with --expected-shred-version");
-            exit(1);
-        }
-        info!("Waiting to adopt entrypoint shred version...");
-        return vec![];
-    }
 
     info!(
         "Searching for an RPC service with shred version {shred_version}{}...",
@@ -473,7 +457,6 @@ fn ping(addr: &SocketAddr) -> Option<Duration> {
 fn get_vetted_rpc_nodes(
     vetted_rpc_nodes: &mut Vec<(ContactInfo, Option<SnapshotHash>, RpcClient)>,
     cluster_info: &Arc<ClusterInfo>,
-    cluster_entrypoints: &[ContactInfo],
     validator_config: &ValidatorConfig,
     blacklisted_rpc_nodes: &mut HashSet<Pubkey>,
     bootstrap_config: &RpcBootstrapConfig,
@@ -481,7 +464,6 @@ fn get_vetted_rpc_nodes(
     while vetted_rpc_nodes.is_empty() {
         let rpc_node_details = match get_rpc_nodes(
             cluster_info,
-            cluster_entrypoints,
             validator_config,
             blacklisted_rpc_nodes,
             bootstrap_config,
@@ -631,7 +613,9 @@ pub fn rpc_bootstrap(
                     .gossip()
                     .expect("Operator must spin up node with valid gossip address"),
                 node.sockets.gossip.try_clone().unwrap(),
-                validator_config.expected_shred_version,
+                validator_config
+                    .expected_shred_version
+                    .expect("expected_shred_version should not be None"),
                 validator_config.gossip_validators.clone(),
                 should_check_duplicate_instance,
                 socket_addr_space,
@@ -642,7 +626,6 @@ pub fn rpc_bootstrap(
         get_vetted_rpc_nodes(
             &mut vetted_rpc_nodes,
             &gossip.as_ref().unwrap().0,
-            cluster_entrypoints,
             validator_config,
             &mut blacklisted_rpc_nodes,
             &bootstrap_config,
@@ -712,7 +695,6 @@ pub fn rpc_bootstrap(
 /// This function finds the highest compatible snapshots from the cluster and returns RPC peers.
 fn get_rpc_nodes(
     cluster_info: &ClusterInfo,
-    cluster_entrypoints: &[ContactInfo],
     validator_config: &ValidatorConfig,
     blacklisted_rpc_nodes: &mut HashSet<Pubkey>,
     bootstrap_config: &RpcBootstrapConfig,
@@ -728,7 +710,6 @@ fn get_rpc_nodes(
 
         let rpc_peers = get_rpc_peers(
             cluster_info,
-            cluster_entrypoints,
             validator_config,
             blacklisted_rpc_nodes,
             &blacklist_timeout,

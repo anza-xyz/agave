@@ -998,6 +998,8 @@ impl TaskHandler for DefaultTaskHandler {
                 // via the replaying stage.
                 // Refer `record_token_balances` in `execute_batch()` as this treatment is mirrored
                 // from it.
+                // This is code path is directly corresponds to the pre_commit_callback in
+                // execute_batch().
                 vec![]
             }
         };
@@ -1419,7 +1421,7 @@ where
         // assert that this is called after ::into_inner()
         assert_matches!(self.session_result_with_timings, None);
 
-        // Ensure to initiate thread shutdown by disconnected new_task_receiver
+        // Ensure to initiate thread shutdown by disconnecting new_task_receiver
         self.disconnect_new_task_sender();
 
         self.ensure_join_threads(true);
@@ -1953,11 +1955,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         sleepless_testing::at(CheckPoint::SessionEnding);
                                         session_ending = true;
                                     }
-                                    Ok(NewTaskPayload::OpenSubchannel(_)
-                                       | NewTaskPayload::UnpauseOpenedSubchannel
-                                       | NewTaskPayload::Reset)
-                                       | Err(RecvError) =>
-                                        unreachable!(),
+                                    Ok(
+                                        NewTaskPayload::OpenSubchannel(_)
+                                        | NewTaskPayload::UnpauseOpenedSubchannel
+                                        | NewTaskPayload::Reset
+                                    )
+                                    | Err(RecvError) => unreachable!(),
                                     Ok(NewTaskPayload::Disconnect) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
                                         // abandoned forks...
@@ -2061,8 +2064,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             Ok(NewTaskPayload::CloseSubchannel) => {
                                 assert_matches!(scheduling_mode, BlockProduction);
-                                // This match arm can be hit if context.is_preallocated()
                                 info!("ignoring duplicate CloseSubchannel...");
+                                // This match arm can be hit if context.is_preallocated()
+                                // or abort is hinted from task results, before explicit
+                                // session ending is sent from the poh or the replay thread.
                             }
                             Ok(NewTaskPayload::Disconnect) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
@@ -2291,14 +2296,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .send(NewTaskPayload::CloseSubchannel)
             .is_err();
 
-        // In addition to the later session result receiving, also skip thread joining, which is
-        // part of necessary bookkeeping on scheduler abortion, even if detected; Otherwise, we
-        // could be dead-locked around poh, because we would technically wait on handler thread
-        // before joining in _the poh thread_. Nonblocking session ending is guaranteed to be
-        // followed by blocking session ending in the replay stage thread. The first nonblocking
-        // session ending is special-cased only for block production poh. The second real session
-        // ending will properly take care of all the skipped clean up.
         if nonblocking {
+            // Bail out session ending bookkeeping under this special case codepath for block
+            // production. This means skipping the `abort_detected`-dependant thread joining step
+            // as well; Otherwise, we could be dead-locked around poh, because we would technically
+            // wait for joining handler threads in _the poh thread_, which holds the poh lock (This
+            // `nonblocking` special case is called by the thread).
+            //
+            // This nonblocking session ending is guaranteed to be followed by a blocking session ending
+            // in the replay stage thread. The next real session ending will properly take care of
+            // all the skipped bookkeeping.
             return;
         }
 

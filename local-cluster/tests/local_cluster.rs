@@ -2854,6 +2854,7 @@ fn test_oc_bad_signatures() {
         cluster.validators.len().saturating_sub(1),
         0,
         0,
+        cluster.entry_point_info.shred_version(),
     );
 
     let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
@@ -4069,6 +4070,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
         cluster.validators.len().saturating_sub(1),
         5000, // Refresh if 5 seconds of inactivity
         5,    // Refresh the past 5 votes
+        cluster.entry_point_info.shred_version(),
     );
 
     // 4) Check that the cluster is making progress

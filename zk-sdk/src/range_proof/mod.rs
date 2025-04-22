@@ -327,7 +327,9 @@ impl RangeProof {
         transcript.append_scalar(b"e_blinding", &self.e_blinding);
 
         let w = transcript.challenge_scalar(b"w");
-        let c = transcript.challenge_scalar(b"c"); // challenge value for batching multiscalar mul
+
+        // this variable exists for backwards compatibility
+        let _c = transcript.challenge_scalar(b"c");
 
         // verify inner product proof
         let (x_sq, x_inv_sq, s) = self.ipp_proof.verification_scalars(nm, transcript)?;
@@ -335,6 +337,11 @@ impl RangeProof {
 
         let a = self.ipp_proof.a;
         let b = self.ipp_proof.b;
+
+        transcript.append_scalar(b"ipp_a", &a);
+        transcript.append_scalar(b"ipp_b", &b);
+
+        let d = transcript.challenge_scalar(b"d"); // challenge value for batching multiscalar mul
 
         // construct concat_z_and_2, an iterator of the values of
         // z^0 * \vec(2)^n || z^1 * \vec(2)^n || ... || z^(m-1) * \vec(2)^n
@@ -354,15 +361,15 @@ impl RangeProof {
             .map(|((s_i_inv, exp_y_inv), z_and_2)| z + exp_y_inv * (zz * z_and_2 - b * s_i_inv));
 
         let basepoint_scalar =
-            w * (self.t_x - a * b) + c * (delta(&bit_lengths, &y, &z) - self.t_x);
-        let value_commitment_scalars = util::exp_iter(z).take(m).map(|z_exp| c * zz * z_exp);
+            w * (self.t_x - a * b) + d * (delta(&bit_lengths, &y, &z) - self.t_x);
+        let value_commitment_scalars = util::exp_iter(z).take(m).map(|z_exp| d * zz * z_exp);
 
         let mega_check = RistrettoPoint::optional_multiscalar_mul(
             iter::once(Scalar::ONE)
                 .chain(iter::once(x))
-                .chain(iter::once(c * x))
-                .chain(iter::once(c * x * x))
-                .chain(iter::once(-self.e_blinding - c * self.t_x_blinding))
+                .chain(iter::once(d * x))
+                .chain(iter::once(d * x * x))
+                .chain(iter::once(-self.e_blinding - d * self.t_x_blinding))
                 .chain(iter::once(basepoint_scalar))
                 .chain(x_sq.iter().cloned())
                 .chain(x_inv_sq.iter().cloned())

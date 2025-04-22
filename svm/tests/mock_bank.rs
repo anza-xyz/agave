@@ -3,7 +3,6 @@
 #[allow(deprecated)]
 use solana_sdk::sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
-    agave_feature_set::FeatureSet,
     solana_bpf_loader_program::syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
         SyscallLog, SyscallMemcpy, SyscallMemset, SyscallSetReturnData,
@@ -31,6 +30,7 @@ use {
     },
     solana_svm::transaction_processor::TransactionBatchProcessor,
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_type_overrides::sync::{Arc, RwLock},
     std::{
@@ -60,7 +60,7 @@ impl ForkGraph for MockForkGraph {
 
 #[derive(Default, Clone)]
 pub struct MockBankCallback {
-    pub feature_set: Arc<FeatureSet>,
+    pub feature_set: Arc<SVMFeatureSet>,
     pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
     #[allow(clippy::type_complexity)]
     pub inspected_accounts:
@@ -128,7 +128,7 @@ impl MockBankCallback {
     }
 
     #[allow(unused)]
-    pub fn override_feature_set(&mut self, new_set: FeatureSet) {
+    pub fn override_feature_set(&mut self, new_set: SVMFeatureSet) {
         self.feature_set = Arc::new(new_set)
     }
 

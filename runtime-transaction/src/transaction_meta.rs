@@ -23,6 +23,7 @@ pub trait StaticMeta {
     fn is_simple_vote_transaction(&self) -> bool;
     fn signature_details(&self) -> &TransactionSignatureDetails;
     fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails;
+    fn instruction_data_len(&self) -> u16;
 }
 
 /// Statically loaded meta is a supertrait of Dynamically loaded meta, when
@@ -39,4 +40,5 @@ pub struct TransactionMeta {
     pub(crate) is_simple_vote_transaction: bool,
     pub(crate) signature_details: TransactionSignatureDetails,
     pub(crate) compute_budget_instruction_details: ComputeBudgetInstructionDetails,
+    pub(crate) instruction_data_len: u16,
 }

@@ -5,6 +5,9 @@ dir = "target/nextest"
 failure-output = "immediate-final"
 slow-timeout = { period = "60s", terminate-after = 1 }
 retries = { backoff = "fixed", count = 3, delay = "1s" }
+# Prevent nextest from using > 64 processes at once
+# setting this higher may break port allocation logic in net-utils
+max-threads = 64
 
 [profile.ci.junit]
 path = "junit.xml"

@@ -17,7 +17,6 @@ use {
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
-    agave_feature_set::{remove_accounts_executable_flag_checks, FeatureSet},
     log::debug,
     percentage::Percentage,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
@@ -48,6 +47,7 @@ use {
     solana_rent_collector::RentCollector,
     solana_sdk_ids::{native_loader, system_program},
     solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
@@ -129,7 +129,7 @@ pub struct TransactionProcessingEnvironment<'a> {
     /// The total stake for the current epoch.
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
-    pub feature_set: Arc<FeatureSet>,
+    pub feature_set: Arc<SVMFeatureSet>,
     /// Rent collector to use for the transaction batch.
     pub rent_collector: Option<&'a dyn SVMRentCollector>,
 }
@@ -823,7 +823,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         transaction_context.set_remove_accounts_executable_flag_checks(
             environment
                 .feature_set
-                .is_active(&remove_accounts_executable_flag_checks::id()),
+                .remove_accounts_executable_flag_checks,
         );
         #[cfg(debug_assertions)]
         transaction_context.set_signature(tx.signature());
@@ -1068,7 +1068,6 @@ mod tests {
             nonce_info::NonceInfo,
             rollback_accounts::RollbackAccounts,
         },
-        agave_feature_set::FeatureSet,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{create_account_shared_data_for_test, WritableAccount},
         solana_clock::Clock,
@@ -1196,7 +1195,7 @@ mod tests {
             AccountLoader::new_with_account_cache_capacity(
                 None,
                 callbacks,
-                Arc::<FeatureSet>::default(),
+                Arc::<SVMFeatureSet>::default(),
                 0,
             )
         }

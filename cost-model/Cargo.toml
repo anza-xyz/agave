@@ -40,7 +40,6 @@ solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true, optional = true }
 solana-transaction-error = { workspace = true }
-solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 
 [lib]
@@ -68,6 +67,7 @@ solana-runtime-transaction = { workspace = true, features = [
 solana-signer = { workspace = true }
 solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
+solana-vote = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

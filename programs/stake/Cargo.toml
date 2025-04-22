@@ -39,8 +39,10 @@ proptest = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-svm-callback = { workspace = true }
+solana-svm-feature-set = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-vote-program = { workspace = true, default-features = false }
 test-case = { workspace = true }

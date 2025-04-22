@@ -85,7 +85,7 @@ declare_builtin_function!(
 
         if invoke_context
             .get_feature_set()
-            .is_active(&agave_feature_set::bpf_account_data_direct_mapping::id())
+            .bpf_account_data_direct_mapping
         {
             let cmp_result = translate_type_mut::<i32>(
                 memory_mapping,
@@ -143,7 +143,7 @@ declare_builtin_function!(
 
         if invoke_context
             .get_feature_set()
-            .is_active(&agave_feature_set::bpf_account_data_direct_mapping::id())
+            .bpf_account_data_direct_mapping
         {
             let syscall_context = invoke_context.get_syscall_context()?;
 
@@ -170,7 +170,7 @@ fn memmove(
 ) -> Result<u64, Error> {
     if invoke_context
         .get_feature_set()
-        .is_active(&agave_feature_set::bpf_account_data_direct_mapping::id())
+        .bpf_account_data_direct_mapping
     {
         let syscall_context = invoke_context.get_syscall_context()?;
 
@@ -324,7 +324,11 @@ fn memset_non_contiguous(
     )?;
     for item in dst_chunk_iter {
         let (dst_region, dst_vm_addr, dst_len) = item?;
-        let dst_host_addr = Result::from(dst_region.vm_to_host(dst_vm_addr, dst_len as u64))?;
+        let dst_host_addr = dst_region
+            .vm_to_host(dst_vm_addr, dst_len as u64)
+            .ok_or_else(|| {
+                EbpfError::AccessViolation(AccessType::Store, dst_vm_addr, dst_len as u64, "")
+            })?;
         unsafe { slice::from_raw_parts_mut(dst_host_addr as *mut u8, dst_len).fill(c) }
     }
 
@@ -413,8 +417,21 @@ where
             };
 
             (
-                Result::from(src_region.vm_to_host(src_addr, chunk_len as u64))?,
-                Result::from(dst_region.vm_to_host(dst_addr, chunk_len as u64))?,
+                src_region
+                    .vm_to_host(src_addr, chunk_len as u64)
+                    .ok_or_else(|| {
+                        EbpfError::AccessViolation(AccessType::Load, src_addr, chunk_len as u64, "")
+                    })?,
+                dst_region
+                    .vm_to_host(dst_addr, chunk_len as u64)
+                    .ok_or_else(|| {
+                        EbpfError::AccessViolation(
+                            AccessType::Store,
+                            dst_addr,
+                            chunk_len as u64,
+                            "",
+                        )
+                    })?,
             )
         };
 
@@ -494,7 +511,7 @@ impl<'a> MemoryChunkIterator<'a> {
 
     fn region(&mut self, vm_addr: u64) -> Result<&'a MemoryRegion, Error> {
         match self.memory_mapping.region(self.access_type, vm_addr) {
-            Ok(region) => Ok(region),
+            Ok((_region_index, region)) => Ok(region),
             Err(error) => match error {
                 EbpfError::AccessViolation(access_type, _vm_addr, _len, name) => Err(Box::new(
                     EbpfError::AccessViolation(access_type, self.initial_vm_addr, self.len, name),

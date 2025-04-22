@@ -1,8 +1,11 @@
 use {
     crate::{
-        account_storage::meta::StoredAccountMeta,
+        account_storage::{
+            meta::StoredAccountMeta,
+            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        },
         accounts_file::MatchAccountOwnerError,
-        append_vec::IndexInfo,
+        append_vec::{IndexInfo, IndexInfoInner},
         tiered_storage::{
             file::TieredReadableFile,
             footer::{AccountMetaFormat, TieredStorageFooter},
@@ -11,7 +14,7 @@ use {
             TieredStorageResult,
         },
     },
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     std::path::Path,
 };
@@ -76,7 +79,41 @@ impl TieredStorageReader {
         }
     }
 
+    /// Returns the `IndexInfo` for the account located at the specified index offset.
+    ///
+    /// Only intended to be used with the accounts index.
+    pub(crate) fn get_account_index_info(
+        &self,
+        index_offset: IndexOffset,
+    ) -> TieredStorageResult<Option<IndexInfo>> {
+        self.get_stored_account_meta_callback(index_offset, |account| IndexInfo {
+            stored_size_aligned: account.stored_size(),
+            index_info: IndexInfoInner {
+                pubkey: *account.pubkey(),
+                lamports: account.lamports(),
+                offset: account.offset(),
+                data_len: account.data_len() as u64,
+                executable: account.executable(),
+                rent_epoch: account.rent_epoch(),
+            },
+        })
+    }
+
     /// calls `callback` with the account located at the specified index offset.
+    pub fn get_stored_account_callback<Ret>(
+        &self,
+        index_offset: IndexOffset,
+        callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
+    ) -> TieredStorageResult<Option<Ret>> {
+        match self {
+            Self::Hot(hot) => hot.get_stored_account_callback(index_offset, callback),
+        }
+    }
+
+    /// calls `callback` with the account located at the specified index offset.
+    ///
+    /// Prefer get_stored_account_callback() when possible, as it does not contain file format
+    /// implementation details, and thus potentially can read less and be faster.
     pub fn get_stored_account_meta_callback<Ret>(
         &self,
         index_offset: IndexOffset,
@@ -126,6 +163,51 @@ impl TieredStorageReader {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Note that account data is not read/passed to the callback.
+    pub fn scan_accounts_without_data(
+        &self,
+        mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
+    ) -> TieredStorageResult<()> {
+        // Note, this should be reimplemented to not read account data
+        self.scan_accounts(|stored_account| {
+            let account = StoredAccountInfoWithoutData {
+                pubkey: stored_account.pubkey(),
+                lamports: stored_account.lamports(),
+                owner: stored_account.owner(),
+                data_len: stored_account.data().len(),
+                executable: stored_account.executable(),
+                rent_epoch: stored_account.rent_epoch(),
+            };
+            callback(account);
+        })
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts_without_data() when account data is not needed,
+    /// as it can potentially read less and be faster.
+    pub fn scan_accounts(
+        &self,
+        mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>),
+    ) -> TieredStorageResult<()> {
+        self.scan_accounts_stored_meta(|stored_account_meta| {
+            let account = StoredAccountInfo {
+                pubkey: stored_account_meta.pubkey(),
+                lamports: stored_account_meta.lamports(),
+                owner: stored_account_meta.owner(),
+                data: stored_account_meta.data(),
+                executable: stored_account_meta.executable(),
+                rent_epoch: stored_account_meta.rent_epoch(),
+            };
+            callback(account);
+        })
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts() when possible, as it does not contain file format
+    /// implementation details, and thus potentially can read less and be faster.
     pub(crate) fn scan_accounts_stored_meta(
         &self,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),

@@ -113,23 +113,24 @@ pub trait StorableAccounts<'a>: Sync {
     fn is_zero_lamport(&self, index: usize) -> bool;
     /// data length of account at 'index'
     fn data_len(&self, index: usize) -> usize;
+    /// pubkey of account at 'index'
+    fn pubkey(&self, index: usize) -> &Pubkey;
     /// None if account is zero lamports
     fn account_default_if_zero_lamport<Ret>(
         &self,
         index: usize,
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
-        self.account(index, |account| {
-            callback(if account.lamports() != 0 {
-                account
-            } else {
-                // preserve the pubkey, but use a default value for the account
-                AccountForStorage::AddressAndAccount((
-                    account.pubkey(),
-                    &DEFAULT_ACCOUNT_SHARED_DATA,
-                ))
-            })
-        })
+        // Calling `self.account` may be expensive if backed by disk storage.
+        // Check if the account is zero lamports first.
+        if self.is_zero_lamport(index) {
+            callback(AccountForStorage::AddressAndAccount((
+                self.pubkey(index),
+                &DEFAULT_ACCOUNT_SHARED_DATA,
+            )))
+        } else {
+            self.account(index, callback)
+        }
     }
     // current slot for account at 'index'
     fn slot(&self, index: usize) -> Slot;
@@ -162,6 +163,9 @@ impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(&'a Pubkey, &'a AccountSh
     fn data_len(&self, index: usize) -> usize {
         self.1[index].1.data().len()
     }
+    fn pubkey(&self, index: usize) -> &Pubkey {
+        self.1[index].0
+    }
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data
         self.target_slot()
@@ -187,6 +191,9 @@ impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(Pubkey, AccountSharedData
     }
     fn data_len(&self, index: usize) -> usize {
         self.1[index].1.data().len()
+    }
+    fn pubkey(&self, index: usize) -> &Pubkey {
+        &self.1[index].0
     }
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data
@@ -314,6 +321,10 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
         let indexes = self.find_internal_index(index);
         self.slots_and_accounts[indexes.0].1[indexes.1].data_len()
     }
+    fn pubkey(&self, index: usize) -> &Pubkey {
+        let indexes = self.find_internal_index(index);
+        self.slots_and_accounts[indexes.0].1[indexes.1].pubkey()
+    }
     fn slot(&self, index: usize) -> Slot {
         let indexes = self.find_internal_index(index);
         self.slots_and_accounts[indexes.0].0
@@ -373,6 +384,9 @@ pub mod tests {
         fn data_len(&self, index: usize) -> usize {
             self.1[index].data_len()
         }
+        fn pubkey(&self, index: usize) -> &Pubkey {
+            self.1[index].pubkey()
+        }
         fn slot(&self, _index: usize) -> Slot {
             // per-index slot is not unique per slot when per-account slot is not included in the source data
             self.0
@@ -402,6 +416,9 @@ pub mod tests {
         }
         fn data_len(&self, index: usize) -> usize {
             self.1[index].1.data().len()
+        }
+        fn pubkey(&self, index: usize) -> &Pubkey {
+            &self.1[index].0
         }
         fn slot(&self, _index: usize) -> Slot {
             // per-index slot is not unique per slot when per-account slot is not included in the source data
@@ -441,6 +458,9 @@ pub mod tests {
         }
         fn data_len(&self, index: usize) -> usize {
             self.1[index].data_len()
+        }
+        fn pubkey(&self, index: usize) -> &Pubkey {
+            self.1[index].pubkey()
         }
         fn slot(&self, _index: usize) -> Slot {
             // same other slot for all accounts
