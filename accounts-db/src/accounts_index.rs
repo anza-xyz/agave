@@ -87,11 +87,11 @@ pub(crate) struct GenerateIndexResult<T: IndexValue> {
 /// which accounts `scan` should load from disk
 pub enum ScanFilter {
     /// Scan both in-memory and on-disk index
-    #[default]
     All,
 
     /// abnormal = ref_count != 1 or slot list.len() != 1
     /// Scan only in-memory index and skip on-disk index
+    #[default]
     OnlyAbnormal,
 
     /// Similar to `OnlyAbnormal but also check on-disk index to verify the
