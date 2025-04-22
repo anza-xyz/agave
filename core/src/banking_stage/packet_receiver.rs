@@ -107,13 +107,18 @@ impl PacketReceiver {
             slot_metrics_tracker,
         );
 
-        banking_stage_stats
+        let vote_source_counts = match vote_source {
+            VoteSource::Gossip => &banking_stage_stats.gossip_counts,
+            VoteSource::Tpu => &banking_stage_stats.tpu_counts,
+        };
+
+        vote_source_counts
             .receive_and_buffer_packets_count
             .fetch_add(packet_count, Ordering::Relaxed);
-        banking_stage_stats
+        vote_source_counts
             .dropped_packets_count
             .fetch_add(dropped_packets_count, Ordering::Relaxed);
-        banking_stage_stats
+        vote_source_counts
             .newly_buffered_packets_count
             .fetch_add(newly_buffered_packets_count, Ordering::Relaxed);
         banking_stage_stats

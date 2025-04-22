@@ -94,12 +94,10 @@ const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 #[derive(Debug, Default)]
 pub struct BankingStageStats {
     last_report: AtomicInterval,
-    receive_and_buffer_packets_count: AtomicUsize,
-    dropped_packets_count: AtomicUsize,
+    tpu_counts: VoteSourceCounts,
+    gossip_counts: VoteSourceCounts,
     pub(crate) dropped_duplicated_packets_count: AtomicUsize,
     dropped_forward_packets_count: AtomicUsize,
-    newly_buffered_packets_count: AtomicUsize,
-    newly_buffered_forwarded_packets_count: AtomicUsize,
     current_buffered_packets_count: AtomicUsize,
     rebuffered_packets_count: AtomicUsize,
     consumed_buffered_packets_count: AtomicUsize,
@@ -111,6 +109,27 @@ pub struct BankingStageStats {
     filter_pending_packets_elapsed: AtomicU64,
     pub(crate) packet_conversion_elapsed: AtomicU64,
     transaction_processing_elapsed: AtomicU64,
+}
+
+#[derive(Debug, Default)]
+struct VoteSourceCounts {
+    receive_and_buffer_packets_count: AtomicUsize,
+    dropped_packets_count: AtomicUsize,
+    newly_buffered_packets_count: AtomicUsize,
+    newly_buffered_forwarded_packets_count: AtomicUsize,
+}
+
+impl VoteSourceCounts {
+    fn is_empty(&self) -> bool {
+        0 == self
+            .receive_and_buffer_packets_count
+            .load(Ordering::Relaxed)
+            + self.dropped_packets_count.load(Ordering::Relaxed)
+            + self.newly_buffered_packets_count.load(Ordering::Relaxed)
+            + self
+                .newly_buffered_forwarded_packets_count
+                .load(Ordering::Relaxed)
+    }
 }
 
 impl BankingStageStats {
@@ -125,28 +144,25 @@ impl BankingStageStats {
     }
 
     fn is_empty(&self) -> bool {
-        0 == self
-            .receive_and_buffer_packets_count
-            .load(Ordering::Relaxed) as u64
-            + self.dropped_packets_count.load(Ordering::Relaxed) as u64
-            + self
+        self.gossip_counts.is_empty()
+            && self.tpu_counts.is_empty()
+            && 0 == self
                 .dropped_duplicated_packets_count
                 .load(Ordering::Relaxed) as u64
-            + self.dropped_forward_packets_count.load(Ordering::Relaxed) as u64
-            + self.newly_buffered_packets_count.load(Ordering::Relaxed) as u64
-            + self.current_buffered_packets_count.load(Ordering::Relaxed) as u64
-            + self.rebuffered_packets_count.load(Ordering::Relaxed) as u64
-            + self.consumed_buffered_packets_count.load(Ordering::Relaxed) as u64
-            + self
-                .consume_buffered_packets_elapsed
-                .load(Ordering::Relaxed)
-            + self
-                .receive_and_buffer_packets_elapsed
-                .load(Ordering::Relaxed)
-            + self.filter_pending_packets_elapsed.load(Ordering::Relaxed)
-            + self.packet_conversion_elapsed.load(Ordering::Relaxed)
-            + self.transaction_processing_elapsed.load(Ordering::Relaxed)
-            + self.batch_packet_indexes_len.entries()
+                + self.dropped_forward_packets_count.load(Ordering::Relaxed) as u64
+                + self.current_buffered_packets_count.load(Ordering::Relaxed) as u64
+                + self.rebuffered_packets_count.load(Ordering::Relaxed) as u64
+                + self.consumed_buffered_packets_count.load(Ordering::Relaxed) as u64
+                + self
+                    .consume_buffered_packets_elapsed
+                    .load(Ordering::Relaxed)
+                + self
+                    .receive_and_buffer_packets_elapsed
+                    .load(Ordering::Relaxed)
+                + self.filter_pending_packets_elapsed.load(Ordering::Relaxed)
+                + self.packet_conversion_elapsed.load(Ordering::Relaxed)
+                + self.transaction_processing_elapsed.load(Ordering::Relaxed)
+                + self.batch_packet_indexes_len.entries()
     }
 
     fn report(&mut self, report_interval_ms: u64) {
@@ -158,14 +174,59 @@ impl BankingStageStats {
             datapoint_info!(
                 "banking_stage-vote_loop_stats",
                 (
-                    "receive_and_buffer_packets_count",
-                    self.receive_and_buffer_packets_count
+                    "tpu_receive_and_buffer_packets_count",
+                    self.tpu_counts
+                        .receive_and_buffer_packets_count
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "dropped_packets_count",
-                    self.dropped_packets_count.swap(0, Ordering::Relaxed),
+                    "tpu_dropped_packets_count",
+                    self.tpu_counts
+                        .dropped_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "tpu_newly_buffered_packets_count",
+                    self.tpu_counts
+                        .newly_buffered_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "tpu_newly_buffered_forwarded_packets_count",
+                    self.tpu_counts
+                        .newly_buffered_forwarded_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "gossip_receive_and_buffer_packets_count",
+                    self.gossip_counts
+                        .receive_and_buffer_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "gossip_dropped_packets_count",
+                    self.gossip_counts
+                        .dropped_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "gossip_newly_buffered_packets_count",
+                    self.gossip_counts
+                        .newly_buffered_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "gossip_newly_buffered_forwarded_packets_count",
+                    self.gossip_counts
+                        .newly_buffered_forwarded_packets_count
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -177,17 +238,6 @@ impl BankingStageStats {
                 (
                     "dropped_forward_packets_count",
                     self.dropped_forward_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "newly_buffered_packets_count",
-                    self.newly_buffered_packets_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "newly_buffered_forwarded_packets_count",
-                    self.newly_buffered_forwarded_packets_count
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
