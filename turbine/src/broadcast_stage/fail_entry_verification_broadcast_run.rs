@@ -51,8 +51,9 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         // 1) Pull entries from banking stage
-let mut stats = ProcessShredsStats::default();
-        let mut receive_results = broadcast_utils::recv_slot_entries(receiver, &mut None, &mut stats)?;
+        let mut stats = ProcessShredsStats::default();
+        let mut receive_results =
+            broadcast_utils::recv_slot_entries(receiver, &mut None, &mut stats)?;
         let bank = receive_results.bank.clone();
         let last_tick_height = receive_results.last_tick_height;
 

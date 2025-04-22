@@ -37,7 +37,11 @@ impl BroadcastRun for BroadcastFakeShredsRun {
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         // 1) Pull entries from banking stage
-        let receive_results = broadcast_utils::recv_slot_entries(receiver, &mut None, &mut ProcessShredsStats::default())?;
+        let receive_results = broadcast_utils::recv_slot_entries(
+            receiver,
+            &mut None,
+            &mut ProcessShredsStats::default(),
+        )?;
         let bank = receive_results.bank;
         let last_tick_height = receive_results.last_tick_height;
 

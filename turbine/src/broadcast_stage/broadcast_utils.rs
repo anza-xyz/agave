@@ -199,7 +199,8 @@ mod tests {
 
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
-        while let Ok(result) = recv_slot_entries(&r, &mut None, &mut ProcessShredsStats::default()) {
+        while let Ok(result) = recv_slot_entries(&r, &mut None, &mut ProcessShredsStats::default())
+        {
             assert_eq!(result.bank.slot(), bank1.slot());
             last_tick_height = result.last_tick_height;
             res_entries.extend(result.entries);
@@ -241,7 +242,8 @@ mod tests {
         let mut res_entries = vec![];
         let mut last_tick_height = 0;
         let mut bank_slot = 0;
-        while let Ok(result) = recv_slot_entries(&r, &mut None, &mut ProcessShredsStats::default()) {
+        while let Ok(result) = recv_slot_entries(&r, &mut None, &mut ProcessShredsStats::default())
+        {
             bank_slot = result.bank.slot();
             last_tick_height = result.last_tick_height;
             res_entries = result.entries;
