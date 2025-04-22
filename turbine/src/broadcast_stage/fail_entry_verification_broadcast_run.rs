@@ -16,6 +16,7 @@ pub(super) struct FailEntryVerificationBroadcastRun {
     good_shreds: Vec<Shred>,
     current_slot: Slot,
     chained_merkle_root: Hash,
+    carryover_entry: Option<WorkingBankEntry>,
     next_shred_index: u32,
     next_code_index: u32,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
@@ -33,6 +34,7 @@ impl FailEntryVerificationBroadcastRun {
             good_shreds: vec![],
             current_slot: 0,
             chained_merkle_root: Hash::default(),
+            carryover_entry: None,
             next_shred_index: 0,
             next_code_index: 0,
             cluster_nodes_cache,
@@ -53,7 +55,7 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         // 1) Pull entries from banking stage
         let mut stats = ProcessShredsStats::default();
         let mut receive_results =
-            broadcast_utils::recv_slot_entries(receiver, &mut None, &mut stats)?;
+            broadcast_utils::recv_slot_entries(receiver, &mut self.carryover_entry, &mut stats)?;
         let bank = receive_results.bank.clone();
         let last_tick_height = receive_results.last_tick_height;
 
