@@ -349,10 +349,7 @@ pub mod tests {
             accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
             accounts_file::AccountsFileProvider,
             accounts_hash::AccountHash,
-            append_vec::{
-                meta::{AccountMeta, StoredMeta},
-                StoredAccountMeta,
-            },
+            append_vec::{AccountMeta, StoredAccountMeta, StoredMeta},
         },
         solana_account::{accounts_equal, AccountSharedData, WritableAccount},
         solana_hash::Hash,

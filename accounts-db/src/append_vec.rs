@@ -4,13 +4,18 @@
 //!
 //! <https://docs.solanalabs.com/implemented-proposals/persistent-account-storage>
 
-#[cfg(feature = "dev-context-only-utils")]
-pub(crate) mod meta;
-#[cfg(not(feature = "dev-context-only-utils"))]
 mod meta;
-
 pub mod test_utils;
 
+// Used all over the accounts-db crate.  Probably should be minimized.
+pub(crate) use meta::StoredAccountMeta;
+// Used by the snapshot code in the runtime crate
+pub use meta::StoredMetaWriteVersion;
+// Some tests/benches use AccountMeta/StoredMeta
+#[cfg(feature = "dev-context-only-utils")]
+pub use meta::{AccountMeta, StoredMeta};
+#[cfg(not(feature = "dev-context-only-utils"))]
+use meta::{AccountMeta, StoredMeta};
 use {
     crate::{
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
@@ -27,7 +32,7 @@ use {
     },
     log::*,
     memmap2::MmapMut,
-    meta::{AccountMeta, StoredAccountNoData, StoredMeta},
+    meta::StoredAccountNoData,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Epoch,
     solana_hash::Hash,
@@ -48,11 +53,6 @@ use {
     },
     thiserror::Error,
 };
-
-pub(crate) use meta::StoredAccountMeta;
-pub use meta::StoredMetaWriteVersion;
-#[cfg(test)]
-use solana_account::accounts_equal;
 
 /// size of the fixed sized fields in an append vec
 /// we need to add data len and align it to get the actual stored size
@@ -892,7 +892,10 @@ impl AppendVec {
         let sizes = self.get_account_sizes(&[offset]);
         let result = self.get_stored_account_meta_callback(offset, |r_callback| {
             let r2 = self.get_account_shared_data(offset);
-            assert!(accounts_equal(&r_callback, r2.as_ref().unwrap()));
+            assert!(solana_account::accounts_equal(
+                &r_callback,
+                r2.as_ref().unwrap()
+            ));
             assert_eq!(sizes, vec![r_callback.stored_size()]);
             let meta = r_callback.meta().clone();
             Some((meta, r_callback.to_account_shared_data()))

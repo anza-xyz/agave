@@ -8,10 +8,8 @@ use {
         accounts_index::{tests::*, AccountIndex, AccountSecondaryIndexesIncludeExclude},
         ancient_append_vecs,
         append_vec::{
-            aligned_stored_size,
-            meta::{AccountMeta, StoredMeta},
-            test_utils::TempFile,
-            AppendVec, StoredAccountMeta,
+            aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredAccountMeta,
+            StoredMeta,
         },
         storable_accounts::AccountForStorage,
     },

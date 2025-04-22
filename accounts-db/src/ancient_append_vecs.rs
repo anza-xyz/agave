@@ -1211,9 +1211,7 @@ pub mod tests {
             accounts_hash::AccountHash,
             accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
             append_vec::{
-                aligned_stored_size,
-                meta::{AccountMeta, StoredMeta},
-                AppendVec, StoredAccountMeta,
+                aligned_stored_size, AccountMeta, AppendVec, StoredAccountMeta, StoredMeta,
             },
             storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
         },
