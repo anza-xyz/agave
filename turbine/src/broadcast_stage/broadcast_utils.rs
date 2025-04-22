@@ -30,14 +30,10 @@ fn keep_coalescing_entries(
     serialized_batch_byte_count: u64,
     max_batch_byte_count: u64,
 ) -> bool {
-    if last_tick_height >= max_tick_height {
-        // This slot is over.
-        return false;
-    } else if serialized_batch_byte_count >= max_batch_byte_count {
-        // We are at or over the max batch byte count.
-        return false;
-    }
-    true
+    // This slot is not over.
+    last_tick_height < max_tick_height &&
+    // We have no exceeded max batch byte count.
+    serialized_batch_byte_count < max_batch_byte_count
 }
 
 pub(super) fn recv_slot_entries(
@@ -70,11 +66,10 @@ pub(super) fn recv_slot_entries(
     let mut serialized_batch_byte_count = serialized_size(&entries)?;
     let target_serialized_batch_byte_count: u64 = (DATA_SHREDS_PER_FEC_BLOCK
         * ShredData::capacity(/*merkle_proof_size*/ None).unwrap())
-    .try_into()
-    .unwrap();
+        as u64;
 
     // Coalesce entries until one of the following conditions are hit:
-    // 1. We've ticked through the entire slot.
+    // 1. We ticked through the entire slot.
     // 2. We hit the timeout.
     // 3. We're over the max data target.
     let mut coalesce_start = Instant::now();
