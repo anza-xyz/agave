@@ -32,7 +32,7 @@ fn keep_coalescing_entries(
 ) -> bool {
     // This slot is not over.
     last_tick_height < max_tick_height &&
-    // We have no exceeded max batch byte count.
+    // We have not exceeded max batch byte count.
     serialized_batch_byte_count < max_batch_byte_count
 }
 
