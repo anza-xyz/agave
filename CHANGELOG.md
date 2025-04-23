@@ -42,7 +42,7 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 * `withdraw-stake` now accepts the `AVAILABLE` keyword for the amount, allowing withdrawal of unstaked lamports (#4483)
-* `solana-test-validator` will now bind to localhost (127.0.0.1) by default rather than all interfaces to improve security. Provide `--bind-address 0.0.0.0` to bind to all interfaces.
+* `solana-test-validator` will now bind to localhost (127.0.0.1) by default rather than all interfaces to improve security. Provide `--bind-address 0.0.0.0` to bind to all interfaces to restore the previous default behavior.
 
 ## 2.2.0
 
