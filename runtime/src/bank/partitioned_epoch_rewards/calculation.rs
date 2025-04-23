@@ -313,7 +313,8 @@ impl Bank {
         };
 
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-        let vote_account_rewards: VoteRewards = DashMap::new();
+        let estimated_num_vote_accounts = cached_vote_accounts.len();
+        let vote_account_rewards: VoteRewards = DashMap::with_capacity(estimated_num_vote_accounts);
         let total_stake_rewards = AtomicU64::default();
         let (stake_rewards, measure_stake_rewards_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
