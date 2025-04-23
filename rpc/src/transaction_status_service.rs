@@ -398,7 +398,7 @@ pub(crate) mod tests {
             .message()
             .account_keys()
             .iter()
-            .map(|x| (*x, bank.get_account(x).unwrap()))
+            .map(|key| (*key, bank.get_account(key).unwrap()))
             .collect();
 
         let commit_result = Ok(CommittedTransaction {
