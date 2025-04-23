@@ -158,6 +158,7 @@ pub struct ClusterInfo {
     contact_save_interval: u64,  // milliseconds, 0 = disabled
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
+    ingress_filter: Arc<RwLock<Arc<dyn Fn(&CrdsData) -> bool + Send + Sync + 'static>>>,
 }
 
 struct PullData {
@@ -228,9 +229,18 @@ impl ClusterInfo {
             contact_info_path: PathBuf::default(),
             contact_save_interval: 0, // disabled
             socket_addr_space,
+            ingress_filter: Arc::new(RwLock::new(Arc::new(|_: &CrdsData| true))),
         };
         me.refresh_my_gossip_contact_info();
         me
+    }
+
+    pub fn set_ingress_filter(
+        &self,
+        filter: Arc<dyn Fn(&CrdsData) -> bool + Send + Sync + 'static>,
+    ) {
+        let mut guard = self.ingress_filter.write().unwrap();
+        *guard = filter;
     }
 
     pub fn set_contact_debug_interval(&mut self, new: u64) {
@@ -2004,6 +2014,11 @@ impl ClusterInfo {
             })
         };
 
+        // Read the filter ONCE
+        let filter_lock = self.ingress_filter.read().unwrap();
+        let filter_fn = filter_lock.clone();
+        drop(filter_lock);
+
         // Check if there is a duplicate instance of
         // this node with more recent timestamp.
         let check_duplicate_instance = {
@@ -2063,7 +2078,15 @@ impl ClusterInfo {
                     if should_check_duplicate_instance {
                         check_duplicate_instance(&data)?;
                     }
-                    data.retain(&mut verify_gossip_addr);
+                    // Apply filter first, then shadowing closure (1-arg) within retain
+                    data.retain(|value| {
+                        let passes_filter = filter_fn(value.data());
+                        if !passes_filter {
+                            self.stats.ingress_filtered_count.add_relaxed(1);
+                            return false;
+                        }
+                        verify_gossip_addr(value) // Calls 1-arg shadowing closure
+                    });
                     if !data.is_empty() {
                         push_messages.push((from, data));
                     }
