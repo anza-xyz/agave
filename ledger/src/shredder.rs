@@ -165,8 +165,6 @@ impl Shredder {
 
         let mut gen_data_time = Measure::start("shred_gen_data_time");
         let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
-        process_stats.data_buffer_residual +=
-            (data_buffer_size - serialized_shreds.len() % data_buffer_size) % data_buffer_size;
         // Integer division to ensure we have enough shreds to fit all the data
         let num_shreds = serialized_shreds.len().div_ceil(data_buffer_size);
         let last_shred_index = next_shred_index + num_shreds as u32 - 1;
@@ -542,11 +540,10 @@ mod tests {
             blockstore::MAX_DATA_SHREDS_PER_SLOT,
             shred::{
                 self, max_entries_per_n_shred, max_ticks_per_n_shreds, verify_test_data_shred,
-                ShredType, MAX_CODE_SHREDS_PER_SLOT,
+                ShredType, CODING_SHREDS_PER_FEC_BLOCK, MAX_CODE_SHREDS_PER_SLOT,
             },
         },
         assert_matches::assert_matches,
-        bincode::serialized_size,
         rand::{seq::SliceRandom, Rng},
         solana_sdk::{
             hash::{hash, Hash},
@@ -592,18 +589,8 @@ mod tests {
             })
             .collect();
 
-        let size = serialized_size(&entries).unwrap() as usize;
-        // Integer division to ensure we have enough shreds to fit all the data
-        let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
-        let num_expected_data_shreds = size.div_ceil(data_buffer_size);
-        let num_expected_data_shreds = num_expected_data_shreds.max(if is_last_in_slot {
-            DATA_SHREDS_PER_FEC_BLOCK
-        } else {
-            1
-        });
-        let num_expected_coding_shreds =
-            get_erasure_batch_size(num_expected_data_shreds, is_last_in_slot)
-                - num_expected_data_shreds;
+        let num_expected_data_shreds = DATA_SHREDS_PER_FEC_BLOCK;
+        let num_expected_coding_shreds = CODING_SHREDS_PER_FEC_BLOCK;
         let start_index = 0;
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,

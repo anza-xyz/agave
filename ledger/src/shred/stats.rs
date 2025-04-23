@@ -37,7 +37,8 @@ pub struct ProcessShredsStats {
     pub num_extant_slots: u64,
     // When looking up chained merkle root from parent slot fails.
     pub err_unknown_chained_merkle_root: u64,
-    pub(crate) data_buffer_residual: usize,
+    pub(crate) padding_bytes: usize,
+    pub(crate) data_bytes: usize,
     num_merkle_data_shreds: usize,
     num_merkle_coding_shreds: usize,
 }
@@ -108,7 +109,8 @@ impl ProcessShredsStats {
                 self.err_unknown_chained_merkle_root,
                 i64
             ),
-            ("data_buffer_residual", self.data_buffer_residual, i64),
+            ("padding_bytes", self.padding_bytes, i64),
+            ("data_bytes", self.data_bytes, i64),
             ("num_data_shreds_07", self.num_data_shreds_hist[0], i64),
             ("num_data_shreds_15", self.num_data_shreds_hist[1], i64),
             ("num_data_shreds_31", self.num_data_shreds_hist[2], i64),
@@ -212,7 +214,8 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
             num_data_shreds_hist,
             num_extant_slots,
             err_unknown_chained_merkle_root,
-            data_buffer_residual,
+            padding_bytes,
+            data_bytes,
             num_merkle_data_shreds,
             num_merkle_coding_shreds,
         } = rhs;
@@ -231,7 +234,8 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
         self.coalesce_exited_rcv_timeout += coalesce_exited_rcv_timeout;
         self.num_extant_slots += num_extant_slots;
         self.err_unknown_chained_merkle_root += err_unknown_chained_merkle_root;
-        self.data_buffer_residual += data_buffer_residual;
+        self.padding_bytes += padding_bytes;
+        self.data_bytes += data_bytes;
         self.num_merkle_data_shreds += num_merkle_data_shreds;
         self.num_merkle_coding_shreds += num_merkle_coding_shreds;
         for (i, bucket) in self.num_data_shreds_hist.iter_mut().enumerate() {

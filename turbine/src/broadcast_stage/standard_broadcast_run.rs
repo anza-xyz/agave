@@ -489,8 +489,10 @@ mod test {
         solana_entry::entry::create_ticks,
         solana_gossip::cluster_info::{ClusterInfo, Node},
         solana_ledger::{
-            blockstore::Blockstore, genesis_utils::create_genesis_config, get_tmp_ledger_path,
-            shred::max_ticks_per_n_shreds,
+            blockstore::Blockstore,
+            genesis_utils::create_genesis_config,
+            get_tmp_ledger_path,
+            shred::{max_ticks_per_n_shreds, DATA_SHREDS_PER_FEC_BLOCK},
         },
         solana_net_utils::bind_to_unspecified,
         solana_runtime::bank::Bank,
@@ -586,7 +588,7 @@ mod test {
     #[test]
     fn test_slot_interrupt() {
         // Setup
-        let num_shreds_per_slot = 2;
+        let num_shreds_per_slot = DATA_SHREDS_PER_FEC_BLOCK as u64;
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
             setup(num_shreds_per_slot);
         let (quic_endpoint_sender, _quic_endpoint_receiver) =
@@ -683,7 +685,10 @@ mod test {
 
         // The shred index should have reset to 0, which makes it possible for the
         // index < the previous shred index for slot 0
-        assert_eq!(standard_broadcast_run.next_shred_index as u64, num_shreds);
+        assert_eq!(
+            standard_broadcast_run.next_shred_index as usize,
+            DATA_SHREDS_PER_FEC_BLOCK
+        );
         assert_eq!(standard_broadcast_run.slot, 2);
         assert_eq!(standard_broadcast_run.parent, 0);
 
@@ -751,14 +756,20 @@ mod test {
             shreds.extend(recv_shreds.deref().clone());
         }
         // At least as many coding shreds as data shreds.
-        assert!(shreds.len() >= 29 * 2);
-        assert_eq!(shreds.iter().filter(|shred| shred.is_data()).count(), 30);
+        assert!(shreds.len() >= DATA_SHREDS_PER_FEC_BLOCK * 2);
+        assert_eq!(
+            shreds.iter().filter(|shred| shred.is_data()).count(),
+            shreds.len() / 2
+        );
         process_ticks(75);
         while let Ok((recv_shreds, _)) = brecv.recv_timeout(Duration::from_secs(1)) {
             shreds.extend(recv_shreds.deref().clone());
         }
-        assert!(shreds.len() >= 33 * 2);
-        assert_eq!(shreds.iter().filter(|shred| shred.is_data()).count(), 34);
+        assert!(shreds.len() >= DATA_SHREDS_PER_FEC_BLOCK * 2);
+        assert_eq!(
+            shreds.iter().filter(|shred| shred.is_data()).count(),
+            shreds.len() / 2
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub(crate) const SIZE_OF_MERKLE_ROOT: usize = std::mem::size_of::<Hash>();
 const_assert_eq!(SIZE_OF_MERKLE_ROOT, 32);
 const_assert_eq!(SIZE_OF_MERKLE_PROOF_ENTRY, 20);
 pub(crate) const SIZE_OF_MERKLE_PROOF_ENTRY: usize = std::mem::size_of::<MerkleProofEntry>();
+pub(crate) const PROOF_NUM_ENTRIES: u8 = 6;
 
 // Defense against second preimage attack:
 // https://en.wikipedia.org/wiki/Merkle_tree#Second_preimage_attack

@@ -11760,7 +11760,7 @@ pub mod tests {
         assert!(results.is_retransmitter_signed);
         blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
 
-        // Slot has less than DATA_SHREDS_PER_FEC_BLOCK shreds in total
+        // Slot has two batches with small number of entries.
         let mut fec_set_index = 0;
         let (first_data_shreds, _, _) =
             setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
@@ -11780,11 +11780,12 @@ pub mod tests {
                 40,
                 fec_set_index,
                 Some(merkle_root),
-                false, // No padding
+                false,
             );
         let last_index = last_data_shreds.last().unwrap().index();
         let total_shreds = first_data_shreds.len() + last_data_shreds.len();
-        assert!(total_shreds < DATA_SHREDS_PER_FEC_BLOCK);
+        assert_eq!(total_shreds, 2 * DATA_SHREDS_PER_FEC_BLOCK);
+        let merkle_root = last_data_shreds[0].merkle_root().unwrap();
         blockstore
             .insert_shreds(first_data_shreds, None, false)
             .unwrap();
@@ -11796,11 +11797,11 @@ pub mod tests {
         slot_meta.last_index = Some(last_index as u64);
         blockstore.put_meta(slot, &slot_meta).unwrap();
         let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert!(results.last_fec_set_merkle_root.is_none());
+        assert_eq!(results.last_fec_set_merkle_root, Some(merkle_root));
         assert!(!results.is_retransmitter_signed);
         blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
 
-        // Slot has more than DATA_SHREDS_PER_FEC_BLOCK in total, but last FEC set has less
+        // Slot has batches with medium number of entries.
         let mut fec_set_index = 0;
         let (first_data_shreds, _, _) =
             setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
@@ -11820,12 +11821,13 @@ pub mod tests {
                 100,
                 fec_set_index,
                 Some(merkle_root),
-                false, // No padding
+                false,
             );
         let last_index = last_data_shreds.last().unwrap().index();
         let total_shreds = first_data_shreds.len() + last_data_shreds.len();
-        assert!(last_data_shreds.len() < DATA_SHREDS_PER_FEC_BLOCK);
-        assert!(total_shreds > DATA_SHREDS_PER_FEC_BLOCK);
+        assert_eq!(last_data_shreds.len(), DATA_SHREDS_PER_FEC_BLOCK);
+        assert_eq!(total_shreds, 2 * DATA_SHREDS_PER_FEC_BLOCK);
+        let merkle_root = last_data_shreds[0].merkle_root().unwrap();
         blockstore
             .insert_shreds(first_data_shreds, None, false)
             .unwrap();
@@ -11837,7 +11839,7 @@ pub mod tests {
         slot_meta.last_index = Some(last_index as u64);
         blockstore.put_meta(slot, &slot_meta).unwrap();
         let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert!(results.last_fec_set_merkle_root.is_none());
+        assert_eq!(results.last_fec_set_merkle_root, Some(merkle_root));
         assert!(!results.is_retransmitter_signed);
         blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
 
@@ -11854,7 +11856,7 @@ pub mod tests {
                 true,
             );
         assert!(first_data_shreds.len() > DATA_SHREDS_PER_FEC_BLOCK);
-        let block_id = first_data_shreds[0].merkle_root().unwrap();
+        let block_id = first_data_shreds.last().unwrap().merkle_root().unwrap();
         blockstore
             .insert_shreds(first_data_shreds, None, false)
             .unwrap();
