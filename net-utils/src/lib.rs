@@ -262,7 +262,10 @@ impl SocketConfig {
     /// **Note:** On Linux the kernel will double the value you specify.
     /// For example, if you specify `16MB`, the kernel will configure the
     /// socket to use `32MB`.
-    /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_RCVBUF
+    /// However, "Linux assumes that half of the send/receive buffer is used for
+    /// internal kernel structures; thus the values in the corresponding
+    /// /proc files are twice what can be observed on the wire."
+    /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_RCVBUF, NOTES
     pub fn recv_buffer_size(mut self, size: usize) -> Self {
         self.recv_buffer_size = Some(size);
         self
@@ -273,7 +276,10 @@ impl SocketConfig {
     /// **Note:** On Linux the kernel will double the value you specify.
     /// For example, if you specify `16MB`, the kernel will configure the
     /// socket to use `32MB`.
-    /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_SNDBUF
+    /// However, "Linux assumes that half of the send/receive buffer is used for
+    /// internal kernel structures; thus the values in the corresponding
+    /// /proc files are twice what can be observed on the wire."
+    /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_SNDBUF, NOTES
     pub fn send_buffer_size(mut self, size: usize) -> Self {
         self.send_buffer_size = Some(size);
         self
@@ -483,6 +489,10 @@ pub fn bind_to_localhost() -> io::Result<UdpSocket> {
     )
 }
 
+pub fn bind_to_localhost_with_config(config: SocketConfig) -> io::Result<UdpSocket> {
+    bind_to_with_config(IpAddr::V4(Ipv4Addr::LOCALHOST), /*port:*/ 0, config)
+}
+
 #[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
     bind_to_async(
@@ -499,6 +509,10 @@ pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
         /*port:*/ 0,
         /*reuseport:*/ false,
     )
+}
+
+pub fn bind_to_unspecified_with_config(config: SocketConfig) -> io::Result<UdpSocket> {
+    bind_to_with_config(IpAddr::V4(Ipv4Addr::UNSPECIFIED), /*port:*/ 0, config)
 }
 
 #[cfg(feature = "dev-context-only-utils")]

@@ -63,9 +63,12 @@ pub struct UdpConfig {
 
 impl NewConnectionConfig for UdpConfig {
     fn new() -> Result<Self, ClientError> {
+        // The `udp-client` primarily sends data and only receives control traffic
+        // Set a 4 MB buffer size for the minimally used side of the socket for QUIC control traffic
+        let config = SocketConfig::default().recv_buffer_size(4 * 1024 * 1024);
         let socket = solana_net_utils::bind_with_any_port_with_config(
             IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            SocketConfig::default(),
+            config,
         )
         .map_err(Into::<ClientError>::into)?;
         Ok(Self {
