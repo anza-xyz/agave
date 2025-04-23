@@ -3359,9 +3359,10 @@ mod tests {
     #[test]
     fn new_with_external_ip_test_random() {
         let ip = Ipv4Addr::LOCALHOST;
+        let port_range = localhost_port_range_for_tests();
         let config = NodeConfig {
             gossip_addr: socketaddr!(ip, 0),
-            port_range: VALIDATOR_PORT_RANGE,
+            port_range,
             bind_ip_addr: IpAddr::V4(ip),
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
@@ -3373,17 +3374,16 @@ mod tests {
 
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);
 
-        check_node_sockets(&node, IpAddr::V4(ip), VALIDATOR_PORT_RANGE);
+        check_node_sockets(&node, IpAddr::V4(ip), port_range);
     }
 
     #[test]
     fn new_with_external_ip_test_gossip() {
         // Can't use VALIDATOR_PORT_RANGE because if this test runs in parallel with others, the
         // port returned by `bind_in_range()` might be snatched up before `Node::new_with_external_ip()` runs
-        let (start, end) = VALIDATOR_PORT_RANGE;
-        let port_range = (end, end + (end - start));
+        let port_range = localhost_port_range_for_tests();
         let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let port = bind_in_range(ip, port_range).expect("Failed to bind").0;
+        let port = port_range.0;
         let config = NodeConfig {
             gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, port),
             port_range,
