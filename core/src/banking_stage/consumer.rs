@@ -691,6 +691,10 @@ impl Consumer {
                 |(index, processing_result)| processing_result.was_processed().then_some(index),
             ));
 
+            // retryable indexes are expected to be sorted - in this case the
+            // `extend` can cause that assumption to be violated.
+            retryable_transaction_indexes.sort_unstable();
+
             return ExecuteAndCommitTransactionsOutput {
                 transaction_counts,
                 retryable_transaction_indexes,
