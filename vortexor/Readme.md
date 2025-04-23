@@ -1,4 +1,4 @@
-NOTE: Vortexer is not production ready.
+NOTE: Vortexor is not production ready.
 
 
 # Introduction
