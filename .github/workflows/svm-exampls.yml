@@ -44,6 +44,7 @@ jobs:
 
       - name: Run build
         run: |
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "$CARGO_HOME/bin" && \
           cd svm/examples
           cargo build --tests
 
