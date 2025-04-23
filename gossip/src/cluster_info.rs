@@ -51,11 +51,12 @@ use {
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::shred::Shred,
     solana_net_utils::{
-        bind_common_in_range_with_config, bind_common_with_config, bind_in_range,
-        bind_in_range_with_config, bind_more_with_config, bind_to_localhost, bind_to_unspecified,
-        bind_to_with_config, bind_two_in_range_with_offset_and_config,
-        find_available_ports_in_range, multi_bind_in_range_with_config,
-        sockets::localhost_port_range_for_tests, PortRange, SocketConfig, VALIDATOR_PORT_RANGE,
+        bind_common_in_range_with_config, bind_in_range, bind_in_range_with_config,
+        bind_more_with_config, bind_to_localhost, bind_to_unspecified, bind_to_with_config,
+        bind_two_in_range_with_offset_and_config, find_available_ports_in_range,
+        multi_bind_in_range_with_config,
+        sockets::{bind_gossip_port_in_range, localhost_port_range_for_tests},
+        PortRange, SocketConfig, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -2312,7 +2313,7 @@ impl ClusterInfo {
     ) -> (ContactInfo, UdpSocket, Option<TcpListener>) {
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let (port, (gossip_socket, ip_echo)) =
-            Node::get_gossip_port(gossip_addr, VALIDATOR_PORT_RANGE, bind_ip_addr);
+            bind_gossip_port_in_range(gossip_addr, VALIDATOR_PORT_RANGE, bind_ip_addr);
         let contact_info =
             Self::gossip_contact_info(id, SocketAddr::new(gossip_addr.ip(), port), shred_version);
 
@@ -2546,25 +2547,6 @@ impl Node {
         }
     }
 
-    fn get_gossip_port(
-        gossip_addr: &SocketAddr,
-        port_range: PortRange,
-        bind_ip_addr: IpAddr,
-    ) -> (u16, (UdpSocket, TcpListener)) {
-        let config = SocketConfig::default();
-        if gossip_addr.port() != 0 {
-            (
-                gossip_addr.port(),
-                bind_common_with_config(bind_ip_addr, gossip_addr.port(), config).unwrap_or_else(
-                    |e| panic!("gossip_addr bind_to port {}: {}", gossip_addr.port(), e),
-                ),
-            )
-        } else {
-            bind_common_in_range_with_config(bind_ip_addr, port_range, config)
-                .expect("Failed to bind")
-        }
-    }
-
     fn bind_with_config(
         bind_ip_addr: IpAddr,
         port_range: PortRange,
@@ -2580,7 +2562,7 @@ impl Node {
         bind_ip_addr: IpAddr,
     ) -> Self {
         let (gossip_port, (gossip, ip_echo)) =
-            Self::get_gossip_port(gossip_addr, port_range, bind_ip_addr);
+            bind_gossip_port_in_range(gossip_addr, port_range, bind_ip_addr);
 
         let socket_config = SocketConfig::default();
         let socket_config_reuseport = SocketConfig::default().reuseport(true);
@@ -2735,7 +2717,7 @@ impl Node {
         } = config;
 
         let (gossip_port, (gossip, ip_echo)) =
-            Self::get_gossip_port(&gossip_addr, port_range, bind_ip_addr);
+            bind_gossip_port_in_range(&gossip_addr, port_range, bind_ip_addr);
 
         let socket_config = SocketConfig::default();
         let socket_config_reuseport = SocketConfig::default().reuseport(true);
