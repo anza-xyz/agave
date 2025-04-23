@@ -948,7 +948,7 @@ fn make_stub_shred(
 }
 
 // Maps number of (code + data) shreds to merkle_proof.len().
-fn get_proof_size(num_shreds: usize) -> u8 {
+pub(super) fn get_proof_size(num_shreds: usize) -> u8 {
     let bits = usize::BITS - num_shreds.leading_zeros();
     let proof_size = if num_shreds.is_power_of_two() {
         bits.checked_sub(1).unwrap()

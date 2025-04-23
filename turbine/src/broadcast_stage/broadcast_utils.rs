@@ -5,7 +5,7 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::{
         blockstore::Blockstore,
-        shred::{self, ProcessShredsStats, DATA_SHRED_BYTES_PER_BATCH_TYPICAL},
+        shred::{self, get_data_shred_bytes_per_batch_typical, ProcessShredsStats},
     },
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_runtime::bank::Bank,
@@ -25,7 +25,7 @@ pub(super) struct ReceiveResults {
 }
 
 fn data_shred_bytes_per_batch() -> u64 {
-    *DATA_SHRED_BYTES_PER_BATCH_TYPICAL
+    *get_data_shred_bytes_per_batch_typical()
 }
 
 fn target_batch_bytes_default() -> u64 {
@@ -61,10 +61,11 @@ fn keep_coalescing_entries(
 // longer and avoid unnecessary padding. If we have a lot, we shouldn't wait as
 // long so we avoid delaying downstream validator replay.
 fn max_coalesce_time(serialized_batch_byte_count: u64, max_batch_byte_count: u64) -> Duration {
+    assert!(max_batch_byte_count > 0);
     // Compute the fraction of the target batch that has been filled.
     // Constrain to 75% to ensure we allow some time for coalescing.
-    let ratio = (serialized_batch_byte_count as f64 / max_batch_byte_count as f64).min(0.75);
-    ENTRY_COALESCE_DURATION.mul_f64(1.0 - ratio)
+    let ratio = (serialized_batch_byte_count as f32 / max_batch_byte_count as f32).min(0.75);
+    ENTRY_COALESCE_DURATION.mul_f32(1.0 - ratio)
 }
 
 pub(super) fn recv_slot_entries(
