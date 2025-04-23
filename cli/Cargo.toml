@@ -85,7 +85,7 @@ solana-transaction-status = { workspace = true }
 solana-udp-client = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
-spl-memo = { workspace = true, features = ["no-entrypoint"] }
+spl-memo = { version = "=6.0.0", features = ["no-entrypoint"] }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }
 
