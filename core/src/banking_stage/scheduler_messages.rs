@@ -1,4 +1,5 @@
 use {
+    super::consumer::RetryableIndexKind,
     solana_sdk::clock::{Epoch, Slot},
     std::fmt::Display,
 };
@@ -46,6 +47,8 @@ pub struct ConsumeWork<Tx> {
 /// Message: [Worker -> Scheduler]
 /// Processed transactions.
 pub struct FinishedConsumeWork<Tx> {
+    /// Slot that work was attempted on. `None` if sent back without attempt.
+    pub slot: Option<Slot>,
     pub work: ConsumeWork<Tx>,
-    pub retryable_indexes: Vec<usize>,
+    pub retryable_indexes: Vec<RetryableIndexKind>,
 }

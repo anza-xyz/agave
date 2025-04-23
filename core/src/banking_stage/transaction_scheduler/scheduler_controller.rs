@@ -147,7 +147,13 @@ where
                             MAX_PROCESSING_AGE,
                         )
                     },
-                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
+                    |state| {
+                        if state.last_tried_slot() == Some(bank_start.working_bank.slot()) {
+                            PreLockFilterAction::SkipAndRetain
+                        } else {
+                            PreLockFilterAction::AttemptToSchedule
+                        }
+                    }
                 )?);
 
                 self.count_metrics.update(|count_metrics| {
@@ -247,7 +253,7 @@ where
 
         while transaction_ids.len() < MAX_TRANSACTION_CHECKS {
             let Some(id) = self.container.pop() else {
-                break
+                break;
             };
             transaction_ids.push(id);
         }
@@ -339,7 +345,7 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::{
-            consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
+            consumer::{RetryableIndexKind, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             packet_deserializer::PacketDeserializer,
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
@@ -542,6 +548,7 @@ mod tests {
 
         finished_consume_work_sender
             .send(FinishedConsumeWork {
+                slot: None,
                 work: ConsumeWork {
                     batch_id: TransactionBatchId::new(0),
                     ids: vec![],
@@ -880,8 +887,9 @@ mod tests {
         // Complete the batch - marking the second transaction as retryable
         finished_consume_work_sender
             .send(FinishedConsumeWork {
+                slot: None,
                 work: consume_work,
-                retryable_indexes: vec![1],
+                retryable_indexes: vec![RetryableIndexKind::InvalidBank(1)],
             })
             .unwrap();
 
@@ -896,5 +904,86 @@ mod tests {
             .map(|tx| tx.message_hash())
             .collect_vec();
         assert_eq!(message_hashes, vec![&tx1_hash]);
+    }
+
+    #[test_case(test_create_sanitized_transaction_receive_and_buffer, true; "test-case::sdk_immediate_retry")]
+    #[test_case(test_create_transaction_view_receive_and_buffer, true; "test-case::view_immediate_retry")]
+    #[test_case(test_create_sanitized_transaction_receive_and_buffer, false; "test-case::sdk_delayed_retry")]
+    #[test_case(test_create_transaction_view_receive_and_buffer, false; "test-case::view_delayed_retry")]
+    fn test_schedule_consume_slot_gated_retry<R: ReceiveAndBuffer>(
+        create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
+        immediate_retry: bool,
+    ) {
+        let (test_frame, mut scheduler_controller) =
+            create_test_frame(1, create_receive_and_buffer);
+        let TestFrame {
+            bank,
+            mint_keypair,
+            poh_recorder,
+            banking_packet_sender,
+            consume_work_receivers,
+            finished_consume_work_sender,
+            ..
+        } = &test_frame;
+
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank_for_test(bank.clone());
+
+        // Send packet batch to the scheduler - should do nothing until we become the leader.
+        let tx1 = create_and_fund_prioritized_transfer(
+            bank,
+            mint_keypair,
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            1000,
+            bank.last_blockhash(),
+        );
+        let tx2 = create_and_fund_prioritized_transfer(
+            bank,
+            mint_keypair,
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            2000,
+            bank.last_blockhash(),
+        );
+        let tx1_hash = tx1.message().hash();
+        let tx2_hash = tx2.message().hash();
+
+        let txs = vec![tx1, tx2];
+        banking_packet_sender
+            .send(to_banking_packet_batch(&txs))
+            .unwrap();
+
+        test_receive_then_schedule(&mut scheduler_controller);
+        let consume_work = consume_work_receivers[0].try_recv().unwrap();
+        assert_eq!(consume_work.ids.len(), 2);
+        assert_eq!(consume_work.transactions.len(), 2);
+        let message_hashes = consume_work
+            .transactions
+            .iter()
+            .map(|tx| tx.message_hash())
+            .collect_vec();
+        assert_eq!(message_hashes, vec![&tx2_hash, &tx1_hash]);
+
+        // Complete the batch - marking the second transaction as retryable
+        finished_consume_work_sender
+            .send(FinishedConsumeWork {
+                slot: Some(bank.slot()),
+                work: consume_work,
+                retryable_indexes: vec![if immediate_retry {
+                    RetryableIndexKind::AccountInUse(1)
+                } else {
+                    RetryableIndexKind::BlockLimits(1)
+                }],
+            })
+            .unwrap();
+
+        // Transaction should NOT be rescheduled
+        test_receive_then_schedule(&mut scheduler_controller);
+        assert_eq!(consume_work_receivers[0].is_empty(), !immediate_retry);
     }
 }

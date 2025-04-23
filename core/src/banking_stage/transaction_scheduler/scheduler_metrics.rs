@@ -419,6 +419,7 @@ pub struct SchedulingDetails {
     pub sum_num_scheduled: usize,
     pub sum_unschedulable_conflicts: usize,
     pub sum_unschedulable_threads: usize,
+    pub sum_skipped_retry: usize,
 }
 
 impl Default for SchedulingDetails {
@@ -435,6 +436,7 @@ impl Default for SchedulingDetails {
             sum_num_scheduled: 0,
             sum_unschedulable_conflicts: 0,
             sum_unschedulable_threads: 0,
+            sum_skipped_retry: 0,
         }
     }
 }
@@ -458,6 +460,7 @@ impl SchedulingDetails {
             .max_starting_buffer_size
             .max(scheduling_summary.starting_buffer_size);
         self.sum_starting_buffer_size += scheduling_summary.starting_buffer_size;
+        self.sum_skipped_retry += scheduling_summary.num_skipped_retry;
 
         self.sum_num_scheduled += scheduling_summary.num_scheduled;
         self.sum_unschedulable_conflicts += scheduling_summary.num_unschedulable_conflicts;
@@ -502,6 +505,7 @@ impl SchedulingDetails {
                         self.sum_unschedulable_threads,
                         i64
                     ),
+                    ("num_skipped_retry", self.sum_skipped_retry, i64),
                 );
                 *self = Self {
                     last_report: now,

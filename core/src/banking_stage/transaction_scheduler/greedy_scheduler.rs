@@ -98,6 +98,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         let mut num_sent: usize = 0;
         let mut num_unschedulable_conflicts: usize = 0;
         let mut num_unschedulable_threads: usize = 0;
+        let mut num_skipped_retry: usize = 0;
 
         let mut batches = Batches::new(num_threads, self.config.target_transactions_per_batch);
         while num_scanned < self.config.max_scanned_transactions_per_scheduling_pass
@@ -150,6 +151,10 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                 }
                 Err(TransactionSchedulingError::UnschedulableThread) => {
                     num_unschedulable_threads += 1;
+                    self.unschedulables.push(id);
+                }
+                Err(TransactionSchedulingError::Skipped) => {
+                    num_skipped_retry += 1;
                     self.unschedulables.push(id);
                 }
                 Ok(TransactionSchedulingInfo {
@@ -209,6 +214,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             num_scheduled,
             num_unschedulable_conflicts,
             num_unschedulable_threads,
+            num_skipped_retry,
             num_filtered_out: 0,
             filter_time_us: 0,
         })
@@ -228,6 +234,7 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
 ) -> Result<TransactionSchedulingInfo<Tx>, TransactionSchedulingError> {
     match pre_lock_filter(transaction_state) {
         PreLockFilterAction::AttemptToSchedule => {}
+        PreLockFilterAction::SkipAndRetain => return Err(TransactionSchedulingError::Skipped),
     }
 
     // Schedule the transaction if it can be.
