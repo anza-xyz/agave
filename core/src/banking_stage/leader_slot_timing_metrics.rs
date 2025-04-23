@@ -30,7 +30,7 @@ impl LeaderExecuteAndCommitTimings {
 
     pub fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-vote_leader_slot_execute_and_commit_timings",
+            "banking_stage-leader_slot_vote_execute_and_commit_timings",
             ("slot", slot as i64, i64),
             ("collect_balances_us", self.collect_balances_us as i64, i64),
             ("load_execute_us", self.load_execute_us as i64, i64),
@@ -45,7 +45,7 @@ impl LeaderExecuteAndCommitTimings {
         );
 
         datapoint_info!(
-            "banking_stage-vote_leader_slot_record_timings",
+            "banking_stage-leader_slot_vote_record_timings",
             ("slot", slot as i64, i64),
             (
                 "processing_results_to_transactions_us",
@@ -144,7 +144,7 @@ impl OuterLoopTimings {
 
     fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-vote_leader_slot_loop_timings",
+            "banking_stage-leader_slot_vote_loop_timings",
             ("slot", slot as i64, i64),
             (
                 "bank_detected_to_slot_end_detected_us",
@@ -184,7 +184,7 @@ pub(crate) struct ProcessBufferedPacketsTimings {
 impl ProcessBufferedPacketsTimings {
     fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-vote_leader_slot_process_buffered_packets_timings",
+            "banking_stage-leader_slot_vote_process_buffered_packets_timings",
             ("slot", slot as i64, i64),
             ("make_decision_us", self.make_decision_us as i64, i64),
             (
@@ -205,7 +205,7 @@ pub(crate) struct ConsumeBufferedPacketsTimings {
 impl ConsumeBufferedPacketsTimings {
     fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-vote_leader_slot_consume_buffered_packets_timings",
+            "banking_stage-leader_slot_vote_consume_buffered_packets_timings",
             ("slot", slot as i64, i64),
             (
                 "process_packets_transactions_us",
@@ -236,7 +236,7 @@ pub(crate) struct ProcessPacketsTimings {
 impl ProcessPacketsTimings {
     fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-vote_leader_slot_process_packets_timings",
+            "banking_stage-leader_slot_vote_process_packets_timings",
             ("slot", slot as i64, i64),
             (
                 "transactions_from_packets_us",
