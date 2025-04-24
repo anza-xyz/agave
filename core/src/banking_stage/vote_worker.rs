@@ -3,6 +3,7 @@ use {
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
         immutable_deserialized_packet::ImmutableDeserializedPacket,
+        latest_unprocessed_votes::VoteSource,
         leader_slot_metrics::{
             CommittedTransactionsCounts, LeaderSlotMetricsTracker, ProcessTransactionsSummary,
         },
@@ -43,35 +44,35 @@ pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
 
 pub struct VoteWorker {
     decision_maker: DecisionMaker,
-    packet_receiver: PacketReceiver,
+    tpu_receiver: PacketReceiver,
+    gossip_receiver: PacketReceiver,
     storage: VoteStorage,
     bank_forks: Arc<RwLock<BankForks>>,
     consumer: Consumer,
-    id: u32,
 }
 
 impl VoteWorker {
     pub fn new(
         decision_maker: DecisionMaker,
-        packet_receiver: PacketReceiver,
+        tpu_receiver: PacketReceiver,
+        gossip_receiver: PacketReceiver,
         storage: VoteStorage,
         bank_forks: Arc<RwLock<BankForks>>,
         consumer: Consumer,
-        id: u32,
     ) -> Self {
         Self {
             decision_maker,
-            packet_receiver,
+            tpu_receiver,
+            gossip_receiver,
             storage,
             bank_forks,
             consumer,
-            id,
         }
     }
 
     pub fn run(mut self) {
-        let mut banking_stage_stats = BankingStageStats::new(self.id);
-        let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(self.id);
+        let mut banking_stage_stats = BankingStageStats::new();
+        let mut slot_metrics_tracker = LeaderSlotMetricsTracker::default();
 
         let mut last_metrics_update = Instant::now();
 
@@ -86,10 +87,22 @@ impl VoteWorker {
                 last_metrics_update = Instant::now();
             }
 
-            match self.packet_receiver.receive_and_buffer_packets(
+            // Check for new packets from the tpu receiver
+            match self.tpu_receiver.receive_and_buffer_packets(
                 &mut self.storage,
                 &mut banking_stage_stats,
                 &mut slot_metrics_tracker,
+                VoteSource::Tpu,
+            ) {
+                Ok(()) | Err(RecvTimeoutError::Timeout) => (),
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+            // Check for new packets from the gossip receiver
+            match self.gossip_receiver.receive_and_buffer_packets(
+                &mut self.storage,
+                &mut banking_stage_stats,
+                &mut slot_metrics_tracker,
+                VoteSource::Gossip,
             ) {
                 Ok(()) | Err(RecvTimeoutError::Timeout) => (),
                 Err(RecvTimeoutError::Disconnected) => break,
@@ -103,9 +116,6 @@ impl VoteWorker {
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
-        if self.storage.should_not_process() {
-            return;
-        }
         let (decision, make_decision_us) =
             measure_us!(self.decision_maker.make_consume_or_forward_decision());
         let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(decision.bank_start());

@@ -199,16 +199,15 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
 }
 
 /// specification of how much memory in-mem portion of account index can use
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone)]
 pub enum IndexLimitMb {
     /// use disk index while keeping a minimal amount in-mem
-    #[default]
     Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct AccountsIndexConfig {
     pub bins: Option<usize>,
     pub num_flush_threads: Option<NonZeroUsize>,
@@ -216,6 +215,19 @@ pub struct AccountsIndexConfig {
     pub index_limit_mb: IndexLimitMb,
     pub ages_to_stay_in_cache: Option<Age>,
     pub scan_results_limit_bytes: Option<usize>,
+}
+
+impl Default for AccountsIndexConfig {
+    fn default() -> Self {
+        Self {
+            bins: None,
+            num_flush_threads: None,
+            drives: None,
+            index_limit_mb: IndexLimitMb::Minimal,
+            ages_to_stay_in_cache: None,
+            scan_results_limit_bytes: None,
+        }
+    }
 }
 
 pub fn default_num_flush_threads() -> NonZeroUsize {
@@ -294,13 +306,11 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub fn default_for_tests() -> Self {
-        Self::new(Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING), Arc::default())
+        Self::new(&ACCOUNTS_INDEX_CONFIG_FOR_TESTING, Arc::default())
     }
 
-    pub fn new(config: Option<AccountsIndexConfig>, exit: Arc<AtomicBool>) -> Self {
-        let scan_results_limit_bytes = config
-            .as_ref()
-            .and_then(|config| config.scan_results_limit_bytes);
+    pub fn new(config: &AccountsIndexConfig, exit: Arc<AtomicBool>) -> Self {
+        let scan_results_limit_bytes = config.scan_results_limit_bytes;
         let (account_maps, bin_calculator, storage) = Self::allocate_accounts_index(config, exit);
         Self {
             purge_older_root_entries_one_slot_list: AtomicUsize::default(),
@@ -393,20 +403,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     #[allow(clippy::type_complexity)]
     fn allocate_accounts_index(
-        config: Option<AccountsIndexConfig>,
+        config: &AccountsIndexConfig,
         exit: Arc<AtomicBool>,
     ) -> (
         Box<[Arc<InMemAccountsIndex<T, U>>]>,
         PubkeyBinCalculator24,
         AccountsIndexStorage<T, U>,
     ) {
-        let bins = config
-            .as_ref()
-            .and_then(|config| config.bins)
-            .unwrap_or(BINS_DEFAULT);
+        let bins = config.bins.unwrap_or(BINS_DEFAULT);
         // create bin_calculator early to verify # bins is reasonable
         let bin_calculator = PubkeyBinCalculator24::new(bins);
-        let storage = AccountsIndexStorage::new(bins, &config, exit);
+        let storage = AccountsIndexStorage::new(bins, config, exit);
 
         let account_maps: Box<_> = (0..bins)
             .map(|bin| Arc::clone(&storage.in_mem[bin]))
@@ -2204,7 +2211,7 @@ pub mod tests {
         } else {
             IndexLimitMb::InMemOnly // in-mem only
         };
-        let index = AccountsIndex::<T, T>::new(Some(config), Arc::default());
+        let index = AccountsIndex::<T, T>::new(&config, Arc::default());
         let mut gc = Vec::new();
 
         if upsert {
@@ -3824,7 +3831,7 @@ pub mod tests {
     fn test_illegal_bins() {
         let mut config = AccountsIndexConfig::default();
         config.bins = Some(3);
-        AccountsIndex::<bool, bool>::new(Some(config), Arc::default());
+        AccountsIndex::<bool, bool>::new(&config, Arc::default());
     }
 
     #[test]
