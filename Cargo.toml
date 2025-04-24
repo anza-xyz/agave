@@ -23,10 +23,6 @@ opt-level = 1
 inherits = "test"
 opt-level = 1
 
-# Disable optimizations for some crates as they interfere with tests there
-[profile.ci.package."solana-gossip"]
-opt-level = 0
-
 [workspace]
 members = [
     "account-decoder",
