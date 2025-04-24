@@ -133,9 +133,9 @@ impl From<StakeIdentity> for QuicClientCertificate {
     }
 }
 
-impl StakeIdentity {
-    pub fn as_certificate(&self) -> &QuicClientCertificate {
-        &self.0
+impl<'a> From<&'a StakeIdentity> for &'a QuicClientCertificate {
+    fn from(identity: &'a StakeIdentity) -> Self {
+        &identity.0
     }
 }
 
@@ -242,7 +242,7 @@ impl ConnectionWorkersScheduler {
                     let client_config = {
                         let stake_identity = self.update_certificate_receiver.borrow_and_update();
                         let client_certificate = match stake_identity.as_ref() {
-                            Some(identity) => &identity.as_certificate(),
+                            Some(identity) => identity.into(),
                             None => &QuicClientCertificate::new(None),
                         };
                         create_client_config(client_certificate)
