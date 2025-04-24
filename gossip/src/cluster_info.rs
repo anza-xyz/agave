@@ -3085,7 +3085,6 @@ mod tests {
         itertools::izip,
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
-        solana_net_utils::bind_to,
         solana_signer::Signer,
         solana_vote_program::{
             vote_instruction,
@@ -4273,13 +4272,7 @@ mod tests {
         );
 
         let cluster_info44 = Arc::new({
-            let mut node = Node::new_localhost_with_pubkey(&keypair44.pubkey());
-            node.sockets.gossip = bind_to(
-                IpAddr::V4(Ipv4Addr::LOCALHOST),
-                /*port*/ 65534,
-                /*reuseport:*/ false,
-            )
-            .unwrap();
+            let node = Node::new_localhost_with_pubkey(&keypair44.pubkey());
             info!("{:?}", node);
             ClusterInfo::new(node.info, keypair44.clone(), SocketAddrSpace::Unspecified)
         });
