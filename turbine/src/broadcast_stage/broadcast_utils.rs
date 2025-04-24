@@ -41,7 +41,7 @@ static TARGET_BATCH_PAD_BYTES: OnceLock<u64> = OnceLock::new();
 pub fn get_target_batch_pad_bytes() -> &'static u64 {
     TARGET_BATCH_PAD_BYTES.get_or_init(|| {
         // Less than 5% padding is acceptable overhead. Let's not push our luck.
-        (data_shred_bytes_per_batch() as f64 * 0.05) as u64
+        (data_shred_bytes_per_batch() as f32 * 0.05) as u64
     })
 }
 
