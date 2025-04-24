@@ -542,21 +542,20 @@ impl TpuClientNextClient {
         let leader_updater = forward_address_getter.clone();
 
         let config = Self::create_config(bind_socket, stake_identity);
-        let scheduler: ConnectionWorkersScheduler =
-            ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
+        // For now _update_certificate_sender is unused, will be implemented later.
+        let (_update_certificate_sender, update_certificate_receiver) = watch::channel(None);
+        let scheduler: ConnectionWorkersScheduler = ConnectionWorkersScheduler::new(
+            Box::new(leader_updater),
+            receiver,
+            update_certificate_receiver,
+        );
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
             "forwarding-stage-tpu-client",
             METRICS_REPORTING_INTERVAL,
             cancel.clone(),
         ));
-        // For now _update_certificate_sender is unused, will be implemented later.
-        let (_update_certificate_sender, update_certificate_receiver) = watch::channel(None);
-        let _handle = runtime_handle.spawn(scheduler.run(
-            update_certificate_receiver,
-            config,
-            cancel.clone(),
-        ));
+        let _handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
         Self { sender }
     }
 

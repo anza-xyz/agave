@@ -35,6 +35,7 @@ pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
 pub struct ConnectionWorkersScheduler {
     leader_updater: Box<dyn LeaderUpdater>,
     transaction_receiver: TransactionReceiver,
+    update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
     stats: Arc<SendTransactionStats>,
 }
 
@@ -164,11 +165,13 @@ impl ConnectionWorkersScheduler {
     pub fn new(
         leader_updater: Box<dyn LeaderUpdater>,
         transaction_receiver: mpsc::Receiver<TransactionBatch>,
+        update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
     ) -> Self {
         let stats = Arc::new(SendTransactionStats::default());
         Self {
             leader_updater,
             transaction_receiver,
+            update_certificate_receiver,
             stats,
         }
     }
@@ -189,16 +192,11 @@ impl ConnectionWorkersScheduler {
     /// over the network.
     pub async fn run(
         self,
-        update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
         config: ConnectionWorkersSchedulerConfig,
         cancel: CancellationToken,
     ) -> Result<Self, ConnectionWorkersSchedulerError> {
-        self.run_with_broadcaster::<NonblockingBroadcaster>(
-            update_certificate_receiver,
-            config,
-            cancel,
-        )
-        .await
+        self.run_with_broadcaster::<NonblockingBroadcaster>(config, cancel)
+            .await
     }
 
     /// Starts the scheduler, which manages the distribution of transactions to
@@ -213,7 +211,6 @@ impl ConnectionWorkersScheduler {
     /// problems, they will not be retried when the problem is resolved.
     pub async fn run_with_broadcaster<Broadcaster: WorkersBroadcaster>(
         mut self,
-        mut update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
         ConnectionWorkersSchedulerConfig {
             bind,
             stake_identity,
@@ -241,9 +238,9 @@ impl ConnectionWorkersScheduler {
                         break;
                     }
                 },
-                _ = update_certificate_receiver.changed() => {
+                _ = self.update_certificate_receiver.changed() => {
                     let client_config = {
-                        let stake_identity = update_certificate_receiver.borrow_and_update();
+                        let stake_identity = self.update_certificate_receiver.borrow_and_update();
                         let client_certificate = match stake_identity.as_ref() {
                             Some(identity) => &identity.as_certificate(),
                             None => &QuicClientCertificate::new(None),

@@ -232,8 +232,6 @@ pub struct TpuClientNextClient {
     runtime_handle: Handle,
     sender: mpsc::Sender<TransactionBatch>,
     update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
-    //handle: TpuClientJoinHandle,
-    cancel: CancellationToken,
 }
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
@@ -267,25 +265,21 @@ impl TpuClientNextClient {
             };
         let config = Self::create_config(bind_socket, identity, leader_forward_count as usize);
 
-        let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
+        let scheduler = ConnectionWorkersScheduler::new(
+            Box::new(leader_updater),
+            receiver,
+            update_certificate_receiver,
+        );
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
             "send-transaction-service-TPU-client",
             METRICS_REPORTING_INTERVAL,
             cancel.clone(),
         ));
-        // TODO(klykov): store handle in structure later, when move the logic for update to separate structure.
-        let _handle = runtime_handle.spawn(scheduler.run(
-            update_certificate_receiver,
-            config,
-            cancel.clone(),
-        ));
-        // TODO(klykov): maybe we update keypair here if only scheduler has endpoint copy?
+        let _handle = runtime_handle.spawn(scheduler.run(config, cancel));
         Self {
             runtime_handle,
             update_certificate_sender,
-            //handle,
-            cancel,
             sender,
         }
     }
