@@ -947,17 +947,6 @@ fn make_stub_shred(
     Ok(shred)
 }
 
-// Maps number of (code + data) shreds to merkle_proof.len().
-pub(super) fn get_proof_size(num_shreds: usize) -> u8 {
-    let bits = usize::BITS - num_shreds.leading_zeros();
-    let proof_size = if num_shreds.is_power_of_two() {
-        bits.checked_sub(1).unwrap()
-    } else {
-        bits
-    };
-    u8::try_from(proof_size).unwrap()
-}
-
 // Generates data shreds for the current erasure batch.
 // Updates ShredCommonHeader.index for data shreds of the next batch.
 fn make_shreds_data<'a>(
@@ -1032,7 +1021,7 @@ pub(super) fn make_shreds_from_data(
     let now = Instant::now();
     let chained = chained_merkle_root.is_some();
     let resigned = chained && is_last_in_slot;
-    let proof_size = PROOF_NUM_ENTRIES;
+    let proof_size = PROOF_NUM_ENTRIES_TYPICAL;
     let data_buffer_per_shred_size = ShredData::capacity(proof_size, chained, resigned)?;
     let data_buffer_total_size = DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size;
 
@@ -1461,6 +1450,17 @@ mod test {
                 &reed_solomon_cache,
             );
         }
+    }
+
+    // Maps number of (code + data) shreds to merkle_proof.len().
+    fn get_proof_size(num_shreds: usize) -> u8 {
+        let bits = usize::BITS - num_shreds.leading_zeros();
+        let proof_size = if num_shreds.is_power_of_two() {
+            bits.checked_sub(1).unwrap()
+        } else {
+            bits
+        };
+        u8::try_from(proof_size).unwrap()
     }
 
     fn run_recover_merkle_shreds<R: Rng + CryptoRng>(
