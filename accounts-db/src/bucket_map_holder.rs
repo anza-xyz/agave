@@ -218,7 +218,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             .unwrap_or_default()
         {
             IndexLimitMb::InMemOnly => None,
-            IndexLimitMb::Unlimited => Some(BucketMap::new(bucket_config)),
+            IndexLimitMb::Minimal => Some(BucketMap::new(bucket_config)),
         };
 
         Self {

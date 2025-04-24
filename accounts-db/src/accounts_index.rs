@@ -58,7 +58,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndex
     bins: Some(BINS_FOR_TESTING),
     num_flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
-    index_limit_mb: IndexLimitMb::Unlimited,
+    index_limit_mb: IndexLimitMb::Minimal,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
 };
@@ -66,7 +66,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     bins: Some(BINS_FOR_BENCHMARKS),
     num_flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
-    index_limit_mb: IndexLimitMb::Unlimited,
+    index_limit_mb: IndexLimitMb::Minimal,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
 };
@@ -201,10 +201,9 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
 /// specification of how much memory in-mem portion of account index can use
 #[derive(Debug, Copy, Clone, Default)]
 pub enum IndexLimitMb {
-    /// use disk index while allowing to use as much memory as available for
-    /// in-memory index.
+    /// use disk index while keeping a minimal amount in-mem
     #[default]
-    Unlimited,
+    Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
 }
@@ -2201,7 +2200,7 @@ pub mod tests {
 
         let mut config = ACCOUNTS_INDEX_CONFIG_FOR_TESTING;
         config.index_limit_mb = if use_disk {
-            IndexLimitMb::Unlimited
+            IndexLimitMb::Minimal
         } else {
             IndexLimitMb::InMemOnly // in-mem only
         };
