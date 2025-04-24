@@ -4,7 +4,6 @@ use {
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         is_zero_lamport::IsZeroLamport,
     },
-    log::*,
     solana_clock::Slot,
     std::sync::{
         atomic::{AtomicBool, Ordering},
@@ -50,9 +49,10 @@ impl<T: IndexValue> AccountMapEntry<T> {
     pub fn unref(&self) -> RefCount {
         let previous = self.ref_count.fetch_sub(1, Ordering::Release);
         self.set_dirty(true);
-        if previous == 0 {
-            inc_new_counter_info!("accounts_index-deref_from_0", 1);
-        }
+        assert_ne!(
+            previous, 0,
+            "decremented ref count when already zero: {self:?}"
+        );
         previous
     }
 
