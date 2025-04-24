@@ -38,7 +38,7 @@ pub fn localhost_port_range_for_tests() -> (u16, u16) {
     (start, start + 20)
 }
 
-pub fn get_gossip_port(
+pub fn bind_gossip_port_in_range(
     gossip_addr: &SocketAddr,
     port_range: PortRange,
     bind_ip_addr: IpAddr,

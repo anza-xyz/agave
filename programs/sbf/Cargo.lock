@@ -2174,7 +2174,7 @@ dependencies = [
  "indexmap 2.9.0",
  "slab",
  "tokio",
- "tokio-util 0.7.14",
+ "tokio-util 0.7.15",
  "tracing",
 ]
 
@@ -4498,7 +4498,7 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "tokio-rustls 0.24.1",
- "tokio-util 0.7.14",
+ "tokio-util 0.7.15",
  "tower-service",
  "url 2.5.4",
  "wasm-bindgen",
@@ -4543,7 +4543,7 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tokio",
  "tokio-rustls 0.26.2",
- "tokio-util 0.7.14",
+ "tokio-util 0.7.15",
  "tower 0.5.2",
  "tower-service",
  "url 2.5.4",
@@ -5925,7 +5925,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util 0.7.14",
+ "tokio-util 0.7.15",
  "trees",
 ]
 
@@ -7370,7 +7370,7 @@ dependencies = [
  "stream-cancel",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util 0.7.14",
+ "tokio-util 0.7.15",
 ]
 
 [[package]]
@@ -8284,7 +8284,7 @@ dependencies = [
  "solana-sdk",
  "solana-tpu-client-next",
  "tokio",
- "tokio-util 0.7.14",
+ "tokio-util 0.7.15",
 ]
 
 [[package]]
@@ -8561,7 +8561,7 @@ dependencies = [
  "solana-transaction-metrics-tracker",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util 0.7.14",
+ "tokio-util 0.7.15",
  "x509-parser",
 ]
 
@@ -8886,7 +8886,7 @@ dependencies = [
  "solana-tpu-client",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util 0.7.14",
+ "tokio-util 0.7.15",
 ]
 
 [[package]]
@@ -10522,9 +10522,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.14"
+version = "0.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b9590b93e6fcc1739458317cccd391ad3955e2bde8913edf6f95f9e65a8f034"
+checksum = "66a539a9ad6d5d281510d5bd368c973d636c02dbf8a67300bfb6b950696ad7df"
 dependencies = [
  "bytes",
  "futures-core",
@@ -10618,7 +10618,7 @@ dependencies = [
  "rand 0.8.5",
  "slab",
  "tokio",
- "tokio-util 0.7.14",
+ "tokio-util 0.7.15",
  "tower-layer",
  "tower-service",
  "tracing",
