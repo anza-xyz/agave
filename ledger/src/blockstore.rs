@@ -1642,12 +1642,12 @@ impl Blockstore {
     /// Arguments:
     /// - `shred`: the shred to be inserted
     /// - `shred_insertion_tracker`: collection of shred insertion tracking
-    ///     data.
+    ///   data.
     /// - `is_trusted`: if false, this function will check whether the
-    ///     input shred is duplicate.
+    ///   input shred is duplicate.
     /// - `handle_duplicate`: the function that handles duplication.
     /// - `leader_schedule`: the leader schedule will be used to check
-    ///     whether it is okay to insert the input shred.
+    ///   whether it is okay to insert the input shred.
     /// - `shred_source`: the source of the shred.
     #[allow(clippy::too_many_arguments)]
     fn check_insert_data_shred<'a>(
