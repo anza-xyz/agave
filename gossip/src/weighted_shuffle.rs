@@ -357,18 +357,18 @@ mod tests {
             assert_eq!(get_num_nodes_and_tree_size(count), (1, 1));
         }
         let num_nodes = 1 + 16;
-        for count in 17..=256 {
-            let tree_size = 1 + (count + 15) / 16;
+        for count in 17_usize..=256 {
+            let tree_size = 1 + count.div_ceil(16);
             assert_eq!(get_num_nodes_and_tree_size(count), (num_nodes, tree_size));
         }
         let num_nodes = 1 + 16 + 16 * 16;
-        for count in 257..=4096 {
-            let tree_size = 1 + 16 + (count + 15) / 16;
+        for count in 257_usize..=4096 {
+            let tree_size = 1 + 16 + count.div_ceil(16);
             assert_eq!(get_num_nodes_and_tree_size(count), (num_nodes, tree_size));
         }
         let num_nodes = 1 + 16 + 16 * 16 + 16 * 16 * 16;
-        for count in 4097..=65536 {
-            let tree_size = 1 + 16 + 16 * 16 + (count + 15) / 16;
+        for count in 4097_usize..=65536 {
+            let tree_size = 1 + 16 + 16 * 16 + count.div_ceil(16);
             assert_eq!(get_num_nodes_and_tree_size(count), (num_nodes, tree_size));
         }
     }
