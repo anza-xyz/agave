@@ -2013,6 +2013,14 @@ impl ClusterInfo {
         let mut ping_messages = vec![];
         let mut pong_messages = vec![];
         for (from_addr, packet) in packets.drain(..).flatten() {
+            // Deferred verification - we now do this later (here) instead of in verify_packet because it is expensive
+            if !packet.par_verify() {
+                continue;
+            }
+
+            // Verification passed, increment stats
+            self.stats.packets_received_verified_count.add_relaxed(1);
+
             match packet {
                 Protocol::PullRequest(filter, caller) => {
                     if !check_pull_request_shred_version(self_shred_version, &caller) {
@@ -2129,10 +2137,7 @@ impl ClusterInfo {
                     return None;
                 }
             }
-            protocol.par_verify().then(|| {
-                stats.packets_received_verified_count.add_relaxed(1);
-                (packet.meta().socket_addr(), protocol)
-            })
+            Some((packet.meta().socket_addr(), protocol))
         }
         let stakes = epoch_specs
             .map(EpochSpecs::current_epoch_staked_nodes)
