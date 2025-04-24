@@ -8,13 +8,16 @@ use {
     libc::{iovec, mmsghdr, sockaddr_storage, socklen_t, AF_INET, AF_INET6, MSG_WAITFORONE},
     std::{
         mem::{self, MaybeUninit},
-        net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+        net::{SocketAddr, SocketAddrV4, SocketAddrV6},
         os::unix::io::AsRawFd,
     },
 };
 use {
     crate::packet::{Meta, Packet},
-    std::{cmp, io, net::UdpSocket},
+    std::{
+        cmp, io,
+        net::{Ipv4Addr, Ipv6Addr, UdpSocket},
+    },
 };
 
 #[cfg(not(target_os = "linux"))]
@@ -170,24 +173,24 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
 mod tests {
     use {
         crate::{packet::PACKET_DATA_SIZE, recvmmsg::*},
-        solana_net_utils::{bind_to, bind_to_localhost},
+        solana_net_utils::{
+            bind_in_range_with_config, sockets::localhost_port_range_for_tests, SocketConfig,
+        },
         std::{
-            net::{SocketAddr, UdpSocket},
+            net::{IpAddr, SocketAddr, UdpSocket},
             time::{Duration, Instant},
         },
     };
 
     type TestConfig = (UdpSocket, SocketAddr, UdpSocket, SocketAddr);
 
-    fn test_setup_reader_sender(ip_str: &str) -> io::Result<TestConfig> {
-        let sock_addr: SocketAddr = ip_str
-            .parse()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let reader = bind_to(sock_addr.ip(), sock_addr.port(), /*reuseport:*/ false)?;
-        let addr = reader.local_addr()?;
-        let sender = bind_to(sock_addr.ip(), sock_addr.port(), /*reuseport:*/ false)?;
-        let saddr = sender.local_addr()?;
-        Ok((reader, addr, sender, saddr))
+    fn test_setup_reader_sender(ip: IpAddr) -> io::Result<TestConfig> {
+        let port_range = localhost_port_range_for_tests();
+        let reader = bind_in_range_with_config(ip, port_range, SocketConfig::default())?.1;
+        let reader_addr = reader.local_addr()?;
+        let sender = bind_in_range_with_config(ip, port_range, SocketConfig::default())?.1;
+        let sender_addr = sender.local_addr()?;
+        Ok((reader, reader_addr, sender, sender_addr))
     }
 
     const TEST_NUM_MSGS: usize = 32;
@@ -209,9 +212,9 @@ mod tests {
             }
         };
 
-        test_one_iter(test_setup_reader_sender("127.0.0.1:0").unwrap());
+        test_one_iter(test_setup_reader_sender(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap());
 
-        match test_setup_reader_sender("::1:0") {
+        match test_setup_reader_sender(IpAddr::V6(Ipv6Addr::LOCALHOST)) {
             Ok(config) => test_one_iter(config),
             Err(e) => warn!("Failed to configure IPv6: {:?}", e),
         }
@@ -245,9 +248,9 @@ mod tests {
             }
         };
 
-        test_multi_iter(test_setup_reader_sender("127.0.0.1:0").unwrap());
+        test_multi_iter(test_setup_reader_sender(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap());
 
-        match test_setup_reader_sender("::1:0") {
+        match test_setup_reader_sender(IpAddr::V6(Ipv6Addr::LOCALHOST)) {
             Ok(config) => test_multi_iter(config),
             Err(e) => warn!("Failed to configure IPv6: {:?}", e),
         }
@@ -255,16 +258,14 @@ mod tests {
 
     #[test]
     pub fn test_recv_mmsg_multi_iter_timeout() {
-        let reader = bind_to_localhost().expect("bind");
-        let addr = reader.local_addr().unwrap();
+        let (reader, reader_addr, sender, sender_addr) =
+            test_setup_reader_sender(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap();
         reader.set_read_timeout(Some(Duration::new(5, 0))).unwrap();
         reader.set_nonblocking(false).unwrap();
-        let sender = bind_to_localhost().expect("bind");
-        let saddr = sender.local_addr().unwrap();
         let sent = TEST_NUM_MSGS;
         for _ in 0..sent {
             let data = [0; PACKET_DATA_SIZE];
-            sender.send_to(&data[..], addr).unwrap();
+            sender.send_to(&data[..], reader_addr).unwrap();
         }
 
         let start = Instant::now();
@@ -273,7 +274,7 @@ mod tests {
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-            assert_eq!(packet.meta().socket_addr(), saddr);
+            assert_eq!(packet.meta().socket_addr(), sender_addr);
         }
         reader.set_nonblocking(true).unwrap();
 
@@ -286,25 +287,32 @@ mod tests {
 
     #[test]
     pub fn test_recv_mmsg_multi_addrs() {
-        let reader = bind_to_localhost().expect("bind");
-        let addr = reader.local_addr().unwrap();
-
-        let sender1 = bind_to_localhost().expect("bind");
-        let saddr1 = sender1.local_addr().unwrap();
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let port_range = localhost_port_range_for_tests();
+        let reader = bind_in_range_with_config(ip, port_range, SocketConfig::default())
+            .unwrap()
+            .1;
+        let reader_addr = reader.local_addr().unwrap();
+        let sender1 = bind_in_range_with_config(ip, port_range, SocketConfig::default())
+            .unwrap()
+            .1;
+        let sender1_addr = sender1.local_addr().unwrap();
         let sent1 = TEST_NUM_MSGS - 1;
 
-        let sender2 = bind_to_localhost().expect("bind");
-        let saddr2 = sender2.local_addr().unwrap();
+        let sender2 = bind_in_range_with_config(ip, port_range, SocketConfig::default())
+            .unwrap()
+            .1;
+        let sender_addr = sender2.local_addr().unwrap();
         let sent2 = TEST_NUM_MSGS + 1;
 
         for _ in 0..sent1 {
             let data = [0; PACKET_DATA_SIZE];
-            sender1.send_to(&data[..], addr).unwrap();
+            sender1.send_to(&data[..], reader_addr).unwrap();
         }
 
         for _ in 0..sent2 {
             let data = [0; PACKET_DATA_SIZE];
-            sender2.send_to(&data[..], addr).unwrap();
+            sender2.send_to(&data[..], reader_addr).unwrap();
         }
 
         let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
@@ -313,11 +321,11 @@ mod tests {
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(sent1) {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-            assert_eq!(packet.meta().socket_addr(), saddr1);
+            assert_eq!(packet.meta().socket_addr(), sender1_addr);
         }
         for packet in packets.iter().skip(sent1).take(recv - sent1) {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-            assert_eq!(packet.meta().socket_addr(), saddr2);
+            assert_eq!(packet.meta().socket_addr(), sender_addr);
         }
 
         packets
@@ -327,7 +335,7 @@ mod tests {
         assert_eq!(sent1 + sent2 - TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
             assert_eq!(packet.meta().size, PACKET_DATA_SIZE);
-            assert_eq!(packet.meta().socket_addr(), saddr2);
+            assert_eq!(packet.meta().socket_addr(), sender_addr);
         }
     }
 }
