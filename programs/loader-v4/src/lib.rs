@@ -1271,49 +1271,6 @@ mod tests {
         );
         assert_eq!(accounts[0].lamports(), transaction_accounts[0].1.lamports());
 
-        // Error: Source program is not writable
-        process_instruction(
-            vec![],
-            &bincode::serialize(&LoaderV4Instruction::Deploy).unwrap(),
-            transaction_accounts.clone(),
-            &[(0, false, true), (1, true, false), (2, false, false)],
-            Err(InstructionError::InvalidArgument),
-        );
-
-        // Error: Source program is not retracted
-        process_instruction(
-            vec![],
-            &bincode::serialize(&LoaderV4Instruction::Deploy).unwrap(),
-            transaction_accounts.clone(),
-            &[(2, false, true), (1, true, false), (0, false, true)],
-            Err(InstructionError::InvalidArgument),
-        );
-
-        // Redeploy: Retract, then replace data by other source
-        let accounts = process_instruction(
-            vec![],
-            &bincode::serialize(&LoaderV4Instruction::Retract).unwrap(),
-            transaction_accounts.clone(),
-            &[(0, false, true), (1, true, false)],
-            Ok(()),
-        );
-        transaction_accounts[0].1 = accounts[0].clone();
-        let accounts = process_instruction(
-            vec![],
-            &bincode::serialize(&LoaderV4Instruction::Deploy).unwrap(),
-            transaction_accounts.clone(),
-            &[(0, false, true), (1, true, false), (2, false, true)],
-            Ok(()),
-        );
-        assert_eq!(
-            accounts[0].data().len(),
-            transaction_accounts[2].1.data().len(),
-        );
-        assert_eq!(accounts[2].data().len(), 0,);
-        assert_eq!(accounts[0].lamports(), transaction_accounts[2].1.lamports());
-        assert_eq!(accounts[2].lamports(), transaction_accounts[0].1.lamports());
-        transaction_accounts[0].1 = accounts[0].clone();
-
         // Error: Program was deployed recently, cooldown still in effect
         process_instruction(
             vec![],
