@@ -752,19 +752,33 @@ pub fn process_deploy_program(
         .verify::<RequisiteVerifier>()
         .map_err(|err| format!("ELF error: {err}"))?;
 
-    // Create and add retract message
+    // Create and add retract and set_program_length instructions
     let mut initial_instructions = Vec::default();
-    let mut retract_instruction = None;
     if let Some(program_account) = program_account.as_ref() {
-        retract_instruction =
-            build_retract_instruction(program_account, program_address, &authority_pubkey)?;
+        if let Some(retract_instruction) =
+            build_retract_instruction(program_account, program_address, &authority_pubkey)?
+        {
+            initial_instructions.insert(0, retract_instruction);
+        }
+        let (mut set_program_length_instructions, _lamports_required) =
+            build_set_program_length_instructions(
+                rpc_client.clone(),
+                config,
+                auth_signer_index,
+                program_account,
+                program_address,
+                program_data.len() as u32,
+            )?;
+        if !set_program_length_instructions.is_empty() {
+            initial_instructions.append(&mut set_program_length_instructions);
+        }
     }
 
     let upload_address = buffer_address.unwrap_or(program_address);
-    let upload_account = if buffer_address.is_some() {
-        buffer_account
+    let (upload_account, upload_account_length) = if buffer_address.is_some() {
+        (buffer_account, upload_range.len())
     } else {
-        program_account
+        (program_account, program_data.len())
     };
     let existing_lamports = upload_account
         .as_ref()
@@ -779,7 +793,7 @@ pub fn process_deploy_program(
                 instruction::set_program_length(
                     upload_address,
                     &authority_pubkey,
-                    program_data.len() as u32,
+                    upload_account_length as u32,
                     &payer_pubkey,
                 ),
             ]);
@@ -790,11 +804,12 @@ pub fn process_deploy_program(
             upload_address,
             lamports_required,
             &authority_pubkey,
-            program_data.len() as u32,
+            upload_account_length as u32,
             &payer_pubkey,
         ));
     }
 
+    // Create and add write messages
     let mut write_messages = vec![];
     if upload_signer_index.is_none() {
         if upload_account.is_none() {
@@ -808,24 +823,6 @@ pub fn process_deploy_program(
         if upload_range.is_empty() {
             return Err(format!("Attempting to upload empty range {:?}", upload_range).into());
         }
-
-        // Create and add set_program_length message
-        if let Some(upload_account) = upload_account.as_ref() {
-            let (mut set_program_length_instructions, _lamports_required) =
-                build_set_program_length_instructions(
-                    rpc_client.clone(),
-                    config,
-                    auth_signer_index,
-                    upload_account,
-                    upload_address,
-                    program_data.len() as u32,
-                )?;
-            if !set_program_length_instructions.is_empty() {
-                initial_instructions.append(&mut set_program_length_instructions);
-            }
-        }
-
-        // Create and add write messages
         let first_write_message = Message::new(
             &[instruction::write(
                 upload_address,
@@ -849,39 +846,27 @@ pub fn process_deploy_program(
         }
     }
 
-    // Create and add deploy messages
-    let mut final_instructions = Vec::default();
-    if buffer_address == Some(program_address) {
+    let final_instructions = if buffer_address == Some(program_address) {
         // Upload to buffer only and skip actual deployment
-    } else if buffer_address.is_some() {
-        // Redeploy with a buffer account
-        if let Some(retract_instruction) = retract_instruction {
-            final_instructions.push(retract_instruction);
-        }
-        final_instructions.push(instruction::deploy_from_source(
-            program_address,
-            &authority_pubkey,
-            upload_address,
-        ));
-        let mut lamports_to_retrive = upload_account
-            .as_ref()
-            .map(|account| account.lamports)
-            .unwrap_or(0);
-        if upload_signer_index.is_some() {
-            lamports_to_retrive = lamports_to_retrive.saturating_add(lamports_required);
-        }
-        final_instructions.push(system_instruction::transfer(
-            upload_address,
-            &payer_pubkey,
-            lamports_to_retrive,
-        ));
+        Vec::default()
+    } else if let Some(buffer_address) = buffer_address {
+        // Redeployment with a buffer
+        vec![
+            instruction::copy(
+                program_address,
+                &authority_pubkey,
+                buffer_address,
+                upload_range.start as u32,
+                0,
+                upload_range.len() as u32,
+            ),
+            instruction::deploy(program_address, &authority_pubkey),
+            instruction::set_program_length(buffer_address, &authority_pubkey, 0, &payer_pubkey),
+        ]
     } else {
-        // Deploy new program or redeploy without a buffer account
-        if let Some(retract_instruction) = retract_instruction {
-            initial_instructions.insert(0, retract_instruction);
-        }
-        final_instructions.push(instruction::deploy(program_address, &authority_pubkey));
-    }
+        // Initial deployment or redeployment without a buffer
+        vec![instruction::deploy(program_address, &authority_pubkey)]
+    };
 
     send_messages(
         rpc_client,
