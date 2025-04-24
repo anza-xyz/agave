@@ -306,6 +306,9 @@ pub fn bind_common_in_range_with_config(
     range: PortRange,
     mut config: SocketConfig,
 ) -> io::Result<(u16, (UdpSocket, TcpListener))> {
+    if config.reuseport {
+        warn!("Calling 'bind_common_in_range_with_config' with SO_REUSEPORT is not supported");
+    }
     config.reuseport = false;
     for port in range.0..range.1 {
         if let Ok((sock, listener)) = bind_common_with_config(ip_addr, port, config) {
@@ -328,6 +331,9 @@ pub fn bind_in_range_with_config(
     range: PortRange,
     mut config: SocketConfig,
 ) -> io::Result<(u16, UdpSocket)> {
+    if config.reuseport {
+        warn!("Calling 'bind_in_range_with_config' with SO_REUSEPORT is not supported");
+    }
     config.reuseport = false;
     let sock = udp_socket_with_config(config)?;
 
@@ -416,8 +422,11 @@ pub async fn bind_to_async(
 }
 
 pub fn bind_to_localhost() -> io::Result<UdpSocket> {
-    let config = SocketConfig::default();
-    bind_to_with_config(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, config)
+    bind_to(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -431,13 +440,21 @@ pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
 }
 
 pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
-    let config = SocketConfig::default();
-    bind_to_with_config(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, config)
+    bind_to(
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_unspecified_async() -> io::Result<TokioUdpSocket> {
-    bind_to_async(IpAddr::V4(Ipv4Addr::UNSPECIFIED), /*port:*/ 0, false).await
+    bind_to_async(
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
+    .await
 }
 
 pub fn bind_to_with_config(
@@ -775,7 +792,7 @@ mod tests {
         let port = find_available_port_in_range(ip_addr, (pr_s, pr_e)).unwrap();
         assert!((pr_s..pr_e).contains(&port));
 
-        let _socket = bind_to_with_config(ip_addr, port, SocketConfig::default()).unwrap();
+        let _socket = bind_to(ip_addr, port, false).unwrap();
         find_available_port_in_range(ip_addr, (port, port + 1)).unwrap_err();
     }
 
