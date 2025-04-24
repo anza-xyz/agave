@@ -86,9 +86,13 @@ async fn setup_connection_worker_scheduler(
 
     let cancel = CancellationToken::new();
     let config = test_config(stake_identity);
-    let scheduler = ConnectionWorkersScheduler::new(leader_updater, transaction_receiver);
-    let scheduler =
-        tokio::spawn(scheduler.run(update_certificate_receiver, config, cancel.clone()));
+    let scheduler = ConnectionWorkersScheduler::new(
+        leader_updater,
+        transaction_receiver,
+        update_certificate_receiver,
+        cancel.clone(),
+    );
+    let scheduler = tokio::spawn(scheduler.run(config));
 
     (scheduler, cancel)
 }

@@ -548,6 +548,7 @@ impl TpuClientNextClient {
             Box::new(leader_updater),
             receiver,
             update_certificate_receiver,
+            cancel.clone(),
         );
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
@@ -555,7 +556,7 @@ impl TpuClientNextClient {
             METRICS_REPORTING_INTERVAL,
             cancel.clone(),
         ));
-        let _handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
+        let _handle = runtime_handle.spawn(scheduler.run(config));
         Self { sender }
     }
 

@@ -36,6 +36,7 @@ pub struct ConnectionWorkersScheduler {
     leader_updater: Box<dyn LeaderUpdater>,
     transaction_receiver: TransactionReceiver,
     update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
+    cancel: CancellationToken,
     stats: Arc<SendTransactionStats>,
 }
 
@@ -166,12 +167,14 @@ impl ConnectionWorkersScheduler {
         leader_updater: Box<dyn LeaderUpdater>,
         transaction_receiver: mpsc::Receiver<TransactionBatch>,
         update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
+        cancel: CancellationToken,
     ) -> Self {
         let stats = Arc::new(SendTransactionStats::default());
         Self {
             leader_updater,
             transaction_receiver,
             update_certificate_receiver,
+            cancel,
             stats,
         }
     }
@@ -193,9 +196,8 @@ impl ConnectionWorkersScheduler {
     pub async fn run(
         self,
         config: ConnectionWorkersSchedulerConfig,
-        cancel: CancellationToken,
     ) -> Result<Self, ConnectionWorkersSchedulerError> {
-        self.run_with_broadcaster::<NonblockingBroadcaster>(config, cancel)
+        self.run_with_broadcaster::<NonblockingBroadcaster>(config)
             .await
     }
 
@@ -204,8 +206,7 @@ impl ConnectionWorkersScheduler {
     /// way transactions are send to the leaders, see [`WorkersBroadcaster`].
     ///
     /// Runs the main loop that handles worker scheduling and management for
-    /// connections. Returns the error quic statistics per connection address or
-    /// an error along with receiver for transactions.
+    /// connections. Returns [`SendTransactionStats`] or an error.
     ///
     /// Importantly, if some transactions were not delivered due to network
     /// problems, they will not be retried when the problem is resolved.
@@ -220,12 +221,11 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
-        cancel: CancellationToken,
     ) -> Result<Self, ConnectionWorkersSchedulerError> {
         let mut endpoint = Self::setup_endpoint(bind, stake_identity)?;
 
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
-        let mut workers = WorkersCache::new(num_connections, cancel.clone());
+        let mut workers = WorkersCache::new(num_connections, self.cancel.clone());
 
         let mut last_error = None;
 
@@ -254,7 +254,7 @@ impl ConnectionWorkersScheduler {
                     workers.flush();
                     continue;
                 }
-                () = cancel.cancelled() => {
+                () = self.cancel.cancelled() => {
                     debug!("Cancelled: Shutting down");
                     break;
                 }

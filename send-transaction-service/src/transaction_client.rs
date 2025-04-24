@@ -232,6 +232,7 @@ pub struct TpuClientNextClient {
     runtime_handle: Handle,
     sender: mpsc::Sender<TransactionBatch>,
     update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
+    cancel: CancellationToken,
 }
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
@@ -269,6 +270,7 @@ impl TpuClientNextClient {
             Box::new(leader_updater),
             receiver,
             update_certificate_receiver,
+            cancel.clone(),
         );
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
@@ -276,11 +278,12 @@ impl TpuClientNextClient {
             METRICS_REPORTING_INTERVAL,
             cancel.clone(),
         ));
-        let _handle = runtime_handle.spawn(scheduler.run(config, cancel));
+        let _handle = runtime_handle.spawn(scheduler.run(config));
         Self {
             runtime_handle,
             update_certificate_sender,
             sender,
+            cancel,
         }
     }
 
