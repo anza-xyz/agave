@@ -1021,7 +1021,7 @@ pub(super) fn make_shreds_from_data(
     let now = Instant::now();
     let chained = chained_merkle_root.is_some();
     let resigned = chained && is_last_in_slot;
-    let proof_size = PROOF_NUM_ENTRIES_TYPICAL;
+    let proof_size = PROOF_ENTRIES_FOR_32_32_BATCH;
     let data_buffer_per_shred_size = ShredData::capacity(proof_size, chained, resigned)?;
     let data_buffer_total_size = DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size;
 
