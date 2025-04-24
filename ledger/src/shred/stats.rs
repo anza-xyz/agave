@@ -19,9 +19,16 @@ pub struct ProcessShredsStats {
     pub coding_send_elapsed: u64,
     pub get_leader_schedule_elapsed: u64,
     pub coalesce_elapsed: u64,
+    // The number of times entry coalescing exited because the maximum number of
+    // bytes was hit.
     pub coalesce_exited_hit_max: u64,
+    // The number of times entry coalescing exited because we were tightly
+    // aligned to an erasure batch boundary.
     pub coalesce_exited_tightly_packed: u64,
+    // The number of times entry coalescing exited because the slot ended.
     pub coalesce_exited_slot_ended: u64,
+    // The number of times entry coalescing exited because the maximum coalesce
+    // duration was reached.
     pub coalesce_exited_rcv_timeout: u64,
     // Histogram count of num_data_shreds obtained from serializing entries
     // counted in 5 buckets.
