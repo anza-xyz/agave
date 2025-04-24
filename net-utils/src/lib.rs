@@ -252,7 +252,7 @@ pub struct SocketConfig {
 }
 
 impl SocketConfig {
-    #[deprecated(since = "2.3", note = "SO_REUSEPORT is now managed automatically")]
+    #[deprecated(since = "2.3.0", note = "SO_REUSEPORT is now managed automatically")]
     pub fn reuseport(mut self, reuseport: bool) -> Self {
         self.reuseport = reuseport;
         self
@@ -287,6 +287,7 @@ fn udp_socket_with_config(_config: SocketConfig) -> io::Result<Socket> {
     Ok(sock)
 }
 
+#[cfg(not(any(windows, target_os = "ios")))]
 fn set_reuse_port<T>(socket: &T) -> io::Result<()>
 where
     T: std::os::fd::AsFd,
@@ -318,12 +319,13 @@ fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
     Ok(sock)
 }
 
-// Find a port in the given range with a socket config that is available for both TCP and UDP
+/// Find a port in the given range with a socket config that is available for both TCP and UDP
 pub fn bind_common_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
-    config: SocketConfig,
+    mut config: SocketConfig,
 ) -> io::Result<(u16, (UdpSocket, TcpListener))> {
+    config.reuseport = false;
     for port in range.0..range.1 {
         if let Ok((sock, listener)) = bind_common_with_config(ip_addr, port, config) {
             return Result::Ok((sock.local_addr().unwrap().port(), (sock, listener)));
@@ -355,8 +357,9 @@ pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpS
 pub fn bind_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
-    config: SocketConfig,
+    mut config: SocketConfig,
 ) -> io::Result<(u16, UdpSocket)> {
+    config.reuseport = false;
     let sock = udp_socket_with_config(config)?;
 
     for port in range.0..range.1 {
@@ -394,16 +397,9 @@ pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
 pub fn multi_bind_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
-    mut config: SocketConfig,
+    config: SocketConfig,
     mut num: usize,
 ) -> io::Result<(u16, Vec<UdpSocket>)> {
-    config.reuseport = false;
-    if !config.reuseport {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SocketConfig.reuseport must be true for multi_bind_in_range_with_config",
-        ));
-    }
     if cfg!(windows) && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
@@ -412,35 +408,8 @@ pub fn multi_bind_in_range_with_config(
         );
         num = 1;
     }
-    let mut sockets = Vec::with_capacity(num);
-
-    const NUM_TRIES: usize = 100;
-    let mut port = 0;
-    let mut error = None;
-    for _ in 0..NUM_TRIES {
-        port = {
-            let (port, _) = bind_in_range(ip_addr, range)?;
-            port
-        }; // drop the probe, port should be available... briefly.
-
-        for _ in 0..num {
-            let sock = bind_to_with_config(ip_addr, port, config);
-            if let Ok(sock) = sock {
-                sockets.push(sock);
-            } else {
-                error = Some(sock);
-                break;
-            }
-        }
-        if sockets.len() == num {
-            break;
-        } else {
-            sockets.clear();
-        }
-    }
-    if sockets.len() != num {
-        error.unwrap()?;
-    }
+    let (port, socket) = bind_in_range_with_config(ip_addr, range, config)?;
+    let sockets = bind_more_with_config(socket, num, config)?;
     Ok((port, sockets))
 }
 
@@ -460,7 +429,7 @@ pub fn multi_bind_in_range(
     multi_bind_in_range_with_config(ip_addr, range, config, num)
 }
 
-#[deprecated(since = "2.3", note = "use `bind_to_with_config` instead")]
+//#[deprecated(since = "2.3.0", note = "use `bind_to_with_config` instead")]
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSocket> {
     let config = SocketConfig {
         reuseport,
@@ -639,8 +608,21 @@ pub fn find_available_ports_in_range(
 pub fn bind_more_with_config(
     socket: UdpSocket,
     num: usize,
-    config: SocketConfig,
+    mut config: SocketConfig,
 ) -> io::Result<Vec<UdpSocket>> {
+    #[cfg(any(windows, target_os = "ios"))]
+    let num = {
+        if num > 1 {
+            warn!(
+                "bind_more_with_config() only supports 1 socket in windows ({} requested)",
+                num
+            );
+        }
+        num.min(1)
+    };
+    #[cfg(not(any(windows, target_os = "ios")))]
+    set_reuse_port(&socket)?;
+    config.reuseport = true;
     let addr = socket.local_addr().unwrap();
     let ip = addr.ip();
     let port = addr.port();
@@ -803,6 +785,17 @@ mod tests {
     }
 
     #[test]
+    fn test_bind_on_top() {
+        let config = SocketConfig::default();
+        let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let port_range = sockets::localhost_port_range_for_tests();
+        let (_p, s) = bind_in_range_with_config(localhost, port_range, config).unwrap();
+        let _socks = bind_more_with_config(s, 8, config).unwrap();
+
+        let _socks2 = multi_bind_in_range_with_config(localhost, port_range, config, 8).unwrap();
+    }
+
+    #[test]
     fn test_find_available_port_in_range() {
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let (pr_s, pr_e) = sockets::localhost_port_range_for_tests();
@@ -813,7 +806,7 @@ mod tests {
         let port = find_available_port_in_range(ip_addr, (pr_s, pr_e)).unwrap();
         assert!((pr_s..pr_e).contains(&port));
 
-        let socket_ = bind_to_with_config(ip_addr, port, SocketConfig::default()).unwrap();
+        let _socket = bind_to_with_config(ip_addr, port, SocketConfig::default()).unwrap();
         find_available_port_in_range(ip_addr, (port, port + 1)).unwrap_err();
     }
 
@@ -997,18 +990,5 @@ mod tests {
             assert!(port2 == port1 + offset);
         }
         assert!(bind_two_in_range_with_offset(ip_addr, (1024, 1044), offset).is_err());
-    }
-
-    #[test]
-    fn test_multi_bind_in_range_with_config_reuseport_disabled() {
-        let ip_addr: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let config = SocketConfig::default(); //reuseport is false by default
-
-        let result = multi_bind_in_range_with_config(ip_addr, (2010, 2110), config, 2);
-
-        assert!(
-            result.is_err(),
-            "Expected an error when reuseport is not set to true"
-        );
     }
 }
