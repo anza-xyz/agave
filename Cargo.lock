@@ -7690,9 +7690,8 @@ dependencies = [
 
 [[package]]
 name = "solana-config-program-client"
-version = "0.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53aceac36f105fd4922e29b4f0c1f785b69d7b3e7e387e384b8985c8e0c3595e"
+version = "1.0.0"
+source = "git+https://github.com/solana-program/config.git?branch=drop-config-state#adace9caa7c0302225d94d9564e7a637f8339fa7"
 dependencies = [
  "bincode",
  "borsh 0.10.3",
