@@ -61,7 +61,7 @@ impl Vortexor {
         tpu_forward_address: Option<SocketAddr>,
         num_quic_endpoints: usize,
     ) -> TpuSockets {
-        let quic_config = SocketConfig::default().reuseport(true);
+        let quic_config = SocketConfig::default();
 
         let tpu_quic = bind_sockets(
             bind_address,
