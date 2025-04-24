@@ -96,7 +96,7 @@ pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
     multi_bind_in_range_with_config(
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         port_range,
-        SocketConfig::default().reuseport(true),
+        SocketConfig::default(),
         num,
     )
     .expect("bind operation for quic server sockets should succeed")
