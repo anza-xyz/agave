@@ -196,7 +196,7 @@ impl ConnectionWorkersScheduler {
     pub async fn run(
         self,
         config: ConnectionWorkersSchedulerConfig,
-    ) -> Result<Self, ConnectionWorkersSchedulerError> {
+    ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
         self.run_with_broadcaster::<NonblockingBroadcaster>(config)
             .await
     }
@@ -211,7 +211,7 @@ impl ConnectionWorkersScheduler {
     /// Importantly, if some transactions were not delivered due to network
     /// problems, they will not be retried when the problem is resolved.
     pub async fn run_with_broadcaster<Broadcaster: WorkersBroadcaster>(
-        mut self,
+        self,
         ConnectionWorkersSchedulerConfig {
             bind,
             stake_identity,
@@ -221,26 +221,33 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
-    ) -> Result<Self, ConnectionWorkersSchedulerError> {
+    ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
+        let ConnectionWorkersScheduler {
+            mut leader_updater,
+            mut transaction_receiver,
+            mut update_certificate_receiver,
+            cancel,
+            stats,
+        } = self;
         let mut endpoint = Self::setup_endpoint(bind, stake_identity)?;
 
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
-        let mut workers = WorkersCache::new(num_connections, self.cancel.clone());
+        let mut workers = WorkersCache::new(num_connections, cancel.clone());
 
         let mut last_error = None;
 
         loop {
             let transaction_batch: TransactionBatch = tokio::select! {
-                recv_res = self.transaction_receiver.recv() => match recv_res {
+                recv_res = transaction_receiver.recv() => match recv_res {
                     Some(txs) => txs,
                     None => {
                         debug!("End of `transaction_receiver`: shutting down.");
                         break;
                     }
                 },
-                _ = self.update_certificate_receiver.changed() => {
+                _ = update_certificate_receiver.changed() => {
                     let client_config = {
-                        let stake_identity = self.update_certificate_receiver.borrow_and_update();
+                        let stake_identity = update_certificate_receiver.borrow_and_update();
                         let client_certificate = match stake_identity.as_ref() {
                             Some(identity) => identity.into(),
                             None => &QuicClientCertificate::new(None),
@@ -254,13 +261,13 @@ impl ConnectionWorkersScheduler {
                     workers.flush();
                     continue;
                 }
-                () = self.cancel.cancelled() => {
+                () = cancel.cancelled() => {
                     debug!("Cancelled: Shutting down");
                     break;
                 }
             };
 
-            let connect_leaders = self.leader_updater.next_leaders(leaders_fanout.connect);
+            let connect_leaders = leader_updater.next_leaders(leaders_fanout.connect);
             let send_leaders = extract_send_leaders(&connect_leaders, leaders_fanout.send);
 
             // add future leaders to the cache to hide the latency of opening
@@ -273,7 +280,7 @@ impl ConnectionWorkersScheduler {
                         worker_channel_size,
                         skip_check_transaction_age,
                         max_reconnect_attempts,
-                        self.stats.clone(),
+                        stats.clone(),
                     );
                     maybe_shutdown_worker(workers.push(peer, worker));
                 }
@@ -290,11 +297,11 @@ impl ConnectionWorkersScheduler {
         workers.shutdown().await;
 
         endpoint.close(0u32.into(), b"Closing connection");
-        self.leader_updater.stop().await;
+        leader_updater.stop().await;
         if let Some(error) = last_error {
             return Err(error);
         }
-        Ok(self)
+        Ok(stats)
     }
 
     /// Sets up the QUIC endpoint for the scheduler to handle connections.

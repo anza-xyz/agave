@@ -21,7 +21,7 @@ use {
         leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
+        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
     },
     std::{
         collections::HashMap,
@@ -68,7 +68,7 @@ async fn setup_connection_worker_scheduler(
     transaction_receiver: Receiver<TransactionBatch>,
     stake_identity: Option<Keypair>,
 ) -> (
-    JoinHandle<Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>>,
+    JoinHandle<Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError>>,
     CancellationToken,
 ) {
     let json_rpc_url = "http://127.0.0.1:8899";
@@ -99,14 +99,14 @@ async fn setup_connection_worker_scheduler(
 
 async fn join_scheduler(
     scheduler_handle: JoinHandle<
-        Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>,
+        Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError>,
     >,
 ) -> SendTransactionStatsNonAtomic {
-    let scheduler = scheduler_handle
+    let scheduler_stats = scheduler_handle
         .await
         .unwrap()
         .expect("Scheduler should stop successfully.");
-    scheduler.get_stats().read_and_reset()
+    scheduler_stats.read_and_reset()
 }
 
 // Specify the pessimistic time to finish generation and result checks.

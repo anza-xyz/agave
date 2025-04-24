@@ -232,6 +232,7 @@ pub struct TpuClientNextClient {
     runtime_handle: Handle,
     sender: mpsc::Sender<TransactionBatch>,
     update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     cancel: CancellationToken,
 }
 
@@ -283,6 +284,7 @@ impl TpuClientNextClient {
             runtime_handle,
             update_certificate_sender,
             sender,
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
             cancel,
         }
     }
