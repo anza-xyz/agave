@@ -393,7 +393,6 @@ pub fn multi_bind_in_range(
     multi_bind_in_range_with_config(ip_addr, range, config, num)
 }
 
-//#[deprecated(since = "2.3.0", note = "use `bind_to_with_config` instead")]
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSocket> {
     let config = SocketConfig {
         reuseport,
@@ -423,7 +422,12 @@ pub fn bind_to_localhost() -> io::Result<UdpSocket> {
 
 #[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
-    bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), /*port:*/ 0, false).await
+    bind_to_async(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
+    .await
 }
 
 pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
