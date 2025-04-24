@@ -2368,7 +2368,7 @@ impl Node {
         let localhost_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = localhost_port_range_for_tests();
         let udp_config = SocketConfig::default();
-        let quic_config = SocketConfig::default().reuseport(true);
+        let quic_config = SocketConfig::default();
         let ((_tpu_port, tpu), (_tpu_quic_port, tpu_quic)) =
             bind_two_in_range_with_offset_and_config(
                 localhost_ip_addr,
@@ -2520,6 +2520,7 @@ impl Node {
             bind_gossip_port_in_range(gossip_addr, port_range, bind_ip_addr);
 
         let socket_config = SocketConfig::default();
+        #[allow(deprecated)] // will be cleaned in a separate PR
         let socket_config_reuseport = SocketConfig::default().reuseport(true);
         let (tvu_port, tvu) = Self::bind_with_config(bind_ip_addr, port_range, socket_config);
         let (tvu_quic_port, tvu_quic) =
@@ -2674,7 +2675,7 @@ impl Node {
             bind_gossip_port_in_range(&gossip_addr, port_range, bind_ip_addr);
 
         let socket_config = SocketConfig::default();
-        let socket_config_reuseport = SocketConfig::default().reuseport(true);
+        let socket_config_reuseport = SocketConfig::default();
 
         let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,

@@ -233,6 +233,7 @@ pub struct SocketConfig {
 }
 
 impl SocketConfig {
+    #[deprecated(since = "2.3", note = "SO_REUSEPORT is now managed automatically")]
     pub fn reuseport(mut self, reuseport: bool) -> Self {
         self.reuseport = reuseport;
         self
@@ -267,28 +268,32 @@ fn udp_socket_with_config(_config: SocketConfig) -> io::Result<Socket> {
     Ok(sock)
 }
 
+fn set_reuse_port<T>(socket: &T) -> io::Result<()>
+where
+    T: std::os::fd::AsFd,
+{
+    use nix::sys::socket::{setsockopt, sockopt::ReusePort};
+    setsockopt(socket, ReusePort, &true).map_err(io::Error::from)
+}
+
 #[cfg(not(any(windows, target_os = "ios")))]
 fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
-    use nix::sys::socket::{setsockopt, sockopt::ReusePort};
     let SocketConfig {
         reuseport,
         recv_buffer_size,
         send_buffer_size,
     } = config;
-
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-
     // Set buffer sizes
     if let Some(recv_buffer_size) = recv_buffer_size {
         sock.set_recv_buffer_size(recv_buffer_size)?;
     }
-
     if let Some(send_buffer_size) = send_buffer_size {
         sock.set_send_buffer_size(send_buffer_size)?;
     }
 
     if reuseport {
-        setsockopt(&sock, ReusePort, &true).ok();
+        set_reuse_port(&sock)?;
     }
 
     Ok(sock)
@@ -353,9 +358,10 @@ pub fn bind_with_any_port_with_config(
 pub fn multi_bind_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
-    config: SocketConfig,
+    mut config: SocketConfig,
     mut num: usize,
 ) -> io::Result<(u16, Vec<UdpSocket>)> {
+    config.reuseport = false;
     if !config.reuseport {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -402,8 +408,12 @@ pub fn multi_bind_in_range_with_config(
     Ok((port, sockets))
 }
 
+#[deprecated(since = "2.3", note = "use `bind_to_with_config` instead")]
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSocket> {
-    let config = SocketConfig::default().reuseport(reuseport);
+    let config = SocketConfig {
+        reuseport,
+        ..Default::default()
+    };
     bind_to_with_config(ip_addr, port, config)
 }
 
@@ -413,45 +423,32 @@ pub async fn bind_to_async(
     port: u16,
     reuseport: bool,
 ) -> io::Result<TokioUdpSocket> {
-    let config = SocketConfig::default().reuseport(reuseport);
+    let config = SocketConfig {
+        reuseport,
+        ..Default::default()
+    };
     let socket = bind_to_with_config_non_blocking(ip_addr, port, config)?;
     TokioUdpSocket::from_std(socket)
 }
 
 pub fn bind_to_localhost() -> io::Result<UdpSocket> {
-    bind_to(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        /*port:*/ 0,
-        /*reuseport:*/ false,
-    )
+    let config = SocketConfig::default();
+    bind_to_with_config(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, config)
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
-    bind_to_async(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        /*port:*/ 0,
-        /*reuseport:*/ false,
-    )
-    .await
+    bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), /*port:*/ 0, false).await
 }
 
 pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
-    bind_to(
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        /*port:*/ 0,
-        /*reuseport:*/ false,
-    )
+    let config = SocketConfig::default();
+    bind_to_with_config(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, config)
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_unspecified_async() -> io::Result<TokioUdpSocket> {
-    bind_to_async(
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        /*port:*/ 0,
-        /*reuseport:*/ false,
-    )
-    .await
+    bind_to_async(IpAddr::V4(Ipv4Addr::UNSPECIFIED), /*port:*/ 0, false).await
 }
 
 pub fn bind_to_with_config(
@@ -718,14 +715,14 @@ mod tests {
         let s = bind_in_range(ip_addr, (pr_s, pr_e)).unwrap();
         assert_eq!(s.0, pr_s, "bind_in_range should use first available port");
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let config = SocketConfig::default().reuseport(true);
+        let config = SocketConfig::default();
         let x = bind_to_with_config(ip_addr, pr_s + 1, config).unwrap();
-        let y = bind_to_with_config(ip_addr, pr_s + 1, config).unwrap();
+        let y = bind_more_with_config(x, 2, config).unwrap();
         assert_eq!(
-            x.local_addr().unwrap().port(),
-            y.local_addr().unwrap().port()
+            y[0].local_addr().unwrap().port(),
+            y[1].local_addr().unwrap().port()
         );
-        bind_to(ip_addr, pr_s, false).unwrap_err();
+        bind_to_with_config(ip_addr, pr_s, SocketConfig::default()).unwrap_err();
         bind_in_range(ip_addr, (pr_s, pr_s + 2)).unwrap_err();
 
         let (port, v) =
@@ -765,7 +762,7 @@ mod tests {
         let port = find_available_port_in_range(ip_addr, (pr_s, pr_e)).unwrap();
         assert!((pr_s..pr_e).contains(&port));
 
-        let _socket = bind_to(ip_addr, port, false).unwrap();
+        let socket_ = bind_to_with_config(ip_addr, port, SocketConfig::default()).unwrap();
         find_available_port_in_range(ip_addr, (port, port + 1)).unwrap_err();
     }
 
