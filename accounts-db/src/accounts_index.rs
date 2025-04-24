@@ -199,16 +199,15 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
 }
 
 /// specification of how much memory in-mem portion of account index can use
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone)]
 pub enum IndexLimitMb {
     /// use disk index while keeping a minimal amount in-mem
-    #[default]
     Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct AccountsIndexConfig {
     pub bins: Option<usize>,
     pub num_flush_threads: Option<NonZeroUsize>,
@@ -216,6 +215,19 @@ pub struct AccountsIndexConfig {
     pub index_limit_mb: IndexLimitMb,
     pub ages_to_stay_in_cache: Option<Age>,
     pub scan_results_limit_bytes: Option<usize>,
+}
+
+impl Default for AccountsIndexConfig {
+    fn default() -> Self {
+        Self {
+            bins: None,
+            num_flush_threads: None,
+            drives: None,
+            index_limit_mb: IndexLimitMb::Minimal,
+            ages_to_stay_in_cache: None,
+            scan_results_limit_bytes: None,
+        }
+    }
 }
 
 pub fn default_num_flush_threads() -> NonZeroUsize {

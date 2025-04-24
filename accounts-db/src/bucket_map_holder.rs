@@ -215,7 +215,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         let disk = match config
             .as_ref()
             .map(|config| config.index_limit_mb)
-            .unwrap_or_default()
+            .unwrap_or(AccountsIndexConfig::default().index_limit_mb)
         {
             IndexLimitMb::InMemOnly => None,
             IndexLimitMb::Minimal => Some(BucketMap::new(bucket_config)),
