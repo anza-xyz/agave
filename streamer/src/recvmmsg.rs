@@ -14,10 +14,7 @@ use {
 };
 use {
     crate::packet::{Meta, Packet},
-    std::{
-        cmp, io,
-        net::{Ipv4Addr, Ipv6Addr, UdpSocket},
-    },
+    std::{cmp, io, net::UdpSocket},
 };
 
 #[cfg(not(target_os = "linux"))]
@@ -177,7 +174,7 @@ mod tests {
             bind_in_range_with_config, sockets::localhost_port_range_for_tests, SocketConfig,
         },
         std::{
-            net::{IpAddr, SocketAddr, UdpSocket},
+            net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
             time::{Duration, Instant},
         },
     };
