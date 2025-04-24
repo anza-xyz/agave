@@ -3099,7 +3099,7 @@ mod tests {
         },
     };
     const DEFAULT_NUM_QUIC_ENDPOINTS: NonZeroUsize =
-        unsafe { NonZeroUsize::new_unchecked(DEFAULT_QUIC_ENDPOINTS) };
+        NonZeroUsize::new(DEFAULT_QUIC_ENDPOINTS).unwrap();
 
     impl ClusterInfo {
         // Wrapper for ClusterInfo.new_pull_requests replicating old return
