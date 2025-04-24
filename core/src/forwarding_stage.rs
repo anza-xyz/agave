@@ -24,13 +24,16 @@ use {
     solana_sdk::{
         fee::{FeeBudgetLimits, FeeDetails},
         packet,
+        quic::NotifyKeyUpdate,
         signer::keypair::Keypair,
         transaction::MessageHash,
         transport::TransportError,
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_tpu_client_next::{
-        connection_workers_scheduler::{BindTarget, ConnectionWorkersSchedulerConfig, Fanout},
+        connection_workers_scheduler::{
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+        },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler,
@@ -525,6 +528,7 @@ impl LeaderUpdater for ForwardAddressGetter {
 
 struct TpuClientNextClient {
     sender: mpsc::Sender<TransactionBatch>,
+    update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
 }
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
@@ -542,8 +546,7 @@ impl TpuClientNextClient {
         let leader_updater = forward_address_getter.clone();
 
         let config = Self::create_config(bind_socket, stake_identity);
-        // For now _update_certificate_sender is unused, will be implemented later.
-        let (_update_certificate_sender, update_certificate_receiver) = watch::channel(None);
+        let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
         let scheduler: ConnectionWorkersScheduler = ConnectionWorkersScheduler::new(
             Box::new(leader_updater),
             receiver,
@@ -557,7 +560,10 @@ impl TpuClientNextClient {
             cancel.clone(),
         ));
         let _handle = runtime_handle.spawn(scheduler.run(config));
-        Self { sender }
+        Self {
+            sender,
+            update_certificate_sender,
+        }
     }
 
     fn create_config(
@@ -591,6 +597,14 @@ impl ForwardingClient for TpuClientNextClient {
         self.sender
             .try_send(TransactionBatch::new(wire_transactions))
             .map_err(|_e| ForwardingClientError::Failed)
+    }
+}
+
+impl NotifyKeyUpdate for TpuClientNextClient {
+    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        self.update_certificate_sender
+            .send(Some(identity.into()))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 }
 
