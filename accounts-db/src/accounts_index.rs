@@ -285,8 +285,6 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub active_scans: AtomicUsize,
     /// # of slots between latest max and latest scan
     pub max_distance_to_min_scan_slot: AtomicU64,
-    // # of unref when the account's ref_count is zero
-    pub unref_zero_count: AtomicU64,
 
     /// populated at generate_index time - accounts that could possibly be rent paying
     pub rent_paying_accounts_by_partition: OnceLock<RentPayingAccountsByPartition>,
@@ -324,7 +322,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             roots_removed: AtomicUsize::default(),
             active_scans: AtomicUsize::default(),
             max_distance_to_min_scan_slot: AtomicU64::default(),
-            unref_zero_count: AtomicU64::default(),
             rent_paying_accounts_by_partition: OnceLock::default(),
         }
     }
