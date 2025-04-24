@@ -306,13 +306,11 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub fn default_for_tests() -> Self {
-        Self::new(Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING), Arc::default())
+        Self::new(&ACCOUNTS_INDEX_CONFIG_FOR_TESTING, Arc::default())
     }
 
-    pub fn new(config: Option<AccountsIndexConfig>, exit: Arc<AtomicBool>) -> Self {
-        let scan_results_limit_bytes = config
-            .as_ref()
-            .and_then(|config| config.scan_results_limit_bytes);
+    pub fn new(config: &AccountsIndexConfig, exit: Arc<AtomicBool>) -> Self {
+        let scan_results_limit_bytes = config.scan_results_limit_bytes;
         let (account_maps, bin_calculator, storage) = Self::allocate_accounts_index(config, exit);
         Self {
             purge_older_root_entries_one_slot_list: AtomicUsize::default(),
@@ -405,20 +403,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     #[allow(clippy::type_complexity)]
     fn allocate_accounts_index(
-        config: Option<AccountsIndexConfig>,
+        config: &AccountsIndexConfig,
         exit: Arc<AtomicBool>,
     ) -> (
         Box<[Arc<InMemAccountsIndex<T, U>>]>,
         PubkeyBinCalculator24,
         AccountsIndexStorage<T, U>,
     ) {
-        let bins = config
-            .as_ref()
-            .and_then(|config| config.bins)
-            .unwrap_or(BINS_DEFAULT);
+        let bins = config.bins.unwrap_or(BINS_DEFAULT);
         // create bin_calculator early to verify # bins is reasonable
         let bin_calculator = PubkeyBinCalculator24::new(bins);
-        let storage = AccountsIndexStorage::new(bins, &config, exit);
+        let storage = AccountsIndexStorage::new(bins, config, exit);
 
         let account_maps: Box<_> = (0..bins)
             .map(|bin| Arc::clone(&storage.in_mem[bin]))
@@ -2216,7 +2211,7 @@ pub mod tests {
         } else {
             IndexLimitMb::InMemOnly // in-mem only
         };
-        let index = AccountsIndex::<T, T>::new(Some(config), Arc::default());
+        let index = AccountsIndex::<T, T>::new(&config, Arc::default());
         let mut gc = Vec::new();
 
         if upsert {
@@ -3836,7 +3831,7 @@ pub mod tests {
     fn test_illegal_bins() {
         let mut config = AccountsIndexConfig::default();
         config.bins = Some(3);
-        AccountsIndex::<bool, bool>::new(Some(config), Arc::default());
+        AccountsIndex::<bool, bool>::new(&config, Arc::default());
     }
 
     #[test]

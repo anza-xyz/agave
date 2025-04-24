@@ -1636,7 +1636,7 @@ mod tests {
     fn new_for_test<T: IndexValue>() -> InMemAccountsIndex<T, T> {
         let holder = Arc::new(BucketMapHolder::new(
             BINS_FOR_TESTING,
-            &Some(AccountsIndexConfig::default()),
+            &AccountsIndexConfig::default(),
             1,
         ));
         let bin = 0;
@@ -1646,7 +1646,7 @@ mod tests {
     fn new_disk_buckets_for_test<T: IndexValue>() -> InMemAccountsIndex<T, T> {
         let holder = Arc::new(BucketMapHolder::new(
             BINS_FOR_TESTING,
-            &Some(AccountsIndexConfig::default()),
+            &AccountsIndexConfig::default(),
             1,
         ));
         let bin = 0;
