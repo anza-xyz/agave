@@ -10,7 +10,7 @@ use {
     thiserror::Error,
     tokio::{
         sync::mpsc::{self, error::TrySendError},
-        task::JoinHandle,
+        task::{JoinHandle, JoinSet},
     },
     tokio_util::sync::CancellationToken,
 };
@@ -20,7 +20,6 @@ use {
 pub struct WorkerInfo {
     sender: mpsc::Sender<TransactionBatch>,
     handle: JoinHandle<()>,
-    generation: u64,
     cancel: CancellationToken,
 }
 
@@ -28,13 +27,11 @@ impl WorkerInfo {
     pub fn new(
         sender: mpsc::Sender<TransactionBatch>,
         handle: JoinHandle<()>,
-        generation: u64,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             sender,
             handle,
-            generation,
             cancel,
         }
     }
@@ -106,10 +103,10 @@ impl WorkersCache {
 
     /// Checks if the worker for a given peer exists and it hasn't been
     /// cancelled.
-    pub fn contains_and_valid(&self, peer: &SocketAddr, generation: u64) -> bool {
+    pub fn contains_and_valid(&self, peer: &SocketAddr) -> bool {
         self.workers
             .peek(peer)
-            .map(|worker| !worker.cancel.is_cancelled() && worker.generation == generation)
+            .map(|worker| !worker.cancel.is_cancelled())
             .unwrap_or(false)
     }
 
@@ -218,17 +215,37 @@ impl WorkersCache {
             .unwrap_or(Err(WorkersCacheError::ShutdownError))
     }
 
+    /// Flushes the cache and asynchronously shuts down all workers. This method
+    /// doesn't wait for the completion of all the shutdown tasks.
+    pub(crate) fn flush(&mut self) {
+        while let Some((peer, current_worker)) = self.workers.pop_lru() {
+            maybe_shutdown_worker(Some(ShutdownWorker {
+                leader: peer,
+                worker: current_worker,
+            }));
+        }
+    }
+
     /// Closes and removes all workers in the cache. This is typically done when
     /// shutting down the system.
+    ///
+    /// The method awaits the completion of all shutdown tasks, ensuring that
+    /// each worker is properly terminated.
     pub(crate) async fn shutdown(&mut self) {
         // Interrupt any outstanding `send_transactions()` calls.
         self.cancel.cancel();
 
-        while let Some((leader, worker)) = self.workers.pop_lru() {
-            //TODO(klykov): why not doing it using maybe_shutdown_worker?
-            let res = worker.shutdown().await;
+        let mut tasks = JoinSet::new();
+        while let Some((peer, current_worker)) = self.workers.pop_lru() {
+            let shutdown_worker = ShutdownWorker {
+                leader: peer,
+                worker: current_worker,
+            };
+            tasks.spawn(shutdown_worker.shutdown());
+        }
+        while let Some(res) = tasks.join_next().await {
             if let Err(err) = res {
-                debug!("Error while shutting down worker for {leader}: {err}");
+                debug!("A shutdown task failed: {}", err);
             }
         }
     }

@@ -18,10 +18,7 @@ use {
     solana_keypair::Keypair,
     std::{
         net::{SocketAddr, UdpSocket},
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            Arc,
-        },
+        sync::Arc,
     },
     thiserror::Error,
     tokio::sync::{mpsc, watch},
@@ -158,7 +155,6 @@ pub trait WorkersBroadcaster {
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
-        generation: u64,
     ) -> Result<(), ConnectionWorkersSchedulerError>;
 }
 
@@ -229,34 +225,8 @@ impl ConnectionWorkersScheduler {
         }: ConnectionWorkersSchedulerConfig,
         cancel: CancellationToken,
     ) -> Result<Self, ConnectionWorkersSchedulerError> {
-        let endpoint = Self::setup_endpoint(bind, stake_identity)?;
+        let mut endpoint = Self::setup_endpoint(bind, stake_identity)?;
 
-        let connection_gen = Arc::new(AtomicU64::new(0));
-        tokio::spawn({
-            let cancel = cancel.clone();
-            let connection_gen = connection_gen.clone();
-            let mut endpoint = endpoint.clone();
-            async move {
-                loop {
-                    tokio::select! {
-                        _ = update_certificate_receiver.changed() => {
-                            let stake_identity = update_certificate_receiver.borrow_and_update();
-                            let client_certificate = match stake_identity.as_ref() {
-                                Some(identity) => &identity.as_certificate(),
-                                None => &QuicClientCertificate::new(None),
-                            };
-
-                            let client_config = create_client_config(client_certificate);
-                            endpoint.set_default_client_config(client_config);
-                            connection_gen.fetch_add(1, Ordering::Relaxed);
-                        }
-                        _ = cancel.cancelled() => {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
 
@@ -271,6 +241,22 @@ impl ConnectionWorkersScheduler {
                         break;
                     }
                 },
+                _ = update_certificate_receiver.changed() => {
+                    let client_config = {
+                        let stake_identity = update_certificate_receiver.borrow_and_update();
+                        let client_certificate = match stake_identity.as_ref() {
+                            Some(identity) => &identity.as_certificate(),
+                            None => &QuicClientCertificate::new(None),
+                        };
+                        create_client_config(client_certificate)
+                    };
+
+                    endpoint.set_default_client_config(client_config);
+                    // Flush workers since they are handling connections created
+                    // with outdated certificate.
+                    workers.flush();
+                    continue;
+                }
                 () = cancel.cancelled() => {
                     debug!("Cancelled: Shutting down");
                     break;
@@ -283,30 +269,21 @@ impl ConnectionWorkersScheduler {
             // add future leaders to the cache to hide the latency of opening
             // the connection.
             for peer in connect_leaders {
-                let current_connection_gen = connection_gen.load(Ordering::Relaxed);
-                if !workers.contains_and_valid(&peer, current_connection_gen) {
-                    let current_connection_gen = connection_gen.load(Ordering::Relaxed);
+                if !workers.contains_and_valid(&peer) {
                     let worker = Self::spawn_worker(
                         &endpoint,
                         &peer,
                         worker_channel_size,
                         skip_check_transaction_age,
                         max_reconnect_attempts,
-                        current_connection_gen,
                         self.stats.clone(),
                     );
                     maybe_shutdown_worker(workers.push(peer, worker));
                 }
             }
 
-            let current_connection_gen = connection_gen.load(Ordering::Relaxed);
-            if let Err(error) = Broadcaster::send_to_workers(
-                &mut workers,
-                &send_leaders,
-                transaction_batch,
-                current_connection_gen,
-            )
-            .await
+            if let Err(error) =
+                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
             {
                 last_error = Some(error);
                 break;
@@ -344,7 +321,6 @@ impl ConnectionWorkersScheduler {
         worker_channel_size: usize,
         skip_check_transaction_age: bool,
         max_reconnect_attempts: usize,
-        generation: u64,
         stats: Arc<SendTransactionStats>,
     ) -> WorkerInfo {
         let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
@@ -363,7 +339,7 @@ impl ConnectionWorkersScheduler {
             worker.run().await;
         });
 
-        WorkerInfo::new(txs_sender, handle, generation, cancel)
+        WorkerInfo::new(txs_sender, handle, cancel)
     }
 }
 
@@ -378,10 +354,9 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
-        generation: u64,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         for new_leader in leaders {
-            if !workers.contains_and_valid(new_leader, generation) {
+            if !workers.contains_and_valid(new_leader) {
                 warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
                 continue;
             }
