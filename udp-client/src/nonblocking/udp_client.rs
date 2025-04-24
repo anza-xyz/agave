@@ -79,9 +79,13 @@ mod tests {
         )
         .unwrap();
         let connection = UdpClientConnection::new_from_addr(socket, addr);
-        let reader = bind_to_async(addr.ip(), /*port*/ addr.port())
-            .await
-            .expect("bind");
+        let reader = bind_to_async(
+            addr.ip(),
+            /*port*/ addr.port(),
+            /*reuseport:*/ false,
+        )
+        .await
+        .expect("bind");
         check_send_one(&connection, &reader).await;
         check_send_batch(&connection, &reader).await;
     }
