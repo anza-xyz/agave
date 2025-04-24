@@ -16,7 +16,7 @@ use {
     },
 };
 
-const ENTRY_COALESCE_DURATION: Duration = Duration::from_millis(50);
+const ENTRY_COALESCE_DURATION: Duration = Duration::from_millis(200);
 
 pub(super) struct ReceiveResults {
     pub entries: Vec<Entry>,
