@@ -58,7 +58,7 @@ impl Vortexor {
         dynamic_port_range: (u16, u16),
         num_quic_endpoints: usize,
     ) -> TpuSockets {
-        let quic_config = SocketConfig::default().reuseport(true);
+        let quic_config = SocketConfig::default();
 
         let (_, tpu_quic) =
             bind_in_range_with_config(bind_address, dynamic_port_range, quic_config)
