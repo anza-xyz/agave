@@ -45,7 +45,7 @@ impl GeyserPluginService {
     /// Creates and returns the GeyserPluginService.
     /// # Arguments
     /// * `confirmed_bank_receiver` - The receiver for confirmed bank notification
-    /// * `geyser_plugin_always_enabled` -- Subscribe on all types of notifiactions, even if
+    /// * `geyser_plugin_always_enabled` -- Subscribe on all types of notifications, even if
     ///   no config files are passed
     /// * `geyser_plugin_config_file` - The config file path for the plugin. The
     ///   config file controls the plugin responsible
