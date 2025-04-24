@@ -328,10 +328,7 @@ fn read_disk_stats() -> Result<DiskStats, String> {
                     }
                     let mut path = blk_device_dir.path();
                     path.push("stat");
-                    match File::open(path) {
-                        Ok(file_diskstats) => Some(file_diskstats),
-                        Err(_) => None,
-                    }
+                    File::open(path).ok()
                 }
                 Err(_) => None,
             }
