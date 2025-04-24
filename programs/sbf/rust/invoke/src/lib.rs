@@ -1386,7 +1386,7 @@ fn process_instruction<'a>(
 
                 let post = accounts[ARGUMENT_INDEX].try_borrow_data().unwrap().as_ptr();
 
-                if prev == post {
+                if std::ptr::eq(prev, post) {
                     panic!("failed to clone the data");
                 }
 
