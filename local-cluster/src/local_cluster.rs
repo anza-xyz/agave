@@ -60,7 +60,7 @@ use {
     },
     std::{
         collections::HashMap,
-        io::{Error, ErrorKind, Result},
+        io::{Error, Result},
         iter,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
@@ -755,11 +755,7 @@ impl LocalCluster {
 
             warn!("Sending transaction with retries, attempt {attempt} failed");
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "failed to confirm transaction".to_string(),
-        )
-        .into())
+        Err(std::io::Error::other("failed to confirm transaction").into())
     }
 
     fn transfer_with_client(
@@ -909,9 +905,9 @@ impl LocalCluster {
                                 if stake_state.delegation.voter_pubkey != vote_account_pubkey
                                     || stake_state.delegation.stake != amount
                                 {
-                                    Err(Error::new(ErrorKind::Other, "invalid stake account state"))
+                                    Err(Error::other("invalid stake account state"))
                                 } else if vote_state.node_pubkey != node_pubkey {
-                                    Err(Error::new(ErrorKind::Other, "invalid vote account state"))
+                                    Err(Error::other("invalid vote account state"))
                                 } else {
                                     info!(
                                         "node {} {:?} {:?}",
@@ -921,32 +917,16 @@ impl LocalCluster {
                                     return Ok(());
                                 }
                             }
-                            (None, _) => {
-                                Err(Error::new(ErrorKind::Other, "invalid stake account data"))
-                            }
-                            (_, None) => {
-                                Err(Error::new(ErrorKind::Other, "invalid vote account data"))
-                            }
+                            (None, _) => Err(Error::other("invalid stake account data")),
+                            (_, None) => Err(Error::other("invalid vote account data")),
                         }
                     }
-                    (None, _) => Err(Error::new(
-                        ErrorKind::Other,
-                        "unable to retrieve stake account data",
-                    )),
-                    (_, None) => Err(Error::new(
-                        ErrorKind::Other,
-                        "unable to retrieve vote account data",
-                    )),
+                    (None, _) => Err(Error::other("unable to retrieve stake account data")),
+                    (_, None) => Err(Error::other("unable to retrieve vote account data")),
                 }
             }
-            (Err(_), _) => Err(Error::new(
-                ErrorKind::Other,
-                "unable to retrieve stake account data",
-            )),
-            (_, Err(_)) => Err(Error::new(
-                ErrorKind::Other,
-                "unable to retrieve vote account data",
-            )),
+            (Err(_), _) => Err(Error::other("unable to retrieve stake account data")),
+            (_, Err(_)) => Err(Error::other("unable to retrieve vote account data")),
         }
     }
 
@@ -971,10 +951,7 @@ impl LocalCluster {
         let cache = match &*self.connection_cache {
             ConnectionCache::Quic(cache) => cache,
             ConnectionCache::Udp(_) => {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "Expected a Quic ConnectionCache. Got UDP",
-                ))
+                return Err(Error::other("Expected a Quic ConnectionCache. Got UDP"))
             }
         };
 
@@ -984,7 +961,7 @@ impl LocalCluster {
             TpuClientConfig::default(),
             cache.clone(),
         )
-        .map_err(|err| Error::new(ErrorKind::Other, format!("TpuSenderError: {}", err)))?;
+        .map_err(|err| Error::other(format!("TpuSenderError: {}", err)))?;
 
         Ok(tpu_client)
     }

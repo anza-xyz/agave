@@ -136,7 +136,7 @@ where
         if let Some(err) = last_error {
             Err(err)
         } else if !some_success {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "No sends attempted").into())
+            Err(std::io::Error::other("No sends attempted").into())
         } else {
             Ok(())
         }

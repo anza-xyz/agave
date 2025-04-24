@@ -64,8 +64,8 @@ pub enum AccountFileFormat {
 fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
     Pubkey::from_str(key_str).or_else(|_| {
         let bytes: Vec<u8> = serde_json::from_str(key_str)?;
-        let keypair = Keypair::from_bytes(&bytes)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let keypair =
+            Keypair::from_bytes(&bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(keypair.pubkey())
     })
 }
@@ -76,21 +76,17 @@ pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> 
 
     let genesis_accounts: HashMap<String, Base64Account> =
         serde_yaml::from_reader(accounts_file)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err:?}")))?;
+            .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
     for (key, account_details) in genesis_accounts {
-        let pubkey = pubkey_from_str(key.as_str()).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Invalid pubkey/keypair {key}: {err:?}"),
-            )
-        })?;
+        let pubkey = pubkey_from_str(key.as_str())
+            .map_err(|err| io::Error::other(format!("Invalid pubkey/keypair {key}: {err:?}")))?;
 
         let owner_program_id = Pubkey::from_str(account_details.owner.as_str()).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Invalid owner: {}: {:?}", account_details.owner, err),
-            )
+            io::Error::other(format!(
+                "Invalid owner: {}: {:?}",
+                account_details.owner, err
+            ))
         })?;
 
         let mut account = AccountSharedData::new(account_details.balance, 0, &owner_program_id);
@@ -99,10 +95,10 @@ pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> 
                 &BASE64_STANDARD
                     .decode(account_details.data.as_str())
                     .map_err(|err| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("Invalid account data: {}: {:?}", account_details.data, err),
-                        )
+                        io::Error::other(format!(
+                            "Invalid account data: {}: {:?}",
+                            account_details.data, err
+                        ))
                     })?,
             );
         }
@@ -123,37 +119,28 @@ pub fn load_validator_accounts(
     let accounts_file = File::open(file)?;
     let validator_genesis_accounts: Vec<StakedValidatorAccountInfo> =
         serde_yaml::from_reader::<_, ValidatorAccountsFile>(accounts_file)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err:?}")))?
+            .map_err(|err| io::Error::other(format!("{err:?}")))?
             .validator_accounts;
 
     for account_details in validator_genesis_accounts {
         let pubkeys = [
             pubkey_from_str(account_details.identity_account.as_str()).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "Invalid pubkey/keypair {}: {:?}",
-                        account_details.identity_account, err
-                    ),
-                )
+                io::Error::other(format!(
+                    "Invalid pubkey/keypair {}: {:?}",
+                    account_details.identity_account, err
+                ))
             })?,
             pubkey_from_str(account_details.vote_account.as_str()).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "Invalid pubkey/keypair {}: {:?}",
-                        account_details.vote_account, err
-                    ),
-                )
+                io::Error::other(format!(
+                    "Invalid pubkey/keypair {}: {:?}",
+                    account_details.vote_account, err
+                ))
             })?,
             pubkey_from_str(account_details.stake_account.as_str()).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "Invalid pubkey/keypair {}: {:?}",
-                        account_details.stake_account, err
-                    ),
-                )
+                io::Error::other(format!(
+                    "Invalid pubkey/keypair {}: {:?}",
+                    account_details.stake_account, err
+                ))
             })?,
         ];
 
@@ -286,8 +273,7 @@ fn add_validator_accounts(
 
 fn rent_exempt_check(stake_lamports: u64, exempt: u64) -> io::Result<()> {
     if stake_lamports < exempt {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             format!(
                 "error: insufficient validator stake lamports: {stake_lamports} for rent exemption, requires {exempt}"
             ),

@@ -325,10 +325,9 @@ pub fn bind_common_in_range_with_config(
         }
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::Other,
-        format!("No available TCP/UDP ports in {range:?}"),
-    ))
+    Err(io::Error::other(format!(
+        "No available TCP/UDP ports in {range:?}"
+    )))
 }
 
 // Find a port in the given range that is available for both TCP and UDP
@@ -364,10 +363,9 @@ pub fn bind_in_range_with_config(
         }
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::Other,
-        format!("No available UDP ports in {range:?}"),
-    ))
+    Err(io::Error::other(format!(
+        "No available UDP ports in {range:?}"
+    )))
 }
 
 pub fn bind_with_any_port_with_config(
@@ -378,10 +376,7 @@ pub fn bind_with_any_port_with_config(
     let addr = SocketAddr::new(ip_addr, 0);
     match sock.bind(&SockAddr::from(addr)) {
         Ok(_) => Result::Ok(sock.into()),
-        Err(err) => Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("No available UDP port: {err}"),
-        )),
+        Err(err) => Err(io::Error::other(format!("No available UDP port: {err}"))),
     }
 }
 
@@ -575,8 +570,7 @@ pub fn bind_two_in_range_with_offset_and_config(
     sock2_config: SocketConfig,
 ) -> io::Result<((u16, UdpSocket), (u16, UdpSocket))> {
     if range.1.saturating_sub(range.0) < offset {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "range too small to find two ports with the correct offset".to_string(),
         ));
     }
@@ -596,8 +590,7 @@ pub fn bind_two_in_range_with_offset_and_config(
             }
         }
     }
-    Err(io::Error::new(
-        io::ErrorKind::Other,
+    Err(io::Error::other(
         "couldn't find two ports with the correct offset in range".to_string(),
     ))
 }

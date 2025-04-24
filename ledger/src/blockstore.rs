@@ -3312,10 +3312,7 @@ impl Blockstore {
 
     fn get_block_signatures_rev(&self, slot: Slot) -> Result<Vec<Signature>> {
         let block = self.get_complete_block(slot, false).map_err(|err| {
-            BlockstoreError::Io(IoError::new(
-                ErrorKind::Other,
-                format!("Unable to get block: {err}"),
-            ))
+            BlockstoreError::Io(IoError::other(format!("Unable to get block: {err}")))
         })?;
 
         Ok(block
@@ -4954,10 +4951,9 @@ pub fn create_new_ledger(
                 );
             });
 
-            return Err(BlockstoreError::Io(IoError::new(
-                ErrorKind::Other,
-                format!("Error checking to unpack genesis archive: {unpack_err}{error_messages}"),
-            )));
+            return Err(BlockstoreError::Io(IoError::other(format!(
+                "Error checking to unpack genesis archive: {unpack_err}{error_messages}"
+            ))));
         }
     }
 
@@ -11018,8 +11014,7 @@ pub mod tests {
                                 Ok((_entries, _num_shreds, is_full)) => {
                                     if is_full {
                                         signal_sender
-                                            .send(Err(IoError::new(
-                                                ErrorKind::Other,
+                                            .send(Err(IoError::other(
                                                 "got full slot entries for dead slot",
                                             )))
                                             .unwrap();

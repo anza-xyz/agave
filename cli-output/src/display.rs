@@ -605,10 +605,7 @@ fn write_return_data<W: io::Write>(
         let (data, encoding) = &return_data.data;
         let raw_return_data = match encoding {
             UiReturnDataEncoding::Base64 => BASE64_STANDARD.decode(data).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("could not parse data as {encoding:?}: {err:?}"),
-                )
+                io::Error::other(format!("could not parse data as {encoding:?}: {err:?}"))
             })?,
         };
         if !raw_return_data.is_empty() {

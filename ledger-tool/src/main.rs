@@ -139,10 +139,10 @@ fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result
 
     let status = child.wait_with_output()?.status;
     if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("dot failed with error {}", status.code().unwrap_or(-1)),
-        ));
+        return Err(io::Error::other(format!(
+            "dot failed with error {}",
+            status.code().unwrap_or(-1)
+        )));
     }
     Ok(())
 }

@@ -1003,15 +1003,12 @@ impl ProgramTestBanksClientExt for BanksClient {
             num_retries += 1;
         }
 
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!(
-                "Unable to get new blockhash after {}ms (retried {} times), stuck at {}",
-                start.elapsed().as_millis(),
-                num_retries,
-                blockhash
-            ),
-        ))
+        Err(io::Error::other(format!(
+            "Unable to get new blockhash after {}ms (retried {} times), stuck at {}",
+            start.elapsed().as_millis(),
+            num_retries,
+            blockhash
+        )))
     }
 }
 

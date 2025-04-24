@@ -242,10 +242,7 @@ pub fn discover(
     }
 
     info!("discover failed...\n{}", spy_ref.contact_info_trace());
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        "Discover failed",
-    ))
+    Err(std::io::Error::other("Discover failed"))
 }
 
 /// Creates a TpuClient by selecting a valid node at random

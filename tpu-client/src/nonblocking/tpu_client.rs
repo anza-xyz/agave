@@ -458,7 +458,7 @@ where
             Err(if let Some(err) = last_error {
                 err
             } else {
-                std::io::Error::new(std::io::ErrorKind::Other, "No sends attempted").into()
+                std::io::Error::other("No sends attempted").into()
             })
         } else {
             Ok(())
@@ -502,7 +502,7 @@ where
             Err(if let Some(err) = last_error {
                 err
             } else {
-                std::io::Error::new(std::io::ErrorKind::Other, "No sends attempted").into()
+                std::io::Error::other("No sends attempted").into()
             })
         } else {
             Ok(())
