@@ -210,18 +210,6 @@ impl LatestUnprocessedVotes {
         self.len() == 0
     }
 
-    fn filter_unstaked_votes<'a>(
-        &'a self,
-        votes: impl Iterator<Item = LatestValidatorVotePacket> + 'a,
-    ) -> impl Iterator<Item = LatestValidatorVotePacket> + 'a {
-        votes.filter(move |vote| {
-            let stake = self
-                .cached_epoch_stakes
-                .vote_account_stake(&vote.vote_pubkey());
-            stake > 0
-        })
-    }
-
     pub(crate) fn insert_batch(
         &self,
         votes: impl Iterator<Item = LatestValidatorVotePacket>,
@@ -230,7 +218,15 @@ impl LatestUnprocessedVotes {
         let mut num_dropped_gossip = 0;
         let mut num_dropped_tpu = 0;
 
-        for vote in self.filter_unstaked_votes(votes) {
+        for vote in votes {
+            if self
+                .cached_epoch_stakes
+                .vote_account_stake(&vote.vote_pubkey())
+                == 0
+            {
+                continue;
+            }
+
             if let Some(vote) = self.update_latest_vote(vote, should_replenish_taken_votes) {
                 match vote.vote_source {
                     VoteSource::Gossip => num_dropped_gossip += 1,
