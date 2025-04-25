@@ -269,7 +269,7 @@ impl ConnectionWorkersScheduler {
             // add future leaders to the cache to hide the latency of opening
             // the connection.
             for peer in connect_leaders {
-                if !workers.contains_and_valid(&peer) {
+                if !workers.contains(&peer) {
                     let worker = Self::spawn_worker(
                         &endpoint,
                         &peer,
@@ -360,7 +360,7 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
         transaction_batch: TransactionBatch,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         for new_leader in leaders {
-            if !workers.contains_and_valid(new_leader) {
+            if !workers.contains(new_leader) {
                 warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
                 continue;
             }

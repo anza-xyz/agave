@@ -103,11 +103,8 @@ impl WorkersCache {
 
     /// Checks if the worker for a given peer exists and it hasn't been
     /// cancelled.
-    pub fn contains_and_valid(&self, peer: &SocketAddr) -> bool {
-        self.workers
-            .peek(peer)
-            .map(|worker| !worker.cancel.is_cancelled())
-            .unwrap_or(false)
+    pub fn contains(&self, peer: &SocketAddr) -> bool {
+        self.workers.contains(peer)
     }
 
     pub(crate) fn push(
