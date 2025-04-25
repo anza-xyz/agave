@@ -14,7 +14,7 @@ use {
     },
     async_trait::async_trait,
     log::*,
-    quinn::Endpoint,
+    quinn::{ClientConfig, Endpoint},
     solana_keypair::Keypair,
     std::{
         net::{SocketAddr, UdpSocket},
@@ -116,27 +116,19 @@ pub enum BindTarget {
 /// consumed by [`ConnectionWorkersScheduler`] to create an endpoint.
 pub struct StakeIdentity(QuicClientCertificate);
 
-impl From<Keypair> for StakeIdentity {
-    fn from(keypair: Keypair) -> Self {
-        Self(QuicClientCertificate::new(Some(&keypair)))
-    }
-}
-
-impl From<&Keypair> for StakeIdentity {
-    fn from(keypair: &Keypair) -> Self {
+impl StakeIdentity {
+    pub fn new(keypair: &Keypair) -> Self {
         Self(QuicClientCertificate::new(Some(keypair)))
+    }
+
+    pub fn as_certificate(&self) -> &QuicClientCertificate {
+        &self.0
     }
 }
 
 impl From<StakeIdentity> for QuicClientCertificate {
     fn from(identity: StakeIdentity) -> Self {
         identity.0
-    }
-}
-
-impl<'a> From<&'a StakeIdentity> for &'a QuicClientCertificate {
-    fn from(identity: &'a StakeIdentity) -> Self {
-        &identity.0
     }
 }
 
@@ -229,12 +221,16 @@ impl ConnectionWorkersScheduler {
             cancel,
             stats,
         } = self;
-        let mut endpoint = Self::setup_endpoint(bind, stake_identity)?;
+        let mut endpoint = setup_endpoint(bind, stake_identity)?;
 
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
 
         let mut last_error = None;
+        // flag to ensure that the section handling
+        // `update_certificate_receiver.changed()` is entered only once when the
+        // channel is dropped.
+        let mut certificate_updater_is_active = true;
 
         loop {
             let transaction_batch: TransactionBatch = tokio::select! {
@@ -245,22 +241,21 @@ impl ConnectionWorkersScheduler {
                         break;
                     }
                 },
-                _ = update_certificate_receiver.changed() => {
-                    let client_config = {
-                        let stake_identity = update_certificate_receiver.borrow_and_update();
-                        let client_certificate = match stake_identity.as_ref() {
-                            Some(identity) => identity.into(),
-                            None => &QuicClientCertificate::new(None),
-                        };
-                        create_client_config(client_certificate)
+                res = update_certificate_receiver.changed(), if certificate_updater_is_active => {
+                    let Ok(()) = res else {
+                        // Sender has been dropped; log and continue
+                        debug!("Certificate update channel closed; continuing without further updates.");
+                        certificate_updater_is_active = false;
+                        continue;
                     };
 
+                    let client_config = build_client_config(update_certificate_receiver.borrow_and_update().as_ref());
                     endpoint.set_default_client_config(client_config);
                     // Flush workers since they are handling connections created
                     // with outdated certificate.
                     workers.flush();
                     continue;
-                }
+                },
                 () = cancel.cancelled() => {
                     debug!("Cancelled: Shutting down");
                     break;
@@ -304,20 +299,6 @@ impl ConnectionWorkersScheduler {
         Ok(stats)
     }
 
-    /// Sets up the QUIC endpoint for the scheduler to handle connections.
-    fn setup_endpoint(
-        bind: BindTarget,
-        stake_identity: Option<StakeIdentity>,
-    ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
-        let client_certificate = match stake_identity {
-            Some(identity) => identity.into(),
-            None => QuicClientCertificate::new(None),
-        };
-        let client_config = create_client_config(&client_certificate);
-        let endpoint = create_client_endpoint(bind, client_config)?;
-        Ok(endpoint)
-    }
-
     /// Spawns a worker to handle communication with a given peer.
     fn spawn_worker(
         endpoint: &Endpoint,
@@ -345,6 +326,24 @@ impl ConnectionWorkersScheduler {
 
         WorkerInfo::new(txs_sender, handle, cancel)
     }
+}
+
+/// Sets up the QUIC endpoint for the scheduler to handle connections.
+fn setup_endpoint(
+    bind: BindTarget,
+    stake_identity: Option<StakeIdentity>,
+) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
+    let client_config = build_client_config(stake_identity.as_ref());
+    let endpoint = create_client_endpoint(bind, client_config)?;
+    Ok(endpoint)
+}
+
+fn build_client_config(stake_identity: Option<&StakeIdentity>) -> ClientConfig {
+    let client_certificate = match stake_identity {
+        Some(identity) => identity.as_certificate(),
+        None => &QuicClientCertificate::new(None),
+    };
+    create_client_config(client_certificate)
 }
 
 /// [`NonblockingBroadcaster`] attempts to immediately send transactions to all

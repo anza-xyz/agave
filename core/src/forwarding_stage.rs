@@ -572,7 +572,7 @@ impl TpuClientNextClient {
     ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
             bind: BindTarget::Socket(bind_socket),
-            stake_identity: stake_identity.map(Into::into),
+            stake_identity: stake_identity.map(|identity| StakeIdentity::new(identity)),
             // Cache size of 128 covers all nodes above the P90 slot count threshold,
             // which together account for ~75% of total slots in the epoch.
             num_connections: 128,
@@ -602,8 +602,9 @@ impl ForwardingClient for TpuClientNextClient {
 
 impl NotifyKeyUpdate for TpuClientNextClient {
     fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        let stake_identity = StakeIdentity::new(identity);
         self.update_certificate_sender
-            .send(Some(identity.into()))
+            .send(Some(stake_identity))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 }

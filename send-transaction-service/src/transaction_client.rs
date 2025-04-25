@@ -296,7 +296,7 @@ impl TpuClientNextClient {
     ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
             bind: BindTarget::Socket(bind_socket),
-            stake_identity: stake_identity.map(Into::into),
+            stake_identity: stake_identity.map(|identity| StakeIdentity::new(identity)),
             num_connections: MAX_CONNECTIONS,
             skip_check_transaction_age: true,
             // experimentally found parameter values
@@ -317,8 +317,9 @@ impl TpuClientNextClient {
 
 impl NotifyKeyUpdate for TpuClientNextClient {
     fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        let stake_identity = StakeIdentity::new(identity);
         self.update_certificate_sender
-            .send(Some(identity.into()))
+            .send(Some(stake_identity))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 }

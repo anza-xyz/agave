@@ -45,7 +45,7 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
     let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
     ConnectionWorkersSchedulerConfig {
         bind: BindTarget::Address(address),
-        stake_identity: stake_identity.map(Into::into),
+        stake_identity: stake_identity.map(|identity| StakeIdentity::new(&identity)),
         num_connections: 1,
         skip_check_transaction_age: false,
         // At the moment we have only one strategy to send transactions: we try
