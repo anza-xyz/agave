@@ -56,6 +56,3 @@ name = "cluster_info"
 
 [[bench]]
 name = "cluster_nodes"
-
-[[bench]]
-name = "retransmit_stage"
