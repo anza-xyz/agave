@@ -8314,8 +8314,9 @@ dependencies = [
  "log",
  "solana-accounts-db",
  "solana-download-utils",
+ "solana-genesis-config",
+ "solana-hash",
  "solana-rpc-client",
- "solana-sdk",
 ]
 
 [[package]]

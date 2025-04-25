@@ -13,8 +13,9 @@ edition = { workspace = true }
 log = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-download-utils = { workspace = true }
+solana-genesis-config = { workspace = true }
+solana-hash = { workspace = true }
 solana-rpc-client = { workspace = true }
-solana-sdk = { workspace = true }
 
 [lib]
 crate-type = ["lib"]
