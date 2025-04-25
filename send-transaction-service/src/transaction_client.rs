@@ -282,8 +282,8 @@ impl TpuClientNextClient {
         let _handle = runtime_handle.spawn(scheduler.run(config));
         Self {
             runtime_handle,
-            update_certificate_sender,
             sender,
+            update_certificate_sender,
             #[cfg(any(test, feature = "dev-context-only-utils"))]
             cancel,
         }

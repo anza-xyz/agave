@@ -670,11 +670,11 @@ async fn test_rate_limiting_establish_connection() {
     server_handle.await.unwrap();
 }
 
-// Check that certificate is updated successfully using corresponding channel.
+// Check that identity is updated successfully using corresponding channel.
 //
-// Since the certificate update and the transactions are sent concurrently to their channels
+// Since the identity update and the transactions are sent concurrently to their channels
 // and scheduler selects randomly which channel to handle first, we cannot
-// guarantee in this test that the certificate has been updated before we start
+// guarantee in this test that the identity has been updated before we start
 // sending transactions. Hence, instead of checking that all the transactions
 // have been delivered, we check that at least some have been.
 #[tokio::test]
@@ -696,6 +696,7 @@ async fn test_update_identity() {
             // `max_staked_connections` and `max_unstaked_connections` are
             // cumulative for all the endpoints.
             max_staked_connections: 10,
+            // Deny all unstaked connections.
             max_unstaked_connections: 0,
             ..Default::default()
         },
