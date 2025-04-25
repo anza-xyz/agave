@@ -462,8 +462,8 @@ pub enum AddBankSnapshotError {
     #[error("failed to write snapshot version file '{1}': {0}")]
     WriteSnapshotVersionFile(#[source] IoError, PathBuf),
 
-    #[error("failed to mark snapshot as 'complete': failed to create file '{1}': {0}")]
-    CreateStateCompleteFile(#[source] IoError, PathBuf),
+    #[error("failed to mark snapshot as 'complete': {0}")]
+    MarkSnapshotComplete(#[source] IoError),
 }
 
 /// Errors that can happen in `archive_snapshot_package()`
@@ -642,6 +642,20 @@ fn is_bank_snapshot_complete(bank_snapshot_dir: impl AsRef<Path>) -> bool {
         .as_ref()
         .join(SNAPSHOT_STATE_COMPLETE_FILENAME);
     state_complete_path.is_file()
+}
+
+/// Marks the bank snapshot as complete
+fn write_snapshot_state_complete_file(bank_snapshot_dir: impl AsRef<Path>) -> IoResult<()> {
+    let state_complete_path = bank_snapshot_dir
+        .as_ref()
+        .join(SNAPSHOT_STATE_COMPLETE_FILENAME);
+    fs::File::create(&state_complete_path).map_err(|err| {
+        IoError::other(format!(
+            "failed to create file '{}': {err}",
+            state_complete_path.display(),
+        ))
+    })?;
+    Ok(())
 }
 
 /// Writes the full snapshot slot file into the bank snapshot dir
@@ -922,11 +936,10 @@ fn serialize_snapshot(
         .map_err(|err| AddBankSnapshotError::WriteSnapshotVersionFile(err, version_path))?);
 
         // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
-        let state_complete_path = bank_snapshot_dir.join(SNAPSHOT_STATE_COMPLETE_FILENAME);
-        let (_, write_state_complete_file_us) = measure_us!(fs::File::create(&state_complete_path)
-            .map_err(|err| {
-                AddBankSnapshotError::CreateStateCompleteFile(err, state_complete_path)
-            })?);
+        let (_, write_state_complete_file_us) = measure_us!({
+            write_snapshot_state_complete_file(&bank_snapshot_dir)
+                .map_err(AddBankSnapshotError::MarkSnapshotComplete)?
+        });
 
         measure_everything.stop();
 
@@ -1672,8 +1685,7 @@ fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Pat
         slot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME),
     )?;
 
-    let state_complete_file = slot_dir.join(SNAPSHOT_STATE_COMPLETE_FILENAME);
-    fs::File::create(state_complete_file)?;
+    write_snapshot_state_complete_file(slot_dir)?;
 
     Ok(())
 }
@@ -2962,8 +2974,7 @@ mod tests {
             fs::write(version_path, SnapshotVersion::default().as_str().as_bytes()).unwrap();
 
             // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
-            let state_complete_path = snapshot_dir.join(SNAPSHOT_STATE_COMPLETE_FILENAME);
-            fs::File::create(state_complete_path).unwrap();
+            write_snapshot_state_complete_file(snapshot_dir).unwrap();
         }
     }
 
