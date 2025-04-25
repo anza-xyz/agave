@@ -376,6 +376,12 @@ pub fn multi_bind_in_range_with_config(
     config: SocketConfig,
     mut num: usize,
 ) -> io::Result<(u16, Vec<UdpSocket>)> {
+    if config.reuseport_set_by_user && !config.reuseport {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "SocketConfig.reuseport must be true for multiple binds to the same port",
+        ));
+    }
     if cfg!(windows) && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
@@ -623,15 +629,17 @@ pub fn bind_more_with_config(
                 num
             );
         }
-        vec![socket]
+        Ok(vec![socket])
     }
     #[cfg(not(any(windows, target_os = "ios")))]
     {
         if config.reuseport_set_by_user {
-            assert!(
-                config.reuseport,
-                "Multi-bind is only possible when SO_REUSEPORT is set"
-            );
+            if !config.reuseport {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SocketConfig.reuseport must be true for multiple bind to the same port",
+                ));
+            }
         } else {
             set_reuse_port(&socket)?;
             config.reuseport = true;
@@ -1018,5 +1026,19 @@ mod tests {
             assert!(port2 == port1 + offset);
         }
         assert!(bind_two_in_range_with_offset(ip_addr, (1024, 1044), offset).is_err());
+    }
+
+    #[test]
+    fn test_multi_bind_in_range_with_config_reuseport_disabled() {
+        let ip_addr: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        #[allow(deprecated)] // check that legacy behavior is preserved
+        let config = SocketConfig::default().reuseport(false);
+
+        let result = multi_bind_in_range_with_config(ip_addr, (2010, 2110), config, 2);
+
+        assert!(
+            result.is_err(),
+            "Expected an error when reuseport is explicitly set to false"
+        );
     }
 }
