@@ -265,21 +265,18 @@ impl LatestUnprocessedVotes {
         let with_latest_vote = |latest_vote: &RwLock<LatestValidatorVotePacket>,
                                 vote: LatestValidatorVotePacket|
          -> Option<LatestValidatorVotePacket> {
-            let should_try_update = Self::allow_update(
+            if Self::allow_update(
                 &vote,
                 &latest_vote.read().unwrap(),
                 should_replenish_taken_votes,
-            );
-            if should_try_update {
+            ) {
                 let mut latest_vote = latest_vote.write().unwrap();
-                if Self::allow_update(&vote, &latest_vote, should_replenish_taken_votes) {
-                    let old_vote = std::mem::replace(latest_vote.deref_mut(), vote);
-                    if old_vote.is_vote_taken() {
-                        self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
-                        return None;
-                    } else {
-                        return Some(old_vote);
-                    }
+                let old_vote = std::mem::replace(latest_vote.deref_mut(), vote);
+                if old_vote.is_vote_taken() {
+                    self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
+                    return None;
+                } else {
+                    return Some(old_vote);
                 }
             }
             Some(vote)
