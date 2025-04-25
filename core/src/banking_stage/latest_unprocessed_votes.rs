@@ -7,7 +7,7 @@ use {
     solana_runtime::{bank::Bank, epoch_stakes::EpochStakes},
     solana_sdk::{
         account::from_account,
-        clock::{Slot, UnixTimestamp},
+        clock::{Epoch, Slot, UnixTimestamp},
         hash::Hash,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
@@ -15,14 +15,7 @@ use {
         sysvar,
     },
     solana_vote_program::vote_instruction::VoteInstruction,
-    std::{
-        cmp,
-        collections::HashMap,
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            Arc,
-        },
-    },
+    std::{cmp, collections::HashMap, sync::Arc},
 };
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
@@ -165,7 +158,7 @@ pub struct LatestUnprocessedVotes {
     num_unprocessed_votes: usize,
     cached_epoch_stakes: EpochStakes,
     deprecate_legacy_vote_ixs: bool,
-    current_epoch: AtomicU64,
+    current_epoch: Epoch,
 }
 
 impl LatestUnprocessedVotes {
@@ -177,7 +170,7 @@ impl LatestUnprocessedVotes {
             latest_vote_per_vote_pubkey: HashMap::default(),
             num_unprocessed_votes: 0,
             cached_epoch_stakes: bank.current_epoch_stakes().clone(),
-            current_epoch: AtomicU64::new(bank.epoch()),
+            current_epoch: bank.epoch(),
             deprecate_legacy_vote_ixs,
         }
     }
@@ -196,7 +189,7 @@ impl LatestUnprocessedVotes {
             latest_vote_per_vote_pubkey: HashMap::default(),
             num_unprocessed_votes: 0,
             cached_epoch_stakes: epoch_stakes,
-            current_epoch: AtomicU64::new(0),
+            current_epoch: 0,
             deprecate_legacy_vote_ixs: true,
         }
     }
@@ -307,12 +300,12 @@ impl LatestUnprocessedVotes {
     /// Recache the staked nodes based on a bank from the new epoch.
     /// This should only be run by the TPU vote thread
     pub(super) fn cache_epoch_boundary_info(&mut self, bank: &Bank) {
-        if bank.epoch() <= self.current_epoch.load(Ordering::Relaxed) {
+        if bank.epoch() <= self.current_epoch {
             return;
         }
         {
             self.cached_epoch_stakes = bank.current_epoch_stakes().clone();
-            self.current_epoch.store(bank.epoch(), Ordering::Relaxed);
+            self.current_epoch = bank.epoch();
             self.deprecate_legacy_vote_ixs = bank
                 .feature_set
                 .is_active(&feature_set::deprecate_legacy_vote_ixs::id());
