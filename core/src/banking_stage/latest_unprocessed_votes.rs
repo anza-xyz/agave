@@ -164,8 +164,7 @@ impl VoteBatchInsertionMetrics {
 pub struct LatestUnprocessedVotes {
     latest_vote_per_vote_pubkey: RwLock<HashMap<Pubkey, Arc<RwLock<LatestValidatorVotePacket>>>>,
     num_unprocessed_votes: AtomicUsize,
-    // These are only ever written to by the tpu vote thread
-    cached_epoch_stakes: RwLock<EpochStakes>,
+    cached_epoch_stakes: EpochStakes,
     deprecate_legacy_vote_ixs: AtomicBool,
     current_epoch: AtomicU64,
 }
@@ -178,7 +177,7 @@ impl LatestUnprocessedVotes {
         Self {
             latest_vote_per_vote_pubkey: RwLock::new(HashMap::default()),
             num_unprocessed_votes: AtomicUsize::new(0),
-            cached_epoch_stakes: RwLock::new(bank.current_epoch_stakes().clone()),
+            cached_epoch_stakes: bank.current_epoch_stakes().clone(),
             current_epoch: AtomicU64::new(bank.epoch()),
             deprecate_legacy_vote_ixs: AtomicBool::new(deprecate_legacy_vote_ixs),
         }
@@ -197,7 +196,7 @@ impl LatestUnprocessedVotes {
         Self {
             latest_vote_per_vote_pubkey: RwLock::new(HashMap::default()),
             num_unprocessed_votes: AtomicUsize::new(0),
-            cached_epoch_stakes: RwLock::new(epoch_stakes),
+            cached_epoch_stakes: epoch_stakes,
             current_epoch: AtomicU64::new(0),
             deprecate_legacy_vote_ixs: AtomicBool::new(true),
         }
@@ -215,9 +214,10 @@ impl LatestUnprocessedVotes {
         &'a self,
         votes: impl Iterator<Item = LatestValidatorVotePacket> + 'a,
     ) -> impl Iterator<Item = LatestValidatorVotePacket> + 'a {
-        let epoch_stakes = self.cached_epoch_stakes.read().unwrap();
         votes.filter(move |vote| {
-            let stake = epoch_stakes.vote_account_stake(&vote.vote_pubkey());
+            let stake = self
+                .cached_epoch_stakes
+                .vote_account_stake(&vote.vote_pubkey());
             stake > 0
         })
     }
@@ -348,12 +348,11 @@ impl LatestUnprocessedVotes {
 
     fn weighted_random_order_by_stake(&self) -> impl Iterator<Item = Pubkey> {
         // Efraimidis and Spirakis algo for weighted random sample without replacement
-        let epoch_stakes = self.cached_epoch_stakes.read().unwrap();
         let latest_vote_per_vote_pubkey = self.latest_vote_per_vote_pubkey.read().unwrap();
         let mut pubkey_with_weight: Vec<(f64, Pubkey)> = latest_vote_per_vote_pubkey
             .keys()
             .filter_map(|&pubkey| {
-                let stake = epoch_stakes.vote_account_stake(&pubkey);
+                let stake = self.cached_epoch_stakes.vote_account_stake(&pubkey);
                 if stake == 0 {
                     None // Ignore votes from unstaked validators
                 } else {
@@ -367,13 +366,12 @@ impl LatestUnprocessedVotes {
 
     /// Recache the staked nodes based on a bank from the new epoch.
     /// This should only be run by the TPU vote thread
-    pub(super) fn cache_epoch_boundary_info(&self, bank: &Bank) {
+    pub(super) fn cache_epoch_boundary_info(&mut self, bank: &Bank) {
         if bank.epoch() <= self.current_epoch.load(Ordering::Relaxed) {
             return;
         }
         {
-            let mut epoch_stakes = self.cached_epoch_stakes.write().unwrap();
-            *epoch_stakes = bank.current_epoch_stakes().clone();
+            self.cached_epoch_stakes = bank.current_epoch_stakes().clone();
             self.current_epoch.store(bank.epoch(), Ordering::Relaxed);
             self.deprecate_legacy_vote_ixs.store(
                 bank.feature_set
@@ -383,12 +381,11 @@ impl LatestUnprocessedVotes {
         }
 
         // Evict any now unstaked pubkeys
-        let epoch_stakes = self.cached_epoch_stakes.read().unwrap();
         let mut latest_vote_per_vote_pubkey = self.latest_vote_per_vote_pubkey.write().unwrap();
         let mut unstaked_votes = 0;
         latest_vote_per_vote_pubkey.retain(|vote_pubkey, vote| {
             let is_present = !vote.read().unwrap().is_vote_taken();
-            let should_evict = epoch_stakes.vote_account_stake(vote_pubkey) == 0;
+            let should_evict = self.cached_epoch_stakes.vote_account_stake(vote_pubkey) == 0;
             if is_present && should_evict {
                 unstaked_votes += 1;
             }
@@ -978,7 +975,7 @@ mod tests {
         .into_iter();
 
         let bank_0 = Bank::new_for_tests(&GenesisConfig::default());
-        let latest_unprocessed_votes = LatestUnprocessedVotes::new(&bank_0);
+        let mut latest_unprocessed_votes = LatestUnprocessedVotes::new(&bank_0);
 
         // Insert batch should filter out all votes as they are unstaked
         latest_unprocessed_votes.insert_batch(votes.clone(), true);
