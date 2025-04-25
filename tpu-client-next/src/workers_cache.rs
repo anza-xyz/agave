@@ -311,3 +311,149 @@ pub fn shutdown_worker(worker: ShutdownWorker) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        crate::{
+            connection_workers_scheduler::BindTarget,
+            quic_networking::{create_client_config, create_client_endpoint},
+            send_transaction_stats::SendTransactionStatsNonAtomic,
+            transaction_batch::TransactionBatch,
+            workers_cache::{spawn_worker, WorkersCache, WorkersCacheError},
+            SendTransactionStats,
+        },
+        solana_tls_utils::QuicClientCertificate,
+        std::{
+            net::{Ipv4Addr, SocketAddr},
+            sync::Arc,
+            time::Duration,
+        },
+        tokio::time::{sleep, timeout, Instant},
+        tokio_util::sync::CancellationToken,
+    };
+
+    // Specify the pessimistic time to finish generation and result checks.
+    const TEST_MAX_TIME: Duration = Duration::from_secs(5);
+
+    #[tokio::test]
+    async fn test_worker_stopped_after_failed_connect() {
+        let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
+        let client_config = create_client_config(&QuicClientCertificate::new(None));
+        let endpoint = create_client_endpoint(BindTarget::Address(address), client_config).unwrap();
+
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1234);
+
+        let worker_channel_size = 1;
+        let skip_check_transaction_age = true;
+        let max_reconnect_attempts = 0;
+        let stats = Arc::new(SendTransactionStats::default());
+        let worker_info = spawn_worker(
+            &endpoint,
+            &peer,
+            worker_channel_size,
+            skip_check_transaction_age,
+            max_reconnect_attempts,
+            stats.clone(),
+        );
+
+        timeout(TEST_MAX_TIME, worker_info.handle)
+            .await
+            .expect(format!("Should stop in less than {TEST_MAX_TIME:?}.").as_str())
+            .expect("Worker task should finish successfully.");
+        assert_eq!(
+            stats.read_and_reset(),
+            SendTransactionStatsNonAtomic {
+                connection_error_timed_out: 1,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_worker_shutdown() {
+        let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
+        let client_config = create_client_config(&QuicClientCertificate::new(None));
+        let endpoint = create_client_endpoint(BindTarget::Address(address), client_config).unwrap();
+
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1234);
+
+        let worker_channel_size = 1;
+        let skip_check_transaction_age = true;
+        let max_reconnect_attempts = 0;
+        let stats = Arc::new(SendTransactionStats::default());
+        let worker_info = spawn_worker(
+            &endpoint,
+            &peer,
+            worker_channel_size,
+            skip_check_transaction_age,
+            max_reconnect_attempts,
+            stats.clone(),
+        );
+
+        timeout(TEST_MAX_TIME, worker_info.shutdown())
+            .await
+            .expect(format!("Should stop in less than {TEST_MAX_TIME:?}.").as_str())
+            .expect("Worker task should finish successfully.");
+    }
+
+    // Verifies that a worker which terminates (e.g. due to connection failure)
+    // is properly detected, its sender is closed, and it is removed from the
+    // `WorkersCache`.
+    #[tokio::test]
+    async fn test_worker_removed_after_exit() {
+        let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
+        let client_config = create_client_config(&QuicClientCertificate::new(None));
+        let endpoint = create_client_endpoint(BindTarget::Address(address), client_config).unwrap();
+
+        let cancel = CancellationToken::new();
+        let mut cache = WorkersCache::new(10, cancel.clone());
+
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1234);
+        let worker_channel_size = 1;
+        let skip_check_transaction_age = true;
+        let max_reconnect_attempts = 0;
+        let stats = Arc::new(SendTransactionStats::default());
+        let worker = spawn_worker(
+            &endpoint,
+            &peer,
+            worker_channel_size,
+            skip_check_transaction_age,
+            max_reconnect_attempts,
+            stats.clone(),
+        );
+        assert!(cache.push(peer, worker).is_none());
+
+        let worker_info = cache.workers.peek(&peer).unwrap();
+        // wait until sender is closed which happens when task has finished.
+        let start = Instant::now();
+        while !worker_info.sender.is_closed() {
+            if start.elapsed() > TEST_MAX_TIME {
+                panic!("Sender did not close in {TEST_MAX_TIME:?}");
+            }
+            sleep(Duration::from_millis(500)).await;
+        }
+
+        // try to send to this worker — should fail and remove the worker
+        let result = cache
+            .try_send_transactions_to_address(&peer, TransactionBatch::new(vec![vec![0u8; 1]]));
+
+        assert_eq!(result, Err(WorkersCacheError::ReceiverDropped));
+        assert!(
+            !cache.contains(&peer),
+            "worker should be removed after failure"
+        );
+
+        // Cleanup
+        cancel.cancel();
+        cache.shutdown().await;
+
+        assert_eq!(
+            stats.read_and_reset(),
+            SendTransactionStatsNonAtomic {
+                connection_error_timed_out: 1,
+                ..Default::default()
+            }
+        );
+    }
+}
