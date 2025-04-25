@@ -9,7 +9,7 @@ use {
             create_client_config, create_client_endpoint, QuicClientCertificate, QuicError,
         },
         transaction_batch::TransactionBatch,
-        workers_cache::{maybe_shutdown_worker, WorkerInfo, WorkersCache, WorkersCacheError},
+        workers_cache::{shutdown_worker, WorkerInfo, WorkersCache, WorkersCacheError},
         SendTransactionStats,
     },
     async_trait::async_trait,
@@ -278,7 +278,7 @@ impl ConnectionWorkersScheduler {
                         max_reconnect_attempts,
                         stats.clone(),
                     );
-                    maybe_shutdown_worker(workers.push(peer, worker));
+                    workers.push(peer, worker).map(shutdown_worker);
                 }
             }
 
@@ -374,7 +374,7 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
                 }
                 Err(WorkersCacheError::ReceiverDropped) => {
                     // Remove the worker from the cache, if the peer has disconnected.
-                    maybe_shutdown_worker(workers.pop(*new_leader));
+                    workers.pop(*new_leader).map(shutdown_worker);
                 }
                 Err(err) => {
                     warn!("Connection to {new_leader} was closed, worker error: {err}");

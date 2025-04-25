@@ -163,10 +163,12 @@ impl WorkersCache {
                 "Failed to deliver transaction batch for leader {}, drop batch.",
                 peer.ip()
             );
-            maybe_shutdown_worker(workers.pop(peer).map(|current_worker| ShutdownWorker {
-                leader: *peer,
-                worker: current_worker,
-            }));
+            workers.pop(peer).map(|current_worker| {
+                shutdown_worker(ShutdownWorker {
+                    leader: *peer,
+                    worker: current_worker,
+                })
+            });
         }
 
         send_res
@@ -197,10 +199,12 @@ impl WorkersCache {
             let send_res = current_worker.send_transactions(txs_batch).await;
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
                 // Remove the worker from the cache, if the peer has disconnected.
-                maybe_shutdown_worker(workers.pop(peer).map(|current_worker| ShutdownWorker {
-                    leader: *peer,
-                    worker: current_worker,
-                }));
+                workers.pop(peer).map(|current_worker| {
+                    shutdown_worker(ShutdownWorker {
+                        leader: *peer,
+                        worker: current_worker,
+                    })
+                });
             }
 
             send_res
@@ -216,10 +220,10 @@ impl WorkersCache {
     /// doesn't wait for the completion of all the shutdown tasks.
     pub(crate) fn flush(&mut self) {
         while let Some((peer, current_worker)) = self.workers.pop_lru() {
-            maybe_shutdown_worker(Some(ShutdownWorker {
+            shutdown_worker(ShutdownWorker {
                 leader: peer,
                 worker: current_worker,
-            }));
+            });
         }
     }
 
@@ -266,10 +270,7 @@ impl ShutdownWorker {
     }
 }
 
-pub fn maybe_shutdown_worker(worker: Option<ShutdownWorker>) {
-    let Some(worker) = worker else {
-        return;
-    };
+pub fn shutdown_worker(worker: ShutdownWorker) {
     tokio::spawn(async move {
         let leader = worker.leader();
         let res = worker.shutdown().await;
