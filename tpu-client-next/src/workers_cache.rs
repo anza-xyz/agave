@@ -163,12 +163,12 @@ impl WorkersCache {
                 "Failed to deliver transaction batch for leader {}, drop batch.",
                 peer.ip()
             );
-            workers.pop(peer).map(|current_worker| {
+            if let Some(current_worker) = workers.pop(peer) {
                 shutdown_worker(ShutdownWorker {
                     leader: *peer,
                     worker: current_worker,
                 })
-            });
+            }
         }
 
         send_res
@@ -199,12 +199,12 @@ impl WorkersCache {
             let send_res = current_worker.send_transactions(txs_batch).await;
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
                 // Remove the worker from the cache, if the peer has disconnected.
-                workers.pop(peer).map(|current_worker| {
+                if let Some(current_worker) = workers.pop(peer) {
                     shutdown_worker(ShutdownWorker {
                         leader: *peer,
                         worker: current_worker,
                     })
-                });
+                }
             }
 
             send_res

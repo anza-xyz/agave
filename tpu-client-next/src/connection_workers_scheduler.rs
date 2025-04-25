@@ -278,7 +278,9 @@ impl ConnectionWorkersScheduler {
                         max_reconnect_attempts,
                         stats.clone(),
                     );
-                    workers.push(peer, worker).map(shutdown_worker);
+                    if let Some(pop_worker) = workers.push(peer, worker) {
+                        shutdown_worker(pop_worker)
+                    }
                 }
             }
 
@@ -374,7 +376,9 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
                 }
                 Err(WorkersCacheError::ReceiverDropped) => {
                     // Remove the worker from the cache, if the peer has disconnected.
-                    workers.pop(*new_leader).map(shutdown_worker);
+                    if let Some(pop_worker) = workers.pop(*new_leader) {
+                        shutdown_worker(pop_worker)
+                    }
                 }
                 Err(err) => {
                     warn!("Connection to {new_leader} was closed, worker error: {err}");
