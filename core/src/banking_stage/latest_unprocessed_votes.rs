@@ -162,7 +162,7 @@ impl VoteBatchInsertionMetrics {
 
 #[derive(Debug)]
 pub struct LatestUnprocessedVotes {
-    latest_vote_per_vote_pubkey: RwLock<HashMap<Pubkey, Arc<RwLock<LatestValidatorVotePacket>>>>,
+    latest_vote_per_vote_pubkey: HashMap<Pubkey, Arc<RwLock<LatestValidatorVotePacket>>>,
     num_unprocessed_votes: AtomicUsize,
     cached_epoch_stakes: EpochStakes,
     deprecate_legacy_vote_ixs: AtomicBool,
@@ -175,7 +175,7 @@ impl LatestUnprocessedVotes {
             .feature_set
             .is_active(&feature_set::deprecate_legacy_vote_ixs::id());
         Self {
-            latest_vote_per_vote_pubkey: RwLock::new(HashMap::default()),
+            latest_vote_per_vote_pubkey: HashMap::default(),
             num_unprocessed_votes: AtomicUsize::new(0),
             cached_epoch_stakes: bank.current_epoch_stakes().clone(),
             current_epoch: AtomicU64::new(bank.epoch()),
@@ -194,7 +194,7 @@ impl LatestUnprocessedVotes {
         let epoch_stakes = EpochStakes::new_for_tests(vote_accounts, 0);
 
         Self {
-            latest_vote_per_vote_pubkey: RwLock::new(HashMap::default()),
+            latest_vote_per_vote_pubkey: HashMap::default(),
             num_unprocessed_votes: AtomicUsize::new(0),
             cached_epoch_stakes: epoch_stakes,
             current_epoch: AtomicU64::new(0),
@@ -211,7 +211,7 @@ impl LatestUnprocessedVotes {
     }
 
     pub(crate) fn insert_batch(
-        &self,
+        &mut self,
         votes: impl Iterator<Item = LatestValidatorVotePacket>,
         should_replenish_taken_votes: bool,
     ) -> VoteBatchInsertionMetrics {
@@ -242,29 +242,20 @@ impl LatestUnprocessedVotes {
     }
 
     fn get_entry(&self, pubkey: Pubkey) -> Option<Arc<RwLock<LatestValidatorVotePacket>>> {
-        self.latest_vote_per_vote_pubkey
-            .read()
-            .unwrap()
-            .get(&pubkey)
-            .cloned()
+        self.latest_vote_per_vote_pubkey.get(&pubkey).cloned()
     }
 
     /// If this vote causes an unprocessed vote to be removed, returns Some(old_vote)
     /// If there is a newer vote processed / waiting to be processed returns Some(vote)
     /// Otherwise returns None
     pub fn update_latest_vote(
-        &self,
+        &mut self,
         vote: LatestValidatorVotePacket,
         should_replenish_taken_votes: bool,
     ) -> Option<LatestValidatorVotePacket> {
         let vote_pubkey = vote.vote_pubkey();
         // Grab write-lock to insert new vote.
-        match self
-            .latest_vote_per_vote_pubkey
-            .write()
-            .unwrap()
-            .entry(vote_pubkey)
-        {
+        match self.latest_vote_per_vote_pubkey.entry(vote_pubkey) {
             std::collections::hash_map::Entry::Occupied(entry) => {
                 let mut latest_vote = entry.get().write().unwrap();
                 if Self::allow_update(&vote, latest_vote.deref_mut(), should_replenish_taken_votes)
@@ -290,8 +281,6 @@ impl LatestUnprocessedVotes {
     #[cfg(test)]
     pub fn get_latest_vote_slot(&self, pubkey: Pubkey) -> Option<Slot> {
         self.latest_vote_per_vote_pubkey
-            .read()
-            .unwrap()
             .get(&pubkey)
             .map(|l| l.read().unwrap().slot())
     }
@@ -299,16 +288,14 @@ impl LatestUnprocessedVotes {
     #[cfg(test)]
     fn get_latest_timestamp(&self, pubkey: Pubkey) -> Option<UnixTimestamp> {
         self.latest_vote_per_vote_pubkey
-            .read()
-            .unwrap()
             .get(&pubkey)
             .and_then(|l| l.read().unwrap().timestamp())
     }
 
     fn weighted_random_order_by_stake(&self) -> impl Iterator<Item = Pubkey> {
         // Efraimidis and Spirakis algo for weighted random sample without replacement
-        let latest_vote_per_vote_pubkey = self.latest_vote_per_vote_pubkey.read().unwrap();
-        let mut pubkey_with_weight: Vec<(f64, Pubkey)> = latest_vote_per_vote_pubkey
+        let mut pubkey_with_weight: Vec<(f64, Pubkey)> = self
+            .latest_vote_per_vote_pubkey
             .keys()
             .filter_map(|&pubkey| {
                 let stake = self.cached_epoch_stakes.vote_account_stake(&pubkey);
@@ -340,16 +327,16 @@ impl LatestUnprocessedVotes {
         }
 
         // Evict any now unstaked pubkeys
-        let mut latest_vote_per_vote_pubkey = self.latest_vote_per_vote_pubkey.write().unwrap();
         let mut unstaked_votes = 0;
-        latest_vote_per_vote_pubkey.retain(|vote_pubkey, vote| {
-            let is_present = !vote.read().unwrap().is_vote_taken();
-            let should_evict = self.cached_epoch_stakes.vote_account_stake(vote_pubkey) == 0;
-            if is_present && should_evict {
-                unstaked_votes += 1;
-            }
-            !should_evict
-        });
+        self.latest_vote_per_vote_pubkey
+            .retain(|vote_pubkey, vote| {
+                let is_present = !vote.read().unwrap().is_vote_taken();
+                let should_evict = self.cached_epoch_stakes.vote_account_stake(vote_pubkey) == 0;
+                if is_present && should_evict {
+                    unstaked_votes += 1;
+                }
+                !should_evict
+            });
         self.num_unprocessed_votes
             .fetch_sub(unstaked_votes, Ordering::Relaxed);
         datapoint_info!(
@@ -405,16 +392,12 @@ impl LatestUnprocessedVotes {
     }
 
     pub fn clear(&self) {
-        self.latest_vote_per_vote_pubkey
-            .read()
-            .unwrap()
-            .values()
-            .for_each(|lock| {
-                let mut vote = lock.write().unwrap();
-                if vote.take_vote().is_some() {
-                    self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
-                }
-            });
+        self.latest_vote_per_vote_pubkey.values().for_each(|lock| {
+            let mut vote = lock.write().unwrap();
+            if vote.take_vote().is_some() {
+                self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
+            }
+        });
     }
 
     pub(super) fn should_deprecate_legacy_vote_ixs(&self) -> bool {
@@ -455,7 +438,6 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        rand::{thread_rng, Rng},
         solana_perf::packet::{Packet, PacketBatch, PacketFlags},
         solana_runtime::{
             bank::Bank,
@@ -467,7 +449,7 @@ mod tests {
         },
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
-        std::{sync::Arc, thread::Builder},
+        std::sync::Arc,
     };
 
     fn from_slots(
@@ -582,7 +564,7 @@ mod tests {
     fn test_update_latest_vote() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
         let keypair_b = ValidatorVoteKeypairs::new_rand();
-        let latest_unprocessed_votes = LatestUnprocessedVotes::new_for_tests(&[
+        let mut latest_unprocessed_votes = LatestUnprocessedVotes::new_for_tests(&[
             keypair_a.vote_keypair.pubkey(),
             keypair_b.vote_keypair.pubkey(),
         ]);
@@ -757,8 +739,6 @@ mod tests {
         // Drain all latest votes
         for packet in latest_unprocessed_votes
             .latest_vote_per_vote_pubkey
-            .read()
-            .unwrap()
             .values()
         {
             packet.write().unwrap().take_vote().inspect(|_vote| {
@@ -783,127 +763,12 @@ mod tests {
     }
 
     #[test]
-    fn test_update_latest_vote_race() {
-        // There was a race condition in updating the same pubkey in the hashmap
-        // when the entry does not initially exist.
-        const NUM_VOTES: usize = 100;
-        let keypairs = Arc::new(
-            (0..NUM_VOTES)
-                .map(|_| ValidatorVoteKeypairs::new_rand())
-                .collect_vec(),
-        );
-        let staked_nodes = keypairs
-            .iter()
-            .map(|kp| kp.vote_keypair.pubkey())
-            .collect_vec();
-        let latest_unprocessed_votes =
-            Arc::new(LatestUnprocessedVotes::new_for_tests(&staked_nodes));
-
-        // Insert votes in parallel
-        let insert_vote = |latest_unprocessed_votes: &LatestUnprocessedVotes,
-                           keypairs: &Arc<Vec<ValidatorVoteKeypairs>>,
-                           i: usize| {
-            let vote = from_slots(vec![(i as u64, 1)], VoteSource::Gossip, &keypairs[i], None);
-            latest_unprocessed_votes.update_latest_vote(vote, false /* should replenish */);
-        };
-
-        let hdl = Builder::new()
-            .spawn({
-                let latest_unprocessed_votes = latest_unprocessed_votes.clone();
-                let keypairs = keypairs.clone();
-                move || {
-                    for i in 0..NUM_VOTES {
-                        insert_vote(&latest_unprocessed_votes, &keypairs, i);
-                    }
-                }
-            })
-            .unwrap();
-
-        for i in 0..NUM_VOTES {
-            insert_vote(&latest_unprocessed_votes, &keypairs, i);
-        }
-
-        hdl.join().unwrap();
-        assert_eq!(NUM_VOTES, latest_unprocessed_votes.len());
-    }
-
-    #[test]
-    fn test_simulate_threads() {
-        let keypairs = Arc::new(
-            (0..10)
-                .map(|_| ValidatorVoteKeypairs::new_rand())
-                .collect_vec(),
-        );
-        let keypairs_tpu = keypairs.clone();
-        let staked_nodes = keypairs
-            .iter()
-            .map(|kp| kp.vote_keypair.pubkey())
-            .collect_vec();
-        let latest_unprocessed_votes =
-            Arc::new(LatestUnprocessedVotes::new_for_tests(&staked_nodes));
-        let latest_unprocessed_votes_tpu = latest_unprocessed_votes.clone();
-        let vote_limit = 1000;
-
-        let gossip = Builder::new()
-            .spawn(move || {
-                let mut rng = thread_rng();
-                for i in 0..vote_limit {
-                    let vote = from_slots(
-                        vec![(i, 1)],
-                        VoteSource::Gossip,
-                        &keypairs[rng.gen_range(0..10)],
-                        None,
-                    );
-                    latest_unprocessed_votes
-                        .update_latest_vote(vote, false /* should replenish */);
-                }
-            })
-            .unwrap();
-
-        let tpu = Builder::new()
-            .spawn(move || {
-                let mut rng = thread_rng();
-                for i in 0..vote_limit {
-                    let vote = from_slots(
-                        vec![(i, 1)],
-                        VoteSource::Tpu,
-                        &keypairs_tpu[rng.gen_range(0..10)],
-                        None,
-                    );
-                    latest_unprocessed_votes_tpu
-                        .update_latest_vote(vote, false /* should replenish */);
-                    if i % 214 == 0 {
-                        // Simulate draining and processing packets
-                        let latest_vote_per_vote_pubkey = latest_unprocessed_votes_tpu
-                            .latest_vote_per_vote_pubkey
-                            .read()
-                            .unwrap();
-                        latest_vote_per_vote_pubkey
-                            .iter()
-                            .for_each(|(_pubkey, lock)| {
-                                let mut latest_vote = lock.write().unwrap();
-                                if !latest_vote.is_vote_taken() {
-                                    latest_vote.take_vote();
-                                    latest_unprocessed_votes_tpu
-                                        .num_unprocessed_votes
-                                        .fetch_sub(1, Ordering::Relaxed);
-                                }
-                            });
-                    }
-                }
-            })
-            .unwrap();
-        gossip.join().unwrap();
-        tpu.join().unwrap();
-    }
-
-    #[test]
     fn test_clear() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
         let keypair_b = ValidatorVoteKeypairs::new_rand();
         let keypair_c = ValidatorVoteKeypairs::new_rand();
         let keypair_d = ValidatorVoteKeypairs::new_rand();
-        let latest_unprocessed_votes = LatestUnprocessedVotes::new_for_tests(&[
+        let mut latest_unprocessed_votes = LatestUnprocessedVotes::new_for_tests(&[
             keypair_a.vote_keypair.pubkey(),
             keypair_b.vote_keypair.pubkey(),
             keypair_c.vote_keypair.pubkey(),

@@ -42,6 +42,9 @@ impl VoteStorage {
         vote_source: VoteSource,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
     ) -> VoteBatchInsertionMetrics {
+        let should_deprecate_legacy_vote_ixs = self
+            .latest_unprocessed_votes
+            .should_deprecate_legacy_vote_ixs();
         self.latest_unprocessed_votes.insert_batch(
             deserialized_packets
                 .into_iter()
@@ -49,8 +52,7 @@ impl VoteStorage {
                     LatestValidatorVotePacket::new_from_immutable(
                         Arc::new(deserialized_packet),
                         vote_source,
-                        self.latest_unprocessed_votes
-                            .should_deprecate_legacy_vote_ixs(),
+                        should_deprecate_legacy_vote_ixs,
                     )
                     .ok()
                 }),
@@ -63,13 +65,15 @@ impl VoteStorage {
         &mut self,
         packets: impl Iterator<Item = Arc<ImmutableDeserializedPacket>>,
     ) {
+        let should_deprecate_legacy_vote_ixs = self
+            .latest_unprocessed_votes
+            .should_deprecate_legacy_vote_ixs();
         self.latest_unprocessed_votes.insert_batch(
             packets.filter_map(|packet| {
                 LatestValidatorVotePacket::new_from_immutable(
                     packet,
                     VoteSource::Tpu, // incorrect, but this bug has been here w/o issue for a long time.
-                    self.latest_unprocessed_votes
-                        .should_deprecate_legacy_vote_ixs(),
+                    should_deprecate_legacy_vote_ixs,
                 )
                 .ok()
             }),
