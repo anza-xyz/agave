@@ -10692,44 +10692,52 @@ pub mod tests {
     fn erasure_multiple_config() {
         solana_logger::setup();
         let slot = 1;
-        let parent = 0;
         let num_txs = 20;
-        let entry = make_large_tx_entry(num_txs);
-        let shreds = entries_to_test_shreds(
-            &[entry],
-            slot,
-            parent,
-            true,  // is_full_slot
-            0,     // version
-            false, // merkle_variant
+        let entries = [make_large_tx_entry(num_txs)];
+
+        let version = solana_sdk::shred_version::version_from_hash(&entries[0].hash);
+
+        let shredder = Shredder::new(slot, 0, 0, version).unwrap();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let (data1, coding1) = shredder.entries_to_shreds(
+            &Keypair::new(),
+            &entries,
+            true, // is_last_in_slot
+            // chained_merkle_root
+            Some(Hash::new_from_array(rand::thread_rng().gen())),
+            0,    // next_shred_index
+            0,    // next_code_index
+            true, // merkle_variant
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
         );
-        assert!(shreds.len() > 1);
+        let (_data2, coding2) = shredder.entries_to_shreds(
+            &Keypair::new(),
+            &entries,
+            true, // is_last_in_slot
+            // chained_merkle_root
+            Some(Hash::new_from_array(rand::thread_rng().gen())),
+            0,    // next_shred_index
+            1,    // next_code_index
+            true, // merkle_variant
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-        let reed_solomon_cache = ReedSolomonCache::default();
-        let coding1 = Shredder::generate_coding_shreds(
-            &shreds,
-            0, // next_code_index
-            &reed_solomon_cache,
-        );
-        let coding2 = Shredder::generate_coding_shreds(
-            &shreds,
-            1, // next_code_index
-            &reed_solomon_cache,
-        );
-        for shred in &shreds {
-            info!("shred {:?}", shred);
+        for shred in &data1 {
+            info!("shred {:?}", shred.id());
         }
         for shred in &coding1 {
-            info!("coding1 {:?}", shred);
+            info!("coding1 {:?}", shred.id());
         }
         for shred in &coding2 {
-            info!("coding2 {:?}", shred);
+            info!("coding2 {:?}", shred.id());
         }
         blockstore
-            .insert_shreds(shreds[..shreds.len() - 2].to_vec(), None, false)
+            .insert_shreds(data1[..data1.len() - 2].to_vec(), None, false)
             .unwrap();
         blockstore
             .insert_shreds(vec![coding1[0].clone(), coding2[1].clone()], None, false)
