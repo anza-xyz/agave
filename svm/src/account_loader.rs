@@ -151,7 +151,7 @@ pub struct FeesOnlyTransaction {
 // transaction batch and obviates the need to load accounts from accounts-db
 // more than once. It effectively wraps an `impl TransactionProcessingCallback`
 // type, and itself implements `TransactionProcessingCallback`, behaving
-// exactly like the `Bank` impl of this trait but also returns up-to-date
+// exactly like the implementor of the trait, but also returning up-to-date
 // account states mid-batch.
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     loaded_accounts: AHashMap<Pubkey, AccountSharedData>,
