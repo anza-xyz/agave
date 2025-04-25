@@ -1,10 +1,8 @@
 use {
     super::{
         immutable_deserialized_packet::ImmutableDeserializedPacket,
-        latest_unprocessed_votes::{
-            LatestUnprocessedVotes, LatestValidatorVotePacket, VoteBatchInsertionMetrics,
-            VoteSource,
-        },
+        latest_unprocessed_votes::{LatestUnprocessedVotes, VoteBatchInsertionMetrics},
+        latest_validator_vote_packet::{LatestValidatorVotePacket, VoteSource},
     },
     solana_runtime::bank::Bank,
     std::sync::Arc,

@@ -1,7 +1,7 @@
 use {
     super::{
         immutable_deserialized_packet::ImmutableDeserializedPacket,
-        latest_unprocessed_votes::VoteSource,
+        latest_validator_vote_packet::VoteSource,
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_deserializer::{PacketDeserializer, ReceivePacketResults},
         vote_storage::VoteStorage,
