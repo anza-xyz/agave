@@ -2,6 +2,7 @@
 use {
     crate::{
         banking_stage::{
+            unified_scheduler::ensure_banking_stage_setup,
             update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage, LikeClusterInfo,
         },
         banking_trace::{
@@ -46,6 +47,7 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         collections::BTreeMap,
         fmt::Display,
@@ -692,6 +694,7 @@ impl BankingSimulator {
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
+        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> (SenderLoop, SimulatorLoop, SimulatorThreads) {
         let parent_slot = self.parent_slot().unwrap();
         let mut packet_batches_by_time = self.banking_trace_events.packet_batches_by_time;
@@ -779,6 +782,22 @@ impl BankingSimulator {
         let cluster_info_for_banking = Arc::new(DummyClusterInfo {
             id: simulated_leader.into(),
         });
+        let num_banking_threads = BankingStage::num_threads();
+        let banking_tracer_channels = if let Some(pool) = unified_scheduler_pool {
+            let channels = retracer.create_channels_for_scheduler_pool(&pool);
+            ensure_banking_stage_setup(
+                &pool,
+                &bank_forks,
+                &channels,
+                &cluster_info_for_banking,
+                &poh_recorder,
+                transaction_recorder.clone(),
+                num_banking_threads,
+            );
+            channels
+        } else {
+            retracer.create_channels(false)
+        };
         let Channels {
             non_vote_sender,
             non_vote_receiver,
@@ -786,7 +805,7 @@ impl BankingSimulator {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = retracer.create_channels(false);
+        } = banking_tracer_channels;
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
@@ -830,7 +849,7 @@ impl BankingSimulator {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
-            BankingStage::num_threads(),
+            num_banking_threads,
             None,
             replay_vote_sender,
             None,
@@ -910,6 +929,7 @@ impl BankingSimulator {
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
+        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> Result<(), SimulateError> {
         let (sender_loop, simulator_loop, simulator_threads) = self.prepare_simulation(
             genesis_config,
@@ -917,6 +937,7 @@ impl BankingSimulator {
             blockstore,
             block_production_method,
             transaction_struct,
+            unified_scheduler_pool,
         );
 
         sender_loop.log_starting();

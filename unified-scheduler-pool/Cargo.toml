@@ -19,7 +19,6 @@ derive-where = { workspace = true }
 derive_more = { workspace = true }
 dyn-clone = { workspace = true }
 log = { workspace = true }
-qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
 solana-clock = { workspace = true }
 solana-cost-model = { workspace = true }
@@ -48,6 +47,8 @@ solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-system-transaction = { workspace = true }
+# See order-crates-for-publishing.py for using this unusual `path = "."`
+solana-unified-scheduler-pool = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [features]
