@@ -262,38 +262,17 @@ impl LatestUnprocessedVotes {
         should_replenish_taken_votes: bool,
     ) -> Option<LatestValidatorVotePacket> {
         let vote_pubkey = vote.vote_pubkey();
-        let slot = vote.slot();
-        let timestamp = vote.timestamp();
-
-        // Allow votes for later slots or the same slot with later timestamp (refreshed votes)
-        // We directly compare as options to prioritize votes for same slot with timestamp as
-        // Some > None
-        let allow_update = |latest_vote: &LatestValidatorVotePacket| -> bool {
-            match slot.cmp(&latest_vote.slot()) {
-                cmp::Ordering::Less => return false,
-                cmp::Ordering::Greater => return true,
-                cmp::Ordering::Equal => {}
-            };
-
-            // Slots are equal, now check timestamp
-            match timestamp.cmp(&latest_vote.timestamp()) {
-                cmp::Ordering::Less => return false,
-                cmp::Ordering::Greater => return true,
-                cmp::Ordering::Equal => {}
-            };
-
-            // Timestamps are equal, lastly check if vote was taken previously
-            // and should be replenished
-            should_replenish_taken_votes && latest_vote.is_vote_taken()
-        };
-
         let with_latest_vote = |latest_vote: &RwLock<LatestValidatorVotePacket>,
                                 vote: LatestValidatorVotePacket|
          -> Option<LatestValidatorVotePacket> {
-            let should_try_update = allow_update(&latest_vote.read().unwrap());
+            let should_try_update = Self::allow_update(
+                &vote,
+                &latest_vote.read().unwrap(),
+                should_replenish_taken_votes,
+            );
             if should_try_update {
                 let mut latest_vote = latest_vote.write().unwrap();
-                if allow_update(&latest_vote) {
+                if Self::allow_update(&vote, &latest_vote, should_replenish_taken_votes) {
                     let old_vote = std::mem::replace(latest_vote.deref_mut(), vote);
                     if old_vote.is_vote_taken() {
                         self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
@@ -460,6 +439,34 @@ impl LatestUnprocessedVotes {
 
     pub(super) fn should_deprecate_legacy_vote_ixs(&self) -> bool {
         self.deprecate_legacy_vote_ixs.load(Ordering::Relaxed)
+    }
+
+    /// Allow votes for later slots or the same slot with later timestamp (refreshed votes)
+    /// We directly compare as options to prioritize votes for same slot with timestamp as
+    /// Some > None
+    fn allow_update(
+        vote: &LatestValidatorVotePacket,
+        latest_vote: &LatestValidatorVotePacket,
+        should_replenish_taken_votes: bool,
+    ) -> bool {
+        let slot = vote.slot();
+
+        match slot.cmp(&latest_vote.slot()) {
+            cmp::Ordering::Less => return false,
+            cmp::Ordering::Greater => return true,
+            cmp::Ordering::Equal => {}
+        };
+
+        // Slots are equal, now check timestamp
+        match vote.timestamp().cmp(&latest_vote.timestamp()) {
+            cmp::Ordering::Less => return false,
+            cmp::Ordering::Greater => return true,
+            cmp::Ordering::Equal => {}
+        };
+
+        // Timestamps are equal, lastly check if vote was taken previously
+        // and should be replenished
+        should_replenish_taken_votes && latest_vote.is_vote_taken()
     }
 }
 
