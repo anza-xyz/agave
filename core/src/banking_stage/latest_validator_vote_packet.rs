@@ -1,6 +1,5 @@
 use {
     super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
-    solana_perf::packet::Packet,
     solana_pubkey::Pubkey,
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
@@ -29,19 +28,6 @@ pub struct LatestValidatorVotePacket {
 }
 
 impl LatestValidatorVotePacket {
-    pub fn new(
-        packet: &Packet,
-        vote_source: VoteSource,
-        deprecate_legacy_vote_ixs: bool,
-    ) -> Result<Self, DeserializedPacketError> {
-        if !packet.meta().is_simple_vote_tx() {
-            return Err(DeserializedPacketError::VoteTransactionError);
-        }
-
-        let vote = Arc::new(ImmutableDeserializedPacket::new(packet)?);
-        Self::new_from_immutable(vote, vote_source, deprecate_legacy_vote_ixs)
-    }
-
     pub fn new_from_immutable(
         vote: Arc<ImmutableDeserializedPacket>,
         vote_source: VoteSource,
@@ -96,8 +82,18 @@ impl LatestValidatorVotePacket {
         }
     }
 
-    pub fn get_vote_packet(&self) -> Arc<ImmutableDeserializedPacket> {
-        self.vote.as_ref().unwrap().clone()
+    #[cfg(test)]
+    pub fn new(
+        packet: &solana_perf::packet::Packet,
+        vote_source: VoteSource,
+        deprecate_legacy_vote_ixs: bool,
+    ) -> Result<Self, DeserializedPacketError> {
+        if !packet.meta().is_simple_vote_tx() {
+            return Err(DeserializedPacketError::VoteTransactionError);
+        }
+
+        let vote = Arc::new(ImmutableDeserializedPacket::new(packet)?);
+        Self::new_from_immutable(vote, vote_source, deprecate_legacy_vote_ixs)
     }
 
     pub fn vote_pubkey(&self) -> Pubkey {
@@ -134,7 +130,7 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_perf::packet::PacketBatch,
+        solana_perf::packet::{Packet, PacketBatch},
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
         solana_sdk::{packet::PacketFlags, signer::Signer, system_transaction::transfer},
         solana_vote::vote_transaction::new_tower_sync_transaction,

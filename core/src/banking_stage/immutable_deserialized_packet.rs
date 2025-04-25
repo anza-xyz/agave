@@ -51,6 +51,7 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(Clone))]
 pub struct ImmutableDeserializedPacket {
     transaction: SanitizedVersionedTransaction,
     forwarded: bool,

@@ -150,7 +150,7 @@ impl PacketReceiver {
                 .increment_newly_buffered_packets_count(deserialized_packets.len() as u64);
 
             let vote_batch_insertion_metrics =
-                vote_storage.insert_batch(vote_source, deserialized_packets);
+                vote_storage.insert_batch(vote_source, deserialized_packets.into_iter());
             slot_metrics_tracker
                 .accumulate_vote_batch_insertion_metrics(&vote_batch_insertion_metrics);
             saturating_add_assign!(

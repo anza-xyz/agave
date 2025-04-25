@@ -1,9 +1,9 @@
 use {
     super::{
         consumer::LeaderProcessedTransactionCounts,
-        latest_unprocessed_votes::VoteBatchInsertionMetrics,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
         packet_deserializer::PacketReceiverStats,
+        vote_storage::VoteBatchInsertionMetrics,
     },
     solana_poh::poh_recorder::BankStart,
     solana_sdk::{clock::Slot, saturating_add_assign},
