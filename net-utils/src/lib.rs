@@ -40,6 +40,10 @@ pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 17; // VALIDATOR_PORT_RANGE 
 pub(crate) const HEADER_LENGTH: usize = 4;
 pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
 
+/// True on platforms that support advanced socket configuration
+pub(crate) const PLATFORM_SUPPORTS_SOCKET_CONFIGS: bool =
+    cfg!(not(any(windows, target_os = "ios")));
+
 /// Determine the public IP address of this machine by asking an ip_echo_server at the given
 /// address.
 pub fn get_public_ip_addr(ip_echo_server_addr: &SocketAddr) -> Result<IpAddr, String> {
@@ -265,11 +269,11 @@ impl SocketConfig {
 }
 
 #[cfg(any(windows, target_os = "ios"))]
-fn udp_socket_with_config(_config: SocketConfig) -> io::Result<Socket> {
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-    Ok(sock)
+fn set_reuse_port<T>(_socket: &T) -> io::Result<()> {
+    Ok(())
 }
 
+/// Sets SO_REUSEPORT on platforms that support it.
 #[cfg(not(any(windows, target_os = "ios")))]
 fn set_reuse_port<T>(socket: &T) -> io::Result<()>
 where
@@ -279,7 +283,6 @@ where
     setsockopt(socket, ReusePort, &true).map_err(io::Error::from)
 }
 
-#[cfg(not(any(windows, target_os = "ios")))]
 fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
     let SocketConfig {
         reuseport,
@@ -288,16 +291,18 @@ fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
         send_buffer_size,
     } = config;
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-    // Set buffer sizes
-    if let Some(recv_buffer_size) = recv_buffer_size {
-        sock.set_recv_buffer_size(recv_buffer_size)?;
-    }
-    if let Some(send_buffer_size) = send_buffer_size {
-        sock.set_send_buffer_size(send_buffer_size)?;
-    }
+    if PLATFORM_SUPPORTS_SOCKET_CONFIGS {
+        // Set buffer sizes
+        if let Some(recv_buffer_size) = recv_buffer_size {
+            sock.set_recv_buffer_size(recv_buffer_size)?;
+        }
+        if let Some(send_buffer_size) = send_buffer_size {
+            sock.set_send_buffer_size(send_buffer_size)?;
+        }
 
-    if reuseport {
-        set_reuse_port(&sock)?;
+        if reuseport {
+            set_reuse_port(&sock)?;
+        }
     }
 
     Ok(sock)
@@ -382,10 +387,10 @@ pub fn multi_bind_in_range_with_config(
             "SocketConfig.reuseport must be true for multiple binds to the same port",
         ));
     }
-    if cfg!(windows) && num != 1 {
+    if !PLATFORM_SUPPORTS_SOCKET_CONFIGS && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
-            "multi_bind_in_range_with_config() only supports 1 socket in windows ({} requested)",
+            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({} requested)",
             num
         );
         num = 1;
@@ -621,18 +626,15 @@ pub fn bind_more_with_config(
     num: usize,
     mut config: SocketConfig,
 ) -> io::Result<Vec<UdpSocket>> {
-    #[cfg(any(windows, target_os = "ios"))]
-    {
+    if !PLATFORM_SUPPORTS_SOCKET_CONFIGS {
         if num > 1 {
             warn!(
-                "bind_more_with_config() only supports 1 socket in windows ({} requested)",
+                "bind_more_with_config() only supports 1 socket on this platform ({} requested)",
                 num
             );
         }
         Ok(vec![socket])
-    }
-    #[cfg(not(any(windows, target_os = "ios")))]
-    {
+    } else {
         if config.reuseport_set_by_user {
             if !config.reuseport {
                 return Err(io::Error::new(
