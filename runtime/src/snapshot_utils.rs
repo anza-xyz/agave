@@ -876,13 +876,16 @@ fn serialize_snapshot(
             bank_snapshot_path.display(),
         );
 
-        let (_, flush_storages_us) = measure_us!({
-            for storage in snapshot_storages {
-                storage.flush().map_err(|err| {
-                    AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
-                })?;
-            }
-        });
+        // brooks XXX:
+        /*
+         * let (_, flush_storages_us) = measure_us!({
+         *     for storage in snapshot_storages {
+         *         storage.flush().map_err(|err| {
+         *             AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
+         *         })?;
+         *     }
+         * });
+         */
 
         // We are constructing the snapshot directory to contain the full snapshot state information to allow
         // constructing a bank from this directory.  It acts like an archive to include the full state.
@@ -935,11 +938,14 @@ fn serialize_snapshot(
         )
         .map_err(|err| AddBankSnapshotError::WriteSnapshotVersionFile(err, version_path))?);
 
-        // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
-        let (_, write_state_complete_file_us) = measure_us!({
-            write_snapshot_state_complete_file(&bank_snapshot_dir)
-                .map_err(AddBankSnapshotError::MarkSnapshotComplete)?
-        });
+        // brooks XXX:
+        /*
+         * // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
+         * let (_, write_state_complete_file_us) = measure_us!({
+         *     write_snapshot_state_complete_file(&bank_snapshot_dir)
+         *         .map_err(AddBankSnapshotError::MarkSnapshotComplete)?
+         * });
+         */
 
         measure_everything.stop();
 
@@ -949,16 +955,12 @@ fn serialize_snapshot(
             ("slot", slot, i64),
             ("bank_size", bank_snapshot_consumed_size, i64),
             ("status_cache_size", status_cache_consumed_size, i64),
-            ("flush_storages_us", flush_storages_us, i64),
+            // brooks XXX: ("flush_storages_us", flush_storages_us, i64),
             ("hard_link_storages_us", hard_link_storages_us, i64),
             ("bank_serialize_us", bank_serialize.as_us(), i64),
             ("status_cache_serialize_us", status_cache_serialize_us, i64),
             ("write_version_file_us", write_version_file_us, i64),
-            (
-                "write_state_complete_file_us",
-                write_state_complete_file_us,
-                i64
-            ),
+            // brooks XXX: ("write_state_complete_file_us", write_state_complete_file_us, i64),
             ("total_us", measure_everything.as_us(), i64),
         );
 

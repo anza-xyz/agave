@@ -3,13 +3,15 @@ mod snapshot_gossip_manager;
 pub use pending_snapshot_packages::PendingSnapshotPackages;
 use {
     snapshot_gossip_manager::SnapshotGossipManager,
+    solana_accounts_db::accounts_db::AccountStorageEntry,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_measure::{measure::Measure, measure_us},
+    solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
-        snapshot_controller::SnapshotController, snapshot_hash::StartingSnapshotHashes,
-        snapshot_package::SnapshotPackage, snapshot_utils,
+        snapshot_config::SnapshotConfig, snapshot_controller::SnapshotController,
+        snapshot_hash::StartingSnapshotHashes, snapshot_package::SnapshotPackage, snapshot_utils,
     },
+    solana_sdk::clock::Slot,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -45,8 +47,19 @@ impl SnapshotPackagerService {
                 let mut snapshot_gossip_manager = enable_gossip_push
                     .then(|| SnapshotGossipManager::new(cluster_info, starting_snapshot_hashes));
 
+                // brooks TODO: doc
+                let mut teardown_state = None;
+
                 loop {
                     if exit.load(Ordering::Relaxed) {
+                        if let Some(teardown_state) = &teardown_state {
+                            info!("Received exit request, tearing down...");
+                            let (_, dur) = meas_dur!(Self::teardown(
+                                teardown_state,
+                                snapshot_controller.snapshot_config(),
+                            ));
+                            info!("Teardown completed in {dur:?}.");
+                        }
                         break;
                     }
 
@@ -63,6 +76,12 @@ impl SnapshotPackagerService {
                     let snapshot_kind = snapshot_package.snapshot_kind;
                     let snapshot_slot = snapshot_package.slot;
                     let snapshot_hash = snapshot_package.hash;
+
+                    // brooks NOTE: save storages to maybe flush later
+                    teardown_state = Some(TeardownState {
+                        snapshot_slot: snapshot_package.slot,
+                        snapshot_storages: snapshot_package.snapshot_storages.clone(),
+                    });
 
                     // Archiving the snapshot package is not allowed to fail.
                     // AccountsBackgroundService calls `clean_accounts()` with a value for
@@ -137,4 +156,41 @@ impl SnapshotPackagerService {
     ) -> Option<SnapshotPackage> {
         pending_snapshot_packages.lock().unwrap().pop()
     }
+
+    // brooks TODO: doc
+    fn teardown(state: &TeardownState, snapshot_config: &SnapshotConfig) {
+        for storage in &state.snapshot_storages {
+            let result = storage.flush();
+            if let Err(err) = result {
+                warn!(
+                    "Failed to flush account storage '{}': {err}",
+                    storage.path().display(),
+                );
+                // If flushing a storage failed, we do *NOT* want to mark
+                // this snapshot as complete, so return early.
+                return;
+            }
+        }
+
+        let bank_snapshot_dir = snapshot_utils::get_bank_snapshot_dir(
+            &snapshot_config.bank_snapshots_dir,
+            state.snapshot_slot,
+        );
+        let result = snapshot_utils::write_snapshot_state_complete_file(&bank_snapshot_dir);
+        if let Err(err) = result {
+            warn!(
+                "Failed to mark snapshot as 'complete': failed to create file in '{}': {err}",
+                bank_snapshot_dir.display(),
+            );
+        }
+    }
+}
+
+// brooks TODO: doc
+// Note, don't derive Debug, because we don't want to print out 432k+ `AccountStorageEntry`s...
+struct TeardownState {
+    // brooks TODO: doc
+    snapshot_slot: Slot,
+    // brooks TODO: doc
+    snapshot_storages: Vec<Arc<AccountStorageEntry>>,
 }
