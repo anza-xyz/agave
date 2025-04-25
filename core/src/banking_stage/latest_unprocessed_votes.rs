@@ -19,7 +19,7 @@ use {
         cmp,
         collections::HashMap,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
         },
     },
@@ -162,7 +162,7 @@ impl VoteBatchInsertionMetrics {
 #[derive(Debug)]
 pub struct LatestUnprocessedVotes {
     latest_vote_per_vote_pubkey: HashMap<Pubkey, LatestValidatorVotePacket>,
-    num_unprocessed_votes: AtomicUsize,
+    num_unprocessed_votes: usize,
     cached_epoch_stakes: EpochStakes,
     deprecate_legacy_vote_ixs: AtomicBool,
     current_epoch: AtomicU64,
@@ -175,7 +175,7 @@ impl LatestUnprocessedVotes {
             .is_active(&feature_set::deprecate_legacy_vote_ixs::id());
         Self {
             latest_vote_per_vote_pubkey: HashMap::default(),
-            num_unprocessed_votes: AtomicUsize::new(0),
+            num_unprocessed_votes: 0,
             cached_epoch_stakes: bank.current_epoch_stakes().clone(),
             current_epoch: AtomicU64::new(bank.epoch()),
             deprecate_legacy_vote_ixs: AtomicBool::new(deprecate_legacy_vote_ixs),
@@ -194,7 +194,7 @@ impl LatestUnprocessedVotes {
 
         Self {
             latest_vote_per_vote_pubkey: HashMap::default(),
-            num_unprocessed_votes: AtomicUsize::new(0),
+            num_unprocessed_votes: 0,
             cached_epoch_stakes: epoch_stakes,
             current_epoch: AtomicU64::new(0),
             deprecate_legacy_vote_ixs: AtomicBool::new(true),
@@ -202,7 +202,7 @@ impl LatestUnprocessedVotes {
     }
 
     pub fn len(&self) -> usize {
-        self.num_unprocessed_votes.load(Ordering::Relaxed)
+        self.num_unprocessed_votes
     }
 
     pub fn is_empty(&self) -> bool {
@@ -256,7 +256,7 @@ impl LatestUnprocessedVotes {
                 if Self::allow_update(&vote, latest_vote, should_replenish_taken_votes) {
                     let old_vote = std::mem::replace(latest_vote, vote);
                     if old_vote.is_vote_taken() {
-                        self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
+                        self.num_unprocessed_votes += 1;
                         return None;
                     } else {
                         return Some(old_vote);
@@ -266,7 +266,7 @@ impl LatestUnprocessedVotes {
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(vote);
-                self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
+                self.num_unprocessed_votes += 1;
                 None
             }
         }
@@ -331,8 +331,7 @@ impl LatestUnprocessedVotes {
                 }
                 !should_evict
             });
-        self.num_unprocessed_votes
-            .fetch_sub(unstaked_votes, Ordering::Relaxed);
+        self.num_unprocessed_votes -= unstaked_votes;
         datapoint_info!(
             "latest_unprocessed_votes-epoch-boundary",
             ("epoch", bank.epoch(), i64),
@@ -364,7 +363,7 @@ impl LatestUnprocessedVotes {
                             return None;
                         }
                         latest_vote.take_vote().inspect(|_vote| {
-                            self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
+                            self.num_unprocessed_votes -= 1;
                         })
                     })
             })
@@ -391,7 +390,7 @@ impl LatestUnprocessedVotes {
             .values_mut()
             .for_each(|vote| {
                 if vote.take_vote().is_some() {
-                    self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
+                    self.num_unprocessed_votes -= 1;
                 }
             });
     }
@@ -738,9 +737,7 @@ mod tests {
             .values_mut()
         {
             packet.take_vote().inspect(|_vote| {
-                latest_unprocessed_votes
-                    .num_unprocessed_votes
-                    .fetch_sub(1, Ordering::Relaxed);
+                latest_unprocessed_votes.num_unprocessed_votes -= 1;
             });
         }
         assert_eq!(0, latest_unprocessed_votes.len());
