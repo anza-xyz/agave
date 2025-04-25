@@ -19,7 +19,7 @@ use {
         cmp,
         collections::HashMap,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicU64, Ordering},
             Arc,
         },
     },
@@ -164,7 +164,7 @@ pub struct LatestUnprocessedVotes {
     latest_vote_per_vote_pubkey: HashMap<Pubkey, LatestValidatorVotePacket>,
     num_unprocessed_votes: usize,
     cached_epoch_stakes: EpochStakes,
-    deprecate_legacy_vote_ixs: AtomicBool,
+    deprecate_legacy_vote_ixs: bool,
     current_epoch: AtomicU64,
 }
 
@@ -178,7 +178,7 @@ impl LatestUnprocessedVotes {
             num_unprocessed_votes: 0,
             cached_epoch_stakes: bank.current_epoch_stakes().clone(),
             current_epoch: AtomicU64::new(bank.epoch()),
-            deprecate_legacy_vote_ixs: AtomicBool::new(deprecate_legacy_vote_ixs),
+            deprecate_legacy_vote_ixs,
         }
     }
 
@@ -197,7 +197,7 @@ impl LatestUnprocessedVotes {
             num_unprocessed_votes: 0,
             cached_epoch_stakes: epoch_stakes,
             current_epoch: AtomicU64::new(0),
-            deprecate_legacy_vote_ixs: AtomicBool::new(true),
+            deprecate_legacy_vote_ixs: true,
         }
     }
 
@@ -313,11 +313,9 @@ impl LatestUnprocessedVotes {
         {
             self.cached_epoch_stakes = bank.current_epoch_stakes().clone();
             self.current_epoch.store(bank.epoch(), Ordering::Relaxed);
-            self.deprecate_legacy_vote_ixs.store(
-                bank.feature_set
-                    .is_active(&feature_set::deprecate_legacy_vote_ixs::id()),
-                Ordering::Relaxed,
-            );
+            self.deprecate_legacy_vote_ixs = bank
+                .feature_set
+                .is_active(&feature_set::deprecate_legacy_vote_ixs::id());
         }
 
         // Evict any now unstaked pubkeys
@@ -396,7 +394,7 @@ impl LatestUnprocessedVotes {
     }
 
     pub(super) fn should_deprecate_legacy_vote_ixs(&self) -> bool {
-        self.deprecate_legacy_vote_ixs.load(Ordering::Relaxed)
+        self.deprecate_legacy_vote_ixs
     }
 
     /// Allow votes for later slots or the same slot with later timestamp (refreshed votes)
