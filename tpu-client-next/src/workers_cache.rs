@@ -3,10 +3,14 @@
 //! batches, and gathering send transaction statistics.
 
 use {
-    crate::transaction_batch::TransactionBatch,
+    crate::{
+        connection_worker::ConnectionWorker, transaction_batch::TransactionBatch,
+        SendTransactionStats,
+    },
     log::*,
     lru::LruCache,
-    std::net::SocketAddr,
+    quinn::Endpoint,
+    std::{net::SocketAddr, sync::Arc},
     thiserror::Error,
     tokio::{
         sync::mpsc::{self, error::TrySendError},
@@ -65,6 +69,34 @@ impl WorkerInfo {
             .map_err(|_| WorkersCacheError::TaskJoinFailure)?;
         Ok(())
     }
+}
+
+/// Spawns a worker to handle communication with a given peer.
+pub(crate) fn spawn_worker(
+    endpoint: &Endpoint,
+    peer: &SocketAddr,
+    worker_channel_size: usize,
+    skip_check_transaction_age: bool,
+    max_reconnect_attempts: usize,
+    stats: Arc<SendTransactionStats>,
+) -> WorkerInfo {
+    let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
+    let endpoint = endpoint.clone();
+    let peer = *peer;
+
+    let (mut worker, cancel) = ConnectionWorker::new(
+        endpoint,
+        peer,
+        txs_receiver,
+        skip_check_transaction_age,
+        max_reconnect_attempts,
+        stats,
+    );
+    let handle = tokio::spawn(async move {
+        worker.run().await;
+    });
+
+    WorkerInfo::new(txs_sender, handle, cancel)
 }
 
 /// [`WorkersCache`] manages and caches workers. It uses an LRU cache to store and

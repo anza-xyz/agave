@@ -4,12 +4,11 @@
 use {
     super::leader_updater::LeaderUpdater,
     crate::{
-        connection_worker::ConnectionWorker,
         quic_networking::{
             create_client_config, create_client_endpoint, QuicClientCertificate, QuicError,
         },
         transaction_batch::TransactionBatch,
-        workers_cache::{shutdown_worker, WorkerInfo, WorkersCache, WorkersCacheError},
+        workers_cache::{shutdown_worker, spawn_worker, WorkersCache, WorkersCacheError},
         SendTransactionStats,
     },
     async_trait::async_trait,
@@ -270,7 +269,7 @@ impl ConnectionWorkersScheduler {
             // the connection.
             for peer in connect_leaders {
                 if !workers.contains(&peer) {
-                    let worker = Self::spawn_worker(
+                    let worker = spawn_worker(
                         &endpoint,
                         &peer,
                         worker_channel_size,
@@ -300,34 +299,6 @@ impl ConnectionWorkersScheduler {
             return Err(error);
         }
         Ok(stats)
-    }
-
-    /// Spawns a worker to handle communication with a given peer.
-    fn spawn_worker(
-        endpoint: &Endpoint,
-        peer: &SocketAddr,
-        worker_channel_size: usize,
-        skip_check_transaction_age: bool,
-        max_reconnect_attempts: usize,
-        stats: Arc<SendTransactionStats>,
-    ) -> WorkerInfo {
-        let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
-        let endpoint = endpoint.clone();
-        let peer = *peer;
-
-        let (mut worker, cancel) = ConnectionWorker::new(
-            endpoint,
-            peer,
-            txs_receiver,
-            skip_check_transaction_age,
-            max_reconnect_attempts,
-            stats,
-        );
-        let handle = tokio::spawn(async move {
-            worker.run().await;
-        });
-
-        WorkerInfo::new(txs_sender, handle, cancel)
     }
 }
 
