@@ -262,44 +262,31 @@ impl LatestUnprocessedVotes {
         should_replenish_taken_votes: bool,
     ) -> Option<LatestValidatorVotePacket> {
         let vote_pubkey = vote.vote_pubkey();
-        let with_latest_vote = |latest_vote: &RwLock<LatestValidatorVotePacket>,
-                                vote: LatestValidatorVotePacket|
-         -> Option<LatestValidatorVotePacket> {
-            if Self::allow_update(
-                &vote,
-                &latest_vote.read().unwrap(),
-                should_replenish_taken_votes,
-            ) {
-                let mut latest_vote = latest_vote.write().unwrap();
-                let old_vote = std::mem::replace(latest_vote.deref_mut(), vote);
-                if old_vote.is_vote_taken() {
-                    self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
-                    return None;
-                } else {
-                    return Some(old_vote);
+        // Grab write-lock to insert new vote.
+        match self
+            .latest_vote_per_vote_pubkey
+            .write()
+            .unwrap()
+            .entry(vote_pubkey)
+        {
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                let mut latest_vote = entry.get().write().unwrap();
+                if Self::allow_update(&vote, latest_vote.deref_mut(), should_replenish_taken_votes)
+                {
+                    let old_vote = std::mem::replace(latest_vote.deref_mut(), vote);
+                    if old_vote.is_vote_taken() {
+                        self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
+                        return None;
+                    } else {
+                        return Some(old_vote);
+                    }
                 }
+                Some(vote)
             }
-            Some(vote)
-        };
-
-        if let Some(latest_vote) = self.get_entry(vote_pubkey) {
-            with_latest_vote(&latest_vote, vote)
-        } else {
-            // Grab write-lock to insert new vote.
-            match self
-                .latest_vote_per_vote_pubkey
-                .write()
-                .unwrap()
-                .entry(vote_pubkey)
-            {
-                std::collections::hash_map::Entry::Occupied(entry) => {
-                    with_latest_vote(entry.get(), vote)
-                }
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert(Arc::new(RwLock::new(vote)));
-                    self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
-                    None
-                }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(Arc::new(RwLock::new(vote)));
+                self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
+                None
             }
         }
     }
