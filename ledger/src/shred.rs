@@ -80,7 +80,7 @@ use {
         signature::{Keypair, Signature, Signer, SIGNATURE_BYTES},
     },
     static_assertions::const_assert_eq,
-    std::{fmt::Debug, sync::OnceLock, time::Instant},
+    std::{fmt::Debug, time::Instant},
     thiserror::Error,
 };
 
@@ -125,13 +125,15 @@ pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHRED
 // 1. 32:32 erasure coding batch
 // 2. Merkles are chained
 // 3. No retransmit signature (only included for last batch)
-static DATA_SHRED_BYTES_PER_BATCH_TYPICAL: OnceLock<u64> = OnceLock::new();
-pub fn get_data_shred_bytes_per_batch_typical() -> &'static u64 {
-    DATA_SHRED_BYTES_PER_BATCH_TYPICAL.get_or_init(|| {
-        let capacity = ShredData::capacity(Some((PROOF_ENTRIES_FOR_32_32_BATCH, true, false)))
-            .expect("Failed to get shred capacity");
-        (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
-    })
+pub const fn get_data_shred_bytes_per_batch_typical() -> u64 {
+    let capacity =
+        match merkle::ShredData::const_capacity(PROOF_ENTRIES_FOR_32_32_BATCH, true, false) {
+            Ok(v) => v,
+            Err(_proof_size) => {
+                panic!("this is unreachable");
+            }
+        };
+    (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
 }
 
 // For legacy tests and benchmarks.

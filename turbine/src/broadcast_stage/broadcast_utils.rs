@@ -11,7 +11,7 @@ use {
     solana_runtime::bank::Bank,
     solana_sdk::{clock::Slot, hash::Hash},
     std::{
-        sync::{Arc, OnceLock},
+        sync::Arc,
         time::{Duration, Instant},
     },
 };
@@ -24,25 +24,15 @@ pub(super) struct ReceiveResults {
     pub last_tick_height: u64,
 }
 
-fn data_shred_bytes_per_batch() -> u64 {
-    *get_data_shred_bytes_per_batch_typical()
+const fn get_target_batch_bytes_default() -> u64 {
+    // Empirically discovered to be a good balance between avoiding padding and
+    // not delaying broadcast.
+    3 * get_data_shred_bytes_per_batch_typical()
 }
 
-static TARGET_BATCH_BYTES_DEFAULT: OnceLock<u64> = OnceLock::new();
-fn get_target_batch_bytes_default() -> &'static u64 {
-    TARGET_BATCH_BYTES_DEFAULT.get_or_init(|| {
-        // Empirically discovered to be a good balance between avoiding padding and
-        // not delaying broadcast.
-        3 * data_shred_bytes_per_batch()
-    })
-}
-
-static TARGET_BATCH_PAD_BYTES: OnceLock<u64> = OnceLock::new();
-fn get_target_batch_pad_bytes() -> &'static u64 {
-    TARGET_BATCH_PAD_BYTES.get_or_init(|| {
-        // Less than 5% padding is acceptable overhead. Let's not push our luck.
-        data_shred_bytes_per_batch() / 20
-    })
+const fn get_target_batch_pad_bytes() -> u64 {
+    // Less than 5% padding is acceptable overhead. Let's not push our luck.
+    get_data_shred_bytes_per_batch_typical() / 20
 }
 
 fn keep_coalescing_entries(
@@ -61,9 +51,9 @@ fn keep_coalescing_entries(
         process_stats.coalesce_exited_hit_max += 1;
         return false;
     }
-    let bytes_to_fill_erasure_batch =
-        data_shred_bytes_per_batch() - (serialized_batch_byte_count % data_shred_bytes_per_batch());
-    if bytes_to_fill_erasure_batch < *get_target_batch_pad_bytes() {
+    let bytes_to_fill_erasure_batch = get_data_shred_bytes_per_batch_typical()
+        - (serialized_batch_byte_count % get_data_shred_bytes_per_batch_typical());
+    if bytes_to_fill_erasure_batch < get_target_batch_pad_bytes() {
         // We're close enough to tightly packing erasure batches. Just send it.
         process_stats.coalesce_exited_tightly_packed += 1;
         return false;
@@ -117,9 +107,9 @@ pub(super) fn recv_slot_entries(
 
     let mut serialized_batch_byte_count = serialized_size(&entries)?;
     let next_full_batch_byte_count = serialized_batch_byte_count
-        .div_ceil(data_shred_bytes_per_batch())
-        .saturating_mul(data_shred_bytes_per_batch());
-    let max_batch_byte_count = next_full_batch_byte_count.max(*get_target_batch_bytes_default());
+        .div_ceil(get_data_shred_bytes_per_batch_typical())
+        .saturating_mul(get_data_shred_bytes_per_batch_typical());
+    let max_batch_byte_count = next_full_batch_byte_count.max(get_target_batch_bytes_default());
 
     // Coalesce entries until one of the following conditions are hit:
     // 1. We ticked through the entire slot.

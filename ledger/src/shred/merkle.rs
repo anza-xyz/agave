@@ -209,6 +209,25 @@ impl ShredData {
         let node = get_merkle_node(shred, SIZE_OF_SIGNATURE..proof_offset).ok()?;
         get_merkle_root(index, node, proof).ok()
     }
+
+    pub(crate) const fn const_capacity(
+        proof_size: u8,
+        chained: bool,
+        resigned: bool,
+    ) -> Result<usize, u8> {
+        debug_assert!(chained || !resigned);
+        // Merkle proof is generated and signed after coding shreds are
+        // generated. Coding shred headers cannot be erasure coded either.
+        match Self::SIZE_OF_PAYLOAD.checked_sub(
+            Self::SIZE_OF_HEADERS
+                + if chained { SIZE_OF_MERKLE_ROOT } else { 0 }
+                + (proof_size as usize) * SIZE_OF_MERKLE_PROOF_ENTRY
+                + if resigned { SIZE_OF_SIGNATURE } else { 0 },
+        ) {
+            Some(v) => Ok(v),
+            None => Err(proof_size),
+        }
+    }
 }
 
 impl ShredCode {
@@ -1453,14 +1472,15 @@ mod test {
     }
 
     // Maps number of (code + data) shreds to merkle_proof.len().
-    fn get_proof_size(num_shreds: usize) -> u8 {
+    const fn get_proof_size(num_shreds: usize) -> u8 {
         let bits = usize::BITS - num_shreds.leading_zeros();
         let proof_size = if num_shreds.is_power_of_two() {
-            bits.checked_sub(1).unwrap()
+            bits.saturating_sub(1)
         } else {
             bits
         };
-        u8::try_from(proof_size).unwrap()
+        // this can never overflow because bits < 64
+        proof_size as u8
     }
 
     fn run_recover_merkle_shreds<R: Rng + CryptoRng>(
