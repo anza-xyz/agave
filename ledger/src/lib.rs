@@ -10,6 +10,7 @@ pub mod block_error;
 #[macro_use]
 pub mod blockstore;
 pub mod ancestor_iterator;
+pub mod bit_vec;
 pub mod blockstore_cleanup_service;
 pub mod blockstore_db;
 pub mod blockstore_meta;
