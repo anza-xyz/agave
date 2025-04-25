@@ -7997,12 +7997,13 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "2.2.1"
+version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "685197cf2304e5d26973c72286abb8eb503eede4555b05dbe853d236fd74132c"
+checksum = "1bdd72d99751bcd646dc6a32772bf181c7b49f5379e4a4c8946920f3082b0ec6"
 dependencies = [
  "bs58",
  "bv",
+ "bytes",
  "im",
  "log",
  "memmap2 0.5.10",
