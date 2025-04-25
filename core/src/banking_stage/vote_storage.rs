@@ -81,7 +81,7 @@ impl VoteStorage {
         );
     }
 
-    pub fn drain_unprocessed(&self, bank: &Bank) -> Vec<Arc<ImmutableDeserializedPacket>> {
+    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<Arc<ImmutableDeserializedPacket>> {
         self.latest_unprocessed_votes.drain_unprocessed(bank)
     }
 

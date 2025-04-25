@@ -18,10 +18,9 @@ use {
     std::{
         cmp,
         collections::HashMap,
-        ops::DerefMut,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-            Arc, RwLock,
+            Arc,
         },
     },
 };
@@ -162,7 +161,7 @@ impl VoteBatchInsertionMetrics {
 
 #[derive(Debug)]
 pub struct LatestUnprocessedVotes {
-    latest_vote_per_vote_pubkey: HashMap<Pubkey, Arc<RwLock<LatestValidatorVotePacket>>>,
+    latest_vote_per_vote_pubkey: HashMap<Pubkey, LatestValidatorVotePacket>,
     num_unprocessed_votes: AtomicUsize,
     cached_epoch_stakes: EpochStakes,
     deprecate_legacy_vote_ixs: AtomicBool,
@@ -241,10 +240,6 @@ impl LatestUnprocessedVotes {
         }
     }
 
-    fn get_entry(&self, pubkey: Pubkey) -> Option<Arc<RwLock<LatestValidatorVotePacket>>> {
-        self.latest_vote_per_vote_pubkey.get(&pubkey).cloned()
-    }
-
     /// If this vote causes an unprocessed vote to be removed, returns Some(old_vote)
     /// If there is a newer vote processed / waiting to be processed returns Some(vote)
     /// Otherwise returns None
@@ -256,11 +251,10 @@ impl LatestUnprocessedVotes {
         let vote_pubkey = vote.vote_pubkey();
         // Grab write-lock to insert new vote.
         match self.latest_vote_per_vote_pubkey.entry(vote_pubkey) {
-            std::collections::hash_map::Entry::Occupied(entry) => {
-                let mut latest_vote = entry.get().write().unwrap();
-                if Self::allow_update(&vote, latest_vote.deref_mut(), should_replenish_taken_votes)
-                {
-                    let old_vote = std::mem::replace(latest_vote.deref_mut(), vote);
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let latest_vote = entry.get_mut();
+                if Self::allow_update(&vote, latest_vote, should_replenish_taken_votes) {
+                    let old_vote = std::mem::replace(latest_vote, vote);
                     if old_vote.is_vote_taken() {
                         self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
                         return None;
@@ -271,7 +265,7 @@ impl LatestUnprocessedVotes {
                 Some(vote)
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(Arc::new(RwLock::new(vote)));
+                entry.insert(vote);
                 self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
                 None
             }
@@ -282,14 +276,14 @@ impl LatestUnprocessedVotes {
     pub fn get_latest_vote_slot(&self, pubkey: Pubkey) -> Option<Slot> {
         self.latest_vote_per_vote_pubkey
             .get(&pubkey)
-            .map(|l| l.read().unwrap().slot())
+            .map(|l| l.slot())
     }
 
     #[cfg(test)]
     fn get_latest_timestamp(&self, pubkey: Pubkey) -> Option<UnixTimestamp> {
         self.latest_vote_per_vote_pubkey
             .get(&pubkey)
-            .and_then(|l| l.read().unwrap().timestamp())
+            .and_then(|l| l.timestamp())
     }
 
     fn weighted_random_order_by_stake(&self) -> impl Iterator<Item = Pubkey> {
@@ -330,7 +324,7 @@ impl LatestUnprocessedVotes {
         let mut unstaked_votes = 0;
         self.latest_vote_per_vote_pubkey
             .retain(|vote_pubkey, vote| {
-                let is_present = !vote.read().unwrap().is_vote_taken();
+                let is_present = !vote.is_vote_taken();
                 let should_evict = self.cached_epoch_stakes.vote_account_stake(vote_pubkey) == 0;
                 if is_present && should_evict {
                     unstaked_votes += 1;
@@ -349,7 +343,7 @@ impl LatestUnprocessedVotes {
     /// Drains all votes yet to be processed sorted by a weighted random ordering by stake
     /// Do not touch votes that are for a different fork from `bank` as we know they will fail,
     /// however the next bank could be built on a different fork and consume these votes.
-    pub fn drain_unprocessed(&self, bank: &Bank) -> Vec<Arc<ImmutableDeserializedPacket>> {
+    pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<Arc<ImmutableDeserializedPacket>> {
         let slot_hashes = bank
             .get_account(&sysvar::slot_hashes::id())
             .and_then(|account| from_account::<SlotHashes, _>(&account));
@@ -363,15 +357,16 @@ impl LatestUnprocessedVotes {
 
         self.weighted_random_order_by_stake()
             .filter_map(|pubkey| {
-                self.get_entry(pubkey).and_then(|lock| {
-                    let mut latest_vote = lock.write().unwrap();
-                    if !Self::is_valid_for_our_fork(&latest_vote, &slot_hashes) {
-                        return None;
-                    }
-                    latest_vote.take_vote().inspect(|_vote| {
-                        self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
+                self.latest_vote_per_vote_pubkey
+                    .get_mut(&pubkey)
+                    .and_then(|latest_vote| {
+                        if !Self::is_valid_for_our_fork(latest_vote, &slot_hashes) {
+                            return None;
+                        }
+                        latest_vote.take_vote().inspect(|_vote| {
+                            self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
+                        })
                     })
-                })
             })
             .collect_vec()
     }
@@ -391,13 +386,14 @@ impl LatestUnprocessedVotes {
             .unwrap_or(false)
     }
 
-    pub fn clear(&self) {
-        self.latest_vote_per_vote_pubkey.values().for_each(|lock| {
-            let mut vote = lock.write().unwrap();
-            if vote.take_vote().is_some() {
-                self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
-            }
-        });
+    pub fn clear(&mut self) {
+        self.latest_vote_per_vote_pubkey
+            .values_mut()
+            .for_each(|vote| {
+                if vote.take_vote().is_some() {
+                    self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
+                }
+            });
     }
 
     pub(super) fn should_deprecate_legacy_vote_ixs(&self) -> bool {
@@ -739,9 +735,9 @@ mod tests {
         // Drain all latest votes
         for packet in latest_unprocessed_votes
             .latest_vote_per_vote_pubkey
-            .values()
+            .values_mut()
         {
-            packet.write().unwrap().take_vote().inspect(|_vote| {
+            packet.take_vote().inspect(|_vote| {
                 latest_unprocessed_votes
                     .num_unprocessed_votes
                     .fetch_sub(1, Ordering::Relaxed);
