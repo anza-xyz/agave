@@ -35,7 +35,7 @@ pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
 pub struct ConnectionWorkersScheduler {
     leader_updater: Box<dyn LeaderUpdater>,
     transaction_receiver: TransactionReceiver,
-    update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
+    update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
     cancel: CancellationToken,
     stats: Arc<SendTransactionStats>,
 }
@@ -158,14 +158,14 @@ impl ConnectionWorkersScheduler {
     pub fn new(
         leader_updater: Box<dyn LeaderUpdater>,
         transaction_receiver: mpsc::Receiver<TransactionBatch>,
-        update_certificate_receiver: watch::Receiver<Option<StakeIdentity>>,
+        update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
         cancel: CancellationToken,
     ) -> Self {
         let stats = Arc::new(SendTransactionStats::default());
         Self {
             leader_updater,
             transaction_receiver,
-            update_certificate_receiver,
+            update_identity_receiver,
             cancel,
             stats,
         }
@@ -217,7 +217,7 @@ impl ConnectionWorkersScheduler {
         let ConnectionWorkersScheduler {
             mut leader_updater,
             mut transaction_receiver,
-            mut update_certificate_receiver,
+            mut update_identity_receiver,
             cancel,
             stats,
         } = self;
@@ -228,9 +228,9 @@ impl ConnectionWorkersScheduler {
 
         let mut last_error = None;
         // flag to ensure that the section handling
-        // `update_certificate_receiver.changed()` is entered only once when the
+        // `update_identity_receiver.changed()` is entered only once when the
         // channel is dropped.
-        let mut certificate_updater_is_active = true;
+        let mut identity_updater_is_active = true;
 
         loop {
             let transaction_batch: TransactionBatch = tokio::select! {
@@ -241,19 +241,20 @@ impl ConnectionWorkersScheduler {
                         break;
                     }
                 },
-                res = update_certificate_receiver.changed(), if certificate_updater_is_active => {
+                res = update_identity_receiver.changed(), if identity_updater_is_active => {
                     let Ok(()) = res else {
                         // Sender has been dropped; log and continue
                         debug!("Certificate update channel closed; continuing without further updates.");
-                        certificate_updater_is_active = false;
+                        identity_updater_is_active = false;
                         continue;
                     };
 
-                    let client_config = build_client_config(update_certificate_receiver.borrow_and_update().as_ref());
+                    let client_config = build_client_config(update_identity_receiver.borrow_and_update().as_ref());
                     endpoint.set_default_client_config(client_config);
                     // Flush workers since they are handling connections created
                     // with outdated certificate.
                     workers.flush();
+                    debug!("Updated certificate.");
                     continue;
                 },
                 () = cancel.cancelled() => {
