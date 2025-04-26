@@ -1313,8 +1313,10 @@ mod tests {
     }
 
     fn concat_regions(regions: &[MemoryRegion]) -> AlignedMemory<HOST_ALIGN> {
-        let len = regions.iter().fold(0, |len, region| len + region.len) as usize;
-        let mut mem = AlignedMemory::zero_filled(len);
+        let last_region = regions.last().unwrap();
+        let mut mem = AlignedMemory::zero_filled(
+            (last_region.vm_addr - MM_INPUT_START + last_region.len) as usize,
+        );
         for region in regions {
             let host_slice = unsafe {
                 slice::from_raw_parts(region.host_addr as *const u8, region.len as usize)
