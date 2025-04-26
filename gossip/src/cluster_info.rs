@@ -2771,23 +2771,6 @@ impl Node {
         info.set_serve_repair(QUIC, (addr, serve_repair_quic_port))
             .unwrap();
 
-        let vortexor_receivers = vortexor_receiver_addr.map(|vortexor_receiver_addr| {
-            multi_bind_in_range_with_config(
-                vortexor_receiver_addr.ip(),
-                (
-                    vortexor_receiver_addr.port(),
-                    vortexor_receiver_addr.port() + 1,
-                ),
-                socket_config,
-                32,
-            )
-            .unwrap_or_else(|_| {
-                panic!("Could not bind to the set vortexor_receiver_addr {vortexor_receiver_addr}")
-            })
-            .1
-        });
-
-        info!("vortexor_receivers is {vortexor_receivers:?}");
         trace!("new ContactInfo: {:?}", info);
         let sockets = Sockets {
             gossip,
