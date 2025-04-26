@@ -3679,7 +3679,7 @@ fn test_cpi_account_ownership_writability() {
                         result.unwrap_err().unwrap(),
                         TransactionError::InstructionError(
                             0,
-                            InstructionError::ExternalAccountDataModified
+                            InstructionError::ExternalAccountDataModified,
                         )
                     );
                 } else {
@@ -3939,8 +3939,10 @@ fn test_cpi_account_data_updates() {
         let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
         account.set_data(b"foobar".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data =
-            vec![TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN];
+        let mut instruction_data = vec![
+            TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
+            direct_mapping as u8,
+        ];
         instruction_data.extend_from_slice(4usize.to_le_bytes().as_ref());
         let instruction = Instruction::new_with_bytes(
             account_metas[3].pubkey,
@@ -3979,7 +3981,10 @@ fn test_cpi_account_data_updates() {
         let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
         account.set_data(b"foo".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS];
+        let mut instruction_data = vec![
+            TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
+            direct_mapping as u8,
+        ];
         // realloc to "foobazbad" then shrink to "foobazb"
         instruction_data.extend_from_slice(7usize.to_le_bytes().as_ref());
         instruction_data.extend_from_slice(b"bazbad");
@@ -4013,7 +4018,10 @@ fn test_cpi_account_data_updates() {
         let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
         account.set_data(b"foo".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS];
+        let mut instruction_data = vec![
+            TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
+            direct_mapping as u8,
+        ];
         // realloc to "foobazbad" then shrink to "f"
         instruction_data.extend_from_slice(1usize.to_le_bytes().as_ref());
         instruction_data.extend_from_slice(b"bazbad");
@@ -5134,12 +5142,12 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 let message = Message::new(&[instruction], Some(&mint_pubkey));
                 let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
                 let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+                let last_line = logs.last().unwrap();
 
                 if direct_mapping {
-                    assert!(logs.last().unwrap().ends_with(" failed: InvalidLength"));
-                } else if result.is_err() {
-                    // without direct mapping, we should never get the InvalidLength error
-                    assert!(!logs.last().unwrap().ends_with(" failed: InvalidLength"));
+                    assert!(last_line.contains(" failed: Access violation"), "{logs:?}");
+                } else {
+                    assert!(result.is_ok(), "{logs:?}");
                 }
             }
 
@@ -5154,14 +5162,19 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 let message = Message::new(&[instruction], Some(&mint_pubkey));
                 let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
                 let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+                let last_line = logs.last().unwrap();
 
-                if direct_mapping && !deprecated {
-                    // we have a resize area
+                if direct_mapping && (!deprecated || instr < 8) {
                     assert!(
-                        logs.last().unwrap().ends_with(" failed: InvalidLength"),
-                        "{logs:?}"
+                        last_line.contains(" failed: account data too small")
+                            || last_line.contains(" failed: Failed to reallocate account data")
+                            || last_line.contains(" failed: Access violation"),
+                        "{logs:?}",
                     );
                 } else {
+                    // direct_mapping && deprecated && instr >= 8 succeeds with zero-length accounts
+                    // because there is no MemoryRegion for the account,
+                    // so there can be no error when leaving that non-existent region.
                     assert!(result.is_ok(), "{logs:?}");
                 }
             }
