@@ -78,7 +78,7 @@ use {
         path::{Path, PathBuf},
         process::exit,
         str::FromStr,
-        sync::{Arc, RwLock},
+        sync::{atomic::AtomicBool, Arc, RwLock},
         time::Duration,
     },
 };
@@ -1087,6 +1087,13 @@ pub fn execute(
         }
     }
 
+    let validator_exit_backpressure = [(
+        "SnapshotPackagerService".to_string(),
+        Arc::new(AtomicBool::new(false)),
+    )]
+    .into();
+    validator_config.validator_exit_backpressure = validator_exit_backpressure;
+
     let mut ledger_lock = ledger_lockfile(&ledger_path);
     let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
@@ -1105,6 +1112,7 @@ pub fn execute(
             rpc_addr: validator_config.rpc_addrs.map(|(rpc_addr, _)| rpc_addr),
             start_time: std::time::SystemTime::now(),
             validator_exit: validator_config.validator_exit.clone(),
+            validator_exit_backpressure: validator_config.validator_exit_backpressure.clone(),
             start_progress: start_progress.clone(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             post_init: admin_service_post_init.clone(),

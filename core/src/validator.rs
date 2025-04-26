@@ -294,6 +294,7 @@ pub struct ValidatorConfig {
     pub tpu_coalesce: Duration,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub validator_exit: Arc<RwLock<Exit>>,
+    pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
     pub no_wait_for_vote_to_start_leader: bool,
     pub wait_to_vote_slot: Option<Slot>,
     pub runtime_config: RuntimeConfig,
@@ -367,6 +368,7 @@ impl Default for ValidatorConfig {
             tpu_coalesce: DEFAULT_TPU_COALESCE,
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             validator_exit: Arc::new(RwLock::new(Exit::default())),
+            validator_exit_backpressure: HashMap::default(),
             no_wait_for_vote_to_start_leader: true,
             accounts_db_config: None,
             wait_to_vote_slot: None,
@@ -895,11 +897,19 @@ impl Validator {
             .snapshot_config()
             .should_generate_snapshots()
         {
+            // brooks TODO: replace unwrap with expect
+            // brooks TODO: deduplicate the SPS key string
+            let exit_backpressure = config
+                .validator_exit_backpressure
+                .get("SnapshotPackagerService")
+                .cloned()
+                .unwrap();
             let enable_gossip_push = true;
             let snapshot_packager_service = SnapshotPackagerService::new(
                 pending_snapshot_packages.clone(),
                 starting_snapshot_hashes,
                 exit.clone(),
+                exit_backpressure,
                 cluster_info.clone(),
                 snapshot_controller.clone(),
                 enable_gossip_push,

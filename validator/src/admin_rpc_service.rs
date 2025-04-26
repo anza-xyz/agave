@@ -30,7 +30,10 @@ use {
         fmt::{self, Display},
         net::SocketAddr,
         path::{Path, PathBuf},
-        sync::{Arc, RwLock},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock,
+        },
         thread::{self, Builder},
         time::{Duration, SystemTime},
     },
@@ -43,6 +46,7 @@ pub struct AdminRpcRequestMetadata {
     pub start_time: SystemTime,
     pub start_progress: Arc<RwLock<ValidatorStartProgress>>,
     pub validator_exit: Arc<RwLock<Exit>>,
+    pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub tower_storage: Arc<dyn TowerStorage>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
@@ -266,6 +270,25 @@ impl AdminRpc for AdminRpcImpl {
                 warn!("validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
 
+                // brooks TODO: check for backpressure here
+                loop {
+                    // brooks NOTE: initial sleep is a grace period to allow anyone to raise their backpressure flags
+                    // subsequent sleeps are to throttle how often we check and log
+                    thread::sleep(Duration::from_secs(1));
+
+                    let mut any_flags_raised = false;
+                    for (name, flag) in &meta.validator_exit_backpressure {
+                        let is_flag_raised = flag.load(Ordering::Relaxed);
+                        if is_flag_raised {
+                            info!("{name}'s exit backpressure flag is raised");
+                            any_flags_raised = true;
+                        }
+                    }
+                    if !any_flags_raised {
+                        break;
+                    }
+                }
+
                 // TODO: Debug why Exit doesn't always cause the validator to fully exit
                 // (rocksdb background processing or some other stuck thread perhaps?).
                 //
@@ -277,6 +300,8 @@ impl AdminRpc for AdminRpcImpl {
                         .unwrap_or(5),
                 ));
                 warn!("validator exit timeout");
+                // brooks XXX: extra sleep to see the warn! above
+                thread::sleep(Duration::from_millis(100));
                 std::process::exit(0);
             })
             .unwrap();

@@ -34,6 +34,7 @@ impl SnapshotPackagerService {
         pending_snapshot_packages: Arc<Mutex<PendingSnapshotPackages>>,
         starting_snapshot_hashes: Option<StartingSnapshotHashes>,
         exit: Arc<AtomicBool>,
+        exit_backpressure: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
         snapshot_controller: Arc<SnapshotController>,
         enable_gossip_push: bool,
@@ -53,12 +54,14 @@ impl SnapshotPackagerService {
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         if let Some(teardown_state) = &teardown_state {
+                            exit_backpressure.store(true, Ordering::Relaxed);
                             info!("Received exit request, tearing down...");
                             let (_, dur) = meas_dur!(Self::teardown(
                                 teardown_state,
                                 snapshot_controller.snapshot_config(),
                             ));
                             info!("Teardown completed in {dur:?}.");
+                            exit_backpressure.store(false, Ordering::Relaxed);
                         }
                         break;
                     }
