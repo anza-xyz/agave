@@ -66,7 +66,7 @@ impl SnapshotPackagerService {
                                 teardown_state,
                                 snapshot_controller.snapshot_config(),
                             ));
-                            info!("brooks DEBUG: sleeping for 5 seconds now...");
+                            error!("brooks DEBUG: sleeping for 5 seconds now...");
                             thread::sleep(Duration::from_secs(5));
                             info!("Teardown completed in {dur:?}.");
                             // brooks XXX: exit_backpressure.store(false, Ordering::Relaxed);

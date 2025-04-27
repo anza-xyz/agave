@@ -271,6 +271,10 @@ impl AdminRpc for AdminRpcImpl {
                 meta.validator_exit.write().unwrap().exit();
 
                 // brooks TODO: check for backpressure here
+                error!(
+                    "brooks DEBUG: backpressure flags: {:?}",
+                    meta.validator_exit_backpressure
+                );
                 loop {
                     // brooks NOTE: initial sleep is a grace period to allow anyone to raise their backpressure flags
                     // subsequent sleeps are to throttle how often we check and log
@@ -279,6 +283,7 @@ impl AdminRpc for AdminRpcImpl {
                     let mut any_flags_raised = false;
                     for (name, flag) in &meta.validator_exit_backpressure {
                         let is_flag_raised = flag.load(Ordering::Relaxed);
+                        error!("brooks DEBUG: backpressure name: {name}, flag: {is_flag_raised}");
                         if is_flag_raised {
                             info!("{name}'s exit backpressure flag is raised");
                             any_flags_raised = true;
