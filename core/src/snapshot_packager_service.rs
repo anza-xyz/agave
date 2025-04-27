@@ -67,7 +67,7 @@ impl SnapshotPackagerService {
                                 snapshot_controller.snapshot_config(),
                             ));
                             info!("Teardown completed in {dur:?}.");
-                            exit_backpressure.store(false, Ordering::Relaxed);
+                            // brooks XXX: exit_backpressure.store(false, Ordering::Relaxed);
                         }
                         break;
                     }
@@ -147,6 +147,7 @@ impl SnapshotPackagerService {
                     );
                 }
                 info!("SnapshotPackagerService has stopped");
+                exit_backpressure.store(false, Ordering::Relaxed);
             })
             .unwrap();
 
