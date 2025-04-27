@@ -268,6 +268,10 @@ impl AdminRpc for AdminRpcImpl {
                 thread::sleep(Duration::from_millis(100));
 
                 warn!("validator exit requested");
+                // brooks TODO: does this exit() call take down the AdminRpc and thus why we don't
+                // see the loop logs???
+                // Or is something else calling process::exit()???
+                // Where/who handles logging???
                 meta.validator_exit.write().unwrap().exit();
 
                 // brooks TODO: check for backpressure here
