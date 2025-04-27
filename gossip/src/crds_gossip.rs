@@ -30,6 +30,7 @@ use {
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
+    solana_vote::vote_account::StakedNodesHashMap,
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
@@ -62,7 +63,7 @@ impl CrdsGossip {
         &self,
         self_pubkey: &Pubkey,
         origins: I, // Unique pubkeys of crds values' owners.
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
     ) -> HashMap</*gossip peer:*/ Pubkey, /*origins:*/ Vec<Pubkey>>
     where
         I: IntoIterator<Item = Pubkey>,
@@ -74,7 +75,7 @@ impl CrdsGossip {
         &self,
         pubkey: &Pubkey, // This node.
         now: u64,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
     ) -> (
         Vec<CrdsValue>, // unique CrdsValues pushed out to peers
@@ -163,7 +164,7 @@ impl CrdsGossip {
         origin: &[Pubkey],
         wallclock: u64,
         now: u64,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
     ) -> Result<(), CrdsGossipError> {
         if now > wallclock.saturating_add(self.push.prune_timeout) {
             Err(CrdsGossipError::PruneMessageTimeout)
@@ -181,7 +182,7 @@ impl CrdsGossip {
         &self,
         self_keypair: &Keypair,
         self_shred_version: u16,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
         gossip_validators: Option<&HashSet<Pubkey>>,
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
@@ -208,7 +209,7 @@ impl CrdsGossip {
         self_shred_version: u16,
         now: u64,
         gossip_validators: Option<&HashSet<Pubkey>>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
         bloom_size: usize,
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
@@ -288,7 +289,7 @@ impl CrdsGossip {
     pub fn make_timeouts<'a>(
         &self,
         self_pubkey: Pubkey,
-        stakes: &'a HashMap<Pubkey, u64>,
+        stakes: &'a StakedNodesHashMap,
         epoch_duration: Duration,
     ) -> CrdsTimeouts<'a> {
         self.pull.make_timeouts(self_pubkey, stakes, epoch_duration)
@@ -324,7 +325,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     verify_shred_version: impl Fn(/*shred_version:*/ u16) -> bool,
     crds: &RwLock<Crds>,
     gossip_validators: Option<&HashSet<Pubkey>>,
-    stakes: &HashMap<Pubkey, u64>,
+    stakes: &StakedNodesHashMap,
     socket_addr_space: &SocketAddrSpace,
 ) -> Vec<ContactInfo> {
     // Exclude nodes which have not been active for this long.
@@ -364,7 +365,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
 // Dedups gossip addresses, keeping only the one with the highest stake.
 pub(crate) fn dedup_gossip_addresses(
     nodes: impl IntoIterator<Item = ContactInfo>,
-    stakes: &HashMap<Pubkey, u64>,
+    stakes: &StakedNodesHashMap,
 ) -> HashMap</*gossip:*/ SocketAddr, (/*stake:*/ u64, ContactInfo)> {
     nodes
         .into_iter()
@@ -440,9 +441,9 @@ mod test {
         let ping_cache = Mutex::new(ping_cache);
         crds_gossip.refresh_push_active_set(
             &keypair,
-            0,               // shred version
-            &HashMap::new(), // stakes
-            None,            // gossip validators
+            0,                   // shred version
+            &HashMap::default(), // stakes
+            None,                // gossip validators
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
@@ -456,7 +457,7 @@ mod test {
             &[prune_pubkey],
             now,
             now,
-            &HashMap::<Pubkey, u64>::default(), // stakes
+            &HashMap::default(), // stakes
         );
         assert_eq!(res.err(), Some(CrdsGossipError::BadPruneDestination));
         //correct dest
@@ -467,7 +468,7 @@ mod test {
             &[prune_pubkey], // origins
             now,
             now,
-            &HashMap::<Pubkey, u64>::default(), // stakes
+            &HashMap::default(), // stakes
         );
         res.unwrap();
         //test timeout
@@ -479,7 +480,7 @@ mod test {
             &[prune_pubkey], // origins
             now,
             timeout,
-            &HashMap::<Pubkey, u64>::default(), // stakes
+            &HashMap::default(), // stakes
         );
         assert_eq!(res.err(), Some(CrdsGossipError::PruneMessageTimeout));
     }

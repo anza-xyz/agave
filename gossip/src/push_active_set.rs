@@ -5,7 +5,7 @@ use {
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
-    std::collections::HashMap,
+    solana_vote::vote_account::StakedNodesHashMap,
 };
 
 const NUM_PUSH_ACTIVE_SET_ENTRIES: usize = 25;
@@ -34,7 +34,7 @@ impl PushActiveSet {
         origin: &'a Pubkey, // CRDS value owner.
         // If true forces gossip push even if the node has pruned the origin.
         should_force_push: impl FnMut(&Pubkey) -> bool + 'a,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
     ) -> impl Iterator<Item = &'a Pubkey> + 'a {
         let stake = stakes.get(pubkey).min(stakes.get(origin));
         self.get_entry(stake)
@@ -48,7 +48,7 @@ impl PushActiveSet {
         pubkey: &Pubkey,    // This node.
         node: &Pubkey,      // Gossip node.
         origins: &[Pubkey], // CRDS value owners.
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
     ) {
         let stake = stakes.get(pubkey);
         for origin in origins {
@@ -67,7 +67,7 @@ impl PushActiveSet {
         cluster_size: usize,
         // Gossip nodes to be sampled for each push active set.
         nodes: &[Pubkey],
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
     ) {
         let num_bloom_filter_items = cluster_size.max(Self::MIN_NUM_BLOOM_ITEMS);
         // Active set of nodes to push to are sampled from these gossip nodes,
@@ -184,8 +184,11 @@ fn get_stake_bucket(stake: Option<&u64>) -> usize {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, itertools::iproduct, rand::SeedableRng, rand_chacha::ChaChaRng,
-        std::iter::repeat_with,
+        super::*,
+        itertools::iproduct,
+        rand::SeedableRng,
+        rand_chacha::ChaChaRng,
+        std::{collections::HashMap, iter::repeat_with},
     };
 
     #[test]
@@ -219,7 +222,7 @@ mod tests {
         let pubkey = Pubkey::new_unique();
         let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
         let stakes = repeat_with(|| rng.gen_range(1..MAX_STAKE));
-        let mut stakes: HashMap<_, _> = nodes.iter().copied().zip(stakes).collect();
+        let mut stakes: HashMap<_, _, _> = nodes.iter().copied().zip(stakes).collect();
         stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
         let mut active_set = PushActiveSet::default();
         assert!(active_set.0.iter().all(|entry| entry.0.is_empty()));

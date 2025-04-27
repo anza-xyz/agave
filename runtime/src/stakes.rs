@@ -14,7 +14,7 @@ use {
         vote::state::VoteStateVersions,
     },
     solana_stake_program::stake_state::Stake,
-    solana_vote::vote_account::{VoteAccount, VoteAccounts},
+    solana_vote::vote_account::{StakedNodesHashMap, VoteAccount, VoteAccounts},
     std::{
         collections::HashMap,
         ops::Add,
@@ -196,7 +196,7 @@ impl<T: Clone> Stakes<T> {
         &self.vote_accounts
     }
 
-    pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub(crate) fn staked_nodes(&self) -> Arc<StakedNodesHashMap> {
         self.vote_accounts.staked_nodes()
     }
 }
@@ -434,7 +434,7 @@ impl StakesEnum {
         }
     }
 
-    pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub(crate) fn staked_nodes(&self) -> Arc<StakedNodesHashMap> {
         match self {
             StakesEnum::Accounts(stakes) => stakes.staked_nodes(),
             StakesEnum::Delegations(stakes) => stakes.staked_nodes(),

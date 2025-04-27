@@ -209,7 +209,7 @@ impl LocalCluster {
             }
 
             let total_stake = config.node_stakes.iter().sum::<u64>();
-            let stakes = HashMap::from([
+            let stakes = HashMap::from_iter([
                 (client_keypair.pubkey(), stake),
                 (Pubkey::new_unique(), total_stake.saturating_sub(stake)),
             ]);

@@ -25,6 +25,7 @@ use {
         timing::timestamp,
     },
     solana_streamer::socket::SocketAddrSpace,
+    solana_vote::vote_account::StakedNodesHashMap,
     std::{
         any::TypeId,
         cell::RefCell,
@@ -208,7 +209,7 @@ impl ClusterNodes<BroadcastStage> {
     pub fn new(
         cluster_info: &ClusterInfo,
         cluster_type: ClusterType,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
     ) -> Self {
         new_cluster_nodes(cluster_info, cluster_type, stakes)
     }
@@ -303,7 +304,7 @@ impl ClusterNodes<RetransmitStage> {
 pub fn new_cluster_nodes<T: 'static>(
     cluster_info: &ClusterInfo,
     cluster_type: ClusterType,
-    stakes: &HashMap<Pubkey, u64>,
+    stakes: &StakedNodesHashMap,
 ) -> ClusterNodes<T> {
     let self_pubkey = cluster_info.id();
     let nodes = get_nodes(cluster_info, cluster_type, stakes);
@@ -332,7 +333,7 @@ pub fn new_cluster_nodes<T: 'static>(
 fn get_nodes(
     cluster_info: &ClusterInfo,
     cluster_type: ClusterType,
-    stakes: &HashMap<Pubkey, u64>,
+    stakes: &StakedNodesHashMap,
 ) -> Vec<Node> {
     let self_pubkey = cluster_info.id();
     let should_dedup_tvu_addrs = match cluster_type {
@@ -566,7 +567,7 @@ impl<T: 'static> ClusterNodesCache<T> {
                     for epoch: {epoch}, slot: {shred_slot}"
                     );
                     inc_new_counter_error!("cluster_nodes-unknown_epoch_staked_nodes", 1);
-                    Arc::<HashMap<Pubkey, /*stake:*/ u64>>::default()
+                    Arc::<StakedNodesHashMap>::default()
                 });
             let nodes =
                 new_cluster_nodes::<T>(cluster_info, root_bank.cluster_type(), &epoch_staked_nodes);
@@ -624,11 +625,7 @@ pub fn make_test_cluster<R: Rng>(
     rng: &mut R,
     num_nodes: usize,
     unstaked_ratio: Option<(u32, u32)>,
-) -> (
-    Vec<GossipContactInfo>,
-    HashMap<Pubkey, u64>, // stakes
-    ClusterInfo,
-) {
+) -> (Vec<GossipContactInfo>, StakedNodesHashMap, ClusterInfo) {
     let (unstaked_numerator, unstaked_denominator) = unstaked_ratio.unwrap_or((1, 7));
     let mut nodes: Vec<_> = repeat_with(|| {
         let pubkey = solana_sdk::pubkey::new_rand();
@@ -640,7 +637,7 @@ pub fn make_test_cluster<R: Rng>(
     let keypair = Arc::new(Keypair::new());
     nodes[0] = GossipContactInfo::new_localhost(&keypair.pubkey(), /*wallclock:*/ timestamp());
     let this_node = nodes[0].clone();
-    let mut stakes: HashMap<Pubkey, u64> = nodes
+    let mut stakes: StakedNodesHashMap = nodes
         .iter()
         .filter_map(|node| {
             if rng.gen_ratio(unstaked_numerator, unstaked_denominator) {

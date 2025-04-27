@@ -1,13 +1,12 @@
 use {
     solana_clock::{Epoch, DEFAULT_MS_PER_SLOT},
     solana_epoch_schedule::EpochSchedule,
-    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankForks, ReadOnlyAtomicSlot},
     },
+    solana_vote::vote_account::StakedNodesHashMap,
     std::{
-        collections::HashMap,
         sync::{Arc, RwLock},
         time::Duration,
     },
@@ -20,13 +19,13 @@ pub struct EpochSpecs {
     epoch_schedule: EpochSchedule,
     root: ReadOnlyAtomicSlot, // updated by bank-forks.
     bank_forks: Arc<RwLock<BankForks>>,
-    current_epoch_staked_nodes: Arc<HashMap<Pubkey, /*stake:*/ u64>>,
+    current_epoch_staked_nodes: Arc<StakedNodesHashMap>,
     epoch_duration: Duration,
 }
 
 impl EpochSpecs {
     #[inline]
-    pub fn current_epoch_staked_nodes(&mut self) -> &Arc<HashMap<Pubkey, /*stake:*/ u64>> {
+    pub fn current_epoch_staked_nodes(&mut self) -> &Arc<StakedNodesHashMap> {
         self.maybe_refresh();
         &self.current_epoch_staked_nodes
     }
@@ -81,6 +80,7 @@ mod tests {
     use {
         super::*,
         solana_clock::Slot,
+        solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::{create_genesis_config, GenesisConfigInfo},
     };
 

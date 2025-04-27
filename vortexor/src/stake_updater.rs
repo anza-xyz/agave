@@ -85,7 +85,7 @@ impl StakeUpdater {
                             vote_account.activated_stake,
                         ))
                     })
-                    .collect::<HashMap<Pubkey, u64>>(),
+                    .collect::<HashMap<Pubkey, u64, _>>(),
             );
 
             *last_refresh = Some(Instant::now());

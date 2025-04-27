@@ -176,7 +176,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_transaction_context::{TransactionAccount, TransactionReturnData},
-    solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
+    solana_vote::vote_account::{StakedNodesHashMap, VoteAccount, VoteAccountsHashMap},
     std::{
         collections::{HashMap, HashSet},
         fmt,
@@ -6248,11 +6248,11 @@ impl Bank {
     }
 
     /// Get the staked nodes map for the current Bank::epoch
-    pub fn current_epoch_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+    pub fn current_epoch_staked_nodes(&self) -> Arc<StakedNodesHashMap> {
         self.current_epoch_stakes().stakes().staked_nodes()
     }
 
-    pub fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<HashMap<Pubkey, u64>>> {
+    pub fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<StakedNodesHashMap>> {
         Some(self.epoch_stakes.get(&epoch)?.stakes().staked_nodes())
     }
 
