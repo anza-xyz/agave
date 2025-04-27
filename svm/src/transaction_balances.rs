@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::field_qualifiers;
 use {
     crate::{
         account_loader::AccountLoader,
@@ -31,6 +33,10 @@ pub(crate) trait BalanceCollectionRoutines {
 }
 
 #[derive(Debug, Default)]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(native_pre(pub), native_post(pub), token_pre(pub), token_post(pub),)
+)]
 pub struct BalanceCollector {
     native_pre: BatchNativeBalances,
     native_post: BatchNativeBalances,

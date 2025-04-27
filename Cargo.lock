@@ -8532,6 +8532,7 @@ dependencies = [
  "solana-transaction-status",
  "solana-vote",
  "solana-vote-program",
+ "spl-generic-token",
  "spl-pod",
  "static_assertions",
  "strum",
