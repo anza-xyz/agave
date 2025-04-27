@@ -683,10 +683,10 @@ impl JsonRpcRequestProcessor {
             .map(move |reward| (reward.pubkey.clone(), (reward, slot)))
     }
 
-    fn filter_rewards<'a, F>(
+    fn filter_rewards<F>(
         rewards: Option<Rewards>,
-        reward_type_filter: &'a F,
-    ) -> impl Iterator<Item = Reward> + use<'a, F>
+        reward_type_filter: &F,
+    ) -> impl Iterator<Item = Reward> + use<'_, F>
     where
         F: Fn(RewardType) -> bool,
     {
