@@ -289,6 +289,7 @@ impl AdminRpc for AdminRpcImpl {
                             any_flags_raised = true;
                         }
                     }
+                    error!("brooks DEBUG: any flags raised: {any_flags_raised}");
                     if !any_flags_raised {
                         break;
                     }
