@@ -2651,6 +2651,8 @@ mod balance_collector {
     static SPL_TOKEN_BYTES: &[u8] =
         include_bytes!("../../program-test/src/programs/spl_token-3.5.0.so");
 
+    const TOKEN_TRANSFER_OPCODE: u8 = 3;
+
     const STARTING_BALANCE: u64 = LAMPORTS_PER_SOL * 100;
 
     // a helper for constructing a transfer instruction, agnostic over system/token
@@ -2668,11 +2670,11 @@ mod balance_collector {
         // given a set of users, picks two randomly and does a random transfer between them
         fn new_rand(users: &[Pubkey]) -> Self {
             let mut rng = rand0_7::thread_rng();
-            let mut users = users.to_vec();
-            let (i, from) = users.iter().enumerate().choose(&mut rng).unwrap();
-            let from = *from;
-            users.remove(i);
-            let to = *users.iter().choose(&mut rng).unwrap();
+            let [from_idx, to_idx] = (0..users.len()).choose_multiple(&mut rng, 2)[..] else {
+                unreachable!()
+            };
+            let from = users[from_idx];
+            let to = users[to_idx];
             let amount = rng.gen_range(1, STARTING_BALANCE / 100);
 
             Self { from, to, amount }
@@ -2694,7 +2696,7 @@ mod balance_collector {
                     AccountMeta::new(self.to, false),
                     AccountMeta::new(fee_payer, true),
                 ],
-                data: bincode::serialize(&(3u8, self.amount)).unwrap(),
+                data: bincode::serialize(&(TOKEN_TRANSFER_OPCODE, self.amount)).unwrap(),
             }
         }
 
