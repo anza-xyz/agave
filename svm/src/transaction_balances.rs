@@ -30,7 +30,7 @@ pub(crate) trait BalanceCollectionRoutines {
     );
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BalanceCollector {
     native_pre: BatchNativeBalances,
     native_post: BatchNativeBalances,
@@ -105,6 +105,13 @@ impl BalanceCollector {
         }
 
         (native_balances, token_balances)
+    }
+
+    pub(crate) fn lengths_match_expected(&self, expected_len: usize) -> bool {
+        self.native_pre.len() == expected_len
+            && self.native_post.len() == expected_len
+            && self.token_pre.len() == expected_len
+            && self.token_post.len() == expected_len
     }
 }
 

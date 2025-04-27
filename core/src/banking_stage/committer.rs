@@ -160,8 +160,17 @@ impl Committer {
                 })
                 .unzip();
 
+            // There are two cases where balance_collector could be None:
+            // * Balance recording is disabled. If that were the case, there would
+            //   be no TransactionStatusSender, and we would not be in this branch.
+            // * The batch was aborted in its entirety in SVM. In that case, there
+            //   would be zero processed transactions, and commit_transactions()
+            //   would not have been called at all.
+            // Therefore this should always be true.
+            debug_assert!(balance_collector.is_some());
+
             let (balances, token_balances) =
-                compile_collected_balances(balance_collector, sanitized_transactions.len());
+                compile_collected_balances(balance_collector.unwrap_or_default());
 
             transaction_status_sender.send_transaction_status_batch(
                 bank.slot(),

@@ -11,25 +11,9 @@ use {
 
 // decompose the contents of BalanceCollector into the two structs required by TransactionStatusSender
 pub fn compile_collected_balances(
-    balance_collector: Option<BalanceCollector>,
-    batch_len: usize,
+    balance_collector: BalanceCollector,
 ) -> (TransactionBalancesSet, TransactionTokenBalancesSet) {
-    // if the batch was aborted due to blowing the program cache, balance_collector may be None
-    // it isnt reasonable to expect svm to track where in the batch it is and load all accounts in this case
-    // we provide balance sets that have an empty vec for each transaction, rather than simple empty vecs
-    // this is because the balance set must be broken down into individual TransactionStatusMeta structs
-    // it is the responsibility of consumers to robustly handle empty balances in the case of a full batch discard
-    let (native_pre, native_post, token_pre, token_post) =
-        if let Some(balance_collector) = balance_collector {
-            balance_collector.into_vecs()
-        } else {
-            (
-                vec![vec![]; batch_len],
-                vec![vec![]; batch_len],
-                vec![vec![]; batch_len],
-                vec![vec![]; batch_len],
-            )
-        };
+    let (native_pre, native_post, token_pre, token_post) = balance_collector.into_vecs();
 
     let native_balances = TransactionBalancesSet::new(native_pre, native_post);
     let token_balances = TransactionTokenBalancesSet::new(

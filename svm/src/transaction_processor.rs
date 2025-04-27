@@ -366,10 +366,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     processing_results: (0..sanitized_txs.len())
                         .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
                         .collect(),
-                    // if we abort the batch and balance recording is enabled, we wipe the records
-                    // this is much better than returning a partial balance set
-                    // also much better than pausing abort to load every account for every remaining transaction
-                    // svm consumers must handle the None case themselves
+                    // If we abort the batch and balance recording is enabled, no balances should be
+                    // collected. If this is a leader thread, no batch will be committed.
                     balance_collector: None,
                 };
             }
@@ -502,6 +500,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
         execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::ExecuteUs, execution_us);
+
+        if let Some(ref balance_collector) = balance_collector {
+            debug_assert!(balance_collector.lengths_match_expected(sanitized_txs.len()));
+        }
 
         LoadAndExecuteSanitizedTransactionsOutput {
             error_metrics,

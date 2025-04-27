@@ -283,8 +283,16 @@ pub fn execute_batch<'a>(
             .map(|tx| tx.as_sanitized_transaction().into_owned())
             .collect();
 
+        // There are two cases where balance_collector could be None:
+        // * Balance recording is disabled. If that were the case, there would
+        //   be no TransactionStatusSender, and we would not be in this branch.
+        // * The batch was aborted in its entirety in SVM. In that case, nothing
+        //   would have been committed.
+        // Therefore this should always be true.
+        debug_assert!(balance_collector.is_some());
+
         let (balances, token_balances) =
-            compile_collected_balances(balance_collector, batch.sanitized_transactions().len());
+            compile_collected_balances(balance_collector.unwrap_or_default());
 
         // The length of costs vector needs to be consistent with all other
         // vectors that are sent over (such as `transactions`). So, replace the
