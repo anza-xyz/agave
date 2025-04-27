@@ -674,14 +674,13 @@ impl JsonRpcRequestProcessor {
         slot: Slot,
         addresses: &'a [String],
         reward_type_filter: &'a F,
-    ) -> HashMap<String, (Reward, Slot)>
+    ) -> impl Iterator<Item = (String, (Reward, Slot))> + use<'a, F>
     where
         F: Fn(RewardType) -> bool,
     {
         Self::filter_rewards(rewards, reward_type_filter)
             .filter(|reward| addresses.contains(&reward.pubkey))
-            .map(|reward| (reward.pubkey.clone(), (reward.clone(), slot)))
-            .collect()
+            .map(move |reward| (reward.pubkey.clone(), (reward.clone(), slot)))
     }
 
     fn filter_rewards<'a, F>(
@@ -789,6 +788,7 @@ impl JsonRpcRequestProcessor {
                         || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
                 },
             )
+            .collect()
         };
 
         // Append stake account rewards from partitions if partitions epoch
