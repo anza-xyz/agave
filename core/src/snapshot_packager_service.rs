@@ -42,6 +42,12 @@ impl SnapshotPackagerService {
         let t_snapshot_packager = Builder::new()
             .name("solSnapshotPkgr".to_string())
             .spawn(move || {
+                // brooks TODO: maybe the exit_backpressure is a Mutex instead of an AtomicBool,
+                // and we lock it here, then unlock when the loop finishes?
+                // The issue is I've seen the AdminRpc thread *not* see us raise the flag here
+                // before terminating the process...
+                // brooks TODO 2: test out raising the flag immediately to ensure it is always set?
+                exit_backpressure.store(true, Ordering::Relaxed);
                 info!("SnapshotPackagerService has started");
                 let snapshot_config = snapshot_controller.snapshot_config();
                 renice_this_thread(snapshot_config.packager_thread_niceness_adj).unwrap();
@@ -54,7 +60,7 @@ impl SnapshotPackagerService {
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         if let Some(teardown_state) = &teardown_state {
-                            exit_backpressure.store(true, Ordering::Relaxed);
+                            // brooks XXX: exit_backpressure.store(true, Ordering::Relaxed);
                             info!("Received exit request, tearing down...");
                             let (_, dur) = meas_dur!(Self::teardown(
                                 teardown_state,
