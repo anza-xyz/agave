@@ -281,7 +281,7 @@ impl AdminRpc for AdminRpcImpl {
                     thread::sleep(Duration::from_secs(1));
 
                     let mut any_flags_raised = false;
-                    for (name, flag) in &meta.validator_exit_backpressure {
+                    for (name, flag) in meta.validator_exit_backpressure.iter() {
                         let is_flag_raised = flag.load(Ordering::Relaxed);
                         error!("brooks DEBUG: backpressure name: {name}, flag: {is_flag_raised}");
                         if is_flag_raised {
