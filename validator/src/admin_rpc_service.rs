@@ -297,15 +297,17 @@ impl AdminRpc for AdminRpcImpl {
                 // (rocksdb background processing or some other stuck thread perhaps?).
                 //
                 // If the process is still alive after five seconds, exit harder
-                thread::sleep(Duration::from_secs(
-                    env::var("SOLANA_VALIDATOR_EXIT_TIMEOUT")
-                        .ok()
-                        .and_then(|x| x.parse().ok())
-                        .unwrap_or(5),
-                ));
-                warn!("validator exit timeout");
+                /*
+                 * thread::sleep(Duration::from_secs(
+                 *     env::var("SOLANA_VALIDATOR_EXIT_TIMEOUT")
+                 *         .ok()
+                 *         .and_then(|x| x.parse().ok())
+                 *         .unwrap_or(5),
+                 * ));
+                 * warn!("validator exit timeout");
+                 */
                 // brooks XXX: extra sleep to see the warn! above
-                thread::sleep(Duration::from_millis(100));
+                //thread::sleep(Duration::from_millis(100));
                 // brooks XXX: std::process::exit(0);
             })
             .unwrap();
