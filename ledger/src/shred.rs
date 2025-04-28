@@ -118,8 +118,8 @@ const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 // each erasure batch depends on the number of shreds obtained from serializing
 // a &[Entry].
 pub const DATA_SHRED_PER_FEC_SET: usize = 32;
-pub const CODING_SHREDS_PER_FEC_BLOCK: usize = 32;
-pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHRED_PER_FEC_SET + CODING_SHREDS_PER_FEC_BLOCK;
+pub const CODING_SHREDS_PER_FEC_SET: usize = 32;
+pub const SHREDS_PER_FEC_SET: usize = DATA_SHRED_PER_FEC_SET + CODING_SHREDS_PER_FEC_SET;
 
 // Statically compute the typical data batch size assuming:
 // 1. 32:32 erasure coding batch

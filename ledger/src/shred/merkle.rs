@@ -13,7 +13,7 @@ use {
                 Shred as ShredTrait, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait,
             },
             CodingShredHeader, DataShredHeader, Error, ProcessShredsStats, ShredCommonHeader,
-            ShredFlags, ShredVariant, DATA_SHRED_PER_FEC_SET, SHREDS_PER_FEC_BLOCK,
+            ShredFlags, ShredVariant, DATA_SHRED_PER_FEC_SET, SHREDS_PER_FEC_SET,
             SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_SIGNATURE,
         },
         shredder::{self, ReedSolomonCache},
@@ -1067,7 +1067,7 @@ pub(super) fn make_shreds_from_data(
     // Pre-allocate shreds to avoid reallocations.
     let mut shreds = {
         let number_of_batches = data.len().div_ceil(data_buffer_total_size);
-        let total_num_shreds = SHREDS_PER_FEC_BLOCK * number_of_batches;
+        let total_num_shreds = SHREDS_PER_FEC_SET * number_of_batches;
         Vec::<Shred>::with_capacity(total_num_shreds)
     };
     stats.data_bytes += data.len();

@@ -540,7 +540,7 @@ mod tests {
             blockstore::MAX_DATA_SHREDS_PER_SLOT,
             shred::{
                 self, max_entries_per_n_shred, max_ticks_per_n_shreds, verify_test_data_shred,
-                ShredType, CODING_SHREDS_PER_FEC_BLOCK, MAX_CODE_SHREDS_PER_SLOT,
+                ShredType, CODING_SHREDS_PER_FEC_SET, MAX_CODE_SHREDS_PER_SLOT,
             },
         },
         assert_matches::assert_matches,
@@ -590,7 +590,7 @@ mod tests {
             .collect();
 
         let num_expected_data_shreds = DATA_SHRED_PER_FEC_SET;
-        let num_expected_coding_shreds = CODING_SHREDS_PER_FEC_BLOCK;
+        let num_expected_coding_shreds = CODING_SHREDS_PER_FEC_SET;
         let start_index = 0;
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
