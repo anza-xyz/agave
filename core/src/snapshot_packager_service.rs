@@ -174,8 +174,8 @@ impl SnapshotPackagerService {
                     "Failed to flush account storage '{}': {err}",
                     storage.path().display(),
                 );
-                // If flushing a storage failed, we do *NOT* want to mark
-                // this snapshot as complete, so return early.
+                // If flushing a storage failed, we do *NOT* want to write
+                // the "storages flushed" file, so return early.
                 return;
             }
         }
@@ -184,12 +184,9 @@ impl SnapshotPackagerService {
             &snapshot_config.bank_snapshots_dir,
             state.snapshot_slot,
         );
-        let result = snapshot_utils::write_snapshot_state_complete_file(&bank_snapshot_dir);
+        let result = snapshot_utils::write_storages_flushed_file(&bank_snapshot_dir);
         if let Err(err) = result {
-            warn!(
-                "Failed to mark snapshot as 'complete': failed to create file in '{}': {err}",
-                bank_snapshot_dir.display(),
-            );
+            warn!("Failed to mark snapshot storages 'flushed': {err}");
         }
     }
 }

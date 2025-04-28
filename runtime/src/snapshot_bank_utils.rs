@@ -1154,9 +1154,12 @@ mod tests {
             )
             .unwrap();
 
+            let bank_snapshot_dir =
+                snapshot_utils::get_bank_snapshot_dir(&bank_snapshots_dir, slot);
+            snapshot_utils::write_snapshot_state_complete_file(&bank_snapshot_dir).unwrap();
+
             // As a hack, to make a PRE bank snapshot, just rename the POST one.
             if i >= num_posts {
-                let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, slot);
                 let post = bank_snapshot_dir.join(get_snapshot_file_name(slot));
                 let pre = post.with_extension(BANK_SNAPSHOT_PRE_FILENAME_EXTENSION);
                 fs::rename(post, pre).unwrap();
@@ -2755,7 +2758,12 @@ mod tests {
         // 1. call get_highest_loadable() but bad snapshot dir, so returns None
         assert!(get_highest_loadable_bank_snapshot(&SnapshotConfig::default()).is_none());
 
-        // 2. get_highest_loadable(), should return highest_bank_snapshot_post_slot
+        // 2. the 'storages flushed' file hasn't been written yet, so get_highest_loadable() should return NONE
+        assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
+
+        // 3. write 'storages flushed' file, get_highest_loadable(), should return highest_bank_snapshot_post_slot
+        snapshot_utils::write_storages_flushed_file(&highest_bank_snapshot_post.snapshot_dir)
+            .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot, highest_bank_snapshot_post);
 
@@ -2767,8 +2775,16 @@ mod tests {
         let bank_snapshot = get_highest_loadable_bank_snapshot(&load_only_snapshot_config).unwrap();
         assert_eq!(bank_snapshot, highest_bank_snapshot_post);
 
-        // 5. delete highest bank snapshot, get_highest_loadable() should return Some() again, with slot-1
+        // 5. delete highest bank snapshot, get_highest_loadable() should return NONE
         fs::remove_dir_all(&highest_bank_snapshot_post.snapshot_dir).unwrap();
+        assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
+
+        // 5. write 'storages flushed' file, get_highest_loadable() should return Some() again, with slot-1
+        snapshot_utils::write_storages_flushed_file(get_bank_snapshot_dir(
+            &snapshot_config.bank_snapshots_dir,
+            highest_bank_snapshot_post.slot - 1,
+        ))
+        .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot.slot, highest_bank_snapshot_post.slot - 1);
 

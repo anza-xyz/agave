@@ -69,6 +69,7 @@ pub use archive_format::*;
 pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
 pub const SNAPSHOT_VERSION_FILENAME: &str = "version";
 pub const SNAPSHOT_STATE_COMPLETE_FILENAME: &str = "state_complete";
+pub const SNAPSHOT_STORAGES_FLUSHED_FILENAME: &str = "storages_flushed";
 pub const SNAPSHOT_ACCOUNTS_HARDLINKS: &str = "accounts_hardlinks";
 pub const SNAPSHOT_ARCHIVE_DOWNLOAD_DIR: &str = "remote";
 pub const SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME: &str = "full_snapshot_slot";
@@ -703,12 +704,35 @@ pub fn read_full_snapshot_slot_file(bank_snapshot_dir: impl AsRef<Path>) -> IoRe
     Ok(slot)
 }
 
+// brooks TODO: doc
+pub fn write_storages_flushed_file(bank_snapshot_dir: impl AsRef<Path>) -> IoResult<()> {
+    let flushed_storages_path = bank_snapshot_dir
+        .as_ref()
+        .join(SNAPSHOT_STORAGES_FLUSHED_FILENAME);
+    fs::File::create(&flushed_storages_path).map_err(|err| {
+        IoError::other(format!(
+            "failed to create file '{}': {err}",
+            flushed_storages_path.display(),
+        ))
+    })?;
+    Ok(())
+}
+
+// brooks TODO: doc
+fn are_bank_snapshot_storages_flushed(bank_snapshot_dir: impl AsRef<Path>) -> bool {
+    let flushed_storages = bank_snapshot_dir
+        .as_ref()
+        .join(SNAPSHOT_STORAGES_FLUSHED_FILENAME);
+    flushed_storages.is_file()
+}
+
 /// Gets the highest, loadable, bank snapshot
 ///
 /// The highest bank snapshot is the one with the highest slot.
 /// To be loadable, the bank snapshot must be a BankSnapshotKind::Post.
 /// And if we're generating snapshots (e.g. running a normal validator), then
 /// the full snapshot file's slot must match the highest full snapshot archive's.
+/// Lastly, the account storages must have been flushed to be loadable.
 pub fn get_highest_loadable_bank_snapshot(
     snapshot_config: &SnapshotConfig,
 ) -> Option<BankSnapshotInfo> {
@@ -727,7 +751,10 @@ pub fn get_highest_loadable_bank_snapshot(
         get_highest_full_snapshot_archive_slot(&snapshot_config.full_snapshot_archives_dir)?;
     let full_snapshot_file_slot =
         read_full_snapshot_slot_file(&highest_bank_snapshot.snapshot_dir).ok()?;
-    (full_snapshot_file_slot == highest_full_snapshot_archive_slot).then_some(highest_bank_snapshot)
+    let are_storages_flushed =
+        are_bank_snapshot_storages_flushed(&highest_bank_snapshot.snapshot_dir);
+    (are_storages_flushed && (full_snapshot_file_slot == highest_full_snapshot_archive_slot))
+        .then_some(highest_bank_snapshot)
 }
 
 /// If the validator halts in the middle of `archive_snapshot_package()`, the temporary staging
@@ -940,14 +967,11 @@ fn serialize_snapshot(
         )
         .map_err(|err| AddBankSnapshotError::WriteSnapshotVersionFile(err, version_path))?);
 
-        // brooks XXX:
-        /*
-         * // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
-         * let (_, write_state_complete_file_us) = measure_us!({
-         *     write_snapshot_state_complete_file(&bank_snapshot_dir)
-         *         .map_err(AddBankSnapshotError::MarkSnapshotComplete)?
-         * });
-         */
+        // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
+        let (_, write_state_complete_file_us) = measure_us!({
+            write_snapshot_state_complete_file(&bank_snapshot_dir)
+                .map_err(AddBankSnapshotError::MarkSnapshotComplete)?
+        });
 
         measure_everything.stop();
 
@@ -962,7 +986,11 @@ fn serialize_snapshot(
             ("bank_serialize_us", bank_serialize.as_us(), i64),
             ("status_cache_serialize_us", status_cache_serialize_us, i64),
             ("write_version_file_us", write_version_file_us, i64),
-            // brooks XXX: ("write_state_complete_file_us", write_state_complete_file_us, i64),
+            (
+                "write_state_complete_file_us",
+                write_state_complete_file_us,
+                i64
+            ),
             ("total_us", measure_everything.as_us(), i64),
         );
 
