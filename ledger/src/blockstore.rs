@@ -5371,6 +5371,7 @@ pub mod tests {
             message::v0::LoadedAddresses,
             packet::PACKET_DATA_SIZE,
             pubkey::Pubkey,
+            shred_version::version_from_hash,
             signature::Signature,
             transaction::{Transaction, TransactionError},
         },
@@ -10689,13 +10690,16 @@ pub mod tests {
     }
 
     #[test]
+    /// Intentionally makes the ErasureMeta mismatch via the code index
+    /// by producing valid shreds with overlapping fec_set_index ranges
+    /// so that we fail the config check and mark the slot duplicate
     fn erasure_multiple_config() {
         solana_logger::setup();
         let slot = 1;
         let num_txs = 20;
         let entries = [make_large_tx_entry(num_txs)];
 
-        let version = solana_sdk::shred_version::version_from_hash(&entries[0].hash);
+        let version = version_from_hash(&entries[0].hash);
 
         let shredder = Shredder::new(slot, 0, 0, version).unwrap();
         let reed_solomon_cache = ReedSolomonCache::default();
@@ -10718,7 +10722,7 @@ pub mod tests {
             // chained_merkle_root
             Some(Hash::new_from_array(rand::thread_rng().gen())),
             0,    // next_shred_index
-            1,    // next_code_index
+            1,    // next_code_index (overlaps with FEC set in data1 + coding1)
             true, // merkle_variant
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
