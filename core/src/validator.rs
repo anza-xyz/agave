@@ -897,9 +897,11 @@ impl Validator {
             .snapshot_config()
             .should_generate_snapshots()
         {
+            // brooks TODO: replace 'expect' with `unwrap_or`, and create a new dummy backpressure flag
             let exit_backpressure = config
                 .validator_exit_backpressure
                 .get(SnapshotPackagerService::NAME)
+                .inspect(|_| error!("brooks DEBUG: Validator::new(), yep we've got a SPS exit backpressure flag"))
                 .cloned()
                 .expect("get exit backpressure flag for SnapshotPackagerService");
             let enable_gossip_push = true;

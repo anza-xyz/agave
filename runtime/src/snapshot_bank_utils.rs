@@ -1154,12 +1154,9 @@ mod tests {
             )
             .unwrap();
 
-            let bank_snapshot_dir =
-                snapshot_utils::get_bank_snapshot_dir(&bank_snapshots_dir, slot);
-            snapshot_utils::write_snapshot_state_complete_file(&bank_snapshot_dir).unwrap();
-
             // As a hack, to make a PRE bank snapshot, just rename the POST one.
             if i >= num_posts {
+                let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, slot);
                 let post = bank_snapshot_dir.join(get_snapshot_file_name(slot));
                 let pre = post.with_extension(BANK_SNAPSHOT_PRE_FILENAME_EXTENSION);
                 fs::rename(post, pre).unwrap();

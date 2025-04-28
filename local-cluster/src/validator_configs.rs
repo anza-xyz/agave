@@ -1,10 +1,7 @@
 use {
     solana_core::validator::ValidatorConfig,
     solana_sdk::exit::Exit,
-    std::{
-        collections::HashMap,
-        sync::{Arc, RwLock},
-    },
+    std::sync::{atomic::AtomicBool, Arc, RwLock},
 };
 
 pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
@@ -54,7 +51,11 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         tpu_coalesce: config.tpu_coalesce,
         staked_nodes_overrides: config.staked_nodes_overrides.clone(),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
-        validator_exit_backpressure: HashMap::default(),
+        validator_exit_backpressure: config
+            .validator_exit_backpressure
+            .iter()
+            .map(|(name, _)| (name.clone(), Arc::new(AtomicBool::new(false))))
+            .collect(),
         poh_hashes_per_batch: config.poh_hashes_per_batch,
         process_ledger_before_services: config.process_ledger_before_services,
         no_wait_for_vote_to_start_leader: config.no_wait_for_vote_to_start_leader,
