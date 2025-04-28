@@ -268,10 +268,6 @@ impl AdminRpc for AdminRpcImpl {
                 thread::sleep(Duration::from_millis(100));
 
                 warn!("validator exit requested");
-                // brooks TODO: does this exit() call take down the AdminRpc and thus why we don't
-                // see the loop logs???
-                // Or is something else calling process::exit()???
-                // Where/who handles logging???
                 meta.validator_exit.write().unwrap().exit();
 
                 // brooks TODO: check for backpressure here
@@ -287,13 +283,11 @@ impl AdminRpc for AdminRpcImpl {
                     let mut any_flags_raised = false;
                     for (name, flag) in meta.validator_exit_backpressure.iter() {
                         let is_flag_raised = flag.load(Ordering::Relaxed);
-                        error!("brooks DEBUG: backpressure name: {name}, flag: {is_flag_raised}");
                         if is_flag_raised {
                             info!("{name}'s exit backpressure flag is raised");
                             any_flags_raised = true;
                         }
                     }
-                    error!("brooks DEBUG: any flags raised: {any_flags_raised}");
                     if !any_flags_raised {
                         break;
                     }
