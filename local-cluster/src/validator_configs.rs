@@ -1,6 +1,6 @@
 use {
     solana_core::validator::ValidatorConfig,
-    solana_sdk::exit::Exit,
+    solana_validator_exit::Exit,
     std::sync::{Arc, RwLock},
 };
 
