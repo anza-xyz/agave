@@ -5,16 +5,14 @@
 /// records if stake information is not available (can happen for very short epochs).
 use {
     crate::{cluster_slots_service::slot_supporters::SlotSupporters, consensus::Stake},
+    solana_clock::{Epoch, Slot},
+    solana_epoch_schedule::EpochSchedule,
     solana_gossip::{
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::EpochStakes},
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        epoch_schedule::EpochSchedule,
-        pubkey::Pubkey,
-        timing::AtomicInterval,
-    },
+    solana_time_utils::AtomicInterval,
     std::{
         collections::{HashMap, VecDeque},
         hash::RandomState,
@@ -163,25 +161,29 @@ impl ClusterSlots {
         let root_epoch = root_bank.epoch();
         info!("Updating epoch_metadata for epoch {root_epoch}");
         let epoch_stakes_map = root_bank.epoch_stakes_map();
-        let mut epoch_metadata = self.epoch_metadata.write().unwrap();
+
         {
-            let my_epoch = self.get_epoch_for_slot(self.get_current_slot());
-            if let Some(my_epoch) = my_epoch {
-                info!("Evicting epoch_metadata for epoch {my_epoch}");
-                epoch_metadata.remove(&my_epoch);
+            let mut epoch_metadata = self.epoch_metadata.write().unwrap();
+            // check if we need to do any cleanup in the epoch_metadata
+            {
+                if let Some(my_epoch) = self.get_epoch_for_slot(self.get_current_slot()) {
+                    info!("Evicting epoch_metadata for epoch {my_epoch}");
+                    epoch_metadata.remove(&my_epoch);
+                }
             }
+            // Next we fetch info about current and upcoming epoch's stakes
+            epoch_metadata.insert(
+                root_epoch,
+                EpochStakeInfo::from(&epoch_stakes_map[&root_epoch]),
+            );
         }
-        // Next we fetch info about current and upcoming epoch's stakes
-        epoch_metadata.insert(
-            root_epoch,
-            EpochStakeInfo::from(&epoch_stakes_map[&root_epoch]),
-        );
-        let next_epoch = root_epoch.wrapping_add(1);
-        let next_epoch_info = EpochStakeInfo::from(&epoch_stakes_map[&next_epoch]);
         *self.root_epoch.write().unwrap() = Some(RootEpoch {
             schedule: root_bank.epoch_schedule().clone(),
             number: root_epoch,
         });
+
+        let next_epoch = root_epoch.wrapping_add(1);
+        let next_epoch_info = EpochStakeInfo::from(&epoch_stakes_map[&next_epoch]);
         let mut first_slot = root_bank
             .epoch_schedule()
             .get_first_slot_in_epoch(next_epoch);
@@ -192,18 +194,23 @@ impl ClusterSlots {
             let Some(row) = row else {
                 break; // reached the end of ringbuffer and/or ringbuffer is not initialized
             };
+            // rows for this epoch are not initialized, initialize them now
             if row.supporters.is_blank() {
                 patched += 1;
                 row.supporters = Arc::new(SlotSupporters::new(
                     next_epoch_info.total_stake,
                     next_epoch_info.pubkey_to_index.clone(),
                 ));
+            } else {
+                // if any rows for this epoch are initialized, they all should be
+                break;
             }
             first_slot = first_slot.wrapping_add(1);
         }
         if patched > 0 {
             warn!("Finalized init for {patched} slots in epoch {next_epoch}");
         }
+        let mut epoch_metadata = self.epoch_metadata.write().unwrap();
         epoch_metadata.insert(next_epoch, next_epoch_info);
     }
     #[cfg(test)]
