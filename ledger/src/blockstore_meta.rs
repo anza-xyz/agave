@@ -6,10 +6,8 @@ use {
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        hash::Hash,
-    },
+    solana_clock::{Slot, UnixTimestamp},
+    solana_hash::Hash,
     std::{
         collections::BTreeSet,
         ops::{Range, RangeBounds},

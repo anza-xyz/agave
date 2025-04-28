@@ -10,8 +10,9 @@ use {
         SIZE_OF_SIGNATURE,
     },
     assert_matches::debug_assert_matches,
+    solana_clock::Slot,
     solana_perf::packet::deserialize_from_with_limit,
-    solana_sdk::{clock::Slot, signature::Signature},
+    solana_signature::Signature,
     static_assertions::const_assert_eq,
     std::{io::Cursor, ops::Range},
 };

@@ -2,11 +2,9 @@ use {
     crate::leader_schedule::{
         IdentityKeyedLeaderSchedule, LeaderSchedule, VoteKeyedLeaderSchedule,
     },
+    solana_clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_sdk::{
-        clock::{Epoch, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
-        pubkey::Pubkey,
-    },
     std::collections::HashMap,
 };
 

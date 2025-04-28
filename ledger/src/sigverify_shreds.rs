@@ -3,6 +3,8 @@ use {
     crate::shred::{self, SignedData, SIZE_OF_MERKLE_ROOT},
     itertools::{izip, Itertools},
     rayon::{prelude::*, ThreadPool},
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_metrics::inc_new_counter_debug,
     solana_perf::{
         cuda_runtime::PinnedVec,
@@ -11,7 +13,8 @@ use {
         recycler_cache::RecyclerCache,
         sigverify::{self, count_packets_in_batches, TxOffset},
     },
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signature},
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
     std::{
         collections::HashMap,
         iter::{self, repeat},
@@ -23,7 +26,8 @@ use {
 #[cfg(test)]
 use {
     sha2::{Digest, Sha512},
-    solana_sdk::signature::{Keypair, Signer},
+    solana_keypair::Keypair,
+    solana_signer::Signer,
     std::sync::Arc,
 };
 
@@ -500,13 +504,11 @@ mod tests {
         rand::{seq::SliceRandom, Rng},
         rayon::ThreadPoolBuilder,
         solana_entry::entry::Entry,
-        solana_sdk::{
-            hash,
-            hash::Hash,
-            signature::{Keypair, Signer},
-            system_transaction,
-            transaction::Transaction,
-        },
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        solana_system_transaction as system_transaction,
+        solana_transaction::Transaction,
         std::iter::{once, repeat_with},
         test_case::test_case,
     };
@@ -757,7 +759,7 @@ mod tests {
 
     fn make_transaction<R: Rng>(rng: &mut R) -> Transaction {
         let block = rng.gen::<[u8; 32]>();
-        let recent_blockhash = hash::hashv(&[&block]);
+        let recent_blockhash = solana_sha256_hasher::hashv(&[&block]);
         system_transaction::transfer(
             &Keypair::new(),       // from
             &Pubkey::new_unique(), // to
@@ -777,7 +779,7 @@ mod tests {
     }
 
     fn make_entries<R: Rng>(rng: &mut R, num_entries: usize) -> Vec<Entry> {
-        let prev_hash = hash::hashv(&[&rng.gen::<[u8; 32]>()]);
+        let prev_hash = solana_sha256_hasher::hashv(&[&rng.gen::<[u8; 32]>()]);
         let entry = make_entry(rng, &prev_hash);
         std::iter::successors(Some(entry), |entry| Some(make_entry(rng, &entry.hash)))
             .take(num_entries)

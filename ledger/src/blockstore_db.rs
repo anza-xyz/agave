@@ -28,7 +28,7 @@ use {
         IteratorMode as RocksIteratorMode, LiveFile, Options, WriteBatch as RWriteBatch, DB,
     },
     serde::de::DeserializeOwned,
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     std::{
         collections::HashSet,
         ffi::{CStr, CString},

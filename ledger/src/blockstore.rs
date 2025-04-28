@@ -32,24 +32,26 @@ use {
     rand::Rng,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     rocksdb::{DBRawIterator, LiveFile},
+    solana_account::ReadableAccount,
     solana_accounts_db::hardened_unpack::unpack_genesis_archive,
+    solana_address_lookup_table_interface::state::AddressLookupTable,
+    solana_clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND},
     solana_entry::entry::{create_ticks, Entry},
+    solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_metrics::datapoint_error,
+    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_sdk::{
-        account::ReadableAccount,
-        address_lookup_table::state::AddressLookupTable,
-        clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND},
-        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
-        timing::timestamp,
-        transaction::{SanitizedVersionedTransaction, VersionedTransaction},
-    },
+    solana_signature::Signature,
+    solana_signer::Signer,
     solana_storage_proto::{StoredExtendedRewards, StoredTransactionStatusMeta},
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
+    solana_time_utils::timestamp,
+    solana_transaction::versioned::{
+        sanitized::SanitizedVersionedTransaction, VersionedTransaction,
+    },
     solana_transaction_status::{
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, Rewards,
         RewardsAndNumPartitions, TransactionStatusMeta, TransactionWithStatusMeta,
@@ -201,12 +203,12 @@ impl LastFECSetCheckResults {
         &self,
         feature_set: &FeatureSet,
     ) -> std::result::Result<Option<Hash>, BlockstoreProcessorError> {
-        if feature_set.is_active(&solana_sdk::feature_set::vote_only_full_fec_sets::id())
+        if feature_set.is_active(&agave_feature_set::vote_only_full_fec_sets::id())
             && self.last_fec_set_merkle_root.is_none()
         {
             return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
         } else if feature_set
-            .is_active(&solana_sdk::feature_set::vote_only_retransmitter_signed_fec_sets::id())
+            .is_active(&agave_feature_set::vote_only_retransmitter_signed_fec_sets::id())
             && !self.is_retransmitter_signed
         {
             return Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet);
@@ -3785,7 +3787,7 @@ impl Blockstore {
                 "Unable to check the last fec set for slot {slot} {bank_hash}, \
                  marking as dead: {results:?}",
             );
-            if feature_set.is_active(&solana_sdk::feature_set::vote_only_full_fec_sets::id()) {
+            if feature_set.is_active(&agave_feature_set::vote_only_full_fec_sets::id()) {
                 return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
             }
             return Ok(None);
@@ -4874,7 +4876,7 @@ pub fn create_new_ledger(
     let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
     let entries = create_ticks(ticks_per_slot, hashes_per_tick, genesis_config.hash());
     let last_hash = entries.last().unwrap().hash;
-    let version = solana_sdk::shred_version::version_from_hash(&last_hash);
+    let version = solana_shred_version::version_from_hash(&last_hash);
 
     let shredder = Shredder::new(0, 0, 0, version).unwrap();
     let (shreds, _) = shredder.entries_to_shreds(
@@ -5353,6 +5355,7 @@ pub mod tests {
             leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
             shred::{max_ticks_per_n_shreds, ShredFlags, LEGACY_SHRED_DATA_CAPACITY},
         },
+        agave_feature_set::{vote_only_full_fec_sets, vote_only_retransmitter_signed_fec_sets},
         assert_matches::assert_matches,
         bincode::{serialize, Options},
         crossbeam_channel::unbounded,
@@ -5361,22 +5364,20 @@ pub mod tests {
         solana_accounts_db::hardened_unpack::{
             open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         },
+        solana_clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
         solana_entry::entry::{next_entry, next_entry_mut},
+        solana_hash::Hash,
+        solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
+        solana_packet::PACKET_DATA_SIZE,
+        solana_pubkey::Pubkey,
         solana_runtime::bank::{Bank, RewardType},
-        solana_sdk::{
-            clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
-            feature_set::{vote_only_full_fec_sets, vote_only_retransmitter_signed_fec_sets},
-            hash::{self, hash, Hash},
-            instruction::CompiledInstruction,
-            message::v0::LoadedAddresses,
-            packet::PACKET_DATA_SIZE,
-            pubkey::Pubkey,
-            shred_version::version_from_hash,
-            signature::Signature,
-            transaction::{Transaction, TransactionError},
-        },
+        solana_sha256_hasher::hash,
+        solana_shred_version::version_from_hash,
+        solana_signature::Signature,
         solana_storage_proto::convert::generated,
+        solana_transaction::Transaction,
         solana_transaction_context::TransactionReturnData,
+        solana_transaction_error::TransactionError,
         solana_transaction_status::{
             InnerInstruction, InnerInstructions, Reward, Rewards, TransactionTokenBalance,
         },
@@ -8332,7 +8333,9 @@ pub mod tests {
 
         // insert value
         let status = TransactionStatusMeta {
-            status: solana_sdk::transaction::Result::<()>::Err(TransactionError::AccountNotFound),
+            status: solana_transaction_error::TransactionResult::<()>::Err(
+                TransactionError::AccountNotFound,
+            ),
             fee: 5u64,
             pre_balances: pre_balances_vec.clone(),
             post_balances: post_balances_vec.clone(),
@@ -8388,7 +8391,7 @@ pub mod tests {
 
         // insert value
         let status = TransactionStatusMeta {
-            status: solana_sdk::transaction::Result::<()>::Ok(()),
+            status: solana_transaction_error::TransactionResult::<()>::Ok(()),
             fee: 9u64,
             pre_balances: pre_balances_vec.clone(),
             post_balances: post_balances_vec.clone(),
@@ -8527,7 +8530,7 @@ pub mod tests {
         let pre_balances_vec = vec![1, 2, 3];
         let post_balances_vec = vec![3, 2, 1];
         let status = TransactionStatusMeta {
-            status: solana_sdk::transaction::Result::<()>::Ok(()),
+            status: solana_transaction_error::TransactionResult::<()>::Ok(()),
             fee: 42u64,
             pre_balances: pre_balances_vec,
             post_balances: post_balances_vec,
@@ -8704,7 +8707,7 @@ pub mod tests {
         let pre_balances_vec = vec![1, 2, 3];
         let post_balances_vec = vec![3, 2, 1];
         let status = TransactionStatusMeta {
-            status: solana_sdk::transaction::Result::<()>::Ok(()),
+            status: solana_transaction_error::TransactionResult::<()>::Ok(()),
             fee: 42u64,
             pre_balances: pre_balances_vec,
             post_balances: post_balances_vec,
@@ -8832,7 +8835,7 @@ pub mod tests {
         let pre_balances_vec = vec![1, 2, 3];
         let post_balances_vec = vec![3, 2, 1];
         let status = TransactionStatusMeta {
-            status: solana_sdk::transaction::Result::<()>::Ok(()),
+            status: solana_transaction_error::TransactionResult::<()>::Ok(()),
             fee: 42u64,
             pre_balances: pre_balances_vec,
             post_balances: post_balances_vec,
@@ -9795,7 +9798,7 @@ pub mod tests {
         let empty_entries_iterator = entries.iter();
         assert!(get_last_hash(empty_entries_iterator).is_none());
 
-        let entry = next_entry(&hash::hash(&[42u8]), 1, vec![]);
+        let entry = next_entry(&solana_sha256_hasher::hash(&[42u8]), 1, vec![]);
         let entries: Vec<Entry> = std::iter::successors(Some(entry), |entry| {
             Some(next_entry(&entry.hash, 1, vec![]))
         })
@@ -9823,7 +9826,7 @@ pub mod tests {
                 vec![CompiledInstruction::new(1, &(), vec![0])],
             );
             let status = TransactionStatusMeta {
-                status: solana_sdk::transaction::Result::<()>::Err(
+                status: solana_transaction_error::TransactionResult::<()>::Err(
                     TransactionError::AccountNotFound,
                 ),
                 fee: x,
@@ -10682,7 +10685,7 @@ pub mod tests {
             .map(|_| {
                 let keypair0 = Keypair::new();
                 let to = solana_pubkey::new_rand();
-                solana_sdk::system_transaction::transfer(&keypair0, &to, 1, Hash::default())
+                solana_system_transaction::transfer(&keypair0, &to, 1, Hash::default())
             })
             .collect();
 
