@@ -260,7 +260,7 @@ impl AdminRpc for AdminRpcImpl {
     fn exit(&self, meta: Self::Metadata) -> Result<()> {
         debug!("exit admin rpc request received");
 
-        thread::Builder::new()
+        let thread_handle = thread::Builder::new()
             .name("solProcessExit".into())
             .spawn(move || {
                 // Delay exit signal until this RPC request completes, otherwise the caller of `exit` might
@@ -309,6 +309,11 @@ impl AdminRpc for AdminRpcImpl {
                 // brooks XXX: std::process::exit(0);
             })
             .unwrap();
+
+        error!("brooks DEBUG: Joining exit thread...");
+        let result = thread_handle.join();
+        error!("brooks DEBUG: Joining exit thread... DONE, result: {result:?}");
+
         Ok(())
     }
 
