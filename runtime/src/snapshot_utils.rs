@@ -647,7 +647,7 @@ fn is_bank_snapshot_complete(bank_snapshot_dir: impl AsRef<Path>) -> bool {
 }
 
 /// Marks the bank snapshot as complete
-fn write_snapshot_state_complete_file(bank_snapshot_dir: impl AsRef<Path>) -> IoResult<()> {
+pub fn write_snapshot_state_complete_file(bank_snapshot_dir: impl AsRef<Path>) -> IoResult<()> {
     let state_complete_path = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_STATE_COMPLETE_FILENAME);
