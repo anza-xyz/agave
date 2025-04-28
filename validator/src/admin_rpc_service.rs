@@ -270,27 +270,31 @@ impl AdminRpc for AdminRpcImpl {
                 warn!("validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
 
-                // brooks TODO: check for backpressure here
-                error!(
-                    "brooks DEBUG: backpressure flags: {:?}",
-                    meta.validator_exit_backpressure
-                );
-                loop {
-                    // brooks NOTE: initial sleep is a grace period to allow anyone to raise their backpressure flags
-                    // subsequent sleeps are to throttle how often we check and log
-                    thread::sleep(Duration::from_secs(1));
+                if !meta.validator_exit_backpressure.is_empty() {
+                    let service_names  = meta.validator_exit_backpressure.keys();
+                    info!("brooks DEBUG: Maybe wait for these services to complete: {service_names:?}");
+                    error!(
+                        "brooks DEBUG: backpressure flags: {:?}",
+                        meta.validator_exit_backpressure
+                    );
+                    loop {
+                        // brooks NOTE: initial sleep is a grace period to allow anyone to raise their backpressure flags
+                        // subsequent sleeps are to throttle how often we check and log
+                        thread::sleep(Duration::from_secs(1));
 
-                    let mut any_flags_raised = false;
-                    for (name, flag) in meta.validator_exit_backpressure.iter() {
-                        let is_flag_raised = flag.load(Ordering::Relaxed);
-                        if is_flag_raised {
-                            info!("{name}'s exit backpressure flag is raised");
-                            any_flags_raised = true;
+                        let mut any_flags_raised = false;
+                        for (name, flag) in meta.validator_exit_backpressure.iter() {
+                            let is_flag_raised = flag.load(Ordering::Relaxed);
+                            if is_flag_raised {
+                                info!("{name}'s exit backpressure flag is raised");
+                                any_flags_raised = true;
+                            }
+                        }
+                        if !any_flags_raised {
+                            break;
                         }
                     }
-                    if !any_flags_raised {
-                        break;
-                    }
+                    info!("All services have completed.");
                 }
 
                 // TODO: Debug why Exit doesn't always cause the validator to fully exit
