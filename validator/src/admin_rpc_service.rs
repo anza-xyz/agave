@@ -291,7 +291,7 @@ impl AdminRpc for AdminRpcImpl {
                             break;
                         }
                     }
-                    info!("All services have completed.");
+                    info!("All services have completed");
                 }
 
                 // TODO: Debug why Exit doesn't always cause the validator to fully exit
