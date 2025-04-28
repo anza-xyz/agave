@@ -313,6 +313,8 @@ impl AdminRpc for AdminRpcImpl {
         error!("brooks DEBUG: Joining exit thread...");
         let result = thread_handle.join();
         error!("brooks DEBUG: Joining exit thread... DONE, result: {result:?}");
+        // brooks XXX: extra sleep to see the log above
+        thread::sleep(Duration::from_millis(100));
 
         Ok(())
     }
