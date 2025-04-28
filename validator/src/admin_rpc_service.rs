@@ -273,13 +273,10 @@ impl AdminRpc for AdminRpcImpl {
                 if !meta.validator_exit_backpressure.is_empty() {
                     let service_names = meta.validator_exit_backpressure.keys();
                     info!("Wait for these services to complete: {service_names:?}");
-                    error!(
-                        "brooks DEBUG: backpressure flags: {:?}",
-                        meta.validator_exit_backpressure
-                    );
                     loop {
-                        // brooks NOTE: initial sleep is a grace period to allow anyone to raise their backpressure flags
-                        // subsequent sleeps are to throttle how often we check and log
+                        // The initial sleep is a grace period to allow the services to raise their
+                        // backpressure flags.
+                        // Subsequent sleeps are to throttle how often we check and log.
                         thread::sleep(Duration::from_secs(1));
 
                         let mut any_flags_raised = false;
@@ -291,7 +288,6 @@ impl AdminRpc for AdminRpcImpl {
                             }
                         }
                         if !any_flags_raised {
-                            error!("brooks DEBUG: no flags raised; break!");
                             break;
                         }
                     }
