@@ -312,7 +312,7 @@ impl AdminRpc for AdminRpcImpl {
                 warn!("validator exit timeout");
                 // brooks XXX: extra sleep to see the warn! above
                 thread::sleep(Duration::from_millis(100));
-                std::process::exit(0);
+                // brooks XXX: std::process::exit(0);
             })
             .unwrap();
         Ok(())
