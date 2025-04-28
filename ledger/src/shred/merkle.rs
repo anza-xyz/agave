@@ -1327,7 +1327,7 @@ fn finish_erasure_batch(
 mod test {
     use {
         super::*,
-        crate::shred::{ShredFlags, ShredId, SignedData},
+        crate::shred::{merkle_tree::get_proof_size, ShredFlags, ShredId, SignedData},
         assert_matches::assert_matches,
         itertools::Itertools,
         rand::{seq::SliceRandom, CryptoRng, Rng},
@@ -1469,18 +1469,6 @@ mod test {
                 &reed_solomon_cache,
             );
         }
-    }
-
-    // Maps number of (code + data) shreds to merkle_proof.len().
-    const fn get_proof_size(num_shreds: usize) -> u8 {
-        let bits = usize::BITS - num_shreds.leading_zeros();
-        let proof_size = if num_shreds.is_power_of_two() {
-            bits.saturating_sub(1)
-        } else {
-            bits
-        };
-        // this can never overflow because bits < 64
-        proof_size as u8
     }
 
     fn run_recover_merkle_shreds<R: Rng + CryptoRng>(
@@ -1648,28 +1636,6 @@ mod test {
                     ShredType::Code => assert_matches!(shred.payload(), Payload::Unique(_)),
                     ShredType::Data => assert_matches!(shred.payload(), Payload::Shared(_)),
                 }
-            }
-        }
-    }
-
-    #[test]
-    fn test_get_proof_size() {
-        assert_eq!(get_proof_size(0), 0);
-        assert_eq!(get_proof_size(1), 0);
-        assert_eq!(get_proof_size(2), 1);
-        assert_eq!(get_proof_size(3), 2);
-        assert_eq!(get_proof_size(4), 2);
-        assert_eq!(get_proof_size(5), 3);
-        assert_eq!(get_proof_size(63), 6);
-        assert_eq!(get_proof_size(64), 6);
-        assert_eq!(get_proof_size(65), 7);
-        assert_eq!(get_proof_size(usize::MAX - 1), 64);
-        assert_eq!(get_proof_size(usize::MAX), 64);
-        for proof_size in 1u8..9 {
-            let max_num_shreds = 1usize << u32::from(proof_size);
-            let min_num_shreds = (max_num_shreds >> 1) + 1;
-            for num_shreds in min_num_shreds..=max_num_shreds {
-                assert_eq!(get_proof_size(num_shreds), proof_size);
             }
         }
     }
