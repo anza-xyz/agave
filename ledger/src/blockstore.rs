@@ -17,7 +17,7 @@ use {
         next_slots_iterator::NextSlotsIterator,
         shred::{
             self, max_ticks_per_n_shreds, ErasureSetId, ProcessShredsStats, ReedSolomonCache,
-            Shred, ShredData, ShredId, ShredType, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
+            Shred, ShredData, ShredId, ShredType, Shredder, DATA_SHRED_PER_FEC_SET,
         },
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
@@ -3799,10 +3799,10 @@ impl Blockstore {
     }
 
     /// Performs checks on the last FEC set for this slot.
-    /// - `block_id` will be `Some(mr)` if the last `DATA_SHREDS_PER_FEC_BLOCK` data shreds of
+    /// - `block_id` will be `Some(mr)` if the last `DATA_SHRED_PER_FEC_SET` data shreds of
     ///   `slot` have the same merkle root of `mr`, indicating they are a part of the same FEC set.
     ///   This indicates that the last FEC set is sufficiently sized.
-    /// - `is_retransmitter_signed` will be true if the last `DATA_SHREDS_PER_FEC_BLOCK`
+    /// - `is_retransmitter_signed` will be true if the last `DATA_SHRED_PER_FEC_SET`
     ///   data shreds of `slot` are of the retransmitter variant. Since we already discard
     ///   invalid signatures on ingestion, this indicates that the last FEC set is properly
     ///   signed by retransmitters.
@@ -3813,20 +3813,23 @@ impl Blockstore {
     ///     - There are missing shreds in the last fec set
     ///     - The block contains legacy shreds
     fn check_last_fec_set(&self, slot: Slot) -> Result<LastFECSetCheckResults> {
-        // We need to check if the last FEC set index contains at least `DATA_SHREDS_PER_FEC_BLOCK` data shreds.
-        // We compare the merkle roots of the last `DATA_SHREDS_PER_FEC_BLOCK` shreds in this block.
+        // We need to check if the last FEC set index contains at least `DATA_SHRED_PER_FEC_SET` data shreds.
+        // We compare the merkle roots of the last `DATA_SHRED_PER_FEC_SET` shreds in this block.
         // Since the merkle root contains the fec_set_index, if all of them match, we know that the last fec set has
-        // at least `DATA_SHREDS_PER_FEC_BLOCK` shreds.
+        // at least `DATA_SHRED_PER_FEC_SET` shreds.
         let slot_meta = self.meta(slot)?.ok_or(BlockstoreError::SlotUnavailable)?;
         let last_shred_index = slot_meta
             .last_index
             .ok_or(BlockstoreError::UnknownLastIndex(slot))?;
 
-        const MINIMUM_INDEX: u64 = DATA_SHREDS_PER_FEC_BLOCK as u64 - 1;
+        const MINIMUM_INDEX: u64 = DATA_SHRED_PER_FEC_SET as u64 - 1;
         #[cfg(test)]
         const_assert_eq!(MINIMUM_INDEX, 31);
         let Some(start_index) = last_shred_index.checked_sub(MINIMUM_INDEX) else {
-            warn!("Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} required", last_shred_index + 1);
+            warn!(
+                "Slot {slot} has only {} shreds, fewer than the {DATA_SHRED_PER_FEC_SET} required",
+                last_shred_index + 1
+            );
             return Ok(LastFECSetCheckResults {
                 last_fec_set_merkle_root: None,
                 is_retransmitter_signed: false,
@@ -11716,7 +11719,7 @@ pub mod tests {
         let total_shreds = fec_set_index as u64 + data_shreds.len() as u64;
 
         // FEC set should be padded
-        assert_eq!(data_shreds.len(), DATA_SHREDS_PER_FEC_BLOCK);
+        assert_eq!(data_shreds.len(), DATA_SHRED_PER_FEC_SET);
 
         // Missing slot meta
         assert_matches!(
@@ -11727,7 +11730,7 @@ pub mod tests {
         // Incomplete slot
         blockstore
             .insert_shreds(
-                data_shreds[0..DATA_SHREDS_PER_FEC_BLOCK - 1].to_vec(),
+                data_shreds[0..DATA_SHRED_PER_FEC_SET - 1].to_vec(),
                 None,
                 false,
             )
@@ -11784,7 +11787,7 @@ pub mod tests {
             );
         let last_index = last_data_shreds.last().unwrap().index();
         let total_shreds = first_data_shreds.len() + last_data_shreds.len();
-        assert_eq!(total_shreds, 2 * DATA_SHREDS_PER_FEC_BLOCK);
+        assert_eq!(total_shreds, 2 * DATA_SHRED_PER_FEC_SET);
         let merkle_root = last_data_shreds[0].merkle_root().unwrap();
         blockstore
             .insert_shreds(first_data_shreds, None, false)
@@ -11825,8 +11828,8 @@ pub mod tests {
             );
         let last_index = last_data_shreds.last().unwrap().index();
         let total_shreds = first_data_shreds.len() + last_data_shreds.len();
-        assert_eq!(last_data_shreds.len(), DATA_SHREDS_PER_FEC_BLOCK);
-        assert_eq!(total_shreds, 2 * DATA_SHREDS_PER_FEC_BLOCK);
+        assert_eq!(last_data_shreds.len(), DATA_SHRED_PER_FEC_SET);
+        assert_eq!(total_shreds, 2 * DATA_SHRED_PER_FEC_SET);
         let merkle_root = last_data_shreds[0].merkle_root().unwrap();
         blockstore
             .insert_shreds(first_data_shreds, None, false)
@@ -11855,7 +11858,7 @@ pub mod tests {
                 None,
                 true,
             );
-        assert!(first_data_shreds.len() > DATA_SHREDS_PER_FEC_BLOCK);
+        assert!(first_data_shreds.len() > DATA_SHRED_PER_FEC_SET);
         let block_id = first_data_shreds.last().unwrap().merkle_root().unwrap();
         blockstore
             .insert_shreds(first_data_shreds, None, false)

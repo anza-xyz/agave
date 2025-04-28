@@ -1,6 +1,6 @@
 use {
     crate::shred::{
-        self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags, DATA_SHREDS_PER_FEC_BLOCK,
+        self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags, DATA_SHRED_PER_FEC_SET,
     },
     itertools::Itertools,
     lazy_lru::LruCache,
@@ -194,7 +194,7 @@ impl Shredder {
         };
         let shreds: Vec<&[u8]> = serialized_shreds.chunks(data_buffer_size).collect();
         let fec_set_offsets: Vec<usize> =
-            get_fec_set_offsets(shreds.len(), DATA_SHREDS_PER_FEC_BLOCK).collect();
+            get_fec_set_offsets(shreds.len(), DATA_SHRED_PER_FEC_SET).collect();
         assert_eq!(shreds.len(), fec_set_offsets.len());
         let shreds: Vec<Shred> = PAR_THREAD_POOL.install(|| {
             shreds
@@ -467,7 +467,7 @@ impl Shredder {
 }
 
 impl ReedSolomonCache {
-    const CAPACITY: usize = 4 * DATA_SHREDS_PER_FEC_BLOCK;
+    const CAPACITY: usize = 4 * DATA_SHRED_PER_FEC_SET;
 
     pub(crate) fn get(
         &self,
@@ -506,7 +506,7 @@ pub(crate) fn get_erasure_batch_size(num_data_shreds: usize, is_last_in_slot: bo
         .copied()
         .unwrap_or(2 * num_data_shreds);
     if is_last_in_slot {
-        erasure_batch_size.max(2 * DATA_SHREDS_PER_FEC_BLOCK)
+        erasure_batch_size.max(2 * DATA_SHRED_PER_FEC_SET)
     } else {
         erasure_batch_size
     }
@@ -589,7 +589,7 @@ mod tests {
             })
             .collect();
 
-        let num_expected_data_shreds = DATA_SHREDS_PER_FEC_BLOCK;
+        let num_expected_data_shreds = DATA_SHRED_PER_FEC_SET;
         let num_expected_coding_shreds = CODING_SHREDS_PER_FEC_BLOCK;
         let start_index = 0;
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
@@ -1236,7 +1236,7 @@ mod tests {
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
-        const MIN_CHUNK_SIZE: usize = DATA_SHREDS_PER_FEC_BLOCK;
+        const MIN_CHUNK_SIZE: usize = DATA_SHRED_PER_FEC_SET;
         let chunks: Vec<_> = data_shreds
             .iter()
             .group_by(|shred| shred.fec_set_index())
