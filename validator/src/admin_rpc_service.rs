@@ -271,8 +271,8 @@ impl AdminRpc for AdminRpcImpl {
                 meta.validator_exit.write().unwrap().exit();
 
                 if !meta.validator_exit_backpressure.is_empty() {
-                    let service_names  = meta.validator_exit_backpressure.keys();
-                    info!("brooks DEBUG: Maybe wait for these services to complete: {service_names:?}");
+                    let service_names = meta.validator_exit_backpressure.keys();
+                    info!("Wait for these services to complete: {service_names:?}");
                     error!(
                         "brooks DEBUG: backpressure flags: {:?}",
                         meta.validator_exit_backpressure
@@ -291,6 +291,7 @@ impl AdminRpc for AdminRpcImpl {
                             }
                         }
                         if !any_flags_raised {
+                            error!("brooks DEBUG: no flags raised; break!");
                             break;
                         }
                     }
