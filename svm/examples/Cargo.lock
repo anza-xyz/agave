@@ -2854,7 +2854,7 @@ dependencies = [
  "solana-transaction-context 2.3.0",
  "solana-transaction-status",
  "solana-version",
- "spl-token-2022 8.0.0",
+ "spl-token-2022 8.0.1",
  "tokio",
  "tokio-util 0.7.15",
 ]
@@ -5143,7 +5143,7 @@ dependencies = [
  "solana-vote-interface",
  "spl-generic-token",
  "spl-token 8.0.0",
- "spl-token-2022 8.0.0",
+ "spl-token-2022 8.0.1",
  "spl-token-group-interface 0.6.0",
  "spl-token-metadata-interface 0.7.0",
  "thiserror 2.0.12",
@@ -6442,7 +6442,7 @@ dependencies = [
  "solana-vote",
  "solana-vote-program",
  "spl-token 8.0.0",
- "spl-token-2022 8.0.0",
+ "spl-token-2022 8.0.1",
  "static_assertions",
  "strum",
  "strum_macros",
@@ -7245,7 +7245,7 @@ dependencies = [
  "solana-vote-program",
  "spl-generic-token",
  "spl-token 8.0.0",
- "spl-token-2022 8.0.0",
+ "spl-token-2022 8.0.1",
  "stream-cancel",
  "thiserror 2.0.12",
  "tokio",
@@ -8408,7 +8408,7 @@ dependencies = [
  "spl-associated-token-account",
  "spl-memo",
  "spl-token 8.0.0",
- "spl-token-2022 8.0.0",
+ "spl-token-2022 8.0.1",
  "spl-token-group-interface 0.6.0",
  "spl-token-metadata-interface 0.7.0",
  "thiserror 2.0.12",
@@ -9101,9 +9101,9 @@ dependencies = [
 
 [[package]]
 name = "spl-token-2022"
-version = "8.0.0"
+version = "8.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d2cf83cb0d5e2df4e5b9043c78744af9ff2866e21bcea9380704b8dabc61e15"
+checksum = "31f0dfbb079eebaee55e793e92ca5f433744f4b71ee04880bfd6beefba5973e5"
 dependencies = [
  "arrayref",
  "bytemuck",
