@@ -299,29 +299,26 @@ impl AdminRpc for AdminRpcImpl {
         let thread_handle = thread::Builder::new()
             .name("solProcessExit".into())
             .spawn(move || {
-
                 // TODO: Debug why Exit doesn't always cause the validator to fully exit
                 // (rocksdb background processing or some other stuck thread perhaps?).
                 //
                 // If the process is still alive after five seconds, exit harder
-                /*
-                 * thread::sleep(Duration::from_secs(
-                 *     env::var("SOLANA_VALIDATOR_EXIT_TIMEOUT")
-                 *         .ok()
-                 *         .and_then(|x| x.parse().ok())
-                 *         .unwrap_or(5),
-                 * ));
-                 * warn!("validator exit timeout");
-                 */
-                // brooks XXX: extra sleep to see the warn! above
-                //thread::sleep(Duration::from_millis(100));
-                // brooks XXX: std::process::exit(0);
+                thread::sleep(Duration::from_secs(
+                    env::var("SOLANA_VALIDATOR_EXIT_TIMEOUT")
+                        .ok()
+                        .and_then(|x| x.parse().ok())
+                        .unwrap_or(5),
+                ));
+                warn!("validator exit timeout");
+                std::process::exit(0);
             })
             .unwrap();
 
-        error!("brooks DEBUG: Joining exit thread...");
-        let result = thread_handle.join();
-        error!("brooks DEBUG: Joining exit thread... DONE, result: {result:?}");
+        /*
+         * error!("brooks DEBUG: Joining exit thread...");
+         * let result = thread_handle.join();
+         * error!("brooks DEBUG: Joining exit thread... DONE, result: {result:?}");
+         */
 
         Ok(())
     }
