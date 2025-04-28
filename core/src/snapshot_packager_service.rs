@@ -27,6 +27,8 @@ pub struct SnapshotPackagerService {
 }
 
 impl SnapshotPackagerService {
+    pub const NAME: &str = "SnapshotPackagerService";
+
     /// If there are no snapshot packages to handle, limit how often we re-check
     const LOOP_LIMITER: Duration = Duration::from_millis(100);
 
@@ -43,7 +45,7 @@ impl SnapshotPackagerService {
             .name("solSnapshotPkgr".to_string())
             .spawn(move || {
                 exit_backpressure.store(true, Ordering::Relaxed);
-                info!("SnapshotPackagerService has started");
+                info!("{} has started", Self::NAME);
                 let snapshot_config = snapshot_controller.snapshot_config();
                 renice_this_thread(snapshot_config.packager_thread_niceness_adj).unwrap();
                 let mut snapshot_gossip_manager = enable_gossip_push
@@ -97,8 +99,9 @@ impl SnapshotPackagerService {
                         ));
                     if let Err(err) = archive_result {
                         error!(
-                            "Stopping SnapshotPackagerService! Fatal error while archiving \
-                             snapshot package: {err}"
+                            "Stopping {}! Fatal error while archiving \
+                             snapshot package: {err}",
+                            Self::NAME,
                         );
                         exit.store(true, Ordering::Relaxed);
                         break;
@@ -141,7 +144,7 @@ impl SnapshotPackagerService {
                         ("purge_old_archives_time_us", purge_archives_time_us, i64),
                     );
                 }
-                info!("SnapshotPackagerService has stopped");
+                info!("{} has stopped", Self::NAME);
                 exit_backpressure.store(false, Ordering::Relaxed);
             })
             .unwrap();

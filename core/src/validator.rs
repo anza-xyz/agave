@@ -898,10 +898,9 @@ impl Validator {
             .should_generate_snapshots()
         {
             // brooks TODO: replace unwrap with expect
-            // brooks TODO: deduplicate the SPS key string
             let exit_backpressure = config
                 .validator_exit_backpressure
-                .get("SnapshotPackagerService")
+                .get(SnapshotPackagerService::NAME)
                 .cloned()
                 .unwrap();
             let enable_gossip_push = true;

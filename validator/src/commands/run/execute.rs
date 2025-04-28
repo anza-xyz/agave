@@ -27,6 +27,7 @@ use {
     solana_core::{
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
+        snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
@@ -1088,7 +1089,7 @@ pub fn execute(
     }
 
     let validator_exit_backpressure = [(
-        "SnapshotPackagerService".to_string(),
+        SnapshotPackagerService::NAME.to_string(),
         Arc::new(AtomicBool::new(false)),
     )]
     .into();
