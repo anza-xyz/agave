@@ -125,11 +125,15 @@ fn bench_deserialize_hdr(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
-fn bench_shredder_coding(bencher: &mut Bencher) {
+fn make_entries() -> Vec<Entry> {
     let txs_per_entry = 128;
     let num_entries = max_entries_per_n_shred(&make_test_entry(txs_per_entry), 200, Some(1000));
-    let entries = make_large_unchained_entries(txs_per_entry, num_entries);
+    make_large_unchained_entries(txs_per_entry, num_entries)
+}
+
+#[bench]
+fn bench_shredder_coding(bencher: &mut Bencher) {
+    let entries = make_entries();
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
     let reed_solomon_cache = ReedSolomonCache::default();
     let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
@@ -151,9 +155,7 @@ fn bench_shredder_coding(bencher: &mut Bencher) {
 
 #[bench]
 fn bench_shredder_decoding(bencher: &mut Bencher) {
-    let txs_per_entry = 128;
-    let num_entries = max_entries_per_n_shred(&make_test_entry(txs_per_entry), 200, Some(1000));
-    let entries = make_large_unchained_entries(txs_per_entry, num_entries);
+    let entries = make_entries();
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
     let reed_solomon_cache = ReedSolomonCache::default();
     let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
@@ -170,7 +172,7 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
     );
 
     bencher.iter(|| {
-        let res = Shredder::try_recovery(coding_shreds.clone(), &reed_solomon_cache).unwrap();
-        black_box(res);
+        let result = Shredder::try_recovery(coding_shreds.clone(), &reed_solomon_cache).unwrap();
+        black_box(result);
     })
 }
