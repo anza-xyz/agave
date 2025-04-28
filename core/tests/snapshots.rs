@@ -737,6 +737,7 @@ fn test_snapshots_with_background_services(
         pending_snapshot_packages.clone(),
         None,
         exit.clone(),
+        Arc::new(AtomicBool::new(false)),
         cluster_info.clone(),
         snapshot_controller.clone(),
         false,

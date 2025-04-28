@@ -976,6 +976,7 @@ mod tests {
                 start_time: SystemTime::now(),
                 start_progress,
                 validator_exit,
+                validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: Arc::new(RwLock::new(vec![vote_keypair])),
                 tower_storage: Arc::new(NullTowerStorage {}),
                 post_init: Arc::new(RwLock::new(Some(AdminRpcRequestMetadataPostInit {
@@ -1408,6 +1409,7 @@ mod tests {
                 start_time: SystemTime::now(),
                 start_progress: start_progress.clone(),
                 validator_exit: validator_config.validator_exit.clone(),
+                validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: authorized_voter_keypairs.clone(),
                 tower_storage: Arc::new(NullTowerStorage {}),
                 post_init: post_init.clone(),

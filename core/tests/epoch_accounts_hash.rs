@@ -187,6 +187,7 @@ impl BackgroundServices {
             pending_snapshot_packages.clone(),
             None,
             exit.clone(),
+            Arc::new(AtomicBool::new(false)),
             cluster_info.clone(),
             snapshot_controller.clone(),
             false,
