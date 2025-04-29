@@ -62,8 +62,6 @@ impl SnapshotPackagerService {
                                 teardown_state,
                                 snapshot_controller.snapshot_config(),
                             ));
-                            error!("brooks DEBUG: sleeping for 3 seconds now...");
-                            thread::sleep(Duration::from_secs(3));
                             info!("Teardown completed in {dur:?}.");
                         }
                         break;
@@ -167,6 +165,7 @@ impl SnapshotPackagerService {
 
     // brooks TODO: doc
     fn teardown(state: &TeardownState, snapshot_config: &SnapshotConfig) {
+        error!("brooks DEBUG: SPS teardown()");
         for storage in &state.snapshot_storages {
             let result = storage.flush();
             if let Err(err) = result {
