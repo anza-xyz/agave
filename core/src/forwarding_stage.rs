@@ -531,6 +531,12 @@ impl ForwardingClient for ConnectionCacheClient {
     }
 }
 
+impl NotifyKeyUpdate for ConnectionCacheClient {
+    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        self.connection_cache.update_key(identity)
+    }
+}
+
 #[async_trait]
 impl LeaderUpdater for ForwardAddressGetter {
     fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {

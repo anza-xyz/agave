@@ -111,6 +111,7 @@ pub struct Tpu {
 }
 
 impl Tpu {
+    #[deprecated(since = "2.3.0", note = "Use new_with_client instead.")]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,

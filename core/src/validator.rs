@@ -26,7 +26,7 @@ use {
         system_monitor_service::{
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
-        tpu::{Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
+        tpu::{ForwardingClientOption, Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     anyhow::{anyhow, Context, Result},
@@ -1070,31 +1070,42 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
-        // ConnectionCache might be used for JsonRpc and for Forwarding. Since
-        // the latter is not migrated yet to the tpu-client-next, create
-        // ConnectionCache regardless of config.use_tpu_client_next for now.
-        let connection_cache = if use_quic {
-            let connection_cache = ConnectionCache::new_with_client_options(
-                "connection_cache_tpu_quic",
-                tpu_connection_pool_size,
-                Some(node.sockets.tpu_transaction_forwarding_client),
-                Some((
-                    &identity_keypair,
-                    node.info
-                        .tpu(Protocol::UDP)
-                        .ok_or_else(|| {
-                            ValidatorError::Other(String::from("Invalid UDP address for TPU"))
-                        })?
-                        .ip(),
-                )),
-                Some((&staked_nodes, &identity_keypair.pubkey())),
-            );
-            Arc::new(connection_cache)
+        let mut tpu_transactions_forwards_client =
+            Some(node.sockets.tpu_transactions_forwards_client);
+        let connection_cache = if !config.use_tpu_client_next {
+            // ConnectionCache might be used for JsonRpc and for Forwarding. Since
+            // the latter is not migrated yet to the tpu-client-next, create
+            // ConnectionCache regardless of config.use_tpu_client_next for now.
+            let connection_cache = if use_quic {
+                let connection_cache = ConnectionCache::new_with_client_options(
+                    "connection_cache_tpu_quic",
+                    tpu_connection_pool_size,
+                    Some(
+                        tpu_transactions_forwards_client
+                            .take()
+                            .expect("Socket should exist."),
+                    ),
+                    Some((
+                        &identity_keypair,
+                        node.info
+                            .tpu(Protocol::UDP)
+                            .ok_or_else(|| {
+                                ValidatorError::Other(String::from("Invalid UDP address for TPU"))
+                            })?
+                            .ip(),
+                    )),
+                    Some((&staked_nodes, &identity_keypair.pubkey())),
+                );
+                Arc::new(connection_cache)
+            } else {
+                Arc::new(ConnectionCache::with_udp(
+                    "connection_cache_tpu_udp",
+                    tpu_connection_pool_size,
+                ))
+            };
+            Some(connection_cache)
         } else {
-            Arc::new(ConnectionCache::with_udp(
-                "connection_cache_tpu_udp",
-                tpu_connection_pool_size,
-            ))
+            None
         };
 
         let vote_connection_cache = if vote_use_quic {
@@ -1172,6 +1183,9 @@ impl Validator {
                     runtime_handle.clone(),
                 )
             } else {
+                let Some(connection_cache) = &connection_cache else {
+                    panic!("ConnectionCache should exist by construction.");
+                };
                 ClientOption::ConnectionCache(connection_cache.clone())
             };
             let rpc_svc_config = JsonRpcServiceConfig {
@@ -1479,9 +1493,12 @@ impl Validator {
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
 
         // If RPC is supported and ConnectionCache is used, pass ConnectionCache for being warmup inside Tvu.
-        let connection_cache_for_warmup = (json_rpc_service.is_some()
-            && !config.use_tpu_client_next)
-            .then_some(&connection_cache);
+        let connection_cache_for_warmup =
+            if json_rpc_service.is_some() && connection_cache.is_some() {
+                connection_cache.as_ref()
+            } else {
+                None
+            };
 
         let tvu = Tvu::new(
             vote_account,
@@ -1568,7 +1585,22 @@ impl Validator {
             return Err(ValidatorError::WenRestartFinished.into());
         }
 
-        let (tpu, mut key_notifies) = Tpu::new(
+        let forwarding_tpu_client = if let Some(connection_cache) = connection_cache {
+            ForwardingClientOption::ConnectionCache(connection_cache.clone())
+        } else {
+            let runtime_handle = tpu_client_next_runtime
+                .as_ref()
+                .map(TokioRuntime::handle)
+                .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+            ForwardingClientOption::TpuClientNext((
+                Arc::as_ref(&identity_keypair),
+                tpu_transactions_forwards_client
+                    .take()
+                    .expect("Socket should exist."),
+                runtime_handle.clone(),
+            ))
+        };
+        let (tpu, mut key_notifies) = Tpu::new_with_client(
             &cluster_info,
             &poh_recorder,
             transaction_recorder,
@@ -1601,7 +1633,7 @@ impl Validator {
             bank_notification_sender.map(|sender| sender.sender),
             config.tpu_coalesce,
             duplicate_confirmed_slot_sender,
-            &connection_cache,
+            forwarding_tpu_client,
             turbine_quic_endpoint_sender,
             &identity_keypair,
             config.runtime_config.log_messages_bytes_limit,
