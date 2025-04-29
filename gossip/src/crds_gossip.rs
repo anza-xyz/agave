@@ -319,8 +319,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     now: u64,
     pubkey: &Pubkey, // This node.
     // By default, should only push to or pull from gossip nodes with the same
-    // shred-version. Except for spy nodes (shred_version == 0u16) which can
-    // pull from any node.
+    // shred-version.
     verify_shred_version: impl Fn(/*shred_version:*/ u16) -> bool,
     crds: &RwLock<Crds>,
     gossip_validators: Option<&HashSet<Pubkey>>,

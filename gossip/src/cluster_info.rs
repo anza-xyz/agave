@@ -2910,8 +2910,7 @@ fn check_pull_request_shred_version(self_shred_version: u16, caller: &CrdsValue)
         CrdsData::LegacyContactInfo(node) => node.shred_version(),
         _ => return false,
     };
-    // Allow spy nodes with shred-verion == 0 to pull from other nodes.
-    shred_version == 0u16 || shred_version == self_shred_version
+    shred_version == self_shred_version
 }
 
 // Discards CrdsValues in PushMessages and PullResponses from nodes with
