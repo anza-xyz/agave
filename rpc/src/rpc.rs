@@ -670,29 +670,28 @@ impl JsonRpcRequestProcessor {
     }
 
     fn filter_map_rewards<'a, F>(
-        rewards: &'a Option<Rewards>,
+        rewards: Option<Rewards>,
         slot: Slot,
         addresses: &'a [String],
         reward_type_filter: &'a F,
-    ) -> HashMap<String, (Reward, Slot)>
+    ) -> impl Iterator<Item = (String, (Reward, Slot))> + use<'a, F>
     where
         F: Fn(RewardType) -> bool,
     {
         Self::filter_rewards(rewards, reward_type_filter)
             .filter(|reward| addresses.contains(&reward.pubkey))
-            .map(|reward| (reward.pubkey.clone(), (reward.clone(), slot)))
-            .collect()
+            .map(move |reward| (reward.pubkey.clone(), (reward, slot)))
     }
 
-    fn filter_rewards<'a, F>(
-        rewards: &'a Option<Rewards>,
-        reward_type_filter: &'a F,
-    ) -> impl Iterator<Item = &'a Reward>
+    fn filter_rewards<F>(
+        rewards: Option<Rewards>,
+        reward_type_filter: &F,
+    ) -> impl Iterator<Item = Reward> + use<'_, F>
     where
         F: Fn(RewardType) -> bool,
     {
         rewards
-            .iter()
+            .into_iter()
             .flatten()
             .filter(move |reward| reward.reward_type.is_some_and(reward_type_filter))
     }
@@ -781,7 +780,7 @@ impl JsonRpcRequestProcessor {
             let addresses: Vec<String> =
                 addresses.iter().map(|pubkey| pubkey.to_string()).collect();
             Self::filter_map_rewards(
-                &epoch_boundary_block.rewards,
+                epoch_boundary_block.rewards,
                 first_confirmed_block_in_epoch,
                 &addresses,
                 &|reward_type| -> bool {
@@ -789,6 +788,7 @@ impl JsonRpcRequestProcessor {
                         || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
                 },
             )
+            .collect()
         };
 
         // Append stake account rewards from partitions if partitions epoch
@@ -862,7 +862,7 @@ impl JsonRpcRequestProcessor {
                 };
 
                 let index_reward_map = Self::filter_map_rewards(
-                    &block.rewards,
+                    block.rewards,
                     slot,
                     addresses,
                     &|reward_type| -> bool { reward_type == RewardType::Staking },
