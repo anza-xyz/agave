@@ -612,8 +612,6 @@ pub fn clean_orphaned_account_snapshot_dirs(
 }
 
 /// Purges incomplete bank snapshots
-// brooks TODO: need to use/call this function in SPS now? But also make sure to *not* purge the
-// latest bank snapshot, because we may want to mark it as complete during graceful exit.
 pub fn purge_incomplete_bank_snapshots(bank_snapshots_dir: impl AsRef<Path>) {
     let Ok(read_dir_iter) = std::fs::read_dir(&bank_snapshots_dir) else {
         // If we cannot read the bank snapshots dir, then there's nothing to do
@@ -707,7 +705,7 @@ pub fn read_full_snapshot_slot_file(bank_snapshot_dir: impl AsRef<Path>) -> IoRe
     Ok(slot)
 }
 
-// brooks TODO: doc
+/// Writes the 'snapshot storages have been flushed' file to the bank snapshot dir
 pub fn write_storages_flushed_file(bank_snapshot_dir: impl AsRef<Path>) -> IoResult<()> {
     let flushed_storages_path = bank_snapshot_dir
         .as_ref()
@@ -721,7 +719,7 @@ pub fn write_storages_flushed_file(bank_snapshot_dir: impl AsRef<Path>) -> IoRes
     Ok(())
 }
 
-// brooks TODO: doc
+/// Were the snapshot storages flushed in this bank snapshot?
 fn are_bank_snapshot_storages_flushed(bank_snapshot_dir: impl AsRef<Path>) -> bool {
     let flushed_storages = bank_snapshot_dir
         .as_ref()
@@ -1242,9 +1240,6 @@ pub fn get_bank_snapshots(bank_snapshots_dir: impl AsRef<Path>) -> Vec<BankSnaps
                     Ok(snapshot_info) => bank_snapshots.push(snapshot_info),
                     // Other threads may be modifying bank snapshots in parallel; only return
                     // snapshots that are complete as deemed by BankSnapshotInfo::new_from_dir()
-                    // brooks TODO: since we're not always writing the COMPLETE file anymore, need
-                    // to change this logic so we still purge old bank snapshots correctly.
-                    // Otherwise, we never remove old bank snapshots!
                     Err(err) => debug!("Unable to read bank snapshot for slot {slot}: {err}"),
                 },
             ),
