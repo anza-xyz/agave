@@ -456,7 +456,7 @@ macro_rules! impl_merkle_shred {
         }
 
         // Returns the offsets into the payload which are erasure coded.
-        fn erausre_shard_offsets(&self) -> Result<Range<usize>, Error> {
+        fn erasure_shard_offsets(&self) -> Result<Range<usize>, Error> {
             if self.payload.len() != Self::SIZE_OF_PAYLOAD {
                 return Err(Error::InvalidPayloadSize(self.payload.len()));
             }
@@ -475,13 +475,13 @@ macro_rules! impl_merkle_shred {
         // Returns the erasure coded slice as an immutable reference.
         fn erasure_shard(&self) -> Result<&[u8], Error> {
             self.payload
-                .get(self.erausre_shard_offsets()?)
+                .get(self.erasure_shard_offsets()?)
                 .ok_or(Error::InvalidPayloadSize(self.payload.len()))
         }
 
         // Returns the erasure coded slice as a mutable reference.
         fn erasure_shard_mut(&mut self) -> Result<&mut [u8], Error> {
-            let offsets = self.erausre_shard_offsets()?;
+            let offsets = self.erasure_shard_offsets()?;
             let payload_size = self.payload.len();
             self.payload
                 .get_mut(offsets)
