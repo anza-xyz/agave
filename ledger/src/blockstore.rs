@@ -1,6 +1,7 @@
 //! The `blockstore` module provides functions for parallel verification of the
 //! Proof of History ledger as well as iterative read, append write, and random
 //! access read to a persistent file-based ledger.
+
 use {
     crate::{
         ancestor_iterator::AncestorIterator,
@@ -6067,12 +6068,21 @@ pub mod tests {
 
         // For slots 1..num_slots/2, fill in the holes in one batch insertion,
         // so we should only get one signal
-        let _missing_shreds2 = missing_shreds
+        let missing_shreds2 = missing_shreds
             .drain((num_slots / 2) as usize..)
             .collect_vec();
         blockstore
             .insert_shreds(missing_shreds, None, false)
             .unwrap();
+        assert!(recvr.recv_timeout(timer).is_ok());
+        assert!(recvr.try_recv().is_err());
+
+        // Fill in the holes for each of the remaining slots,
+        // we should get a single update
+        blockstore
+            .insert_shreds(missing_shreds2, None, false)
+            .unwrap();
+
         assert!(recvr.recv_timeout(timer).is_ok());
         assert!(recvr.try_recv().is_err());
     }
@@ -6770,10 +6780,10 @@ pub mod tests {
             );
 
             let meta = blockstore.meta(i).unwrap().unwrap();
-            assert_eq!(meta.received, 32);
-            assert_eq!(meta.last_index, Some(31));
+            assert_eq!(meta.received, DATA_SHREDS_PER_FEC_BLOCK as u64);
+            assert_eq!(meta.last_index, Some(DATA_SHREDS_PER_FEC_BLOCK as u64 - 1));
             assert_eq!(meta.parent_slot, Some(i.saturating_sub(1)));
-            assert_eq!(meta.consumed, 32);
+            assert_eq!(meta.consumed, DATA_SHREDS_PER_FEC_BLOCK as u64);
         }
     }
 
@@ -7122,8 +7132,7 @@ pub mod tests {
                 &keypair,
                 &entries,
                 true,
-                // chained_merkle_root
-                Some(Hash::new_from_array(rand::thread_rng().gen())),
+                None, //chained_merkle_root
                 0,
                 0,
                 true,
@@ -7145,13 +7154,12 @@ pub mod tests {
         // make a "blank" FEC set that would normally be used to terminate the block
         let terminator = shredder
             .entries_to_shreds(
-                &Keypair::new(),
+                &keypair,
                 &[],
                 true,
-                // chained_merkle_root
-                Some(Hash::new_from_array(rand::thread_rng().gen())),
-                6, // next_shred_index,
-                6, // next_code_index
+                None, //chained_merkle_root
+                6,    // next_shred_index,
+                6,    // next_code_index
                 true,
                 &rsc,
                 &mut ProcessShredsStats::default(),
@@ -7209,8 +7217,7 @@ pub mod tests {
                 &Keypair::new(),
                 &entries,
                 true,
-                // chained_merkle_root
-                Some(Hash::new_from_array(rand::thread_rng().gen())),
+                None,     //chained_merkle_root
                 last_idx, // next_shred_index,
                 last_idx, // next_code_index
                 true,
