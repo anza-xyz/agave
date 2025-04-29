@@ -10697,33 +10697,39 @@ pub mod tests {
         solana_logger::setup();
         let slot = 1;
         let num_txs = 20;
+        // primary slot content
         let entries = [make_large_tx_entry(num_txs)];
+        // "conflicting" slot content
+        let entries2 = [make_large_tx_entry(num_txs)];
 
         let version = version_from_hash(&entries[0].hash);
-
         let shredder = Shredder::new(slot, 0, 0, version).unwrap();
         let reed_solomon_cache = ReedSolomonCache::default();
+        let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+        let kp = Keypair::new();
+        // produce normal shreds
         let (data1, coding1) = shredder.entries_to_shreds(
-            &Keypair::new(),
+            &kp,
             &entries,
-            true, // is_last_in_slot
-            // chained_merkle_root
-            Some(Hash::new_from_array(rand::thread_rng().gen())),
+            true, // complete slot
+            merkle_root,
             0,    // next_shred_index
             0,    // next_code_index
-            true, // merkle_variant
+            true, // make merkle shreds
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
+        // produce shreds with conflicting FEC set index based off different data.
+        // it should not matter what data we use here though. Using the same merkle
+        // root as above as if we are building off the same previous block.
         let (_data2, coding2) = shredder.entries_to_shreds(
-            &Keypair::new(),
-            &entries,
-            true, // is_last_in_slot
-            // chained_merkle_root
-            Some(Hash::new_from_array(rand::thread_rng().gen())),
+            &kp,
+            &entries2,
+            true, // complete slot
+            merkle_root,
             0,    // next_shred_index
             1,    // next_code_index (overlaps with FEC set in data1 + coding1)
-            true, // merkle_variant
+            true, // make merkle shreds
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -10740,9 +10746,11 @@ pub mod tests {
         for shred in &coding2 {
             info!("coding2 {:?}", shred.id());
         }
+        // insert all but 2 data shreds from first set (so it is not yet recoverable)
         blockstore
             .insert_shreds(data1[..data1.len() - 2].to_vec(), None, false)
             .unwrap();
+        // insert two coding shreds from conflicting FEC sets
         blockstore
             .insert_shreds(vec![coding1[0].clone(), coding2[1].clone()], None, false)
             .unwrap();
