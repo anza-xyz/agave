@@ -1,0 +1,35 @@
+[package]
+name = "solana-shred-verify"
+description = "Solana shred Merkle trees and signature verification"
+documentation = "https://docs.rs/solana-shred-verify"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[features]
+agave-unstable-api = ["solana-shred-wire-format/agave-unstable-api"]
+dev-context-only-utils = []
+
+[dependencies]
+solana-hash = { workspace = true, features = ["copy", "decode"] }
+solana-keypair = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
+solana-shred-wire-format = { workspace = true }
+solana-signature = { workspace = true, features = ["verify"] }
+solana-signer = { workspace = true }
+static_assertions = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+assert_matches = { workspace = true }
+rand = { workspace = true }
+# The shared tree file's tests use `Hash::new_unique`, which solana-hash gates on `atomic`.
+solana-hash = { workspace = true, features = ["atomic"] }
+
+[lints]
+workspace = true

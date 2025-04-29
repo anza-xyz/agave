@@ -1,0 +1,66 @@
+[package]
+name = "solana-shred"
+description = "Solana shred wire parser and serializer"
+documentation = "https://docs.rs/solana-shred"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[features]
+agave-unstable-api = [
+    "solana-fec-set-recovery/agave-unstable-api",
+    "solana-shred-verify/agave-unstable-api",
+    "solana-shred-wire-format/agave-unstable-api",
+    "solana-shredder/agave-unstable-api",
+]
+dev-context-only-utils = [
+    "solana-fec-set-recovery/dev-context-only-utils",
+    "solana-shred-verify/dev-context-only-utils",
+    "solana-shred-wire-format/dev-context-only-utils",
+    "solana-shredder/dev-context-only-utils",
+]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+
+[dependencies]
+bytes = { workspace = true }
+solana-clock = { workspace = true }
+solana-fec-set-recovery = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-hash = { workspace = true, features = ["copy", "decode", "wincode"] }
+solana-keypair = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-shred-verify = { workspace = true }
+solana-shred-wire-format = { workspace = true }
+solana-shredder = { workspace = true }
+solana-signature = { workspace = true, features = ["verify", "wincode"] }
+solana-signer = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+assert_matches = { workspace = true }
+criterion = { workspace = true }
+rand = { workspace = true }
+solana-ledger = { workspace = true }
+solana-shred = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
+test-case = { workspace = true }
+wincode = { workspace = true }
+
+[[bench]]
+name = "view"
+harness = false
+
+[[bench]]
+name = "shredder"
+harness = false
+
+[lints]
+workspace = true

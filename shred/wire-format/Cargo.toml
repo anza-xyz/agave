@@ -1,0 +1,28 @@
+[package]
+name = "solana-shred-wire-format"
+description = "Solana shred wire format: layout, headers and section boundaries"
+documentation = "https://docs.rs/solana-shred-wire-format"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[features]
+agave-unstable-api = []
+dev-context-only-utils = []
+
+[dependencies]
+bytes = { workspace = true }
+solana-clock = { workspace = true }
+solana-hash = { workspace = true, features = ["copy", "decode", "wincode"] }
+solana-packet = { workspace = true }
+solana-signature = { workspace = true, features = ["wincode"] }
+static_assertions = { workspace = true }
+thiserror = { workspace = true }
+wincode = { workspace = true }
+
+[lints]
+workspace = true

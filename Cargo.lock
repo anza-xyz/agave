@@ -8237,6 +8237,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-fec-set-recovery"
+version = "4.4.0-alpha.0"
+dependencies = [
+ "bytes",
+ "reed-solomon-erasure",
+ "solana-hash 4.6.0",
+ "solana-shred-verify",
+ "solana-shred-wire-format",
+ "solana-shredder",
+ "solana-signature",
+ "thiserror 2.0.20",
+ "wincode",
+]
+
+[[package]]
 name = "solana-fee"
 version = "4.4.0-alpha.0"
 dependencies = [
@@ -10347,6 +10362,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-shred"
+version = "4.4.0-alpha.0"
+dependencies = [
+ "assert_matches",
+ "bytes",
+ "criterion",
+ "rand 0.9.4",
+ "solana-clock",
+ "solana-fec-set-recovery",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-hash 4.6.0",
+ "solana-keypair",
+ "solana-ledger",
+ "solana-pubkey 4.3.0",
+ "solana-shred",
+ "solana-shred-verify",
+ "solana-shred-wire-format",
+ "solana-shredder",
+ "solana-signature",
+ "solana-signer",
+ "test-case",
+ "thiserror 2.0.20",
+ "wincode",
+]
+
+[[package]]
+name = "solana-shred-verify"
+version = "4.4.0-alpha.0"
+dependencies = [
+ "assert_matches",
+ "rand 0.9.4",
+ "solana-hash 4.6.0",
+ "solana-keypair",
+ "solana-pubkey 4.3.0",
+ "solana-sha256-hasher",
+ "solana-shred-wire-format",
+ "solana-signature",
+ "solana-signer",
+ "static_assertions",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "solana-shred-version"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10355,6 +10414,35 @@ dependencies = [
  "solana-hard-forks",
  "solana-hash 4.6.0",
  "solana-sha256-hasher",
+]
+
+[[package]]
+name = "solana-shred-wire-format"
+version = "4.4.0-alpha.0"
+dependencies = [
+ "bytes",
+ "solana-clock",
+ "solana-hash 4.6.0",
+ "solana-packet 4.3.0",
+ "solana-signature",
+ "static_assertions",
+ "thiserror 2.0.20",
+ "wincode",
+]
+
+[[package]]
+name = "solana-shredder"
+version = "4.4.0-alpha.0"
+dependencies = [
+ "bytes",
+ "reed-solomon-erasure",
+ "solana-clock",
+ "solana-hash 4.6.0",
+ "solana-keypair",
+ "solana-shred-verify",
+ "solana-shred-wire-format",
+ "thiserror 2.0.20",
+ "wincode",
 ]
 
 [[package]]
