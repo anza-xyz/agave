@@ -53,8 +53,8 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         validator_exit: Arc::new(RwLock::new(Exit::default())),
         validator_exit_backpressure: config
             .validator_exit_backpressure
-            .iter()
-            .map(|(name, _)| (name.clone(), Arc::new(AtomicBool::new(false))))
+            .keys()
+            .map(|name| (name.clone(), Arc::new(AtomicBool::new(false))))
             .collect(),
         poh_hashes_per_batch: config.poh_hashes_per_batch,
         process_ledger_before_services: config.process_ledger_before_services,

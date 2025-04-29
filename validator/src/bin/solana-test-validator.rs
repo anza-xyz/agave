@@ -406,7 +406,7 @@ fn main() {
             start_progress: genesis.start_progress.clone(),
             start_time: std::time::SystemTime::now(),
             validator_exit: genesis.validator_exit.clone(),
-            validator_exit_backpressure: HashMap::default(), // brooks TODO: check this
+            validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs: genesis.authorized_voter_keypairs.clone(),
             staked_nodes_overrides: genesis.staked_nodes_overrides.clone(),
             post_init: admin_service_post_init,
