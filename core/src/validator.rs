@@ -2662,7 +2662,7 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
     // Staked nodes entries will not expire until an epoch after. So it
     // is necessary here to filter for recent entries to establish liveness.
     let peers: HashMap<_, _> = cluster_info
-        .tvu_peers(|q| q.clone())
+        .tvu_peers(ContactInfo::clone)
         .into_iter()
         .filter(|node| {
             let age = now.saturating_sub(node.wallclock());

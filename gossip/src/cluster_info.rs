@@ -472,7 +472,7 @@ impl ClusterInfo {
                     .rpc()
                     .filter(|addr| self.socket_addr_space.check(addr))?;
                 let node_version = self.get_node_version(node.pubkey());
-                if node.shred_version() != 0 && node.shred_version() != my_shred_version {
+                if node.shred_version() != my_shred_version {
                     return None;
                 }
                 let rpc_addr = node_rpc.ip();
@@ -527,7 +527,7 @@ impl ClusterInfo {
                 }
 
                 let node_version = self.get_node_version(node.pubkey());
-                if node.shred_version() != 0 && node.shred_version() != my_shred_version {
+                if node.shred_version() != my_shred_version {
                     different_shred_nodes = different_shred_nodes.saturating_add(1);
                     None
                 } else {
@@ -1021,13 +1021,25 @@ impl ClusterInfo {
     }
 
     /// all validators that have a valid rpc port regardless of `shred_version`.
+    #[deprecated(
+        since = "3.0.0",
+        note = "use `rpc_peers` instead to ensure shred version is the same"
+    )]
     pub fn all_rpc_peers(&self) -> Vec<ContactInfo> {
+        self.rpc_peers()
+    }
+
+    /// all validators that have a valid rpc port and are on the same `shred_version`.
+    pub fn rpc_peers(&self) -> Vec<ContactInfo> {
         let self_pubkey = self.id();
+        let self_shred_version = self.my_shred_version();
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_nodes_contact_info()
             .filter(|node| {
-                node.pubkey() != &self_pubkey && self.check_socket_addr_space(&node.rpc())
+                node.pubkey() != &self_pubkey
+                    && self.check_socket_addr_space(&node.rpc())
+                    && node.shred_version() == self_shred_version
             })
             .cloned()
             .collect()
@@ -1035,20 +1047,29 @@ impl ClusterInfo {
 
     // All nodes in gossip (including spy nodes) and the last time we heard about them
     pub fn all_peers(&self) -> Vec<(ContactInfo, u64)> {
+        let self_shred_version = self.my_shred_version();
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_nodes()
-            .map(|x| (x.value.contact_info().unwrap().clone(), x.local_timestamp))
+            .filter_map(|node| {
+                let contact_info = node.value.contact_info()?;
+                (contact_info.shred_version() == self_shred_version)
+                    .then(|| (contact_info.clone(), node.local_timestamp))
+            })
             .collect()
     }
 
     pub fn gossip_peers(&self) -> Vec<ContactInfo> {
         let me = self.id();
+        let self_shred_version = self.my_shred_version();
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_nodes_contact_info()
-            // shred_version not considered for gossip peers (ie, spy nodes do not set shred_version)
-            .filter(|node| node.pubkey() != &me && self.check_socket_addr_space(&node.gossip()))
+            .filter(|node| {
+                node.pubkey() != &me
+                    && self.check_socket_addr_space(&node.gossip())
+                    && node.shred_version() == self_shred_version
+            })
             .cloned()
             .collect()
     }
