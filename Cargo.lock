@@ -10807,6 +10807,7 @@ dependencies = [
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
+ "solana-net-utils",
  "solana-pubkey",
  "solana-quic-definitions",
  "solana-rpc-client",

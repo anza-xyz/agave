@@ -323,9 +323,11 @@ mod tests {
             workers_cache::{spawn_worker, WorkersCache, WorkersCacheError},
             SendTransactionStats,
         },
+        quinn::Endpoint,
+        solana_net_utils::{bind_in_range, sockets::localhost_port_range_for_tests},
         solana_tls_utils::QuicClientCertificate,
         std::{
-            net::{Ipv4Addr, SocketAddr},
+            net::{IpAddr, Ipv4Addr, SocketAddr},
             sync::Arc,
             time::Duration,
         },
@@ -336,13 +338,21 @@ mod tests {
     // Specify the pessimistic time to finish generation and result checks.
     const TEST_MAX_TIME: Duration = Duration::from_secs(5);
 
+    fn create_test_endpoint() -> Endpoint {
+        let port_range = localhost_port_range_for_tests();
+        let socket = bind_in_range(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range)
+            .unwrap()
+            .1;
+        let client_config = create_client_config(&QuicClientCertificate::new(None));
+        create_client_endpoint(BindTarget::Socket(socket), client_config).unwrap()
+    }
+
     #[tokio::test]
     async fn test_worker_stopped_after_failed_connect() {
-        let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
-        let client_config = create_client_config(&QuicClientCertificate::new(None));
-        let endpoint = create_client_endpoint(BindTarget::Address(address), client_config).unwrap();
+        let endpoint = create_test_endpoint();
 
-        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1234);
+        let port_range = localhost_port_range_for_tests();
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.0);
 
         let worker_channel_size = 1;
         let skip_check_transaction_age = true;
@@ -359,7 +369,7 @@ mod tests {
 
         timeout(TEST_MAX_TIME, worker_info.handle)
             .await
-            .expect(format!("Should stop in less than {TEST_MAX_TIME:?}.").as_str())
+            .unwrap_or_else(|_| panic!("Should stop in less than {TEST_MAX_TIME:?}."))
             .expect("Worker task should finish successfully.");
         assert_eq!(
             stats.read_and_reset(),
@@ -372,11 +382,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_worker_shutdown() {
-        let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
-        let client_config = create_client_config(&QuicClientCertificate::new(None));
-        let endpoint = create_client_endpoint(BindTarget::Address(address), client_config).unwrap();
+        let endpoint = create_test_endpoint();
 
-        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1234);
+        let port_range = localhost_port_range_for_tests();
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.0);
 
         let worker_channel_size = 1;
         let skip_check_transaction_age = true;
@@ -393,7 +402,7 @@ mod tests {
 
         timeout(TEST_MAX_TIME, worker_info.shutdown())
             .await
-            .expect(format!("Should stop in less than {TEST_MAX_TIME:?}.").as_str())
+            .unwrap_or_else(|_| panic!("Should stop in less than {TEST_MAX_TIME:?}."))
             .expect("Worker task should finish successfully.");
     }
 
@@ -402,14 +411,13 @@ mod tests {
     // `WorkersCache`.
     #[tokio::test]
     async fn test_worker_removed_after_exit() {
-        let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
-        let client_config = create_client_config(&QuicClientCertificate::new(None));
-        let endpoint = create_client_endpoint(BindTarget::Address(address), client_config).unwrap();
+        let endpoint = create_test_endpoint();
 
         let cancel = CancellationToken::new();
         let mut cache = WorkersCache::new(10, cancel.clone());
 
-        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1234);
+        let port_range = localhost_port_range_for_tests();
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.0);
         let worker_channel_size = 1;
         let skip_check_transaction_age = true;
         let max_reconnect_attempts = 0;
