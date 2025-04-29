@@ -170,7 +170,6 @@ dependencies = [
  "ctrlc",
  "dirs-next",
  "indicatif",
- "lazy_static",
  "nix",
  "reqwest 0.12.15",
  "scopeguard",
