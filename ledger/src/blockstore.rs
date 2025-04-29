@@ -10714,19 +10714,20 @@ pub mod tests {
             0, // next_code_index
             &reed_solomon_cache,
         );
+
         let coding2 = Shredder::generate_coding_shreds(
             &shreds,
             1, // next_code_index
             &reed_solomon_cache,
         );
         for shred in &shreds {
-            info!("shred {:?}", shred);
+            info!("shred {:?}", shred.id());
         }
         for shred in &coding1 {
-            info!("coding1 {:?}", shred);
+            info!("coding1 {:?}", shred.id());
         }
         for shred in &coding2 {
-            info!("coding2 {:?}", shred);
+            info!("coding2 {:?}", shred.id());
         }
         blockstore
             .insert_shreds(shreds[..shreds.len() - 2].to_vec(), None, false)

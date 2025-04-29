@@ -10,6 +10,7 @@ on:
       - master
       - v[0-9]+.[0-9]+
     paths:
+      - ".github/workflows/svm-exampls.yml"
       - "**.rs"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -43,10 +44,11 @@ jobs:
 
       - name: Run build
         run: |
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "$CARGO_HOME/bin" && \
           cd svm/examples
           cargo build --tests
 
       - name: Run tests
         run: |
           cd svm/examples
-          cargo test
+          cargo nextest run
