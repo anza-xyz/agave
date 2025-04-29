@@ -10347,6 +10347,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-shred"
+version = "4.4.0-alpha.0"
+
+[[package]]
 name = "solana-shred-version"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
