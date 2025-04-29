@@ -151,6 +151,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-fec-set-recovery"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "agave-shred-verify",
+ "agave-shred-wire-format",
+ "agave-shredder",
+ "bytes",
+ "reed-solomon-erasure",
+ "solana-hash",
+ "solana-signature",
+ "thiserror 2.0.20",
+ "wincode",
+]
+
+[[package]]
 name = "agave-fs"
 version = "4.5.0-alpha.0"
 dependencies = [
@@ -340,6 +355,79 @@ dependencies = [
  "solana-runtime-transaction",
  "solana-transaction",
  "solana-transaction-error",
+ "wincode",
+]
+
+[[package]]
+name = "agave-shred"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "agave-fec-set-recovery",
+ "agave-shred",
+ "agave-shred-verify",
+ "agave-shred-wire-format",
+ "agave-shredder",
+ "assert_matches",
+ "bytes",
+ "criterion",
+ "rand 0.9.4",
+ "solana-clock",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-hash",
+ "solana-keypair",
+ "solana-ledger",
+ "solana-pubkey 4.3.0",
+ "solana-signature",
+ "solana-signer",
+ "test-case",
+ "thiserror 2.0.20",
+ "wincode",
+]
+
+[[package]]
+name = "agave-shred-verify"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "agave-shred-wire-format",
+ "assert_matches",
+ "rand 0.9.4",
+ "solana-hash",
+ "solana-keypair",
+ "solana-pubkey 4.3.0",
+ "solana-sha256-hasher",
+ "solana-signature",
+ "solana-signer",
+ "static_assertions",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "agave-shred-wire-format"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "bytes",
+ "solana-clock",
+ "solana-hash",
+ "solana-packet",
+ "solana-signature",
+ "static_assertions",
+ "thiserror 2.0.20",
+ "wincode",
+]
+
+[[package]]
+name = "agave-shredder"
+version = "4.5.0-alpha.0"
+dependencies = [
+ "agave-shred-verify",
+ "agave-shred-wire-format",
+ "bytes",
+ "reed-solomon-erasure",
+ "solana-clock",
+ "solana-hash",
+ "solana-keypair",
+ "thiserror 2.0.20",
  "wincode",
 ]
 

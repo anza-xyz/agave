@@ -1,0 +1,33 @@
+[package]
+name = "agave-fec-set-recovery"
+description = "Reed-Solomon recovery of missing Solana shreds in an erasure batch"
+documentation = "https://docs.rs/agave-fec-set-recovery"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[features]
+agave-unstable-api = [
+    "agave-shred-verify/agave-unstable-api",
+    "agave-shred-wire-format/agave-unstable-api",
+    "agave-shredder/agave-unstable-api",
+]
+dev-context-only-utils = []
+
+[dependencies]
+agave-shred-verify = { workspace = true }
+agave-shred-wire-format = { workspace = true }
+agave-shredder = { workspace = true }
+bytes = { workspace = true }
+reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
+solana-hash = { workspace = true, features = ["copy"] }
+solana-signature = { workspace = true }
+thiserror = { workspace = true }
+wincode = { workspace = true }
+
+[lints]
+workspace = true
