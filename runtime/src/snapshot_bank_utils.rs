@@ -975,8 +975,11 @@ fn bank_to_full_snapshot_archive_with(
         snapshot_version,
         ..Default::default()
     };
-    let snapshot_archive_info =
-        snapshot_utils::serialize_and_archive_snapshot_package(snapshot_package, &snapshot_config)?;
+    let snapshot_archive_info = snapshot_utils::serialize_and_archive_snapshot_package(
+        snapshot_package,
+        &snapshot_config,
+        false, // flushing the storages is not needed because we do not intend to fastboot
+    )?;
 
     Ok(FullSnapshotArchiveInfo::new(snapshot_archive_info))
 }
@@ -1074,8 +1077,11 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_version,
         ..Default::default()
     };
-    let snapshot_archive_info =
-        snapshot_utils::serialize_and_archive_snapshot_package(snapshot_package, &snapshot_config)?;
+    let snapshot_archive_info = snapshot_utils::serialize_and_archive_snapshot_package(
+        snapshot_package,
+        &snapshot_config,
+        false, // flushing the storages is not needed because we do not intend to fastboot
+    )?;
 
     Ok(IncrementalSnapshotArchiveInfo::new(
         full_snapshot_slot,

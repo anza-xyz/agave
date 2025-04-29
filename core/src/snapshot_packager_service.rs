@@ -36,7 +36,7 @@ impl SnapshotPackagerService {
         pending_snapshot_packages: Arc<Mutex<PendingSnapshotPackages>>,
         starting_snapshot_hashes: Option<StartingSnapshotHashes>,
         exit: Arc<AtomicBool>,
-        exit_backpressure: Arc<AtomicBool>,
+        exit_backpressure: Option<Arc<AtomicBool>>,
         cluster_info: Arc<ClusterInfo>,
         snapshot_controller: Arc<SnapshotController>,
         enable_gossip_push: bool,
@@ -44,16 +44,16 @@ impl SnapshotPackagerService {
         let t_snapshot_packager = Builder::new()
             .name("solSnapshotPkgr".to_string())
             .spawn(move || {
-                exit_backpressure.store(true, Ordering::Relaxed);
+                if let Some(exit_backpressure) = &exit_backpressure {
+                    exit_backpressure.store(true, Ordering::Relaxed);
+                }
                 info!("{} has started", Self::NAME);
                 let snapshot_config = snapshot_controller.snapshot_config();
                 renice_this_thread(snapshot_config.packager_thread_niceness_adj).unwrap();
                 let mut snapshot_gossip_manager = enable_gossip_push
                     .then(|| SnapshotGossipManager::new(cluster_info, starting_snapshot_hashes));
 
-                // brooks TODO: doc
                 let mut teardown_state = None;
-
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         if let Some(teardown_state) = &teardown_state {
@@ -81,11 +81,15 @@ impl SnapshotPackagerService {
                     let snapshot_slot = snapshot_package.slot;
                     let snapshot_hash = snapshot_package.hash;
 
-                    // brooks NOTE: save storages to maybe flush later
-                    teardown_state = Some(TeardownState {
-                        snapshot_slot: snapshot_package.slot,
-                        snapshot_storages: snapshot_package.snapshot_storages.clone(),
-                    });
+                    if exit_backpressure.is_some() {
+                        // With exit backpressure, we will delay flushing snapshot storages
+                        // until we receive a graceful exit request.
+                        // Save the snapshot storages here, so we can flush later (as needed).
+                        teardown_state = Some(TeardownState {
+                            snapshot_slot: snapshot_package.slot,
+                            snapshot_storages: snapshot_package.snapshot_storages.clone(),
+                        });
+                    }
 
                     // Archiving the snapshot package is not allowed to fail.
                     // AccountsBackgroundService calls `clean_accounts()` with a value for
@@ -94,11 +98,13 @@ impl SnapshotPackagerService {
                         measure_us!(snapshot_utils::serialize_and_archive_snapshot_package(
                             snapshot_package,
                             snapshot_config,
+                            // Without exit backpressure, always flush the snapshot storages,
+                            // which is required for fastboot.
+                            exit_backpressure.is_none(),
                         ));
                     if let Err(err) = archive_result {
                         error!(
-                            "Stopping {}! Fatal error while archiving \
-                             snapshot package: {err}",
+                            "Stopping {}! Fatal error while archiving snapshot package: {err}",
                             Self::NAME,
                         );
                         exit.store(true, Ordering::Relaxed);
@@ -143,7 +149,9 @@ impl SnapshotPackagerService {
                     );
                 }
                 info!("{} has stopped", Self::NAME);
-                exit_backpressure.store(false, Ordering::Relaxed);
+                if let Some(exit_backpressure) = &exit_backpressure {
+                    exit_backpressure.store(false, Ordering::Relaxed);
+                }
             })
             .unwrap();
 
@@ -163,7 +171,7 @@ impl SnapshotPackagerService {
         pending_snapshot_packages.lock().unwrap().pop()
     }
 
-    // brooks TODO: doc
+    /// Performs final operations before gracefully shutting down
     fn teardown(state: &TeardownState, snapshot_config: &SnapshotConfig) {
         error!("brooks DEBUG: SPS teardown()");
         for storage in &state.snapshot_storages {
@@ -190,11 +198,11 @@ impl SnapshotPackagerService {
     }
 }
 
-// brooks TODO: doc
+/// The state required to run `teardown()`
 // Note, don't derive Debug, because we don't want to print out 432k+ `AccountStorageEntry`s...
 struct TeardownState {
-    // brooks TODO: doc
+    /// The slot of the latest snapshot
     snapshot_slot: Slot,
-    // brooks TODO: doc
+    /// The storages of the latest snapshot
     snapshot_storages: Vec<Arc<AccountStorageEntry>>,
 }

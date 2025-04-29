@@ -451,6 +451,9 @@ pub enum AddBankSnapshotError {
     #[error("failed to flush storage '{1}': {0}")]
     FlushStorage(#[source] AccountsFileError, PathBuf),
 
+    #[error("failed to mark snapshot storages as 'flushed': {0}")]
+    MarkStoragesFlushed(#[source] IoError),
+
     #[error("failed to hard link storages: {0}")]
     HardLinkStorages(#[source] HardLinkStoragesToSnapshotError),
 
@@ -789,6 +792,7 @@ pub fn remove_tmp_snapshot_archives(snapshot_archives_dir: impl AsRef<Path>) {
 pub fn serialize_and_archive_snapshot_package(
     snapshot_package: SnapshotPackage,
     snapshot_config: &SnapshotConfig,
+    should_flush_storages: bool,
 ) -> Result<SnapshotArchiveInfo> {
     let SnapshotPackage {
         snapshot_kind,
@@ -819,6 +823,7 @@ pub fn serialize_and_archive_snapshot_package(
         epoch_accounts_hash,
         bank_incremental_snapshot_persistence.as_ref(),
         write_version,
+        should_flush_storages,
     )?;
 
     // now write the full snapshot slot file after serializing so this bank snapshot is loadable
@@ -881,6 +886,7 @@ fn serialize_snapshot(
     epoch_accounts_hash: Option<EpochAccountsHash>,
     bank_incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
     write_version: StoredMetaWriteVersion,
+    should_flush_storages: bool,
 ) -> Result<BankSnapshotInfo> {
     let slot = bank_fields.slot;
 
@@ -905,16 +911,20 @@ fn serialize_snapshot(
             bank_snapshot_path.display(),
         );
 
-        // brooks XXX:
-        /*
-         * let (_, flush_storages_us) = measure_us!({
-         *     for storage in snapshot_storages {
-         *         storage.flush().map_err(|err| {
-         *             AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
-         *         })?;
-         *     }
-         * });
-         */
+        let flush_storages_us = if should_flush_storages {
+            let measure = Measure::start("");
+            for storage in snapshot_storages {
+                storage.flush().map_err(|err| {
+                    AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
+                })?;
+            }
+            let measure_us = measure.end_as_us();
+            write_storages_flushed_file(&bank_snapshot_dir)
+                .map_err(AddBankSnapshotError::MarkStoragesFlushed)?;
+            Some(measure_us)
+        } else {
+            None
+        };
 
         // We are constructing the snapshot directory to contain the full snapshot state information to allow
         // constructing a bank from this directory.  It acts like an archive to include the full state.
@@ -981,7 +991,7 @@ fn serialize_snapshot(
             ("slot", slot, i64),
             ("bank_size", bank_snapshot_consumed_size, i64),
             ("status_cache_size", status_cache_consumed_size, i64),
-            // brooks XXX: ("flush_storages_us", flush_storages_us, i64),
+            ("flush_storages_us", flush_storages_us, Option<i64>),
             ("hard_link_storages_us", hard_link_storages_us, i64),
             ("bank_serialize_us", bank_serialize.as_us(), i64),
             ("status_cache_serialize_us", status_cache_serialize_us, i64),
