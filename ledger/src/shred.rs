@@ -117,9 +117,9 @@ const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 // data shreds per each batch as below. The actual number of data shreds in
 // each erasure batch depends on the number of shreds obtained from serializing
 // a &[Entry].
-pub const DATA_SHREDS_PER_FEC_BLOCK: usize = 32;
-pub const CODING_SHREDS_PER_FEC_BLOCK: usize = 32;
-pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHREDS_PER_FEC_BLOCK;
+pub const DATA_SHRED_PER_FEC_SET: usize = 32;
+pub const CODING_SHREDS_PER_FEC_SET: usize = 32;
+pub const SHREDS_PER_FEC_SET: usize = DATA_SHRED_PER_FEC_SET + CODING_SHREDS_PER_FEC_SET;
 
 // Statically compute the typical data batch size assuming:
 // 1. 32:32 erasure coding batch
@@ -130,7 +130,7 @@ pub fn get_data_shred_bytes_per_batch_typical() -> &'static u64 {
     DATA_SHRED_BYTES_PER_BATCH_TYPICAL.get_or_init(|| {
         let capacity = ShredData::capacity(Some((PROOF_ENTRIES_FOR_32_32_BATCH, true, false)))
             .expect("Failed to get shred capacity");
-        (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
+        (DATA_SHRED_PER_FEC_SET * capacity) as u64
     })
 }
 

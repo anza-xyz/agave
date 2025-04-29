@@ -13,7 +13,7 @@ use {
                 Shred as ShredTrait, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait,
             },
             CodingShredHeader, DataShredHeader, Error, ProcessShredsStats, ShredCommonHeader,
-            ShredFlags, ShredVariant, DATA_SHREDS_PER_FEC_BLOCK, SHREDS_PER_FEC_BLOCK,
+            ShredFlags, ShredVariant, DATA_SHRED_PER_FEC_SET, SHREDS_PER_FEC_SET,
             SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_SIGNATURE,
         },
         shredder::{self, ReedSolomonCache},
@@ -1023,7 +1023,7 @@ pub(super) fn make_shreds_from_data(
     let resigned = chained && is_last_in_slot;
     let proof_size = PROOF_ENTRIES_FOR_32_32_BATCH;
     let data_buffer_per_shred_size = ShredData::capacity(proof_size, chained, resigned)?;
-    let data_buffer_total_size = DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size;
+    let data_buffer_total_size = DATA_SHRED_PER_FEC_SET * data_buffer_per_shred_size;
 
     // Common header for the data shreds.
     let mut common_header_data = ShredCommonHeader {
@@ -1067,7 +1067,7 @@ pub(super) fn make_shreds_from_data(
     // Pre-allocate shreds to avoid reallocations.
     let mut shreds = {
         let number_of_batches = data.len().div_ceil(data_buffer_total_size);
-        let total_num_shreds = SHREDS_PER_FEC_BLOCK * number_of_batches;
+        let total_num_shreds = SHREDS_PER_FEC_SET * number_of_batches;
         Vec::<Shred>::with_capacity(total_num_shreds)
     };
     stats.data_bytes += data.len();
@@ -1078,7 +1078,7 @@ pub(super) fn make_shreds_from_data(
         let (current_batch_data_chunk, rest) = data.split_at(data_buffer_total_size);
         debug_assert_eq!(
             current_batch_data_chunk.len(),
-            DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size
+            DATA_SHRED_PER_FEC_SET * data_buffer_per_shred_size
         );
         common_header_data.fec_set_index = common_header_data.index;
         common_header_code.fec_set_index = common_header_data.fec_set_index;
@@ -1093,7 +1093,7 @@ pub(super) fn make_shreds_from_data(
         shreds.extend(
             make_shreds_code(
                 &mut common_header_code,
-                DATA_SHREDS_PER_FEC_BLOCK,          // num_data_shreds
+                DATA_SHRED_PER_FEC_SET,             // num_data_shreds
                 is_last_in_slot && rest.is_empty(), // is_last_in_slot
             )
             .map(Shred::ShredCode),
@@ -1127,13 +1127,13 @@ pub(super) fn make_shreds_from_data(
             let chunks = data
                 .chunks(data_buffer_per_shred_size)
                 .chain(std::iter::repeat(&[][..])) // possible padding
-                .take(DATA_SHREDS_PER_FEC_BLOCK);
+                .take(DATA_SHRED_PER_FEC_SET);
             make_shreds_data(&mut common_header_data, data_header, chunks).map(Shred::ShredData)
         });
         shreds.extend(
             make_shreds_code(
                 &mut common_header_code,
-                DATA_SHREDS_PER_FEC_BLOCK,
+                DATA_SHRED_PER_FEC_SET,
                 is_last_in_slot,
             )
             .map(Shred::ShredCode),
