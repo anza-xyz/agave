@@ -1,4 +1,4 @@
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 use std::ffi::{CStr, CString};
 use {
     crate::{
@@ -936,7 +936,7 @@ pub(crate) fn remap_append_vec_file(
     next_append_vec_id: &AtomicAccountsFileId,
     num_collisions: &AtomicUsize,
 ) -> io::Result<(AccountsFileId, PathBuf)> {
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
     let append_vec_path_cstr = cstring_from_path(append_vec_path)?;
 
     let mut remapped_append_vec_path = append_vec_path.to_path_buf();
@@ -1283,7 +1283,7 @@ fn rename_no_replace(src: &CStr, dest: &CStr) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn cstring_from_path(path: &Path) -> io::Result<CString> {
     // It is better to allocate here than use the stack. Jemalloc is going to give us a chunk of a
     // preallocated small arena anyway. Instead if we used the stack since PATH_MAX=4096 it would
