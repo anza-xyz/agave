@@ -392,7 +392,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let (program_accounts_map, filter_executable_us) = measure_us!(self
                 .filter_executable_program_accounts(
-                    &mut account_loader,
+                    &account_loader,
                     tx,
                     PROGRAM_OWNERS,
                     programs_modified_by_batch.keys(),
@@ -688,7 +688,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// to their usage counters, for the transactions with a valid blockhash or nonce.
     fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
         &self,
-        account_loader: &mut AccountLoader<CB>,
+        account_loader: &AccountLoader<CB>,
         tx: &impl SVMMessage,
         program_owners: &[Pubkey],
         modified_programs: impl Iterator<Item = &'a Pubkey> + Clone,
@@ -1594,7 +1594,7 @@ mod tests {
             .write()
             .unwrap()
             .insert(key2, data2);
-        let mut account_loader = (&mock_bank).into();
+        let account_loader = (&mock_bank).into();
 
         let message = Message {
             account_keys: vec![key1, key2],
@@ -1619,7 +1619,7 @@ mod tests {
         let owners = vec![owner1, owner2];
 
         let result = batch_processor.filter_executable_program_accounts(
-            &mut account_loader,
+            &account_loader,
             &sanitized_transaction,
             &owners,
             vec![].into_iter(),
@@ -1679,7 +1679,7 @@ mod tests {
             account4_pubkey,
             AccountSharedData::new(40, 1, &program2_pubkey),
         );
-        let mut account_loader = (&bank).into();
+        let account_loader = (&bank).into();
 
         let tx1 = Transaction::new_with_compiled_instructions(
             &[&keypair1],
@@ -1703,7 +1703,7 @@ mod tests {
         let owners = &[program1_pubkey, program2_pubkey];
 
         let tx1_programs = batch_processor.filter_executable_program_accounts(
-            &mut account_loader,
+            &account_loader,
             &sanitized_tx1,
             owners,
             vec![].into_iter(),
@@ -1718,7 +1718,7 @@ mod tests {
         );
 
         let tx2_programs = batch_processor.filter_executable_program_accounts(
-            &mut account_loader,
+            &account_loader,
             &sanitized_tx2,
             owners,
             vec![].into_iter(),
