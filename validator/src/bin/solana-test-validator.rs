@@ -33,7 +33,7 @@ use {
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::*,
     std::{
-        collections::HashSet,
+        collections::{HashMap, HashSet},
         fs, io,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
@@ -406,6 +406,7 @@ fn main() {
             start_progress: genesis.start_progress.clone(),
             start_time: std::time::SystemTime::now(),
             validator_exit: genesis.validator_exit.clone(),
+            validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs: genesis.authorized_voter_keypairs.clone(),
             staked_nodes_overrides: genesis.staked_nodes_overrides.clone(),
             post_init: admin_service_post_init,
