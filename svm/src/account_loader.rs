@@ -156,6 +156,7 @@ pub struct FeesOnlyTransaction {
 // type, and itself implements `TransactionProcessingCallback`, behaving
 // exactly like the implementor of the trait, but also returning up-to-date
 // account states mid-batch.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     loaded_accounts: AHashMap<Pubkey, AccountSharedData>,
     callbacks: &'a CB,
@@ -164,6 +165,7 @@ pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
 
 impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     // create a new AccountLoader for the transaction batch
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new_with_loaded_accounts_capacity(
         account_overrides: Option<&'a AccountOverrides>,
         callbacks: &'a CB,

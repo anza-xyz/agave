@@ -1516,12 +1516,6 @@ impl Bank {
                             .load(Ordering::Relaxed),
                         Ordering::Relaxed,
                     );
-                    recompiled.ix_usage_counter.fetch_add(
-                        program_to_recompile
-                            .ix_usage_counter
-                            .load(Ordering::Relaxed),
-                        Ordering::Relaxed,
-                    );
                     let mut program_cache =
                         self.transaction_processor.program_cache.write().unwrap();
                     program_cache.assign_program(key, recompiled);

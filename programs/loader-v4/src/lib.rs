@@ -20,7 +20,7 @@ use {
     solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_transaction_context::{BorrowedAccount, InstructionContext},
-    solana_type_overrides::sync::{atomic::Ordering, Arc},
+    solana_type_overrides::sync::Arc,
     std::{cell::RefCell, rc::Rc},
 };
 
@@ -499,9 +499,6 @@ fn process_instruction_inner(
         get_or_create_executor_time.stop();
         invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
         drop(program);
-        loaded_program
-            .ix_usage_counter
-            .fetch_add(1, Ordering::Relaxed);
         match &loaded_program.program {
             ProgramCacheEntryType::FailedVerification(_)
             | ProgramCacheEntryType::Closed

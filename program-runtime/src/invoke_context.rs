@@ -34,7 +34,7 @@ use {
         IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
         MAX_ACCOUNTS_PER_TRANSACTION,
     },
-    solana_type_overrides::sync::{atomic::Ordering, Arc},
+    solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
         cell::RefCell,
@@ -593,7 +593,6 @@ impl<'a> InvokeContext<'a> {
             _ => None,
         }
         .ok_or(InstructionError::UnsupportedProgramId)?;
-        entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
 
         let program_id = *instruction_context.get_program_key(self.transaction_context)?;
         self.transaction_context

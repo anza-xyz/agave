@@ -177,10 +177,6 @@ pub fn deploy_program(
             old_entry.tx_usage_counter.load(Ordering::Relaxed),
             Ordering::Relaxed,
         );
-        executor.ix_usage_counter.store(
-            old_entry.ix_usage_counter.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
     }
     load_program_metrics.program_id = program_id.to_string();
     program_cache_for_tx_batch.store_modified_entry(*program_id, Arc::new(executor));
@@ -452,7 +448,6 @@ pub(crate) fn process_instruction_inner(
     get_or_create_executor_time.stop();
     invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
 
-    executor.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
     match &executor.program {
         ProgramCacheEntryType::FailedVerification(_)
         | ProgramCacheEntryType::Closed
@@ -4105,8 +4100,7 @@ mod tests {
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
-            tx_usage_counter: AtomicU64::new(100),
-            ix_usage_counter: AtomicU64::new(100),
+            tx_usage_counter: Arc::new(AtomicU64::new(100)),
             latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
@@ -4128,10 +4122,6 @@ mod tests {
             updated_program.tx_usage_counter.load(Ordering::Relaxed),
             100
         );
-        assert_eq!(
-            updated_program.ix_usage_counter.load(Ordering::Relaxed),
-            100
-        );
     }
 
     #[test]
@@ -4149,8 +4139,7 @@ mod tests {
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
-            tx_usage_counter: AtomicU64::new(100),
-            ix_usage_counter: AtomicU64::new(100),
+            tx_usage_counter: Arc::new(AtomicU64::new(100)),
             latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
@@ -4170,6 +4159,5 @@ mod tests {
 
         assert_eq!(program2.deployment_slot, 2);
         assert_eq!(program2.tx_usage_counter.load(Ordering::Relaxed), 0);
-        assert_eq!(program2.ix_usage_counter.load(Ordering::Relaxed), 0);
     }
 }
