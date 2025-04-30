@@ -36,47 +36,80 @@ use {
         UiRawMessage, UiTransaction, UiTransactionStatusMeta,
     },
     solana_version::Version,
-    std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::RwLock},
+    std::{
+        collections::{HashMap, VecDeque},
+        net::SocketAddr,
+        str::FromStr,
+        sync::RwLock,
+    },
 };
 
 pub const PUBKEY: &str = "7RoSF9fUmdphVCpabEoefH81WwrW7orsWonXWqTXkKV8";
 
 #[derive(Default)]
-pub struct Mocks(Vec<(RpcRequest, Value)>);
-
-impl Mocks {
-    pub fn new() -> Self {
-        Self(Vec::new())
-    }
-
-    pub fn from<const N: usize>(mocks: [(RpcRequest, Value); N]) -> Self {
-        Self(mocks.to_vec())
-    }
-
-    pub fn insert(&mut self, request: RpcRequest, response: Value) {
-        self.0.push((request, response));
-    }
-
-    pub fn remove(&mut self, request: &RpcRequest) -> Option<Value> {
-        self.0
-            .iter()
-            .position(|(r, _)| r == request)
-            .map(|index| self.0.remove(index).1)
-    }
-}
+pub struct Mocks(pub HashMap<RpcRequest, Value>);
 
 impl FromIterator<(RpcRequest, Value)> for Mocks {
     fn from_iter<T: IntoIterator<Item = (RpcRequest, Value)>>(iter: T) -> Self {
-        let mut mocks = Mocks::new();
+        let mut mocks = Mocks::default();
         for (request, response) in iter {
-            mocks.insert(request, response);
+            mocks.0.insert(request, response);
         }
         mocks
     }
 }
 
+impl From<Mocks> for MocksMap {
+    fn from(mocks: Mocks) -> Self {
+        let mut map = HashMap::new();
+        for (key, value) in mocks.0 {
+            map.insert(key, [value].into());
+        }
+        MocksMap(map)
+    }
+}
+
+#[derive(Default)]
+pub struct MocksMap(HashMap<RpcRequest, VecDeque<Value>>);
+
+impl FromIterator<(RpcRequest, Value)> for MocksMap {
+    fn from_iter<T: IntoIterator<Item = (RpcRequest, Value)>>(iter: T) -> Self {
+        let mut map = MocksMap::default();
+        for (request, value) in iter {
+            map.insert(request, value);
+        }
+        map
+    }
+}
+
+impl MocksMap {
+    pub fn insert(&mut self, request: RpcRequest, value: Value) {
+        let queue = self.0.get_mut(&request);
+        if let Some(queue) = queue {
+            queue.push_back(value);
+        } else {
+            self.0.insert(request, [value].into());
+        }
+    }
+
+    pub fn remove(&mut self, request: &RpcRequest) -> Option<Value> {
+        let queue = self.0.get_mut(request);
+        if let Some(queue) = queue {
+            match queue.len().cmp(&1) {
+                std::cmp::Ordering::Less => None,
+                std::cmp::Ordering::Equal => {
+                    self.0.remove(request).and_then(|r| r.into_iter().last())
+                }
+                std::cmp::Ordering::Greater => queue.pop_front(),
+            }
+        } else {
+            None
+        }
+    }
+}
+
 pub struct MockSender {
-    mocks: RwLock<Mocks>,
+    mocks: RwLock<MocksMap>,
     url: String,
 }
 
@@ -111,6 +144,13 @@ impl MockSender {
     }
 
     pub fn new_with_mocks<U: ToString>(url: U, mocks: Mocks) -> Self {
+        Self {
+            url: url.to_string(),
+            mocks: RwLock::new(MocksMap::from(mocks)),
+        }
+    }
+
+    pub fn new_with_mocks_map<U: ToString>(url: U, mocks: MocksMap) -> Self {
         Self {
             url: url.to_string(),
             mocks: RwLock::new(mocks),

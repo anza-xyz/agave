@@ -10,6 +10,7 @@
 //! in [`crate::nonblocking::rpc_client`].
 
 pub use crate::mock_sender::Mocks;
+use crate::mock_sender::MocksMap;
 use {
     crate::{
         http_sender::HttpSender,
@@ -499,6 +500,86 @@ impl RpcClient {
     pub fn new_mock_with_mocks<U: ToString>(url: U, mocks: Mocks) -> Self {
         Self::new_sender(
             MockSender::new_with_mocks(url, mocks),
+            RpcClientConfig::with_commitment(CommitmentConfig::default()),
+        )
+    }
+
+    /// Create a mock `RpcClient`.
+    ///
+    /// A mock `RpcClient` contains an implementation of [`RpcSender`] that does
+    /// not use the network, and instead returns synthetic responses, for use in
+    /// tests.
+    ///
+    /// It is primarily for internal use, with limited customizability, and
+    /// behaviors determined by internal Solana test cases. New users should
+    /// consider implementing `RpcSender` themselves and constructing
+    /// `RpcClient` with [`RpcClient::new_sender`] to get mock behavior.
+    ///
+    /// Unless directed otherwise, a mock `RpcClient` will generally return a
+    /// reasonable default response to any request, at least for [`RpcRequest`]
+    /// values for which responses have been implemented.
+    ///
+    /// This mock can be customized in two ways:
+    ///
+    /// 1) By changing the `url` argument, which is not actually a URL, but a
+    ///    simple string directive that changes the mock behavior in specific
+    ///    scenarios.
+    ///
+    ///    It is customary to set the `url` to "succeeds" for mocks that should
+    ///    return successfully, though this value is not actually interpreted.
+    ///
+    ///    If `url` is "fails" then any call to `send` will return `Ok(Value::Null)`.
+    ///
+    ///    Other possible values of `url` are specific to different `RpcRequest`
+    ///    values. Read the implementation of `MockSender` (which is non-public)
+    ///    for details.
+    ///
+    /// 2) Custom responses can be configured by providing [`Mocks`]. This type
+    ///    is a [`HashMap`] from [`RpcRequest`] to a JSON [`Value`] response,
+    ///    Any entries in this map override the default behavior for the given
+    ///    request.
+    ///
+    /// The [`RpcClient::new_mock_with_mocks_map`] function offers further
+    /// customization options.
+    ///
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{
+    /// #     request::RpcRequest,
+    /// #     response::{Response, RpcResponseContext},
+    /// # };
+    /// # use solana_rpc_client::{rpc_client::RpcClient, mock_sender};
+    /// # use serde_json::json;
+    /// // Create a mock with a custom response to the `GetBalance` request
+    /// let account_balance_x = 50;
+    /// let account_balance_y = 100;
+    /// let account_balance_responses = vec![
+    ///     json!(Response {
+    ///         context: RpcResponseContext {
+    ///             slot: 1,
+    ///             api_version: None,
+    ///         },
+    ///         value: json!(account_balance_x),
+    ///     }),
+    ///     json!(Response {
+    ///         context: RpcResponseContext {
+    ///             slot: 1,
+    ///             api_version: None,
+    ///         },
+    ///         value: json!(account_balance_y),
+    ///     }),
+    /// ];
+    ///
+    /// let mut mocks = MocksMap::default();
+    /// mocks.insert(RpcRequest::GetBalance, account_balance_response);
+    /// let url = "succeeds".to_string();
+    /// let client = RpcClient::new_mock_with_mocks_map(url, mocks);
+    /// ```
+    pub fn new_mock_with_mocks_map<U: ToString>(url: U, mocks: MocksMap) -> Self {
+        Self::new_sender(
+            MockSender::new_with_mocks_map(url, mocks),
             RpcClientConfig::with_commitment(CommitmentConfig::default()),
         )
     }
@@ -3676,8 +3757,8 @@ impl RpcClient {
 
 /// Mocks for documentation examples
 #[doc(hidden)]
-pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
-    let mut mocks = crate::mock_sender::Mocks::new();
+pub fn create_rpc_client_mocks_map() -> crate::mock_sender::MocksMap {
+    let mut mocks = crate::mock_sender::MocksMap::default();
 
     let get_account_request = RpcRequest::GetAccountInfo;
     let get_account_response = serde_json::to_value(Response {
@@ -3695,6 +3776,27 @@ pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
     mocks.insert(get_account_request, get_account_response);
 
     mocks
+}
+
+/// MocksMap for documentation examples
+#[doc(hidden)]
+pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
+    let mut mocks = std::collections::HashMap::new();
+
+    let get_account_request = RpcRequest::GetAccountInfo;
+    let get_account_response = serde_json::to_value(Response {
+        context: RpcResponseContext {
+            slot: 1,
+            api_version: None,
+        },
+        value: {
+            let pubkey = Pubkey::from_str("BgvYtJEfmZYdVKiptmMjxGzv8iQoo4MWjsP3QsTkhhxa").unwrap();
+            mock_encoded_account(&pubkey)
+        },
+    })
+    .unwrap();
+    mocks.insert(get_account_request, get_account_response);
+    crate::mock_sender::Mocks(mocks)
 }
 
 #[cfg(test)]
@@ -4015,8 +4117,15 @@ mod tests {
 
         // Test: Mock with duplicate requests
         {
-            let expected_result = vec![(pubkey, account.clone()), (pubkey, account.clone())];
-            let mocks: Mocks = [
+            let expected_result = vec![
+                (pubkey, account.clone()),
+                (pubkey, account.clone()),
+                (pubkey, account.clone()),
+                (pubkey, account.clone()),
+                (pubkey, account.clone()),
+            ];
+
+            let mut mocks: MocksMap = [
                 (
                     RpcRequest::GetProgramAccounts,
                     serde_json::to_value(OptionalContext::Context(Response {
@@ -4042,7 +4151,24 @@ mod tests {
             ]
             .into_iter()
             .collect();
-            let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
+
+            mocks.insert(
+                RpcRequest::GetProgramAccounts,
+                serde_json::to_value(OptionalContext::Context(Response {
+                    context: RpcResponseContext {
+                        slot: 1,
+                        api_version: None,
+                    },
+                    value: vec![
+                        keyed_account.clone(),
+                        keyed_account.clone(),
+                        keyed_account.clone(),
+                    ],
+                }))
+                .unwrap(),
+            );
+
+            let rpc_client = RpcClient::new_mock_with_mocks_map("mock_client".to_string(), mocks);
             let mut result1 = rpc_client
                 .get_program_accounts_with_config(
                     &program_id,
@@ -4077,7 +4203,25 @@ mod tests {
                 )
                 .unwrap();
 
+            let result_3 = rpc_client
+                .get_program_accounts_with_config(
+                    &program_id,
+                    RpcProgramAccountsConfig {
+                        filters: None,
+                        account_config: RpcAccountInfoConfig {
+                            encoding: Some(UiAccountEncoding::Base64),
+                            data_slice: None,
+                            commitment: None,
+                            min_context_slot: None,
+                        },
+                        with_context: Some(true),
+                        sort_results: None,
+                    },
+                )
+                .unwrap();
+
             result1.extend(result2);
+            result1.extend(result_3);
             assert_eq!(expected_result, result1);
         }
     }
