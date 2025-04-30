@@ -7,7 +7,6 @@ use {
         ping_pong::{self, Pong},
     },
     bincode::serialize,
-    rayon::prelude::*,
     serde::Serialize,
     solana_keypair::signable::Signable,
     solana_perf::packet::PACKET_DATA_SIZE,
@@ -94,8 +93,8 @@ impl Protocol {
     pub(crate) fn par_verify(&self) -> bool {
         match self {
             Self::PullRequest(_, caller) => caller.verify(),
-            Self::PullResponse(_, data) => data.par_iter().all(CrdsValue::verify),
-            Self::PushMessage(_, data) => data.par_iter().all(CrdsValue::verify),
+            Self::PullResponse(_, data) => data.iter().all(CrdsValue::verify),
+            Self::PushMessage(_, data) => data.iter().all(CrdsValue::verify),
             Self::PruneMessage(_, data) => data.verify(),
             Self::PingMessage(ping) => ping.verify(),
             Self::PongMessage(pong) => pong.verify(),
