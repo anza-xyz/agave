@@ -354,9 +354,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
-        let mut evict_from_global_cache = false; // HANA maybe can obviate
-        let mut programs_modified_by_batch: HashMap<Pubkey, Arc<ProgramCacheEntry>> =
-            HashMap::new();
+        let mut loaded_missing_programs = false;
+        let mut programs_modified_by_batch = HashMap::new();
 
         // Validate, execute, and collect results from each transaction in order.
         // With SIMD83, transactions must be executed in order, because transactions
@@ -403,19 +402,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             );
 
             let (mut program_cache_for_tx, program_cache_us) = measure_us!({
-                let mut program_cache_for_tx = self.replenish_program_cache(
+                let program_cache_for_tx = self.replenish_program_cache(
                     &account_loader,
                     &program_accounts_map,
+                    &programs_modified_by_batch,
                     &mut execute_timings,
                     config.check_program_modification_slot,
                     config.limit_to_load_programs,
                 );
-
-                // HANA TODO do this nicer somehwere, maybe pass it into replenish
-                // i need to take a second look at that code and maybe rework it
-                println!("HANA merging: {:#?}", programs_modified_by_batch);
-                program_cache_for_tx.merge(&programs_modified_by_batch);
-                program_cache_for_tx.merged_modified = false;
 
                 if program_cache_for_tx.hit_max_limit {
                     return LoadAndExecuteSanitizedTransactionsOutput {
@@ -464,21 +458,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // Update loaded accounts cache with account states which might have changed.
                     account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
 
-                    // HANA TODO i think i had a better idea about eviction here and below but idk
-                    // might have been if modified is nonempty i dont need to set teh bool here
-                    if program_cache_for_tx.loaded_missing {
-                        evict_from_global_cache = true;
-                    }
+                    loaded_missing_programs =
+                        loaded_missing_programs || program_cache_for_tx.loaded_missing;
 
-                    if executed_tx.was_successful()
-                        && !executed_tx.programs_modified_by_tx.is_empty()
-                    {
+                    if executed_tx.was_successful() {
                         for (key, entry) in &executed_tx.programs_modified_by_tx {
-                            programs_modified_by_batch
-                                .entry(*key)
-                                .or_insert(entry.clone());
+                            programs_modified_by_batch.insert(*key, entry.clone());
                         }
-                        evict_from_global_cache = true;
                     }
 
                     Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
@@ -498,7 +484,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
-        if evict_from_global_cache {
+        if loaded_missing_programs || !programs_modified_by_batch.is_empty() {
             const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: u8 = 90;
             self.program_cache
                 .write()
@@ -746,6 +732,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         &self,
         account_loader: &AccountLoader<CB>,
         program_accounts_map: &HashMap<Pubkey, u64>,
+        programs_modified_by_batch: &HashMap<Pubkey, Arc<ProgramCacheEntry>>,
         execute_timings: &mut ExecuteTimings,
         check_program_modification_slot: bool,
         limit_to_load_programs: bool,
@@ -766,15 +753,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 })
                 .collect();
 
-        let mut loaded_programs_for_txs: Option<ProgramCacheForTxBatch> = None;
+        let mut loaded_programs_for_tx: Option<ProgramCacheForTxBatch> = None;
         loop {
             let (program_to_store, task_cookie, task_waiter) = {
                 // Lock the global cache.
                 let program_cache = self.program_cache.read().unwrap();
                 // Initialize our local cache.
-                let is_first_round = loaded_programs_for_txs.is_none();
+                let is_first_round = loaded_programs_for_tx.is_none();
                 if is_first_round {
-                    loaded_programs_for_txs = Some(ProgramCacheForTxBatch::new_from_cache(
+                    loaded_programs_for_tx = Some(ProgramCacheForTxBatch::new_from_cache(
                         self.slot,
                         self.epoch,
                         &program_cache,
@@ -783,7 +770,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // Figure out which program needs to be loaded next.
                 let program_to_load = program_cache.extract(
                     &mut missing_programs,
-                    loaded_programs_for_txs.as_mut().unwrap(),
+                    loaded_programs_for_tx.as_mut().unwrap(),
                     is_first_round,
                 );
 
@@ -808,7 +795,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             };
 
             if let Some((key, program)) = program_to_store {
-                loaded_programs_for_txs.as_mut().unwrap().loaded_missing = true;
+                loaded_programs_for_tx.as_mut().unwrap().loaded_missing = true;
                 let mut program_cache = self.program_cache.write().unwrap();
                 // Submit our last completed loading task.
                 if program_cache.finish_cooperative_loading_task(self.slot, key, program)
@@ -835,7 +822,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             }
         }
 
-        loaded_programs_for_txs.unwrap()
+        let mut program_cache_for_tx = loaded_programs_for_tx.unwrap();
+        program_cache_for_tx.merge(programs_modified_by_batch);
+        program_cache_for_tx.merged_modified = false;
+
+        program_cache_for_tx
     }
 
     /// Execute a transaction using the provided loaded accounts and update
@@ -848,7 +839,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         mut loaded_transaction: LoadedTransaction,
         execute_timings: &mut ExecuteTimings,
         error_metrics: &mut TransactionErrorMetrics,
-        program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
+        program_cache_for_tx: &mut ProgramCacheForTxBatch,
         environment: &TransactionProcessingEnvironment,
         config: &TransactionProcessingConfig,
     ) -> ExecutedTransaction {
@@ -910,7 +901,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
-            program_cache_for_tx_batch,
+            program_cache_for_tx,
             EnvironmentConfig::new(
                 environment.blockhash,
                 environment.blockhash_lamports_per_signature,
@@ -1018,7 +1009,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 accounts_data_len_delta,
             },
             loaded_transaction,
-            programs_modified_by_tx: program_cache_for_tx_batch.drain_modified_entries(),
+            programs_modified_by_tx: program_cache_for_tx.drain_modified_entries(),
         }
     }
 
