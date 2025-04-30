@@ -6,11 +6,6 @@ pub mod syscalls;
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
-    agave_feature_set::{
-        bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
-        enable_loader_v4, mask_out_rent_epoch_in_vm_serialization,
-        remove_accounts_executable_flag_checks,
-    },
     solana_bincode::limited_deserialize,
     solana_clock::Slot,
     solana_instruction::{error::InstructionError, AccountMeta},
@@ -357,9 +352,9 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
 
     Ok(MemoryMapping::new_with_cow(
         regions,
-        transaction_context.account_data_write_access_handler(),
         config,
         sbpf_version,
+        transaction_context.account_data_write_access_handler(),
     )?)
 }
 
@@ -415,7 +410,7 @@ pub(crate) fn process_instruction_inner(
             Err(
                 if invoke_context
                     .get_feature_set()
-                    .is_active(&remove_accounts_executable_flag_checks::id())
+                    .remove_accounts_executable_flag_checks
                 {
                     InstructionError::UnsupportedProgramId
                 } else {
@@ -431,7 +426,7 @@ pub(crate) fn process_instruction_inner(
     #[allow(deprecated)]
     if !invoke_context
         .get_feature_set()
-        .is_active(&remove_accounts_executable_flag_checks::id())
+        .remove_accounts_executable_flag_checks
         && !program_account.is_executable()
     {
         ic_logger_msg!(log_collector, "Program is not executable");
@@ -446,7 +441,7 @@ pub(crate) fn process_instruction_inner(
             ic_logger_msg!(log_collector, "Program is not cached");
             if invoke_context
                 .get_feature_set()
-                .is_active(&remove_accounts_executable_flag_checks::id())
+                .remove_accounts_executable_flag_checks
             {
                 InstructionError::UnsupportedProgramId
             } else {
@@ -465,7 +460,7 @@ pub(crate) fn process_instruction_inner(
             ic_logger_msg!(log_collector, "Program is not deployed");
             let instruction_error = if invoke_context
                 .get_feature_set()
-                .is_active(&remove_accounts_executable_flag_checks::id())
+                .remove_accounts_executable_flag_checks
             {
                 InstructionError::UnsupportedProgramId
             } else {
@@ -477,7 +472,7 @@ pub(crate) fn process_instruction_inner(
         _ => {
             let instruction_error = if invoke_context
                 .get_feature_set()
-                .is_active(&remove_accounts_executable_flag_checks::id())
+                .remove_accounts_executable_flag_checks
             {
                 InstructionError::UnsupportedProgramId
             } else {
@@ -744,7 +739,7 @@ fn process_loader_upgradeable_instruction(
             #[allow(deprecated)]
             if !invoke_context
                 .get_feature_set()
-                .is_active(&remove_accounts_executable_flag_checks::id())
+                .remove_accounts_executable_flag_checks
                 && !program.is_executable()
             {
                 ic_logger_msg!(log_collector, "Program account not executable");
@@ -985,7 +980,7 @@ fn process_loader_upgradeable_instruction(
         UpgradeableLoaderInstruction::SetAuthorityChecked => {
             if !invoke_context
                 .get_feature_set()
-                .is_active(&enable_bpf_loader_set_authority_checked_ix::id())
+                .enable_bpf_loader_set_authority_checked_ix
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
@@ -1318,10 +1313,7 @@ fn process_loader_upgradeable_instruction(
             );
         }
         UpgradeableLoaderInstruction::Migrate => {
-            if !invoke_context
-                .get_feature_set()
-                .is_active(&enable_loader_v4::id())
-            {
+            if !invoke_context.get_feature_set().enable_loader_v4 {
                 return Err(InstructionError::InvalidInstructionData);
             }
 
@@ -1555,10 +1547,10 @@ fn execute<'a, 'b: 'a>(
     let use_jit = executable.get_compiled_program().is_some();
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&bpf_account_data_direct_mapping::id());
+        .bpf_account_data_direct_mapping;
     let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
-        .is_active(&mask_out_rent_epoch_in_vm_serialization::id());
+        .mask_out_rent_epoch_in_vm_serialization;
 
     let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
@@ -1674,7 +1666,7 @@ fn execute<'a, 'b: 'a>(
                                 #[allow(deprecated)]
                                 if !invoke_context
                                     .get_feature_set()
-                                    .is_active(&remove_accounts_executable_flag_checks::id())
+                                    .remove_accounts_executable_flag_checks
                                     && account.is_executable()
                                 {
                                     InstructionError::ExecutableDataModified
@@ -1816,11 +1808,13 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{error::InstructionError, AccountMeta},
         solana_program_runtime::{
-            invoke_context::mock_process_instruction, with_mock_invoke_context,
+            invoke_context::{mock_process_instruction, mock_process_instruction_with_feature_set},
+            with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::sysvar,
+        solana_svm_feature_set::SVMFeatureSet,
         std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
     };
 
@@ -1935,8 +1929,11 @@ mod tests {
             |_invoke_context| {},
         );
 
+        let mut feature_set = SVMFeatureSet::all_enabled();
+        feature_set.remove_accounts_executable_flag_checks = false;
+
         // Case: Account not a program
-        mock_process_instruction(
+        mock_process_instruction_with_feature_set(
             &loader_id,
             vec![0],
             &[],
@@ -1945,12 +1942,10 @@ mod tests {
             Err(InstructionError::IncorrectProgramId),
             Entrypoint::vm,
             |invoke_context| {
-                let mut feature_set = invoke_context.get_feature_set().clone();
-                feature_set.deactivate(&remove_accounts_executable_flag_checks::id());
-                invoke_context.mock_set_feature_set(Arc::new(feature_set));
                 test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},
+            &feature_set,
         );
         process_instruction(
             &loader_id,
@@ -2630,7 +2625,11 @@ mod tests {
         );
         *instruction_accounts.get_mut(1).unwrap() = instruction_accounts.get(2).unwrap().clone();
         let instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
-        mock_process_instruction(
+
+        let mut feature_set = SVMFeatureSet::all_enabled();
+        feature_set.remove_accounts_executable_flag_checks = false;
+
+        mock_process_instruction_with_feature_set(
             &bpf_loader_upgradeable::id(),
             Vec::new(),
             &instruction_data,
@@ -2639,12 +2638,10 @@ mod tests {
             Err(InstructionError::AccountNotExecutable),
             Entrypoint::vm,
             |invoke_context| {
-                let mut feature_set = invoke_context.get_feature_set().clone();
-                feature_set.deactivate(&remove_accounts_executable_flag_checks::id());
-                invoke_context.mock_set_feature_set(Arc::new(feature_set));
                 test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},
+            &feature_set,
         );
         process_instruction(
             transaction_accounts.clone(),

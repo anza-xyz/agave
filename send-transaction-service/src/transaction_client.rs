@@ -1,27 +1,31 @@
 use {
     crate::{send_transaction_service_stats::SendTransactionServiceStats, tpu_info::TpuInfo},
     async_trait::async_trait,
-    log::{debug, error, warn},
+    log::warn,
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_sdk::quic::NotifyKeyUpdate,
     solana_tpu_client_next::{
-        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
+        connection_workers_scheduler::{
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+        },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
+        ConnectionWorkersScheduler,
     },
     std::{
-        net::{Ipv4Addr, SocketAddr},
+        net::{SocketAddr, UdpSocket},
         sync::{atomic::Ordering, Arc, Mutex},
         time::{Duration, Instant},
     },
     tokio::{
         runtime::Handle,
-        sync::mpsc::{self},
-        task::JoinHandle as TokioJoinHandle,
+        sync::{
+            mpsc::{self},
+            watch,
+        },
     },
     tokio_util::sync::CancellationToken,
 };
@@ -43,8 +47,6 @@ pub trait TransactionClient {
 
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     fn protocol(&self) -> Protocol;
-
-    fn exit(&self);
 }
 
 pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
@@ -155,8 +157,6 @@ where
     fn protocol(&self) -> Protocol {
         self.connection_cache.protocol()
     }
-
-    fn exit(&self) {}
 }
 
 impl<T> NotifyKeyUpdate for ConnectionCacheClient<T>
@@ -231,14 +231,10 @@ where
 pub struct TpuClientNextClient {
     runtime_handle: Handle,
     sender: mpsc::Sender<TransactionBatch>,
-    // This handle is needed to implement `NotifyKeyUpdate` trait. It's only
-    // method takes &self and thus we need to wrap with Mutex.
-    join_and_cancel: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
-    leader_forward_count: u64,
+    update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    cancel: CancellationToken,
 }
-
-type TpuClientJoinHandle =
-    TokioJoinHandle<Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>>;
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
 impl TpuClientNextClient {
@@ -249,6 +245,7 @@ impl TpuClientNextClient {
         leader_info: Option<T>,
         leader_forward_count: u64,
         identity: Option<&Keypair>,
+        bind_socket: UdpSocket,
     ) -> Self
     where
         T: TpuInfoWithSendStatic + Clone,
@@ -256,6 +253,8 @@ impl TpuClientNextClient {
         // The channel size represents 8s worth of transactions at a rate of
         // 1000 tps, assuming batch size is 64.
         let (sender, receiver) = mpsc::channel(128);
+
+        let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
 
         let cancel = CancellationToken::new();
 
@@ -266,30 +265,38 @@ impl TpuClientNextClient {
                 my_tpu_address,
                 tpu_peers,
             };
-        let config = Self::create_config(identity, leader_forward_count as usize);
-        let scheduler = ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
+        let config = Self::create_config(bind_socket, identity, leader_forward_count as usize);
+
+        let scheduler = ConnectionWorkersScheduler::new(
+            Box::new(leader_updater),
+            receiver,
+            update_certificate_receiver,
+            cancel.clone(),
+        );
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
             "send-transaction-service-TPU-client",
             METRICS_REPORTING_INTERVAL,
             cancel.clone(),
         ));
-        let handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
+        let _handle = runtime_handle.spawn(scheduler.run(config));
         Self {
             runtime_handle,
-            join_and_cancel: Arc::new(Mutex::new((Some(handle), cancel))),
             sender,
-            leader_forward_count,
+            update_certificate_sender,
+            #[cfg(any(test, feature = "dev-context-only-utils"))]
+            cancel,
         }
     }
 
     fn create_config(
+        bind_socket: UdpSocket,
         stake_identity: Option<&Keypair>,
         leader_forward_count: usize,
     ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
-            bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
-            stake_identity: stake_identity.map(Into::into),
+            bind: BindTarget::Socket(bind_socket),
+            stake_identity: stake_identity.map(StakeIdentity::new),
             num_connections: MAX_CONNECTIONS,
             skip_check_transaction_age: true,
             // experimentally found parameter values
@@ -303,61 +310,17 @@ impl TpuClientNextClient {
     }
 
     #[cfg(any(test, feature = "dev-context-only-utils"))]
-    pub fn cancel(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let Ok(lock) = self.join_and_cancel.lock() else {
-            return Err("Failed to stop scheduler.".into());
-        };
-        lock.1.cancel();
-        Ok(())
-    }
-
-    async fn do_update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let runtime_handle = self.runtime_handle.clone();
-        let config = Self::create_config(Some(identity), self.leader_forward_count as usize);
-        let handle = self.join_and_cancel.clone();
-
-        let join_handle = {
-            let Ok(mut lock) = handle.lock() else {
-                return Err("TpuClientNext task panicked.".into());
-            };
-            let (handle, token) = std::mem::take(&mut *lock);
-            token.cancel();
-            handle
-        };
-
-        if let Some(join_handle) = join_handle {
-            let Ok(result) = join_handle.await else {
-                return Err("TpuClientNext task panicked.".into());
-            };
-
-            match result {
-                Ok(scheduler) => {
-                    let cancel = CancellationToken::new();
-                    // leaking handle to this task, as it will run until the cancel signal is received
-                    runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
-                        "send-transaction-service-TPU-client",
-                        METRICS_REPORTING_INTERVAL,
-                        cancel.clone(),
-                    ));
-                    let join_handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
-
-                    let Ok(mut lock) = handle.lock() else {
-                        return Err("TpuClientNext task panicked.".into());
-                    };
-                    *lock = (Some(join_handle), cancel);
-                }
-                Err(error) => {
-                    return Err(Box::new(error));
-                }
-            }
-        }
-        Ok(())
+    pub fn cancel(&self) {
+        self.cancel.cancel();
     }
 }
 
 impl NotifyKeyUpdate for TpuClientNextClient {
     fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        self.runtime_handle.block_on(self.do_update_key(identity))
+        let stake_identity = StakeIdentity::new(identity);
+        self.update_certificate_sender
+            .send(Some(stake_identity))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 }
 
@@ -386,31 +349,6 @@ impl TransactionClient for TpuClientNextClient {
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     fn protocol(&self) -> Protocol {
         Protocol::QUIC
-    }
-
-    fn exit(&self) {
-        let Ok(mut lock) = self.join_and_cancel.lock() else {
-            error!("Failed to stop scheduler: TpuClientNext task panicked.");
-            return;
-        };
-        let (cancel, token) = std::mem::take(&mut *lock);
-        token.cancel();
-        let Some(handle) = cancel else {
-            error!("Client task handle was not set.");
-            return;
-        };
-        match self.runtime_handle.block_on(handle) {
-            Ok(result) => match result {
-                Ok(scheduler) => {
-                    debug!(
-                        "tpu-client-next statistics over all the connections: {:?}",
-                        scheduler.get_stats()
-                    );
-                }
-                Err(error) => error!("tpu-client-next exits with error {error}."),
-            },
-            Err(error) => error!("Failed to join task {error}."),
-        }
     }
 }
 

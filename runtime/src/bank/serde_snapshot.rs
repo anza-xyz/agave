@@ -518,7 +518,7 @@ mod tests {
             super::*,
             crate::bank::BankHashStats,
             solana_accounts_db::{
-                account_storage::meta::StoredMetaWriteVersion, accounts_hash::AccountsLtHash,
+                accounts_hash::AccountsLtHash, append_vec::StoredMetaWriteVersion,
             },
             solana_frozen_abi::abi_example::AbiExample,
             solana_lattice_hash::lt_hash::LtHash,

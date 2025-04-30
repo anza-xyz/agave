@@ -18,7 +18,6 @@ solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-client = { workspace = true }
 solana-gossip = { workspace = true }
-solana-inline-spl = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-net-utils = { workspace = true }
@@ -29,6 +28,7 @@ solana-sdk = { workspace = true }
 solana-streamer = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
+spl-generic-token = { workspace = true }
 spl-token = { workspace = true, features = ["no-entrypoint"] }
 
 [dev-dependencies]

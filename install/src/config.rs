@@ -54,10 +54,9 @@ impl Config {
             if err_string.contains(LEGACY_FMT_LOAD_ERR) {
                 // looks like a config written by serde_yaml <0.9.0.
                 // let's try to upgrade it
-                Self::try_migrate_08(config_file)
-                    .map_err(|_| io::Error::new(io::ErrorKind::Other, err_string))
+                Self::try_migrate_08(config_file).map_err(|_| io::Error::other(err_string))
             } else {
-                Err(io::Error::new(io::ErrorKind::Other, err_string))
+                Err(io::Error::other(err_string))
             }
         })
     }
@@ -68,7 +67,7 @@ impl Config {
         std::fs::copy(config_file, &bak_filename)?;
         let result = File::open(config_file).and_then(|file| {
             serde_yaml_08::from_reader(file)
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err:?}")))
+                .map_err(|err| io::Error::other(format!("{err:?}")))
                 .and_then(|config_08: Self| {
                     let save = config_08._save(config_file).map(|_| config_08);
                     if save.is_ok() {
@@ -97,8 +96,8 @@ impl Config {
     }
 
     fn _save(&self, config_file: &str) -> Result<(), io::Error> {
-        let serialized = serde_yaml::to_string(self)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err:?}")))?;
+        let serialized =
+            serde_yaml::to_string(self).map_err(|err| io::Error::other(format!("{err:?}")))?;
 
         if let Some(outdir) = Path::new(&config_file).parent() {
             create_dir_all(outdir)?;

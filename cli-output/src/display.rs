@@ -605,10 +605,7 @@ fn write_return_data<W: io::Write>(
         let (data, encoding) = &return_data.data;
         let raw_return_data = match encoding {
             UiReturnDataEncoding::Base64 => BASE64_STANDARD.decode(data).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("could not parse data as {encoding:?}: {err:?}"),
-                )
+                io::Error::other(format!("could not parse data as {encoding:?}: {err:?}"))
             })?,
         };
         if !raw_return_data.is_empty() {
@@ -817,6 +814,7 @@ mod test {
                 data: vec![1, 2, 3],
             }),
             compute_units_consumed: Some(1234u64),
+            cost_units: Some(5678),
         };
 
         let output = {
@@ -896,6 +894,7 @@ Rewards:
                 data: vec![1, 2, 3],
             }),
             compute_units_consumed: Some(2345u64),
+            cost_units: Some(5678),
         };
 
         let output = {

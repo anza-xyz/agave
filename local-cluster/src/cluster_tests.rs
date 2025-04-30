@@ -16,7 +16,7 @@ use {
         crds_data::{self, CrdsData},
         crds_value::{CrdsValue, CrdsValueLabel},
         gossip_error::GossipError,
-        gossip_service::{self, discover_cluster, GossipService},
+        gossip_service::{self, discover_validators, GossipService},
     },
     solana_ledger::blockstore::Blockstore,
     solana_rpc_client::rpc_client::RpcClient,
@@ -67,9 +67,10 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
     socket_addr_space: SocketAddrSpace,
     connection_cache: &Arc<ConnectionCache>,
 ) {
-    let cluster_nodes = discover_cluster(
+    let cluster_nodes = discover_validators(
         &entry_point_info.gossip().unwrap(),
         nodes,
+        entry_point_info.shred_version(),
         socket_addr_space,
     )
     .unwrap();
@@ -234,9 +235,10 @@ pub fn kill_entry_and_spend_and_verify_rest(
     info!("kill_entry_and_spend_and_verify_rest...");
 
     // Ensure all nodes have spun up and are funded.
-    let cluster_nodes = discover_cluster(
+    let cluster_nodes = discover_validators(
         &entry_point_info.gossip().unwrap(),
         nodes,
+        entry_point_info.shred_version(),
         socket_addr_space,
     )
     .unwrap();
@@ -532,6 +534,7 @@ pub fn start_gossip_voter(
     num_expected_peers: usize,
     refresh_ms: u64,
     max_votes_to_refresh: usize,
+    shred_version: u16,
 ) -> GossipVoter {
     let exit = Arc::new(AtomicBool::new(false));
     let (gossip_service, tcp_listener, cluster_info) = gossip_service::make_gossip_node(
@@ -541,7 +544,7 @@ pub fn start_gossip_voter(
         Some(gossip_addr),
         exit.clone(),
         None,
-        0,
+        shred_version,
         false,
         SocketAddrSpace::Unspecified,
     );

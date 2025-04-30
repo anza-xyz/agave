@@ -127,7 +127,7 @@ use {
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
     },
-    solana_turbine::{self, broadcast_stage::BroadcastStageType},
+    solana_turbine::{self, broadcast_stage::BroadcastStageType, xdp::XdpConfig},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
@@ -314,6 +314,7 @@ pub struct ValidatorConfig {
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
     pub use_tpu_client_next: bool,
+    pub retransmit_xdp: Option<XdpConfig>,
 }
 
 impl Default for ValidatorConfig {
@@ -387,6 +388,7 @@ impl Default for ValidatorConfig {
             tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
             use_tpu_client_next: false,
+            retransmit_xdp: None,
         }
     }
 }
@@ -1091,7 +1093,7 @@ impl Validator {
             let connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
                 tpu_connection_pool_size,
-                None,
+                Some(node.sockets.quic_forwards_client),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1115,7 +1117,7 @@ impl Validator {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_vote_quic",
                 tpu_connection_pool_size,
-                None, // client_endpoint
+                Some(node.sockets.quic_vote_client),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1182,7 +1184,10 @@ impl Validator {
                 max_complete_rewards_slot,
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 client_option: if config.use_tpu_client_next {
-                    ClientOption::TpuClientNext(Arc::as_ref(&identity_keypair))
+                    ClientOption::TpuClientNext(
+                        Arc::as_ref(&identity_keypair),
+                        node.sockets.rpc_sts_client,
+                    )
                 } else {
                     ClientOption::ConnectionCache(connection_cache.clone())
                 },
@@ -1519,6 +1524,7 @@ impl Validator {
                 replay_forks_threads: config.replay_forks_threads,
                 replay_transactions_threads: config.replay_transactions_threads,
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
+                retransmit_xdp: config.retransmit_xdp.clone(),
             },
             &max_slots,
             block_metadata_notifier,
@@ -1576,6 +1582,8 @@ impl Validator {
                 transactions_quic: node.sockets.tpu_quic,
                 transactions_forwards_quic: node.sockets.tpu_forwards_quic,
                 vote_quic: node.sockets.tpu_vote_quic,
+                vote_forwards_client: node.sockets.tpu_vote_forwards_client,
+                vortexor_receivers: node.sockets.vortexor_receivers,
             },
             &rpc_subscriptions,
             transaction_status_sender,

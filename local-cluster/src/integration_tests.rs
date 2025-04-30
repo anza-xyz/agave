@@ -22,7 +22,7 @@ use {
         consensus::{tower_storage::FileTowerStorage, Tower, SWITCH_FORK_THRESHOLD},
         validator::{is_snapshot_config_valid, ValidatorConfig},
     },
-    solana_gossip::gossip_service::discover_cluster,
+    solana_gossip::gossip_service::discover_validators,
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{Blockstore, PurgeType},
@@ -386,9 +386,10 @@ pub fn run_cluster_partition<C>(
         &cluster.connection_cache,
     );
 
-    let cluster_nodes = discover_cluster(
+    let cluster_nodes = discover_validators(
         &cluster.entry_point_info.gossip().unwrap(),
         num_nodes,
+        cluster.entry_point_info.shred_version(),
         SocketAddrSpace::Unspecified,
     )
     .unwrap();

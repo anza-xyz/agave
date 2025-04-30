@@ -4,6 +4,7 @@ use {
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
+        hash::Hash,
         pubkey::Pubkey,
     },
 };
@@ -46,6 +47,31 @@ impl SourceBuffer {
             }
         }
         Err(CoreBpfMigrationError::InvalidBufferAccount(*buffer_address))
+    }
+
+    /// [`SourceBuffer::new_checked`] but also verifies the build hash
+    /// https://github.com/Ellipsis-Labs/solana-verifiable-build
+    pub(crate) fn new_checked_with_verified_build_hash(
+        bank: &Bank,
+        buffer_address: &Pubkey,
+        expected_hash: Hash,
+    ) -> Result<Self, CoreBpfMigrationError> {
+        let buffer = Self::new_checked(bank, buffer_address)?;
+        let data = buffer.buffer_account.data();
+
+        let offset = bpf_loader_upgradeable::UpgradeableLoaderState::size_of_buffer_metadata();
+        let end_offset = data.iter().rposition(|&x| x != 0).map_or(offset, |i| i + 1);
+        let buffer_program_data = &data[offset..end_offset];
+        let hash = solana_sha256_hasher::hash(buffer_program_data);
+
+        if hash != expected_hash {
+            return Err(CoreBpfMigrationError::BuildHashMismatch(
+                hash,
+                expected_hash,
+            ));
+        }
+
+        Ok(buffer)
     }
 }
 

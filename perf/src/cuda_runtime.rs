@@ -214,7 +214,7 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
         let api = perf_libs::api();
         if api.is_some()
             && self.pinnable
-            && (self.x.as_ptr() != old_ptr || self.x.capacity() != old_capacity)
+            && (!std::ptr::eq(self.x.as_ptr(), old_ptr) || self.x.capacity() != old_capacity)
         {
             if self.pinned {
                 unpin(old_ptr);

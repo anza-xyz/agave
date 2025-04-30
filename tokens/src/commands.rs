@@ -104,6 +104,7 @@ impl From<Vec<FundingSource>> for FundingSources {
 
 type StakeExtras = Vec<(Keypair, Option<DateTime<Utc>>)>;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("I/O error")]

@@ -16,7 +16,7 @@ use {
     solana_gossip::{
         cluster_info::Node,
         contact_info::{ContactInfo, Protocol},
-        gossip_service::discover_cluster,
+        gossip_service::{discover, discover_validators},
     },
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
     solana_net_utils::bind_to_unspecified,
@@ -60,11 +60,12 @@ use {
     },
     std::{
         collections::HashMap,
-        io::{Error, ErrorKind, Result},
+        io::{Error, Result},
         iter,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
+        time::Duration,
     },
 };
 
@@ -328,7 +329,7 @@ impl LocalCluster {
             leader_config.max_genesis_archive_unpacked_size,
         );
 
-        let leader_contact_info = leader_node.info.clone();
+        // let leader_contact_info = leader_node.info.clone();
         leader_config.rpc_addrs = Some((
             leader_node.info.rpc().unwrap(),
             leader_node.info.rpc_pubsub().unwrap(),
@@ -356,6 +357,7 @@ impl LocalCluster {
         )
         .expect("assume successful validator start");
 
+        let leader_contact_info = leader_server.cluster_info.my_contact_info();
         let mut validators = HashMap::new();
         let leader_info = ValidatorInfo {
             keypair: leader_keypair,
@@ -373,7 +375,7 @@ impl LocalCluster {
 
         let mut cluster = Self {
             funding_keypair: mint_keypair,
-            entry_point_info: leader_contact_info,
+            entry_point_info: leader_contact_info.clone(),
             validators,
             genesis_config,
             connection_cache,
@@ -416,9 +418,15 @@ impl LocalCluster {
             );
         });
 
-        discover_cluster(
-            &cluster.entry_point_info.gossip().unwrap(),
-            config.node_stakes.len() + config.num_listeners as usize,
+        discover(
+            None,
+            Some(&cluster.entry_point_info.gossip().unwrap()),
+            Some(config.node_stakes.len() + config.num_listeners as usize),
+            Duration::from_secs(120),
+            None,
+            None,
+            None,
+            leader_contact_info.shred_version(),
             socket_addr_space,
         )
         .unwrap();
@@ -608,9 +616,10 @@ impl LocalCluster {
             .collect();
         assert!(!alive_node_contact_infos.is_empty());
         info!("{} discovering nodes", test_name);
-        let cluster_nodes = discover_cluster(
+        let cluster_nodes = discover_validators(
             &alive_node_contact_infos[0].gossip().unwrap(),
             alive_node_contact_infos.len(),
+            alive_node_contact_infos[0].shred_version(),
             socket_addr_space,
         )
         .unwrap();
@@ -668,9 +677,10 @@ impl LocalCluster {
             .collect();
         assert!(!alive_node_contact_infos.is_empty());
         info!("{} discovering nodes", test_name);
-        let cluster_nodes = discover_cluster(
+        let cluster_nodes = discover_validators(
             &alive_node_contact_infos[0].gossip().unwrap(),
             alive_node_contact_infos.len(),
+            alive_node_contact_infos[0].shred_version(),
             socket_addr_space,
         )
         .unwrap();
@@ -713,7 +723,7 @@ impl LocalCluster {
                 return Ok(None);
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(400));
+            std::thread::sleep(Duration::from_millis(400));
         }
     }
 
@@ -745,11 +755,7 @@ impl LocalCluster {
 
             warn!("Sending transaction with retries, attempt {attempt} failed");
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "failed to confirm transaction".to_string(),
-        )
-        .into())
+        Err(std::io::Error::other("failed to confirm transaction").into())
     }
 
     fn transfer_with_client(
@@ -899,9 +905,9 @@ impl LocalCluster {
                                 if stake_state.delegation.voter_pubkey != vote_account_pubkey
                                     || stake_state.delegation.stake != amount
                                 {
-                                    Err(Error::new(ErrorKind::Other, "invalid stake account state"))
+                                    Err(Error::other("invalid stake account state"))
                                 } else if vote_state.node_pubkey != node_pubkey {
-                                    Err(Error::new(ErrorKind::Other, "invalid vote account state"))
+                                    Err(Error::other("invalid vote account state"))
                                 } else {
                                     info!(
                                         "node {} {:?} {:?}",
@@ -911,32 +917,16 @@ impl LocalCluster {
                                     return Ok(());
                                 }
                             }
-                            (None, _) => {
-                                Err(Error::new(ErrorKind::Other, "invalid stake account data"))
-                            }
-                            (_, None) => {
-                                Err(Error::new(ErrorKind::Other, "invalid vote account data"))
-                            }
+                            (None, _) => Err(Error::other("invalid stake account data")),
+                            (_, None) => Err(Error::other("invalid vote account data")),
                         }
                     }
-                    (None, _) => Err(Error::new(
-                        ErrorKind::Other,
-                        "unable to retrieve stake account data",
-                    )),
-                    (_, None) => Err(Error::new(
-                        ErrorKind::Other,
-                        "unable to retrieve vote account data",
-                    )),
+                    (None, _) => Err(Error::other("unable to retrieve stake account data")),
+                    (_, None) => Err(Error::other("unable to retrieve vote account data")),
                 }
             }
-            (Err(_), _) => Err(Error::new(
-                ErrorKind::Other,
-                "unable to retrieve stake account data",
-            )),
-            (_, Err(_)) => Err(Error::new(
-                ErrorKind::Other,
-                "unable to retrieve vote account data",
-            )),
+            (Err(_), _) => Err(Error::other("unable to retrieve stake account data")),
+            (_, Err(_)) => Err(Error::other("unable to retrieve vote account data")),
         }
     }
 
@@ -961,10 +951,7 @@ impl LocalCluster {
         let cache = match &*self.connection_cache {
             ConnectionCache::Quic(cache) => cache,
             ConnectionCache::Udp(_) => {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "Expected a Quic ConnectionCache. Got UDP",
-                ))
+                return Err(Error::other("Expected a Quic ConnectionCache. Got UDP"))
             }
         };
 
@@ -974,7 +961,7 @@ impl LocalCluster {
             TpuClientConfig::default(),
             cache.clone(),
         )
-        .map_err(|err| Error::new(ErrorKind::Other, format!("TpuSenderError: {}", err)))?;
+        .map_err(|err| Error::other(format!("TpuSenderError: {}", err)))?;
 
         Ok(tpu_client)
     }

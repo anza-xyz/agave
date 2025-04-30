@@ -1197,7 +1197,6 @@ pub mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            account_storage::meta::{AccountMeta, StoredAccountMeta, StoredMeta},
             accounts_db::{
                 get_temp_accounts_paths,
                 tests::{
@@ -1211,7 +1210,9 @@ pub mod tests {
             accounts_file::StorageAccess,
             accounts_hash::AccountHash,
             accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
-            append_vec::{aligned_stored_size, AppendVec, AppendVecStoredAccountMeta},
+            append_vec::{
+                aligned_stored_size, AccountMeta, AppendVec, StoredAccountMeta, StoredMeta,
+            },
             storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
         },
         rand::seq::SliceRandom as _,
@@ -2188,7 +2189,7 @@ pub mod tests {
             let account = shrink_in_progress
                 .new_storage()
                 .accounts
-                .get_stored_account_meta_callback(0, |account| {
+                .get_stored_account_callback(0, |account| {
                     assert_eq!(account.pubkey(), pk_with_2_refs);
                     account.to_account_shared_data()
                 })
@@ -2337,7 +2338,7 @@ pub mod tests {
             let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
             let accounts_shrunk_same_slot = storage
                 .accounts
-                .get_stored_account_meta_callback(0, |account| {
+                .get_stored_account_callback(0, |account| {
                     (*account.pubkey(), account.to_account_shared_data())
                 })
                 .unwrap();
@@ -2439,7 +2440,7 @@ pub mod tests {
             pubkey,
             data_len: 43,
         };
-        let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+        let account = StoredAccountMeta {
             meta: &stored_meta,
             // account data
             account_meta: &account_meta,
@@ -2447,7 +2448,7 @@ pub mod tests {
             offset,
             stored_size: account_size,
             hash: &hash,
-        });
+        };
         let map = [&account];
         let map_accounts_from_storage = build_accounts_from_storage(map.iter().copied());
         for (selector, available_bytes) in [

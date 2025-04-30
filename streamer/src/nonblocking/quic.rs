@@ -12,7 +12,7 @@ use {
     },
     async_channel::{bounded as async_bounded, Receiver as AsyncReceiver, Sender as AsyncSender},
     bytes::Bytes,
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Sender, TrySendError},
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
     percentage::Percentage,
@@ -923,11 +923,17 @@ async fn packet_batch_sender(
                 let len = packet_batch.len();
                 track_streamer_fetch_packet_performance(&packet_perf_measure, &stats);
 
-                if let Err(e) = packet_sender.send(packet_batch) {
+                if let Err(e) = packet_sender.try_send(packet_batch) {
                     stats
                         .total_packet_batch_send_err
                         .fetch_add(1, Ordering::Relaxed);
                     trace!("Send error: {}", e);
+
+                    // The downstream channel is disconnected, this error is not recoverable.
+                    if matches!(e, TrySendError::Disconnected(_)) {
+                        exit.store(true, Ordering::Relaxed);
+                        return;
+                    }
                 } else {
                     stats
                         .total_packet_batches_sent

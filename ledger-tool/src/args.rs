@@ -291,7 +291,7 @@ pub fn get_accounts_db_config(
     let accounts_index_index_limit_mb = if arg_matches.is_present("disable_accounts_disk_index") {
         IndexLimitMb::InMemOnly
     } else {
-        IndexLimitMb::Unlimited
+        IndexLimitMb::Minimal
     };
     let accounts_index_drives = values_t!(arg_matches, "accounts_index_path", String)
         .ok()

@@ -17,7 +17,6 @@ use {
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
-    agave_feature_set::{remove_accounts_executable_flag_checks, FeatureSet},
     log::debug,
     percentage::Percentage,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
@@ -48,6 +47,7 @@ use {
     solana_rent_collector::RentCollector,
     solana_sdk_ids::{native_loader, system_program},
     solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
@@ -129,7 +129,7 @@ pub struct TransactionProcessingEnvironment<'a> {
     /// The total stake for the current epoch.
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
-    pub feature_set: Arc<FeatureSet>,
+    pub feature_set: SVMFeatureSet,
     /// Rent collector to use for the transaction batch.
     pub rent_collector: Option<&'a dyn SVMRentCollector>,
 }
@@ -373,7 +373,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             config.account_overrides,
             callbacks,
-            environment.feature_set.clone(),
+            &environment.feature_set,
             account_keys_in_batch,
         );
 
@@ -551,7 +551,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_loaded_rent_epoch = loaded_fee_payer.account.rent_epoch();
         loaded_fee_payer.rent_collected = collect_rent_from_account(
-            &account_loader.feature_set,
+            account_loader.feature_set,
             rent_collector,
             fee_payer_address,
             &mut loaded_fee_payer.account,
@@ -823,7 +823,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         transaction_context.set_remove_accounts_executable_flag_checks(
             environment
                 .feature_set
-                .is_active(&remove_accounts_executable_flag_checks::id()),
+                .remove_accounts_executable_flag_checks,
         );
         #[cfg(debug_assertions)]
         transaction_context.set_signature(tx.signature());
@@ -852,7 +852,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment.blockhash,
                 environment.blockhash_lamports_per_signature,
                 callback,
-                Arc::clone(&environment.feature_set),
+                &environment.feature_set,
                 sysvar_cache,
             ),
             log_collector.clone(),
@@ -1068,7 +1068,6 @@ mod tests {
             nonce_info::NonceInfo,
             rollback_accounts::RollbackAccounts,
         },
-        agave_feature_set::FeatureSet,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{create_account_shared_data_for_test, WritableAccount},
         solana_clock::Clock,
@@ -1119,6 +1118,7 @@ mod tests {
         #[allow(clippy::type_complexity)]
         inspected_accounts:
             Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
+        feature_set: SVMFeatureSet,
     }
 
     impl InvokeContextCallback for MockBankCallback {}
@@ -1196,7 +1196,7 @@ mod tests {
             AccountLoader::new_with_account_cache_capacity(
                 None,
                 callbacks,
-                Arc::<FeatureSet>::default(),
+                &callbacks.feature_set,
                 0,
             )
         }

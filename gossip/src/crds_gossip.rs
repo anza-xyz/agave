@@ -301,12 +301,9 @@ impl CrdsGossip {
         now: u64,
         timeouts: &CrdsTimeouts,
     ) -> usize {
-        let mut rv = 0;
-        if now > self.pull.crds_timeout {
-            debug_assert_eq!(timeouts[self_pubkey], u64::MAX);
-            debug_assert_ne!(timeouts[&Pubkey::default()], 0u64);
-            rv = CrdsGossipPull::purge_active(thread_pool, &self.crds, now, timeouts);
-        }
+        debug_assert_eq!(timeouts[self_pubkey], u64::MAX);
+        debug_assert_ne!(timeouts[&Pubkey::default()], 0u64);
+        let rv = CrdsGossipPull::purge_active(thread_pool, &self.crds, now, timeouts);
         self.crds
             .write()
             .unwrap()

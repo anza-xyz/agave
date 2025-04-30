@@ -3171,7 +3171,8 @@ impl ReplayStage {
                     }
                 }
 
-                let block_id = if bank.collector_id() != my_pubkey {
+                let is_leader_block = bank.collector_id() == my_pubkey;
+                let block_id = if !is_leader_block {
                     // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK correctly retransmitted
                     // shreds in the last FEC set, mark it dead. No reason to perform this check on our leader block.
                     match blockstore.check_last_fec_set_and_get_block_id(
@@ -3230,6 +3231,7 @@ impl ReplayStage {
                 cost_update_sender
                     .send(CostUpdate::FrozenBank {
                         bank: bank.clone_without_scheduler(),
+                        is_leader_block,
                     })
                     .unwrap_or_else(|err| {
                         warn!("cost_update_sender failed sending bank stats: {:?}", err)

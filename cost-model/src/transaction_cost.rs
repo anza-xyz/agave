@@ -59,7 +59,7 @@ impl<Tx> TransactionCost<'_, Tx> {
         }
     }
 
-    pub fn data_bytes_cost(&self) -> u64 {
+    pub fn data_bytes_cost(&self) -> u16 {
         match self {
             Self::SimpleVote { .. } => 0,
             Self::Transaction(usage_cost) => usage_cost.data_bytes_cost,
@@ -158,7 +158,7 @@ pub struct UsageCostDetails<'a, Tx> {
     pub transaction: &'a Tx,
     pub signature_cost: u64,
     pub write_lock_cost: u64,
-    pub data_bytes_cost: u64,
+    pub data_bytes_cost: u16,
     pub programs_execution_cost: u64,
     pub loaded_accounts_data_size_cost: u64,
     pub allocated_accounts_data_size: u64,
@@ -168,7 +168,7 @@ impl<Tx> UsageCostDetails<'_, Tx> {
     pub fn sum(&self) -> u64 {
         self.signature_cost
             .saturating_add(self.write_lock_cost)
-            .saturating_add(self.data_bytes_cost)
+            .saturating_add(u64::from(self.data_bytes_cost))
             .saturating_add(self.programs_execution_cost)
             .saturating_add(self.loaded_accounts_data_size_cost)
     }
@@ -275,6 +275,10 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
 
     fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
         unimplemented!("WritableKeysTransaction::compute_budget_instruction_details")
+    }
+
+    fn instruction_data_len(&self) -> u16 {
+        unimplemented!("WritableKeysTransaction::instruction_data_len")
     }
 }
 

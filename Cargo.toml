@@ -61,7 +61,6 @@ members = [
     "geyser-plugin-interface",
     "geyser-plugin-manager",
     "gossip",
-    "inline-spl",
     "install",
     "keygen",
     "lattice-hash",
@@ -124,6 +123,7 @@ members = [
     "svm",
     "svm-callback",
     "svm-conformance",
+    "svm-feature-set",
     "svm-rent-collector",
     "svm-transaction",
     "test-validator",
@@ -135,6 +135,7 @@ members = [
     "tps-client",
     "tpu-client",
     "tpu-client-next",
+    "transaction-context",
     "transaction-dos",
     "transaction-metrics-tracker",
     "transaction-status",
@@ -149,9 +150,11 @@ members = [
     "validator",
     "version",
     "vortexor",
+    "vortexor-receiver",
     "vote",
     "watchtower",
     "wen-restart",
+    "xdp",
     "zk-keygen",
     "zk-sdk",
     "zk-token-sdk",
@@ -189,11 +192,13 @@ used_underscore_binding = "deny"
 [workspace.dependencies]
 Inflector = "0.11.4"
 axum = "0.7.9"
+aya = "0.13"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.3.0" }
 agave-feature-set = { path = "feature-set", version = "=2.3.0" }
 agave-precompiles = { path = "precompiles", version = "=2.3.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.3.0" }
 agave-transaction-view = { path = "transaction-view", version = "=2.3.0" }
+agave-xdp = { path = "xdp", version = "=2.3.0" }
 aquamarine = "0.6.0"
 aes-gcm-siv = "0.11.1"
 ahash = "0.8.11"
@@ -216,13 +221,13 @@ backoff = "0.4.0"
 base64 = "0.22.1"
 bincode = "1.3.3"
 bitflags = { version = "2.9.0" }
-blake3 = "1.8.1"
+blake3 = "1.8.2"
 borsh = { version = "1.5.7", features = ["derive", "unstable__schema"] }
 borsh0-10 = { package = "borsh", version = "0.10.3" }
 bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 byte-unit = "4.0.19"
-bytemuck = "1.22.0"
+bytemuck = "1.23.0"
 bytemuck_derive = "1.9.3"
 bytes = "1.10"
 bzip2 = "0.4.4"
@@ -230,7 +235,7 @@ caps = "0.5.5"
 cargo_metadata = "0.15.4"
 cfg_eval = "0.1.2"
 cfg-if = "1.0.0"
-chrono = { version = "0.4.40", default-features = false }
+chrono = { version = "0.4.41", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
 console = "0.15.11"
@@ -248,7 +253,7 @@ ctrlc = "3.4.6"
 curve25519-dalek = { version = "4.1.3", features = ["digest", "rand_core"] }
 dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
-derive-where = "1.2.7"
+derive-where = "1.3.0"
 derive_more = { version = "1.0.0", features = ["full"] }
 dialoguer = "0.10.4"
 digest = "0.10.7"
@@ -300,7 +305,7 @@ jsonrpc-ipc-server = "18.0.0"
 jsonrpc-pubsub = "18.0.0"
 lazy-lru = "0.1.3"
 lazy_static = "1.5.0"
-libc = "0.2.171"
+libc = "0.2.172"
 libloading = "0.7.4"
 libsecp256k1 = { version = "0.6.0", default-features = false, features = [
     "std",
@@ -331,7 +336,7 @@ pickledb = { version = "0.5.1", default-features = false }
 predicates = "2.1"
 pretty-hex = "0.3.0"
 prio-graph = "0.3.0"
-proc-macro2 = "1.0.94"
+proc-macro2 = "1.0.95"
 proptest = "1.6"
 prost = "0.11.9"
 prost-build = "0.11.9"
@@ -340,7 +345,7 @@ protobuf-src = "1.1.0"
 qstring = "0.7.2"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.11.7"
-quinn-proto = "0.11.10"
+quinn-proto = "0.11.11"
 quote = "1.0"
 rand = "0.8.5"
 rand0-7 = { package = "rand", version = "0.7" }
@@ -352,7 +357,7 @@ regex = "1.11.1"
 reqwest = { version = "0.12.15", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
-rpassword = "7.3"
+rpassword = "7.4"
 rustls = { version = "0.23.26", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.26"
@@ -436,7 +441,7 @@ solana-feature-gate-interface = "2.2.1"
 solana-fee-calculator = "2.2.1"
 solana-fee = { path = "fee", version = "=2.3.0" }
 solana-fee-structure = "2.2.1"
-solana-frozen-abi = "2.2.1"
+solana-frozen-abi = "2.2.2"
 solana-frozen-abi-macro = "2.2.1"
 solana-tps-client = { path = "tps-client", version = "=2.3.0" }
 solana-file-download = "2.2.1"
@@ -449,7 +454,6 @@ solana-gossip = { path = "gossip", version = "=2.3.0" }
 solana-hard-forks = "2.2.1"
 solana-hash = "2.2.1"
 solana-inflation = "2.2.1"
-solana-inline-spl = { path = "inline-spl", version = "=2.3.0" }
 solana-instruction = "2.2.1"
 solana-instructions-sysvar = "2.2.1"
 solana-keccak-hasher = "2.2.1"
@@ -526,7 +530,7 @@ solana-rpc-client-types = { path = "rpc-client-types", version = "=2.3.0" }
 solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2.3.0" }
 solana-runtime = { path = "runtime", version = "=2.3.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=2.3.0" }
-solana-sbpf = "=0.10.0"
+solana-sbpf = "=0.11.0"
 solana-sdk = "2.2.2"
 solana-sdk-ids = "2.2.1"
 solana-sdk-macro = "2.2.1"
@@ -544,6 +548,7 @@ solana-streamer = { path = "streamer", version = "=2.3.0" }
 solana-svm = { path = "svm", version = "=2.3.0" }
 solana-svm-callback = { path = "svm-callback", version = "=2.3.0" }
 solana-svm-conformance = { path = "svm-conformance", version = "=2.3.0" }
+solana-svm-feature-set = { path = "svm-feature-set", version = "=2.3.0" }
 solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.3.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.3.0" }
 solana-system-interface = "1.0"
@@ -557,7 +562,7 @@ solana-transaction = "2.2.2"
 solana-transaction-error = "2.2.1"
 solana-tpu-client = { path = "tpu-client", version = "=2.3.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=2.3.0" }
-solana-transaction-context = { path = "transaction-context", version = "=2.3.0", features = [ "bincode", "debug-signature" ] }
+solana-transaction-context = { path = "transaction-context", version = "=2.3.0", features = ["bincode", "debug-signature"] }
 solana-transaction-status = { path = "transaction-status", version = "=2.3.0" }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=2.3.0" }
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.3.0" }
@@ -566,8 +571,9 @@ solana-type-overrides = { path = "type-overrides", version = "=2.3.0" }
 solana-udp-client = { path = "udp-client", version = "=2.3.0" }
 solana-validator-exit = "2.2.1"
 solana-version = { path = "version", version = "=2.3.0" }
+solana-vortexor-receiver = { path = "vortexor-receiver", version = "=2.3.0" }
 solana-vote = { path = "vote", version = "=2.3.0" }
-solana-vote-interface = "2.2.3"
+solana-vote-interface = "2.2.4"
 solana-vote-program = { path = "programs/vote", version = "=2.3.0", default-features = false }
 solana-wen-restart = { path = "wen-restart", version = "=2.3.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=2.3.0" }
@@ -575,15 +581,16 @@ solana-zk-keygen = { path = "zk-keygen", version = "=2.3.0" }
 solana-zk-sdk = { path = "zk-sdk", version = "=2.3.0" }
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.3.0" }
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.3.0" }
-spl-associated-token-account = "=6.0.0"
-spl-instruction-padding = "0.3"
-spl-memo = "=6.0.0"
-spl-pod = "=0.5.1"
-spl-token = "=8.0.0"
-spl-token-2022 = "=8.0.0"
+spl-associated-token-account = "6.0.0"
+spl-generic-token = "1.0.1"
+spl-instruction-padding = "0.3.0"
+spl-memo = "6.0.0"
+spl-pod = "0.5.1"
+spl-token = "8.0.0"
+spl-token-2022 = "8.0.1"
 spl-token-confidential-transfer-proof-extraction = "0.3.0"
-spl-token-group-interface = "=0.6.0"
-spl-token-metadata-interface = "=0.7.0"
+spl-token-group-interface = "0.6.0"
+spl-token-metadata-interface = "0.7.0"
 static_assertions = "1.1.0"
 stream-cancel = "0.8.2"
 strum = "0.24"
@@ -606,7 +613,7 @@ tokio = "1.44.2"
 tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.20.1"
-tokio-util = "0.7.14"
+tokio-util = "0.7.15"
 toml = "0.8.12"
 tonic = "0.9.2"
 tonic-build = "0.9.2"

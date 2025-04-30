@@ -71,6 +71,7 @@ impl SnapshotPackagerService {
                         measure_us!(snapshot_utils::serialize_and_archive_snapshot_package(
                             snapshot_package,
                             snapshot_config,
+                            true, // always flush the storages to enable fastboot
                         ));
                     if let Err(err) = archive_result {
                         error!(

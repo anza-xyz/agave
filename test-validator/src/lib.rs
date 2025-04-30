@@ -22,7 +22,6 @@ use {
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
         contact_info::Protocol,
-        gossip_service::discover_cluster,
         socketaddr,
     },
     solana_ledger::{
@@ -94,14 +93,13 @@ pub struct TestValidatorNodeConfig {
 
 impl Default for TestValidatorNodeConfig {
     fn default() -> Self {
-        const MIN_PORT_RANGE: u16 = 1024;
-        const MAX_PORT_RANGE: u16 = 65535;
-
-        let bind_ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let port_range = (MIN_PORT_RANGE, MAX_PORT_RANGE);
-
+        let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        #[cfg(not(debug_assertions))]
+        let port_range = solana_net_utils::VALIDATOR_PORT_RANGE;
+        #[cfg(debug_assertions)]
+        let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         Self {
-            gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, 0),
+            gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, port_range.0),
             port_range,
             bind_ip_addr,
         }
@@ -1049,11 +1047,6 @@ impl TestValidator {
             ValidatorTpuConfig::new_for_tests(config.tpu_enable_udp),
             config.admin_rpc_service_post_init.clone(),
         )?);
-
-        // Needed to avoid panics in `solana-responder-gossip` in tests that create a number of
-        // test validators concurrently...
-        discover_cluster(&gossip, 1, socket_addr_space)
-            .map_err(|err| format!("TestValidator startup failed: {err:?}"))?;
 
         let test_validator = TestValidator {
             ledger_path,

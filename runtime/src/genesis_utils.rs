@@ -297,14 +297,14 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     initial_accounts.push((*validator_stake_account_pubkey, validator_stake_account));
 
     let native_mint_account = solana_sdk::account::AccountSharedData::from(Account {
-        owner: solana_inline_spl::token::id(),
-        data: solana_inline_spl::token::native_mint::ACCOUNT_DATA.to_vec(),
+        owner: spl_generic_token::token::id(),
+        data: spl_generic_token::token::native_mint::ACCOUNT_DATA.to_vec(),
         lamports: sol_to_lamports(1.),
         executable: false,
         rent_epoch: 1,
     });
     initial_accounts.push((
-        solana_inline_spl::token::native_mint::id(),
+        spl_generic_token::token::native_mint::id(),
         native_mint_account,
     ));
 

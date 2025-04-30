@@ -168,13 +168,10 @@ impl SyncClient for BankClient {
                 break;
             }
             if now.elapsed().as_secs() > 15 {
-                return Err(TransportError::IoError(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "signature not found after {} seconds",
-                        now.elapsed().as_secs()
-                    ),
-                )));
+                return Err(TransportError::IoError(io::Error::other(format!(
+                    "signature not found after {} seconds",
+                    now.elapsed().as_secs()
+                ))));
             }
             sleep(Duration::from_millis(250));
         }
@@ -191,13 +188,10 @@ impl SyncClient for BankClient {
                 }
             }
             if now.elapsed().as_secs() > 15 {
-                return Err(TransportError::IoError(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "signature not found after {} seconds",
-                        now.elapsed().as_secs()
-                    ),
-                )));
+                return Err(TransportError::IoError(io::Error::other(format!(
+                    "signature not found after {} seconds",
+                    now.elapsed().as_secs()
+                ))));
             }
             sleep(Duration::from_millis(250));
         }
@@ -239,9 +233,7 @@ impl SyncClient for BankClient {
         )
         .ok()
         .and_then(|sanitized_message| self.bank.get_fee_for_message(&sanitized_message))
-        .ok_or_else(|| {
-            TransportError::IoError(io::Error::new(io::ErrorKind::Other, "Unable calculate fee"))
-        })
+        .ok_or_else(|| TransportError::IoError(io::Error::other("Unable calculate fee")))
     }
 }
 

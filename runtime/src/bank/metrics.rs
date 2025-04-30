@@ -23,7 +23,6 @@ pub(crate) struct RewardsMetrics {
     pub(crate) store_stake_accounts_us: AtomicU64,
     pub(crate) store_vote_accounts_us: AtomicU64,
     pub(crate) vote_accounts_cache_miss_count: AtomicU64,
-    pub(crate) hash_partition_rewards_us: u64,
 }
 
 pub(crate) struct NewBankTimings {
@@ -96,11 +95,6 @@ pub(crate) fn report_new_epoch_metrics(
         (
             "vote_accounts_cache_miss_count",
             metrics.vote_accounts_cache_miss_count.load(Relaxed),
-            i64
-        ),
-        (
-            "hash_partition_rewards_us",
-            metrics.hash_partition_rewards_us,
             i64
         ),
     );
@@ -176,6 +170,7 @@ pub(crate) fn report_new_bank_metrics(
 /// Metrics for partitioned epoch reward store
 #[derive(Debug, Default)]
 pub(crate) struct RewardsStoreMetrics {
+    pub(crate) total_num_partitions: usize,
     pub(crate) partition_index: u64,
     pub(crate) store_stake_accounts_us: u64,
     pub(crate) store_stake_accounts_count: usize,
@@ -199,6 +194,7 @@ pub(crate) fn report_partitioned_reward_metrics(bank: &Bank, timings: RewardsSto
             timings.store_stake_accounts_us,
             i64
         ),
+        ("total_num_partitions", timings.total_num_partitions, i64),
         (
             "store_stake_accounts_count",
             timings.store_stake_accounts_count,

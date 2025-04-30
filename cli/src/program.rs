@@ -3023,7 +3023,7 @@ fn verify_elf(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Verify the program
     let program_runtime_environment = create_program_runtime_environment_v1(
-        &feature_set,
+        &feature_set.runtime_features(),
         &SVMTransactionExecutionBudget::default(),
         true,
         false,

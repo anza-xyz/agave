@@ -197,7 +197,7 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                         transactions,
                         max_ages: _,
                     },
-                retryable_indexes,
+                mut retryable_indexes,
             }) => {
                 let num_transactions = ids.len();
                 let num_retryable = retryable_indexes.len();
@@ -206,10 +206,12 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                 self.complete_batch(batch_id, &transactions);
 
                 // Retryable transactions should be inserted back into the container
-                let mut retryable_iter = retryable_indexes.into_iter().peekable();
+                // Need to sort because recording failures lead to out-of-order indexes
+                retryable_indexes.sort_unstable();
+                let mut retryable_iter = retryable_indexes.iter().peekable();
                 for (index, (id, transaction)) in izip!(ids, transactions).enumerate() {
-                    if let Some(retryable_index) = retryable_iter.peek() {
-                        if *retryable_index == index {
+                    if let Some(&&retryable_index) = retryable_iter.peek() {
+                        if retryable_index == index {
                             container.retry_transaction(id, transaction);
                             retryable_iter.next();
                             continue;
@@ -217,6 +219,11 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
                     }
                     container.remove_by_id(id);
                 }
+
+                debug_assert!(
+                    retryable_iter.peek().is_none(),
+                    "retryable indexes were not in order: {retryable_indexes:?}"
+                );
 
                 Ok((num_transactions, num_retryable))
             }

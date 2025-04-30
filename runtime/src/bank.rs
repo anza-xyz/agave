@@ -61,7 +61,7 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
-    ahash::AHashSet,
+    ahash::{AHashSet, RandomState},
     dashmap::{DashMap, DashSet},
     log::*,
     rayon::{
@@ -954,7 +954,7 @@ struct VoteReward {
     vote_rewards: u64,
 }
 
-type VoteRewards = DashMap<Pubkey, VoteReward>;
+type VoteRewards = DashMap<Pubkey, VoteReward, RandomState>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -1582,7 +1582,7 @@ impl Bank {
             drop(program_cache);
             let mut program_cache = self.transaction_processor.program_cache.write().unwrap();
             let program_runtime_environment_v1 = create_program_runtime_environment_v1(
-                &upcoming_feature_set,
+                &upcoming_feature_set.runtime_features(),
                 &compute_budget,
                 false, /* deployment */
                 false, /* debugging_features */
@@ -2449,9 +2449,11 @@ impl Bank {
             .is_active(&feature_set::stake_minimum_delegation_for_rewards::id())
         {
             let num_stake_delegations = stakes.stake_delegations().len();
-            let min_stake_delegation =
-                solana_stake_program::get_minimum_delegation(&self.feature_set)
-                    .max(LAMPORTS_PER_SOL);
+            let min_stake_delegation = solana_stake_program::get_minimum_delegation(
+                self.feature_set
+                    .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+            )
+            .max(LAMPORTS_PER_SOL);
 
             let (stake_delegations, filter_time_us) = measure_us!(stakes
                 .stake_delegations()
@@ -2481,9 +2483,7 @@ impl Bank {
     /// - we want this fn to have no side effects (such as actually storing vote accounts) so that we
     ///   can compare the expected results with the current code path
     /// - we want to be able to batch store the vote accounts later for improved performance/cache updating
-    fn calc_vote_accounts_to_store(
-        vote_account_rewards: DashMap<Pubkey, VoteReward>,
-    ) -> VoteRewardsAccounts {
+    fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
         let len = vote_account_rewards.len();
         let mut result = VoteRewardsAccounts {
             rewards: Vec::with_capacity(len),
@@ -3435,7 +3435,7 @@ impl Bank {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake: self.get_current_epoch_total_stake(),
-            feature_set: Arc::clone(&self.feature_set),
+            feature_set: self.feature_set.runtime_features(),
             rent_collector: Some(&rent_collector_with_metrics),
         };
 
@@ -4172,7 +4172,7 @@ impl Bank {
         for (pubkey, account, _loaded_slot) in accounts.iter_mut() {
             let rent_epoch_pre = account.rent_epoch();
             let (rent_collected_info, collect_rent_us) = measure_us!(collect_rent_from_account(
-                &self.feature_set,
+                &self.feature_set.runtime_features(),
                 &self.rent_collector,
                 pubkey,
                 account
@@ -4965,7 +4965,7 @@ impl Bank {
             .configure_program_runtime_environments(
                 Some(Arc::new(
                     create_program_runtime_environment_v1(
-                        &self.feature_set,
+                        &self.feature_set.runtime_features(),
                         &self.compute_budget().unwrap_or_default().to_budget(),
                         false, /* deployment */
                         false, /* debugging_features */

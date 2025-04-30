@@ -6,9 +6,7 @@
 // in other words the utility functions in this file should not be broken out into modules or used elsewhere
 
 use {
-    agave_feature_set::{
-        move_stake_and_move_lamports_ixs, stake_raise_minimum_delegation_to_1_sol,
-    },
+    agave_feature_set::stake_raise_minimum_delegation_to_1_sol,
     solana_program_test::*,
     solana_sdk::{
         account::Account as SolanaAccount,
@@ -1222,80 +1220,4 @@ async fn test_move_general_fail(
             .unwrap_err();
         assert_eq!(e, StakeError::VoteAddressMismatch.into());
     }
-}
-
-// this test is only to be sure the feature gate is safe
-// once the feature has been activated, this can all be deleted
-#[test_matrix(
-    [program_test_without_features(&[move_stake_and_move_lamports_ixs::id()]),
-     program_test_without_features(&[move_stake_and_move_lamports_ixs::id(), stake_raise_minimum_delegation_to_1_sol::id()])],
-    [StakeLifecycle::Initialized, StakeLifecycle::Active, StakeLifecycle::Deactive],
-    [StakeLifecycle::Initialized, StakeLifecycle::Activating, StakeLifecycle::Active, StakeLifecycle::Deactive],
-    [false, true]
-)]
-#[tokio::test]
-async fn test_move_feature_gate_fail(
-    program_test: ProgramTest,
-    move_source_type: StakeLifecycle,
-    move_dest_type: StakeLifecycle,
-    move_lamports: bool,
-) {
-    // the test_matrix includes all valid source/dest combinations for MoveLamports
-    // we dont test invalid combinations because they would fail regardless of the fail cases we test here
-    // valid source/dest for MoveStake are a strict subset of MoveLamports
-    // source must be active, and dest must be active or inactive. so we skip the additional invalid MoveStake cases
-    if !move_lamports
-        && (move_source_type != StakeLifecycle::Active
-            || move_dest_type == StakeLifecycle::Activating)
-    {
-        return;
-    }
-
-    let mut context = program_test.start_with_context().await;
-    let accounts = Accounts::default();
-    accounts.initialize(&mut context).await;
-
-    let minimum_delegation = get_minimum_delegation(&mut context).await;
-    let source_staked_amount = minimum_delegation * 2;
-
-    let mk_ixn = if move_lamports {
-        ixn::move_lamports
-    } else {
-        ixn::move_stake
-    };
-
-    let (move_source_keypair, staker_keypair, withdrawer_keypair) = move_source_type
-        .new_stake_account(
-            &mut context,
-            &accounts.vote_account.pubkey(),
-            source_staked_amount,
-        )
-        .await;
-    let move_source = move_source_keypair.pubkey();
-    transfer(&mut context, &move_source, minimum_delegation).await;
-
-    let move_dest_keypair = Keypair::new();
-    move_dest_type
-        .new_stake_account_fully_specified(
-            &mut context,
-            &accounts.vote_account.pubkey(),
-            minimum_delegation,
-            &move_dest_keypair,
-            &staker_keypair,
-            &withdrawer_keypair,
-            &Lockup::default(),
-        )
-        .await;
-    let move_dest = move_dest_keypair.pubkey();
-
-    let instruction = mk_ixn(
-        &move_source,
-        &move_dest,
-        &staker_keypair.pubkey(),
-        minimum_delegation,
-    );
-    let e = process_instruction(&mut context, &instruction, &vec![&staker_keypair])
-        .await
-        .unwrap_err();
-    assert_eq!(e, ProgramError::InvalidInstructionData);
 }

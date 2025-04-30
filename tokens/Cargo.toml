@@ -29,8 +29,8 @@ solana-rpc-client-api = { workspace = true }
 solana-sdk = "=2.2.2"
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
-spl-associated-token-account = { workspace = true }
-spl-token = { workspace = true, features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "=6.0.0", features = ["no-entrypoint"] }
+spl-token = { version = "=8.0.0", features = ["no-entrypoint"] }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 

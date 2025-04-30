@@ -12,7 +12,7 @@ use {
         shred::{shred_code, ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder},
     },
     solana_sdk::{hash::Hash, signature::Keypair, timing::AtomicInterval},
-    std::{borrow::Cow, sync::RwLock, time::Duration},
+    std::{borrow::Cow, sync::RwLock},
     tokio::sync::mpsc::Sender as AsyncSender,
 };
 
@@ -21,6 +21,7 @@ pub struct StandardBroadcastRun {
     slot: Slot,
     parent: Slot,
     chained_merkle_root: Hash,
+    carryover_entry: Option<WorkingBankEntry>,
     next_shred_index: u32,
     next_code_index: u32,
     // If last_tick_height has reached bank.max_tick_height() for this slot
@@ -52,6 +53,7 @@ impl StandardBroadcastRun {
             slot: Slot::MAX,
             parent: Slot::MAX,
             chained_merkle_root: Hash::default(),
+            carryover_entry: None,
             next_shred_index: 0,
             next_code_index: 0,
             completed: true,
@@ -162,7 +164,14 @@ impl StandardBroadcastRun {
     ) -> Result<()> {
         let (bsend, brecv) = unbounded();
         let (ssend, srecv) = unbounded();
-        self.process_receive_results(keypair, blockstore, &ssend, &bsend, receive_results)?;
+        self.process_receive_results(
+            keypair,
+            blockstore,
+            &ssend,
+            &bsend,
+            receive_results,
+            &mut ProcessShredsStats::default(),
+        )?;
         // Data and coding shreds are sent in a single batch.
         let _ = self.transmit(&srecv, cluster_info, sock, bank_forks, quic_endpoint_sender);
         let _ = self.record(&brecv, blockstore);
@@ -176,15 +185,12 @@ impl StandardBroadcastRun {
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         receive_results: ReceiveResults,
+        process_stats: &mut ProcessShredsStats,
     ) -> Result<()> {
-        let mut receive_elapsed = receive_results.time_elapsed;
-        let mut coalesce_elapsed = receive_results.time_coalesced;
         let num_entries = receive_results.entries.len();
         let bank = receive_results.bank.clone();
         let last_tick_height = receive_results.last_tick_height;
         inc_new_counter_info!("broadcast_service-entries_received", num_entries);
-
-        let mut process_stats = ProcessShredsStats::default();
 
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
 
@@ -192,7 +198,7 @@ impl StandardBroadcastRun {
             // Finish previous slot if it was interrupted.
             if !self.completed {
                 let shreds =
-                    self.finish_prev_slot(keypair, bank.ticks_per_slot() as u8, &mut process_stats);
+                    self.finish_prev_slot(keypair, bank.ticks_per_slot() as u8, process_stats);
                 debug_assert!(shreds.iter().all(|shred| shred.slot() == self.slot));
                 // Broadcast shreds for the interrupted slot.
                 let batch_info = Some(BroadcastShredBatchInfo {
@@ -242,8 +248,8 @@ impl StandardBroadcastRun {
             self.completed = false;
             self.slot_broadcast_start = Instant::now();
             self.num_batches = 0;
-            receive_elapsed = Duration::ZERO;
-            coalesce_elapsed = Duration::ZERO;
+            process_stats.receive_elapsed = 0;
+            process_stats.coalesce_elapsed = 0;
         }
 
         // 2) Convert entries to shreds and coding shreds
@@ -259,7 +265,7 @@ impl StandardBroadcastRun {
                 &receive_results.entries,
                 reference_tick as u8,
                 is_last_in_slot,
-                &mut process_stats,
+                process_stats,
                 blockstore::MAX_DATA_SHREDS_PER_SLOT as u32,
                 shred_code::MAX_CODE_SHREDS_PER_SLOT as u32,
             )
@@ -309,11 +315,9 @@ impl StandardBroadcastRun {
 
         process_stats.shredding_elapsed = to_shreds_time.as_us();
         process_stats.get_leader_schedule_elapsed = get_leader_schedule_time.as_us();
-        process_stats.receive_elapsed = receive_elapsed.as_micros() as u64;
-        process_stats.coalesce_elapsed = coalesce_elapsed.as_micros() as u64;
         process_stats.coding_send_elapsed = coding_send_time.as_us();
 
-        self.process_shreds_stats += process_stats;
+        self.process_shreds_stats += *process_stats;
 
         if last_tick_height == bank.max_tick_height() {
             self.report_and_reset_stats(false);
@@ -435,7 +439,12 @@ impl BroadcastRun for StandardBroadcastRun {
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
-        let receive_results = broadcast_utils::recv_slot_entries(receiver)?;
+        let mut process_stats = ProcessShredsStats::default();
+        let receive_results = broadcast_utils::recv_slot_entries(
+            receiver,
+            &mut self.carryover_entry,
+            &mut process_stats,
+        )?;
         // TODO: Confirm that last chunk of coding shreds
         // will not be lost or delayed for too long.
         self.process_receive_results(
@@ -444,6 +453,7 @@ impl BroadcastRun for StandardBroadcastRun {
             socket_sender,
             blockstore_sender,
             receive_results,
+            &mut process_stats,
         )
     }
     fn transmit(
@@ -479,8 +489,10 @@ mod test {
         solana_entry::entry::create_ticks,
         solana_gossip::cluster_info::{ClusterInfo, Node},
         solana_ledger::{
-            blockstore::Blockstore, genesis_utils::create_genesis_config, get_tmp_ledger_path,
-            shred::max_ticks_per_n_shreds,
+            blockstore::Blockstore,
+            genesis_utils::create_genesis_config,
+            get_tmp_ledger_path,
+            shred::{max_ticks_per_n_shreds, DATA_SHREDS_PER_FEC_BLOCK},
         },
         solana_net_utils::bind_to_unspecified,
         solana_runtime::bank::Bank,
@@ -576,7 +588,7 @@ mod test {
     #[test]
     fn test_slot_interrupt() {
         // Setup
-        let num_shreds_per_slot = 2;
+        let num_shreds_per_slot = DATA_SHREDS_PER_FEC_BLOCK as u64;
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
             setup(num_shreds_per_slot);
         let (quic_endpoint_sender, _quic_endpoint_receiver) =
@@ -586,8 +598,6 @@ mod test {
         let ticks0 = create_ticks(genesis_config.ticks_per_slot - 1, 0, genesis_config.hash());
         let receive_results = ReceiveResults {
             entries: ticks0.clone(),
-            time_elapsed: Duration::new(3, 0),
-            time_coalesced: Duration::new(2, 0),
             bank: bank0.clone(),
             last_tick_height: (ticks0.len() - 1) as u64,
         };
@@ -658,8 +668,6 @@ mod test {
         );
         let receive_results = ReceiveResults {
             entries: ticks1.clone(),
-            time_elapsed: Duration::new(2, 0),
-            time_coalesced: Duration::new(1, 0),
             bank: bank2,
             last_tick_height: (ticks1.len() - 1) as u64,
         };
@@ -677,7 +685,10 @@ mod test {
 
         // The shred index should have reset to 0, which makes it possible for the
         // index < the previous shred index for slot 0
-        assert_eq!(standard_broadcast_run.next_shred_index as u64, num_shreds);
+        assert_eq!(
+            standard_broadcast_run.next_shred_index as usize,
+            DATA_SHREDS_PER_FEC_BLOCK
+        );
         assert_eq!(standard_broadcast_run.slot, 2);
         assert_eq!(standard_broadcast_run.parent, 0);
 
@@ -723,8 +734,6 @@ mod test {
             last_tick_height += (ticks.len() - 1) as u64;
             let receive_results = ReceiveResults {
                 entries: ticks,
-                time_elapsed: Duration::new(1, 0),
-                time_coalesced: Duration::new(0, 0),
                 bank: bank.clone(),
                 last_tick_height,
             };
@@ -735,6 +744,7 @@ mod test {
                     &ssend,
                     &bsend,
                     receive_results,
+                    &mut ProcessShredsStats::default(),
                 )
                 .unwrap();
         };
@@ -746,14 +756,20 @@ mod test {
             shreds.extend(recv_shreds.deref().clone());
         }
         // At least as many coding shreds as data shreds.
-        assert!(shreds.len() >= 29 * 2);
-        assert_eq!(shreds.iter().filter(|shred| shred.is_data()).count(), 30);
+        assert!(shreds.len() >= DATA_SHREDS_PER_FEC_BLOCK * 2);
+        assert_eq!(
+            shreds.iter().filter(|shred| shred.is_data()).count(),
+            shreds.len() / 2
+        );
         process_ticks(75);
         while let Ok((recv_shreds, _)) = brecv.recv_timeout(Duration::from_secs(1)) {
             shreds.extend(recv_shreds.deref().clone());
         }
-        assert!(shreds.len() >= 33 * 2);
-        assert_eq!(shreds.iter().filter(|shred| shred.is_data()).count(), 34);
+        assert!(shreds.len() >= DATA_SHREDS_PER_FEC_BLOCK * 2);
+        assert_eq!(
+            shreds.iter().filter(|shred| shred.is_data()).count(),
+            shreds.len() / 2
+        );
     }
 
     #[test]
@@ -769,8 +785,6 @@ mod test {
         let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
         let receive_results = ReceiveResults {
             entries: ticks.clone(),
-            time_elapsed: Duration::new(3, 0),
-            time_coalesced: Duration::new(2, 0),
             bank: bank0,
             last_tick_height: ticks.len() as u64,
         };

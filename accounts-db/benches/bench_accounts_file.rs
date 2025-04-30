@@ -182,5 +182,105 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_write_accounts_file, bench_scan_pubkeys);
+// AppendVec file io has a custom impl for `get_account_shared_data()` that avoids an extra
+// allocation when the account data exceeds the stack buffer.
+// This benchmark times how beneficial this custom impl actually is.  IOW, if the custom impl takes
+// the same time as the `get_stored_account_callback().to_account_shared_data()` impl, then we can
+// remove the custom impl.
+fn bench_get_account_shared_data(c: &mut Criterion) {
+    let mut group = c.benchmark_group("get_account_shared_data");
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    const DATA_SIZES: [usize; 4] = [
+        200,                                /* small data, *does* fit in stack buffer */
+        4 * 1024,                           /* medium data, does *not* fit in stack buffer */
+        1_000_000,                          /* large data, does *not* fix in stack buffer */
+        MAX_PERMITTED_DATA_LENGTH as usize, /* max data, worst-case allocation */
+    ];
+    for data_size in DATA_SIZES {
+        let storable_accounts: Vec<_> = utils::accounts(255, &[data_size], &[1]).take(1).collect();
+
+        // create an append vec file
+        let append_vec_path = temp_dir.path().join(format!("append_vec_{data_size}"));
+        _ = std::fs::remove_file(&append_vec_path);
+        let file_size = storable_accounts
+            .iter()
+            .map(|(_, account)| append_vec::aligned_stored_size(account.data().len()))
+            .sum();
+        let append_vec = AppendVec::new(append_vec_path, true, file_size);
+        let stored_accounts_info = append_vec
+            .append_accounts(&(Slot::MAX, storable_accounts.as_slice()), 0)
+            .unwrap();
+        assert_eq!(stored_accounts_info.offsets.len(), 1);
+        append_vec.flush().unwrap();
+        // Open append vecs for reading here, outside of the bench function, so we don't open lots
+        // of file handles and run out/crash.  We also need to *not* remove the backing file in
+        // these new append vecs because that would cause double-free (or triple-free here).
+        // Wrap the append vecs in ManuallyDrop to *not* remove the backing file on drop.
+        let append_vec_mmap = ManuallyDrop::new(
+            AppendVec::new_from_file(append_vec.path(), append_vec.len(), StorageAccess::Mmap)
+                .unwrap()
+                .0,
+        );
+        let append_vec_file = ManuallyDrop::new(
+            AppendVec::new_from_file(append_vec.path(), append_vec.len(), StorageAccess::File)
+                .unwrap()
+                .0,
+        );
+
+        // Run the benchmarks!
+        // Note, use `iter_with_large_drop()` to avoid timing how long it takes to drop the Vec of
+        // account data.
+        group.bench_function(
+            // The baseline.
+            BenchmarkId::new("append_vec_mmap_get_account_shared_data", data_size),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    _ = append_vec_mmap.get_account_shared_data(0).unwrap();
+                });
+            },
+        );
+        group.bench_function(
+            // The mmap "baseline" impl (above) does exactly the same as this one (below),
+            // so we expect perf to be identical.
+            BenchmarkId::new("append_vec_mmap_get_stored_account_callback", data_size),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    _ = append_vec_mmap
+                        .get_stored_account_callback(0, |account| account.to_account_shared_data())
+                        .unwrap();
+                });
+            },
+        );
+        group.bench_function(
+            // The custom file io impl, which avoids the extra allocation.
+            BenchmarkId::new("append_vec_file_get_account_shared_data", data_size),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    _ = append_vec_file.get_account_shared_data(0).unwrap();
+                });
+            },
+        );
+        group.bench_function(
+            // The "default" file io impl, which requires an additional allocation.
+            // For the larger data sizes that do not fit in the stack buffer, we expect this impl
+            // to be slower than the custom impl (above).
+            BenchmarkId::new("append_vec_file_get_stored_account_callback", data_size),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    _ = append_vec_file
+                        .get_stored_account_callback(0, |account| account.to_account_shared_data())
+                        .unwrap();
+                });
+            },
+        );
+    }
+}
+
+criterion_group!(
+    benches,
+    bench_write_accounts_file,
+    bench_scan_pubkeys,
+    bench_get_account_shared_data,
+);
 criterion_main!(benches);

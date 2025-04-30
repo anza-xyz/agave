@@ -82,14 +82,17 @@ pub type TransactionAccount = (Pubkey, AccountSharedData);
 pub struct TransactionAccounts {
     accounts: Vec<RefCell<AccountSharedData>>,
     touched_flags: RefCell<Box<[bool]>>,
+    resize_delta: RefCell<i64>,
 }
 
 impl TransactionAccounts {
     #[cfg(not(target_os = "solana"))]
     fn new(accounts: Vec<RefCell<AccountSharedData>>) -> TransactionAccounts {
+        let touched_flags = vec![false; accounts.len()].into_boxed_slice();
         TransactionAccounts {
-            touched_flags: RefCell::new(vec![false; accounts.len()].into_boxed_slice()),
             accounts,
+            touched_flags: RefCell::new(touched_flags),
+            resize_delta: RefCell::new(0),
         }
     }
 
@@ -111,14 +114,38 @@ impl TransactionAccounts {
         Ok(())
     }
 
-    #[cfg(not(target_os = "solana"))]
-    pub fn touched_count(&self) -> usize {
-        self.touched_flags
-            .borrow()
-            .iter()
-            .fold(0usize, |accumulator, was_touched| {
-                accumulator.saturating_add(*was_touched as usize)
-            })
+    fn update_accounts_resize_delta(
+        &self,
+        old_len: usize,
+        new_len: usize,
+    ) -> Result<(), InstructionError> {
+        let mut accounts_resize_delta = self
+            .resize_delta
+            .try_borrow_mut()
+            .map_err(|_| InstructionError::GenericError)?;
+        *accounts_resize_delta =
+            accounts_resize_delta.saturating_add((new_len as i64).saturating_sub(old_len as i64));
+        Ok(())
+    }
+
+    fn can_data_be_resized(&self, old_len: usize, new_len: usize) -> Result<(), InstructionError> {
+        // The new length can not exceed the maximum permitted length
+        if new_len > MAX_PERMITTED_DATA_LENGTH as usize {
+            return Err(InstructionError::InvalidRealloc);
+        }
+        // The resize can not exceed the per-transaction maximum
+        let length_delta = (new_len as i64).saturating_sub(old_len as i64);
+        if self
+            .resize_delta
+            .try_borrow()
+            .map_err(|_| InstructionError::GenericError)
+            .map(|value_ref| *value_ref)?
+            .saturating_add(length_delta)
+            > MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+        {
+            return Err(InstructionError::MaxAccountsDataAllocationsExceeded);
+        }
+        Ok(())
     }
 
     pub fn try_borrow(
@@ -130,13 +157,6 @@ impl TransactionAccounts {
             .ok_or(InstructionError::MissingAccount)?
             .try_borrow()
             .map_err(|_| InstructionError::AccountBorrowFailed)
-    }
-
-    pub fn into_accounts(self) -> Vec<AccountSharedData> {
-        self.accounts
-            .into_iter()
-            .map(|account| account.into_inner())
-            .collect()
     }
 }
 
@@ -153,7 +173,6 @@ pub struct TransactionContext {
     instruction_trace: Vec<InstructionContext>,
     top_level_instruction_index: usize,
     return_data: TransactionReturnData,
-    accounts_resize_delta: RefCell<i64>,
     #[cfg(not(target_os = "solana"))]
     remove_accounts_executable_flag_checks: bool,
     #[cfg(not(target_os = "solana"))]
@@ -189,7 +208,6 @@ impl TransactionContext {
             instruction_trace: vec![InstructionContext::default()],
             top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
-            accounts_resize_delta: RefCell::new(0),
             remove_accounts_executable_flag_checks: true,
             rent,
             #[cfg(all(
@@ -215,7 +233,10 @@ impl TransactionContext {
 
         Ok(Rc::try_unwrap(self.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
-            .into_accounts())
+            .accounts
+            .into_iter()
+            .map(RefCell::into_inner)
+            .collect())
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -491,14 +512,15 @@ impl TransactionContext {
 
     /// Returns the accounts resize delta
     pub fn accounts_resize_delta(&self) -> Result<i64, InstructionError> {
-        self.accounts_resize_delta
+        self.accounts
+            .resize_delta
             .try_borrow()
             .map_err(|_| InstructionError::GenericError)
             .map(|value_ref| *value_ref)
     }
 
     /// Returns a new account data write access handler
-    pub fn account_data_write_access_handler(&self) -> Box<dyn Fn(u64) -> Result<u64, ()>> {
+    pub fn account_data_write_access_handler(&self) -> Box<dyn Fn(u32) -> Result<u64, ()>> {
         let accounts = Rc::clone(&self.accounts);
         Box::new(move |index_in_transaction| {
             // The two calls below can't really fail. If they fail because of a bug,
@@ -940,7 +962,6 @@ impl BorrowedAccount<'_> {
     ))]
     pub fn set_data(&mut self, data: Vec<u8>) -> Result<(), InstructionError> {
         self.can_data_be_resized(data.len())?;
-        self.can_data_be_changed()?;
         self.touch()?;
 
         self.update_accounts_resize_delta(data.len())?;
@@ -955,7 +976,6 @@ impl BorrowedAccount<'_> {
     #[cfg(not(target_os = "solana"))]
     pub fn set_data_from_slice(&mut self, data: &[u8]) -> Result<(), InstructionError> {
         self.can_data_be_resized(data.len())?;
-        self.can_data_be_changed()?;
         self.touch()?;
         self.update_accounts_resize_delta(data.len())?;
         // Note that we intentionally don't call self.make_data_mut() here.  make_data_mut() will
@@ -973,7 +993,6 @@ impl BorrowedAccount<'_> {
     #[cfg(not(target_os = "solana"))]
     pub fn set_data_length(&mut self, new_length: usize) -> Result<(), InstructionError> {
         self.can_data_be_resized(new_length)?;
-        self.can_data_be_changed()?;
         // don't touch the account if the length does not change
         if self.get_data().len() == new_length {
             return Ok(());
@@ -989,7 +1008,6 @@ impl BorrowedAccount<'_> {
     pub fn extend_from_slice(&mut self, data: &[u8]) -> Result<(), InstructionError> {
         let new_len = self.get_data().len().saturating_add(data.len());
         self.can_data_be_resized(new_len)?;
-        self.can_data_be_changed()?;
 
         if data.is_empty() {
             return Ok(());
@@ -1193,46 +1211,30 @@ impl BorrowedAccount<'_> {
 
     /// Returns an error if the account data can not be resized to the given length
     #[cfg(not(target_os = "solana"))]
-    pub fn can_data_be_resized(&self, new_length: usize) -> Result<(), InstructionError> {
-        let old_length = self.get_data().len();
+    pub fn can_data_be_resized(&self, new_len: usize) -> Result<(), InstructionError> {
+        let old_len = self.get_data().len();
         // Only the owner can change the length of the data
-        if new_length != old_length && !self.is_owned_by_current_program() {
+        if new_len != old_len && !self.is_owned_by_current_program() {
             return Err(InstructionError::AccountDataSizeChanged);
         }
-        // The new length can not exceed the maximum permitted length
-        if new_length > MAX_PERMITTED_DATA_LENGTH as usize {
-            return Err(InstructionError::InvalidRealloc);
-        }
-        // The resize can not exceed the per-transaction maximum
-        let length_delta = (new_length as i64).saturating_sub(old_length as i64);
-        if self
-            .transaction_context
-            .accounts_resize_delta()?
-            .saturating_add(length_delta)
-            > MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
-        {
-            return Err(InstructionError::MaxAccountsDataAllocationsExceeded);
-        }
-        Ok(())
+        self.transaction_context
+            .accounts
+            .can_data_be_resized(old_len, new_len)?;
+        self.can_data_be_changed()
     }
 
     #[cfg(not(target_os = "solana"))]
     fn touch(&self) -> Result<(), InstructionError> {
         self.transaction_context
-            .accounts()
+            .accounts
             .touch(self.index_in_transaction)
     }
 
     #[cfg(not(target_os = "solana"))]
     fn update_accounts_resize_delta(&mut self, new_len: usize) -> Result<(), InstructionError> {
-        let mut accounts_resize_delta = self
-            .transaction_context
-            .accounts_resize_delta
-            .try_borrow_mut()
-            .map_err(|_| InstructionError::GenericError)?;
-        *accounts_resize_delta = accounts_resize_delta
-            .saturating_add((new_len as i64).saturating_sub(self.get_data().len() as i64));
-        Ok(())
+        self.transaction_context
+            .accounts
+            .update_accounts_resize_delta(self.get_data().len(), new_len)
     }
 }
 
@@ -1249,18 +1251,27 @@ pub struct ExecutionRecord {
 #[cfg(not(target_os = "solana"))]
 impl From<TransactionContext> for ExecutionRecord {
     fn from(context: TransactionContext) -> Self {
-        let accounts = Rc::try_unwrap(context.accounts)
+        let TransactionAccounts {
+            accounts,
+            touched_flags,
+            resize_delta,
+        } = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs");
-        let touched_account_count = accounts.touched_count() as u64;
-        let accounts = accounts.into_accounts();
+        let accounts = Vec::from(Pin::into_inner(context.account_keys))
+            .into_iter()
+            .zip(accounts.into_iter().map(RefCell::into_inner))
+            .collect();
+        let touched_account_count = touched_flags
+            .borrow()
+            .iter()
+            .fold(0usize, |accumulator, was_touched| {
+                accumulator.saturating_add(*was_touched as usize)
+            }) as u64;
         Self {
-            accounts: Vec::from(Pin::into_inner(context.account_keys))
-                .into_iter()
-                .zip(accounts)
-                .collect(),
+            accounts,
             return_data: context.return_data,
             touched_account_count,
-            accounts_resize_delta: RefCell::into_inner(context.accounts_resize_delta),
+            accounts_resize_delta: RefCell::into_inner(resize_delta),
         }
     }
 }

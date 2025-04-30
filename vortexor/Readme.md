@@ -1,3 +1,6 @@
+NOTE: Vortexor is not production ready.
+
+
 # Introduction
 The Vortexor is a service that can offload the tasks of receiving transactions
 from the public, performing signature verifications, and deduplications from the
