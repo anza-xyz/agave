@@ -895,11 +895,13 @@ impl Validator {
             .snapshot_config()
             .should_generate_snapshots()
         {
+            let exit_backpressure = None;
             let enable_gossip_push = true;
             let snapshot_packager_service = SnapshotPackagerService::new(
                 pending_snapshot_packages.clone(),
                 starting_snapshot_hashes,
                 exit.clone(),
+                exit_backpressure,
                 cluster_info.clone(),
                 snapshot_controller.clone(),
                 enable_gossip_push,
