@@ -17,14 +17,13 @@ use {
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader_upgradeable,
         hash::Hash,
         instruction::AccountMeta,
         pubkey::Pubkey,
         signature::Signature,
     },
     solana_svm::{
-        account_loader::{CheckedTransactionDetails, TransactionCheckResult},
+        account_loader::{AccountLoader, CheckedTransactionDetails, TransactionCheckResult},
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResultExtensions,
         },
@@ -33,6 +32,7 @@ use {
             TransactionProcessingEnvironment,
         },
     },
+    solana_svm_feature_set::SVMFeatureSet,
     solana_timings::ExecuteTimings,
     std::collections::HashMap,
 };
@@ -47,17 +47,16 @@ fn program_cache_execution(threads: usize) {
     let batch_processor =
         TransactionBatchProcessor::new(5, 5, Arc::downgrade(&fork_graph), None, None);
 
-    const LOADER: Pubkey = bpf_loader_upgradeable::id();
     let programs = vec![
         deploy_program("hello-solana".to_string(), 0, &mut mock_bank),
         deploy_program("simple-transfer".to_string(), 0, &mut mock_bank),
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
 
-    let account_maps: HashMap<Pubkey, (&Pubkey, u64)> = programs
+    let account_maps: HashMap<Pubkey, u64> = programs
         .iter()
         .enumerate()
-        .map(|(idx, key)| (*key, (&LOADER, idx as u64)))
+        .map(|(idx, key)| (*key, idx as u64))
         .collect();
 
     let ths: Vec<_> = (0..threads)
@@ -71,8 +70,15 @@ fn program_cache_execution(threads: usize) {
             let maps = account_maps.clone();
             let programs = programs.clone();
             thread::spawn(move || {
-                let result = processor.replenish_program_cache(
+                let feature_set = SVMFeatureSet::all_enabled();
+                let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
+                    None,
                     &local_bank,
+                    &feature_set,
+                    0,
+                );
+                let result = processor.replenish_program_cache(
+                    &account_loader,
                     &maps,
                     &mut ExecuteTimings::default(),
                     false,
