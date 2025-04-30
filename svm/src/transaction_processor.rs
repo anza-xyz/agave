@@ -1512,12 +1512,13 @@ mod tests {
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
         let key = Pubkey::new_unique();
 
-        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
+        let mut account_maps = AHashMap::new();
         account_maps.insert(key, 4);
 
         batch_processor.replenish_program_cache(
             &account_loader,
             &account_maps,
+            &HashMap::default(),
             &mut ExecuteTimings::default(),
             false,
             true,
@@ -1541,7 +1542,7 @@ mod tests {
             .insert(key, account_data);
         let account_loader = (&mock_bank).into();
 
-        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
+        let mut account_maps = AHashMap::new();
         account_maps.insert(key, 4);
         let mut loaded_missing = 0;
 
@@ -1549,6 +1550,7 @@ mod tests {
             let result = batch_processor.replenish_program_cache(
                 &account_loader,
                 &account_maps,
+                &HashMap::default(),
                 &mut ExecuteTimings::default(),
                 false,
                 limit_to_load_programs,

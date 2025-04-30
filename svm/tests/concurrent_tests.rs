@@ -5,6 +5,7 @@ use {
         mock_bank::{create_custom_loader, deploy_program, register_builtins, MockForkGraph},
         transaction_builder::SanitizedTransactionBuilder,
     },
+    ahash::AHashMap,
     assert_matches::assert_matches,
     mock_bank::MockBankCallback,
     shuttle::{
@@ -53,7 +54,7 @@ fn program_cache_execution(threads: usize) {
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
 
-    let account_maps: HashMap<Pubkey, u64> = programs
+    let account_maps: AHashMap<Pubkey, u64> = programs
         .iter()
         .enumerate()
         .map(|(idx, key)| (*key, idx as u64))
@@ -80,6 +81,7 @@ fn program_cache_execution(threads: usize) {
                 let result = processor.replenish_program_cache(
                     &account_loader,
                     &maps,
+                    &HashMap::default(),
                     &mut ExecuteTimings::default(),
                     false,
                     true,
