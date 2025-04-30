@@ -90,7 +90,7 @@ impl Protocol {
 
     // Returns true if all signatures verify.
     #[must_use]
-    pub(crate) fn par_verify(&self) -> bool {
+    pub(crate) fn verify(&self) -> bool {
         match self {
             Self::PullRequest(_, caller) => caller.verify(),
             Self::PullResponse(_, data) => data.iter().all(CrdsValue::verify),
