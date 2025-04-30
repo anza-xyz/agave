@@ -975,8 +975,11 @@ fn bank_to_full_snapshot_archive_with(
         snapshot_version,
         ..Default::default()
     };
-    let snapshot_archive_info =
-        snapshot_utils::serialize_and_archive_snapshot_package(snapshot_package, &snapshot_config)?;
+    let snapshot_archive_info = snapshot_utils::serialize_and_archive_snapshot_package(
+        snapshot_package,
+        &snapshot_config,
+        false, // flushing the storages is not needed because we do not intend to fastboot
+    )?;
 
     Ok(FullSnapshotArchiveInfo::new(snapshot_archive_info))
 }
@@ -1074,8 +1077,11 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_version,
         ..Default::default()
     };
-    let snapshot_archive_info =
-        snapshot_utils::serialize_and_archive_snapshot_package(snapshot_package, &snapshot_config)?;
+    let snapshot_archive_info = snapshot_utils::serialize_and_archive_snapshot_package(
+        snapshot_package,
+        &snapshot_config,
+        false, // flushing the storages is not needed because we do not intend to fastboot
+    )?;
 
     Ok(IncrementalSnapshotArchiveInfo::new(
         full_snapshot_slot,
@@ -2755,7 +2761,12 @@ mod tests {
         // 1. call get_highest_loadable() but bad snapshot dir, so returns None
         assert!(get_highest_loadable_bank_snapshot(&SnapshotConfig::default()).is_none());
 
-        // 2. get_highest_loadable(), should return highest_bank_snapshot_post_slot
+        // 2. the 'storages flushed' file hasn't been written yet, so get_highest_loadable() should return NONE
+        assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
+
+        // 3. write 'storages flushed' file, get_highest_loadable(), should return highest_bank_snapshot_post_slot
+        snapshot_utils::write_storages_flushed_file(&highest_bank_snapshot_post.snapshot_dir)
+            .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot, highest_bank_snapshot_post);
 
@@ -2767,8 +2778,16 @@ mod tests {
         let bank_snapshot = get_highest_loadable_bank_snapshot(&load_only_snapshot_config).unwrap();
         assert_eq!(bank_snapshot, highest_bank_snapshot_post);
 
-        // 5. delete highest bank snapshot, get_highest_loadable() should return Some() again, with slot-1
+        // 5. delete highest bank snapshot, get_highest_loadable() should return NONE
         fs::remove_dir_all(&highest_bank_snapshot_post.snapshot_dir).unwrap();
+        assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
+
+        // 5. write 'storages flushed' file, get_highest_loadable() should return Some() again, with slot-1
+        snapshot_utils::write_storages_flushed_file(get_bank_snapshot_dir(
+            &snapshot_config.bank_snapshots_dir,
+            highest_bank_snapshot_post.slot - 1,
+        ))
+        .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot.slot, highest_bank_snapshot_post.slot - 1);
 

@@ -187,6 +187,7 @@ impl BackgroundServices {
             pending_snapshot_packages.clone(),
             None,
             exit.clone(),
+            None,
             cluster_info.clone(),
             snapshot_controller.clone(),
             false,
