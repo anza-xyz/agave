@@ -18,6 +18,7 @@ use {
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
+    ahash::AHashMap,
     log::debug,
     percentage::Percentage,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
@@ -691,8 +692,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         tx: &impl SVMMessage,
         program_owners: &[Pubkey],
         modified_programs: impl Iterator<Item = &'a Pubkey> + Clone,
-    ) -> HashMap<Pubkey, u64> {
-        let mut result: HashMap<Pubkey, u64> = self
+    ) -> AHashMap<Pubkey, u64> {
+        let mut result: AHashMap<Pubkey, u64> = self
             .builtin_program_ids
             .read()
             .unwrap()
@@ -731,7 +732,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         account_loader: &AccountLoader<CB>,
-        program_accounts_map: &HashMap<Pubkey, u64>,
+        program_accounts_map: &AHashMap<Pubkey, u64>,
         programs_modified_by_batch: &HashMap<Pubkey, Arc<ProgramCacheEntry>>,
         execute_timings: &mut ExecuteTimings,
         check_program_modification_slot: bool,
