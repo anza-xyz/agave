@@ -70,14 +70,25 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     // drivers.
     const RING_SIZE: usize = 2048;
 
-    let Ok((mut socket, tx)) = Socket::tx(
+    let (mut socket, tx) = match Socket::tx(
         dev.open_queue(queue_id),
         umem,
         zero_copy,
         RING_SIZE,
         RING_SIZE,
-    ) else {
-        panic!("failed to create AF_XDP socket on queue {queue_id:?}");
+    ) {
+        Ok(v) => v,
+        Err(_) => {
+            // Give us another chance if queue ID 0 is not available.
+            let umem: SliceUmem<'_> = SliceUmem::new(&mut memory, frame_size as u32).unwrap();
+            Socket::tx(
+                dev.open_queue(QueueId(queue_id.0 + 64)),
+                umem,
+                zero_copy,
+                RING_SIZE,
+                RING_SIZE,
+            ).unwrap()
+        }
     };
 
     let umem = socket.umem();
