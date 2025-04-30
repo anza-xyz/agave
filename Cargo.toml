@@ -32,6 +32,7 @@ members = [
     "bench-streamer",
     "bench-tps",
     "bench-vote",
+    "echo-server",
     "bloom",
     "bucket_map",
     "builtins",
@@ -475,6 +476,7 @@ solana-metrics = { path = "metrics", version = "=2.3.0" }
 solana-msg = "2.2.1"
 solana-native-token = "2.2.1"
 solana-net-utils = { path = "net-utils", version = "=2.3.0" }
+agave-echo-server = { path = "echo-server", version = "=2.3.0" }
 solana-nohash-hasher = "0.2.1"
 solana-nonce = "2.2.1"
 solana-nonce-account = "2.2.1"
