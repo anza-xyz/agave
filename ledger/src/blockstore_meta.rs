@@ -51,39 +51,109 @@ impl Default for ConnectedFlags {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-/// The Meta column family
-pub struct SlotMeta {
-    /// The number of slots above the root (the genesis block). The first
-    /// slot has slot 0.
-    pub slot: Slot,
-    /// The total number of consecutive shreds starting from index 0 we have received for this slot.
-    /// At the same time, it is also an index of the first missing shred for this slot, while the
-    /// slot is incomplete.
-    pub consumed: u64,
-    /// The index *plus one* of the highest shred received for this slot.  Useful
-    /// for checking if the slot has received any shreds yet, and to calculate the
-    /// range where there is one or more holes: `(consumed..received)`.
-    pub received: u64,
-    /// The timestamp of the first time a shred was added for this slot
-    pub first_shred_timestamp: u64,
-    /// The index of the shred that is flagged as the last shred for this slot.
-    /// None until the shred with LAST_SHRED_IN_SLOT flag is received.
-    #[serde(with = "serde_compat")]
-    pub last_index: Option<u64>,
-    /// The slot height of the block this one derives from.
-    /// The parent slot of the head of a detached chain of slots is None.
-    #[serde(with = "serde_compat")]
-    pub parent_slot: Option<Slot>,
-    /// The list of slots, each of which contains a block that derives
-    /// from this one.
-    pub next_slots: Vec<Slot>,
-    /// Connected status flags of this slot
-    pub connected_flags: ConnectedFlags,
-    /// Shreds indices which are marked data complete.  That is, those that have the
-    /// [`ShredFlags::DATA_COMPLETE_SHRED`][`crate::shred::ShredFlags::DATA_COMPLETE_SHRED`] set.
-    pub completed_data_indexes: BTreeSet<u32>,
+/// Now deprecated format for completed data indexes.
+///
+/// Replaced by [`CompletedDataIndexesV2`].
+type CompletedDataIndexesV1 = BTreeSet<u32>;
+/// New format for completed data indexes.
+///
+/// `BTreeSet` is inefficient for de/serialization. We
+/// are migrating to a bitvec to improve that.
+type CompletedDataIndexesV2 = BitVec<MAX_DATA_SHREDS_PER_SLOT>;
+
+impl From<CompletedDataIndexesV2> for CompletedDataIndexesV1 {
+    fn from(value: CompletedDataIndexesV2) -> Self {
+        value.iter_ones().map(|i| i as u32).collect()
+    }
 }
+
+impl From<CompletedDataIndexesV1> for CompletedDataIndexesV2 {
+    fn from(value: CompletedDataIndexesV1) -> Self {
+        value.into_iter().map(|i| i as usize).collect()
+    }
+}
+
+/// Helper to define the `SlotMeta` version variants.
+macro_rules! slot_meta_version {
+    ($slot_meta:ident => $completed_data_indexes:ident) => {
+        #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+        /// The Meta column family
+        pub struct $slot_meta {
+            /// The number of slots above the root (the genesis block). The first
+            /// slot has slot 0.
+            pub slot: Slot,
+            /// The total number of consecutive shreds starting from index 0 we have received for this slot.
+            /// At the same time, it is also an index of the first missing shred for this slot, while the
+            /// slot is incomplete.
+            pub consumed: u64,
+            /// The index *plus one* of the highest shred received for this slot.  Useful
+            /// for checking if the slot has received any shreds yet, and to calculate the
+            /// range where there is one or more holes: `(consumed..received)`.
+            pub received: u64,
+            /// The timestamp of the first time a shred was added for this slot
+            pub first_shred_timestamp: u64,
+            /// The index of the shred that is flagged as the last shred for this slot.
+            /// None until the shred with LAST_SHRED_IN_SLOT flag is received.
+            #[serde(with = "serde_compat")]
+            pub last_index: Option<u64>,
+            /// The slot height of the block this one derives from.
+            /// The parent slot of the head of a detached chain of slots is None.
+            #[serde(with = "serde_compat")]
+            pub parent_slot: Option<Slot>,
+            /// The list of slots, each of which contains a block that derives
+            /// from this one.
+            pub next_slots: Vec<Slot>,
+            /// Connected status flags of this slot
+            pub connected_flags: ConnectedFlags,
+            /// Shreds indices which are marked data complete.  That is, those that have the
+            /// [`ShredFlags::DATA_COMPLETE_SHRED`][`crate::shred::ShredFlags::DATA_COMPLETE_SHRED`] set.
+            pub completed_data_indexes: $completed_data_indexes,
+        }
+    };
+}
+
+slot_meta_version!(SlotMetaV1 => CompletedDataIndexesV1);
+slot_meta_version!(SlotMetaV2 => CompletedDataIndexesV2);
+
+impl From<SlotMetaV1> for SlotMetaV2 {
+    fn from(value: SlotMetaV1) -> Self {
+        SlotMetaV2 {
+            slot: value.slot,
+            consumed: value.consumed,
+            received: value.received,
+            first_shred_timestamp: value.first_shred_timestamp,
+            last_index: value.last_index,
+            parent_slot: value.parent_slot,
+            next_slots: value.next_slots,
+            connected_flags: value.connected_flags,
+            completed_data_indexes: value.completed_data_indexes.into(),
+        }
+    }
+}
+
+impl From<SlotMetaV2> for SlotMetaV1 {
+    fn from(value: SlotMetaV2) -> Self {
+        SlotMetaV1 {
+            slot: value.slot,
+            consumed: value.consumed,
+            received: value.received,
+            first_shred_timestamp: value.first_shred_timestamp,
+            last_index: value.last_index,
+            parent_slot: value.parent_slot,
+            next_slots: value.next_slots,
+            connected_flags: value.connected_flags,
+            completed_data_indexes: value.completed_data_indexes.into(),
+        }
+    }
+}
+
+// We need to maintain both formats during migration,
+// as both formats will need to be supported when reading
+// from rocksdb until the migration is complete.
+//
+// Swap these two types to migrate to the new format.
+pub type SlotMeta = SlotMetaV1;
+pub type SlotMetaFallback = SlotMetaV2;
 
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
