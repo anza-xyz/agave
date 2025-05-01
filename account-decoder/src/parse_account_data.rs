@@ -16,7 +16,7 @@ use {
     spl_token_2022::extension::{
         interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
     },
-    std::{collections::HashMap, sync::LazyLock},
+    std::collections::HashMap,
     thiserror::Error,
 };
 
@@ -27,25 +27,26 @@ const STAKE_PROGRAM_ID: Pubkey = stake::id();
 const SYSTEM_PROGRAM_ID: Pubkey = system_program::id();
 const SYSVAR_PROGRAM_ID: Pubkey = sysvar::id();
 const VOTE_PROGRAM_ID: Pubkey = vote::id();
-pub static PARSABLE_PROGRAM_IDS: LazyLock<HashMap<Pubkey, ParsableAccount>> = LazyLock::new(|| {
-    let mut m = HashMap::new();
-    m.insert(
-        ADDRESS_LOOKUP_PROGRAM_ID,
-        ParsableAccount::AddressLookupTable,
-    );
-    m.insert(
-        BPF_UPGRADEABLE_LOADER_PROGRAM_ID,
-        ParsableAccount::BpfUpgradeableLoader,
-    );
-    m.insert(CONFIG_PROGRAM_ID, ParsableAccount::Config);
-    m.insert(SYSTEM_PROGRAM_ID, ParsableAccount::Nonce);
-    m.insert(spl_token::id(), ParsableAccount::SplToken);
-    m.insert(spl_token_2022::id(), ParsableAccount::SplToken2022);
-    m.insert(STAKE_PROGRAM_ID, ParsableAccount::Stake);
-    m.insert(SYSVAR_PROGRAM_ID, ParsableAccount::Sysvar);
-    m.insert(VOTE_PROGRAM_ID, ParsableAccount::Vote);
-    m
-});
+pub static PARSABLE_PROGRAM_IDS: std::sync::LazyLock<HashMap<Pubkey, ParsableAccount>> =
+    std::sync::LazyLock::new(|| {
+        let mut m = HashMap::new();
+        m.insert(
+            ADDRESS_LOOKUP_PROGRAM_ID,
+            ParsableAccount::AddressLookupTable,
+        );
+        m.insert(
+            BPF_UPGRADEABLE_LOADER_PROGRAM_ID,
+            ParsableAccount::BpfUpgradeableLoader,
+        );
+        m.insert(CONFIG_PROGRAM_ID, ParsableAccount::Config);
+        m.insert(SYSTEM_PROGRAM_ID, ParsableAccount::Nonce);
+        m.insert(spl_token::id(), ParsableAccount::SplToken);
+        m.insert(spl_token_2022::id(), ParsableAccount::SplToken2022);
+        m.insert(STAKE_PROGRAM_ID, ParsableAccount::Stake);
+        m.insert(SYSVAR_PROGRAM_ID, ParsableAccount::Sysvar);
+        m.insert(VOTE_PROGRAM_ID, ParsableAccount::Vote);
+        m
+    });
 
 #[derive(Error, Debug)]
 pub enum ParseAccountError {
