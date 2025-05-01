@@ -7140,6 +7140,10 @@ pub mod tests {
                 &mut ProcessShredsStats::default(),
             )
             .0;
+        assert!(
+            shreds.len() > DATA_SHREDS_PER_FEC_BLOCK,
+            "we want multiple fec sets",
+        );
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let max_root = 0;
@@ -7166,18 +7170,15 @@ pub mod tests {
             )
             .0;
 
-        assert!(
-            blockstore.should_insert_data_shred(
-                &terminator[0],
-                &slot_meta,
-                &HashMap::new(),
-                max_root,
-                None,
-                ShredSource::Repaired,
-                &mut Vec::new(),
-            ),
-            "Inserting a shred from terminator block should succeed"
-        );
+        assert!(blockstore.should_insert_data_shred(
+            &terminator[0],
+            &slot_meta,
+            &HashMap::new(),
+            max_root,
+            None,
+            ShredSource::Repaired,
+            &mut Vec::new(),
+        ));
         let term_last_idx = terminator.last().unwrap().index() as usize;
         // Trying to insert another "is_last" shred with index < the received index should fail
         // skip over shred 7
@@ -7746,7 +7747,7 @@ pub mod tests {
             let coding_shred = coding_shred.clone();
             assert!(!Blockstore::should_insert_coding_shred(
                 &coding_shred,
-                max_root + 1
+                coding_shred.slot()
             ));
         }
     }
