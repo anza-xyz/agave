@@ -48,7 +48,7 @@ pub(crate) fn should_retain_crds_value(
             // always store EpochSlots if we have received them
             // to avoid getting them again in PullResponses
             GossipFilterDirection::Ingress => true,
-            // only forward EpochSlots if the sender is staked
+            // only forward EpochSlots if the origin is staked
             GossipFilterDirection::Egress => retain_if_staked(),
         },
         // Deprecated messages we still see in the mainnet
