@@ -54,22 +54,72 @@ impl Default for ConnectedFlags {
 /// Now deprecated format for completed data indexes.
 ///
 /// Replaced by [`CompletedDataIndexesV2`].
-type CompletedDataIndexesV1 = BTreeSet<u32>;
+pub type CompletedDataIndexesV1 = BTreeSet<u32>;
 /// New format for completed data indexes.
 ///
 /// `BTreeSet` is inefficient for de/serialization. We
 /// are migrating to a bitvec to improve that.
-type CompletedDataIndexesV2 = BitVec<MAX_DATA_SHREDS_PER_SLOT>;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(transparent)]
+pub struct CompletedDataIndexesV2 {
+    index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
+}
+
+// API for CompletedDataIndexesV2 that mirrors BTreeSet<u32> to make migration easier.
+// This allows CompletedDataIndexesV2 to be a drop-in replacement for CompletedDataIndexesV1.
+impl CompletedDataIndexesV2 {
+    #[inline]
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
+        self.index.iter_ones().map(|i| i as u32)
+    }
+
+    #[inline]
+    pub fn into_iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
+        self.iter()
+    }
+
+    #[inline]
+    pub fn insert(&mut self, index: u32) {
+        self.index.insert_unchecked(index as usize);
+    }
+
+    #[inline]
+    pub fn contains(&self, index: &u32) -> bool {
+        self.index.contains(*index as usize)
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
+    #[inline]
+    pub fn range<R>(&self, bounds: R) -> impl DoubleEndedIterator<Item = u32> + '_
+    where
+        R: RangeBounds<u32>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index.range((start, end)).iter_ones().map(|i| i as u32)
+    }
+}
+
+impl FromIterator<u32> for CompletedDataIndexesV2 {
+    fn from_iter<T: IntoIterator<Item = u32>>(iter: T) -> Self {
+        let index = iter.into_iter().map(|i| i as usize).collect();
+        CompletedDataIndexesV2 { index }
+    }
+}
 
 impl From<CompletedDataIndexesV2> for CompletedDataIndexesV1 {
     fn from(value: CompletedDataIndexesV2) -> Self {
-        value.iter_ones().map(|i| i as u32).collect()
+        value.into_iter().collect()
     }
 }
 
 impl From<CompletedDataIndexesV1> for CompletedDataIndexesV2 {
     fn from(value: CompletedDataIndexesV1) -> Self {
-        value.into_iter().map(|i| i as usize).collect()
+        value.into_iter().collect()
     }
 }
 
@@ -151,8 +201,25 @@ impl From<SlotMetaV2> for SlotMetaV1 {
 // as both formats will need to be supported when reading
 // from rocksdb until the migration is complete.
 //
-// Swap these two types to migrate to the new format.
+// Swap these types to migrate to the new format.
+//
+// For example, to enable the new format,
+//
+// ```
+// pub type SlotMeta = SlotMetaV2;
+// pub type CompletedDataIndexes = CompletedDataIndexesV2;
+// pub type SlotMetaFallback = SlotMetaV1;
+// ```
+//
+// To enable the old format,
+//
+// ```
+// pub type SlotMeta = SlotMetaV1;
+// pub type CompletedDataIndexes = CompletedDataIndexesV1;
+// pub type SlotMetaFallback = SlotMetaV2;
+// ```
 pub type SlotMeta = SlotMetaV1;
+pub type CompletedDataIndexes = CompletedDataIndexesV1;
 pub type SlotMetaFallback = SlotMetaV2;
 
 // Serde implementation of serialize and deserialize for Option<u64>
