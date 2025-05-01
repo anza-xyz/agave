@@ -8,11 +8,13 @@ use {
     },
     ahash::{AHashMap, AHashSet},
     solana_account::{
-        Account, AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS,
+        state_traits::StateMut, Account, AccountSharedData, ReadableAccount, WritableAccount,
+        PROGRAM_OWNERS,
     },
     solana_fee_structure::FeeDetails,
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
     solana_instructions_sysvar::construct_instructions_data,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_nonce::state::State as NonceState,
     solana_nonce_account::{get_system_account_kind, SystemAccountKind},
     solana_program_runtime::execution_budget::{
@@ -23,7 +25,7 @@ use {
     solana_rent_collector::{CollectedInfo, RENT_EXEMPT_RENT_EPOCH},
     solana_rent_debits::RentDebits,
     solana_sdk_ids::{
-        native_loader,
+        bpf_loader_upgradeable, native_loader,
         sysvar::{self, slot_history},
     },
     solana_svm_callback::{AccountState, TransactionProcessingCallback},
@@ -523,11 +525,6 @@ impl LoadedTransactionAccounts {
     }
 }
 
-// HANA OK TODO how am i managing all this
-// i was thinking just write a new load_transaction_accounts() from scratch
-// and branch on the feature gate once and only once
-// the loader handling is drastically simplified. other things maybe a bit trickier
-
 fn hana_load_transaction_accounts<CB: TransactionProcessingCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
@@ -557,37 +554,67 @@ fn hana_load_transaction_accounts<CB: TransactionProcessingCallback>(
         error_metrics,
     )?;
 
-    let mut collect_loaded_account = |key, loaded_account| -> Result<()> {
-        let LoadedTransactionAccount {
-            account,
-            loaded_size,
-            rent_collected,
-        } = loaded_account;
+    let mut collect_loaded_account =
+        |account_loader: &mut AccountLoader<CB>, key, loaded_account| -> Result<()> {
+            let LoadedTransactionAccount {
+                account,
+                loaded_size,
+                rent_collected,
+            } = loaded_account;
 
-        loaded_transaction_accounts.increase_calculated_data_size(
-            loaded_size,
-            loaded_accounts_bytes_limit,
-            error_metrics,
-        )?;
+            loaded_transaction_accounts.increase_calculated_data_size(
+                loaded_size,
+                loaded_accounts_bytes_limit,
+                error_metrics,
+            )?;
 
-        loaded_transaction_accounts.rent = loaded_transaction_accounts
-            .rent
-            .saturating_add(rent_collected);
+            loaded_transaction_accounts.rent = loaded_transaction_accounts
+                .rent
+                .saturating_add(rent_collected);
 
-        loaded_transaction_accounts
-            .rent_debits
-            .insert(key, rent_collected, account.lamports());
+            loaded_transaction_accounts
+                .rent_debits
+                .insert(key, rent_collected, account.lamports());
 
-        loaded_transaction_accounts.accounts.push((*key, account));
+            // If this is a valid LoaderV3 program...
+            if bpf_loader_upgradeable::check_id(account.owner()) {
+                if let Ok(UpgradeableLoaderState::Program {
+                    programdata_address,
+                }) = account.state()
+                {
+                    // ...and we won't count it as a transaction account, and haven't counted it already...
+                    if !account_keys.iter().any(|key| programdata_address == *key)
+                        && !additional_loaded_accounts.contains(&programdata_address)
+                    {
+                        // ...and it exists (if it doesn't, it is *not* a load failure)...
+                        if let Some(programdata_account) =
+                            account_loader.load_account(&programdata_address)
+                        {
+                            // ...count it toward this transaction's total size.
+                            loaded_transaction_accounts.increase_calculated_data_size(
+                                TRANSACTION_ACCOUNT_BASE_SIZE
+                                    .saturating_add(programdata_account.data().len()),
+                                loaded_accounts_bytes_limit,
+                                error_metrics,
+                            )?;
+                            additional_loaded_accounts.insert(programdata_address);
+                        }
+                    }
+                }
+            }
 
-        // HANA TODO check for a program data account here
+            loaded_transaction_accounts.accounts.push((*key, account));
 
-        Ok(())
-    };
+            Ok(())
+        };
 
     // Since the fee payer is always the first account, collect it first.
     // We can use it directly because it was already loaded during validation.
-    collect_loaded_account(message.fee_payer(), loaded_fee_payer_account)?;
+    collect_loaded_account(
+        account_loader,
+        message.fee_payer(),
+        loaded_fee_payer_account,
+    )?;
 
     // Attempt to load and collect remaining non-fee payer accounts
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
@@ -598,7 +625,7 @@ fn hana_load_transaction_accounts<CB: TransactionProcessingCallback>(
             account_index,
             rent_collector,
         );
-        collect_loaded_account(account_key, loaded_account)?;
+        collect_loaded_account(account_loader, account_key, loaded_account)?;
     }
 
     for (program_id, instruction) in message.program_instructions_iter() {
