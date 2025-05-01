@@ -394,13 +394,13 @@ fn get_singleton_agent() -> &'static MetricsAgent {
     &AGENT
 }
 
-static HOST_ID: std::sync::LazyLock<Arc<RwLock<String>>> = std::sync::LazyLock::new(|| {
-    Arc::new(RwLock::new({
+static HOST_ID: std::sync::LazyLock<RwLock<String>> = std::sync::LazyLock::new(|| {
+    RwLock::new({
         let hostname: String = gethostname()
             .into_string()
             .unwrap_or_else(|_| "".to_string());
         format!("{}", hash(hostname.as_bytes()))
-    }))
+    })
 });
 
 pub fn set_host_id(host_id: String) {
