@@ -198,6 +198,12 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         account_key: &Pubkey,
         is_writable: bool,
     ) -> Option<LoadedTransactionAccount> {
+        let base_account_size = if HANA_FEATURE_GATE_PLACEHOLDER {
+            TRANSACTION_ACCOUNT_BASE_SIZE
+        } else {
+            0
+        };
+
         let account = self.load_account(account_key);
 
         // Inspect prior to collecting rent, since rent collection can modify the account.
@@ -212,7 +218,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         );
 
         account.map(|account| LoadedTransactionAccount {
-            loaded_size: account.data().len(),
+            loaded_size: base_account_size.saturating_add(account.data().len()),
             account,
             rent_collected: 0,
         })
@@ -442,14 +448,25 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
     match validation_result {
         Err(e) => TransactionLoadResult::NotLoaded(e),
         Ok(tx_details) => {
-            let load_result = load_transaction_accounts(
-                account_loader,
-                message,
-                tx_details.loaded_fee_payer_account,
-                tx_details.loaded_accounts_bytes_limit,
-                error_metrics,
-                rent_collector,
-            );
+            let load_result = if HANA_FEATURE_GATE_PLACEHOLDER {
+                hana_load_transaction_accounts(
+                    account_loader,
+                    message,
+                    tx_details.loaded_fee_payer_account,
+                    tx_details.loaded_accounts_bytes_limit,
+                    error_metrics,
+                    rent_collector,
+                )
+            } else {
+                load_transaction_accounts(
+                    account_loader,
+                    message,
+                    tx_details.loaded_fee_payer_account,
+                    tx_details.loaded_accounts_bytes_limit,
+                    error_metrics,
+                    rent_collector,
+                )
+            };
 
             match load_result {
                 Ok(loaded_tx_accounts) => TransactionLoadResult::Loaded(LoadedTransaction {
