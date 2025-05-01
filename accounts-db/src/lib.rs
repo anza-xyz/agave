@@ -38,7 +38,6 @@ pub mod read_only_accounts_cache;
 #[cfg(not(feature = "dev-context-only-utils"))]
 mod read_only_accounts_cache;
 mod rolling_bit_field;
-pub mod secondary_index;
 pub mod shared_buffer_reader;
 pub mod sorted_storages;
 pub mod stake_rewards;
