@@ -35,11 +35,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     receiver: Receiver<(Vec<SocketAddr>, T)>,
     drop_sender: Sender<(Vec<SocketAddr>, T)>,
 ) {
-    log::info!(
-        "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
-        dev.name()
-    );
-
+    let mut queue_id = queue_id;
     // each queue is bound to its own CPU core
     set_cpu_affinity([cpu_id]).unwrap();
 
@@ -52,42 +48,45 @@ pub fn tx_loop<T: AsRef<[u8]>>(
 
     // try to allocate huge pages first, then fall back to regular pages
     const HUGE_2MB: usize = 2 * 1024 * 1024;
-    let mut memory =
-        PageAlignedMemory::alloc_with_page_size(frame_size, FRAME_COUNT, HUGE_2MB, true)
+
+    let mut memory;
+    let (mut socket, tx) = loop {
+        assert!(queue_id.0 < 200);
+        log::info!(
+            "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
+            dev.name()
+        );
+
+        memory = PageAlignedMemory::alloc_with_page_size(frame_size, FRAME_COUNT, HUGE_2MB, true)
             .or_else(|_| {
                 log::warn!("huge page alloc failed, falling back to regular page size");
                 PageAlignedMemory::alloc(frame_size, FRAME_COUNT)
             })
             .unwrap();
-    let umem = SliceUmem::new(&mut memory, frame_size as u32).unwrap();
+        let umem = SliceUmem::new(&mut memory, frame_size as u32).unwrap();
 
-    // we need NET_ADMIN and NET_RAW for the socket
-    for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
-        caps::raise(None, CapSet::Effective, cap).unwrap();
-    }
+        // we need NET_ADMIN and NET_RAW for the socket
+        for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
+            caps::raise(None, CapSet::Effective, cap).unwrap();
+        }
 
-    // A nice round number. This is the size used by kernel selftests, so likely to work with all
-    // drivers.
-    const RING_SIZE: usize = 2048;
+        // A nice round number. This is the size used by kernel selftests, so likely to work with all
+        // drivers.
+        const RING_SIZE: usize = 2048;
 
-    let (mut socket, tx) = match Socket::tx(
-        dev.open_queue(queue_id),
-        umem,
-        zero_copy,
-        RING_SIZE,
-        RING_SIZE,
-    ) {
-        Ok(v) => v,
-        Err(_) => {
-            // Give us another chance if queue ID 0 is not available.
-            let umem: SliceUmem<'_> = SliceUmem::new(&mut memory, frame_size as u32).unwrap();
-            Socket::tx(
-                dev.open_queue(QueueId(queue_id.0 + 64)),
-                umem,
-                zero_copy,
-                RING_SIZE,
-                RING_SIZE,
-            ).unwrap()
+        match Socket::tx(
+            dev.open_queue(queue_id),
+            umem,
+            zero_copy,
+            RING_SIZE,
+            RING_SIZE,
+        ) {
+            Ok(v) => break v,
+            Err(e) => {
+                log::warn!("failed to create socket: {e}");
+                queue_id = QueueId(queue_id.0 + 1);
+                continue;
+            }
         }
     };
 
