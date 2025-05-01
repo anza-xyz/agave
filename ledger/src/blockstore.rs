@@ -7181,26 +7181,30 @@ pub mod tests {
         ));
         let term_last_idx = terminator.last().unwrap().index() as usize;
         // Trying to insert another "is_last" shred with index < the received index should fail
-        // skip over shred 7
+        // so we insert some shreds that are beyond where terminator block is in index space
         blockstore
             .insert_shreds(
-                shreds[term_last_idx + 2..term_last_idx + 4].iter().cloned(),
+                shreds[term_last_idx + 2..term_last_idx + 3].iter().cloned(),
                 None,
                 false,
             )
             .unwrap();
         let slot_meta = blockstore.meta(0).unwrap().unwrap();
-        assert_eq!(slot_meta.received, term_last_idx as u64 + 4);
+        assert_eq!(slot_meta.received, term_last_idx as u64 + 3);
         let mut duplicate_shreds = vec![];
-        assert!(!blockstore.should_insert_data_shred(
-            terminator.last().unwrap(),
-            &slot_meta,
-            &HashMap::new(),
-            max_root,
-            None,
-            ShredSource::Repaired,
-            &mut duplicate_shreds,
-        ));
+        // Now we check if terminator is eligible to be inserted
+        assert!(
+            !blockstore.should_insert_data_shred(
+                terminator.last().unwrap(),
+                &slot_meta,
+                &HashMap::new(),
+                max_root,
+                None,
+                ShredSource::Repaired,
+                &mut duplicate_shreds,
+            ),
+            "Should not insert shreds with indices before already existing shreds"
+        );
         assert!(blockstore.has_duplicate_shreds_in_slot(0));
         assert_eq!(duplicate_shreds.len(), 1);
         assert_matches!(
@@ -7231,15 +7235,18 @@ pub mod tests {
         duplicate_shreds.clear();
         blockstore.duplicate_slots_cf.delete(0).unwrap();
         assert!(!blockstore.has_duplicate_shreds_in_slot(0));
-        assert!(!blockstore.should_insert_data_shred(
-            &past_tail_shreds[5],
-            &slot_meta,
-            &HashMap::new(),
-            max_root,
-            None,
-            ShredSource::Repaired,
-            &mut duplicate_shreds,
-        ));
+        assert!(
+            !blockstore.should_insert_data_shred(
+                &past_tail_shreds[5], // 5 is not magic, could be any shred from this set
+                &slot_meta,
+                &HashMap::new(),
+                max_root,
+                None,
+                ShredSource::Repaired,
+                &mut duplicate_shreds,
+            ),
+            "Shreds past end of block should fail to insert"
+        );
 
         assert_eq!(duplicate_shreds.len(), 1);
         assert_matches!(
