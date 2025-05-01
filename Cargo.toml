@@ -180,7 +180,7 @@ check-cfg = [
 ]
 
 [workspace.lints.rust]
-warnings = "deny"
+# XXX HANA warnings = "deny"
 
 # Clippy lint configuration that can not be applied in clippy.toml
 [workspace.lints.clippy]

@@ -35,6 +35,10 @@ use {
     std::num::{NonZeroU32, Saturating},
 };
 
+const HANA_FEATURE_GATE_PLACEHOLDER: bool = false;
+const TRANSACTION_ACCOUNT_BASE_SIZE: usize = 64;
+const ADDRESS_LOOKUP_TABLE_BASE_SIZE: usize = 8248;
+
 // for the load instructions
 pub(crate) type TransactionRent = u64;
 pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
@@ -475,6 +479,143 @@ struct LoadedTransactionAccounts {
     pub(crate) rent: TransactionRent,
     pub(crate) rent_debits: RentDebits,
     pub(crate) loaded_accounts_data_size: u32,
+}
+
+impl LoadedTransactionAccounts {
+    fn increase_calculated_data_size(
+        &mut self,
+        data_size_delta: usize,
+        requested_loaded_accounts_data_size_limit: NonZeroU32,
+        error_metrics: &mut TransactionErrorMetrics,
+    ) -> Result<()> {
+        let Ok(data_size_delta) = u32::try_from(data_size_delta) else {
+            error_metrics.max_loaded_accounts_data_size_exceeded += 1;
+            return Err(TransactionError::MaxLoadedAccountsDataSizeExceeded);
+        };
+
+        self.loaded_accounts_data_size = self
+            .loaded_accounts_data_size
+            .saturating_add(data_size_delta);
+
+        if self.loaded_accounts_data_size > requested_loaded_accounts_data_size_limit.get() {
+            error_metrics.max_loaded_accounts_data_size_exceeded += 1;
+            Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+// HANA OK TODO how am i managing all this
+// i was thinking just write a new load_transaction_accounts() from scratch
+// and branch on the feature gate once and only once
+// the loader handling is drastically simplified. other things maybe a bit trickier
+
+fn hana_load_transaction_accounts<CB: TransactionProcessingCallback>(
+    account_loader: &mut AccountLoader<CB>,
+    message: &impl SVMMessage,
+    loaded_fee_payer_account: LoadedTransactionAccount,
+    loaded_accounts_bytes_limit: NonZeroU32,
+    error_metrics: &mut TransactionErrorMetrics,
+    rent_collector: &dyn SVMRentCollector,
+) -> Result<LoadedTransactionAccounts> {
+    let account_keys = message.account_keys();
+    let mut additional_loaded_accounts: AHashSet<Pubkey> = AHashSet::new();
+
+    let mut loaded_transaction_accounts = LoadedTransactionAccounts {
+        accounts: Vec::with_capacity(account_keys.len()),
+        program_indices: Vec::with_capacity(message.num_instructions()),
+        rent: 0,
+        rent_debits: RentDebits::default(),
+        loaded_accounts_data_size: 0,
+    };
+
+    // transactions pay a base fee per address lookup table
+    // HANA can there be more than one? who does this return usize instead of bool. forwards compat?
+    loaded_transaction_accounts.increase_calculated_data_size(
+        message
+            .num_lookup_tables()
+            .saturating_mul(ADDRESS_LOOKUP_TABLE_BASE_SIZE),
+        loaded_accounts_bytes_limit,
+        error_metrics,
+    )?;
+
+    let mut collect_loaded_account = |key, loaded_account| -> Result<()> {
+        let LoadedTransactionAccount {
+            account,
+            loaded_size,
+            rent_collected,
+        } = loaded_account;
+
+        loaded_transaction_accounts.increase_calculated_data_size(
+            loaded_size,
+            loaded_accounts_bytes_limit,
+            error_metrics,
+        )?;
+
+        loaded_transaction_accounts.rent = loaded_transaction_accounts
+            .rent
+            .saturating_add(rent_collected);
+
+        loaded_transaction_accounts
+            .rent_debits
+            .insert(key, rent_collected, account.lamports());
+
+        loaded_transaction_accounts.accounts.push((*key, account));
+
+        // HANA TODO check for a program data account here
+
+        Ok(())
+    };
+
+    // Since the fee payer is always the first account, collect it first.
+    // We can use it directly because it was already loaded during validation.
+    collect_loaded_account(message.fee_payer(), loaded_fee_payer_account)?;
+
+    // Attempt to load and collect remaining non-fee payer accounts
+    for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
+        let loaded_account = load_transaction_account(
+            account_loader,
+            message,
+            account_key,
+            account_index,
+            rent_collector,
+        );
+        collect_loaded_account(account_key, loaded_account)?;
+    }
+
+    for (program_id, instruction) in message.program_instructions_iter() {
+        if native_loader::check_id(program_id) {
+            loaded_transaction_accounts.program_indices.push(vec![]);
+            continue;
+        }
+
+        let Some(program_account) = account_loader.load_account(program_id) else {
+            error_metrics.account_not_found += 1;
+            return Err(TransactionError::ProgramAccountNotFound);
+        };
+
+        if !account_loader
+            .feature_set
+            .remove_accounts_executable_flag_checks
+            && !program_account.executable()
+        {
+            error_metrics.invalid_program_for_execution += 1;
+            return Err(TransactionError::InvalidProgramForExecution);
+        }
+
+        let owner_id = program_account.owner();
+        if !native_loader::check_id(owner_id) && !PROGRAM_OWNERS.contains(owner_id) {
+            error_metrics.invalid_program_for_execution += 1;
+            return Err(TransactionError::InvalidProgramForExecution);
+        }
+
+        loaded_transaction_accounts
+            .program_indices
+            .push(vec![instruction.program_id_index as IndexOfAccount]);
+    }
+
+    Ok(loaded_transaction_accounts)
 }
 
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
