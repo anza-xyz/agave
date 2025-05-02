@@ -1145,16 +1145,16 @@ impl Validator {
 
         // test-validator crate may start the validator in a tokio runtime
         // context which forces us to use the same runtime because a nested
-        // runtime will cause panic at drop.
-        // Outside test-validator crate, we always need a tokio runtime (and
-        // the respective handle) to initialize the turbine QUIC endpoint.
+        // runtime will cause panic at drop. Outside test-validator crate, we
+        // always need a tokio runtime (and the respective handle) to initialize
+        // the turbine QUIC endpoint.
         let current_runtime_handle = tokio::runtime::Handle::try_current();
         let tpu_client_next_runtime =
             (current_runtime_handle.is_err() && config.use_tpu_client_next).then(|| {
                 tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
-                    .worker_threads(4)
-                    .thread_name("solTpuClientNextRt")
+                    .worker_threads(2)
+                    .thread_name("solTpuClientRt")
                     .build()
                     .unwrap()
             });
