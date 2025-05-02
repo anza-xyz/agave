@@ -873,8 +873,8 @@ mod tests {
         let (shreds_data_5_4, shreds_code_5_4) = make_shreds_for_slot(5, 4, 0);
         // make a set of shreds for slot 5 with parent slot 3
         let (shreds_data_5_3, _shreds_code_5_3) = make_shreds_for_slot(5, 3, 0);
-        // make a set of shreds for slot 5 with parent slot 8
-        let (shreds_data_5_2, _shreds_code_5_8) = make_shreds_for_slot(5, 2, 0);
+        // make a set of shreds for slot 5 with parent slot 2
+        let (shreds_data_5_2, _shreds_code_5_2) = make_shreds_for_slot(5, 2, 0);
         // pick a shred for tests
         let shred = shreds_data_5_4.last().unwrap().clone();
         // unique shred should pass
