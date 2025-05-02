@@ -849,43 +849,62 @@ mod tests {
     fn test_already_received() {
         let keypair = get_keypair();
         let entries = create_ticks(10, 1, Hash::new_unique());
-        let shredder = Shredder::new(0, 0, 1, 0).unwrap();
         let rsc = ReedSolomonCache::default();
-        let (shreds_data, shreds_code) = shredder.entries_to_shreds(
-            &keypair,
-            &entries,
-            true,
-            // chained_merkle_root
-            Some(Hash::new_from_array(rand::thread_rng().gen())),
-            0,
-            0,
-            true,
-            &rsc,
-            &mut ProcessShredsStats::default(),
-        );
-        let shred = shreds_data[0].clone();
+        let make_shreds_for_slot = |slot, parent, code_index| {
+            let shredder = Shredder::new(slot, parent, 1, 0).unwrap();
+            shredder.entries_to_shreds(
+                &keypair,
+                &entries,
+                true,
+                // chained_merkle_root
+                Some(Hash::new_from_array(rand::thread_rng().gen())),
+                0,
+                code_index,
+                true,
+                &rsc,
+                &mut ProcessShredsStats::default(),
+            )
+        };
+
         let mut rng = ChaChaRng::from_seed([0xa5; 32]);
         let shred_deduper = ShredDeduper::<2>::new(&mut rng, /*num_bits:*/ 640_007);
+
+        // make a set of shreds for slot 5 with parent slot 4
+        let (shreds_data_5_4, shreds_code_5_4) = make_shreds_for_slot(5, 4, 0);
+        // make a set of shreds for slot 5 with parent slot 3
+        let (shreds_data_5_3, _shreds_code_5_3) = make_shreds_for_slot(5, 3, 0);
+        // pick a shred for tests
+        let shred = shreds_data_5_4.last().unwrap().clone();
         // unique shred should pass
         assert!(!shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
         // duplicate shred blocked
         assert!(shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
-        let shred = shreds_data.last().unwrap().clone();
-        // first duplicate shred passed
-        assert!(!shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
+        // Pick a shred with same index as `shred` but different parent offset
+        let shred_dup = shreds_data_5_3.last().unwrap().clone();
+        // first shred passed through
+        assert!(!shred_deduper.dedup(shred_dup.id(), shred_dup.payload(), MAX_DUPLICATE_COUNT));
         // then blocked
-        assert!(shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
+        assert!(shred_deduper.dedup(shred_dup.id(), shred_dup.payload(), MAX_DUPLICATE_COUNT));
 
-        let shred = shreds_code[0].clone();
+        // Pick a coding shred at index 4 based off FEC set index 0
+        let shred = shreds_code_5_4[4].clone();
         // Coding passes
         assert!(!shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
         // then blocked
         assert!(shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
 
-        let shred = shreds_code[1].clone();
+        // Make a coding shred at index 4 based off FEC set index 2
+        let (_, shreds_code_invalid) = make_shreds_for_slot(5, 4, 2);
+
+        let shred2 = shreds_code_invalid[2].clone();
+        assert_eq!(
+            shred.index(),
+            shred2.index(),
+            "we want a shred with same index but different FEC set index"
+        );
         // 2nd unique coding passes
-        assert!(!shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
+        assert!(!shred_deduper.dedup(shred2.id(), shred2.payload(), MAX_DUPLICATE_COUNT));
         // same again is blocked
-        assert!(shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
+        assert!(shred_deduper.dedup(shred2.id(), shred2.payload(), MAX_DUPLICATE_COUNT));
     }
 }
