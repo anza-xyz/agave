@@ -2240,15 +2240,9 @@ impl AccountsDb {
         let mut already_counted = IntSet::default();
         for (bin_index, bin) in candidates.iter().enumerate() {
             let bin = bin.read().unwrap();
-            for (
-                pubkey,
-                CleaningInfo {
-                    slot_list,
-                    ref_count,
-                    ..
-                },
-            ) in bin.iter()
-            {
+            for (pubkey, cleaning_info) in bin.iter() {
+                let slot_list = &cleaning_info.slot_list;
+                let ref_count = &cleaning_info.ref_count;
                 let mut failed_slot = None;
                 let all_stores_being_deleted = slot_list.len() as RefCount == *ref_count;
                 if all_stores_being_deleted {
@@ -2987,15 +2981,9 @@ impl AccountsDb {
         let mut store_counts_time = Measure::start("store_counts");
         let mut store_counts: HashMap<Slot, (usize, HashSet<Pubkey>)> = HashMap::new();
         for candidates_bin in candidates.iter() {
-            for (
-                pubkey,
-                CleaningInfo {
-                    slot_list,
-                    ref_count,
-                    ..
-                },
-            ) in candidates_bin.write().unwrap().iter_mut()
-            {
+            for (pubkey, cleaning_info) in candidates_bin.write().unwrap().iter_mut() {
+                let slot_list = &mut cleaning_info.slot_list;
+                let ref_count = &mut cleaning_info.ref_count;
                 debug_assert!(!slot_list.is_empty(), "candidate slot_list can't be empty");
                 if purged_account_slots.contains_key(pubkey) {
                     *ref_count = self.accounts_index.ref_count_from_storage(pubkey);
@@ -3082,11 +3070,7 @@ impl AccountsDb {
             let mut bin_set = candidates_bin
                 .iter()
                 .filter_map(|(pubkey, cleaning_info)| {
-                    let CleaningInfo {
-                        slot_list,
-                        ref_count: _,
-                        ..
-                    } = cleaning_info;
+                    let slot_list = &cleaning_info.slot_list;
                     (!slot_list.is_empty()).then_some((
                         *pubkey,
                         slot_list
@@ -3367,11 +3351,7 @@ impl AccountsDb {
         for bin in candidates {
             let mut bin = bin.write().unwrap();
             bin.retain(|pubkey, cleaning_info| {
-                let CleaningInfo {
-                    slot_list,
-                    ref_count: _,
-                    ..
-                } = cleaning_info;
+                let slot_list = &cleaning_info.slot_list;
                 debug_assert!(!slot_list.is_empty(), "candidate slot_list can't be empty");
                 // Only keep candidates where the entire history of the account in the root set
                 // can be purged. All AppendVecs for those updates are dead.
