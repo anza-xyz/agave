@@ -7203,7 +7203,7 @@ pub mod tests {
                 ShredSource::Repaired,
                 &mut duplicate_shreds,
             ),
-            "Should not insert shreds with indices before already existing shreds"
+            "Should not insert shred with 'last' flag set and index less than already existing shreds"
         );
         assert!(blockstore.has_duplicate_shreds_in_slot(0));
         assert_eq!(duplicate_shreds.len(), 1);
