@@ -1,6 +1,11 @@
 pub use solana_client::connection_cache::Protocol;
 use {
-    crate::{crds_data::MAX_WALLCLOCK, legacy_contact_info::LegacyContactInfo},
+    crate::{
+        crds_data::MAX_WALLCLOCK,
+        define_tlv_enum,
+        legacy_contact_info::LegacyContactInfo,
+        tlv::{self, TlvRecord},
+    },
     assert_matches::{assert_matches, debug_assert_matches},
     serde::{Deserialize, Deserializer, Serialize},
     solana_pubkey::Pubkey,
@@ -113,8 +118,10 @@ struct SocketEntry {
     offset: u16, // Port offset with respect to the previous entry.
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-enum Extension {}
+// The Extension enum for optional features in gossip
+define_tlv_enum! (pub(crate) enum Extension {
+    1=>SupportSenderSignatures(u8),
+});
 
 // As part of deserialization, self.addrs and self.sockets should be cross
 // verified and self.cache needs to be populated. This type serves as a
@@ -132,8 +139,9 @@ struct ContactInfoLite {
     addrs: Vec<IpAddr>,
     #[serde(with = "short_vec")]
     sockets: Vec<SocketEntry>,
+    #[allow(dead_code)]
     #[serde(with = "short_vec")]
-    extensions: Vec<Extension>,
+    extensions: Vec<TlvRecord>,
 }
 
 macro_rules! get_socket {
@@ -220,7 +228,7 @@ impl ContactInfo {
             version: solana_version::Version::default(),
             addrs: Vec::<IpAddr>::default(),
             sockets: Vec::<SocketEntry>::default(),
-            extensions: Vec::<Extension>::default(),
+            extensions: Vec::default(),
             cache: EMPTY_SOCKET_ADDR_CACHE,
         }
     }
@@ -549,7 +557,7 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
             version,
             addrs,
             sockets,
-            extensions,
+            extensions: tlv::parse(&extensions),
             cache: EMPTY_SOCKET_ADDR_CACHE,
         };
         // Populate node.cache.
@@ -1179,5 +1187,15 @@ mod tests {
             assert_eq!(node.overrides(&other), Some(false));
             assert_eq!(other.overrides(&node), Some(true));
         }
+    }
+
+    #[test]
+    fn test_extensions() {
+        let mut ci = ContactInfo::new_localhost(&Pubkey::new_unique(), 42);
+        ci.extensions.push(Extension::SupportSenderSignatures(42));
+        let bytes = bincode::serialize(&ci).unwrap();
+        let cil: ContactInfoLite = bincode::deserialize(&bytes).unwrap();
+        let ci2 = ContactInfo::try_from(cil).unwrap();
+        assert_eq!(ci, ci2);
     }
 }
