@@ -846,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn test_already_received() {
+    fn test_shred_deduper() {
         let keypair = get_keypair();
         let entries = create_ticks(10, 1, Hash::new_unique());
         let rsc = ReedSolomonCache::default();
@@ -873,38 +873,82 @@ mod tests {
         let (shreds_data_5_4, shreds_code_5_4) = make_shreds_for_slot(5, 4, 0);
         // make a set of shreds for slot 5 with parent slot 3
         let (shreds_data_5_3, _shreds_code_5_3) = make_shreds_for_slot(5, 3, 0);
+        // make a set of shreds for slot 5 with parent slot 8
+        let (shreds_data_5_2, _shreds_code_5_8) = make_shreds_for_slot(5, 2, 0);
         // pick a shred for tests
         let shred = shreds_data_5_4.last().unwrap().clone();
         // unique shred should pass
-        assert!(!shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
+        assert!(
+            !shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT),
+            "First time shred X => Not dup because it is the only shred"
+        );
         // duplicate shred blocked
-        assert!(shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
+        assert!(
+            shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT),
+            "
+            Second time shred X => Dup because common header is duplicate
+            "
+        );
         // Pick a shred with same index as `shred` but different parent offset
         let shred_dup = shreds_data_5_3.last().unwrap().clone();
         // first shred passed through
-        assert!(!shred_deduper.dedup(shred_dup.id(), shred_dup.payload(), MAX_DUPLICATE_COUNT));
+        assert!(!shred_deduper.dedup(shred_dup.id(), shred_dup.payload(), MAX_DUPLICATE_COUNT),
+        "First time seeing shred X with differnt parent slot (3 instead of 4) => Not dup because common header is unique & shred ID only seen once"
+        );
         // then blocked
-        assert!(shred_deduper.dedup(shred_dup.id(), shred_dup.payload(), MAX_DUPLICATE_COUNT));
+        assert!(shred_deduper.dedup(shred_dup.id(), shred_dup.payload(), MAX_DUPLICATE_COUNT),
+        "Second time seeing shred X with parent slot 3 => Dup because common header is not unique & shred ID seen twice"
+        );
+
+        let shred_dup2 = shreds_data_5_2.last().unwrap().clone();
+
+        assert!(shred_deduper.dedup(shred_dup2.id(), shred_dup2.payload(), MAX_DUPLICATE_COUNT),
+            "First time seeing shred X with parent slot 2 => Dup because common header is unique but shred ID seen twice already"
+        );
+
+        /* Coding shreds */
 
         // Pick a coding shred at index 4 based off FEC set index 0
         let shred = shreds_code_5_4[4].clone();
         // Coding passes
-        assert!(!shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
+        assert!(
+            !shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT),
+            "
+           First time seeing coding shred Y => Not dup because common header & shred ID are unique"
+        );
         // then blocked
-        assert!(shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
+        assert!(
+            shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT),
+            "
+            Second time seeing coding shred Y => Dup because common header is dup
+            "
+        );
 
         // Make a coding shred at index 4 based off FEC set index 2
         let (_, shreds_code_invalid) = make_shreds_for_slot(5, 4, 2);
 
-        let shred2 = shreds_code_invalid[2].clone();
+        let shred_inv_code_1 = shreds_code_invalid[2].clone();
         assert_eq!(
             shred.index(),
-            shred2.index(),
+            shred_inv_code_1.index(),
             "we want a shred with same index but different FEC set index"
         );
         // 2nd unique coding passes
-        assert!(!shred_deduper.dedup(shred2.id(), shred2.payload(), MAX_DUPLICATE_COUNT));
+        assert!(!shred_deduper.dedup(shred_inv_code_1.id(), shred_inv_code_1.payload(), MAX_DUPLICATE_COUNT),
+            "First time seeing shred Y w/ changed header (FEC Set index 2) => Not dup because common header is unique & shred ID only seen once");
         // same again is blocked
-        assert!(shred_deduper.dedup(shred2.id(), shred2.payload(), MAX_DUPLICATE_COUNT));
+        assert!(shred_deduper.dedup(shred_inv_code_1.id(), shred_inv_code_1.payload(), MAX_DUPLICATE_COUNT),"
+           Second time seeing shred Y w/ changed header (FEC Set index 2) => Dup because common header is not unique & shred ID seen twice ");
+        // Make a coding shred at index 4 based off FEC set index 3
+        let (_, shreds_code_invalid) = make_shreds_for_slot(5, 4, 3);
+
+        let shred_inv_code_2 = shreds_code_invalid[1].clone();
+        assert_eq!(
+            shred.index(),
+            shred_inv_code_2.index(),
+            "we want a shred with same index but different FEC set index"
+        );
+        assert!(shred_deduper.dedup(shred_inv_code_2.id(), shred_inv_code_2.payload(), MAX_DUPLICATE_COUNT),"
+           First time seeing shred Y w/ changed header (FEC Set index 3)=>Dup because common header is unique but shred ID seen twice already");
     }
 }
