@@ -3,6 +3,7 @@
 mod setup;
 
 use {
+    assert_matches::assert_matches,
     bincode::deserialize,
     log::debug,
     setup::{setup_stake, setup_vote},
@@ -77,14 +78,19 @@ async fn clock_sysvar_updated_from_warp() {
         &[&context.payer],
         context.last_blockhash,
     );
-    assert_eq!(
+    assert_matches!(
         context
             .banks_client
             .process_transaction(transaction)
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::Custom(WRONG_SLOT_ERROR))
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(WRONG_SLOT_ERROR),
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Warp to success!

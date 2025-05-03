@@ -1,4 +1,5 @@
 use {
+    assert_matches::assert_matches,
     bytemuck::{bytes_of, Pod},
     solana_account::Account,
     solana_instruction::error::InstructionError,
@@ -761,9 +762,14 @@ async fn test_verify_proof_without_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidInstructionData,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // try to verify a valid proof, but with a wrong proof type
@@ -785,9 +791,14 @@ async fn test_verify_proof_without_context<T, U>(
             .await
             .unwrap_err()
             .unwrap();
-        assert_eq!(
+        assert_matches!(
             err,
-            TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
+            TransactionError::InstructionError(
+                0,
+                InstructionError::InvalidInstructionData,
+                None,
+                Some(ii),
+            ) if ii > 0
         );
     }
 
@@ -816,9 +827,14 @@ async fn test_verify_proof_without_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidInstructionData,
+            None,
+            Some(ii),
+        ) if ii > 0
     )
 }
 
@@ -870,9 +886,14 @@ async fn test_verify_proof_with_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(1, InstructionError::InvalidInstructionData)
+        TransactionError::InstructionError(
+            1,
+            InstructionError::InvalidInstructionData,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // try to create proof context state with incorrect account data length
@@ -897,9 +918,14 @@ async fn test_verify_proof_with_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(1, InstructionError::InvalidAccountData)
+        TransactionError::InstructionError(
+            1,
+            InstructionError::InvalidAccountData,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // try to create proof context state with insufficient rent
@@ -957,9 +983,14 @@ async fn test_verify_proof_with_context<T, U>(
             .await
             .unwrap_err()
             .unwrap();
-        assert_eq!(
+        assert_matches!(
             err,
-            TransactionError::InstructionError(1, InstructionError::InvalidInstructionData)
+            TransactionError::InstructionError(
+                1,
+                InstructionError::InvalidInstructionData,
+                None,
+                Some(ii),
+            ) if ii > 0
         );
     }
 
@@ -996,9 +1027,14 @@ async fn test_verify_proof_with_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(0, InstructionError::AccountAlreadyInitialized)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::AccountAlreadyInitialized,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // self-owned context state account
@@ -1099,9 +1135,14 @@ async fn test_verify_proof_from_account_with_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(1, InstructionError::InvalidInstructionData)
+        TransactionError::InstructionError(
+            1,
+            InstructionError::InvalidInstructionData,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // successfully create a proof context state
@@ -1144,9 +1185,14 @@ async fn test_verify_proof_from_account_with_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(0, InstructionError::AccountAlreadyInitialized)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::AccountAlreadyInitialized,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // self-owned context state account
@@ -1245,9 +1291,14 @@ async fn test_close_context_state<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(0, InstructionError::InvalidAccountOwner)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidAccountOwner,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // successfully close proof context state
@@ -1347,9 +1398,14 @@ async fn test_close_context_state<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(2, InstructionError::InvalidInstructionData)
+        TransactionError::InstructionError(
+            2,
+            InstructionError::InvalidInstructionData,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // close self-owned proof context accounts

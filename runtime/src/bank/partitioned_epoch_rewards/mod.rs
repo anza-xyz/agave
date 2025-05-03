@@ -856,9 +856,14 @@ mod tests {
                 // When the bank is at the beginning of the new epoch, i.e. slot
                 // 32, StakeError::EpochRewardsActive should be thrown for
                 // actions like StakeInstruction::Withdraw
-                assert_eq!(
+                assert_matches!(
                     stake_result,
-                    Err(InstructionError(0, StakeError::EpochRewardsActive.into()))
+                    Err(InstructionError(
+                        0,
+                        actual_err,
+                        None,
+                        Some(ii)
+                    )) if ii > 0 && actual_err == StakeError::EpochRewardsActive.into()
                 );
             } else {
                 // When the bank is outside of reward interval, the withdraw

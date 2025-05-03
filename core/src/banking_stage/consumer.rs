@@ -1560,17 +1560,20 @@ mod tests {
                 (transaction.signatures[0], meta.status)
             })
             .collect();
-        let expected_tx_results = vec![
-            (success_signature, Ok(())),
+        assert_eq!(actual_tx_results.len(), 2);
+        assert_eq!(actual_tx_results[0], (success_signature, Ok(())));
+        assert_matches!(
+            actual_tx_results[1],
             (
-                ix_error_signature,
+                actual_ix_signature,
                 Err(TransactionError::InstructionError(
                     0,
                     InstructionError::Custom(1),
+                    None,
+                    Some(ii),
                 )),
-            ),
-        ];
-        assert_eq!(actual_tx_results, expected_tx_results);
+            ) if ii > 0 && actual_ix_signature == ix_error_signature
+        );
 
         poh_recorder
             .read()
