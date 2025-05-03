@@ -165,7 +165,7 @@ async fn test_failed_extend_twice_in_same_slot() {
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::InvalidArgument)
+        TransactionError::InstructionError(0, InstructionError::InvalidArgument, Some(_), Some(_))
     );
 }
 
@@ -224,7 +224,12 @@ async fn test_failed_extend_upgrade_authority_did_not_sign() {
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::IncorrectAuthority)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::IncorrectAuthority,
+            Some(ii),
+            Some(_),
+        ) if ii > 0
     );
 
     let mut ix = extend_program_checked(
@@ -247,7 +252,12 @@ async fn test_failed_extend_upgrade_authority_did_not_sign() {
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::MissingRequiredSignature)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::MissingRequiredSignature,
+            Some(ii),
+            Some(_),
+        ) if ii > 0
     );
 }
 

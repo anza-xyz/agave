@@ -8,6 +8,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dev-dependencies]
+assert_matches = { workspace = true }
 bytemuck = { workspace = true }
 solana-account = { workspace = true }
 solana-compute-budget = { workspace = true }

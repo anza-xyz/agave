@@ -12,6 +12,7 @@ edition = { workspace = true }
 [dependencies]
 ahash = { workspace = true }
 itertools = { workspace = true }
+lazy_static = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
