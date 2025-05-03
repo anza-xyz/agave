@@ -4497,6 +4497,7 @@ pub mod tests {
             rpc_subscriptions::RpcSubscriptions,
         },
         agave_reserved_account_keys::ReservedAccountKeys,
+        assert_matches::assert_matches,
         bincode::deserialize,
         jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
         jsonrpc_core_client::transports::local,
@@ -6652,15 +6653,18 @@ pub mod tests {
             confirmed_block_signatures[1]
         );
         let res = io.handle_request_sync(&req, meta.clone());
-        let expected_res: transaction::Result<()> = Err(TransactionError::InstructionError(
-            0,
-            InstructionError::Custom(1),
-        ));
         let json: Value = serde_json::from_str(&res.unwrap()).unwrap();
         let result: Option<TransactionStatus> =
             serde_json::from_value(json["result"]["value"][0].clone())
                 .expect("actual response deserialization");
-        assert_eq!(expected_res, result.as_ref().unwrap().status);
+        assert_matches!(
+            result.as_ref().unwrap().status,
+            Err(TransactionError::InstructionError(
+                0,
+                InstructionError::Custom(1),
+                Some(ii),
+            )) if ii > 0
+        );
 
         // disable rpc-tx-history, but attempt historical query
         meta.config.enable_rpc_transaction_history = false;
@@ -7233,19 +7237,21 @@ pub mod tests {
                     assert_eq!(meta.err, None);
                 } else if transaction.signatures[0] == confirmed_block_signatures[1].to_string() {
                     let meta = meta.unwrap();
-                    assert_eq!(
+                    assert_matches!(
                         meta.err,
                         Some(TransactionError::InstructionError(
                             0,
-                            InstructionError::Custom(1)
-                        ))
+                            InstructionError::Custom(1),
+                            Some(ii),
+                        )) if ii > 0
                     );
-                    assert_eq!(
+                    assert_matches!(
                         meta.status,
                         Err(TransactionError::InstructionError(
                             0,
-                            InstructionError::Custom(1)
-                        ))
+                            InstructionError::Custom(1),
+                            Some(ii),
+                        )) if ii > 0
                     );
                 } else {
                     assert_eq!(meta, None);
@@ -7279,19 +7285,21 @@ pub mod tests {
                     assert_eq!(meta.err, None);
                 } else if decoded_transaction.signatures[0] == confirmed_block_signatures[1] {
                     let meta = meta.unwrap();
-                    assert_eq!(
+                    assert_matches!(
                         meta.err,
                         Some(TransactionError::InstructionError(
                             0,
-                            InstructionError::Custom(1)
-                        ))
+                            InstructionError::Custom(1),
+                            Some(ii),
+                        )) if ii > 0
                     );
-                    assert_eq!(
+                    assert_matches!(
                         meta.status,
                         Err(TransactionError::InstructionError(
                             0,
-                            InstructionError::Custom(1)
-                        ))
+                            InstructionError::Custom(1),
+                            Some(ii),
+                        )) if ii > 0
                     );
                 } else {
                     assert_eq!(meta, None);

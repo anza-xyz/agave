@@ -155,7 +155,11 @@ async fn test_failed_extend_twice_in_same_slot() {
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::InvalidArgument)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidArgument,
+            Some(ii),
+        ) if ii > 0
     );
 }
 

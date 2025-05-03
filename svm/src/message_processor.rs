@@ -123,6 +123,7 @@ mod tests {
     use {
         super::*,
         agave_reserved_account_keys::ReservedAccountKeys,
+        assert_matches::assert_matches,
         openssl::{
             ec::{EcGroup, EcKey},
             nid::Nid,
@@ -340,12 +341,13 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut 0,
         );
-        assert_eq!(
+        assert_matches!(
             result,
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::ReadonlyLamportChange
-            ))
+                InstructionError::ReadonlyLamportChange,
+                Some(ii),
+            )) if ii > 0
         );
 
         let message = new_sanitized_message(Message::new_with_compiled_instructions(
@@ -384,12 +386,13 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut 0,
         );
-        assert_eq!(
+        assert_matches!(
             result,
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::ReadonlyDataModified
-            ))
+                InstructionError::ReadonlyDataModified,
+                Some(ii),
+            )) if ii > 0
         );
     }
 
@@ -520,12 +523,13 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut 0,
         );
-        assert_eq!(
+        assert_matches!(
             result,
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::AccountBorrowFailed
-            ))
+                InstructionError::AccountBorrowFailed,
+                Some(ii),
+            )) if ii > 0
         );
 
         // Try to borrow mut the same account in a safe way
@@ -722,12 +726,13 @@ mod tests {
             &mut 0,
         );
 
-        assert_eq!(
+        assert_matches!(
             result,
             Err(TransactionError::InstructionError(
                 3,
-                InstructionError::Custom(0xbabb1e)
-            ))
+                InstructionError::Custom(0xbabb1e),
+                Some(ii),
+            )) if ii > 0
         );
         assert_eq!(transaction_context.get_instruction_trace_length(), 4);
     }

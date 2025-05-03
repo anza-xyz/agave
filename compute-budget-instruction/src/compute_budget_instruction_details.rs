@@ -411,6 +411,7 @@ mod test {
         let expected_heap_size_err = Err(TransactionError::InstructionError(
             3,
             InstructionError::InvalidInstructionData,
+            None,
         ));
         // invalid: requested_heap_size can't be zero
         let instruction_details = ComputeBudgetInstructionDetails {

@@ -1,5 +1,6 @@
 #![cfg(test)]
 use {
+    assert_matches::assert_matches,
     solana_compute_budget::compute_budget_limits::MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
     solana_cost_model::cost_model::CostModel,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -230,19 +231,19 @@ fn test_builtin_ix_cost_adjustment_with_cu_limit_too_low() {
     // Cost model & Compute budget: reserve/allocate requested CU Limit `1`
     // VM Execution: consume `1` CU, then fail
     // Result: 0 adjustment
-    let expected = TestResult {
-        cost_adjustment: 0,
-        execution_status: Err(TransactionError::InstructionError(
-            0,
-            InstructionError::ComputationalBudgetExceeded,
-        )),
-    };
-    assert_eq!(
-        expected,
+    assert_matches!(
         test_setup.execute_test_transaction(&[
             test_setup.transfer_ix(),
             test_setup.set_cu_limit_ix(cu_limit),
-        ])
+        ]),
+        TestResult {
+            cost_adjustment: 0,
+            execution_status: Err(TransactionError::InstructionError(
+                0,
+                InstructionError::ComputationalBudgetExceeded,
+                Some(ii),
+            )),
+        } if ii > 0
     );
 }
 
@@ -282,16 +283,16 @@ fn test_builtin_ix_cost_adjustment_with_memo_no_cu_limit() {
     //   (3_000 + 200_000) = 203_000 CUs (note: less than memo_ix needs)
     // VM Execution: consume all allocated CUs, then fail
     // Result: no adjustment
-    let expected = TestResult {
-        cost_adjustment: 0,
-        execution_status: Err(TransactionError::InstructionError(
-            1,
-            InstructionError::ProgramFailedToComplete,
-        )),
-    };
-    assert_eq!(
-        expected,
-        test_setup.execute_test_transaction(&[test_setup.transfer_ix(), memo_ix.clone()],)
+    assert_matches!(
+        test_setup.execute_test_transaction(&[test_setup.transfer_ix(), memo_ix.clone()],),
+        TestResult {
+            cost_adjustment: 0,
+            execution_status: Err(TransactionError::InstructionError(
+                1,
+                InstructionError::ProgramFailedToComplete,
+                Some(ii),
+            )),
+        } if ii > 0
     );
 }
 

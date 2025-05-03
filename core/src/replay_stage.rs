@@ -5347,17 +5347,21 @@ pub(crate) mod tests {
                     (transaction.signatures[0], meta.status)
                 })
                 .collect();
-            let expected_tx_results = vec![
-                (test_signatures_iter.next().unwrap(), Ok(())),
+            assert_eq!(actual_tx_results.len(), 2);
+            let first_expected_result = test_signatures_iter.next().unwrap();
+            assert_eq!(actual_tx_results[0], (first_expected_result, Ok(())));
+            let second_expected_result = test_signatures_iter.next().unwrap();
+            assert_matches!(
+                actual_tx_results[1],
                 (
-                    test_signatures_iter.next().unwrap(),
+                    actual_result,
                     Err(TransactionError::InstructionError(
                         0,
                         InstructionError::Custom(1),
+                        Some(ii),
                     )),
-                ),
-            ];
-            assert_eq!(actual_tx_results, expected_tx_results);
+                ) if ii > 0 && actual_result == second_expected_result
+            );
             assert!(test_signatures_iter.next().is_none());
         }
         Blockstore::destroy(&ledger_path).unwrap();

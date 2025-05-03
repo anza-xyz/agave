@@ -70,6 +70,7 @@ tokio-util = { workspace = true, features = ["codec", "compat"] }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
+assert_matches = { workspace = true }
 serial_test = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-net-utils = { workspace = true }
