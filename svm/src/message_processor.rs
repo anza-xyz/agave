@@ -3,7 +3,7 @@ use {
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_context::{IndexOfAccount, InstructionAccount, TransactionContext},
     solana_transaction_error::TransactionError,
 };
 
@@ -86,7 +86,33 @@ pub(crate) fn process_message(
             .total_us += process_instruction_us;
 
         result.map_err(|err| {
-            TransactionError::InstructionError(top_level_instruction_index as u8, err)
+            let transaction_context: &TransactionContext = invoke_context.transaction_context;
+            let responsible_program_account_index = transaction_context
+                // By definition the last instruction (outer or inner) in the trace before the trace
+                // stopped being appended to is the one that encountered an error.
+                .get_instruction_trace_length()
+                .checked_sub(1)
+                .and_then(|index_in_trace| {
+                    transaction_context
+                        .get_instruction_context_at_index_in_trace(index_in_trace)
+                        .ok()
+                })
+                // The last program address in the instruction is that of the program being called.
+                .and_then(|ctx| ctx.get_last_program_key(transaction_context).ok())
+                // The order of program accounts in the `TransactionContext` has no relation to the
+                // order of the program accounts in the original message. It's the index in the
+                // message that we need.
+                .and_then(|errored_program_pubkey| {
+                    message
+                        .account_keys()
+                        .iter()
+                        .position(|message_pubkey| message_pubkey.eq(errored_program_pubkey))
+                });
+            TransactionError::InstructionError(
+                top_level_instruction_index as u8,
+                err,
+                responsible_program_account_index.map(|i| i as u8),
+            )
         })?;
     }
     Ok(())
