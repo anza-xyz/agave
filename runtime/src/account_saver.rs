@@ -362,6 +362,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 1,
                 InstructionError::InvalidArgument,
+                None,
+                Some(42),
             )),
             loaded,
         )];
@@ -457,6 +459,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 1,
                 InstructionError::InvalidArgument,
+                None,
+                Some(42),
             )),
             loaded,
         )];
@@ -565,6 +569,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 1,
                 InstructionError::InvalidArgument,
+                None,
+                Some(42),
             )),
             loaded,
         )];

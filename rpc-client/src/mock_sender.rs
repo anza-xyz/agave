@@ -129,6 +129,8 @@ impl RpcSender for MockSender {
                     Err(TransactionError::InstructionError(
                         0,
                         InstructionError::UninitializedAccount,
+                        None,
+                        Some(42), // Mock responsible program account index.
                     ))
                 } else {
                     Ok(())

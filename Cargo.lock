@@ -7430,6 +7430,7 @@ name = "solana-compute-budget-instruction"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
+ "assert_matches",
  "bincode",
  "criterion",
  "log",
@@ -9319,6 +9320,7 @@ version = "2.3.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "assert_matches",
  "base64 0.22.1",
  "bincode",
  "bs58",
@@ -9422,6 +9424,7 @@ dependencies = [
  "solana-program",
  "solana-pubkey",
  "solana-rpc-client-api",
+ "solana-sdk-ids",
  "solana-signature",
  "solana-signer",
  "solana-system-transaction",
@@ -11186,6 +11189,7 @@ dependencies = [
 name = "solana-zk-elgamal-proof-program-tests"
 version = "2.3.0"
 dependencies = [
+ "assert_matches",
  "bytemuck",
  "solana-account",
  "solana-compute-budget",

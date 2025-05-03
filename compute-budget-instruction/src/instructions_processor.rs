@@ -164,6 +164,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 0,
                 InstructionError::InvalidInstructionData,
+                None,
+                None,
             ))
         );
         test!(
@@ -174,6 +176,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 0,
                 InstructionError::InvalidInstructionData,
+                None,
+                None,
             ))
         );
         test!(
@@ -184,6 +188,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 0,
                 InstructionError::InvalidInstructionData,
+                None,
+                None,
             ))
         );
         test!(
@@ -222,6 +228,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 3,
                 InstructionError::InvalidInstructionData,
+                None,
+                None,
             ))
         );
         test!(
