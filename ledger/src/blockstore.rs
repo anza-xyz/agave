@@ -1285,7 +1285,7 @@ impl Blockstore {
 
         // Write out the accumulated batch.
         let mut start = Measure::start("Write Batch");
-        self.write_batch(shred_insertion_tracker.write_batch)?;
+        self.db.write_no_wal(shred_insertion_tracker.write_batch)?;
         start.stop();
         metrics.write_batch_elapsed_us += start.as_us();
 

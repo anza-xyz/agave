@@ -896,6 +896,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "boxcar"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f839cdf7e2d3198ac6ca003fd8ebc61715755f41c1cad15ff13df67531e00ed"
+
+[[package]]
 name = "brotli"
 version = "3.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1458,6 +1464,7 @@ dependencies = [
  "once_cell",
  "parking_lot_core 0.9.8",
  "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -7559,6 +7566,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "blake3",
+ "boxcar",
  "bv",
  "bytemuck",
  "bzip2",
@@ -7589,6 +7597,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_with",
+ "smallvec",
  "solana-accounts-db",
  "solana-bpf-loader-program",
  "solana-bucket-map",
