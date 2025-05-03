@@ -143,9 +143,9 @@ fn bench_shredder_coding(bencher: &mut Bencher) {
             &entries,
             true, // is_last_in_slot
             merkle_root,
-            0,     // next_shred_index
-            0,     // next_code_index
-            false, // merkle_variant
+            0,    // next_shred_index
+            0,    // next_code_index
+            true, // merkle_variant
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -164,9 +164,9 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
         &entries,
         true, // is_last_in_slot
         merkle_root,
-        0,     // next_shred_index
-        0,     // next_code_index
-        false, // merkle_variant
+        0,    // next_shred_index
+        0,    // next_code_index
+        true, // merkle_variant
         &reed_solomon_cache,
         &mut ProcessShredsStats::default(),
     );
