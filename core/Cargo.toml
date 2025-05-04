@@ -172,15 +172,34 @@ frozen-abi = [
 
 [[bench]]
 name = "banking_stage"
+harness = false
+
+[[bench]]
+name = "banking_trace"
+harness = false
+
+[[bench]]
+name = "consensus"
+harness = false
+
+[[bench]]
+name = "consumer"
+harness = false
 
 [[bench]]
 name = "gen_keys"
-
-[[bench]]
-name = "sigverify_stage"
+harness = false
 
 [[bench]]
 name = "receive_and_buffer"
+harness = false
+
+[[bench]]
+name = "shredder"
+harness = false
+
+[[bench]]
+name = "sigverify_stage"
 harness = false
 
 [package.metadata.docs.rs]

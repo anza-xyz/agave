@@ -1,8 +1,8 @@
 #![allow(clippy::arithmetic_side_effects)]
-#![feature(test)]
 
 use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    criterion::{criterion_group, criterion_main, Criterion},
     solana_core::{
         banking_trace::Channels,
         validator::{BlockProductionMethod, TransactionStructure},
@@ -10,8 +10,6 @@ use {
     solana_vote::vote_transaction::new_tower_sync_transaction,
     solana_vote_program::vote_state::TowerSync,
 };
-
-extern crate test;
 
 use {
     crossbeam_channel::{unbounded, Receiver},
@@ -48,7 +46,6 @@ use {
         sync::{atomic::Ordering, Arc},
         time::{Duration, Instant},
     },
-    test::Bencher,
 };
 
 fn check_txs(receiver: &Arc<Receiver<WorkingBankEntry>>, ref_tx_count: usize) {
@@ -135,7 +132,7 @@ enum TransactionType {
 }
 
 fn bench_banking(
-    bencher: &mut Bencher,
+    c: &mut Criterion,
     tx_type: TransactionType,
     block_production_method: BlockProductionMethod,
     transaction_struct: TransactionStructure,
@@ -266,10 +263,11 @@ fn bench_banking(
     // calling send() on the channel.
     let signal_receiver = Arc::new(signal_receiver);
     let signal_receiver2 = signal_receiver;
-    bencher.iter(move || {
-        let now = Instant::now();
-        let mut sent = 0;
-        if let Some(vote_packets) = &vote_packets {
+    c.bench_function("banking_stage", |b| {
+        b.iter( || {
+            let now = Instant::now();
+            let mut sent = 0;
+            if let Some(vote_packets) = &vote_packets {
             tpu_vote_sender
                 .send(BankingPacketBatch::new(
                     vote_packets[start..start + chunk_len].to_vec(),
@@ -310,86 +308,79 @@ fn bench_banking(
             sent,
         );
         start += chunk_len;
-        start %= verified.len();
+            start %= verified.len();
+        });
     });
     exit.store(true, Ordering::Relaxed);
     poh_service.join().unwrap();
 }
 
-#[bench]
-fn bench_banking_stage_multi_accounts(bencher: &mut Bencher) {
+fn bench_banking_stage_multi_accounts(c: &mut Criterion) {
     bench_banking(
-        bencher,
+        c,
         TransactionType::Accounts,
         BlockProductionMethod::CentralScheduler,
         TransactionStructure::Sdk,
     );
 }
 
-#[bench]
-fn bench_banking_stage_multi_programs(bencher: &mut Bencher) {
+fn bench_banking_stage_multi_programs(c: &mut Criterion) {
     bench_banking(
-        bencher,
+        c,
         TransactionType::Programs,
         BlockProductionMethod::CentralScheduler,
         TransactionStructure::Sdk,
     );
 }
 
-#[bench]
-fn bench_banking_stage_multi_accounts_with_voting(bencher: &mut Bencher) {
+fn bench_banking_stage_multi_accounts_with_voting(c: &mut Criterion) {
     bench_banking(
-        bencher,
+        c,
         TransactionType::AccountsAndVotes,
         BlockProductionMethod::CentralScheduler,
         TransactionStructure::Sdk,
     );
 }
 
-#[bench]
-fn bench_banking_stage_multi_programs_with_voting(bencher: &mut Bencher) {
+fn bench_banking_stage_multi_programs_with_voting(c: &mut Criterion) {
     bench_banking(
-        bencher,
+        c,
         TransactionType::ProgramsAndVotes,
         BlockProductionMethod::CentralScheduler,
         TransactionStructure::Sdk,
     );
 }
 
-#[bench]
-fn bench_banking_stage_multi_accounts_view(bencher: &mut Bencher) {
+fn bench_banking_stage_multi_accounts_view(c: &mut Criterion) {
     bench_banking(
-        bencher,
+        c,
         TransactionType::Accounts,
         BlockProductionMethod::CentralScheduler,
         TransactionStructure::View,
     );
 }
 
-#[bench]
-fn bench_banking_stage_multi_programs_view(bencher: &mut Bencher) {
+fn bench_banking_stage_multi_programs_view(c: &mut Criterion) {
     bench_banking(
-        bencher,
+        c,
         TransactionType::Programs,
         BlockProductionMethod::CentralScheduler,
         TransactionStructure::View,
     );
 }
 
-#[bench]
-fn bench_banking_stage_multi_accounts_with_voting_view(bencher: &mut Bencher) {
+fn bench_banking_stage_multi_accounts_with_voting_view(c: &mut Criterion) {
     bench_banking(
-        bencher,
+        c,
         TransactionType::AccountsAndVotes,
         BlockProductionMethod::CentralScheduler,
         TransactionStructure::View,
     );
 }
 
-#[bench]
-fn bench_banking_stage_multi_programs_with_voting_view(bencher: &mut Bencher) {
+fn bench_banking_stage_multi_programs_with_voting_view(c: &mut Criterion) {
     bench_banking(
-        bencher,
+        c,
         TransactionType::ProgramsAndVotes,
         BlockProductionMethod::CentralScheduler,
         TransactionStructure::View,
@@ -437,8 +428,7 @@ fn simulate_process_entries(
     process_entries_for_tests(&bank, vec![entry], None, None).unwrap();
 }
 
-#[bench]
-fn bench_process_entries(bencher: &mut Bencher) {
+fn bench_process_entries(c: &mut Criterion) {
     // entropy multiplier should be big enough to provide sufficient entropy
     // but small enough to not take too much time while executing the test.
     let entropy_multiplier: usize = 25;
@@ -456,14 +446,19 @@ fn bench_process_entries(bencher: &mut Bencher) {
     let keypairs: Vec<Keypair> = repeat_with(Keypair::new).take(num_accounts).collect();
     let tx_vector: Vec<VersionedTransaction> = Vec::with_capacity(num_accounts / 2);
 
-    bencher.iter(|| {
-        simulate_process_entries(
-            &mint_keypair,
-            tx_vector.clone(),
-            &genesis_config,
-            &keypairs,
-            initial_lamports,
-            num_accounts,
-        );
+    c.bench_function("process_entries", |b| {
+        b.iter(|| {
+            simulate_process_entries(
+                &mint_keypair,
+                tx_vector.clone(),
+                &genesis_config,
+                &keypairs,
+                initial_lamports,
+                num_accounts,
+            );
+        });
     });
 }
+
+criterion_group!(benches, bench_banking_stage_multi_accounts, bench_banking_stage_multi_programs, bench_banking_stage_multi_accounts_with_voting, bench_banking_stage_multi_programs_with_voting, bench_banking_stage_multi_accounts_view, bench_banking_stage_multi_programs_view, bench_banking_stage_multi_accounts_with_voting_view, bench_banking_stage_multi_programs_with_voting_view, bench_process_entries);
+criterion_main!(benches);

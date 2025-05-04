@@ -1,11 +1,13 @@
-#![feature(test)]
+use {
+    criterion::{criterion_group, criterion_main, Criterion},
+    solana_core::gen_keys::GenKeys,
+};
 
-extern crate test;
 
-use {solana_core::gen_keys::GenKeys, test::Bencher};
-
-#[bench]
-fn bench_gen_keys(b: &mut Bencher) {
+fn bench_gen_keys(c: &mut Criterion) {
     let mut rnd = GenKeys::new([0u8; 32]);
-    b.iter(|| rnd.gen_n_keypairs(1000));
+    c.bench_function("gen_keys", |b| b.iter(|| rnd.gen_n_keypairs(1000)));
 }
+
+criterion_group!(benches, bench_gen_keys);
+criterion_main!(benches);

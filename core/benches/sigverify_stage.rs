@@ -1,10 +1,9 @@
-#![feature(test)]
 #![allow(clippy::arithmetic_side_effects)]
 
 extern crate solana_core;
-extern crate test;
 
 use {
+    criterion::{criterion_group, criterion_main, black_box, Criterion},
     crossbeam_channel::unbounded,
     log::*,
     rand::{
@@ -27,10 +26,10 @@ use {
         system_transaction,
     },
     std::time::{Duration, Instant},
-    test::Bencher,
 };
 
-fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
+#[allow(dead_code)]
+fn run_bench_packet_discard(num_ips: usize, c: &mut Criterion) {
     solana_logger::setup();
     let len = 30 * 1000;
     let chunk_size = 1024;
@@ -56,33 +55,35 @@ fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
     }
     info!("total packets: {}", total);
 
-    bencher.iter(move || {
-        SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
-        let mut num_packets = 0;
-        for batch in batches.iter_mut() {
-            for p in batch.iter_mut() {
-                if !p.meta().discard() {
-                    num_packets += 1;
+    c.bench_function("discard_excess_packets", |b| {
+        b.iter( || {
+            SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
+            let mut num_packets = 0;
+            for batch in batches.iter_mut() {
+                for p in batch.iter_mut() {
+                    if !p.meta().discard() {
+                        num_packets += 1;
+                    }
+                    p.meta_mut().set_discard(false);
                 }
-                p.meta_mut().set_discard(false);
             }
-        }
-        assert_eq!(num_packets, 10_000);
+            assert_eq!(num_packets, 10_000);
+        })
     });
 }
 
-#[bench]
-fn bench_packet_discard_many_senders(bencher: &mut Bencher) {
-    run_bench_packet_discard(1000, bencher);
+#[allow(dead_code)]
+fn bench_packet_discard_many_senders(c: &mut Criterion) {
+    run_bench_packet_discard(1000, c);
 }
 
-#[bench]
-fn bench_packet_discard_single_sender(bencher: &mut Bencher) {
-    run_bench_packet_discard(1, bencher);
+#[allow(dead_code)]
+fn bench_packet_discard_single_sender(c: &mut Criterion) {
+    run_bench_packet_discard(1, c);
 }
 
-#[bench]
-fn bench_packet_discard_mixed_senders(bencher: &mut Bencher) {
+#[allow(dead_code)]
+fn bench_packet_discard_mixed_senders(c: &mut Criterion) {
     const SIZE: usize = 30 * 1000;
     const CHUNK_SIZE: usize = 1024;
     fn new_rand_addr<R: Rng>(rng: &mut R) -> std::net::IpAddr {
@@ -103,21 +104,24 @@ fn bench_packet_discard_mixed_senders(bencher: &mut Bencher) {
             }
         }
     }
-    bencher.iter(move || {
-        SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
-        let mut num_packets = 0;
-        for batch in batches.iter_mut() {
-            for packet in batch.iter_mut() {
-                if !packet.meta().discard() {
-                    num_packets += 1;
+    c.bench_function("discard_excess_packets", |b| {
+        b.iter( || {
+            SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
+            let mut num_packets = 0;
+            for batch in batches.iter_mut() {
+                for packet in batch.iter_mut() {
+                    if !packet.meta().discard() {
+                        num_packets += 1;
+                    }
+                    packet.meta_mut().set_discard(false);
                 }
-                packet.meta_mut().set_discard(false);
             }
-        }
-        assert_eq!(num_packets, 10_000);
+            assert_eq!(num_packets, 10_000);
+        })
     });
 }
 
+#[allow(dead_code)]
 fn gen_batches(use_same_tx: bool) -> Vec<PacketBatch> {
     let len = 4096;
     let chunk_size = 1024;
@@ -142,17 +146,18 @@ fn gen_batches(use_same_tx: bool) -> Vec<PacketBatch> {
     }
 }
 
-#[bench]
-fn bench_sigverify_stage_with_same_tx(bencher: &mut Bencher) {
-    bench_sigverify_stage(bencher, true)
+#[allow(dead_code)]
+fn bench_sigverify_stage_with_same_tx(c: &mut Criterion) {
+    bench_sigverify_stage(c, true)
 }
 
-#[bench]
-fn bench_sigverify_stage_without_same_tx(bencher: &mut Bencher) {
-    bench_sigverify_stage(bencher, false)
+#[allow(dead_code)]
+fn bench_sigverify_stage_without_same_tx(c: &mut Criterion) {
+    bench_sigverify_stage(c, false)
 }
 
-fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
+#[allow(dead_code)]
+fn bench_sigverify_stage(c: &mut Criterion, use_same_tx: bool) {
     solana_logger::setup();
     trace!("start");
     let (packet_s, packet_r) = unbounded();
@@ -160,10 +165,11 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
     let verifier = TransactionSigVerifier::new(verified_s, None);
     let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerBench", "bench");
 
-    bencher.iter(move || {
-        let now = Instant::now();
-        let batches = gen_batches(use_same_tx);
-        trace!(
+    c.bench_function("sigverify_stage", |b| {
+        b.iter( || {
+            let now = Instant::now();
+            let batches = gen_batches(use_same_tx);
+            trace!(
             "starting... generation took: {} ms batches: {}",
             now.elapsed().as_millis(),
             batches.len()
@@ -180,13 +186,14 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
         loop {
             if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_millis(10)) {
                 received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
-                test::black_box(verifieds);
+                black_box(verifieds);
                 if received >= expected {
                     break;
                 }
             }
+            trace!("received: {}", received);
         }
-        trace!("received: {}", received);
+        })
     });
     // This will wait for all packets to make it through sigverify.
     stage.join().unwrap();
@@ -228,53 +235,68 @@ fn prepare_batches(discard_factor: i32) -> (Vec<PacketBatch>, usize) {
     (batches, len - c)
 }
 
-fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32) {
+fn bench_shrink_sigverify_stage_core(c: &mut Criterion, discard_factor: i32) {
     let (batches0, num_valid_packets) = prepare_batches(discard_factor);
     let (verified_s, _verified_r) = BankingTracer::channel_for_test();
     let verifier = TransactionSigVerifier::new(verified_s, None);
 
-    let mut c = 0;
     let mut total_shrink_time = 0;
     let mut total_verify_time = 0;
+    let mut count = 0;
 
-    bencher.iter(|| {
-        let mut batches = batches0.clone();
-        let (pre_shrink_time_us, _pre_shrink_total) =
-            SigVerifyStage::maybe_shrink_batches(&mut batches);
+    c.bench_function("shrink_sigverify_stage", |b| {
+        b.iter(|| {
+            let mut batches = batches0.clone();
+            let (pre_shrink_time_us, _pre_shrink_total) =
+                SigVerifyStage::maybe_shrink_batches(&mut batches);
+            let mut verify_time = Measure::start("sigverify_batch_time");
+            let _batches = verifier.verify_batches(batches, num_valid_packets);
+            verify_time.stop();
 
-        let mut verify_time = Measure::start("sigverify_batch_time");
-        let _batches = verifier.verify_batches(batches, num_valid_packets);
-        verify_time.stop();
-
-        c += 1;
-        total_shrink_time += pre_shrink_time_us;
-        total_verify_time += verify_time.as_us();
+            count += 1;
+            total_shrink_time += pre_shrink_time_us;
+            total_verify_time += verify_time.as_us();
+        })
     });
 
     error!(
         "bsv, {}, {}, {}",
         discard_factor,
-        (total_shrink_time as f64) / (c as f64),
-        (total_verify_time as f64) / (c as f64),
+        (total_shrink_time as f64) / (count as f64),
+        (total_verify_time as f64) / (count as f64),
     );
 }
 
-macro_rules! GEN_SHRINK_SIGVERIFY_BENCH {
+macro_rules! gen_shrink_sigverify_bench {
     ($i:ident, $n:literal) => {
-        #[bench]
-        fn $i(bencher: &mut Bencher) {
-            bench_shrink_sigverify_stage_core(bencher, $n);
+        fn $i(c: &mut Criterion) {
+            bench_shrink_sigverify_stage_core(c, $n);
         }
     };
 }
 
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_0, 0);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_10, 10);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_20, 20);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_30, 30);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_40, 40);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_50, 50);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_60, 60);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_70, 70);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_80, 80);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_90, 90);
+gen_shrink_sigverify_bench!(bsv_0, 0);
+gen_shrink_sigverify_bench!(bsv_10, 10);
+gen_shrink_sigverify_bench!(bsv_20, 20);
+gen_shrink_sigverify_bench!(bsv_30, 30);
+gen_shrink_sigverify_bench!(bsv_40, 40);
+gen_shrink_sigverify_bench!(bsv_50, 50);
+gen_shrink_sigverify_bench!(bsv_60, 60);
+gen_shrink_sigverify_bench!(bsv_70, 70);
+gen_shrink_sigverify_bench!(bsv_80, 80);
+gen_shrink_sigverify_bench!(bsv_90, 90);
+
+criterion_group!(
+    name = benches;
+    config = Criterion::default();
+    targets = 
+        
+        bench_packet_discard_many_senders,
+        bench_packet_discard_single_sender,
+        bench_packet_discard_mixed_senders,
+        bench_sigverify_stage_with_same_tx,
+        bench_sigverify_stage_without_same_tx,
+        bsv_0, bsv_10, bsv_20, bsv_30, bsv_40, bsv_50, bsv_60, bsv_70, bsv_80, bsv_90,
+);
+
+criterion_main!(benches);

@@ -1,9 +1,6 @@
-#![feature(test)]
-
-extern crate test;
-
 use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    criterion::{criterion_group, criterion_main, Criterion, black_box},
     solana_core::banking_trace::{
         for_test::{
             drop_and_clean_temp_dir_unless_suppressed, sample_packet_batch, terminate_tracer,
@@ -17,7 +14,6 @@ use {
         thread,
     },
     tempfile::TempDir,
-    test::Bencher,
 };
 
 fn ensure_fresh_setup_to_benchmark(path: &PathBuf) {
@@ -28,12 +24,11 @@ fn ensure_fresh_setup_to_benchmark(path: &PathBuf) {
 }
 
 fn black_box_packet_batch(packet_batch: BankingPacketBatch) -> TracerThreadResult {
-    test::black_box(packet_batch);
+    black_box(packet_batch);
     Ok(())
 }
 
-#[bench]
-fn bench_banking_tracer_main_thread_overhead_noop_baseline(bencher: &mut Bencher) {
+fn bench_banking_tracer_main_thread_overhead_noop_baseline(c: &mut Criterion) {
     let exit = Arc::<AtomicBool>::default();
     let tracer = BankingTracer::new_disabled();
     let Channels {
@@ -52,14 +47,15 @@ fn bench_banking_tracer_main_thread_overhead_noop_baseline(bencher: &mut Bencher
     });
 
     let packet_batch = sample_packet_batch();
-    bencher.iter(|| {
-        non_vote_sender.send(packet_batch.clone()).unwrap();
+    c.bench_function("banking_tracer_main_thread_overhead_noop_baseline", |b| {
+        b.iter(|| {
+            non_vote_sender.send(packet_batch.clone()).unwrap();
+        });
     });
     terminate_tracer(tracer, None, dummy_main_thread, non_vote_sender, Some(exit));
 }
 
-#[bench]
-fn bench_banking_tracer_main_thread_overhead_under_peak_write(bencher: &mut Bencher) {
+fn bench_banking_tracer_main_thread_overhead_under_peak_write(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
 
     let exit = Arc::<AtomicBool>::default();
@@ -85,8 +81,10 @@ fn bench_banking_tracer_main_thread_overhead_under_peak_write(bencher: &mut Benc
     });
 
     let packet_batch = sample_packet_batch();
-    bencher.iter(|| {
-        non_vote_sender.send(packet_batch.clone()).unwrap();
+    c.bench_function("banking_tracer_main_thread_overhead_under_peak_write", |b| {
+        b.iter(|| {
+            non_vote_sender.send(packet_batch.clone()).unwrap();
+        });
     });
 
     terminate_tracer(
@@ -99,8 +97,7 @@ fn bench_banking_tracer_main_thread_overhead_under_peak_write(bencher: &mut Benc
     drop_and_clean_temp_dir_unless_suppressed(temp_dir);
 }
 
-#[bench]
-fn bench_banking_tracer_main_thread_overhead_under_sustained_write(bencher: &mut Bencher) {
+fn bench_banking_tracer_main_thread_overhead_under_sustained_write(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
 
     let exit = Arc::<AtomicBool>::default();
@@ -126,8 +123,10 @@ fn bench_banking_tracer_main_thread_overhead_under_sustained_write(bencher: &mut
     });
 
     let packet_batch = sample_packet_batch();
-    bencher.iter(|| {
-        non_vote_sender.send(packet_batch.clone()).unwrap();
+    c.bench_function("banking_tracer_main_thread_overhead_under_sustained_write", |b| {
+        b.iter(|| {
+            non_vote_sender.send(packet_batch.clone()).unwrap();
+        });
     });
 
     terminate_tracer(
@@ -140,16 +139,16 @@ fn bench_banking_tracer_main_thread_overhead_under_sustained_write(bencher: &mut
     drop_and_clean_temp_dir_unless_suppressed(temp_dir);
 }
 
-#[bench]
-fn bench_banking_tracer_background_thread_throughput(bencher: &mut Bencher) {
+fn bench_banking_tracer_background_thread_throughput(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path();
 
     let packet_batch = sample_packet_batch();
 
-    bencher.iter(move || {
-        let path = base_path.join("banking-trace");
-        ensure_fresh_setup_to_benchmark(&path);
+    c.bench_function("banking_tracer_background_thread_throughput", |b| {
+        b.iter( || {
+            let path = base_path.join("banking-trace");
+            ensure_fresh_setup_to_benchmark(&path);
 
         let exit = Arc::<AtomicBool>::default();
 
@@ -179,8 +178,12 @@ fn bench_banking_tracer_background_thread_throughput(bencher: &mut Bencher) {
             dummy_main_thread,
             non_vote_sender,
             None,
-        );
+            );
+        });
     });
 
     drop_and_clean_temp_dir_unless_suppressed(temp_dir);
 }
+
+criterion_group!(benches, bench_banking_tracer_main_thread_overhead_noop_baseline, bench_banking_tracer_main_thread_overhead_under_peak_write, bench_banking_tracer_main_thread_overhead_under_sustained_write, bench_banking_tracer_background_thread_throughput);
+criterion_main!(benches);

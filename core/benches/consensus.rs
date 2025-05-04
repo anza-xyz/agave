@@ -1,9 +1,7 @@
-#![feature(test)]
-
 extern crate solana_core;
-extern crate test;
 
 use {
+    criterion::{criterion_group, criterion_main, Criterion},
     solana_core::{
         consensus::{tower_storage::FileTowerStorage, Tower},
         vote_simulator::VoteSimulator,
@@ -18,12 +16,10 @@ use {
         sync::Arc,
     },
     tempfile::TempDir,
-    test::Bencher,
     trees::tr,
 };
 
-#[bench]
-fn bench_save_tower(bench: &mut Bencher) {
+fn bench_save_tower(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
 
     let vote_account_pubkey = &Pubkey::default();
@@ -40,14 +36,14 @@ fn bench_save_tower(bench: &mut Bencher) {
         &heaviest_bank,
     );
 
-    bench.iter(move || {
-        tower.save(&tower_storage, &node_keypair).unwrap();
+    c.bench_function("save_tower", |b| {
+        b.iter(|| {
+            tower.save(&tower_storage, &node_keypair).unwrap();
+        });
     });
 }
 
-#[bench]
-#[ignore]
-fn bench_generate_ancestors_descendants(bench: &mut Bencher) {
+fn bench_generate_ancestors_descendants(c: &mut Criterion) {
     let vote_account_pubkey = &Pubkey::default();
     let node_keypair = Arc::new(Keypair::new());
     let heaviest_bank = BankForks::new_rw_arc(Bank::default_for_tests())
@@ -74,10 +70,15 @@ fn bench_generate_ancestors_descendants(bench: &mut Bencher) {
         &mut tower,
     );
 
-    bench.iter(move || {
-        for _ in 0..num_banks {
-            let _ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
-            let _descendants = vote_simulator.bank_forks.read().unwrap().descendants();
-        }
+    c.bench_function("generate_ancestors_descendants", |b| {
+        b.iter(|| {
+            for _ in 0..num_banks {
+                let _ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
+                let _descendants = vote_simulator.bank_forks.read().unwrap().descendants();
+            }
+        })
     });
 }
+
+criterion_group!(benches, bench_save_tower, bench_generate_ancestors_descendants);
+criterion_main!(benches);
