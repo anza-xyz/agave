@@ -23,39 +23,29 @@ use {
 };
 
 lazy_static! {
-    static ref ADDRESS_LOOKUP_PROGRAM_ID: Pubkey = address_lookup_table::id();
-    static ref ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey = spl_associated_token_account::id();
-    static ref BPF_LOADER_PROGRAM_ID: Pubkey = solana_sdk_ids::bpf_loader::id();
-    static ref BPF_UPGRADEABLE_LOADER_PROGRAM_ID: Pubkey =
-        solana_sdk_ids::bpf_loader_upgradeable::id();
-    static ref MEMO_V1_PROGRAM_ID: Pubkey = spl_memo::v1::id();
-    static ref MEMO_V3_PROGRAM_ID: Pubkey = spl_memo::id();
-    static ref STAKE_PROGRAM_ID: Pubkey = stake::id();
-    static ref SYSTEM_PROGRAM_ID: Pubkey = system_program::id();
-    static ref VOTE_PROGRAM_ID: Pubkey = vote::id();
     static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableProgram> = {
         let mut m = HashMap::new();
         m.insert(
-            *ADDRESS_LOOKUP_PROGRAM_ID,
+            address_lookup_table::id(),
             ParsableProgram::AddressLookupTable,
         );
         m.insert(
-            *ASSOCIATED_TOKEN_PROGRAM_ID,
+            spl_associated_token_account::id(),
             ParsableProgram::SplAssociatedTokenAccount,
         );
-        m.insert(*MEMO_V1_PROGRAM_ID, ParsableProgram::SplMemo);
-        m.insert(*MEMO_V3_PROGRAM_ID, ParsableProgram::SplMemo);
+        m.insert(spl_memo::v1::id(), ParsableProgram::SplMemo);
+        m.insert(spl_memo::id(), ParsableProgram::SplMemo);
         for spl_token_id in spl_token_ids() {
             m.insert(spl_token_id, ParsableProgram::SplToken);
         }
-        m.insert(*BPF_LOADER_PROGRAM_ID, ParsableProgram::BpfLoader);
+        m.insert(solana_sdk_ids::bpf_loader::id(), ParsableProgram::BpfLoader);
         m.insert(
-            *BPF_UPGRADEABLE_LOADER_PROGRAM_ID,
+            solana_sdk_ids::bpf_loader_upgradeable::id(),
             ParsableProgram::BpfUpgradeableLoader,
         );
-        m.insert(*STAKE_PROGRAM_ID, ParsableProgram::Stake);
-        m.insert(*SYSTEM_PROGRAM_ID, ParsableProgram::System);
-        m.insert(*VOTE_PROGRAM_ID, ParsableProgram::Vote);
+        m.insert(stake::id(), ParsableProgram::Stake);
+        m.insert(system_program::id(), ParsableProgram::System);
+        m.insert(vote::id(), ParsableProgram::Vote);
         m
     };
 }
@@ -171,19 +161,19 @@ mod test {
             data: vec![240, 159, 166, 150],
         };
         assert_eq!(
-            parse(&MEMO_V1_PROGRAM_ID, &memo_instruction, &no_keys, None).unwrap(),
+            parse(&spl_memo::v1::id(), &memo_instruction, &no_keys, None).unwrap(),
             ParsedInstruction {
                 program: "spl-memo".to_string(),
-                program_id: MEMO_V1_PROGRAM_ID.to_string(),
+                program_id: spl_memo::v1::id().to_string(),
                 parsed: json!("🦖"),
                 stack_height: None,
             }
         );
         assert_eq!(
-            parse(&MEMO_V3_PROGRAM_ID, &memo_instruction, &no_keys, Some(1)).unwrap(),
+            parse(&spl_memo::id(), &memo_instruction, &no_keys, Some(1)).unwrap(),
             ParsedInstruction {
                 program: "spl-memo".to_string(),
-                program_id: MEMO_V3_PROGRAM_ID.to_string(),
+                program_id: spl_memo::id().to_string(),
                 parsed: json!("🦖"),
                 stack_height: Some(1),
             }
