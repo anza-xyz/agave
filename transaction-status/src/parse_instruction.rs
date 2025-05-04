@@ -1,9 +1,8 @@
 pub use solana_transaction_status_client_types::ParsedInstruction;
 use {
     crate::{
-        extract_memos::{spl_memo_id_v1, spl_memo_id_v3},
         parse_address_lookup_table::parse_address_lookup_table,
-        parse_associated_token::{parse_associated_token, spl_associated_token_id},
+        parse_associated_token::parse_associated_token,
         parse_bpf_loader::{parse_bpf_loader, parse_bpf_upgradeable_loader},
         parse_stake::parse_stake,
         parse_system::parse_system,
@@ -25,12 +24,12 @@ use {
 
 lazy_static! {
     static ref ADDRESS_LOOKUP_PROGRAM_ID: Pubkey = address_lookup_table::id();
-    static ref ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey = spl_associated_token_id();
+    static ref ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey = spl_associated_token_account::id();
     static ref BPF_LOADER_PROGRAM_ID: Pubkey = solana_sdk_ids::bpf_loader::id();
     static ref BPF_UPGRADEABLE_LOADER_PROGRAM_ID: Pubkey =
         solana_sdk_ids::bpf_loader_upgradeable::id();
-    static ref MEMO_V1_PROGRAM_ID: Pubkey = spl_memo_id_v1();
-    static ref MEMO_V3_PROGRAM_ID: Pubkey = spl_memo_id_v3();
+    static ref MEMO_V1_PROGRAM_ID: Pubkey = spl_memo::v1::id();
+    static ref MEMO_V3_PROGRAM_ID: Pubkey = spl_memo::id();
     static ref STAKE_PROGRAM_ID: Pubkey = stake::id();
     static ref SYSTEM_PROGRAM_ID: Pubkey = system_program::id();
     static ref VOTE_PROGRAM_ID: Pubkey = vote::id();
