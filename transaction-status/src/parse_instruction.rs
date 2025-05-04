@@ -24,29 +24,33 @@ use {
 
 lazy_static! {
     static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableProgram> = {
-        let mut m = HashMap::new();
-        m.insert(
-            address_lookup_table::id(),
-            ParsableProgram::AddressLookupTable,
-        );
-        m.insert(
-            spl_associated_token_account::id(),
-            ParsableProgram::SplAssociatedTokenAccount,
-        );
-        m.insert(spl_memo::v1::id(), ParsableProgram::SplMemo);
-        m.insert(spl_memo::id(), ParsableProgram::SplMemo);
-        for spl_token_id in spl_token_ids() {
-            m.insert(spl_token_id, ParsableProgram::SplToken);
-        }
-        m.insert(solana_sdk_ids::bpf_loader::id(), ParsableProgram::BpfLoader);
-        m.insert(
-            solana_sdk_ids::bpf_loader_upgradeable::id(),
-            ParsableProgram::BpfUpgradeableLoader,
-        );
-        m.insert(stake::id(), ParsableProgram::Stake);
-        m.insert(system_program::id(), ParsableProgram::System);
-        m.insert(vote::id(), ParsableProgram::Vote);
-        m
+        [
+            (
+                address_lookup_table::id(),
+                ParsableProgram::AddressLookupTable,
+            ),
+            (
+                spl_associated_token_account::id(),
+                ParsableProgram::SplAssociatedTokenAccount,
+            ),
+            (spl_memo::v1::id(), ParsableProgram::SplMemo),
+            (spl_memo::id(), ParsableProgram::SplMemo),
+            (solana_sdk_ids::bpf_loader::id(), ParsableProgram::BpfLoader),
+            (
+                solana_sdk_ids::bpf_loader_upgradeable::id(),
+                ParsableProgram::BpfUpgradeableLoader,
+            ),
+            (stake::id(), ParsableProgram::Stake),
+            (system_program::id(), ParsableProgram::System),
+            (vote::id(), ParsableProgram::Vote),
+        ]
+        .into_iter()
+        .chain(
+            spl_token_ids()
+                .into_iter()
+                .map(|spl_token_id| (spl_token_id, ParsableProgram::SplToken)),
+        )
+        .collect()
     };
 }
 
