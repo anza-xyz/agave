@@ -2,7 +2,7 @@ use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
     solana_accounts_db::{
-        accounts_db::{AccountsDb, AccountsDbConfig, CreateAncientStorage},
+        accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
         utils::create_and_canonicalize_directories,

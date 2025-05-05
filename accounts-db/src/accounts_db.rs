@@ -23,6 +23,11 @@ mod scan_account_storage;
 pub mod stats;
 pub mod tests;
 
+#[cfg(test)]
+use crate::{
+    ancient_append_vecs::{AccountsToStore, StorageSelector},
+    u64_align,
+};
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -39,7 +44,7 @@ use {
         },
         accounts_file::{
             AccountsFile, AccountsFileError, AccountsFileProvider, MatchAccountOwnerError,
-            StorageAccess, ALIGN_BOUNDARY_OFFSET,
+            StorageAccess,
         },
         accounts_hash::{
             AccountHash, AccountLtHash, AccountsDeltaHash, AccountsHash, AccountsHashKind,
@@ -59,9 +64,7 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
-        ancient_append_vecs::{
-            get_ancient_append_vec_capacity, is_ancient, AccountsToStore, StorageSelector,
-        },
+        ancient_append_vecs::get_ancient_append_vec_capacity,
         append_vec::{aligned_stored_size, StoredAccountMeta, STORE_META_OVERHEAD},
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
         contains::Contains,
@@ -73,7 +76,7 @@ use {
         read_only_accounts_cache::ReadOnlyAccountsCache,
         sorted_storages::SortedStorages,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
-        u64_align, utils,
+        utils,
         verify_accounts_hash_in_background::VerifyAccountsHashInBackground,
     },
     crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
@@ -335,11 +338,16 @@ pub enum StoreReclaims {
 ///
 /// If a caller uses it before initializing it, it will be a runtime unwrap() error, similar to an assert.
 /// That condition is an illegal use pattern and is justifiably an assertable condition.
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 #[derive(Default)]
 struct CurrentAncientAccountsFile {
     slot_and_accounts_file: Option<(Slot, Arc<AccountStorageEntry>)>,
 }
 
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 impl CurrentAncientAccountsFile {
     fn new(slot: Slot, append_vec: Arc<AccountStorageEntry>) -> CurrentAncientAccountsFile {
         Self {
@@ -425,17 +433,20 @@ enum LoadZeroLamports {
     SomeWithZeroLamportAccountForTests,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct AncientSlotPubkeysInner {
     pubkeys: HashSet<Pubkey>,
     slot: Slot,
 }
 
+#[cfg(test)]
 #[derive(Debug, Default)]
 struct AncientSlotPubkeys {
     inner: Option<AncientSlotPubkeysInner>,
 }
 
+#[cfg(test)]
 impl AncientSlotPubkeys {
     /// All accounts in 'slot' will be moved to 'current_ancient'
     /// If 'slot' is different than the 'current_ancient'.slot, then an account in 'slot' may ALREADY be in the current ancient append vec.
@@ -4225,6 +4236,9 @@ impl AccountsDb {
     /// 'existing_ancient_pubkeys': pubkeys that exist currently in the ancient append vec slot
     /// returns the pubkeys that are in 'accounts' that are already in 'existing_ancient_pubkeys'
     /// Also updated 'existing_ancient_pubkeys' to include all pubkeys in 'accounts' since they will soon be written into the ancient slot.
+    //
+    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+    #[cfg(test)]
     fn get_keys_to_unref_ancient<'a>(
         accounts: &'a [&AccountFromStorage],
         existing_ancient_pubkeys: &mut HashSet<Pubkey>,
@@ -4246,6 +4260,9 @@ impl AccountsDb {
     /// 'accounts' are about to be appended to an ancient append vec. That ancient append vec may already have some accounts.
     /// Unref each account in 'accounts' that already exists in 'existing_ancient_pubkeys'.
     /// As a side effect, on exit, 'existing_ancient_pubkeys' will now contain all pubkeys in 'accounts'.
+    //
+    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+    #[cfg(test)]
     fn unref_accounts_already_in_storage(
         &self,
         accounts: &[&AccountFromStorage],
@@ -4263,6 +4280,7 @@ impl AccountsDb {
     /// get the storage from 'slot' to squash
     /// or None if this slot should be skipped
     /// side effect could be updating 'current_ancient'
+    #[cfg(test)]
     fn get_storage_to_move_to_ancient_accounts_file(
         &self,
         slot: Slot,
@@ -4288,6 +4306,9 @@ impl AccountsDb {
     /// can_randomly_shrink: true if ancient append vecs that otherwise don't qualify to be shrunk can be randomly shrunk
     ///  this is convenient for a running system
     ///  this is not useful for testing
+    //
+    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+    #[cfg(test)]
     fn should_move_to_ancient_accounts_file(
         &self,
         storage: &Arc<AccountStorageEntry>,
@@ -4350,6 +4371,9 @@ impl AccountsDb {
 
     /// Combine all account data from storages in 'sorted_slots' into ancient append vecs.
     /// This keeps us from accumulating append vecs for each slot older than an epoch.
+    //
+    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+    #[cfg(test)]
     fn combine_ancient_slots(&self, sorted_slots: Vec<Slot>, can_randomly_shrink: bool) {
         if sorted_slots.is_empty() {
             return;
@@ -4409,6 +4433,7 @@ impl AccountsDb {
     }
 
     /// put entire alive contents of 'old_storage' into the current ancient append vec or a newly created ancient append vec
+    #[cfg(test)]
     fn combine_one_store_into_ancient(
         &self,
         slot: Slot,
@@ -6862,8 +6887,8 @@ impl AccountsDb {
     /// If ancient append vecs are not enabled, return 0.
     fn get_oldest_non_ancient_slot_for_hash_calc_scan(
         &self,
-        max_slot_inclusive: Slot,
-        config: &CalcAccountsHashConfig<'_>,
+        _max_slot_inclusive: Slot,
+        _config: &CalcAccountsHashConfig<'_>,
     ) -> Option<Slot> {
         // oldest_non_ancient_slot is only applicable when ancient storages are created with `Append`. When ancient storages are created with `Pack`, ancient storages
         // can be created in between non-ancient storages. Return None, because oldest_non_ancient_slot is not applicable here.
