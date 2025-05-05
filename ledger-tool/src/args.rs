@@ -92,13 +92,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
                 verify that on-disk account entries are indeed normal.",
             )
             .hidden(hidden_unless_forced()),
-        Arg::with_name("accounts_db_test_skip_rewrites")
-            .long("accounts-db-test-skip-rewrites")
-            .help(
-                "Debug option to skip rewrites for rent-exempt accounts but still add them in \
-                 bank delta hash calculation",
-            )
-            .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_skip_initial_hash_calculation")
             .long("accounts-db-skip-initial-hash-calculation")
             .help("Do not verify accounts hash at startup.")
@@ -382,8 +375,7 @@ pub fn get_accounts_db_config(
         .ok(),
         exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
-        test_skip_rewrites_but_include_in_bank_hash: arg_matches
-            .is_present("accounts_db_test_skip_rewrites"),
+        test_skip_rewrites_but_include_in_bank_hash: false,
         create_ancient_storage,
         storage_access,
         scan_filter_for_shrinking,
