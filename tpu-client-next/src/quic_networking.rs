@@ -19,8 +19,7 @@ pub use {
     solana_tls_utils::QuicClientCertificate,
 };
 
-pub(crate) fn create_client_config(client_certificate: QuicClientCertificate) -> ClientConfig {
-    // adapted from QuicLazyInitializedEndpoint::create_endpoint
+pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -> ClientConfig {
     let mut crypto = tls_client_config_builder()
         .with_client_auth_cert(
             vec![client_certificate.certificate.clone()],

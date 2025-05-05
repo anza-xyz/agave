@@ -38,7 +38,7 @@ solana-clock = "=2.2.1"
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = "=2.2.1"
-solana-frozen-abi = { version = "=2.2.1", optional = true, features = [
+solana-frozen-abi = { version = "=2.2.2", optional = true, features = [
     "frozen-abi",
 ] }
 solana-frozen-abi-macro = { version = "=2.2.1", optional = true, features = [

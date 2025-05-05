@@ -2,6 +2,7 @@
 use {
     crate::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
     serde::Serialize,
+    solana_loader_v4_interface::instruction,
     solana_sdk::{
         account::{AccountSharedData, WritableAccount},
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
@@ -279,7 +280,8 @@ pub fn instructions_to_load_program_of_loader_v4<T: Client>(
             &program_keypair.pubkey(),
             bank_client
                 .get_minimum_balance_for_rent_exemption(
-                    loader_v4::LoaderV4State::program_data_offset().saturating_add(program.len()),
+                    solana_loader_v4_interface::state::LoaderV4State::program_data_offset()
+                        .saturating_add(program.len()),
                 )
                 .unwrap(),
             0,
@@ -287,7 +289,7 @@ pub fn instructions_to_load_program_of_loader_v4<T: Client>(
         ));
         program_keypair
     });
-    instructions.push(loader_v4::set_program_length(
+    instructions.push(instruction::set_program_length(
         &program_keypair.pubkey(),
         &authority_keypair.pubkey(),
         program.len() as u32,
@@ -296,7 +298,7 @@ pub fn instructions_to_load_program_of_loader_v4<T: Client>(
     let chunk_size = CHUNK_SIZE;
     let mut offset = 0;
     for chunk in program.chunks(chunk_size) {
-        instructions.push(loader_v4::write(
+        instructions.push(instruction::write(
             &program_keypair.pubkey(),
             &authority_keypair.pubkey(),
             offset,
@@ -304,15 +306,31 @@ pub fn instructions_to_load_program_of_loader_v4<T: Client>(
         ));
         offset += chunk_size as u32;
     }
-    instructions.push(if let Some(target_program_id) = target_program_id {
-        loader_v4::deploy_from_source(
+    if let Some(target_program_id) = target_program_id {
+        instructions.push(instruction::set_program_length(
+            target_program_id,
+            &authority_keypair.pubkey(),
+            program.len() as u32,
+            &payer_keypair.pubkey(),
+        ));
+        instructions.push(instruction::copy(
             target_program_id,
             &authority_keypair.pubkey(),
             &program_keypair.pubkey(),
-        )
+            0,
+            0,
+            program.len() as u32,
+        ));
+        instructions.push(instruction::deploy(
+            target_program_id,
+            &authority_keypair.pubkey(),
+        ));
     } else {
-        loader_v4::deploy(&program_keypair.pubkey(), &authority_keypair.pubkey())
-    });
+        instructions.push(instruction::deploy(
+            &program_keypair.pubkey(),
+            &authority_keypair.pubkey(),
+        ));
+    }
     (program_keypair, instructions)
 }
 

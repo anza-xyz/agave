@@ -13,7 +13,6 @@ use {
         is_zero_lamport::IsZeroLamport,
         pubkey_bins::PubkeyBinCalculator24,
         rolling_bit_field::RollingBitField,
-        secondary_index::*,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
     in_mem_accounts_index::{InMemAccountsIndex, InsertNewEntryResults, StartupStats},
@@ -25,6 +24,7 @@ use {
         ThreadPool,
     },
     roots_tracker::RootsTracker,
+    secondary::{RwLockSecondaryIndexEntry, SecondaryIndex, SecondaryIndexEntry},
     solana_account::ReadableAccount,
     solana_clock::{BankId, Slot},
     solana_measure::measure::Measure,
@@ -58,7 +58,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndex
     bins: Some(BINS_FOR_TESTING),
     num_flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
-    index_limit_mb: IndexLimitMb::Unlimited,
+    index_limit_mb: IndexLimitMb::Minimal,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
 };
@@ -66,7 +66,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     bins: Some(BINS_FOR_BENCHMARKS),
     num_flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
-    index_limit_mb: IndexLimitMb::Unlimited,
+    index_limit_mb: IndexLimitMb::Minimal,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
 };
@@ -199,17 +199,15 @@ enum ScanTypes<R: RangeBounds<Pubkey>> {
 }
 
 /// specification of how much memory in-mem portion of account index can use
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone)]
 pub enum IndexLimitMb {
-    /// use disk index while allowing to use as much memory as available for
-    /// in-memory index.
-    #[default]
-    Unlimited,
+    /// use disk index while keeping a minimal amount in-mem
+    Minimal,
     /// in-mem-only was specified, no disk index
     InMemOnly,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct AccountsIndexConfig {
     pub bins: Option<usize>,
     pub num_flush_threads: Option<NonZeroUsize>,
@@ -217,6 +215,19 @@ pub struct AccountsIndexConfig {
     pub index_limit_mb: IndexLimitMb,
     pub ages_to_stay_in_cache: Option<Age>,
     pub scan_results_limit_bytes: Option<usize>,
+}
+
+impl Default for AccountsIndexConfig {
+    fn default() -> Self {
+        Self {
+            bins: None,
+            num_flush_threads: None,
+            drives: None,
+            index_limit_mb: IndexLimitMb::Minimal,
+            ages_to_stay_in_cache: None,
+            scan_results_limit_bytes: None,
+        }
+    }
 }
 
 pub fn default_num_flush_threads() -> NonZeroUsize {
@@ -286,8 +297,6 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub active_scans: AtomicUsize,
     /// # of slots between latest max and latest scan
     pub max_distance_to_min_scan_slot: AtomicU64,
-    // # of unref when the account's ref_count is zero
-    pub unref_zero_count: AtomicU64,
 
     /// populated at generate_index time - accounts that could possibly be rent paying
     pub rent_paying_accounts_by_partition: OnceLock<RentPayingAccountsByPartition>,
@@ -295,13 +304,11 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub fn default_for_tests() -> Self {
-        Self::new(Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING), Arc::default())
+        Self::new(&ACCOUNTS_INDEX_CONFIG_FOR_TESTING, Arc::default())
     }
 
-    pub fn new(config: Option<AccountsIndexConfig>, exit: Arc<AtomicBool>) -> Self {
-        let scan_results_limit_bytes = config
-            .as_ref()
-            .and_then(|config| config.scan_results_limit_bytes);
+    pub fn new(config: &AccountsIndexConfig, exit: Arc<AtomicBool>) -> Self {
+        let scan_results_limit_bytes = config.scan_results_limit_bytes;
         let (account_maps, bin_calculator, storage) = Self::allocate_accounts_index(config, exit);
         Self {
             purge_older_root_entries_one_slot_list: AtomicUsize::default(),
@@ -325,7 +332,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             roots_removed: AtomicUsize::default(),
             active_scans: AtomicUsize::default(),
             max_distance_to_min_scan_slot: AtomicU64::default(),
-            unref_zero_count: AtomicU64::default(),
             rent_paying_accounts_by_partition: OnceLock::default(),
         }
     }
@@ -394,20 +400,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     #[allow(clippy::type_complexity)]
     fn allocate_accounts_index(
-        config: Option<AccountsIndexConfig>,
+        config: &AccountsIndexConfig,
         exit: Arc<AtomicBool>,
     ) -> (
         Box<[Arc<InMemAccountsIndex<T, U>>]>,
         PubkeyBinCalculator24,
         AccountsIndexStorage<T, U>,
     ) {
-        let bins = config
-            .as_ref()
-            .and_then(|config| config.bins)
-            .unwrap_or(BINS_DEFAULT);
+        let bins = config.bins.unwrap_or(BINS_DEFAULT);
         // create bin_calculator early to verify # bins is reasonable
         let bin_calculator = PubkeyBinCalculator24::new(bins);
-        let storage = AccountsIndexStorage::new(bins, &config, exit);
+        let storage = AccountsIndexStorage::new(bins, config, exit);
 
         let account_maps: Box<_> = (0..bins)
             .map(|bin| Arc::clone(&storage.in_mem[bin]))
@@ -1133,10 +1136,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         };
                         cache = match result {
                             AccountsIndexScanResult::Unref => {
-                                if locked_entry.unref() == 0 {
-                                    info!("scan: refcount of item already at 0: {pubkey}");
-                                    self.unref_zero_count.fetch_add(1, Ordering::Relaxed);
-                                }
+                                locked_entry.unref();
                                 true
                             }
                             AccountsIndexScanResult::UnrefAssert0 => {
@@ -1751,6 +1751,7 @@ pub mod tests {
         super::*,
         crate::bucket_map_holder::{AtomicAge, BucketMapHolder},
         account_map_entry::AccountMapEntryMeta,
+        secondary::DashMapSecondaryIndexEntry,
         solana_account::{AccountSharedData, WritableAccount},
         solana_pubkey::PUBKEY_BYTES,
         spl_generic_token::{spl_token_ids, token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
@@ -2201,11 +2202,11 @@ pub mod tests {
 
         let mut config = ACCOUNTS_INDEX_CONFIG_FOR_TESTING;
         config.index_limit_mb = if use_disk {
-            IndexLimitMb::Unlimited
+            IndexLimitMb::Minimal
         } else {
             IndexLimitMb::InMemOnly // in-mem only
         };
-        let index = AccountsIndex::<T, T>::new(Some(config), Arc::default());
+        let index = AccountsIndex::<T, T>::new(&config, Arc::default());
         let mut gc = Vec::new();
 
         if upsert {
@@ -3642,26 +3643,32 @@ pub mod tests {
 
         index.upsert_simple_test(&key, slot1, value);
 
-        let map = index.get_bin(&key);
-        for expected in [false, true] {
-            assert!(map.get_internal_inner(&key, |entry| {
-                // check refcount BEFORE the unref
-                assert_eq!(u64::from(!expected), entry.unwrap().ref_count());
-                // first time, ref count was at 1, we can unref once. Unref should return 1.
-                // second time, ref count was at 0, it is an error to unref. Unref should return 0
-                assert_eq!(u64::from(!expected), entry.unwrap().unref());
-                // check refcount AFTER the unref
-                assert_eq!(
-                    if expected {
-                        (0 as RefCount).wrapping_sub(1)
-                    } else {
-                        0
-                    },
-                    entry.unwrap().ref_count()
-                );
-                (false, true)
-            }));
-        }
+        let entry = index.get_cloned(&key).unwrap();
+        // check refcount BEFORE the unref
+        assert_eq!(entry.ref_count(), 1);
+        // first time, ref count was at 1, we can unref once. Unref should return 1.
+        assert_eq!(entry.unref(), 1);
+        // check refcount AFTER the unref
+        assert_eq!(entry.ref_count(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "decremented ref count when already zero")]
+    fn test_illegal_unref() {
+        let value = true;
+        let key = solana_pubkey::new_rand();
+        let index = AccountsIndex::<bool, bool>::default_for_tests();
+        let slot1 = 1;
+
+        index.upsert_simple_test(&key, slot1, value);
+
+        let entry = index.get_cloned(&key).unwrap();
+        // make ref count be zero
+        assert_eq!(entry.unref(), 1);
+        assert_eq!(entry.ref_count(), 0);
+
+        // unref when already at zero should panic
+        entry.unref();
     }
 
     #[test]
@@ -3825,7 +3832,7 @@ pub mod tests {
     fn test_illegal_bins() {
         let mut config = AccountsIndexConfig::default();
         config.bins = Some(3);
-        AccountsIndex::<bool, bool>::new(Some(config), Arc::default());
+        AccountsIndex::<bool, bool>::new(&config, Arc::default());
     }
 
     #[test]

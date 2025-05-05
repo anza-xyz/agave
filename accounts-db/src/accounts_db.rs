@@ -102,7 +102,7 @@ use {
         fs,
         hash::{Hash as StdHash, Hasher as StdHasher},
         io::Result as IoResult,
-        iter,
+        iter, mem,
         num::{NonZeroUsize, Saturating},
         ops::{Range, RangeBounds},
         path::{Path, PathBuf},
@@ -1938,7 +1938,8 @@ impl AccountsDb {
         exit: Arc<AtomicBool>,
     ) -> Self {
         let accounts_db_config = accounts_db_config.unwrap_or_default();
-        let accounts_index = AccountsIndex::new(accounts_db_config.index.clone(), exit);
+        let accounts_index_config = accounts_db_config.index.unwrap_or_default();
+        let accounts_index = AccountsIndex::new(&accounts_index_config, exit);
 
         let base_working_path = accounts_db_config.base_working_path.clone();
         let (base_working_path, base_working_temp_dir) =
@@ -2229,7 +2230,7 @@ impl AccountsDb {
     /// 2. a pubkey we were planning to remove is not removing all stores that contain the account
     fn calc_delete_dependencies(
         &self,
-        candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>],
+        candidates: &[HashMap<Pubkey, CleaningInfo>],
         store_counts: &mut HashMap<Slot, (usize, HashSet<Pubkey>)>,
         min_slot: Option<Slot>,
     ) {
@@ -2238,16 +2239,9 @@ impl AccountsDb {
         // then increment their storage count.
         let mut already_counted = IntSet::default();
         for (bin_index, bin) in candidates.iter().enumerate() {
-            let bin = bin.read().unwrap();
-            for (
-                pubkey,
-                CleaningInfo {
-                    slot_list,
-                    ref_count,
-                    ..
-                },
-            ) in bin.iter()
-            {
+            for (pubkey, cleaning_info) in bin.iter() {
+                let slot_list = &cleaning_info.slot_list;
+                let ref_count = &cleaning_info.ref_count;
                 let mut failed_slot = None;
                 let all_stores_being_deleted = slot_list.len() as RefCount == *ref_count;
                 if all_stores_being_deleted {
@@ -2323,11 +2317,9 @@ impl AccountsDb {
                                     }
                                 };
                             if candidates_bin_index == bin_index {
-                                update_pending_stores(&bin);
+                                update_pending_stores(bin);
                             } else {
-                                update_pending_stores(
-                                    &candidates[candidates_bin_index].read().unwrap(),
-                                );
+                                update_pending_stores(&candidates[candidates_bin_index]);
                             }
                         }
                     }
@@ -2828,7 +2820,7 @@ impl AccountsDb {
             .activate(ActiveStatItem::CleanConstructCandidates);
         let mut measure_construct_candidates = Measure::start("construct_candidates");
         let mut key_timings = CleanKeyTimings::default();
-        let (candidates, min_dirty_slot) = self.construct_candidate_clean_keys(
+        let (mut candidates, min_dirty_slot) = self.construct_candidate_clean_keys(
             max_clean_root_inclusive,
             is_startup,
             &mut key_timings,
@@ -2966,7 +2958,13 @@ impl AccountsDb {
         accounts_scan.stop();
         drop(active_guard);
 
-        let retained_keys_count = Self::count_pubkeys(&candidates);
+        // strip the RwLock from the candidate bins now that we no longer need it
+        let mut candidates: Box<_> = candidates
+            .iter_mut()
+            .map(|candidates_bin| mem::take(candidates_bin.get_mut().unwrap()))
+            .collect();
+
+        let retained_keys_count: usize = candidates.iter().map(HashMap::len).sum();
         let reclaims = reclaims.into_inner().unwrap();
         let mut pubkeys_removed_from_accounts_index =
             pubkeys_removed_from_accounts_index.into_inner().unwrap();
@@ -2985,16 +2983,10 @@ impl AccountsDb {
             .activate(ActiveStatItem::CleanCollectStoreCounts);
         let mut store_counts_time = Measure::start("store_counts");
         let mut store_counts: HashMap<Slot, (usize, HashSet<Pubkey>)> = HashMap::new();
-        for candidates_bin in candidates.iter() {
-            for (
-                pubkey,
-                CleaningInfo {
-                    slot_list,
-                    ref_count,
-                    ..
-                },
-            ) in candidates_bin.write().unwrap().iter_mut()
-            {
+        for candidates_bin in candidates.iter_mut() {
+            for (pubkey, cleaning_info) in candidates_bin.iter_mut() {
+                let slot_list = &mut cleaning_info.slot_list;
+                let ref_count = &mut cleaning_info.ref_count;
                 debug_assert!(!slot_list.is_empty(), "candidate slot_list can't be empty");
                 if purged_account_slots.contains_key(pubkey) {
                     *ref_count = self.accounts_index.ref_count_from_storage(pubkey);
@@ -3067,7 +3059,7 @@ impl AccountsDb {
         self.filter_zero_lamport_clean_for_incremental_snapshots(
             max_clean_root_inclusive,
             &store_counts,
-            &candidates,
+            &mut candidates,
         );
         purge_filter.stop();
         drop(active_guard);
@@ -3077,15 +3069,10 @@ impl AccountsDb {
         // Recalculate reclaims with new purge set
         let mut pubkey_to_slot_set = Vec::new();
         for candidates_bin in candidates.iter() {
-            let candidates_bin = candidates_bin.read().unwrap();
             let mut bin_set = candidates_bin
                 .iter()
                 .filter_map(|(pubkey, cleaning_info)| {
-                    let CleaningInfo {
-                        slot_list,
-                        ref_count: _,
-                        ..
-                    } = cleaning_info;
+                    let slot_list = &cleaning_info.slot_list;
                     (!slot_list.is_empty()).then_some((
                         *pubkey,
                         slot_list
@@ -3247,13 +3234,6 @@ impl AccountsDb {
                 i64
             ),
             (
-                "unref_zero_count",
-                self.accounts_index
-                    .unref_zero_count
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
                 "ancient_account_cleans",
                 ancient_account_cleans.load(Ordering::Relaxed),
                 i64
@@ -3360,7 +3340,7 @@ impl AccountsDb {
         &self,
         max_clean_root_inclusive: Option<Slot>,
         store_counts: &HashMap<Slot, (usize, HashSet<Pubkey>)>,
-        candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>],
+        candidates: &mut [HashMap<Pubkey, CleaningInfo>],
     ) {
         let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
         let should_filter_for_incremental_snapshots = max_clean_root_inclusive.unwrap_or(Slot::MAX)
@@ -3371,13 +3351,8 @@ impl AccountsDb {
         );
 
         for bin in candidates {
-            let mut bin = bin.write().unwrap();
             bin.retain(|pubkey, cleaning_info| {
-                let CleaningInfo {
-                    slot_list,
-                    ref_count: _,
-                    ..
-                } = cleaning_info;
+                let slot_list = &cleaning_info.slot_list;
                 debug_assert!(!slot_list.is_empty(), "candidate slot_list can't be empty");
                 // Only keep candidates where the entire history of the account in the root set
                 // can be purged. All AppendVecs for those updates are dead.
@@ -8661,13 +8636,7 @@ impl AccountsDb {
             let storage_info = StorageSizeAndCountMap::default();
             let total_processed_slots_across_all_threads = AtomicU64::new(0);
             let outer_slots_len = slots.len();
-            let threads = if self.accounts_index.is_disk_index_enabled() {
-                // these write directly to disk, so the more threads, the better
-                num_cpus::get()
-            } else {
-                // seems to be a good heuristic given varying # cpus for in-mem disk index
-                8
-            };
+            let threads = num_cpus::get();
             let chunk_size = (outer_slots_len / (std::cmp::max(1, threads.saturating_sub(1)))) + 1; // approximately 400k slots in a snapshot
             let mut index_time = Measure::start("index");
             let insertion_time_us = AtomicU64::new(0);
@@ -9028,6 +8997,10 @@ impl AccountsDb {
     /// Startup processes can consume large amounts of memory while inserting accounts into the index as fast as possible.
     /// Calling this can slow down the insertion process to allow flushing to disk to keep pace.
     fn maybe_throttle_index_generation(&self) {
+        // Only throttle if we are generating on-disk index. Throttling is not needed for in-mem index.
+        if !self.accounts_index.is_disk_index_enabled() {
+            return;
+        }
         // This number is chosen to keep the initial ram usage sufficiently small
         // The process of generating the index is goverened entirely by how fast the disk index can be populated.
         // 10M accounts is sufficiently small that it will never have memory usage. It seems sufficiently large that it will provide sufficient performance.

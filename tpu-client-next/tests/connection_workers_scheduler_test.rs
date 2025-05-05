@@ -15,11 +15,13 @@ use {
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
-        connection_workers_scheduler::{BindTarget, ConnectionWorkersSchedulerConfig, Fanout},
+        connection_workers_scheduler::{
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+        },
         leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
+        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
     },
     std::{
         collections::HashMap,
@@ -31,7 +33,7 @@ use {
     tokio::{
         sync::{
             mpsc::{channel, Receiver},
-            oneshot,
+            oneshot, watch,
         },
         task::JoinHandle,
         time::{sleep, Instant},
@@ -43,7 +45,7 @@ fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerCon
     let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
     ConnectionWorkersSchedulerConfig {
         bind: BindTarget::Address(address),
-        stake_identity: stake_identity.map(Into::into),
+        stake_identity: stake_identity.map(|identity| StakeIdentity::new(&identity)),
         num_connections: 1,
         skip_check_transaction_age: false,
         // At the moment we have only one strategy to send transactions: we try
@@ -65,7 +67,8 @@ async fn setup_connection_worker_scheduler(
     transaction_receiver: Receiver<TransactionBatch>,
     stake_identity: Option<Keypair>,
 ) -> (
-    JoinHandle<Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>>,
+    JoinHandle<Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError>>,
+    watch::Sender<Option<StakeIdentity>>,
     CancellationToken,
 ) {
     let json_rpc_url = "http://127.0.0.1:8899";
@@ -82,23 +85,29 @@ async fn setup_connection_worker_scheduler(
         .expect("Leader updates was successfully created");
 
     let cancel = CancellationToken::new();
+    let (update_identity_sender, update_identity_receiver) = watch::channel(None);
+    let scheduler = ConnectionWorkersScheduler::new(
+        leader_updater,
+        transaction_receiver,
+        update_identity_receiver,
+        cancel.clone(),
+    );
     let config = test_config(stake_identity);
-    let scheduler = ConnectionWorkersScheduler::new(leader_updater, transaction_receiver);
-    let scheduler = tokio::spawn(scheduler.run(config, cancel.clone()));
+    let scheduler = tokio::spawn(scheduler.run(config));
 
-    (scheduler, cancel)
+    (scheduler, update_identity_sender, cancel)
 }
 
 async fn join_scheduler(
     scheduler_handle: JoinHandle<
-        Result<ConnectionWorkersScheduler, ConnectionWorkersSchedulerError>,
+        Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError>,
     >,
 ) -> SendTransactionStatsNonAtomic {
-    let scheduler = scheduler_handle
+    let scheduler_stats = scheduler_handle
         .await
         .unwrap()
         .expect("Scheduler should stop successfully.");
-    scheduler.get_stats().read_and_reset()
+    scheduler_stats.read_and_reset()
 }
 
 // Specify the pessimistic time to finish generation and result checks.
@@ -198,8 +207,10 @@ async fn test_basic_transactions_sending() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(10));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, update_identity_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
+    // dropping sender will not lead to stop the scheduler.
+    drop(update_identity_sender);
 
     // Check results
     let mut received_data = Vec::with_capacity(expected_num_txs);
@@ -295,7 +306,7 @@ async fn test_connection_denied_until_allowed() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, _update_identity_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     // Check results
@@ -354,7 +365,7 @@ async fn test_connection_pruned_and_reopened() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, _update_identity_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     sleep(Duration::from_millis(400)).await;
@@ -416,7 +427,7 @@ async fn test_staked_connection() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, Some(stake_identity)).await;
 
     // Check results
@@ -462,7 +473,7 @@ async fn test_connection_throttling() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(1));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     // Check results
@@ -504,7 +515,7 @@ async fn test_no_host() {
         ..
     } = spawn_tx_sender(tx_size, max_send_attempts, Duration::from_millis(10));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     // Wait for all the transactions to be sent, and some extra time for the delivery to be
@@ -558,7 +569,7 @@ async fn test_rate_limiting() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
-    let (scheduler_handle, scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
@@ -616,7 +627,7 @@ async fn test_rate_limiting_establish_connection() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(1000));
 
-    let (scheduler_handle, scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     let actual_num_packets =
@@ -655,6 +666,77 @@ async fn test_rate_limiting_establish_connection() {
     assert_eq!(stats, SendTransactionStatsNonAtomic::default());
 
     // Stop the server.
+    exit.store(true, Ordering::Relaxed);
+    server_handle.await.unwrap();
+}
+
+// Check that identity is updated successfully using corresponding channel.
+//
+// Since the identity update and the transactions are sent concurrently to their channels
+// and scheduler selects randomly which channel to handle first, we cannot
+// guarantee in this test that the identity has been updated before we start
+// sending transactions. Hence, instead of checking that all the transactions
+// have been delivered, we check that at least some have been.
+#[tokio::test]
+async fn test_update_identity() {
+    let stake_identity = Keypair::new();
+    let stakes = HashMap::from([(stake_identity.pubkey(), 100_000)]);
+    let staked_nodes = StakedNodes::new(Arc::new(stakes), HashMap::<Pubkey, u64>::default());
+
+    let SpawnTestServerResult {
+        join_handle: server_handle,
+        exit,
+        receiver,
+        server_address,
+        stats: _stats,
+    } = setup_quic_server(
+        Some(staked_nodes),
+        TestServerConfig {
+            // Must use at least the number of endpoints (10) because
+            // `max_staked_connections` and `max_unstaked_connections` are
+            // cumulative for all the endpoints.
+            max_staked_connections: 10,
+            // Deny all unstaked connections.
+            max_unstaked_connections: 0,
+            ..Default::default()
+        },
+    );
+
+    // Setup sending txs
+    let tx_size = 1;
+    let num_txs: usize = 100;
+    let SpawnTxGenerator {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, num_txs, Duration::from_millis(50));
+
+    let (scheduler_handle, update_identity_sender, scheduler_cancel) =
+        setup_connection_worker_scheduler(
+            server_address,
+            tx_receiver,
+            // Create scheduler with unstaked identity.
+            None,
+        )
+        .await;
+    // Update identity.
+    update_identity_sender
+        .send(Some(StakeIdentity::new(&stake_identity)))
+        .unwrap();
+
+    let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
+    assert!(actual_num_packets > 0);
+
+    // Stop the sender.
+    tx_sender_shutdown.await;
+
+    // And the scheduler.
+    scheduler_cancel.cancel();
+
+    let stats = join_scheduler(scheduler_handle).await;
+    assert!(stats.successfully_sent > 0);
+
+    // Exit server
     exit.store(true, Ordering::Relaxed);
     server_handle.await.unwrap();
 }

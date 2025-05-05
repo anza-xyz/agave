@@ -2129,7 +2129,7 @@ impl ClusterInfo {
                     return None;
                 }
             }
-            protocol.par_verify().then(|| {
+            protocol.verify().then(|| {
                 stats.packets_received_verified_count.add_relaxed(1);
                 (packet.meta().socket_addr(), protocol)
             })
@@ -2447,9 +2447,10 @@ impl Node {
 
         let repair = bind_to_localhost().unwrap();
         let repair_quic = bind_to_localhost().unwrap();
-        let rpc_ports = find_available_ports_in_range(localhost_ip_addr, port_range, 2).unwrap();
-        let rpc_addr = SocketAddr::new(localhost_ip_addr, rpc_ports[0]);
-        let rpc_pubsub_addr = SocketAddr::new(localhost_ip_addr, rpc_ports[1]);
+        let [rpc_port, rpc_pubsub_port] =
+            find_available_ports_in_range(localhost_ip_addr, port_range).unwrap();
+        let rpc_addr = SocketAddr::new(localhost_ip_addr, rpc_port);
+        let rpc_pubsub_addr = SocketAddr::new(localhost_ip_addr, rpc_pubsub_port);
         let broadcast = vec![bind_to_unspecified().unwrap()];
         let retransmit_socket = bind_to_unspecified().unwrap();
         let serve_repair = bind_to_localhost().unwrap();
@@ -2623,9 +2624,8 @@ impl Node {
         let (_, ancestor_hashes_requests_quic) =
             Self::bind_with_config(bind_ip_addr, port_range, socket_config);
 
-        let rpc_ports = find_available_ports_in_range(bind_ip_addr, port_range, 2).unwrap();
-        let rpc_port = rpc_ports[0];
-        let rpc_pubsub_port = rpc_ports[1];
+        let [rpc_port, rpc_pubsub_port] =
+            find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
 
         // These are client sockets, so the port is set to be 0 because it must be ephimeral.
         let tpu_vote_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
@@ -2910,8 +2910,7 @@ fn check_pull_request_shred_version(self_shred_version: u16, caller: &CrdsValue)
         CrdsData::LegacyContactInfo(node) => node.shred_version(),
         _ => return false,
     };
-    // Allow spy nodes with shred-verion == 0 to pull from other nodes.
-    shred_version == 0u16 || shred_version == self_shred_version
+    shred_version == self_shred_version
 }
 
 // Discards CrdsValues in PushMessages and PullResponses from nodes with

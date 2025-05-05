@@ -52,7 +52,7 @@ use {
         },
         thread::{self, Builder, JoinHandle},
     },
-    tokio::runtime::{Builder as TokioBuilder, Runtime as TokioRuntime},
+    tokio::runtime::{Builder as TokioBuilder, Handle as RuntimeHandle, Runtime as TokioRuntime},
     tokio_util::codec::{BytesCodec, FramedRead},
 };
 
@@ -409,7 +409,7 @@ pub struct JsonRpcServiceConfig<'a> {
 ///   requires a reference to a [`Keypair`].
 pub enum ClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext(&'a Keypair, UdpSocket),
+    TpuClientNext(&'a Keypair, UdpSocket, RuntimeHandle),
 }
 
 impl JsonRpcService {
@@ -466,7 +466,7 @@ impl JsonRpcService {
                 )?;
                 Ok(json_rpc_service)
             }
-            ClientOption::TpuClientNext(identity_keypair, tpu_client_socket) => {
+            ClientOption::TpuClientNext(identity_keypair, tpu_client_socket, client_runtime) => {
                 let my_tpu_address = config
                     .cluster_info
                     .my_contact_info()
@@ -476,7 +476,7 @@ impl JsonRpcService {
                         Protocol::QUIC
                     ))?;
                 let client = TpuClientNextClient::new(
-                    runtime.handle().clone(),
+                    client_runtime,
                     my_tpu_address,
                     config.send_transaction_service_config.tpu_peers.clone(),
                     leader_info,
@@ -503,7 +503,7 @@ impl JsonRpcService {
                     config.send_transaction_service_config,
                     config.max_slots,
                     config.leader_schedule_cache,
-                    client.clone(),
+                    client,
                     config.max_complete_transaction_status_slot,
                     config.max_complete_rewards_slot,
                     config.prioritization_fee_cache,

@@ -222,9 +222,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                     |thread_set| {
                         select_thread(
                             thread_set,
-                            &batches.total_cus,
+                            batches.total_cus(),
                             self.common.in_flight_tracker.cus_in_flight_per_thread(),
-                            &batches.transactions,
+                            batches.transactions(),
                             self.common.in_flight_tracker.num_in_flight_per_thread(),
                         )
                     },
@@ -246,13 +246,17 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                         cost,
                     }) => {
                         saturating_add_assign!(num_scheduled, 1);
-                        batches.transactions[thread_id].push(transaction);
-                        batches.ids[thread_id].push(id.id);
-                        batches.max_ages[thread_id].push(max_age);
-                        saturating_add_assign!(batches.total_cus[thread_id], cost);
+                        batches.add_transaction_to_batch(
+                            thread_id,
+                            id.id,
+                            transaction,
+                            max_age,
+                            cost,
+                        );
 
                         // If target batch size is reached, send only this batch.
-                        if batches.ids[thread_id].len() >= self.config.target_transactions_per_batch
+                        if batches.transactions()[thread_id].len()
+                            >= self.config.target_transactions_per_batch
                         {
                             saturating_add_assign!(
                                 num_sent,
@@ -267,7 +271,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                         // if the thread is at max_cu_per_thread, remove it from the schedulable threads
                         // if there are no more schedulable threads, stop scheduling.
                         if self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
-                            + batches.total_cus[thread_id]
+                            + batches.total_cus()[thread_id]
                             >= max_cu_per_thread
                         {
                             schedulable_threads.remove(thread_id);

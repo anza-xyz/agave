@@ -137,9 +137,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                 |thread_set| {
                     select_thread(
                         thread_set,
-                        &batches.total_cus,
+                        batches.total_cus(),
                         self.common.in_flight_tracker.cus_in_flight_per_thread(),
-                        &batches.transactions,
+                        batches.transactions(),
                         self.common.in_flight_tracker.num_in_flight_per_thread(),
                     )
                 },
@@ -163,13 +163,12 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                         "locks must be available"
                     );
                     saturating_add_assign!(num_scheduled, 1);
-                    batches.transactions[thread_id].push(transaction);
-                    batches.ids[thread_id].push(id.id);
-                    batches.max_ages[thread_id].push(max_age);
-                    saturating_add_assign!(batches.total_cus[thread_id], cost);
+                    batches.add_transaction_to_batch(thread_id, id.id, transaction, max_age, cost);
 
                     // If target batch size is reached, send all the batches
-                    if batches.ids[thread_id].len() >= self.config.target_transactions_per_batch {
+                    if batches.transactions()[thread_id].len()
+                        >= self.config.target_transactions_per_batch
+                    {
                         self.working_account_set.clear();
                         num_sent += self.common.send_batches(
                             &mut batches,
@@ -180,7 +179,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                     // if the thread is at target_cu_per_thread, remove it from the schedulable threads
                     // if there are no more schedulable threads, stop scheduling.
                     if self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
-                        + batches.total_cus[thread_id]
+                        + batches.total_cus()[thread_id]
                         >= target_cu_per_thread
                     {
                         schedulable_threads.remove(thread_id);

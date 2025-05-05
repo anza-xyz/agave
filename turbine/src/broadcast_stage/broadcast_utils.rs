@@ -16,7 +16,7 @@ use {
     },
 };
 
-const ENTRY_COALESCE_DURATION: Duration = Duration::from_millis(50);
+const ENTRY_COALESCE_DURATION: Duration = Duration::from_millis(200);
 
 pub(super) struct ReceiveResults {
     pub entries: Vec<Entry>,
@@ -24,19 +24,15 @@ pub(super) struct ReceiveResults {
     pub last_tick_height: u64,
 }
 
-fn data_shred_bytes_per_batch() -> u64 {
-    *get_data_shred_bytes_per_batch_typical()
-}
-
-fn target_batch_bytes_default() -> u64 {
+const fn get_target_batch_bytes_default() -> u64 {
     // Empirically discovered to be a good balance between avoiding padding and
     // not delaying broadcast.
-    3 * data_shred_bytes_per_batch()
+    3 * get_data_shred_bytes_per_batch_typical()
 }
 
-fn target_batch_pad_bytes() -> f64 {
+const fn get_target_batch_pad_bytes() -> u64 {
     // Less than 5% padding is acceptable overhead. Let's not push our luck.
-    data_shred_bytes_per_batch() as f64 * 0.05
+    get_data_shred_bytes_per_batch_typical() / 20
 }
 
 fn keep_coalescing_entries(
@@ -44,16 +40,25 @@ fn keep_coalescing_entries(
     max_tick_height: u64,
     serialized_batch_byte_count: u64,
     max_batch_byte_count: u64,
+    process_stats: &mut ProcessShredsStats,
 ) -> bool {
-    // This slot is not over.
-    last_tick_height < max_tick_height &&
-    // We have not exceeded max batch byte count.
-    serialized_batch_byte_count < max_batch_byte_count &&
-    {
-        let bytes_to_fill_erasure_batch = data_shred_bytes_per_batch() - (serialized_batch_byte_count % data_shred_bytes_per_batch());
-        // We haven't tightly packed this batch.
-        (bytes_to_fill_erasure_batch as f64) > target_batch_pad_bytes()
+    if last_tick_height >= max_tick_height {
+        // The slot has ended.
+        process_stats.coalesce_exited_slot_ended += 1;
+        return false;
+    } else if serialized_batch_byte_count >= max_batch_byte_count {
+        // Exceeded the max batch byte count.
+        process_stats.coalesce_exited_hit_max += 1;
+        return false;
     }
+    let bytes_to_fill_erasure_batch = get_data_shred_bytes_per_batch_typical()
+        - (serialized_batch_byte_count % get_data_shred_bytes_per_batch_typical());
+    if bytes_to_fill_erasure_batch < get_target_batch_pad_bytes() {
+        // We're close enough to tightly packing erasure batches. Just send it.
+        process_stats.coalesce_exited_tightly_packed += 1;
+        return false;
+    }
+    true
 }
 
 // Dynamically determine the coalesce time based on the amount of entry data
@@ -102,9 +107,9 @@ pub(super) fn recv_slot_entries(
 
     let mut serialized_batch_byte_count = serialized_size(&entries)?;
     let next_full_batch_byte_count = serialized_batch_byte_count
-        .div_ceil(data_shred_bytes_per_batch())
-        .saturating_mul(data_shred_bytes_per_batch());
-    let max_batch_byte_count = next_full_batch_byte_count.max(target_batch_bytes_default());
+        .div_ceil(get_data_shred_bytes_per_batch_typical())
+        .saturating_mul(get_data_shred_bytes_per_batch_typical());
+    let max_batch_byte_count = next_full_batch_byte_count.max(get_target_batch_bytes_default());
 
     // Coalesce entries until one of the following conditions are hit:
     // 1. We ticked through the entire slot.
@@ -116,10 +121,12 @@ pub(super) fn recv_slot_entries(
         bank.max_tick_height(),
         serialized_batch_byte_count,
         max_batch_byte_count,
+        process_stats,
     ) {
         let Ok((try_bank, (entry, tick_height))) = receiver.recv_deadline(
             coalesce_start + max_coalesce_time(serialized_batch_byte_count, max_batch_byte_count),
         ) else {
+            process_stats.coalesce_exited_rcv_timeout += 1;
             break;
         };
         // If the bank changed, that implies the previous slot was interrupted and we do not have to
@@ -138,6 +145,7 @@ pub(super) fn recv_slot_entries(
             // This entry will push us over the batch byte limit. Save it for
             // the next batch.
             *carryover_entry = Some((try_bank, (entry, tick_height)));
+            process_stats.coalesce_exited_hit_max += 1;
             break;
         }
 

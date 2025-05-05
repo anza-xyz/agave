@@ -79,7 +79,7 @@ where
 
 impl Stoppable for TpuClientNextClient {
     fn stop(&self) {
-        self.cancel().unwrap();
+        self.cancel();
     }
 }
 

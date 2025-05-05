@@ -18,12 +18,15 @@ use {
         TokioRuntime, TransportConfig,
     },
     solana_keypair::Keypair,
-    solana_net_utils::bind_to_localhost,
+    solana_net_utils::{
+        bind_to_localhost, multi_bind_in_range_with_config,
+        sockets::localhost_port_range_for_tests, SocketConfig,
+    },
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
         time::{Duration, Instant},
     },
@@ -84,27 +87,20 @@ pub struct SpawnTestServerResult {
 }
 
 pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
-    #[cfg(not(target_os = "windows"))]
-    {
-        use {
-            solana_net_utils::bind_to,
-            std::net::{IpAddr, Ipv4Addr},
-        };
-        (0..10)
-            .map(|_| {
-                bind_to(
-                    IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    /*port*/ 0,
-                    /*reuseport:*/ true,
-                )
-                .unwrap()
-            })
-            .collect::<Vec<_>>()
-    }
-    #[cfg(target_os = "windows")]
-    {
-        vec![bind_to_localhost().unwrap()]
-    }
+    let num = if cfg!(not(target_os = "windows")) {
+        10
+    } else {
+        1
+    };
+    let port_range = localhost_port_range_for_tests();
+    multi_bind_in_range_with_config(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        port_range,
+        SocketConfig::default().reuseport(true),
+        num,
+    )
+    .expect("bind operation for quic server sockets should succeed")
+    .1
 }
 
 pub fn setup_quic_server(

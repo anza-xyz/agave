@@ -18,9 +18,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
-    solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, system_program,
-    },
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_transaction_context::{BorrowedAccount, InstructionContext},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{cell::RefCell, rc::Rc},
@@ -281,9 +279,6 @@ fn process_instruction_deploy(invoke_context: &mut InvokeContext) -> Result<(), 
     let authority_address = instruction_context
         .get_index_of_instruction_account_in_transaction(1)
         .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
-    let source_program = instruction_context
-        .try_borrow_instruction_account(transaction_context, 2)
-        .ok();
     let state = check_program_account(
         &log_collector,
         instruction_context,
@@ -306,23 +301,8 @@ fn process_instruction_deploy(invoke_context: &mut InvokeContext) -> Result<(), 
         ic_logger_msg!(log_collector, "Destination program is not retracted");
         return Err(InstructionError::InvalidArgument);
     }
-    let buffer = if let Some(ref source_program) = source_program {
-        let source_state = check_program_account(
-            &log_collector,
-            instruction_context,
-            source_program,
-            authority_address,
-        )?;
-        if !matches!(source_state.status, LoaderV4Status::Retracted) {
-            ic_logger_msg!(log_collector, "Source program is not retracted");
-            return Err(InstructionError::InvalidArgument);
-        }
-        source_program
-    } else {
-        &program
-    };
 
-    let programdata = buffer
+    let programdata = program
         .get_data()
         .get(LoaderV4State::program_data_offset()..)
         .ok_or(InstructionError::AccountDataTooSmall)?;
@@ -330,20 +310,11 @@ fn process_instruction_deploy(invoke_context: &mut InvokeContext) -> Result<(), 
         invoke_context,
         program.get_key(),
         &loader_v4::id(),
-        buffer.get_data().len(),
+        program.get_data().len(),
         programdata,
         current_slot,
     );
 
-    if let Some(mut source_program) = source_program {
-        program.set_data_from_slice(source_program.get_data())?;
-        source_program.set_data_length(0)?;
-        let dst_lamports = program.get_lamports();
-        let src_lamports = source_program.get_lamports();
-        source_program.set_lamports(dst_lamports)?;
-        program.set_lamports(src_lamports)?;
-        source_program.set_owner(&system_program::id().to_bytes())?;
-    }
     let state = get_state_mut(program.get_data_mut()?)?;
     state.slot = current_slot;
     state.status = LoaderV4Status::Deployed;
@@ -1299,49 +1270,6 @@ mod tests {
             transaction_accounts[0].1.data().len(),
         );
         assert_eq!(accounts[0].lamports(), transaction_accounts[0].1.lamports());
-
-        // Error: Source program is not writable
-        process_instruction(
-            vec![],
-            &bincode::serialize(&LoaderV4Instruction::Deploy).unwrap(),
-            transaction_accounts.clone(),
-            &[(0, false, true), (1, true, false), (2, false, false)],
-            Err(InstructionError::InvalidArgument),
-        );
-
-        // Error: Source program is not retracted
-        process_instruction(
-            vec![],
-            &bincode::serialize(&LoaderV4Instruction::Deploy).unwrap(),
-            transaction_accounts.clone(),
-            &[(2, false, true), (1, true, false), (0, false, true)],
-            Err(InstructionError::InvalidArgument),
-        );
-
-        // Redeploy: Retract, then replace data by other source
-        let accounts = process_instruction(
-            vec![],
-            &bincode::serialize(&LoaderV4Instruction::Retract).unwrap(),
-            transaction_accounts.clone(),
-            &[(0, false, true), (1, true, false)],
-            Ok(()),
-        );
-        transaction_accounts[0].1 = accounts[0].clone();
-        let accounts = process_instruction(
-            vec![],
-            &bincode::serialize(&LoaderV4Instruction::Deploy).unwrap(),
-            transaction_accounts.clone(),
-            &[(0, false, true), (1, true, false), (2, false, true)],
-            Ok(()),
-        );
-        assert_eq!(
-            accounts[0].data().len(),
-            transaction_accounts[2].1.data().len(),
-        );
-        assert_eq!(accounts[2].data().len(), 0,);
-        assert_eq!(accounts[0].lamports(), transaction_accounts[2].1.lamports());
-        assert_eq!(accounts[2].lamports(), transaction_accounts[0].1.lamports());
-        transaction_accounts[0].1 = accounts[0].clone();
 
         // Error: Program was deployed recently, cooldown still in effect
         process_instruction(

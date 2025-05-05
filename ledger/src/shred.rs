@@ -51,7 +51,10 @@
 
 #[cfg(test)]
 pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
-pub(crate) use self::{merkle_tree::SIZE_OF_MERKLE_ROOT, payload::serde_bytes_payload};
+pub(crate) use self::{
+    merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
+    payload::serde_bytes_payload,
+};
 pub use {
     self::{
         payload::Payload,
@@ -77,7 +80,7 @@ use {
         signature::{Keypair, Signature, Signer, SIGNATURE_BYTES},
     },
     static_assertions::const_assert_eq,
-    std::{fmt::Debug, sync::OnceLock, time::Instant},
+    std::{fmt::Debug, time::Instant},
     thiserror::Error,
 };
 
@@ -115,19 +118,22 @@ const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 // each erasure batch depends on the number of shreds obtained from serializing
 // a &[Entry].
 pub const DATA_SHREDS_PER_FEC_BLOCK: usize = 32;
+pub const CODING_SHREDS_PER_FEC_BLOCK: usize = 32;
+pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHREDS_PER_FEC_BLOCK;
 
 // Statically compute the typical data batch size assuming:
 // 1. 32:32 erasure coding batch
 // 2. Merkles are chained
 // 3. No retransmit signature (only included for last batch)
-static DATA_SHRED_BYTES_PER_BATCH_TYPICAL: OnceLock<u64> = OnceLock::new();
-pub fn get_data_shred_bytes_per_batch_typical() -> &'static u64 {
-    DATA_SHRED_BYTES_PER_BATCH_TYPICAL.get_or_init(|| {
-        let proof_size = merkle::get_proof_size(DATA_SHREDS_PER_FEC_BLOCK * 2);
-        let capacity = ShredData::capacity(Some((proof_size, true, false)))
-            .expect("Failed to get shred capacity");
-        (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
-    })
+pub const fn get_data_shred_bytes_per_batch_typical() -> u64 {
+    let capacity =
+        match merkle::ShredData::const_capacity(PROOF_ENTRIES_FOR_32_32_BATCH, true, false) {
+            Ok(v) => v,
+            Err(_proof_size) => {
+                panic!("this is unreachable");
+            }
+        };
+    (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
 }
 
 // For legacy tests and benchmarks.

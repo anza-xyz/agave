@@ -127,7 +127,7 @@ use {
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
     },
-    solana_turbine::{self, broadcast_stage::BroadcastStageType},
+    solana_turbine::{self, broadcast_stage::BroadcastStageType, xdp::XdpConfig},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
@@ -314,6 +314,7 @@ pub struct ValidatorConfig {
     pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
     pub use_tpu_client_next: bool,
+    pub retransmit_xdp: Option<XdpConfig>,
 }
 
 impl Default for ValidatorConfig {
@@ -387,6 +388,7 @@ impl Default for ValidatorConfig {
             tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
             use_tpu_client_next: false,
+            retransmit_xdp: None,
         }
     }
 }
@@ -587,6 +589,10 @@ pub struct Validator {
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
+    // This runtime is used to run the client owned by SendTransactionService.
+    // We don't wait for its JoinHandle here because ownership and shutdown
+    // are managed elsewhere. This variable is intentionally unused.
+    _tpu_client_next_runtime: Option<TokioRuntime>,
 }
 
 impl Validator {
@@ -893,11 +899,13 @@ impl Validator {
             .snapshot_config()
             .should_generate_snapshots()
         {
+            let exit_backpressure = None;
             let enable_gossip_push = true;
             let snapshot_packager_service = SnapshotPackagerService::new(
                 pending_snapshot_packages.clone(),
                 starting_snapshot_hashes,
                 exit.clone(),
+                exit_backpressure,
                 cluster_info.clone(),
                 snapshot_controller.clone(),
                 enable_gossip_push,
@@ -1135,6 +1143,22 @@ impl Validator {
             ))
         };
 
+        // test-validator crate may start the validator in a tokio runtime
+        // context which forces us to use the same runtime because a nested
+        // runtime will cause panic at drop. Outside test-validator crate, we
+        // always need a tokio runtime (and the respective handle) to initialize
+        // the turbine QUIC endpoint.
+        let current_runtime_handle = tokio::runtime::Handle::try_current();
+        let tpu_client_next_runtime =
+            (current_runtime_handle.is_err() && config.use_tpu_client_next).then(|| {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .worker_threads(2)
+                    .thread_name("solTpuClientRt")
+                    .build()
+                    .unwrap()
+            });
+
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
         let (
@@ -1159,6 +1183,19 @@ impl Validator {
                 None
             };
 
+            let client_option = if config.use_tpu_client_next {
+                let runtime_handle = tpu_client_next_runtime
+                    .as_ref()
+                    .map(TokioRuntime::handle)
+                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+                ClientOption::TpuClientNext(
+                    Arc::as_ref(&identity_keypair),
+                    node.sockets.rpc_sts_client,
+                    runtime_handle.clone(),
+                )
+            } else {
+                ClientOption::ConnectionCache(connection_cache.clone())
+            };
             let rpc_svc_config = JsonRpcServiceConfig {
                 rpc_addr,
                 rpc_config: config.rpc_config.clone(),
@@ -1181,14 +1218,7 @@ impl Validator {
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
-                client_option: if config.use_tpu_client_next {
-                    ClientOption::TpuClientNext(
-                        Arc::as_ref(&identity_keypair),
-                        node.sockets.rpc_sts_client,
-                    )
-                } else {
-                    ClientOption::ConnectionCache(connection_cache.clone())
-                },
+                client_option,
             };
             let json_rpc_service =
                 JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
@@ -1359,12 +1389,6 @@ impl Validator {
             .as_ref()
             .map(|service| service.sender_cloned());
 
-        // test-validator crate may start the validator in a tokio runtime
-        // context which forces us to use the same runtime because a nested
-        // runtime will cause panic at drop.
-        // Outside test-validator crate, we always need a tokio runtime (and
-        // the respective handle) to initialize the turbine QUIC endpoint.
-        let current_runtime_handle = tokio::runtime::Handle::try_current();
         let turbine_quic_endpoint_runtime = (current_runtime_handle.is_err()
             && genesis_config.cluster_type != ClusterType::MainnetBeta)
             .then(|| {
@@ -1522,6 +1546,7 @@ impl Validator {
                 replay_forks_threads: config.replay_forks_threads,
                 replay_transactions_threads: config.replay_transactions_threads,
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
+                retransmit_xdp: config.retransmit_xdp.clone(),
             },
             &max_slots,
             block_metadata_notifier,
@@ -1681,6 +1706,7 @@ impl Validator {
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
+            _tpu_client_next_runtime: tpu_client_next_runtime,
         })
     }
 
