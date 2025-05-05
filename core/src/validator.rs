@@ -1073,9 +1073,6 @@ impl Validator {
         let mut tpu_transactions_forwards_client =
             Some(node.sockets.tpu_transactions_forwards_client);
         let connection_cache = if !config.use_tpu_client_next {
-            // ConnectionCache might be used for JsonRpc and for Forwarding. Since
-            // the latter is not migrated yet to the tpu-client-next, create
-            // ConnectionCache regardless of config.use_tpu_client_next for now.
             let connection_cache = if use_quic {
                 let connection_cache = ConnectionCache::new_with_client_options(
                     "connection_cache_tpu_quic",
