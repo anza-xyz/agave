@@ -149,8 +149,6 @@ const SHRINK_INSERT_ANCIENT_THRESHOLD: usize = 10;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CreateAncientStorage {
-    /// ancient storages are created by appending
-    Append,
     /// ancient storages are created by 1-shot write to pack multiple accounts together more efficiently with new formats
     #[default]
     Pack,
@@ -509,7 +507,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     max_ancient_storages: None,
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
-    create_ancient_storage: CreateAncientStorage::Pack,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
     storage_access: StorageAccess::File,
@@ -537,7 +534,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     max_ancient_storages: None,
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
-    create_ancient_storage: CreateAncientStorage::Pack,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
     storage_access: StorageAccess::File,
@@ -669,8 +665,6 @@ pub struct AccountsDbConfig {
     pub test_skip_rewrites_but_include_in_bank_hash: bool,
     pub skip_initial_hash_calc: bool,
     pub exhaustively_verify_refcounts: bool,
-    /// how to create ancient storages
-    pub create_ancient_storage: CreateAncientStorage,
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
@@ -1489,9 +1483,6 @@ pub struct AccountsDb {
 
     pub storage: AccountStorage,
 
-    /// from AccountsDbConfig
-    create_ancient_storage: CreateAncientStorage,
-
     /// true if this client should skip rewrites but still include those rewrites in the bank hash as if rewrites had occurred.
     pub test_skip_rewrites_but_include_in_bank_hash: bool,
 
@@ -2033,7 +2024,6 @@ impl AccountsDb {
             account_indexes: accounts_db_config.account_indexes.unwrap_or_default(),
             shrink_ratio: accounts_db_config.shrink_ratio,
             accounts_update_notifier,
-            create_ancient_storage: accounts_db_config.create_ancient_storage,
             read_only_accounts_cache: ReadOnlyAccountsCache::new(
                 read_cache_size.0,
                 read_cache_size.1,
@@ -4228,11 +4218,7 @@ impl AccountsDb {
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let can_randomly_shrink = true;
         let sorted_slots = self.get_sorted_potential_ancient_slots(oldest_non_ancient_slot);
-        if self.create_ancient_storage == CreateAncientStorage::Append {
-            self.combine_ancient_slots(sorted_slots, can_randomly_shrink);
-        } else {
-            self.combine_ancient_slots_packed(sorted_slots, can_randomly_shrink);
-        }
+        self.combine_ancient_slots_packed(sorted_slots, can_randomly_shrink);
     }
 
     /// 'accounts' that exist in the current slot we are combining into a different ancient slot
@@ -6879,24 +6865,9 @@ impl AccountsDb {
         max_slot_inclusive: Slot,
         config: &CalcAccountsHashConfig<'_>,
     ) -> Option<Slot> {
-        if self.create_ancient_storage == CreateAncientStorage::Pack {
-            // oldest_non_ancient_slot is only applicable when ancient storages are created with `Append`. When ancient storages are created with `Pack`, ancient storages
-            // can be created in between non-ancient storages. Return None, because oldest_non_ancient_slot is not applicable here.
-            None
-        } else if self.ancient_append_vec_offset.is_some() {
-            // For performance, this is required when ancient appendvecs are enabled
-            Some(
-                self.get_oldest_non_ancient_slot_from_slot(
-                    config.epoch_schedule,
-                    max_slot_inclusive,
-                ),
-            )
-        } else {
-            // This causes the entire range to be chunked together, treating older append vecs just like new ones.
-            // This performs well if there are many old append vecs that haven't been cleaned yet.
-            // 0 will have the effect of causing ALL older append vecs to be chunked together, just like every other append vec.
-            Some(0)
-        }
+        // oldest_non_ancient_slot is only applicable when ancient storages are created with `Append`. When ancient storages are created with `Pack`, ancient storages
+        // can be created in between non-ancient storages. Return None, because oldest_non_ancient_slot is not applicable here.
+        None
     }
 
     /// hash info about 'storage' into 'hasher'
@@ -7737,14 +7708,7 @@ impl AccountsDb {
     pub(crate) fn is_candidate_for_shrink(&self, store: &AccountStorageEntry) -> bool {
         // appended ancient append vecs should not be shrunk by the normal shrink codepath.
         // It is not possible to identify ancient append vecs when we pack, so no check for ancient when we are not appending.
-        let total_bytes = if self.create_ancient_storage == CreateAncientStorage::Append
-            && is_ancient(&store.accounts)
-            && store.accounts.can_append()
-        {
-            store.written_bytes()
-        } else {
-            store.capacity()
-        };
+        let total_bytes = store.capacity();
 
         let alive_bytes = store.alive_bytes_exclude_zero_lamport_single_ref_accounts() as u64;
         match self.shrink_ratio {
