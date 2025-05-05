@@ -241,14 +241,14 @@ fn retransmit(
     max_slots: &MaxSlots,
     rpc_subscriptions: Option<&RpcSubscriptions>,
     slot_status_notifier: Option<&SlotStatusNotifier>,
-    shred_buf: &mut Vec<shred::Payload>,
+    shred_buf: &mut Vec<Vec<shred::Payload>>,
 ) -> Result<(), RecvError> {
     // Try to receive shreds from the channel without blocking. If the channel
     // is empty precompute turbine trees speculatively. If no cache updates are
     // made then block on the channel until some shreds are received.
     match retransmit_receiver.try_recv() {
         Ok(shreds) => {
-            shred_buf.extend(shreds);
+            shred_buf.push(shreds);
         }
         Err(TryRecvError::Disconnected) => return Err(RecvError),
         Err(TryRecvError::Empty) => {
@@ -262,20 +262,23 @@ fn retransmit(
             ) {
                 return Ok(());
             }
-            shred_buf.extend(retransmit_receiver.recv()?);
+            shred_buf.push(retransmit_receiver.recv()?);
         }
     };
     // now the batch has started
     let mut timer_start = Measure::start("retransmit");
+    let mut num_shreds = shred_buf[0].len();
     // Create a RETRANSMIT_BATCH_SIZE sized batch from the channel
-    shred_buf.extend(
-        retransmit_receiver
-            .try_iter()
-            // We already pulled 1 batch
-            .take(RETRANSMIT_BATCH_SIZE - 1)
-            .flatten(),
-    );
-    stats.num_shreds += shred_buf.len();
+    for shreds in retransmit_receiver
+        .try_iter()
+        // We already pulled 1 batch
+        .take(RETRANSMIT_BATCH_SIZE - 1)
+    {
+        num_shreds += shreds.len();
+        shred_buf.push(shreds);
+    }
+
+    stats.num_shreds += num_shreds;
     stats.total_batches += 1;
 
     let mut epoch_fetch = Measure::start("retransmit_epoch_fetch");
@@ -297,6 +300,7 @@ fn retransmit(
     // Lookup slot leader and cluster nodes for each slot.
     let cache: HashMap<Slot, _> = shred_buf
         .iter()
+        .flatten()
         .filter_map(|shred| shred::layout::get_slot(shred))
         .collect::<HashSet<Slot>>()
         .into_iter()
@@ -309,7 +313,7 @@ fn retransmit(
             // skip the shred.
             let Some(slot_leader) = leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))
             else {
-                stats.unknown_shred_slot_leader += shred_buf.len();
+                stats.unknown_shred_slot_leader += num_shreds;
                 return None;
             };
             let cluster_nodes =
@@ -345,10 +349,11 @@ fn retransmit(
         socket
     };
 
-    let slot_stats = if shred_buf.len() < PAR_ITER_MIN_NUM_SHREDS {
+    let slot_stats = if num_shreds < PAR_ITER_MIN_NUM_SHREDS {
         stats.num_small_batches += 1;
         shred_buf
             .drain(..)
+            .flatten()
             .enumerate()
             .filter_map(|(index, shred)| retransmit_shred(shred, retransmit_socket(index), stats))
             .fold(HashMap::new(), record)
@@ -356,6 +361,7 @@ fn retransmit(
         thread_pool.install(|| {
             shred_buf
                 .par_drain(..)
+                .flatten()
                 .filter_map(|shred| {
                     retransmit_shred(
                         shred,
