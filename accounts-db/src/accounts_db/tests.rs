@@ -6057,12 +6057,8 @@ define_accounts_db_test!(test_many_unrefs, |db| {
     assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
 });
 
-#[test_case(CreateAncientStorage::Pack; "pack")]
-fn test_get_oldest_non_ancient_slot_for_hash_calc_scan(
-    _create_ancient_storage: CreateAncientStorage,
-) {
-    let expected = |_v| None;
-
+#[test]
+fn test_get_oldest_non_ancient_slot_for_hash_calc_scan() {
     let mut db = AccountsDb::new_single_for_tests();
 
     let config = CalcAccountsHashConfig::default();
@@ -6072,23 +6068,23 @@ fn test_get_oldest_non_ancient_slot_for_hash_calc_scan(
     let offset = 10;
     assert_eq!(
         db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch + offset, &config),
-        expected(db.ancient_append_vec_offset.unwrap() as u64 + offset + 1)
+        None,
     );
     // ancient append vecs enabled (but at 0 offset), so can be non-zero
     db.ancient_append_vec_offset = Some(0);
     // 0..=(slots_per_epoch - 1) are all non-ancient
     assert_eq!(
         db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch - 1, &config),
-        expected(0)
+        None,
     );
     // 1..=slots_per_epoch are all non-ancient, so 1 is oldest non ancient
     assert_eq!(
         db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch, &config),
-        expected(1)
+        None,
     );
     assert_eq!(
         db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch + offset, &config),
-        expected(offset + 1)
+        None,
     );
 }
 
