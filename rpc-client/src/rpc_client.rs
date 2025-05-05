@@ -3862,7 +3862,8 @@ mod tests {
             result.unwrap_err().kind(),
             ErrorKind::TransactionError(TransactionError::InstructionError(
                 0,
-                InstructionError::UninitializedAccount
+                InstructionError::UninitializedAccount,
+                Some(42), // From mock response for "instruction_error"
             ))
         );
 

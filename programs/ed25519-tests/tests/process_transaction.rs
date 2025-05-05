@@ -70,8 +70,12 @@ async fn test_failure() {
     assert_matches!(
         client.process_transaction(transaction).await,
         Err(BanksClientError::TransactionError(
-            TransactionError::InstructionError(0, InstructionError::Custom(3))
-        ))
+            TransactionError::InstructionError(
+                0,
+                InstructionError::Custom(3),
+                Some(ii),
+            ),
+        )) if ii > 0
     );
     // this assert is for documenting the matched error code above
     assert_eq!(3, PrecompileError::InvalidDataOffsets as u32);

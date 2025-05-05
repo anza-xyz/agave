@@ -2214,12 +2214,14 @@ fn close(
         if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
             _,
             InstructionError::InvalidInstructionData,
+            _,
         )) = err.kind()
         {
             return Err("Closing a buffer account is not supported by the cluster".into());
         } else if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
             _,
             InstructionError::InvalidArgument,
+            _,
         )) = err.kind()
         {
             return Err("Closing a program account is not supported by the cluster".into());
@@ -2437,6 +2439,7 @@ fn process_extend_program(
         if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
             _,
             InstructionError::InvalidInstructionData,
+            _,
         )) = err.kind()
         {
             return Err("Extending a program is not supported by the cluster".into());
@@ -2532,6 +2535,7 @@ fn process_migrate_program(
         if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
             _,
             InstructionError::InvalidInstructionData,
+            _,
         )) = err.kind()
         {
             return Err("Migrating a program is not supported by the cluster".into());

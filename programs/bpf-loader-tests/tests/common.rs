@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use {
+    assert_matches::assert_matches,
     solana_program_test::*,
     solana_sdk::{
         account::AccountSharedData,
@@ -41,14 +42,18 @@ pub async fn assert_ix_error(
         recent_blockhash,
     );
 
-    assert_eq!(
+    assert_matches!(
         client
             .process_transaction(transaction)
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, expected_err),
-        "{assertion_failed_msg}",
+        TransactionError::InstructionError(
+            0,
+            actual_err,
+            Some(ii),
+        ) if ii > 0 && actual_err == expected_err,
+        "{assertion_failed_msg}"
     );
 }
 

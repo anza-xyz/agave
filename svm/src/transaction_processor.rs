@@ -1069,6 +1069,9 @@ mod tests {
             rollback_accounts::RollbackAccounts,
         },
         agave_reserved_account_keys::ReservedAccountKeys,
+        assert_matches::assert_matches,
+        itertools::Itertools,
+        lazy_static::lazy_static,
         solana_account::{create_account_shared_data_for_test, WritableAccount},
         solana_clock::Clock,
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -1076,10 +1079,12 @@ mod tests {
         solana_fee_calculator::FeeCalculator,
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
+        solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
         solana_message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
         solana_nonce as nonce,
         solana_program_runtime::{
+            declare_process_instruction,
             execution_budget::{
                 SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
             },
@@ -1088,12 +1093,14 @@ mod tests {
         solana_rent::Rent,
         solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_rent_debits::RentDebits,
+        solana_sdk::instruction::InstructionError,
         solana_sdk_ids::{bpf_loader, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_context::TransactionContext,
         solana_transaction_error::{TransactionError, TransactionError::DuplicateInstruction},
+        std::convert::TryInto,
         test_case::test_case,
     };
 
@@ -1289,6 +1296,165 @@ mod tests {
                     },
                 ]
             ]
+        );
+    }
+
+    #[test_case(0; "Throw in program 0")]
+    #[test_case(1; "Throw in program 1")]
+    #[test_case(2; "Throw in program 2")]
+    #[test_case(3; "Throw in program 3")]
+    #[test_case(4; "Throw in program 4")]
+    #[test_case(5; "Throw in program 5")]
+    #[test_case(6; "Throw in program 6")]
+    fn test_instruction_error_carries_responsible_program_account_index(
+        index_of_program_that_should_throw_exception: u8,
+    ) {
+        lazy_static! {
+            static ref PROGRAM_ADDRESSES: [Pubkey; 7] =
+                std::array::from_fn(|_| Pubkey::new_unique());
+        }
+        // This mock program takes in a list of programs and two bytes of data:
+        //   (1) the index of the program that should throw an error
+        //   (2) the index of the program being called
+        //
+        // The programs get executed - two at each CPI call depth - like this:
+        //
+        // Program 0
+        // -- Program 1
+        // -- Program 2
+        // ---- Program 3
+        // ---- Program 4
+        // ------ Program 5
+        // ------ Program 6
+        declare_process_instruction!(MockBuiltin, 1 /* cu_to_consume */, |invoke_context| {
+            let transaction_context = invoke_context.transaction_context.clone();
+            let instruction_context = transaction_context.get_current_instruction_context()?;
+
+            let stack_height: u8 = invoke_context.get_stack_height().try_into().unwrap();
+            let index_of_program_that_must_throw_exception =
+                instruction_context.get_instruction_data()[0] as usize;
+            let current_program_index = instruction_context.get_instruction_data()[1] as usize;
+
+            // Ensure that the program the instruction data claims to be running is the program that
+            // is actually running.
+            let actual_program_address = *instruction_context
+                .get_last_program_key(&transaction_context)
+                .unwrap();
+            assert_eq!(
+                actual_program_address,
+                PROGRAM_ADDRESSES[current_program_index],
+                "The address of the program at index {} that the instruction data claims to be running ({}) is not the program that is actually running ({})",
+                current_program_index,
+                PROGRAM_ADDRESSES[current_program_index],
+                actual_program_address,
+            );
+
+            if current_program_index == index_of_program_that_must_throw_exception {
+                return Err(InstructionError::Custom(0xdeadbeef));
+            }
+
+            if stack_height < 4 && current_program_index % 2 == 0 {
+                // Every odd program does CPIs unless it has reached the maximum CPI stack depth.
+                let mut last_result = Ok(());
+                for ii in 1..3 {
+                    let next_program_index = current_program_index.checked_add(ii).unwrap();
+                    let next_program_address = PROGRAM_ADDRESSES[next_program_index];
+                    let accounts = (next_program_index..PROGRAM_ADDRESSES.len())
+                        .map(|index| AccountMeta::new_readonly(PROGRAM_ADDRESSES[index], false))
+                        .collect_vec();
+                    last_result = invoke_context.native_invoke(
+                        Instruction::new_with_bytes(
+                            next_program_address,
+                            &[
+                                index_of_program_that_must_throw_exception as u8,
+                                next_program_index as u8,
+                            ],
+                            accounts,
+                        )
+                        .into(),
+                        &[],
+                    );
+                    if last_result.is_err() {
+                        return last_result;
+                    }
+                }
+                return last_result;
+            }
+
+            Ok(())
+        });
+
+        // =======================================================
+        // BEGIN: Create a transaction that calls the mock program
+        // =======================================================
+        let base_program_index = 0;
+        let accounts = (0..PROGRAM_ADDRESSES.len())
+            .map(|index| AccountMeta::new_readonly(PROGRAM_ADDRESSES[index], false))
+            .collect_vec();
+        let message: Message = Message::new(
+            &[Instruction::new_with_bytes(
+                PROGRAM_ADDRESSES[base_program_index],
+                &[
+                    index_of_program_that_should_throw_exception,
+                    base_program_index as u8, /* index of program being called */
+                ],
+                accounts,
+            )],
+            None,
+        );
+        let sanitized_message = new_unchecked_sanitized_message(message);
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+        for index in 0..PROGRAM_ADDRESSES.len() {
+            program_cache_for_tx_batch.replenish(
+                PROGRAM_ADDRESSES[index],
+                Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            );
+        }
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let mut mock_program_account = AccountSharedData::new(1, 0, &native_loader::id());
+        mock_program_account.set_executable(true);
+        let loaded_transaction = LoadedTransaction {
+            accounts: (0..PROGRAM_ADDRESSES.len())
+                .map(|index| (PROGRAM_ADDRESSES[index], mock_program_account.clone()))
+                .collect_vec(),
+            program_indices: vec![vec![0]],
+            fee_details: FeeDetails::default(),
+            rollback_accounts: RollbackAccounts::default(),
+            compute_budget: SVMTransactionExecutionBudget::default(),
+            rent: 0,
+            rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 32,
+        };
+        // =======================================================
+        // END: Create a transaction that calls the mock program
+        // =======================================================
+
+        let result = batch_processor.execute_loaded_transaction(
+            &MockBankCallback::default(),
+            &sanitized_transaction,
+            loaded_transaction,
+            &mut ExecuteTimings::default(),
+            &mut TransactionErrorMetrics::default(),
+            &mut program_cache_for_tx_batch,
+            &TransactionProcessingEnvironment::default(),
+            &TransactionProcessingConfig::default(),
+        );
+
+        let status = result.execution_details.status;
+        assert_matches!(
+            status.err(),
+            Some(TransactionError::InstructionError(
+                0,
+                InstructionError::Custom(0xdeadbeef),
+                Some(ii),
+            )) if ii == index_of_program_that_should_throw_exception,
+            "Expected the error to be attributable to the program with account index: \
+            {index_of_program_that_should_throw_exception}."
         );
     }
 

@@ -22,6 +22,7 @@ pub fn process_compute_budget_instructions<'a>(
 mod tests {
     use {
         super::*,
+        assert_matches::assert_matches,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_hash::Hash,
         solana_instruction::{error::InstructionError, Instruction},
@@ -36,13 +37,8 @@ mod tests {
         std::num::NonZeroU32,
     };
 
-    macro_rules! test {
-        ( $instructions: expr, $expected_result: expr) => {
-            for feature_set in [FeatureSet::default(), FeatureSet::all_enabled()] {
-                test!($instructions, $expected_result, &feature_set);
-            }
-        };
-        ( $instructions: expr, $expected_result: expr, $feature_set: expr) => {
+    macro_rules! __test_inner {
+        ($instructions:expr, $feature_set:expr, |$result:ident| $body:expr) => {{
             let payer_keypair = Keypair::new();
             let tx = SanitizedTransaction::from_transaction_for_tests(Transaction::new(
                 &[&payer_keypair],
@@ -50,11 +46,45 @@ mod tests {
                 Hash::default(),
             ));
 
-            let result = process_compute_budget_instructions(
+            let $result = process_compute_budget_instructions(
                 SVMMessage::program_instructions_iter(&tx),
                 $feature_set,
             );
-            assert_eq!($expected_result, result);
+
+            $body
+        }};
+    }
+
+    macro_rules! test {
+        ($instructions:expr, $expected_result:expr $(,)?) => {
+            for feature_set in [FeatureSet::default(), FeatureSet::all_enabled()] {
+                test!($instructions, $expected_result, &feature_set);
+            }
+        };
+        ($instructions:expr, $expected_result:expr, $feature_set:expr $(,)?) => {
+            __test_inner!($instructions, $feature_set, |result| {
+                assert_eq!(result, $expected_result);
+            });
+        };
+        ($instructions:expr, $expected_result:pat $(,)?) => {
+            for feature_set in [FeatureSet::default(), FeatureSet::all_enabled()] {
+                test!($instructions, $expected_result, &feature_set);
+            }
+        };
+        ($instructions:expr, $expected_result:pat if $guard:expr $(,)?) => {
+            for feature_set in [FeatureSet::default(), FeatureSet::all_enabled()] {
+                test!($instructions, $expected_result if $guard, &feature_set);
+            }
+        };
+        ($instructions:expr, $expected_result:pat, $feature_set:expr $(,)?) => {
+            __test_inner!($instructions, $feature_set, |result| {
+                assert_matches!(result, $expected_result);
+            });
+        };
+        ($instructions:expr, $expected_result:pat if $guard:expr, $feature_set:expr $(,)?) => {
+            __test_inner!($instructions, $feature_set, |result| {
+                assert_matches!(result, $expected_result if $guard);
+            });
         };
     }
 
@@ -66,7 +96,7 @@ mod tests {
             Ok(ComputeBudgetLimits {
                 compute_unit_limit: 0,
                 ..ComputeBudgetLimits::default()
-            })
+            }),
         );
         test!(
             &[
@@ -164,7 +194,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 0,
                 InstructionError::InvalidInstructionData,
-            ))
+                Some(ii),
+            )) if ii > 0
         );
         test!(
             &[
@@ -174,7 +205,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 0,
                 InstructionError::InvalidInstructionData,
-            ))
+                Some(ii),
+            )) if ii > 0
         );
         test!(
             &[
@@ -184,7 +216,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 0,
                 InstructionError::InvalidInstructionData,
-            ))
+                Some(ii),
+            )) if ii > 0
         );
         test!(
             &[
@@ -222,7 +255,8 @@ mod tests {
             Err(TransactionError::InstructionError(
                 3,
                 InstructionError::InvalidInstructionData,
-            ))
+                Some(ii),
+            )) if ii > 0
         );
         test!(
             &[
