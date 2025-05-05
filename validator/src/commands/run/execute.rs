@@ -470,17 +470,6 @@ pub fn execute(
                 }
             }
         });
-    let create_ancient_storage = matches
-        .value_of("accounts_db_squash_storages_method")
-        .map(|method| match method {
-            "pack" => CreateAncientStorage::Pack,
-            "append" => CreateAncientStorage::Append,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts-db-squash-storages-method")
-            }
-        })
-        .unwrap_or_default();
     let storage_access = matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
@@ -532,7 +521,7 @@ pub fn execute(
         )
         .ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
-        create_ancient_storage,
+        create_ancient_storage: CreateAncientStorage::Pack,
         test_skip_rewrites_but_include_in_bank_hash: false,
         storage_access,
         scan_filter_for_shrinking,

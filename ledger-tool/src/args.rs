@@ -106,13 +106,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
                  together.",
             )
             .hidden(hidden_unless_forced()),
-        Arg::with_name("accounts_db_squash_storages_method")
-            .long("accounts-db-squash-storages-method")
-            .value_name("METHOD")
-            .takes_value(true)
-            .possible_values(&["pack", "append"])
-            .help("Squash multiple account storage files together using this method")
-            .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_access_storages_method")
             .long("accounts-db-access-storages-method")
             .value_name("METHOD")
@@ -314,17 +307,6 @@ pub fn get_accounts_db_config(
         .pop()
         .unwrap();
 
-    let create_ancient_storage = arg_matches
-        .value_of("accounts_db_squash_storages_method")
-        .map(|method| match method {
-            "pack" => CreateAncientStorage::Pack,
-            "append" => CreateAncientStorage::Append,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts-db-squash-storages-method")
-            }
-        })
-        .unwrap_or_default();
     let storage_access = arg_matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
@@ -376,7 +358,7 @@ pub fn get_accounts_db_config(
         exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         test_skip_rewrites_but_include_in_bank_hash: false,
-        create_ancient_storage,
+        create_ancient_storage: CreateAncientStorage::Pack,
         storage_access,
         scan_filter_for_shrinking,
         enable_experimental_accumulator_hash: !arg_matches
