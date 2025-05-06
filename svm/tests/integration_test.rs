@@ -2641,17 +2641,15 @@ mod balance_collector {
     use {
         super::*,
         rand0_7::prelude::*,
-        solana_account::state_traits::StateMut,
-        solana_sdk::bpf_loader,
-        spl_generic_token::{token, token_2022},
+        solana_sdk::{bpf_loader, program_pack::Pack},
+        spl_generic_token::token_2022,
+        spl_token::state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
         test_case::test_case,
     };
 
     // this could be part of mock_bank but so far nothing but this uses it
     static SPL_TOKEN_BYTES: &[u8] =
         include_bytes!("../../program-test/src/programs/spl_token-3.5.0.so");
-
-    const TOKEN_TRANSFER_OPCODE: u8 = 3;
 
     const STARTING_BALANCE: u64 = LAMPORTS_PER_SOL * 100;
 
@@ -2684,75 +2682,30 @@ mod balance_collector {
             system_instruction::transfer(&self.from, &self.to, self.amount)
         }
 
-        fn to_token_instruction(&self, fee_payer: Pubkey) -> Instruction {
+        fn to_token_instruction(&self, fee_payer: &Pubkey) -> Instruction {
             // true tokenkeg connoisseurs will note we shouldnt have to sign the sender
             // we use a common account owner, the fee-payer, to conveniently reuse account state
             // so why do we sign? to force the sender and receiver to be in a consistent order in account keys
             // which means we can grab them by index in our final test instead of searching by key
-            Instruction {
-                program_id: token::id(),
-                accounts: vec![
-                    AccountMeta::new(self.from, true),
-                    AccountMeta::new(self.to, false),
-                    AccountMeta::new(fee_payer, true),
-                ],
-                data: bincode::serialize(&(TOKEN_TRANSFER_OPCODE, self.amount)).unwrap(),
-            }
+            let mut instruction = spl_token::instruction::transfer(
+                &spl_token::id(),
+                &self.from,
+                &self.to,
+                fee_payer,
+                &[],
+                self.amount,
+            )
+            .unwrap();
+            instruction.accounts[0].is_signer = true;
+
+            instruction
         }
 
-        fn to_instruction(&self, fee_payer: Pubkey, use_tokens: bool) -> Instruction {
+        fn to_instruction(&self, fee_payer: &Pubkey, use_tokens: bool) -> Instruction {
             if use_tokens {
                 self.to_token_instruction(fee_payer)
             } else {
                 self.to_system_instruction()
-            }
-        }
-    }
-
-    // struct that serializes into a valid token account, assuming a right-size buffer
-    #[repr(C)]
-    #[derive(Debug, serde::Serialize, serde::Deserialize)]
-    struct SplTokenAccount {
-        mint: Pubkey,
-        owner: Pubkey,
-        amount: u64,
-        delegate_tag: u32,
-        delegate: Pubkey,
-        state: u8,
-    }
-
-    impl Default for SplTokenAccount {
-        fn default() -> Self {
-            Self {
-                mint: Pubkey::default(),
-                owner: Pubkey::default(),
-                amount: STARTING_BALANCE,
-                delegate_tag: 0,
-                delegate: Pubkey::default(),
-                state: 1,
-            }
-        }
-    }
-
-    // struct that serializes into a valid token mint, assuming a right-size buffer
-    #[repr(C)]
-    #[derive(Debug, serde::Serialize, serde::Deserialize)]
-    struct SplTokenMint {
-        authority_tag: u32,
-        authority: Pubkey,
-        supply: u64,
-        decimals: u8,
-        initialized: bool,
-    }
-
-    impl Default for SplTokenMint {
-        fn default() -> Self {
-            Self {
-                authority_tag: 0,
-                authority: Pubkey::default(),
-                supply: 0,
-                decimals: 9,
-                initialized: true,
             }
         }
     }
@@ -2783,31 +2736,35 @@ mod balance_collector {
             u64::MAX,
         );
 
-        let mut mint_state = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            vec![0; token::Mint::get_packed_len()],
-            token::id(),
-            false,
-            u64::MAX,
-        );
-        mint_state.set_state(&SplTokenMint::default()).unwrap();
-        let mint_state = mint_state;
+        let mut mint_buf = vec![0; Mint::get_packed_len()];
+        Mint {
+            decimals: 9,
+            is_initialized: true,
+            ..Mint::default()
+        }
+        .pack_into_slice(&mut mint_buf);
 
-        let mut token_state = AccountSharedData::create(
+        let mint_state =
+            AccountSharedData::create(LAMPORTS_PER_SOL, mint_buf, spl_token::id(), false, u64::MAX);
+
+        let token_account_for_tests = || TokenAccount {
+            mint,
+            owner: fee_payer,
+            amount: STARTING_BALANCE,
+            state: TokenAccountState::Initialized,
+            ..TokenAccount::default()
+        };
+
+        let mut token_buf = vec![0; TokenAccount::get_packed_len()];
+        token_account_for_tests().pack_into_slice(&mut token_buf);
+
+        let token_state = AccountSharedData::create(
             LAMPORTS_PER_SOL,
-            vec![0; token::Account::get_packed_len()],
-            token::id(),
+            token_buf,
+            spl_token::id(),
             false,
             u64::MAX,
         );
-        token_state
-            .set_state(&SplTokenAccount {
-                mint,
-                owner: fee_payer,
-                ..SplTokenAccount::default()
-            })
-            .unwrap();
-        let token_state = token_state;
 
         let spl_token = AccountSharedData::create(
             LAMPORTS_PER_SOL,
@@ -2822,7 +2779,7 @@ mod balance_collector {
             test_entry.add_initial_account(fee_payer, &native_state.clone());
 
             if use_tokens {
-                test_entry.add_initial_account(token::id(), &spl_token);
+                test_entry.add_initial_account(spl_token::id(), &spl_token);
                 test_entry.add_initial_account(mint, &mint_state);
                 test_entry.add_initial_account(alice, &token_state);
                 test_entry.add_initial_account(bob, &token_state);
@@ -2868,12 +2825,12 @@ mod balance_collector {
                             .entry(transfer.to)
                             .and_modify(|v| *v += transfer.amount);
 
-                        vec![transfer.to_instruction(fee_payer, use_tokens)]
+                        vec![transfer.to_instruction(&fee_payer, use_tokens)]
                     }
                     // transfer an unreasonable amount to fail execution
                     ExecutionStatus::ExecutedFailed => {
                         transfer.amount = u64::MAX / 2;
-                        let instruction = transfer.to_instruction(fee_payer, use_tokens);
+                        let instruction = transfer.to_instruction(&fee_payer, use_tokens);
                         transfer.amount = 0;
 
                         vec![instruction]
@@ -2882,7 +2839,7 @@ mod balance_collector {
                     // token22 is very convenient because its presence ensures token bals are recorded
                     // if we had to use a random program id we would need to push a token program onto account keys
                     ExecutionStatus::ProcessedFailed => {
-                        let mut instruction = transfer.to_instruction(fee_payer, use_tokens);
+                        let mut instruction = transfer.to_instruction(&fee_payer, use_tokens);
                         instruction.program_id = token_2022::id();
                         transfer.amount = 0;
 
@@ -2890,7 +2847,7 @@ mod balance_collector {
                     }
                     // use a non-existant fee-payer to trigger a discard
                     ExecutionStatus::Discarded => {
-                        let mut instruction = transfer.to_instruction(fee_payer, use_tokens);
+                        let mut instruction = transfer.to_instruction(&fee_payer, use_tokens);
                         if use_tokens {
                             instruction.accounts[2].pubkey = fake_fee_payer;
                         }
@@ -2926,29 +2883,40 @@ mod balance_collector {
             // doing this instead of skipping it, we validate that user_balances is definitely correct
             // because env.execute() will assert all these states match the final bank state
             if use_tokens {
-                let mut token_account = SplTokenAccount {
-                    mint,
-                    owner: fee_payer,
-                    ..SplTokenAccount::default()
-                };
-                let mut final_token_state = AccountSharedData::create(
+                let mut token_account = token_account_for_tests();
+                let mut token_buf = vec![0; TokenAccount::get_packed_len()];
+
+                token_account.amount = *user_balances.get(&alice).unwrap();
+                token_account.pack_into_slice(&mut token_buf);
+                let final_token_state = AccountSharedData::create(
                     LAMPORTS_PER_SOL,
-                    vec![0; token::Account::get_packed_len()],
-                    token::id(),
+                    token_buf.clone(),
+                    spl_token::id(),
                     false,
                     u64::MAX,
                 );
-
-                token_account.amount = *user_balances.get(&alice).unwrap();
-                final_token_state.set_state(&token_account).unwrap();
                 test_entry.update_expected_account_data(alice, &final_token_state);
 
                 token_account.amount = *user_balances.get(&bob).unwrap();
-                final_token_state.set_state(&token_account).unwrap();
+                token_account.pack_into_slice(&mut token_buf);
+                let final_token_state = AccountSharedData::create(
+                    LAMPORTS_PER_SOL,
+                    token_buf.clone(),
+                    spl_token::id(),
+                    false,
+                    u64::MAX,
+                );
                 test_entry.update_expected_account_data(bob, &final_token_state);
 
                 token_account.amount = *user_balances.get(&charlie).unwrap();
-                final_token_state.set_state(&token_account).unwrap();
+                token_account.pack_into_slice(&mut token_buf);
+                let final_token_state = AccountSharedData::create(
+                    LAMPORTS_PER_SOL,
+                    token_buf.clone(),
+                    spl_token::id(),
+                    false,
+                    u64::MAX,
+                );
                 test_entry.update_expected_account_data(charlie, &final_token_state);
             } else {
                 let mut alice_final_state = native_state.clone();

@@ -10434,6 +10434,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-type-overrides",
  "spl-generic-token",
+ "spl-token",
  "test-case",
  "thiserror 2.0.12",
 ]
