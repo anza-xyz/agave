@@ -359,12 +359,11 @@ pub fn load_and_process_ledger(
             exit.clone(),
         )
         .map_err(LoadAndProcessLedgerError::LoadBankForks)?;
-    let block_verification_method = value_t!(
+    let block_verification_method = value_t_or_exit!(
         arg_matches,
         "block_verification_method",
         BlockVerificationMethod
-    )
-    .unwrap_or_default();
+    );
     info!(
         "Using: block-verification-method: {}",
         block_verification_method,

@@ -982,6 +982,7 @@ fn main() {
                 .value_name("METHOD")
                 .takes_value(true)
                 .possible_values(BlockVerificationMethod::cli_names())
+                .default_value(BlockVerificationMethod::default().into())
                 .global(true)
                 .help(BlockVerificationMethod::cli_message()),
         )
@@ -1484,6 +1485,7 @@ fn main() {
                         .value_name("METHOD")
                         .takes_value(true)
                         .possible_values(BlockProductionMethod::cli_names())
+                        .default_value(BlockProductionMethod::default().into())
                         .help(BlockProductionMethod::cli_message()),
                 )
                 .arg(
@@ -2548,12 +2550,11 @@ fn main() {
                             None, // transaction status sender
                         );
 
-                    let block_production_method = value_t!(
+                    let block_production_method = value_t_or_exit!(
                         arg_matches,
                         "block_production_method",
                         BlockProductionMethod
-                    )
-                    .unwrap_or_default();
+                    );
                     let transaction_struct =
                         value_t!(arg_matches, "transaction_struct", TransactionStructure)
                             .unwrap_or_default();

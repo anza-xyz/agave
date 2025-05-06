@@ -1035,24 +1035,21 @@ pub fn execute(
     }
 
     configure_banking_trace_dir_byte_limit(&mut validator_config, matches);
-    validator_config.block_verification_method = value_t!(
+    validator_config.block_verification_method = value_t_or_exit!(
         matches,
         "block_verification_method",
         BlockVerificationMethod
-    )
-    .unwrap_or_default();
-    validator_config.block_production_method = value_t!(
+    );
+    validator_config.block_production_method = value_t_or_exit!(
         matches, // comment to align formatting...
         "block_production_method",
         BlockProductionMethod
-    )
-    .unwrap_or_default();
-    validator_config.transaction_struct = value_t!(
+    );
+    validator_config.transaction_struct = value_t_or_exit!(
         matches, // comment to align formatting...
         "transaction_struct",
         TransactionStructure
-    )
-    .unwrap_or_default();
+    );
     validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
     validator_config.unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();

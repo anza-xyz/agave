@@ -1560,6 +1560,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("METHOD")
             .takes_value(true)
             .possible_values(BlockVerificationMethod::cli_names())
+            .default_value(BlockVerificationMethod::default().into())
             .help(BlockVerificationMethod::cli_message()),
     )
     .arg(
@@ -1568,6 +1569,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("METHOD")
             .takes_value(true)
             .possible_values(BlockProductionMethod::cli_names())
+            .default_value(BlockProductionMethod::default().into())
             .help(BlockProductionMethod::cli_message()),
     )
     .arg(
@@ -1576,6 +1578,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("STRUCT")
             .takes_value(true)
             .possible_values(TransactionStructure::cli_names())
+            .default_value(TransactionStructure::default().into())
             .help(TransactionStructure::cli_message()),
     )
     .arg(
