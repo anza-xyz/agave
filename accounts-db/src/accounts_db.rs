@@ -6874,20 +6874,6 @@ impl AccountsDb {
         }
     }
 
-    /// `oldest_non_ancient_slot` is only applicable when `Append` is used for ancient append vec packing.
-    /// If `Pack` is used for ancient append vec packing, return None.
-    /// Otherwise, return a slot 'max_slot_inclusive' - (slots_per_epoch - `self.ancient_append_vec_offset`)
-    /// If ancient append vecs are not enabled, return 0.
-    fn get_oldest_non_ancient_slot_for_hash_calc_scan(
-        &self,
-        _max_slot_inclusive: Slot,
-        _config: &CalcAccountsHashConfig<'_>,
-    ) -> Option<Slot> {
-        // oldest_non_ancient_slot is only applicable when ancient storages are created with `Append`. When ancient storages are created with `Pack`, ancient storages
-        // can be created in between non-ancient storages. Return None, because oldest_non_ancient_slot is not applicable here.
-        None
-    }
-
     /// hash info about 'storage' into 'hasher'
     /// return true iff storage is valid for loading from cache
     fn hash_storage_info(

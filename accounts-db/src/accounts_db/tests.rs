@@ -6057,37 +6057,6 @@ define_accounts_db_test!(test_many_unrefs, |db| {
     assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
 });
 
-#[test]
-fn test_get_oldest_non_ancient_slot_for_hash_calc_scan() {
-    let mut db = AccountsDb::new_single_for_tests();
-
-    let config = CalcAccountsHashConfig::default();
-    let slot = config.epoch_schedule.slots_per_epoch;
-    let slots_per_epoch = config.epoch_schedule.slots_per_epoch;
-    assert_ne!(slot, 0);
-    let offset = 10;
-    assert_eq!(
-        db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch + offset, &config),
-        None,
-    );
-    // ancient append vecs enabled (but at 0 offset), so can be non-zero
-    db.ancient_append_vec_offset = Some(0);
-    // 0..=(slots_per_epoch - 1) are all non-ancient
-    assert_eq!(
-        db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch - 1, &config),
-        None,
-    );
-    // 1..=slots_per_epoch are all non-ancient, so 1 is oldest non ancient
-    assert_eq!(
-        db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch, &config),
-        None,
-    );
-    assert_eq!(
-        db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch + offset, &config),
-        None,
-    );
-}
-
 define_accounts_db_test!(test_mark_dirty_dead_stores_empty, |db| {
     let slot = 0;
     for add_dirty_stores in [false, true] {
