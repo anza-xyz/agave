@@ -534,8 +534,8 @@ impl RpcClient {
     ///    values. Read the implementation of `MockSender` (which is non-public)
     ///    for details.
     ///
-    /// 2) Custom responses can be configured by providing [`Mocks`]. This type
-    ///    is a [`HashMap`] from [`RpcRequest`] to a JSON [`Value`] response,
+    /// 2) Custom responses can be configured by providing [`MocksMap`]. This type
+    ///    is a [`HashMap`] from [`RpcRequest`] to a [`Vec`] of JSON [`Value`] responses,
     ///    Any entries in this map override the default behavior for the given
     ///    request.
     ///
@@ -550,30 +550,47 @@ impl RpcClient {
     /// #     request::RpcRequest,
     /// #     response::{Response, RpcResponseContext},
     /// # };
-    /// # use solana_rpc_client::{rpc_client::RpcClient, mock_sender};
+    /// # use solana_rpc_client::{rpc_client::RpcClient, mock_sender::MocksMap};
     /// # use serde_json::json;
     /// // Create a mock with a custom response to the `GetBalance` request
     /// let account_balance_x = 50;
     /// let account_balance_y = 100;
-    /// let account_balance_responses = vec![
-    ///     json!(Response {
-    ///         context: RpcResponseContext {
-    ///             slot: 1,
-    ///             api_version: None,
-    ///         },
-    ///         value: json!(account_balance_x),
-    ///     }),
-    ///     json!(Response {
-    ///         context: RpcResponseContext {
-    ///             slot: 1,
-    ///             api_version: None,
-    ///         },
-    ///         value: json!(account_balance_y),
-    ///     }),
+    /// let account_balance_z = 150;
+    /// let account_balance_req_responses = vec![
+    ///     (
+    ///         RpcRequest::GetBalance,
+    ///         json!(Response {
+    ///             context: RpcResponseContext {
+    ///                 slot: 1,
+    ///                 api_version: None,
+    ///             },
+    ///             value: json!(account_balance_x),
+    ///         })
+    ///     ),
+    ///     (
+    ///         RpcRequest::GetBalance,
+    ///         json!(Response {
+    ///             context: RpcResponseContext {
+    ///                 slot: 1,
+    ///                 api_version: None,
+    ///             },
+    ///             value: json!(account_balance_y),
+    ///         })
+    ///     ),
     /// ];
+
     ///
-    /// let mut mocks = MocksMap::default();
-    /// mocks.insert(RpcRequest::GetBalance, account_balance_response);
+    /// let mut mocks = MocksMap::from_iter(account_balance_req_responses);
+    /// mocks.insert(
+    ///     RpcRequest::GetBalance,
+    ///     json!(Response {
+    ///         context: RpcResponseContext {
+    ///             slot: 1,
+    ///             api_version: None,
+    ///         },
+    ///         value: json!(account_balance_z),
+    ///     }),
+    /// );
     /// let url = "succeeds".to_string();
     /// let client = RpcClient::new_mock_with_mocks_map(url, mocks);
     /// ```
@@ -3757,29 +3774,6 @@ impl RpcClient {
 
 /// Mocks for documentation examples
 #[doc(hidden)]
-pub fn create_rpc_client_mocks_map() -> crate::mock_sender::MocksMap {
-    let mut mocks = crate::mock_sender::MocksMap::default();
-
-    let get_account_request = RpcRequest::GetAccountInfo;
-    let get_account_response = serde_json::to_value(Response {
-        context: RpcResponseContext {
-            slot: 1,
-            api_version: None,
-        },
-        value: {
-            let pubkey = Pubkey::from_str("BgvYtJEfmZYdVKiptmMjxGzv8iQoo4MWjsP3QsTkhhxa").unwrap();
-            mock_encoded_account(&pubkey)
-        },
-    })
-    .unwrap();
-
-    mocks.insert(get_account_request, get_account_response);
-
-    mocks
-}
-
-/// MocksMap for documentation examples
-#[doc(hidden)]
 pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
     let mut mocks = std::collections::HashMap::new();
 
@@ -3796,7 +3790,7 @@ pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
     })
     .unwrap();
     mocks.insert(get_account_request, get_account_response);
-    crate::mock_sender::Mocks(mocks)
+    mocks
 }
 
 #[cfg(test)]
@@ -4168,6 +4162,18 @@ mod tests {
                 .unwrap(),
             );
 
+            mocks.insert(
+                RpcRequest::GetProgramAccounts,
+                serde_json::to_value(OptionalContext::Context(Response {
+                    context: RpcResponseContext {
+                        slot: 1,
+                        api_version: None,
+                    },
+                    value: Vec::<RpcKeyedAccount>::new(),
+                }))
+                .unwrap(),
+            );
+
             let rpc_client = RpcClient::new_mock_with_mocks_map("mock_client".to_string(), mocks);
             let mut result1 = rpc_client
                 .get_program_accounts_with_config(
@@ -4186,6 +4192,8 @@ mod tests {
                 )
                 .unwrap();
 
+            assert_eq!(result1.len(), 1);
+
             let result2 = rpc_client
                 .get_program_accounts_with_config(
                     &program_id,
@@ -4203,6 +4211,8 @@ mod tests {
                 )
                 .unwrap();
 
+            assert_eq!(result2.len(), 1);
+
             let result_3 = rpc_client
                 .get_program_accounts_with_config(
                     &program_id,
@@ -4219,6 +4229,27 @@ mod tests {
                     },
                 )
                 .unwrap();
+
+            assert_eq!(result_3.len(), 3);
+
+            let result_4 = rpc_client
+                .get_program_accounts_with_config(
+                    &program_id,
+                    RpcProgramAccountsConfig {
+                        filters: None,
+                        account_config: RpcAccountInfoConfig {
+                            encoding: Some(UiAccountEncoding::Base64),
+                            data_slice: None,
+                            commitment: None,
+                            min_context_slot: None,
+                        },
+                        with_context: Some(true),
+                        sort_results: None,
+                    },
+                )
+                .unwrap();
+
+            assert_eq!(result_4.len(), 0);
 
             result1.extend(result2);
             result1.extend(result_3);

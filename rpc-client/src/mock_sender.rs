@@ -46,31 +46,20 @@ use {
 
 pub const PUBKEY: &str = "7RoSF9fUmdphVCpabEoefH81WwrW7orsWonXWqTXkKV8";
 
-#[derive(Default)]
-pub struct Mocks(pub HashMap<RpcRequest, Value>);
-
-impl FromIterator<(RpcRequest, Value)> for Mocks {
-    fn from_iter<T: IntoIterator<Item = (RpcRequest, Value)>>(iter: T) -> Self {
-        let mut mocks = Mocks::default();
-        for (request, response) in iter {
-            mocks.0.insert(request, response);
-        }
-        mocks
-    }
-}
+pub type Mocks = HashMap<RpcRequest, Value>;
 
 impl From<Mocks> for MocksMap {
     fn from(mocks: Mocks) -> Self {
         let mut map = HashMap::new();
-        for (key, value) in mocks.0 {
+        for (key, value) in mocks {
             map.insert(key, [value].into());
         }
         MocksMap(map)
     }
 }
 
-#[derive(Default)]
-pub struct MocksMap(HashMap<RpcRequest, VecDeque<Value>>);
+#[derive(Default, Clone)]
+pub struct MocksMap(pub HashMap<RpcRequest, VecDeque<Value>>);
 
 impl FromIterator<(RpcRequest, Value)> for MocksMap {
     fn from_iter<T: IntoIterator<Item = (RpcRequest, Value)>>(iter: T) -> Self {
@@ -84,27 +73,12 @@ impl FromIterator<(RpcRequest, Value)> for MocksMap {
 
 impl MocksMap {
     pub fn insert(&mut self, request: RpcRequest, value: Value) {
-        let queue = self.0.get_mut(&request);
-        if let Some(queue) = queue {
-            queue.push_back(value);
-        } else {
-            self.0.insert(request, [value].into());
-        }
+        let queue = self.0.entry(request).or_default();
+        queue.push_back(value)
     }
 
-    pub fn remove(&mut self, request: &RpcRequest) -> Option<Value> {
-        let queue = self.0.get_mut(request);
-        if let Some(queue) = queue {
-            match queue.len().cmp(&1) {
-                std::cmp::Ordering::Less => None,
-                std::cmp::Ordering::Equal => {
-                    self.0.remove(request).and_then(|r| r.into_iter().last())
-                }
-                std::cmp::Ordering::Greater => queue.pop_front(),
-            }
-        } else {
-            None
-        }
+    pub fn pop_front_with_request(&mut self, request: &RpcRequest) -> Option<Value> {
+        self.0.get_mut(request).and_then(|queue| queue.pop_front())
     }
 }
 
@@ -169,7 +143,7 @@ impl RpcSender for MockSender {
         request: RpcRequest,
         params: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        if let Some(value) = self.mocks.write().unwrap().remove(&request) {
+        if let Some(value) = self.mocks.write().unwrap().pop_front_with_request(&request) {
             return Ok(value);
         }
         if self.url == "fails" {

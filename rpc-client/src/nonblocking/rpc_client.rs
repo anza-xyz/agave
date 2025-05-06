@@ -470,8 +470,8 @@ impl RpcClient {
     ///    values. Read the implementation of `MockSender` (which is non-public)
     ///    for details.
     ///
-    /// 2) Custom responses can be configured by providing [`Mocks`]. This type
-    ///    is a [`HashMap`] from [`RpcRequest`] to a JSON [`Value`] response,
+    /// 2) Custom responses can be configured by providing [`MocksMap`]. This type
+    ///    is a [`HashMap`] from [`RpcRequest`] to a [`Vec`] of JSON [`Value`] responses,
     ///    Any entries in this map override the default behavior for the given
     ///    request.
     ///
@@ -486,30 +486,47 @@ impl RpcClient {
     /// #     request::RpcRequest,
     /// #     response::{Response, RpcResponseContext},
     /// # };
-    /// # use solana_rpc_client::{rpc_client::RpcClient, mock_sender};
+    /// # use solana_rpc_client::{rpc_client::RpcClient, mock_sender::MocksMap};
     /// # use serde_json::json;
     /// // Create a mock with a custom response to the `GetBalance` request
     /// let account_balance_x = 50;
     /// let account_balance_y = 100;
-    /// let account_balance_responses = vec![
-    ///     json!(Response {
-    ///         context: RpcResponseContext {
-    ///             slot: 1,
-    ///             api_version: None,
-    ///         },
-    ///         value: json!(account_balance_x),
-    ///     }),
-    ///     json!(Response {
-    ///         context: RpcResponseContext {
-    ///             slot: 1,
-    ///             api_version: None,
-    ///         },
-    ///         value: json!(account_balance_y),
-    ///     }),
+    /// let account_balance_z = 150;
+    /// let account_balance_req_responses = vec![
+    ///     (
+    ///         RpcRequest::GetBalance,
+    ///         json!(Response {
+    ///             context: RpcResponseContext {
+    ///                 slot: 1,
+    ///                 api_version: None,
+    ///             },
+    ///             value: json!(account_balance_x),
+    ///         })
+    ///     ),
+    ///     (
+    ///         RpcRequest::GetBalance,
+    ///         json!(Response {
+    ///             context: RpcResponseContext {
+    ///                 slot: 1,
+    ///                 api_version: None,
+    ///             },
+    ///             value: json!(account_balance_y),
+    ///         })
+    ///     ),
     /// ];
+
     ///
-    /// let mut mocks = MocksMap::default();
-    /// mocks.insert(RpcRequest::GetBalance, account_balance_response);
+    /// let mut mocks = MocksMap::from_iter(account_balance_req_responses);
+    /// mocks.insert(
+    ///     RpcRequest::GetBalance,
+    ///     json!(Response {
+    ///         context: RpcResponseContext {
+    ///             slot: 1,
+    ///             api_version: None,
+    ///         },
+    ///         value: json!(account_balance_z),
+    ///     }),
+    /// );
     /// let url = "succeeds".to_string();
     /// let client = RpcClient::new_mock_with_mocks_map(url, mocks);
     /// ```
@@ -4802,7 +4819,7 @@ pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
     })
     .unwrap();
 
-    mocks.0.insert(get_account_request, get_account_response);
+    mocks.insert(get_account_request, get_account_response);
 
     mocks
 }
