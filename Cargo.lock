@@ -7813,6 +7813,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-echo-server"
+version = "2.3.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "bytes",
+ "clap 4.5.31",
+ "itertools 0.12.1",
+ "log",
+ "serde",
+ "serde_derive",
+ "solana-logger",
+ "solana-net-utils",
+ "solana-serde",
+ "solana-version",
+ "tokio",
+]
+
+[[package]]
 name = "solana-ed25519-program"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
