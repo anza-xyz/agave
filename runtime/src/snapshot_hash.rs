@@ -3,11 +3,10 @@ use {
     solana_accounts_db::{
         accounts_hash::MerkleOrLatticeAccountsHash, epoch_accounts_hash::EpochAccountsHash,
     },
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_lattice_hash::lt_hash::Checksum as AccountsLtHashChecksum,
-    solana_sdk::{
-        clock::Slot,
-        hash::{Hash, Hasher},
-    },
+    solana_sha256_hasher::Hasher,
 };
 
 /// At startup, when loading from snapshots, the starting snapshot hashes need to be passed to

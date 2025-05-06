@@ -1,7 +1,7 @@
 use {
     crate::bank::Bank,
+    solana_clock::{Epoch, Slot},
     solana_program_runtime::loaded_programs::ProgramCacheStats,
-    solana_sdk::clock::{Epoch, Slot},
     std::sync::atomic::{
         AtomicU64,
         Ordering::{self, Relaxed},

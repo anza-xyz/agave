@@ -25,12 +25,11 @@ use {
     assert_matches::assert_matches,
     log::*,
     solana_clock::Slot,
+    solana_hash::Hash,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        hash::Hash,
-        transaction::{Result, SanitizedTransaction, TransactionError},
-    },
     solana_timings::ExecuteTimings,
+    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
         fmt::{self, Debug},
@@ -798,7 +797,7 @@ mod tests {
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
         mockall::Sequence,
-        solana_sdk::system_transaction,
+        solana_system_transaction as system_transaction,
         std::sync::Mutex,
     };
 

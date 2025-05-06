@@ -1,13 +1,10 @@
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi::abi_example::AbiExample;
 use {
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        account_utils::StateMut,
-        instruction::InstructionError,
-        pubkey::Pubkey,
-        stake::state::{Delegation, Stake, StakeStateV2},
-    },
+    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
+    solana_instruction::error::InstructionError,
+    solana_pubkey::Pubkey,
+    solana_stake_interface::state::{Delegation, Stake, StakeStateV2},
     std::marker::PhantomData,
     thiserror::Error,
 };
@@ -101,9 +98,9 @@ impl<S, T> PartialEq<StakeAccount<S>> for StakeAccount<T> {
 #[cfg(feature = "frozen-abi")]
 impl AbiExample for StakeAccount<Delegation> {
     fn example() -> Self {
-        use solana_sdk::{
-            account::Account,
-            stake::{
+        use {
+            solana_account::Account,
+            solana_stake_interface::{
                 stake_flags::StakeFlags,
                 state::{Meta, Stake},
             },

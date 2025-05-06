@@ -26,6 +26,11 @@ use {
     rand::Rng,
     rayon::{ThreadPool, ThreadPoolBuilder},
     serde::{Deserialize, Serialize},
+    solana_account::{
+        accounts_equal, create_account_shared_data_with_fields as create_account, from_account,
+        state_traits::StateMut, Account, AccountSharedData, ReadableAccount, WritableAccount,
+    },
+    solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_accounts_db::{
         accounts::AccountAddressFilter,
         accounts_db::DEFAULT_ACCOUNTS_SHRINK_RATIO,
@@ -36,72 +41,59 @@ use {
         accounts_partition::{self, PartitionIndex, RentPayingAccountsByPartition},
         ancestors::Ancestors,
     },
+    solana_client_traits::SyncClient,
+    solana_clock::{
+        BankId, Epoch, Slot, UnixTimestamp, DEFAULT_HASHES_PER_TICK, DEFAULT_SLOTS_PER_EPOCH,
+        DEFAULT_TICKS_PER_SLOT, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_RECENT_BLOCKHASHES,
+        UPDATED_HASHES_PER_TICK2, UPDATED_HASHES_PER_TICK3, UPDATED_HASHES_PER_TICK4,
+        UPDATED_HASHES_PER_TICK5, UPDATED_HASHES_PER_TICK6,
+    },
     solana_compute_budget::{
         compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
     },
+    solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_cost_model::block_cost_limits::{MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0256},
+    solana_cpi::MAX_RETURN_DATA,
+    solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
+    solana_feature_gate_interface::{self as feature, Feature},
+    solana_fee_calculator::FeeRateGovernor,
+    solana_fee_structure::FeeStructure,
+    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_hash::Hash,
+    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_keypair::{keypair_from_seed, Keypair},
+    solana_loader_v3_interface::{
+        instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
+    },
+    solana_loader_v4_interface::{instruction as loader_v4, state::LoaderV4State},
     solana_logger,
+    solana_message::{
+        compiled_instruction::CompiledInstruction, Message, MessageHeader, SanitizedMessage,
+    },
+    solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+    solana_nonce::{self as nonce, state::DurableNonce},
+    solana_packet::PACKET_DATA_SIZE,
+    solana_poh_config::PohConfig,
     solana_program_runtime::{
         declare_process_instruction,
         execution_budget::{self, MAX_COMPUTE_UNIT_LIMIT},
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
     },
-    solana_sdk::{
-        account::{
-            accounts_equal, create_account_shared_data_with_fields as create_account, from_account,
-            Account, AccountSharedData, ReadableAccount, WritableAccount,
-        },
-        account_utils::StateMut,
-        bpf_loader,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        client::SyncClient,
-        clock::{
-            BankId, Epoch, Slot, UnixTimestamp, DEFAULT_HASHES_PER_TICK, DEFAULT_SLOTS_PER_EPOCH,
-            DEFAULT_TICKS_PER_SLOT, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_RECENT_BLOCKHASHES,
-            UPDATED_HASHES_PER_TICK2, UPDATED_HASHES_PER_TICK3, UPDATED_HASHES_PER_TICK4,
-            UPDATED_HASHES_PER_TICK5, UPDATED_HASHES_PER_TICK6,
-        },
-        compute_budget::ComputeBudgetInstruction,
-        entrypoint::MAX_PERMITTED_DATA_INCREASE,
-        epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
-        feature::{self, Feature},
-        fee::FeeStructure,
-        fee_calculator::FeeRateGovernor,
-        genesis_config::{ClusterType, GenesisConfig},
-        hash::{hash, Hash},
-        incinerator,
-        instruction::{AccountMeta, CompiledInstruction, Instruction, InstructionError},
-        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-        loader_v4::{self, LoaderV4State},
-        message::{Message, MessageHeader, SanitizedMessage},
-        native_loader,
-        native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
-        nonce::{self, state::DurableNonce},
-        packet::PACKET_DATA_SIZE,
-        poh_config::PohConfig,
-        program::MAX_RETURN_DATA,
-        pubkey::Pubkey,
-        rent::Rent,
-        rent_collector::RENT_EXEMPT_RENT_EPOCH,
-        reward_type::RewardType,
-        secp256k1_program,
-        signature::{keypair_from_seed, Keypair, Signature, Signer},
-        stake::{
-            instruction as stake_instruction,
-            state::{Authorized, Delegation, Lockup, Stake},
-        },
-        system_instruction::{
-            self, SystemError, MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
-            MAX_PERMITTED_DATA_LENGTH,
-        },
-        system_program, system_transaction, sysvar,
-        timing::years_as_slots,
-        transaction::{
-            Result, SanitizedTransaction, Transaction, TransactionError,
-            TransactionVerificationMode,
-        },
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
+    solana_reward_info::RewardType,
+    solana_sdk_ids::{
+        bpf_loader, bpf_loader_upgradeable, incinerator, native_loader, secp256k1_program,
     },
-    solana_stake_program::stake_state::{self, StakeStateV2},
+    solana_sha256_hasher::hash,
+    solana_signature::Signature,
+    solana_signer::Signer,
+    solana_stake_interface::{
+        instruction as stake_instruction,
+        state::{Authorized, Delegation, Lockup, Stake, StakeStateV2},
+    },
+    solana_stake_program::stake_state,
     solana_svm::{
         account_loader::{FeesOnlyTransaction, LoadedTransaction},
         rollback_accounts::RollbackAccounts,
@@ -109,8 +101,20 @@ use {
         transaction_execution_result::ExecutedTransaction,
     },
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_system_interface::{
+        error::SystemError,
+        instruction::{self as system_instruction},
+        program as system_program, MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
+        MAX_PERMITTED_DATA_LENGTH,
+    },
+    solana_system_transaction as system_transaction, solana_sysvar as sysvar,
+    solana_time_utils::years_as_slots,
     solana_timings::ExecuteTimings,
+    solana_transaction::{
+        sanitized::SanitizedTransaction, Transaction, TransactionVerificationMode,
+    },
     solana_transaction_context::TransactionAccount,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote_program::{
         vote_instruction,
         vote_state::{
@@ -188,14 +192,13 @@ fn create_genesis_config_no_tx_fee_no_rent(lamports: u64) -> (GenesisConfig, Key
 fn create_genesis_config_no_tx_fee(lamports: u64) -> (GenesisConfig, Keypair) {
     // genesis_config creates config with default fee rate and default rent
     // override to set fee rate to zero.
-    let (mut genesis_config, mint_keypair) =
-        solana_sdk::genesis_config::create_genesis_config(lamports);
+    let (mut genesis_config, mint_keypair) = solana_genesis_config::create_genesis_config(lamports);
     genesis_config.fee_rate_governor = FeeRateGovernor::new(0, 0);
     (genesis_config, mint_keypair)
 }
 
 pub(in crate::bank) fn create_genesis_config(lamports: u64) -> (GenesisConfig, Keypair) {
-    solana_sdk::genesis_config::create_genesis_config(lamports)
+    solana_genesis_config::create_genesis_config(lamports)
 }
 
 pub(in crate::bank) fn new_sanitized_message(message: Message) -> SanitizedMessage {
@@ -2672,11 +2675,13 @@ fn test_bank_withdraw_from_nonce_account() {
     genesis_config.rent.lamports_per_byte_year = 42;
     let bank = Bank::new_for_tests(&genesis_config);
 
-    let min_balance = bank.get_minimum_balance_for_rent_exemption(nonce::State::size());
+    let min_balance = bank.get_minimum_balance_for_rent_exemption(nonce::state::State::size());
     let nonce = Keypair::new();
     let nonce_account = AccountSharedData::new_data(
         min_balance + 42,
-        &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::default())),
+        &nonce::versions::Versions::new(nonce::state::State::Initialized(
+            nonce::state::Data::default(),
+        )),
         &system_program::id(),
     )
     .unwrap();
@@ -3218,7 +3223,7 @@ fn test_load_and_execute_commit_transactions_fees_only() {
 
     // Use nonce to show that loaded account stats also included loaded
     // nonce account size
-    let nonce_size = nonce::State::size();
+    let nonce_size = nonce::state::State::size();
     let nonce_balance = genesis_config.rent.minimum_balance(nonce_size);
     let nonce_pubkey = Pubkey::new_unique();
     let nonce_authority = rent_paying_fee_payer;
@@ -3226,7 +3231,7 @@ fn test_load_and_execute_commit_transactions_fees_only() {
     let nonce_data = nonce::state::Data::new(nonce_authority, nonce_initial_hash, 5000);
     let nonce_account = AccountSharedData::new_data(
         nonce_balance,
-        &nonce::state::Versions::new(nonce::State::Initialized(nonce_data.clone())),
+        &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce_data.clone())),
         &system_program::id(),
     )
     .unwrap();
@@ -4577,7 +4582,7 @@ fn test_bank_get_program_accounts() {
     assert!(
         genesis_accounts
             .iter()
-            .any(|(_, account, _)| solana_sdk::sysvar::check_id(account.owner())),
+            .any(|(_, account, _)| solana_sdk_ids::sysvar::check_id(account.owner())),
         "no sysvars found"
     );
 
@@ -5107,8 +5112,8 @@ pub(in crate::bank) fn get_nonce_blockhash(bank: &Bank, nonce_pubkey: &Pubkey) -
 pub(in crate::bank) fn get_nonce_data_from_account(
     account: &AccountSharedData,
 ) -> Option<nonce::state::Data> {
-    let nonce_versions = StateMut::<nonce::state::Versions>::state(account).ok()?;
-    if let nonce::State::Initialized(nonce_data) = nonce_versions.state() {
+    let nonce_versions = StateMut::<nonce::versions::Versions>::state(account).ok()?;
+    if let nonce::state::State::Initialized(nonce_data) = nonce_versions.state() {
         Some(nonce_data.clone())
     } else {
         None
@@ -5210,7 +5215,9 @@ fn test_assign_from_nonce_account_fail() {
     let nonce = Keypair::new();
     let nonce_account = AccountSharedData::new_data(
         42_424_242,
-        &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::default())),
+        &nonce::versions::Versions::new(nonce::state::State::Initialized(
+            nonce::state::Data::default(),
+        )),
         &system_program::id(),
     )
     .unwrap();
@@ -5236,16 +5243,15 @@ fn test_nonce_must_be_advanceable() {
     let nonce_keypair = Keypair::new();
     let nonce_authority = nonce_keypair.pubkey();
     let durable_nonce = DurableNonce::from_blockhash(&bank.last_blockhash());
-    let nonce_account = AccountSharedData::new_data(
-        42_424_242,
-        &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::new(
-            nonce_authority,
-            durable_nonce,
-            5000,
-        ))),
-        &system_program::id(),
-    )
-    .unwrap();
+    let nonce_account =
+        AccountSharedData::new_data(
+            42_424_242,
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(
+                nonce::state::Data::new(nonce_authority, durable_nonce, 5000),
+            )),
+            &system_program::id(),
+        )
+        .unwrap();
     bank.store_account(&nonce_keypair.pubkey(), &nonce_account);
 
     let ix = system_instruction::advance_nonce_account(&nonce_keypair.pubkey(), &nonce_authority);
@@ -5368,7 +5374,7 @@ fn test_nonce_transaction() {
         bank.process_transaction(&nonce_tx),
         Err(TransactionError::InstructionError(
             1,
-            system_instruction::SystemError::ResultWithNegativeLamports.into(),
+            solana_system_interface::error::SystemError::ResultWithNegativeLamports.into(),
         ))
     );
     /* Check fee charged and nonce has advanced */
@@ -5495,7 +5501,7 @@ fn test_nonce_transaction_with_tx_wide_caps() {
         bank.process_transaction(&nonce_tx),
         Err(TransactionError::InstructionError(
             1,
-            system_instruction::SystemError::ResultWithNegativeLamports.into(),
+            solana_system_interface::error::SystemError::ResultWithNegativeLamports.into(),
         ))
     );
     /* Check fee charged and nonce has advanced */
@@ -5624,7 +5630,7 @@ fn test_nonce_payer() {
         bank.process_transaction(&nonce_tx),
         Err(TransactionError::InstructionError(
             1,
-            system_instruction::SystemError::ResultWithNegativeLamports.into(),
+            solana_system_interface::error::SystemError::ResultWithNegativeLamports.into(),
         ))
     );
     /* Check fee charged and nonce has advanced */
@@ -5691,7 +5697,7 @@ fn test_nonce_payer_tx_wide_cap() {
         bank.process_transaction(&nonce_tx),
         Err(TransactionError::InstructionError(
             1,
-            system_instruction::SystemError::ResultWithNegativeLamports.into(),
+            solana_system_interface::error::SystemError::ResultWithNegativeLamports.into(),
         ))
     );
     /* Check fee charged and nonce has advanced */
@@ -5728,9 +5734,9 @@ fn test_nonce_fee_calculator_updates() {
     let (stored_nonce_hash, stored_fee_calculator) = bank
         .get_account(&nonce_pubkey)
         .and_then(|acc| {
-            let nonce_versions = StateMut::<nonce::state::Versions>::state(&acc);
+            let nonce_versions = StateMut::<nonce::versions::Versions>::state(&acc);
             match nonce_versions.ok()?.state() {
-                nonce::State::Initialized(ref data) => {
+                nonce::state::State::Initialized(ref data) => {
                     Some((data.blockhash(), data.fee_calculator))
                 }
                 _ => None,
@@ -5760,9 +5766,9 @@ fn test_nonce_fee_calculator_updates() {
     let (nonce_hash, fee_calculator) = bank
         .get_account(&nonce_pubkey)
         .and_then(|acc| {
-            let nonce_versions = StateMut::<nonce::state::Versions>::state(&acc);
+            let nonce_versions = StateMut::<nonce::versions::Versions>::state(&acc);
             match nonce_versions.ok()?.state() {
-                nonce::State::Initialized(ref data) => {
+                nonce::state::State::Initialized(ref data) => {
                     Some((data.blockhash(), data.fee_calculator))
                 }
                 _ => None,
@@ -5792,9 +5798,9 @@ fn test_nonce_fee_calculator_updates_tx_wide_cap() {
     let (stored_nonce_hash, stored_fee_calculator) = bank
         .get_account(&nonce_pubkey)
         .and_then(|acc| {
-            let nonce_versions = StateMut::<nonce::state::Versions>::state(&acc);
+            let nonce_versions = StateMut::<nonce::versions::Versions>::state(&acc);
             match nonce_versions.ok()?.state() {
-                nonce::State::Initialized(ref data) => {
+                nonce::state::State::Initialized(ref data) => {
                     Some((data.blockhash(), data.fee_calculator))
                 }
                 _ => None,
@@ -5824,9 +5830,9 @@ fn test_nonce_fee_calculator_updates_tx_wide_cap() {
     let (nonce_hash, fee_calculator) = bank
         .get_account(&nonce_pubkey)
         .and_then(|acc| {
-            let nonce_versions = StateMut::<nonce::state::Versions>::state(&acc);
+            let nonce_versions = StateMut::<nonce::versions::Versions>::state(&acc);
             match nonce_versions.ok()?.state() {
-                nonce::State::Initialized(ref data) => {
+                nonce::state::State::Initialized(ref data) => {
                     Some((data.blockhash(), data.fee_calculator))
                 }
                 _ => None,
@@ -7335,7 +7341,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &payer_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -7461,7 +7467,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&buffer_address, &buffer_account);
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &mint_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -7552,7 +7558,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &mint_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -7580,7 +7586,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &mint_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -7607,7 +7613,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&buffer_address, &buffer_account);
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
-    let mut instructions = bpf_loader_upgradeable::deploy_with_max_program_len(
+    let mut instructions = solana_loader_v3_interface::instruction::deploy_with_max_program_len(
         &mint_keypair.pubkey(),
         &program_keypair.pubkey(),
         &buffer_address,
@@ -7640,7 +7646,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&buffer_address, &buffer_account);
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
-    let mut instructions = bpf_loader_upgradeable::deploy_with_max_program_len(
+    let mut instructions = solana_loader_v3_interface::instruction::deploy_with_max_program_len(
         &mint_keypair.pubkey(),
         &program_keypair.pubkey(),
         &buffer_address,
@@ -7683,7 +7689,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &mint_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -7715,7 +7721,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &mint_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -7749,7 +7755,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &mint_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -7776,7 +7782,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&buffer_address, &buffer_account);
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
-    let mut instructions = bpf_loader_upgradeable::deploy_with_max_program_len(
+    let mut instructions = solana_loader_v3_interface::instruction::deploy_with_max_program_len(
         &mint_keypair.pubkey(),
         &program_keypair.pubkey(),
         &buffer_address,
@@ -7816,7 +7822,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &mint_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -7860,7 +7866,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &mint_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -7903,7 +7909,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &mint_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -7946,7 +7952,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &mint_keypair.pubkey(),
             &program_keypair.pubkey(),
             &buffer_address,
@@ -10309,7 +10315,7 @@ fn test_call_precomiled_program() {
     };
     let message_arr = b"hello";
     let instruction =
-        solana_sdk::secp256k1_instruction::new_secp256k1_instruction(&secp_privkey, message_arr);
+        solana_secp256k1_program::new_secp256k1_instruction(&secp_privkey, message_arr);
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
@@ -10336,8 +10342,7 @@ fn test_call_precomiled_program() {
         ed25519_dalek::Keypair { secret, public }
     };
     let message_arr = b"hello";
-    let instruction =
-        solana_sdk::ed25519_instruction::new_ed25519_instruction(&privkey, message_arr);
+    let instruction = solana_ed25519_program::new_ed25519_instruction(&privkey, message_arr);
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
@@ -10604,7 +10609,7 @@ fn test_accounts_data_size_with_good_transaction() {
             .rent
             .minimum_balance(ACCOUNT_SIZE.try_into().unwrap()),
         ACCOUNT_SIZE,
-        &solana_sdk::system_program::id(),
+        &solana_system_interface::program::id(),
     );
 
     let accounts_data_size_before = bank.load_accounts_data_size();
@@ -10643,7 +10648,7 @@ fn test_accounts_data_size_with_bad_transaction() {
         bank.last_blockhash(),
         LAMPORTS_PER_SOL,
         ACCOUNT_SIZE,
-        &solana_sdk::system_program::id(),
+        &solana_system_interface::program::id(),
     );
 
     let accounts_data_size_before = bank.load_accounts_data_size();
@@ -11041,8 +11046,8 @@ fn test_invalid_rent_state_changes_fee_payer() {
     } = create_genesis_config_with_leader(sol_to_lamports(100.), &Pubkey::new_unique(), 42);
     genesis_config.rent = Rent::default();
     genesis_config.fee_rate_governor = FeeRateGovernor::new(
-        solana_sdk::fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
-        solana_sdk::fee_calculator::DEFAULT_TARGET_SIGNATURES_PER_SLOT,
+        solana_fee_calculator::DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE,
+        solana_fee_calculator::DEFAULT_TARGET_SIGNATURES_PER_SLOT,
     );
     let rent_exempt_minimum = genesis_config.rent.minimum_balance(0);
 
@@ -11291,7 +11296,7 @@ fn test_rent_state_incinerator() {
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     for amount in [rent_exempt_minimum - 1, rent_exempt_minimum] {
-        bank.transfer(amount, &mint_keypair, &solana_sdk::incinerator::id())
+        bank.transfer(amount, &mint_keypair, &solana_sdk_ids::incinerator::id())
             .unwrap();
     }
 }
@@ -11977,7 +11982,7 @@ fn test_accounts_data_size_from_genesis() {
             bank.last_blockhash(),
             genesis_config.rent.minimum_balance(data_size),
             data_size as u64,
-            &solana_sdk::system_program::id(),
+            &solana_system_interface::program::id(),
         );
         bank.process_transaction(&transaction).unwrap();
         bank.fill_bank_with_ticks_for_tests();
@@ -12012,7 +12017,7 @@ fn test_cap_accounts_data_allocations_per_transaction() {
                 .rent
                 .minimum_balance(MAX_PERMITTED_DATA_LENGTH as usize),
             MAX_PERMITTED_DATA_LENGTH,
-            &solana_sdk::system_program::id(),
+            &solana_system_interface::program::id(),
         );
         keypairs.push(keypair);
         instructions.push(instruction);
@@ -12030,7 +12035,7 @@ fn test_cap_accounts_data_allocations_per_transaction() {
         result,
         Err(TransactionError::InstructionError(
             NUM_MAX_SIZE_ALLOCATIONS_PER_TRANSACTION as u8,
-            solana_sdk::instruction::InstructionError::MaxAccountsDataAllocationsExceeded,
+            solana_instruction::error::InstructionError::MaxAccountsDataAllocationsExceeded,
         )),
     );
 }
@@ -12204,7 +12209,7 @@ fn test_calculate_fee_with_request_heap_frame_flag() {
 
 #[test]
 fn test_is_in_slot_hashes_history() {
-    use solana_sdk::slot_hashes::MAX_ENTRIES;
+    use solana_slot_hashes::MAX_ENTRIES;
 
     let (bank0, _bank_forks) = create_simple_test_arc_bank(1);
     assert!(!bank0.is_in_slot_hashes_history(&0));
@@ -13315,7 +13320,7 @@ fn test_deploy_last_epoch_slot() {
     let mut program_account = AccountSharedData::new(
         min_program_balance,
         LoaderV4State::program_data_offset().saturating_add(elf.len()),
-        &loader_v4::id(),
+        &solana_sdk_ids::loader_v4::id(),
     );
     let program_state = <&mut [u8; LoaderV4State::program_data_offset()]>::try_from(
         program_account

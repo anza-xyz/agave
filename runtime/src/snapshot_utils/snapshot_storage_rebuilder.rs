@@ -19,8 +19,8 @@ use {
         accounts_db::{AccountsFileId, AtomicAccountsFileId},
         accounts_file::StorageAccess,
     },
+    solana_clock::Slot,
     solana_nohash_hasher::BuildNoHashHasher,
-    solana_sdk::clock::Slot,
     std::{
         collections::HashMap,
         fs::File,

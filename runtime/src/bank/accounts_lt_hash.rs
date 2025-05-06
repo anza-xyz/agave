@@ -2,13 +2,11 @@ use {
     super::Bank,
     agave_feature_set as feature_set,
     rayon::prelude::*,
+    solana_account::{accounts_equal, AccountSharedData},
     solana_accounts_db::accounts_db::AccountsDb,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure},
-    solana_sdk::{
-        account::{accounts_equal, AccountSharedData},
-        pubkey::Pubkey,
-    },
+    solana_pubkey::Pubkey,
     solana_svm_callback::AccountState,
     std::{
         ops::AddAssign,
@@ -406,25 +404,22 @@ mod tests {
         super::*,
         crate::{
             bank::tests::{new_bank_from_parent_with_bank_forks, new_from_parent_next_epoch},
-            genesis_utils,
             runtime_config::RuntimeConfig,
             snapshot_bank_utils,
             snapshot_config::SnapshotConfig,
             snapshot_utils,
         },
+        solana_account::{ReadableAccount as _, WritableAccount as _},
         solana_accounts_db::accounts_db::{
             AccountsDbConfig, DuplicatesLtHash, ACCOUNTS_DB_CONFIG_FOR_TESTING,
         },
-        solana_sdk::{
-            account::{ReadableAccount as _, WritableAccount as _},
-            feature::{self, Feature},
-            fee_calculator::FeeRateGovernor,
-            genesis_config::{self, GenesisConfig},
-            native_token::LAMPORTS_PER_SOL,
-            pubkey::{self, Pubkey},
-            signature::Signer as _,
-            signer::keypair::Keypair,
-        },
+        solana_feature_gate_interface::{self as feature, Feature},
+        solana_fee_calculator::FeeRateGovernor,
+        solana_genesis_config::{self, GenesisConfig},
+        solana_keypair::Keypair,
+        solana_native_token::LAMPORTS_PER_SOL,
+        solana_pubkey::{self as pubkey, Pubkey},
+        solana_signer::Signer as _,
         std::{cmp, collections::HashMap, ops::RangeFull, str::FromStr as _, sync::Arc},
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
@@ -452,9 +447,9 @@ mod tests {
     fn genesis_config_with(features: Features) -> (GenesisConfig, Keypair) {
         let mint_lamports = 123_456_789 * LAMPORTS_PER_SOL;
         match features {
-            Features::None => genesis_config::create_genesis_config(mint_lamports),
+            Features::None => solana_genesis_config::create_genesis_config(mint_lamports),
             Features::All => {
-                let info = genesis_utils::create_genesis_config(mint_lamports);
+                let info = crate::genesis_utils::create_genesis_config(mint_lamports);
                 (info.genesis_config, info.mint_keypair)
             }
         }
@@ -479,7 +474,7 @@ mod tests {
         let keypair5 = Keypair::new();
 
         let (mut genesis_config, mint_keypair) =
-            genesis_config::create_genesis_config(123_456_789 * LAMPORTS_PER_SOL);
+            solana_genesis_config::create_genesis_config(123_456_789 * LAMPORTS_PER_SOL);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(0, 0);
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank.rc

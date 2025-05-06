@@ -37,13 +37,11 @@ use {
         utils::delete_contents_of_path,
     },
     solana_builtins::prototype::BuiltinPrototype,
+    solana_clock::{Epoch, Slot},
+    solana_genesis_config::GenesisConfig,
     solana_measure::{measure::Measure, measure_time},
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        genesis_config::GenesisConfig,
-        pubkey::Pubkey,
-        slot_history::{Check, SlotHistory},
-    },
+    solana_pubkey::Pubkey,
+    solana_slot_history::{Check, SlotHistory},
     std::{
         collections::{HashMap, HashSet},
         ops::RangeInclusive,
@@ -1118,13 +1116,12 @@ mod tests {
             accounts_hash::{CalcAccountsHashConfig, HashStats},
             sorted_storages::SortedStorages,
         },
-        solana_sdk::{
-            genesis_config::create_genesis_config,
-            native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
-            signature::{Keypair, Signer},
-            system_transaction,
-            transaction::SanitizedTransaction,
-        },
+        solana_genesis_config::create_genesis_config,
+        solana_keypair::Keypair,
+        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        solana_signer::Signer,
+        solana_system_transaction as system_transaction,
+        solana_transaction::sanitized::SanitizedTransaction,
         std::{
             fs,
             sync::{atomic::Ordering, Arc, RwLock},
@@ -1634,7 +1631,7 @@ mod tests {
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
         // test expects 0 transaction fee
-        genesis_config.fee_rate_governor = solana_sdk::fee_calculator::FeeRateGovernor::new(0, 0);
+        genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
         let lamports_to_transfer = sol_to_lamports(123_456.);
         let (bank0, bank_forks) = Bank::new_with_paths_for_tests(

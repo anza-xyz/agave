@@ -3,10 +3,8 @@
 use {
     crate::bank::Bank,
     agave_feature_set as feature_set,
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        vote::state::MAX_LOCKOUT_HISTORY,
-    },
+    solana_clock::{Epoch, Slot},
+    solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
 };
 
 /// Is the EAH enabled this Epoch?
@@ -154,8 +152,7 @@ pub struct CalculationInfo {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::{epoch_schedule::EpochSchedule, genesis_config::GenesisConfig},
+        super::*, solana_epoch_schedule::EpochSchedule, solana_genesis_config::GenesisConfig,
         test_case::test_case,
     };
 

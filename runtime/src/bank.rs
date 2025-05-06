@@ -69,6 +69,10 @@ use {
         ThreadPoolBuilder,
     },
     serde::Serialize,
+    solana_account::{
+        create_account_shared_data_with_fields as create_account, from_account, Account,
+        AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
+    },
     solana_accounts_db::{
         account_locks::validate_account_locks,
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
@@ -94,63 +98,49 @@ use {
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     solana_builtins::{prototype::BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
+    solana_clock::{
+        BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_HASHES_PER_TICK,
+        DEFAULT_TICKS_PER_SECOND, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE,
+        MAX_TRANSACTION_FORWARDING_DELAY, SECONDS_PER_DAY, UPDATED_HASHES_PER_TICK2,
+        UPDATED_HASHES_PER_TICK3, UPDATED_HASHES_PER_TICK4, UPDATED_HASHES_PER_TICK5,
+        UPDATED_HASHES_PER_TICK6,
+    },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_cost_model::{block_cost_limits::simd_0256_block_limits, cost_tracker::CostTracker},
+    solana_epoch_info::EpochInfo,
+    solana_epoch_schedule::EpochSchedule,
+    solana_feature_gate_interface as feature,
     solana_fee::FeeFeatures,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_fee_structure::{FeeBudgetLimits, FeeDetails, FeeStructure},
+    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_hard_forks::HardForks,
+    solana_hash::Hash,
+    solana_inflation::Inflation,
+    solana_keypair::Keypair,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_time, measure_us},
+    solana_message::{inner_instruction::InnerInstructions, AccountKeys, SanitizedMessage},
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
+    solana_pubkey::Pubkey,
+    solana_rent_collector::{CollectedInfo, RentCollector},
+    solana_rent_debits::RentDebits,
+    solana_reward_info::RewardInfo,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::{
-        account::{
-            create_account_shared_data_with_fields as create_account, from_account, Account,
-            AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
-        },
-        bpf_loader_upgradeable,
-        clock::{
-            BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_HASHES_PER_TICK,
-            DEFAULT_TICKS_PER_SECOND, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE,
-            MAX_TRANSACTION_FORWARDING_DELAY, SECONDS_PER_DAY, UPDATED_HASHES_PER_TICK2,
-            UPDATED_HASHES_PER_TICK3, UPDATED_HASHES_PER_TICK4, UPDATED_HASHES_PER_TICK5,
-            UPDATED_HASHES_PER_TICK6,
-        },
-        epoch_info::EpochInfo,
-        epoch_schedule::EpochSchedule,
-        feature,
-        fee::{FeeBudgetLimits, FeeDetails, FeeStructure},
-        fee_calculator::FeeRateGovernor,
-        genesis_config::{ClusterType, GenesisConfig},
-        hard_forks::HardForks,
-        hash::{extend_and_hash, hashv, Hash},
-        incinerator,
-        inflation::Inflation,
-        inner_instruction::InnerInstructions,
-        message::{AccountKeys, SanitizedMessage},
-        native_loader,
-        native_token::LAMPORTS_PER_SOL,
-        packet::PACKET_DATA_SIZE,
-        precompiles::PrecompileError,
-        pubkey::Pubkey,
-        rent_collector::{CollectedInfo, RentCollector},
-        rent_debits::RentDebits,
-        reward_info::RewardInfo,
-        signature::{Keypair, Signature},
-        slot_hashes::SlotHashes,
-        slot_history::{Check, SlotHistory},
-        stake::state::Delegation,
-        system_transaction,
-        sysvar::{self, last_restart_slot::LastRestartSlot, Sysvar, SysvarId},
-        timing::years_as_slots,
-        transaction::{
-            MessageHash, Result, SanitizedTransaction, Transaction, TransactionError,
-            TransactionVerificationMode, VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
-        },
-    },
+    solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader},
+    solana_sha256_hasher::{extend_and_hash, hashv},
+    solana_signature::Signature,
+    solana_slot_hashes::SlotHashes,
+    solana_slot_history::{Check, SlotHistory},
+    solana_stake_interface::state::Delegation,
     solana_svm::{
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
@@ -172,8 +162,18 @@ use {
     },
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_system_transaction as system_transaction,
+    solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot, Sysvar},
+    solana_sysvar_id::SysvarId,
+    solana_time_utils::years_as_slots,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
+        versioned::VersionedTransaction,
+        Transaction, TransactionVerificationMode,
+    },
     solana_transaction_context::{TransactionAccount, TransactionReturnData},
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{
         collections::{HashMap, HashSet},
@@ -192,17 +192,15 @@ use {
         time::{Duration, Instant},
     },
 };
-pub use {
-    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_sdk::reward_type::RewardType,
-};
+pub use {partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_reward_info::RewardType};
 #[cfg(feature = "dev-context-only-utils")]
 use {
     solana_accounts_db::accounts_db::{
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
+    solana_nonce as nonce,
     solana_nonce_account::{get_system_account_kind, SystemAccountKind},
     solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
-    solana_sdk::nonce,
 };
 
 /// params to `verify_accounts_hash`
@@ -4511,8 +4509,7 @@ impl Bank {
     fn use_multi_epoch_collection_cycle(&self, epoch: Epoch) -> bool {
         // Force normal behavior, disabling multi epoch collection cycle for manual local testing
         #[cfg(not(test))]
-        if self.slot_count_per_normal_epoch() == solana_sdk::epoch_schedule::MINIMUM_SLOTS_PER_EPOCH
-        {
+        if self.slot_count_per_normal_epoch() == solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH {
             return false;
         }
 
@@ -4523,8 +4520,7 @@ impl Bank {
     pub(crate) fn use_fixed_collection_cycle(&self) -> bool {
         // Force normal behavior, disabling fixed collection cycle for manual local testing
         #[cfg(not(test))]
-        if self.slot_count_per_normal_epoch() == solana_sdk::epoch_schedule::MINIMUM_SLOTS_PER_EPOCH
-        {
+        if self.slot_count_per_normal_epoch() == solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH {
             return false;
         }
 
@@ -6500,14 +6496,14 @@ impl Bank {
 
         if new_feature_activations.contains(&feature_set::pico_inflation::id()) {
             *self.inflation.write().unwrap() = Inflation::pico();
-            self.fee_rate_governor.burn_percent = solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
+            self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
             self.rent_collector.rent.burn_percent = 50; // 50% rent burn
         }
 
         if !new_feature_activations.is_disjoint(&self.feature_set.full_inflation_features_enabled())
         {
             *self.inflation.write().unwrap() = Inflation::full();
-            self.fee_rate_governor.burn_percent = solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
+            self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT; // 50% fee burn
             self.rent_collector.rent.burn_percent = 50; // 50% rent burn
         }
 
@@ -6984,7 +6980,7 @@ impl TransactionProcessingCallback for Bank {
         );
 
         // Add a bogus executable builtin account, which will be loaded and ignored.
-        let account = native_loader::create_loadable_account_with_fields(
+        let account = solana_sdk::native_loader::create_loadable_account_with_fields(
             name,
             self.inherit_specially_retained_account_fields(&existing_genuine_program),
         );
@@ -7237,7 +7233,7 @@ impl Bank {
                     Some(SystemAccountKind::Nonce) => self
                         .rent_collector
                         .rent
-                        .minimum_balance(nonce::State::size()),
+                        .minimum_balance(nonce::state::State::size()),
                     _ => 0,
                 };
 
@@ -7432,12 +7428,10 @@ pub mod test_utils {
     use {
         super::Bank,
         crate::installed_scheduler_pool::BankWithScheduler,
-        solana_sdk::{
-            account::{ReadableAccount, WritableAccount},
-            hash::hashv,
-            lamports::LamportsError,
-            pubkey::Pubkey,
-        },
+        solana_account::{ReadableAccount, WritableAccount},
+        solana_instruction::error::LamportsError,
+        solana_pubkey::Pubkey,
+        solana_sha256_hasher::hashv,
         solana_vote_program::vote_state::{self, BlockTimestamp, VoteStateVersions},
         std::sync::Arc,
     };
