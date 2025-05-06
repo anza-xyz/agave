@@ -13,7 +13,7 @@ use {
 // to solana_pubkey::Pubkey
 #[deprecated(
     since = "2.3.0",
-    note = "Use `spl_associated_token_account::id()` instead"
+    note = "Use `spl_associated_token_account_client::program::id()` instead"
 )]
 pub fn spl_associated_token_id() -> Pubkey {
     spl_associated_token_account::id()
