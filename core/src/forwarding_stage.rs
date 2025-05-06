@@ -115,6 +115,14 @@ impl ForwardAddressGetter {
     }
 }
 
+/// [`SpawnForwardingStageResult`] contains the result of spawning the
+/// [`ForwardingStage`], including the background task handle and a shared
+/// notifier for client address updates.
+pub(crate) struct SpawnForwardingStageResult {
+    pub join_handle: JoinHandle<()>,
+    pub client_updater: Arc<dyn NotifyKeyUpdate + Send + Sync>,
+}
+
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
     client: ForwardingClientOption<'_>,
@@ -122,7 +130,7 @@ pub(crate) fn spawn_forwarding_stage(
     root_bank_cache: RootBankCache,
     forward_address_getter: ForwardAddressGetter,
     data_budget: DataBudget,
-) -> JoinHandle<()> {
+) -> SpawnForwardingStageResult {
     let vote_client = VoteClient::new(vote_client_udp_socket, forward_address_getter.clone());
     match client {
         ForwardingClientOption::ConnectionCache(connection_cache) => {
@@ -135,10 +143,13 @@ pub(crate) fn spawn_forwarding_stage(
                 root_bank_cache,
                 data_budget,
             );
-            Builder::new()
-                .name("solFwdStage".to_string())
-                .spawn(move || forwarding_stage.run())
-                .unwrap()
+            SpawnForwardingStageResult {
+                join_handle: Builder::new()
+                    .name("solFwdStage".to_string())
+                    .spawn(move || forwarding_stage.run())
+                    .unwrap(),
+                client_updater: Arc::new(non_vote_client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+            }
         }
         ForwardingClientOption::TpuClientNext((
             stake_identity,
@@ -154,14 +165,17 @@ pub(crate) fn spawn_forwarding_stage(
             let forwarding_stage = ForwardingStage::new(
                 receiver,
                 vote_client,
-                non_vote_client,
+                non_vote_client.clone(),
                 root_bank_cache,
                 data_budget,
             );
-            Builder::new()
-                .name("solFwdStage".to_string())
-                .spawn(move || forwarding_stage.run())
-                .unwrap()
+            SpawnForwardingStageResult {
+                join_handle: Builder::new()
+                    .name("solFwdStage".to_string())
+                    .spawn(move || forwarding_stage.run())
+                    .unwrap(),
+                client_updater: Arc::new(non_vote_client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+            }
         }
     }
 }
@@ -517,6 +531,12 @@ impl ForwardingClient for ConnectionCacheClient {
     }
 }
 
+impl NotifyKeyUpdate for ConnectionCacheClient {
+    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        self.connection_cache.update_key(identity)
+    }
+}
+
 #[async_trait]
 impl LeaderUpdater for ForwardAddressGetter {
     fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {
@@ -526,6 +546,7 @@ impl LeaderUpdater for ForwardAddressGetter {
     async fn stop(&mut self) {}
 }
 
+#[derive(Clone)]
 struct TpuClientNextClient {
     sender: mpsc::Sender<TransactionBatch>,
     update_certificate_sender: watch::Sender<Option<StakeIdentity>>,

@@ -1657,9 +1657,9 @@ impl Validator {
             if let Some(json_rpc_service) = &json_rpc_service {
                 key_notifies.push(json_rpc_service.get_client_key_updater())
             }
+            // note, that we don't need to add ConnectionClient to key_notifiers
+            // because it is added inside Tpu.
         }
-        // add connection_cache because it is still used in Forwarder.
-        key_notifies.push(connection_cache);
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
             bank_forks: bank_forks.clone(),
