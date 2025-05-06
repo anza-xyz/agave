@@ -159,6 +159,7 @@ pub struct LocalCluster {
     pub connection_cache: Arc<ConnectionCache>,
     quic_connection_cache_config: Option<QuicConnectionCacheConfig>,
     tpu_connection_pool_size: usize,
+    shred_version: u16,
 }
 
 impl LocalCluster {
@@ -329,7 +330,6 @@ impl LocalCluster {
             leader_config.max_genesis_archive_unpacked_size,
         );
 
-        // let leader_contact_info = leader_node.info.clone();
         leader_config.rpc_addrs = Some((
             leader_node.info.rpc().unwrap(),
             leader_node.info.rpc_pubsub().unwrap(),
@@ -381,6 +381,7 @@ impl LocalCluster {
             connection_cache,
             quic_connection_cache_config,
             tpu_connection_pool_size: config.tpu_connection_pool_size,
+            shred_version: leader_contact_info.shred_version(),
         };
 
         let node_pubkey_to_vote_key: HashMap<Pubkey, Arc<Keypair>> = keys_in_genesis
@@ -432,6 +433,14 @@ impl LocalCluster {
         .unwrap();
 
         cluster
+    }
+
+    pub fn shred_version(&self) -> u16 {
+        self.shred_version
+    }
+
+    pub fn set_shred_version(&mut self, shred_version: u16) {
+        self.shred_version = shred_version;
     }
 
     pub fn exit(&mut self) {
@@ -619,7 +628,7 @@ impl LocalCluster {
         let cluster_nodes = discover_validators(
             &alive_node_contact_infos[0].gossip().unwrap(),
             alive_node_contact_infos.len(),
-            alive_node_contact_infos[0].shred_version(),
+            self.shred_version(),
             socket_addr_space,
         )
         .unwrap();
@@ -680,7 +689,7 @@ impl LocalCluster {
         let cluster_nodes = discover_validators(
             &alive_node_contact_infos[0].gossip().unwrap(),
             alive_node_contact_infos.len(),
-            alive_node_contact_infos[0].shred_version(),
+            self.shred_version(),
             socket_addr_space,
         )
         .unwrap();
@@ -1033,7 +1042,8 @@ impl Cluster for LocalCluster {
         cluster_validator_info: &mut ClusterValidatorInfo,
     ) -> (Node, Vec<ContactInfo>) {
         // Update the stored ContactInfo for this node
-        let node = Node::new_localhost_with_pubkey(pubkey);
+        let mut node = Node::new_localhost_with_pubkey(pubkey);
+        node.info.set_shred_version(self.shred_version());
         cluster_validator_info.info.contact_info = node.info.clone();
         cluster_validator_info.config.rpc_addrs =
             Some((node.info.rpc().unwrap(), node.info.rpc_pubsub().unwrap()));

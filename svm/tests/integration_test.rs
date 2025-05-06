@@ -12,6 +12,7 @@ use {
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_fee_structure::FeeDetails,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
+    solana_pubkey::{pubkey, Pubkey},
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable,
@@ -23,7 +24,6 @@ use {
         native_loader,
         native_token::LAMPORTS_PER_SOL,
         nonce::{self, state::DurableNonce},
-        pubkey::Pubkey,
         signature::Signer,
         signer::keypair::Keypair,
         system_instruction, system_program, system_transaction,
@@ -108,11 +108,7 @@ impl SvmTestEnvironment<'_> {
             ..Default::default()
         };
 
-        let mut feature_set = FeatureSet::default();
-        for feature_id in &test_entry.enabled_features {
-            feature_set.activate(feature_id, 0);
-        }
-
+        let feature_set = test_entry.feature_set();
         let processing_environment = TransactionProcessingEnvironment {
             blockhash: LAST_BLOCKHASH,
             feature_set: feature_set.runtime_features(),
@@ -284,10 +280,10 @@ impl SvmTestEnvironment<'_> {
 }
 
 // container for a transaction batch and all data needed to run and verify it against svm
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SvmTestEntry {
-    // features are disabled by default; these will be enabled
-    pub enabled_features: Vec<Pubkey>,
+    // features are enabled by default; these will be disabled
+    pub disabled_features: Vec<Pubkey>,
 
     // until LoaderV4 is live on mainnet, we default to omitting it, but can also test it
     pub with_loader_v4: bool,
@@ -438,7 +434,7 @@ impl SvmTestEntry {
                 let check_result = item.check_result.map(|tx_details| {
                     let compute_budget_limits = process_compute_budget_instructions(
                         SVMMessage::program_instructions_iter(&message),
-                        &FeatureSet::default(),
+                        &self.feature_set(),
                     );
                     let signature_count = message
                         .num_transaction_signatures()
@@ -470,6 +466,31 @@ impl SvmTestEntry {
             .cloned()
             .map(|item| item.asserts)
             .collect()
+    }
+
+    // internal helper to map our feature list to a FeatureSet
+    fn feature_set(&self) -> FeatureSet {
+        let mut feature_set = FeatureSet::all_enabled();
+        for feature_id in &self.disabled_features {
+            feature_set.deactivate(feature_id);
+        }
+
+        feature_set
+    }
+}
+
+// NOTE `1ncomp1ete111111111111111111111111111111111` corresponds to `bpf_account_data_direct_mapping::id()`
+// by hardcoding the string, we ensure when the feature is finished, it will automatically be tested
+impl Default for SvmTestEntry {
+    fn default() -> Self {
+        Self {
+            disabled_features: vec![pubkey!("1ncomp1ete111111111111111111111111111111111")],
+            with_loader_v4: false,
+            initial_programs: vec![],
+            initial_accounts: AccountsMap::default(),
+            transaction_batch: vec![],
+            final_accounts: AccountsMap::default(),
+        }
     }
 }
 
@@ -2324,9 +2345,9 @@ fn svm_integration(test_entries: Vec<SvmTestEntry>) {
 fn program_cache_create_account(remove_accounts_executable_flag_checks: bool) {
     for loader_id in PROGRAM_OWNERS {
         let mut test_entry = SvmTestEntry::with_loader_v4();
-        if remove_accounts_executable_flag_checks {
+        if !remove_accounts_executable_flag_checks {
             test_entry
-                .enabled_features
+                .disabled_features
                 .push(feature_set::remove_accounts_executable_flag_checks::id());
         }
 

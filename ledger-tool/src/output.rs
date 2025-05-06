@@ -9,7 +9,10 @@ use {
     serde::ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
     serde_derive::{Deserialize, Serialize},
     solana_account_decoder::{encode_ui_account, UiAccountData, UiAccountEncoding},
-    solana_accounts_db::accounts_index::{ScanConfig, ScanOrder},
+    solana_accounts_db::{
+        accounts_index::{ScanConfig, ScanOrder},
+        is_loadable::IsLoadable as _,
+    },
     solana_cli_output::{
         display::writeln_transaction, CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay,
         VerboseDisplay,
@@ -831,7 +834,7 @@ struct AccountsScanner {
 impl AccountsScanner {
     /// Returns true if this account should be included in the output
     fn should_process_account(&self, account: &AccountSharedData) -> bool {
-        solana_accounts_db::accounts::Accounts::is_loadable(account.lamports())
+        account.is_loadable()
             && (self.config.include_sysvars || !solana_sdk::sysvar::check_id(account.owner()))
     }
 

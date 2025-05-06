@@ -1,5 +1,5 @@
-NOTE: Vortexor is not production ready.
-
+> **Note:** Vortexor is under active development.
+> For the quick instruction to pair a validator and vortexor, please read [Pair a Vortexor and Validator](#pair-a-vortexor-and-validator).
 
 # Introduction
 The Vortexor is a service that can offload the tasks of receiving transactions
@@ -145,3 +145,92 @@ Operators can decide whether to adopt Vortexors without concerns about network
 protocol changes. Upgrading involves specifying the Vortexor's TPU address and
 verified packet receiver network address via CLI or Admin RPC. The transition is
 designed to be seamless for operators.
+
+# Pair a Vortexor and Validator
+
+To pair a validator and Vortexor, follow these steps:
+
+
+### Step 1: Determine the validator's receiver address and RPC/Web Socket Addresses
+The validator's receiver address should be first determined as the IP:port.
+For example, if there are multiple network interfaces, and the vortexor and validators
+can can communicate on the private network, the IP address can be of the private
+interface's address if the validator. The port should be free of collision from
+other ports used on the system.
+
+The RPC/Web socket server can be any available servers in the network. It does
+NOT need to be the pairing validator. There must be equal number of RPC and Web
+socket servers specified.
+
+### Step 2: Run the Vortexor
+Run the Vortexor using the following command:
+
+```bash
+solana-vortexor --identity /path/to/id.json \
+    --destination <validator_receiver_address> \
+    --dynamic-port-range <port_range> \
+    --rpc-server <rpc_server_address> \
+    --websocket-server <websocket_server_address>
+```
+
+**Parameters:**
+- `--identity`: Path to the identity keypair file for the Vortexor.
+- `--destination`: The validator's receiver address where verified packets will be sent (e.g., `10.138.0.136:8100`).
+- `--dynamic-port-range`: The port range used by the Vortexor for TPU traffic (e.g., `9200-9300`).
+- `--rpc-server`: The RPC server address to fetch cluster information (e.g., `http://10.138.0.137:8899`).
+- `--websocket-server`: The WebSocket server address to fetch stake information (e.g., `ws://10.138.0.137:8900`).
+
+**Example:**
+
+In the example below, we are pairing the vortexor with the validator running on 10.138.0.136 and we use
+the RPC node 10.138.0.137 for RPC and websocket service:
+
+```bash
+solana-vortexor --identity /home/solana/.config/solana/id.json \
+    --destination 10.138.0.136:8100 \
+    --dynamic-port-range 9200-9300 \
+    --rpc-server http://10.138.0.137:8899 \
+    --websocket-server ws://10.138.0.137:8900
+```
+
+---
+
+### Step 3: Find the Vortexor's TPU and Forward Addresses
+The Vortexor's TPU and forward addresses can be found in its log file. For example:
+
+```
+[2025-04-24T17:40:13.098760226Z INFO  solana_vortexor] Creating the Vortexor. The tpu socket is: Ok(0.0.0.0:9200), tpu_fwd: Ok(0.0.0.0:9201)
+```
+
+When configuring the validator, deduct the `QUIC_PORT_OFFSET` (which is 6) from
+the TPU and forward ports. For example, with the ports shown in the vortexor's
+log file, the TPU and forward port should be set to the following when starting
+the validator:
+- TPU port: `9200` → `9194`, then specify 9194 in the --public-tpu-address for the validator.
+- TPU forward port: `9201` → `9195`, then specify 9195 in the --public-tpu-forwards-address for the validator.
+
+---
+
+### Step 4: Configure the Validator
+Run the validator with the following additional parameters to pair it with the Vortexor:
+
+```bash
+--tpu-vortexor-receiver-address <vortexor_receiver_address> \
+--public-tpu-address <vortexor_tpu_address> \
+--public-tpu-forwards-address <vortexor_tpu_forward_address>
+```
+
+**Parameters:**
+- `--tpu-vortexor-receiver-address`: The address where the validator receives verified packets from the Vortexor (e.g., `10.138.0.136:8100`).
+- `--public-tpu-address`: The TPU address of the Vortexor for receiving TPU traffic from the network (e.g., `10.138.0.131:9194`).
+- `--public-tpu-forwards-address`: The TPU forward address of the Vortexor for receiving TPU forward traffic (e.g., `10.138.0.131:9195`).
+
+**Example:**
+
+In the example below, we are pairing the validator running on 10.138.0.136 with the
+vortexor running on node 10.138.0.131:
+```bash
+--tpu-vortexor-receiver-address 10.138.0.136:8100 \
+--public-tpu-address 10.138.0.131:9194 \
+--public-tpu-forwards-address 10.138.0.131:9195
+```

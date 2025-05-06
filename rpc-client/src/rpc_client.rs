@@ -10,11 +10,10 @@
 //! in [`crate::nonblocking::rpc_client`].
 
 pub use crate::mock_sender::Mocks;
-use crate::mock_sender::MocksMap;
 use {
     crate::{
         http_sender::HttpSender,
-        mock_sender::{mock_encoded_account, MockSender},
+        mock_sender::{mock_encoded_account, MockSender, MocksMap},
         nonblocking::{self, rpc_client::get_rpc_request_str},
         rpc_sender::*,
     },

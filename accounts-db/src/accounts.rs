@@ -8,6 +8,7 @@ use {
         },
         accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
         ancestors::Ancestors,
+        is_loadable::IsLoadable as _,
         storable_accounts::StorableAccounts,
     },
     log::*,
@@ -330,19 +331,13 @@ impl Accounts {
         }
     }
 
-    pub fn is_loadable(lamports: u64) -> bool {
-        // Don't ever load zero lamport accounts into runtime because
-        // the existence of zero-lamport accounts are never deterministic!!
-        lamports > 0
-    }
-
     fn load_while_filtering<F: Fn(&AccountSharedData) -> bool>(
         collector: &mut Vec<TransactionAccount>,
         some_account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>,
         filter: F,
     ) {
         if let Some(mapped_account_tuple) = some_account_tuple
-            .filter(|(_, account, _)| Self::is_loadable(account.lamports()) && filter(account))
+            .filter(|(_, account, _)| account.is_loadable() && filter(account))
             .map(|(pubkey, account, _slot)| (*pubkey, account))
         {
             collector.push(mapped_account_tuple)
@@ -354,7 +349,7 @@ impl Accounts {
         some_account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>,
     ) {
         if let Some(mapped_account_tuple) = some_account_tuple
-            .filter(|(_, account, _)| Self::is_loadable(account.lamports()))
+            .filter(|(_, account, _)| account.is_loadable())
             .map(|(pubkey, account, slot)| (*pubkey, account, slot))
         {
             collector.push(mapped_account_tuple)
@@ -503,8 +498,8 @@ impl Accounts {
                 ancestors,
                 bank_id,
                 |some_account_tuple| {
-                    if let Some((pubkey, account, slot)) = some_account_tuple
-                        .filter(|(_, account, _)| Self::is_loadable(account.lamports()))
+                    if let Some((pubkey, account, slot)) =
+                        some_account_tuple.filter(|(_, account, _)| account.is_loadable())
                     {
                         collector.push((*pubkey, account, slot))
                     }

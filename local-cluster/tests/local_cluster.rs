@@ -2250,6 +2250,10 @@ fn test_hard_fork_invalidates_tower() {
         &cluster.lock().unwrap().genesis_config.hash(),
         Some(&hard_forks),
     );
+    cluster
+        .lock()
+        .unwrap()
+        .set_shred_version(expected_shred_version);
 
     validator_a_info
         .config

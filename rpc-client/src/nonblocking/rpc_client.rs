@@ -7,13 +7,12 @@
 //! [JSON-RPC]: https://www.jsonrpc.org/specification
 
 pub use crate::mock_sender::Mocks;
-use crate::mock_sender::MocksMap;
 #[cfg(feature = "spinner")]
 use {crate::spinner, solana_clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
 use {
     crate::{
         http_sender::HttpSender,
-        mock_sender::{mock_encoded_account, MockSender},
+        mock_sender::{mock_encoded_account, MockSender, MocksMap},
         rpc_client::{
             GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
             SerializableTransaction,

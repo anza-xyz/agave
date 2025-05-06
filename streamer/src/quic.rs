@@ -160,6 +160,8 @@ pub struct StreamerStats {
     pub(crate) total_unstaked_chunks_received: AtomicUsize,
     pub(crate) total_packet_batch_send_err: AtomicUsize,
     pub(crate) total_handle_chunk_to_packet_batcher_send_err: AtomicUsize,
+    pub(crate) total_handle_chunk_to_packet_batcher_send_full_err: AtomicUsize,
+    pub(crate) total_handle_chunk_to_packet_batcher_send_disconnected_err: AtomicUsize,
     pub(crate) total_packet_batches_sent: AtomicUsize,
     pub(crate) total_packet_batches_none: AtomicUsize,
     pub(crate) total_packets_sent_for_batching: AtomicUsize,
@@ -444,6 +446,18 @@ impl StreamerStats {
             (
                 "handle_chunk_to_packet_batcher_send_error",
                 self.total_handle_chunk_to_packet_batcher_send_err
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "handle_chunk_to_packet_batcher_send_full_err",
+                self.total_handle_chunk_to_packet_batcher_send_full_err
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "handle_chunk_to_packet_batcher_send_disconnected_err",
+                self.total_handle_chunk_to_packet_batcher_send_disconnected_err
                     .swap(0, Ordering::Relaxed),
                 i64
             ),

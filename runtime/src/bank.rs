@@ -96,10 +96,7 @@ use {
     solana_builtins::{prototype::BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{
-        block_cost_limits::{simd_0207_block_limits, simd_0256_block_limits},
-        cost_tracker::CostTracker,
-    },
+    solana_cost_model::{block_cost_limits::simd_0256_block_limits, cost_tracker::CostTracker},
     solana_fee::FeeFeatures,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_time, measure_us},
@@ -248,7 +245,7 @@ struct RentMetrics {
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "4e7a7AAsQrM5Lp5bhREdVZ5QGZfyETbBthhWjYMYb6zS")
+    frozen_abi(digest = "5dfDCRGWPV7thfoZtLpTJAV8cC93vQUXgTm6BnrfeUsN")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
@@ -3297,48 +3294,43 @@ impl Bank {
             },
         );
 
-        let units_consumed =
-            timings
-                .details
-                .per_program_timings
-                .iter()
-                .fold(0, |acc: u64, (_, program_timing)| {
-                    (std::num::Saturating(acc)
-                        + program_timing.accumulated_units
-                        + program_timing.total_errored_units)
-                        .0
-                });
-
         debug!("simulate_transaction: {:?}", timings);
 
         let processing_result = processing_results
             .pop()
             .unwrap_or(Err(TransactionError::InvalidProgramForExecution));
-        let (post_simulation_accounts, result, logs, return_data, inner_instructions) =
-            match processing_result {
-                Ok(processed_tx) => match processed_tx {
-                    ProcessedTransaction::Executed(executed_tx) => {
-                        let details = executed_tx.execution_details;
-                        let post_simulation_accounts = executed_tx
-                            .loaded_transaction
-                            .accounts
-                            .into_iter()
-                            .take(number_of_accounts)
-                            .collect::<Vec<_>>();
-                        (
-                            post_simulation_accounts,
-                            details.status,
-                            details.log_messages,
-                            details.return_data,
-                            details.inner_instructions,
-                        )
-                    }
-                    ProcessedTransaction::FeesOnly(fees_only_tx) => {
-                        (vec![], Err(fees_only_tx.load_error), None, None, None)
-                    }
-                },
-                Err(error) => (vec![], Err(error), None, None, None),
-            };
+        let (
+            post_simulation_accounts,
+            result,
+            logs,
+            return_data,
+            inner_instructions,
+            units_consumed,
+        ) = match processing_result {
+            Ok(processed_tx) => match processed_tx {
+                ProcessedTransaction::Executed(executed_tx) => {
+                    let details = executed_tx.execution_details;
+                    let post_simulation_accounts = executed_tx
+                        .loaded_transaction
+                        .accounts
+                        .into_iter()
+                        .take(number_of_accounts)
+                        .collect::<Vec<_>>();
+                    (
+                        post_simulation_accounts,
+                        details.status,
+                        details.log_messages,
+                        details.return_data,
+                        details.inner_instructions,
+                        details.executed_units,
+                    )
+                }
+                ProcessedTransaction::FeesOnly(fees_only_tx) => {
+                    (vec![], Err(fees_only_tx.load_error), None, None, None, 0)
+                }
+            },
+            Err(error) => (vec![], Err(error), None, None, None, 0),
+        };
         let logs = logs.unwrap_or_default();
 
         TransactionSimulationResult {
@@ -4898,18 +4890,6 @@ impl Bank {
         // We must apply previously activated features related to limits here
         // so that the initial bank state is consistent with the feature set.
         // Cost-tracker limits are propagated through children banks.
-        if self
-            .feature_set
-            .is_active(&feature_set::raise_block_limits_to_50m::id())
-        {
-            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
-            self.write_cost_tracker().unwrap().set_limits(
-                account_cost_limit,
-                block_cost_limit,
-                vote_cost_limit,
-            );
-        }
-
         if self
             .feature_set
             .is_active(&feature_set::raise_block_limits_to_60m::id())
@@ -6618,19 +6598,6 @@ impl Bank {
                     self.accounts_lt_hash.get_mut().unwrap().0.checksum(),
                 );
             }
-        }
-
-        if new_feature_activations.contains(&feature_set::raise_block_limits_to_50m::id())
-            && !self
-                .feature_set
-                .is_active(&feature_set::raise_block_limits_to_60m::id())
-        {
-            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
-            self.write_cost_tracker().unwrap().set_limits(
-                account_cost_limit,
-                block_cost_limit,
-                vote_cost_limit,
-            );
         }
 
         if new_feature_activations.contains(&feature_set::raise_block_limits_to_60m::id()) {
