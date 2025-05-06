@@ -86,11 +86,7 @@ impl BalanceCollector {
         let has_token_program = transaction.account_keys().iter().any(is_known_spl_token_id);
 
         for (index, key) in transaction.account_keys().iter().enumerate() {
-            // we load as read-only to avoid triggering a bad account inspection
-            let Some(account) = account_loader
-                .load_account(key, false)
-                .map(|loaded| loaded.account)
-            else {
+            let Some(account) = account_loader.load_account(key) else {
                 native_balances.push(0);
                 continue;
             };
@@ -190,8 +186,7 @@ impl SvmTokenInfo {
             amount,
         } = generic_token::Account::unpack(account.data(), &program_id)?;
 
-        // we load as read-only to avoid triggering a bad account inspection
-        let mint_account = account_loader.load_account(&mint, false)?.account;
+        let mint_account = account_loader.load_account(&mint)?;
         if *mint_account.owner() != program_id {
             return None;
         }
