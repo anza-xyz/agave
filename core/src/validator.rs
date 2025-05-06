@@ -1099,7 +1099,7 @@ impl Validator {
             let connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
                 tpu_connection_pool_size,
-                Some(node.sockets.quic_forwards_client),
+                Some(node.sockets.tpu_transactions_forwards_client),
                 Some((
                     &identity_keypair,
                     node.info
