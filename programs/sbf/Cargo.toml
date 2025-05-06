@@ -137,7 +137,7 @@ solana-hash = "2.2.1"
 solana-instruction = "2.2.1"
 solana-keypair = "2.2.1"
 solana-ledger = { workspace = true }
-solana-loader-v3-interface = "3.0.0"
+solana-loader-v3-interface = "4.0.1"
 solana-loader-v4-interface = "2.2.1"
 solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }
