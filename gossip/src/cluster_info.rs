@@ -2366,7 +2366,7 @@ pub struct Sockets {
     /// Client-side socket for ForwardingStage vote transactions
     pub tpu_vote_forwarding_client: UdpSocket,
     /// Client-side socket for ForwardingStage non-vote transactions
-    pub tpu_transactions_forwarding_client: UdpSocket,
+    pub tpu_transaction_forwarding_client: UdpSocket,
     /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket,
     /// Client-side socket for RPC/SendTransactionService.
@@ -2459,7 +2459,7 @@ impl Node {
         let ancestor_hashes_requests_quic = bind_to_unspecified().unwrap();
 
         let tpu_vote_forwarding_client = bind_to_localhost().unwrap();
-        let tpu_transactions_forwarding_client = bind_to_localhost().unwrap();
+        let tpu_transaction_forwarding_client = bind_to_localhost().unwrap();
         let quic_vote_client = bind_to_localhost().unwrap();
         let rpc_sts_client = bind_to_localhost().unwrap();
 
@@ -2540,7 +2540,7 @@ impl Node {
                 tpu_forwards_quic,
                 tpu_vote_quic,
                 tpu_vote_forwarding_client,
-                tpu_transactions_forwarding_client,
+                tpu_transaction_forwarding_client,
                 quic_vote_client,
                 rpc_sts_client,
                 vortexor_receivers: None,
@@ -2630,7 +2630,7 @@ impl Node {
         // These are client sockets, so the port is set to be 0 because it must be ephimeral.
         let tpu_vote_forwarding_client =
             bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
-        let tpu_transactions_forwarding_client =
+        let tpu_transaction_forwarding_client =
             bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
         let quic_vote_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
         let rpc_sts_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
@@ -2698,7 +2698,7 @@ impl Node {
                 tpu_vote_quic,
                 tpu_vote_forwarding_client,
                 quic_vote_client,
-                tpu_transactions_forwarding_client,
+                tpu_transaction_forwarding_client,
                 rpc_sts_client,
                 vortexor_receivers: None,
             },
@@ -2809,7 +2809,7 @@ impl Node {
         // These are client sockets, so the port is set to be 0 because it must be ephimeral.
         let tpu_vote_forwarding_client =
             bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
-        let tpu_transactions_forwarding_client =
+        let tpu_transaction_forwarding_client =
             bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
         let quic_vote_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
         let rpc_sts_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
@@ -2876,7 +2876,7 @@ impl Node {
             tpu_vote_quic,
             tpu_vote_forwarding_client,
             quic_vote_client,
-            tpu_transactions_forwarding_client,
+            tpu_transaction_forwarding_client,
             rpc_sts_client,
             vortexor_receivers,
         };
