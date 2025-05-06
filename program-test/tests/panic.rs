@@ -1,13 +1,12 @@
 use {
+    solana_account_info::AccountInfo,
+    solana_instruction::{error::InstructionError, Instruction},
+    solana_program_error::ProgramResult,
     solana_program_test::{processor, ProgramTest},
-    solana_sdk::{
-        account_info::AccountInfo,
-        entrypoint::ProgramResult,
-        instruction::{Instruction, InstructionError},
-        pubkey::Pubkey,
-        signature::Signer,
-        transaction::{Transaction, TransactionError},
-    },
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
 };
 
 fn panic(_program_id: &Pubkey, _accounts: &[AccountInfo], _input: &[u8]) -> ProgramResult {
