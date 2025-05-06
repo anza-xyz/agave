@@ -1099,7 +1099,7 @@ impl Validator {
             let connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
                 tpu_connection_pool_size,
-                Some(node.sockets.tpu_transactions_forwards_client),
+                Some(node.sockets.tpu_transactions_forwarding_client),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1604,7 +1604,7 @@ impl Validator {
                 transactions_quic: node.sockets.tpu_quic,
                 transactions_forwards_quic: node.sockets.tpu_forwards_quic,
                 vote_quic: node.sockets.tpu_vote_quic,
-                vote_forwards_client: node.sockets.tpu_vote_forwards_client,
+                vote_forwarding_client: node.sockets.tpu_vote_forwarding_client,
                 vortexor_receivers: node.sockets.vortexor_receivers,
             },
             &rpc_subscriptions,
