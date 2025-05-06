@@ -9190,7 +9190,7 @@ dependencies = [
  "solana-measure",
  "solana-perf",
  "solana-rayon-threadlimit",
- "solana-sdk",
+ "solana-sha256-hasher",
  "solana-version",
 ]
 
