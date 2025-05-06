@@ -993,9 +993,10 @@ fn make_shreds_data<'a>(
         shred
     })
 }
-// Generates coding shreds for the current erasure batch.
+// Generates coding shred blanks for the current erasure batch.
 // Updates ShredCommonHeader.index for coding shreds of the next batch.
-fn make_code_shred_blanks(
+// These have the correct headers, but none of the payloads and signatures.
+fn make_shreds_code_header_only(
     common_header: &mut ShredCommonHeader,
 ) -> impl Iterator<Item = ShredCode> + '_ {
     debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. });
@@ -1106,7 +1107,7 @@ pub(super) fn make_shreds_from_data(
             )
             .map(Shred::ShredData),
         );
-        shreds.extend(make_code_shred_blanks(&mut common_header_code).map(Shred::ShredCode));
+        shreds.extend(make_shreds_code_header_only(&mut common_header_code).map(Shred::ShredCode));
         data = rest;
     }
 
@@ -1139,7 +1140,7 @@ pub(super) fn make_shreds_from_data(
                 .take(DATA_SHREDS_PER_FEC_BLOCK);
             make_shreds_data(&mut common_header_data, data_header, chunks).map(Shred::ShredData)
         });
-        shreds.extend(make_code_shred_blanks(&mut common_header_code).map(Shred::ShredCode));
+        shreds.extend(make_shreds_code_header_only(&mut common_header_code).map(Shred::ShredCode));
     }
 
     // Adjust flags for the very last data shred.
