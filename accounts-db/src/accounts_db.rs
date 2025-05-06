@@ -321,97 +321,6 @@ pub enum StoreReclaims {
     Ignore,
 }
 
-/// while combining into ancient append vecs, we need to keep track of the current one that is receiving new data
-/// The pattern for callers is:
-/// 1. this is a mut local
-/// 2. do some version of create/new
-/// 3. use it (slot, append_vec, etc.)
-/// 4. re-create it sometimes
-/// 5. goto 3
-///
-/// If a caller uses it before initializing it, it will be a runtime unwrap() error, similar to an assert.
-/// That condition is an illegal use pattern and is justifiably an assertable condition.
-//
-// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-#[cfg(test)]
-#[derive(Default)]
-struct CurrentAncientAccountsFile {
-    slot_and_accounts_file: Option<(Slot, Arc<AccountStorageEntry>)>,
-}
-
-// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-#[cfg(test)]
-impl CurrentAncientAccountsFile {
-    fn new(slot: Slot, append_vec: Arc<AccountStorageEntry>) -> CurrentAncientAccountsFile {
-        Self {
-            slot_and_accounts_file: Some((slot, append_vec)),
-        }
-    }
-
-    /// Create ancient accounts file for a slot
-    ///     min_bytes: the new accounts file needs to have at least this capacity
-    #[must_use]
-    fn create_ancient_accounts_file<'a>(
-        &mut self,
-        slot: Slot,
-        db: &'a AccountsDb,
-        min_bytes: usize,
-    ) -> ShrinkInProgress<'a> {
-        let size = get_ancient_append_vec_capacity().max(min_bytes as u64);
-        let shrink_in_progress = db.get_store_for_shrink(slot, size);
-        *self = Self::new(slot, Arc::clone(shrink_in_progress.new_storage()));
-        shrink_in_progress
-    }
-    #[must_use]
-    fn create_if_necessary<'a>(
-        &mut self,
-        slot: Slot,
-        db: &'a AccountsDb,
-        min_bytes: usize,
-    ) -> Option<ShrinkInProgress<'a>> {
-        if self.slot_and_accounts_file.is_none() {
-            Some(self.create_ancient_accounts_file(slot, db, min_bytes))
-        } else {
-            None
-        }
-    }
-
-    /// note this requires that 'slot_and_accounts_file' is Some
-    fn slot(&self) -> Slot {
-        self.slot_and_accounts_file.as_ref().unwrap().0
-    }
-
-    /// note this requires that 'slot_and_accounts_file' is Some
-    fn accounts_file(&self) -> &Arc<AccountStorageEntry> {
-        &self.slot_and_accounts_file.as_ref().unwrap().1
-    }
-
-    /// helper function to cleanup call to 'store_accounts_frozen'
-    /// return timing and bytes written
-    fn store_ancient_accounts(
-        &self,
-        db: &AccountsDb,
-        accounts_to_store: &AccountsToStore,
-        storage_selector: StorageSelector,
-    ) -> (StoreAccountsTiming, u64) {
-        let accounts = accounts_to_store.get(storage_selector);
-
-        let previous_available = self.accounts_file().accounts.remaining_bytes();
-
-        let accounts = [(accounts_to_store.slot(), accounts)];
-        let storable_accounts = StorableAccountsBySlot::new(self.slot(), &accounts, db);
-        let timing = db.store_accounts_frozen(storable_accounts, self.accounts_file());
-        let bytes_written =
-            previous_available.saturating_sub(self.accounts_file().accounts.remaining_bytes());
-        assert_eq!(
-            bytes_written,
-            u64_align!(accounts_to_store.get_bytes(storage_selector)) as u64
-        );
-
-        (timing, bytes_written)
-    }
-}
-
 /// specifies how to return zero lamport accounts from a load
 #[derive(Clone, Copy)]
 enum LoadZeroLamports {
@@ -424,62 +333,6 @@ enum LoadZeroLamports {
     /// Once it is cleaned from the index, None is returned.
     #[cfg(feature = "dev-context-only-utils")]
     SomeWithZeroLamportAccountForTests,
-}
-
-#[cfg(test)]
-#[derive(Debug)]
-struct AncientSlotPubkeysInner {
-    pubkeys: HashSet<Pubkey>,
-    slot: Slot,
-}
-
-#[cfg(test)]
-#[derive(Debug, Default)]
-struct AncientSlotPubkeys {
-    inner: Option<AncientSlotPubkeysInner>,
-}
-
-#[cfg(test)]
-impl AncientSlotPubkeys {
-    /// All accounts in 'slot' will be moved to 'current_ancient'
-    /// If 'slot' is different than the 'current_ancient'.slot, then an account in 'slot' may ALREADY be in the current ancient append vec.
-    /// In that case, we need to unref the pubkey because it will now only be referenced from 'current_ancient'.slot and no longer from 'slot'.
-    /// 'self' is also changed to accumulate the pubkeys that now exist in 'current_ancient'
-    /// When 'slot' differs from the previous inner slot, then we have moved to a new ancient append vec, and inner.pubkeys gets reset to the
-    ///  pubkeys in the new 'current_ancient'.append_vec
-    fn maybe_unref_accounts_already_in_ancient(
-        &mut self,
-        slot: Slot,
-        db: &AccountsDb,
-        current_ancient: &CurrentAncientAccountsFile,
-        to_store: &AccountsToStore,
-    ) {
-        if slot != current_ancient.slot() {
-            // we are taking accounts from 'slot' and putting them into 'current_ancient.slot()'
-            // StorageSelector::Primary here because only the accounts that are moving from 'slot' to 'current_ancient.slot()'
-            // Any overflow accounts will get written into a new append vec AT 'slot', so they don't need to be unrefed
-            let accounts = to_store.get(StorageSelector::Primary);
-            if Some(current_ancient.slot()) != self.inner.as_ref().map(|ap| ap.slot) {
-                let mut pubkeys = HashSet::new();
-                current_ancient
-                    .accounts_file()
-                    .accounts
-                    .scan_pubkeys(|pubkey| {
-                        pubkeys.insert(*pubkey);
-                    });
-                self.inner = Some(AncientSlotPubkeysInner {
-                    pubkeys,
-                    slot: current_ancient.slot(),
-                });
-            }
-            // accounts in 'slot' but ALSO already in the ancient append vec at a different slot need to be unref'd since 'slot' is going away
-            // unwrap cannot fail because the code above will cause us to set it to Some(...) if it is None
-            db.unref_accounts_already_in_storage(
-                accounts,
-                self.inner.as_mut().map(|p| &mut p.pubkeys).unwrap(),
-            );
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -9237,7 +9090,6 @@ impl AccountsDb {
     /// get the storage from 'slot' to squash
     /// or None if this slot should be skipped
     /// side effect could be updating 'current_ancient'
-    #[cfg(test)]
     fn get_storage_to_move_to_ancient_accounts_file(
         &self,
         slot: Slot,
@@ -9496,6 +9348,156 @@ impl AccountsDb {
         self.shrink_candidate_slots.lock().unwrap().remove(&slot);
 
         Self::update_shrink_stats(&self.shrink_ancient_stats.shrink_stats, stats_sub, true);
+    }
+}
+
+/// while combining into ancient append vecs, we need to keep track of the current one that is receiving new data
+/// The pattern for callers is:
+/// 1. this is a mut local
+/// 2. do some version of create/new
+/// 3. use it (slot, append_vec, etc.)
+/// 4. re-create it sometimes
+/// 5. goto 3
+///
+/// If a caller uses it before initializing it, it will be a runtime unwrap() error, similar to an assert.
+/// That condition is an illegal use pattern and is justifiably an assertable condition.
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
+#[derive(Default)]
+struct CurrentAncientAccountsFile {
+    slot_and_accounts_file: Option<(Slot, Arc<AccountStorageEntry>)>,
+}
+
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
+impl CurrentAncientAccountsFile {
+    fn new(slot: Slot, append_vec: Arc<AccountStorageEntry>) -> CurrentAncientAccountsFile {
+        Self {
+            slot_and_accounts_file: Some((slot, append_vec)),
+        }
+    }
+
+    /// Create ancient accounts file for a slot
+    ///     min_bytes: the new accounts file needs to have at least this capacity
+    #[must_use]
+    fn create_ancient_accounts_file<'a>(
+        &mut self,
+        slot: Slot,
+        db: &'a AccountsDb,
+        min_bytes: usize,
+    ) -> ShrinkInProgress<'a> {
+        let size = get_ancient_append_vec_capacity().max(min_bytes as u64);
+        let shrink_in_progress = db.get_store_for_shrink(slot, size);
+        *self = Self::new(slot, Arc::clone(shrink_in_progress.new_storage()));
+        shrink_in_progress
+    }
+    #[must_use]
+    fn create_if_necessary<'a>(
+        &mut self,
+        slot: Slot,
+        db: &'a AccountsDb,
+        min_bytes: usize,
+    ) -> Option<ShrinkInProgress<'a>> {
+        if self.slot_and_accounts_file.is_none() {
+            Some(self.create_ancient_accounts_file(slot, db, min_bytes))
+        } else {
+            None
+        }
+    }
+
+    /// note this requires that 'slot_and_accounts_file' is Some
+    fn slot(&self) -> Slot {
+        self.slot_and_accounts_file.as_ref().unwrap().0
+    }
+
+    /// note this requires that 'slot_and_accounts_file' is Some
+    fn accounts_file(&self) -> &Arc<AccountStorageEntry> {
+        &self.slot_and_accounts_file.as_ref().unwrap().1
+    }
+
+    /// helper function to cleanup call to 'store_accounts_frozen'
+    /// return timing and bytes written
+    fn store_ancient_accounts(
+        &self,
+        db: &AccountsDb,
+        accounts_to_store: &AccountsToStore,
+        storage_selector: StorageSelector,
+    ) -> (StoreAccountsTiming, u64) {
+        let accounts = accounts_to_store.get(storage_selector);
+
+        let previous_available = self.accounts_file().accounts.remaining_bytes();
+
+        let accounts = [(accounts_to_store.slot(), accounts)];
+        let storable_accounts = StorableAccountsBySlot::new(self.slot(), &accounts, db);
+        let timing = db.store_accounts_frozen(storable_accounts, self.accounts_file());
+        let bytes_written =
+            previous_available.saturating_sub(self.accounts_file().accounts.remaining_bytes());
+        assert_eq!(
+            bytes_written,
+            u64_align!(accounts_to_store.get_bytes(storage_selector)) as u64
+        );
+
+        (timing, bytes_written)
+    }
+}
+
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
+#[derive(Debug)]
+struct AncientSlotPubkeysInner {
+    pubkeys: HashSet<Pubkey>,
+    slot: Slot,
+}
+
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct AncientSlotPubkeys {
+    inner: Option<AncientSlotPubkeysInner>,
+}
+
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
+impl AncientSlotPubkeys {
+    /// All accounts in 'slot' will be moved to 'current_ancient'
+    /// If 'slot' is different than the 'current_ancient'.slot, then an account in 'slot' may ALREADY be in the current ancient append vec.
+    /// In that case, we need to unref the pubkey because it will now only be referenced from 'current_ancient'.slot and no longer from 'slot'.
+    /// 'self' is also changed to accumulate the pubkeys that now exist in 'current_ancient'
+    /// When 'slot' differs from the previous inner slot, then we have moved to a new ancient append vec, and inner.pubkeys gets reset to the
+    ///  pubkeys in the new 'current_ancient'.append_vec
+    fn maybe_unref_accounts_already_in_ancient(
+        &mut self,
+        slot: Slot,
+        db: &AccountsDb,
+        current_ancient: &CurrentAncientAccountsFile,
+        to_store: &AccountsToStore,
+    ) {
+        if slot != current_ancient.slot() {
+            // we are taking accounts from 'slot' and putting them into 'current_ancient.slot()'
+            // StorageSelector::Primary here because only the accounts that are moving from 'slot' to 'current_ancient.slot()'
+            // Any overflow accounts will get written into a new append vec AT 'slot', so they don't need to be unrefed
+            let accounts = to_store.get(StorageSelector::Primary);
+            if Some(current_ancient.slot()) != self.inner.as_ref().map(|ap| ap.slot) {
+                let mut pubkeys = HashSet::new();
+                current_ancient
+                    .accounts_file()
+                    .accounts
+                    .scan_pubkeys(|pubkey| {
+                        pubkeys.insert(*pubkey);
+                    });
+                self.inner = Some(AncientSlotPubkeysInner {
+                    pubkeys,
+                    slot: current_ancient.slot(),
+                });
+            }
+            // accounts in 'slot' but ALSO already in the ancient append vec at a different slot need to be unref'd since 'slot' is going away
+            // unwrap cannot fail because the code above will cause us to set it to Some(...) if it is None
+            db.unref_accounts_already_in_storage(
+                accounts,
+                self.inner.as_mut().map(|p| &mut p.pubkeys).unwrap(),
+            );
+        }
     }
 }
 
