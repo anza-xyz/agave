@@ -1489,6 +1489,15 @@ fn main() {
                         .help(BlockProductionMethod::cli_message()),
                 )
                 .arg(
+                    Arg::with_name("transaction_struct")
+                        .long("transaction-structure")
+                        .value_name("STRUCT")
+                        .takes_value(true)
+                        .possible_values(TransactionStructure::cli_names())
+                        .default_value(TransactionStructure::default().into())
+                        .help(TransactionStructure::cli_message()),
+                )
+                .arg(
                     Arg::with_name("first_simulated_slot")
                         .long("first-simulated-slot")
                         .value_name("SLOT")
@@ -2556,8 +2565,7 @@ fn main() {
                         BlockProductionMethod
                     );
                     let transaction_struct =
-                        value_t!(arg_matches, "transaction_struct", TransactionStructure)
-                            .unwrap_or_default();
+                        value_t_or_exit!(arg_matches, "transaction_struct", TransactionStructure);
 
                     info!("Using: block-production-method: {block_production_method} transaction-structure: {transaction_struct}");
 
