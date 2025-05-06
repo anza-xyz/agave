@@ -1,4 +1,5 @@
 use {
+    solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_measure::measure_us,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_transaction::svm_message::SVMMessage,
@@ -87,7 +88,7 @@ pub(crate) fn process_message(
 
         result.map_err(|err| {
             let transaction_context: &TransactionContext = invoke_context.transaction_context;
-            let responsible_program_account_index = transaction_context
+            let responsible_program_account_index = &transaction_context
                 // By definition the last instruction (outer or inner) in the trace before the trace
                 // stopped being appended to is the one that encountered an error.
                 .get_instruction_trace_length()
@@ -108,9 +109,63 @@ pub(crate) fn process_message(
                         .iter()
                         .position(|message_pubkey| message_pubkey.eq(errored_program_pubkey))
                 });
+            enum InnerInstructionIndexSearchState {
+                SearchingForTopLevelInstruction(
+                    usize, // Index of top-level instruction being sought next
+                ),
+                InTopLevelInstruction(
+                    Option<u8>, // Inner instruction index
+                ),
+            }
+            let mut state = InnerInstructionIndexSearchState::SearchingForTopLevelInstruction(0);
+            for index_in_trace in 0..transaction_context.get_instruction_trace_length() {
+                if let Ok(instruction_context) =
+                    transaction_context.get_instruction_context_at_index_in_trace(index_in_trace)
+                {
+                    let stack_height = instruction_context.get_stack_height();
+                    match state {
+                        InnerInstructionIndexSearchState::SearchingForTopLevelInstruction(
+                            candidate_top_level_instruction_index,
+                        ) => {
+                            if
+                            // This is a top-level instruction
+                            stack_height == TRANSACTION_LEVEL_STACK_HEIGHT
+                            // and it's the top level instruction we're looking for.
+                            && candidate_top_level_instruction_index == top_level_instruction_index
+                            {
+                                state =
+                                    InnerInstructionIndexSearchState::InTopLevelInstruction(None);
+                            }
+                        }
+                        InnerInstructionIndexSearchState::InTopLevelInstruction(
+                            inner_instruction_index,
+                        ) => {
+                            if stack_height == TRANSACTION_LEVEL_STACK_HEIGHT {
+                                // We hit the next top-level instruction;
+                                // We are done collecting inner instruction indexes.
+                                break;
+                            } else {
+                                state = InnerInstructionIndexSearchState::InTopLevelInstruction(
+                                    inner_instruction_index.map(|i| i + 1).or(Some(1)),
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
             TransactionError::InstructionError(
                 top_level_instruction_index as u8,
                 err,
+                if let InnerInstructionIndexSearchState::InTopLevelInstruction(
+                    inner_instruction_index,
+                ) = state
+                {
+                    inner_instruction_index
+                } else {
+                    None
+                },
                 responsible_program_account_index.map(|i| i as u8),
             )
         })?;

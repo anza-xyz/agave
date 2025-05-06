@@ -1299,15 +1299,16 @@ mod tests {
         );
     }
 
-    #[test_case(0; "Throw in program 0")]
-    #[test_case(1; "Throw in program 1")]
-    #[test_case(2; "Throw in program 2")]
-    #[test_case(3; "Throw in program 3")]
-    #[test_case(4; "Throw in program 4")]
-    #[test_case(5; "Throw in program 5")]
-    #[test_case(6; "Throw in program 6")]
+    #[test_case(0, None; "Throw in program 0")]
+    #[test_case(1, Some(1); "Throw in program 1")]
+    #[test_case(2, Some(2); "Throw in program 2")]
+    #[test_case(3, Some(3); "Throw in program 3")]
+    #[test_case(4, Some(4); "Throw in program 4")]
+    #[test_case(5, Some(5); "Throw in program 5")]
+    #[test_case(6, Some(6); "Throw in program 6")]
     fn test_instruction_error_carries_responsible_program_account_index(
         index_of_program_that_should_throw_exception: u8,
+        expected_inner_instruction_index: Option<u8>,
     ) {
         lazy_static! {
             static ref PROGRAM_ADDRESSES: [Pubkey; 7] =
@@ -1451,10 +1452,13 @@ mod tests {
             Some(TransactionError::InstructionError(
                 0,
                 InstructionError::Custom(0xdeadbeef),
-                Some(ii),
-            )) if ii == index_of_program_that_should_throw_exception,
+                ii,
+                Some(jj),
+            )) if ii == expected_inner_instruction_index && jj == index_of_program_that_should_throw_exception,
             "Expected the error to be attributable to the program with account index: \
-            {index_of_program_that_should_throw_exception}."
+            {index_of_program_that_should_throw_exception} at inner instruction index \
+            {:?}.",
+            expected_inner_instruction_index,
         );
     }
 

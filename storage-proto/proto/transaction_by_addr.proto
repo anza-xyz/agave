@@ -70,7 +70,8 @@ message InstructionError {
     uint32 index = 1;
     InstructionErrorType error = 2;
     CustomError custom = 3;
-    optional uint32 responsible_program_account_index = 4;
+    optional uint32 inner_instruction_index = 4;
+    optional uint32 responsible_program_account_index = 5;
 }
 
 message TransactionDetails {

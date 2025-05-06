@@ -112,6 +112,7 @@ impl ComputeBudgetInstructionDetails {
                         index,
                         InstructionError::InvalidInstructionData,
                         None,
+                        None,
                     ));
                 }
             } else {
@@ -157,6 +158,7 @@ impl ComputeBudgetInstructionDetails {
         let invalid_instruction_data_error = TransactionError::InstructionError(
             index,
             InstructionError::InvalidInstructionData,
+            None,
             Some(instruction.program_id_index),
         );
         let duplicate_instruction_error = TransactionError::DuplicateInstruction(index);

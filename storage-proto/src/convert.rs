@@ -728,6 +728,8 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
     fn try_from(transaction_error: tx_by_addr::TransactionError) -> Result<Self, Self::Error> {
         if transaction_error.transaction_error == 8 {
             if let Some(instruction_error) = transaction_error.instruction_error {
+                let inner_instruction_index =
+                    instruction_error.inner_instruction_index.map(|i| i as u8);
                 let responsible_program_account_index = instruction_error
                     .responsible_program_account_index
                     .map(|i| i as u8);
@@ -736,6 +738,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
                     return Ok(TransactionError::InstructionError(
                         instruction_error.index as u8,
                         InstructionError::Custom(custom.custom),
+                        inner_instruction_index,
                         responsible_program_account_index,
                     ));
                 }
@@ -800,6 +803,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
                 return Ok(TransactionError::InstructionError(
                     instruction_error.index as u8,
                     ie,
+                    inner_instruction_index,
                     responsible_program_account_index,
                 ));
             }
@@ -915,7 +919,7 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 TransactionError::ClusterMaintenance => {
                     tx_by_addr::TransactionErrorType::ClusterMaintenance
                 }
-                TransactionError::InstructionError(_, _, _) => {
+                TransactionError::InstructionError(_, _, _, _) => {
                     tx_by_addr::TransactionErrorType::InstructionError
                 }
                 TransactionError::AccountBorrowOutstanding => {
@@ -992,6 +996,7 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 TransactionError::InstructionError(
                     index,
                     ref instruction_error,
+                    inner_instruction_index,
                     responsible_program_account_index,
                 ) => Some(tx_by_addr::InstructionError {
                     index: index as u32,
@@ -1159,6 +1164,7 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                         }
                         _ => None,
                     },
+                    inner_instruction_index: inner_instruction_index.map(|i| i as u32),
                     responsible_program_account_index: responsible_program_account_index
                         .map(|i| i as u32),
                 }),
@@ -1486,6 +1492,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::AccountAlreadyInitialized,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1495,8 +1502,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::AccountBorrowFailed, Some(42));
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::AccountBorrowFailed,
+            None,
+            Some(42),
+        );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1507,6 +1518,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::AccountBorrowOutstanding,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1519,6 +1531,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::AccountDataSizeChanged,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1528,8 +1541,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::AccountDataTooSmall, Some(42));
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::AccountDataTooSmall,
+            None,
+            Some(42),
+        );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1540,6 +1557,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::AccountNotExecutable,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1550,7 +1568,7 @@ mod test {
         );
 
         let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::CallDepth, Some(42));
+            TransactionError::InstructionError(10, InstructionError::CallDepth, None, Some(42));
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1561,6 +1579,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ComputationalBudgetExceeded,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1573,6 +1592,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::DuplicateAccountIndex,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1585,6 +1605,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::DuplicateAccountOutOfSync,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1597,6 +1618,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ExecutableAccountNotRentExempt,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1609,6 +1631,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ExecutableDataModified,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1621,6 +1644,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ExecutableLamportChange,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1630,8 +1654,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ExecutableModified, Some(42));
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::ExecutableModified,
+            None,
+            Some(42),
+        );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1642,6 +1670,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ExternalAccountDataModified,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1654,6 +1683,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ExternalAccountLamportSpend,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1664,7 +1694,7 @@ mod test {
         );
 
         let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::GenericError, Some(42));
+            TransactionError::InstructionError(10, InstructionError::GenericError, None, Some(42));
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1673,7 +1703,72 @@ mod test {
         );
 
         let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::Immutable, Some(42));
+            TransactionError::InstructionError(10, InstructionError::Immutable, None, Some(42));
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::IncorrectAuthority,
+            None,
+            Some(42),
+        );
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::IncorrectProgramId,
+            None,
+            Some(42),
+        );
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::InsufficientFunds,
+            None,
+            Some(42),
+        );
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::InvalidAccountData,
+            None,
+            Some(42),
+        );
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::InvalidArgument,
+            None,
+            Some(42),
+        );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1682,52 +1777,7 @@ mod test {
         );
 
         let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::IncorrectAuthority, Some(42));
-        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
-            transaction_error.clone().into();
-        assert_eq!(
-            transaction_error,
-            tx_by_addr_transaction_error.try_into().unwrap()
-        );
-
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::IncorrectProgramId, Some(42));
-        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
-            transaction_error.clone().into();
-        assert_eq!(
-            transaction_error,
-            tx_by_addr_transaction_error.try_into().unwrap()
-        );
-
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InsufficientFunds, Some(42));
-        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
-            transaction_error.clone().into();
-        assert_eq!(
-            transaction_error,
-            tx_by_addr_transaction_error.try_into().unwrap()
-        );
-
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidAccountData, Some(42));
-        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
-            transaction_error.clone().into();
-        assert_eq!(
-            transaction_error,
-            tx_by_addr_transaction_error.try_into().unwrap()
-        );
-
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidArgument, Some(42));
-        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
-            transaction_error.clone().into();
-        assert_eq!(
-            transaction_error,
-            tx_by_addr_transaction_error.try_into().unwrap()
-        );
-
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidError, Some(42));
+            TransactionError::InstructionError(10, InstructionError::InvalidError, None, Some(42));
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1738,6 +1788,20 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::InvalidInstructionData,
+            None,
+            Some(42),
+        );
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::InvalidRealloc,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1748,16 +1812,7 @@ mod test {
         );
 
         let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidRealloc, Some(42));
-        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
-            transaction_error.clone().into();
-        assert_eq!(
-            transaction_error,
-            tx_by_addr_transaction_error.try_into().unwrap()
-        );
-
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidSeeds, Some(42));
+            TransactionError::InstructionError(10, InstructionError::InvalidSeeds, None, Some(42));
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1768,6 +1823,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::MaxSeedLengthExceeded,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1777,8 +1833,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::MissingAccount, Some(42));
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::MissingAccount,
+            None,
+            Some(42),
+        );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1789,6 +1849,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::MissingRequiredSignature,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1798,8 +1859,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ModifiedProgramId, Some(42));
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::ModifiedProgramId,
+            None,
+            Some(42),
+        );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1807,8 +1872,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::NotEnoughAccountKeys, None);
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::NotEnoughAccountKeys,
+            None,
+            None,
+        );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1816,8 +1885,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::PrivilegeEscalation, Some(42));
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::PrivilegeEscalation,
+            None,
+            Some(42),
+        );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1828,6 +1901,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ProgramEnvironmentSetupFailure,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1840,6 +1914,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ProgramFailedToCompile,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1852,6 +1927,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ProgramFailedToComplete,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1864,6 +1940,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ReadonlyDataModified,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1876,6 +1953,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ReadonlyLamportChange,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1888,6 +1966,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::ReentrancyNotAllowed,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1897,8 +1976,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::RentEpochModified, Some(42));
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::RentEpochModified,
+            None,
+            Some(42),
+        );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1909,6 +1992,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::UnbalancedInstruction,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1921,6 +2005,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::UninitializedAccount,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1933,6 +2018,7 @@ mod test {
         let transaction_error = TransactionError::InstructionError(
             10,
             InstructionError::UnsupportedProgramId,
+            None,
             Some(42),
         );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
@@ -1943,7 +2029,7 @@ mod test {
         );
 
         let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::Custom(10), Some(42));
+            TransactionError::InstructionError(10, InstructionError::Custom(10), None, Some(42));
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -2007,6 +2093,7 @@ mod test {
                                     index: ix_index,
                                     error: ix_error as i32,
                                     custom: None,
+                                    inner_instruction_index: Some(41),
                                     responsible_program_account_index: Some(11),
                                 }),
                                 transaction_details: None,
@@ -2025,6 +2112,7 @@ mod test {
                                     custom: Some(tx_by_addr::CustomError {
                                         custom: custom_error,
                                     }),
+                                    inner_instruction_index: Some(41),
                                     responsible_program_account_index: Some(11),
                                 }),
                                 transaction_details: None,
