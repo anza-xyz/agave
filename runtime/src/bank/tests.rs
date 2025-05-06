@@ -1954,8 +1954,8 @@ impl Bank {
             }
             // If accounts-db contains a valid vote account, then it should
             // already have been cached in cached_vote_accounts; so the code
-            // below is only for sanity check, and can be removed once
-            // vote_accounts_cache_miss_count is shown to be always zero.
+            // below is only for sanity check in tests, and should not be hit
+            // in practice.
             let account = self.get_account_with_fixed_root(vote_pubkey)?;
             if account.owner() == &solana_vote_program
                 && VoteState::deserialize(account.data()).is_ok()

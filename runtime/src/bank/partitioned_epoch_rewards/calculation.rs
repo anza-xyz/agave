@@ -26,10 +26,15 @@ use {
     },
     solana_clock::{Epoch, Slot},
     solana_measure::measure_us,
-    solana_pubkey::Pubkey,
-    solana_reward_info::RewardInfo,
-    solana_stake_interface::state::Delegation,
-    solana_sysvar::epoch_rewards::EpochRewards,
+    solana_sdk::{
+        account::ReadableAccount,
+        clock::{Epoch, Slot},
+        pubkey::Pubkey,
+        reward_info::RewardInfo,
+        stake::state::Delegation,
+        sysvar::epoch_rewards::EpochRewards,
+    },
+    solana_vote_program::vote_state::VoteState,
     std::sync::{
         atomic::{AtomicU64, Ordering::Relaxed},
         Arc,
@@ -305,6 +310,7 @@ impl Bank {
         );
 
         let total_stake_rewards = AtomicU64::default();
+        const ASSERT_STAKE_CACHE: bool = false; // Turn this on to assert that all vote accounts are in the cache
         let (stake_rewards, measure_stake_rewards_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
                 .par_iter()
@@ -319,7 +325,21 @@ impl Bank {
 
                     let stake_pubkey = **stake_pubkey;
                     let vote_pubkey = stake_account.delegation().voter_pubkey;
-                    let vote_account = cached_vote_accounts.get(&vote_pubkey)?;
+                    let vote_account_from_cache = cached_vote_accounts.get(&vote_pubkey);
+                    if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
+                        let account_from_db = self.get_account_with_fixed_root(&vote_pubkey);
+                        if let Some(account_from_db) = account_from_db {
+                            if account_from_db.owner() == &solana_vote_program::id()
+                                && VoteState::deserialize(account_from_db.data()).is_ok()
+                            {
+                                panic!(
+                                    "Vote account {} not found in cache, but found in db: {:?}",
+                                    vote_pubkey, account_from_db
+                                );
+                            }
+                        }
+                    }
+                    let vote_account = vote_account_from_cache?;
                     let vote_state_view = vote_account.vote_state_view();
                     let mut stake_state = *stake_account.stake_state();
 
