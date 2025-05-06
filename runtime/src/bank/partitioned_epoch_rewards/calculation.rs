@@ -8,7 +8,7 @@ use {
     crate::{
         bank::{
             PrevEpochInflationRewards, RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
-            VoteAccount, VoteReward, VoteRewards,
+            VoteReward, VoteRewards,
         },
         inflation_rewards::{
             points::{calculate_points, PointValue},
@@ -401,19 +401,6 @@ impl Bank {
         } = reward_calculate_params;
 
         let solana_vote_program: Pubkey = solana_vote_program::id();
-
-        let get_vote_account = |vote_pubkey: &Pubkey| -> Option<VoteAccount> {
-            if let Some(vote_account) = cached_vote_accounts.get(vote_pubkey) {
-                return Some(vote_account.clone());
-            }
-            // If accounts-db contains a valid vote account, then it should
-            // already have been cached in cached_vote_accounts; so the code
-            // below is only for sanity checking, and can be removed once
-            // the cache is deemed to be reliable.
-            let account = self.get_account_with_fixed_root(vote_pubkey)?;
-            VoteAccount::try_from(account).ok()
-        };
-
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
@@ -421,7 +408,7 @@ impl Bank {
                 .map(|(_stake_pubkey, stake_account)| {
                     let vote_pubkey = stake_account.delegation().voter_pubkey;
 
-                    let Some(vote_account) = get_vote_account(&vote_pubkey) else {
+                    let Some(vote_account) = cached_vote_accounts.get(&vote_pubkey) else {
                         return 0;
                     };
                     if vote_account.owner() != &solana_vote_program {
