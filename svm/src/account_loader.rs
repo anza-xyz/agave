@@ -450,25 +450,14 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
     match validation_result {
         Err(e) => TransactionLoadResult::NotLoaded(e),
         Ok(tx_details) => {
-            let load_result = if HANA_FEATURE_GATE_PLACEHOLDER {
-                hana_load_transaction_accounts(
-                    account_loader,
-                    message,
-                    tx_details.loaded_fee_payer_account,
-                    tx_details.loaded_accounts_bytes_limit,
-                    error_metrics,
-                    rent_collector,
-                )
-            } else {
-                load_transaction_accounts(
-                    account_loader,
-                    message,
-                    tx_details.loaded_fee_payer_account,
-                    tx_details.loaded_accounts_bytes_limit,
-                    error_metrics,
-                    rent_collector,
-                )
-            };
+            let load_result = load_transaction_accounts(
+                account_loader,
+                message,
+                tx_details.loaded_fee_payer_account,
+                tx_details.loaded_accounts_bytes_limit,
+                error_metrics,
+                rent_collector,
+            );
 
             match load_result {
                 Ok(loaded_tx_accounts) => TransactionLoadResult::Loaded(LoadedTransaction {
@@ -525,7 +514,36 @@ impl LoadedTransactionAccounts {
     }
 }
 
-fn hana_load_transaction_accounts<CB: TransactionProcessingCallback>(
+fn load_transaction_accounts<CB: TransactionProcessingCallback>(
+    account_loader: &mut AccountLoader<CB>,
+    message: &impl SVMMessage,
+    loaded_fee_payer_account: LoadedTransactionAccount,
+    loaded_accounts_bytes_limit: NonZeroU32,
+    error_metrics: &mut TransactionErrorMetrics,
+    rent_collector: &dyn SVMRentCollector,
+) -> Result<LoadedTransactionAccounts> {
+    if HANA_FEATURE_GATE_PLACEHOLDER {
+        load_transaction_accounts_simd186(
+            account_loader,
+            message,
+            loaded_fee_payer_account,
+            loaded_accounts_bytes_limit,
+            error_metrics,
+            rent_collector,
+        )
+    } else {
+        load_transaction_accounts_old(
+            account_loader,
+            message,
+            loaded_fee_payer_account,
+            loaded_accounts_bytes_limit,
+            error_metrics,
+            rent_collector,
+        )
+    }
+}
+
+fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
@@ -544,8 +562,7 @@ fn hana_load_transaction_accounts<CB: TransactionProcessingCallback>(
         loaded_accounts_data_size: 0,
     };
 
-    // transactions pay a base fee per address lookup table
-    // HANA can there be more than one? who does this return usize instead of bool. forwards compat?
+    // Transactions pay a base fee per address lookup table.
     loaded_transaction_accounts.increase_calculated_data_size(
         message
             .num_lookup_tables()
@@ -576,21 +593,31 @@ fn hana_load_transaction_accounts<CB: TransactionProcessingCallback>(
                 .rent_debits
                 .insert(key, rent_collected, account.lamports());
 
+            // This has been annotated branch-by-branch because collapsing the logic is infeasible.
+            // Its purpose is to ensure programdata accounts are counted once and *only* once per
+            // transaction. By checking account_keys, we never double-count a programdata account
+            // that was explictly included in the transaction. We also use a hashset to gracefully
+            // handle cases that LoaderV3 presumably makes impossible, such as self-referential
+            // program accounts or multiply-referenced programdata accounts, for added safety.
+            //
+            // If in the future LoaderV3 programs are migrated to LoaderV4, this entire code block
+            // can be deleted.
+            //
             // If this is a valid LoaderV3 program...
             if bpf_loader_upgradeable::check_id(account.owner()) {
                 if let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
                 }) = account.state()
                 {
-                    // ...and we won't count it as a transaction account, and haven't counted it already...
+                    // ...its programdata was not already counted and will not later be counted...
                     if !account_keys.iter().any(|key| programdata_address == *key)
                         && !additional_loaded_accounts.contains(&programdata_address)
                     {
-                        // ...and it exists (if it doesn't, it is *not* a load failure)...
+                        // ...and the programdata account exists (if it doesn't, it is *not* a load failure)...
                         if let Some(programdata_account) =
                             account_loader.load_account(&programdata_address)
                         {
-                            // ...count it toward this transaction's total size.
+                            // ...count programdata toward this transaction's total size.
                             loaded_transaction_accounts.increase_calculated_data_size(
                                 TRANSACTION_ACCOUNT_BASE_SIZE
                                     .saturating_add(programdata_account.data().len()),
@@ -616,7 +643,7 @@ fn hana_load_transaction_accounts<CB: TransactionProcessingCallback>(
         loaded_fee_payer_account,
     )?;
 
-    // Attempt to load and collect remaining non-fee payer accounts
+    // Attempt to load and collect remaining non-fee payer accounts.
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
         let loaded_account = load_transaction_account(
             account_loader,
@@ -662,7 +689,7 @@ fn hana_load_transaction_accounts<CB: TransactionProcessingCallback>(
     Ok(loaded_transaction_accounts)
 }
 
-fn load_transaction_accounts<CB: TransactionProcessingCallback>(
+fn load_transaction_accounts_old<CB: TransactionProcessingCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
