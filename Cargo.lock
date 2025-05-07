@@ -7450,7 +7450,6 @@ name = "solana-client-test"
 version = "2.3.0"
 dependencies = [
  "futures-util",
- "rand 0.8.5",
  "serde_json",
  "solana-client",
  "solana-clock",
@@ -7462,6 +7461,7 @@ dependencies = [
  "solana-merkle-tree",
  "solana-message",
  "solana-native-token",
+ "solana-net-utils",
  "solana-perf",
  "solana-pubkey",
  "solana-pubsub-client",

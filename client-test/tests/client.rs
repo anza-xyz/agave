@@ -1,6 +1,5 @@
 use {
     futures_util::StreamExt,
-    rand::Rng,
     serde_json::{json, Value},
     solana_clock::Slot,
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
@@ -52,10 +51,8 @@ use {
 };
 
 fn pubsub_addr() -> SocketAddr {
-    SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        rand::thread_rng().gen_range(1024..65535),
-    )
+    let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0)
 }
 
 #[test]
