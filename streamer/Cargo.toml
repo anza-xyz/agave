@@ -37,7 +37,7 @@ solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-quic-definitions = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }

@@ -164,7 +164,7 @@ fn main() -> Result<()> {
         let stake: u64 = 1024;
         let total_stake: u64 = 1024;
 
-        let stakes = HashMap::from([
+        let stakes = HashMap::from_iter([
             (identity_keypair.pubkey(), stake),
             (Pubkey::new_unique(), total_stake.saturating_sub(stake)),
         ]);

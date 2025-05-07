@@ -25,6 +25,7 @@ use {
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
+    solana_vote::vote_account::StakedNodesHashMap,
     std::{
         collections::{HashMap, HashSet},
         net::{Ipv4Addr, SocketAddr},
@@ -91,8 +92,8 @@ impl Deref for Network {
     }
 }
 
-fn stakes(network: &Network) -> HashMap<Pubkey, u64> {
-    let mut stakes = HashMap::new();
+fn stakes(network: &Network) -> StakedNodesHashMap {
+    let mut stakes = HashMap::default();
     for (key, Node { stake, .. }) in network.iter() {
         stakes.insert(*key, *stake);
     }
@@ -295,9 +296,9 @@ fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_conver
     network_values.par_iter().for_each(|node| {
         node.gossip.refresh_push_active_set(
             &node.keypair,
-            0,               // shred version
-            &HashMap::new(), // stakes
-            None,            // gossip validators
+            0,                   // shred version
+            &HashMap::default(), // stakes
+            None,                // gossip validators
             &node.ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
@@ -475,9 +476,9 @@ fn network_run_push(
             network_values.par_iter().for_each(|node| {
                 node.gossip.refresh_push_active_set(
                     &node.keypair,
-                    0,               // shred version
-                    &HashMap::new(), // stakes
-                    None,            // gossip validators
+                    0,                   // shred version
+                    &HashMap::default(), // stakes
+                    None,                // gossip validators
                     &node.ping_cache,
                     &mut Vec::new(), // pings
                     &SocketAddrSpace::Unspecified,
@@ -554,7 +555,7 @@ fn network_run_pull(
                             0, // shred version.
                             now,
                             None,
-                            &HashMap::new(),
+                            &HashMap::default(),
                             992, // max_bloom_filter_bytes
                             from.ping_cache.deref(),
                             &mut pings,
@@ -816,15 +817,15 @@ fn test_prune_errors() {
     let ping_cache = new_ping_cache();
     crds_gossip.refresh_push_active_set(
         &keypair,
-        0,               // shred version
-        &HashMap::new(), // stakes
-        None,            // gossip validators
+        0,                   // shred version
+        &HashMap::default(), // stakes
+        None,                // gossip validators
         &ping_cache,
         &mut Vec::new(), // pings
         &SocketAddrSpace::Unspecified,
     );
     let now = timestamp();
-    let stakes = HashMap::<Pubkey, u64>::default();
+    let stakes = HashMap::default();
     //incorrect dest
     let mut res = crds_gossip.process_prune_msg(
         &id,                                      // self_pubkey

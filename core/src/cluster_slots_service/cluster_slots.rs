@@ -3,10 +3,11 @@ use {
     solana_gossip::{
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
+    solana_pubkey::PubkeyHasherBuilder,
     solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
+    solana_vote::vote_account::StakedNodesHashMap,
     std::{
         collections::{HashMap, VecDeque},
-        hash::RandomState,
         ops::Range,
         sync::{
             atomic::{AtomicU64, Ordering},
@@ -22,10 +23,6 @@ use {
 const CLUSTER_SLOTS_TRIM_SIZE: usize = 50000;
 
 pub type Stake = u64;
-
-//This is intended to be switched to solana_pubkey::PubkeyHasherBuilder
-type PubkeyHasherBuilder = RandomState;
-pub(crate) type ValidatorStakesMap = HashMap<Pubkey, Stake, PubkeyHasherBuilder>;
 
 /// Pubkey-stake map for nodes that have confirmed this slot.
 /// If stake is zero the node has not confirmed the slot.
@@ -45,7 +42,7 @@ pub struct ClusterSlots {
     // ring buffer storing, per slot, which stakes were committed to a certain slot.
     cluster_slots: RwLock<VecDeque<RowContent>>,
     // a cache of validator stakes for reuse internally, updated at epoch boundary.
-    validator_stakes: RwLock<Arc<ValidatorStakesMap>>,
+    validator_stakes: RwLock<Arc<StakedNodesHashMap>>,
     total_stake: AtomicU64, // total amount of stake across all validators in validator_stakes.
     current_slot: AtomicU64, // current slot at the front of ringbuffer.
     epoch: RwLock<Option<u64>>, //current epoch.
@@ -86,7 +83,7 @@ impl ClusterSlots {
     pub(crate) fn update(
         &self,
         root_slot: Slot,
-        validator_stakes: &Arc<ValidatorStakesMap>,
+        validator_stakes: &Arc<StakedNodesHashMap>,
         cluster_info: &ClusterInfo,
         root_epoch: u64,
     ) {
@@ -106,11 +103,7 @@ impl ClusterSlots {
 
     /// Advance the cluster_slots ringbuffer, initialize if needed.
     /// We will discard slots at or before current root or too far ahead.
-    fn roll_cluster_slots(
-        &self,
-        validator_stakes: &HashMap<Pubkey, u64>,
-        root: Slot,
-    ) -> Range<Slot> {
+    fn roll_cluster_slots(&self, validator_stakes: &StakedNodesHashMap, root: Slot) -> Range<Slot> {
         let slot_range = (root + 1)..root.saturating_add(CLUSTER_SLOTS_TRIM_SIZE as u64 + 1);
         let current_slot = self.current_slot.swap(slot_range.start, Ordering::Relaxed);
         // early-return if no slot change happened
@@ -200,7 +193,7 @@ impl ClusterSlots {
     fn update_internal(
         &self,
         root: Slot,
-        validator_stakes: &HashMap<Pubkey, u64>,
+        validator_stakes: &StakedNodesHashMap,
         epoch_slots_list: Vec<EpochSlots>,
     ) {
         let total_stake = self.total_stake.load(std::sync::atomic::Ordering::Relaxed);
@@ -318,7 +311,7 @@ impl ClusterSlots {
 
     fn maybe_update_validator_stakes(
         &self,
-        staked_nodes: &Arc<ValidatorStakesMap>,
+        staked_nodes: &Arc<StakedNodesHashMap>,
         root_epoch: u64,
     ) {
         let my_epoch = *self.epoch.read().unwrap();
@@ -400,7 +393,7 @@ mod tests {
         let pk2 = Pubkey::new_unique();
 
         let trimsize = CLUSTER_SLOTS_TRIM_SIZE as u64;
-        let validator_stakes = HashMap::from([(pk1, 10), (pk2, 20)]);
+        let validator_stakes = HashMap::from_iter([(pk1, 10), (pk2, 20)]);
         assert_eq!(
             cs.cluster_slots.read().unwrap().len(),
             0,
@@ -460,7 +453,7 @@ mod tests {
         let pk1 = Pubkey::new_unique();
         let pk2 = Pubkey::new_unique();
 
-        let validator_stakes = HashMap::from([(pk1, 10), (pk2, 20)]);
+        let validator_stakes = HashMap::from_iter([(pk1, 10), (pk2, 20)]);
         cs.roll_cluster_slots(&validator_stakes, 10);
         cs.roll_cluster_slots(&validator_stakes, 5);
     }
@@ -468,7 +461,7 @@ mod tests {
     #[test]
     fn test_update_noop() {
         let cs = ClusterSlots::default();
-        cs.update_internal(0, &HashMap::new(), vec![]);
+        cs.update_internal(0, &HashMap::default(), vec![]);
         let stored_slots = cs.datastructure_size();
         assert_eq!(stored_slots, 0);
     }
@@ -477,7 +470,7 @@ mod tests {
     fn test_update_empty() {
         let cs = ClusterSlots::default();
         let epoch_slot = EpochSlots::default();
-        cs.update_internal(0, &HashMap::new(), vec![epoch_slot]);
+        cs.update_internal(0, &HashMap::default(), vec![epoch_slot]);
         assert!(cs.lookup(0).is_none());
     }
 
@@ -487,7 +480,7 @@ mod tests {
         let cs = ClusterSlots::default();
         let mut epoch_slot = EpochSlots::default();
         epoch_slot.fill(&[0], 0);
-        cs.update_internal(0, &HashMap::new(), vec![epoch_slot]);
+        cs.update_internal(0, &HashMap::default(), vec![epoch_slot]);
         assert!(cs.lookup(0).is_none());
     }
 
@@ -509,7 +502,7 @@ mod tests {
         cs.update_total_stake([1000]); //disable slot locking
         cs.update_internal(
             0,
-            &HashMap::from([(from1, 10), (from2, 20)]),
+            &HashMap::from_iter([(from1, 10), (from2, 20)]),
             vec![epoch_slot1, epoch_slot2],
         );
         assert!(
@@ -579,7 +572,7 @@ mod tests {
             supporters: Arc::new(RwLock::new(map)),
         });
         //make sure default weights are used as well
-        let validator_stakes: HashMap<_, _> = vec![(k1, u64::MAX / 2)].into_iter().collect();
+        let validator_stakes: HashMap<_, _, _> = vec![(k1, u64::MAX / 2)].into_iter().collect();
         *cs.validator_stakes.write().unwrap() = Arc::new(validator_stakes);
         let c1 = ContactInfo::new(k1, /*wallclock:*/ 0, /*shred_version:*/ 0);
         let c2 = ContactInfo::new(k2, /*wallclock:*/ 0, /*shred_version:*/ 0);
@@ -607,7 +600,7 @@ mod tests {
         assert!(i.is_empty());
 
         // Give second validator max stake
-        let validator_stakes: HashMap<_, _> = vec![
+        let validator_stakes: HashMap<_, _, _> = vec![
             (*contact_infos[0].pubkey(), 42),
             (*contact_infos[1].pubkey(), u64::MAX / 2),
         ]
@@ -633,7 +626,7 @@ mod tests {
             ..Default::default()
         };
         epoch_slot.fill(&[1], 0);
-        let map = HashMap::from([(pk, 42)]);
+        let map = HashMap::from_iter([(pk, 42)]);
 
         cs.update_internal(0, &map, vec![epoch_slot]);
         assert!(cs.lookup(1).is_some(), "slot 1 should have records");

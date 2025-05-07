@@ -27,6 +27,7 @@ use {
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
+    solana_vote::vote_account::StakedNodesHashMap,
     std::{
         collections::{HashMap, HashSet},
         iter::repeat,
@@ -91,7 +92,7 @@ impl CrdsGossipPush {
         &self,
         self_pubkey: &Pubkey,
         origins: I, // Unique pubkeys of crds values' owners.
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
     ) -> HashMap</*gossip peer:*/ Pubkey, /*origins:*/ Vec<Pubkey>>
     where
         I: IntoIterator<Item = Pubkey>,
@@ -167,7 +168,7 @@ impl CrdsGossipPush {
         pubkey: &Pubkey, // This node.
         crds: &RwLock<Crds>,
         now: u64,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
         // Predicate returning false if the CRDS value should be discarded.
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
     ) -> (
@@ -226,7 +227,7 @@ impl CrdsGossipPush {
         self_pubkey: &Pubkey,
         peer: &Pubkey,
         origins: &[Pubkey],
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
     ) {
         let active_set = self.active_set.read().unwrap();
         active_set.prune(self_pubkey, peer, origins, stakes);
@@ -237,7 +238,7 @@ impl CrdsGossipPush {
     pub(crate) fn refresh_push_active_set(
         &self,
         crds: &RwLock<Crds>,
-        stakes: &HashMap<Pubkey, u64>,
+        stakes: &StakedNodesHashMap,
         gossip_validators: Option<&HashSet<Pubkey>>,
         self_keypair: &Keypair,
         self_shred_version: u16,
@@ -311,7 +312,7 @@ mod tests {
             pubkey: &Pubkey,
             crds: &RwLock<Crds>,
             now: u64,
-            stakes: &HashMap<Pubkey, u64>,
+            stakes: &StakedNodesHashMap,
         ) -> HashMap<Pubkey, Vec<CrdsValue>> {
             let (entries, messages, _) = self.new_push_messages(
                 pubkey,
@@ -434,8 +435,8 @@ mod tests {
         let ping_cache = Mutex::new(ping_cache);
         push.refresh_push_active_set(
             &crds,
-            &HashMap::new(), // stakes
-            None,            // gossip_validtors
+            &HashMap::default(), // stakes
+            None,                // gossip_validtors
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
@@ -459,7 +460,7 @@ mod tests {
                 &Pubkey::default(),
                 &crds,
                 0,
-                &HashMap::<Pubkey, u64>::default(), // stakes
+                &HashMap::default(), // stakes
             ),
             expected
         );
@@ -501,8 +502,8 @@ mod tests {
         let ping_cache = Mutex::new(ping_cache);
         push.refresh_push_active_set(
             &crds,
-            &HashMap::new(), // stakes
-            None,            // gossip_validators
+            &HashMap::default(), // stakes
+            None,                // gossip_validators
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
@@ -522,7 +523,7 @@ mod tests {
                 &Pubkey::default(),
                 &crds,
                 now,
-                &HashMap::<Pubkey, u64>::default(), // stakes
+                &HashMap::default(), // stakes
             ),
             expected
         );
@@ -544,8 +545,8 @@ mod tests {
         let ping_cache = Mutex::new(new_ping_cache());
         push.refresh_push_active_set(
             &crds,
-            &HashMap::new(), // stakes
-            None,            // gossip_validators
+            &HashMap::default(), // stakes
+            None,                // gossip_validators
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
@@ -567,14 +568,14 @@ mod tests {
             &self_id,
             &peer.label().pubkey(),
             &[new_msg.label().pubkey()],
-            &HashMap::<Pubkey, u64>::default(), // stakes
+            &HashMap::default(), // stakes
         );
         assert_eq!(
             push.old_new_push_messages(
                 &self_id,
                 &crds,
                 0,
-                &HashMap::<Pubkey, u64>::default(), // stakes
+                &HashMap::default(), // stakes
             ),
             expected
         );
@@ -592,8 +593,8 @@ mod tests {
         let ping_cache = Mutex::new(new_ping_cache());
         push.refresh_push_active_set(
             &crds,
-            &HashMap::new(), // stakes
-            None,            // gossip_validators
+            &HashMap::default(), // stakes
+            None,                // gossip_validators
             &Keypair::new(),
             0, // self_shred_version
             &ping_cache,
@@ -615,7 +616,7 @@ mod tests {
                 &Pubkey::default(),
                 &crds,
                 0,
-                &HashMap::<Pubkey, u64>::default(), // stakes
+                &HashMap::default(), // stakes
             ),
             expected
         );

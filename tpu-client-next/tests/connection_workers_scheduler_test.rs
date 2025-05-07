@@ -397,7 +397,7 @@ async fn test_connection_pruned_and_reopened() {
 #[tokio::test]
 async fn test_staked_connection() {
     let stake_identity = Keypair::new();
-    let stakes = HashMap::from([(stake_identity.pubkey(), 100_000)]);
+    let stakes = HashMap::from_iter([(stake_identity.pubkey(), 100_000)]);
     let staked_nodes = StakedNodes::new(Arc::new(stakes), HashMap::<Pubkey, u64>::default());
 
     let SpawnTestServerResult {

@@ -24,7 +24,7 @@ fn bench_find_old_labels(bencher: &mut Bencher) {
     std::iter::repeat_with(|| (CrdsValue::new_rand(&mut rng, None), rng.gen_range(0..now)))
         .take(50_000)
         .for_each(|(v, ts)| assert!(crds.insert(v, ts, GossipRoute::LocalMessage).is_ok()));
-    let stakes = HashMap::from([(Pubkey::new_unique(), 1u64)]);
+    let stakes = HashMap::from_iter([(Pubkey::new_unique(), 1u64)]);
     let timeouts = CrdsTimeouts::new(
         Pubkey::new_unique(),
         CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS, // default_timeout

@@ -132,7 +132,7 @@ pub fn main() {
     let sigverify_stage = Vortexor::create_sigverify_stage(tpu_receiver, non_vote_sender);
 
     // To be linked with StakedNodes service.
-    let stake_map = Arc::new(HashMap::new());
+    let stake_map = Arc::new(HashMap::default());
     let staked_nodes_overrides = HashMap::new();
 
     let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(

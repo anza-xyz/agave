@@ -1,13 +1,12 @@
 use {
     crate::vote_state_view::VoteStateView,
-    itertools::Itertools,
     serde::{
         de::{MapAccess, Visitor},
         ser::{Serialize, Serializer},
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{
         cmp::Ordering,
         collections::{hash_map::Entry, HashMap},
@@ -39,6 +38,12 @@ struct VoteAccountInner {
 }
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
+/// HashMap from node pubkey to stake across all vote-accounts for that node
+pub type StakedNodesHashMap = HashMap<
+    Pubkey, // VoteAccount.vote_state.node_pubkey.
+    u64,    // Total stake across all vote-accounts.
+    PubkeyHasherBuilder,
+>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteAccounts {
@@ -46,14 +51,7 @@ pub struct VoteAccounts {
     vote_accounts: Arc<VoteAccountsHashMap>,
     // Inner Arc is meant to implement copy-on-write semantics.
     #[serde(skip)]
-    staked_nodes: OnceLock<
-        Arc<
-            HashMap<
-                Pubkey, // VoteAccount.vote_state.node_pubkey.
-                u64,    // Total stake across all vote-accounts.
-            >,
-        >,
-    >,
+    staked_nodes: OnceLock<Arc<StakedNodesHashMap>>,
 }
 
 impl Clone for VoteAccounts {
@@ -135,19 +133,24 @@ impl VoteAccounts {
         self.vote_accounts.is_empty()
     }
 
-    pub fn staked_nodes(&self) -> Arc<HashMap</*node_pubkey:*/ Pubkey, /*stake:*/ u64>> {
+    pub fn staked_nodes(&self) -> Arc<StakedNodesHashMap> {
         self.staked_nodes
             .get_or_init(|| {
-                Arc::new(
-                    self.vote_accounts
-                        .values()
-                        .filter(|(stake, _)| *stake != 0u64)
-                        .map(|(stake, vote_account)| (*vote_account.node_pubkey(), stake))
-                        .into_grouping_map()
-                        .aggregate(|acc, _node_pubkey, stake| {
-                            Some(acc.unwrap_or_default() + stake)
-                        }),
-                )
+                let mut destination_map = HashMap::with_capacity_and_hasher(
+                    self.vote_accounts.len() / 2,
+                    PubkeyHasherBuilder::default(),
+                );
+                for (stake, vote_account) in self.vote_accounts.values() {
+                    if *stake == 0 {
+                        continue;
+                    }
+                    let node_pubkey = *vote_account.node_pubkey();
+                    destination_map
+                        .entry(node_pubkey)
+                        .and_modify(|v: &mut u64| *v = v.saturating_add(*stake))
+                        .or_insert(*stake);
+                }
+                Arc::new(destination_map)
             })
             .clone()
     }
@@ -257,7 +260,7 @@ impl VoteAccounts {
     }
 
     fn do_add_node_stake(
-        staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
+        staked_nodes: &mut Arc<StakedNodesHashMap>,
         stake: u64,
         node_pubkey: Pubkey,
     ) {
@@ -280,7 +283,7 @@ impl VoteAccounts {
     }
 
     fn do_sub_node_stake(
-        staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
+        staked_nodes: &mut Arc<StakedNodesHashMap>,
         stake: u64,
         node_pubkey: &Pubkey,
     ) {
@@ -491,11 +494,11 @@ mod tests {
         })
     }
 
-    fn staked_nodes<'a, I>(vote_accounts: I) -> HashMap<Pubkey, u64>
+    fn staked_nodes<'a, I>(vote_accounts: I) -> StakedNodesHashMap
     where
         I: IntoIterator<Item = &'a (Pubkey, (u64, VoteAccount))>,
     {
-        let mut staked_nodes = HashMap::new();
+        let mut staked_nodes = HashMap::default();
         for (_, (stake, vote_account)) in vote_accounts
             .into_iter()
             .filter(|(_, (stake, _))| *stake != 0)

@@ -73,7 +73,7 @@ pub fn create_connection_cache(
     let (stake, total_stake) =
         find_node_activated_stake(rpc_client, client_node_id.pubkey()).unwrap_or_default();
     info!("Stake for specified client_node_id: {stake}, total stake: {total_stake}");
-    let stakes = HashMap::from([
+    let stakes = HashMap::from_iter([
         (client_node_id.pubkey(), stake),
         (
             Pubkey::new_unique(),

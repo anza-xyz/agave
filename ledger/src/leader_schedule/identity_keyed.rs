@@ -3,6 +3,7 @@ use {
     itertools::Itertools,
     solana_pubkey::Pubkey,
     solana_sdk::clock::Epoch,
+    solana_vote::vote_account::StakedNodesHashMap,
     std::{collections::HashMap, ops::Index, sync::Arc},
 };
 
@@ -16,7 +17,7 @@ pub struct LeaderSchedule {
 impl LeaderSchedule {
     // Note: passing in zero stakers will cause a panic.
     pub fn new(
-        epoch_staked_nodes: &HashMap<Pubkey, u64>,
+        epoch_staked_nodes: &StakedNodesHashMap,
         epoch: Epoch,
         len: u64,
         repeat: u64,
@@ -86,7 +87,7 @@ mod tests {
     #[test]
     fn test_leader_schedule_basic() {
         let num_keys = 10;
-        let stakes: HashMap<_, _> = (0..num_keys)
+        let stakes = (0..num_keys)
             .map(|i| (solana_pubkey::new_rand(), i))
             .collect();
 
@@ -102,7 +103,7 @@ mod tests {
     #[test]
     fn test_repeated_leader_schedule() {
         let num_keys = 10;
-        let stakes: HashMap<_, _> = (0..num_keys)
+        let stakes = (0..num_keys)
             .map(|i| (solana_pubkey::new_rand(), i))
             .collect();
 
@@ -125,7 +126,7 @@ mod tests {
     fn test_repeated_leader_schedule_specific() {
         let alice_pubkey = solana_pubkey::new_rand();
         let bob_pubkey = solana_pubkey::new_rand();
-        let stakes: HashMap<_, _> = [(alice_pubkey, 2), (bob_pubkey, 1)].into_iter().collect();
+        let stakes = [(alice_pubkey, 2), (bob_pubkey, 1)].into_iter().collect();
 
         let epoch = 0;
         let len = 8;
