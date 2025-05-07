@@ -45,7 +45,6 @@ use {
     },
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
-        system_program,
     },
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
@@ -1409,11 +1408,7 @@ fn process_loader_upgradeable_instruction(
             }
             program.set_data_from_slice(&[])?;
             program.checked_add_lamports(programdata_funds)?;
-            if program_len == 0 {
-                program.set_owner(&system_program::id().to_bytes())?;
-            } else {
-                program.set_owner(&loader_v4::id().to_bytes())?;
-            }
+            program.set_owner(&loader_v4::id().to_bytes())?;
             drop(program);
 
             let mut programdata =
@@ -1421,7 +1416,18 @@ fn process_loader_upgradeable_instruction(
             programdata.set_lamports(0)?;
             drop(programdata);
 
-            if program_len > 0 {
+            if program_len == 0 {
+                invoke_context
+                    .program_cache_for_tx_batch
+                    .store_modified_entry(
+                        program_address,
+                        Arc::new(ProgramCacheEntry::new_tombstone(
+                            clock_slot,
+                            ProgramCacheEntryOwner::LoaderV4,
+                            ProgramCacheEntryType::Closed,
+                        )),
+                    );
+            } else {
                 invoke_context.native_invoke(
                     solana_loader_v4_interface::instruction::set_program_length(
                         &program_address,
@@ -1483,7 +1489,6 @@ fn process_loader_upgradeable_instruction(
             let mut programdata =
                 instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
             programdata.set_data_from_slice(&[])?;
-            programdata.set_owner(&system_program::id().to_bytes())?;
             drop(programdata);
 
             ic_logger_msg!(log_collector, "Migrated program {:?}", &program_address);
@@ -1825,7 +1830,7 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_sdk_ids::sysvar,
+        solana_sdk_ids::{system_program, sysvar},
         std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
     };
 

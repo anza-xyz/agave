@@ -189,8 +189,7 @@ fn process_instruction_set_program_length(
     let authority_address = instruction_context
         .get_index_of_instruction_account_in_transaction(1)
         .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
-    let is_initialization =
-        new_size > 0 && program.get_data().len() < LoaderV4State::program_data_offset();
+    let is_initialization = program.get_data().len() < LoaderV4State::program_data_offset();
     if is_initialization {
         if !loader_v4::check_id(program.get_owner()) {
             ic_logger_msg!(log_collector, "Program not owned by loader");
@@ -1127,6 +1126,15 @@ mod tests {
             ),
         );
 
+        // Close uninitialized program account
+        process_instruction(
+            vec![],
+            &bincode::serialize(&LoaderV4Instruction::SetProgramLength { new_size: 0 }).unwrap(),
+            transaction_accounts.clone(),
+            &[(3, false, true), (1, true, false), (2, true, true)],
+            Ok(()),
+        );
+
         // Error: Program not owned by loader
         process_instruction(
             vec![],
@@ -1161,15 +1169,6 @@ mod tests {
             transaction_accounts.clone(),
             &[(3, true, true), (1, false, false), (2, true, true)],
             Err(InstructionError::MissingRequiredSignature),
-        );
-
-        // Error: Program is and stays uninitialized
-        process_instruction(
-            vec![],
-            &bincode::serialize(&LoaderV4Instruction::SetProgramLength { new_size: 0 }).unwrap(),
-            transaction_accounts.clone(),
-            &[(3, false, true), (1, true, false), (2, true, true)],
-            Err(InstructionError::AccountDataTooSmall),
         );
 
         // Error: Program is not retracted
