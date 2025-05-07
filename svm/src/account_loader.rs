@@ -972,14 +972,23 @@ mod tests {
         test_case::test_case,
     };
 
-    // HANA enable all by default
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     struct TestCallbacks {
         accounts_map: HashMap<Pubkey, AccountSharedData>,
         #[allow(clippy::type_complexity)]
         inspected_accounts:
             RefCell<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>,
         feature_set: SVMFeatureSet,
+    }
+
+    impl Default for TestCallbacks {
+        fn default() -> Self {
+            Self {
+                accounts_map: HashMap::default(),
+                inspected_accounts: RefCell::default(),
+                feature_set: SVMFeatureSet::all_enabled(),
+            }
+        }
     }
 
     impl InvokeContextCallback for TestCallbacks {}
@@ -1668,9 +1677,9 @@ mod tests {
         );
     }
 
-    // HANA fails with feature
-    #[test]
-    fn test_load_transaction_accounts_native_loader() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_load_transaction_accounts_native_loader(formalize_loaded_transaction_data_size: bool) {
         let key1 = Keypair::new();
         let message = Message {
             account_keys: vec![key1.pubkey(), native_loader::id()],
@@ -1685,6 +1694,8 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
+        mock_bank.feature_set.formalize_loaded_transaction_data_size =
+            formalize_loaded_transaction_data_size;
         mock_bank
             .accounts_map
             .insert(native_loader::id(), AccountSharedData::default());
@@ -1702,17 +1713,27 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+
+        let base_account_size = if formalize_loaded_transaction_data_size {
+            TRANSACTION_ACCOUNT_BASE_SIZE
+        } else {
+            0
+        };
+
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
+                loaded_size: base_account_size,
                 ..LoadedTransactionAccount::default()
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
+
+        let loaded_accounts_data_size = base_account_size as u32 * 2;
 
         assert_eq!(
             result.unwrap(),
@@ -1727,7 +1748,7 @@ mod tests {
                 program_indices: vec![vec![]],
                 rent: 0,
                 rent_debits: RentDebits::default(),
-                loaded_accounts_data_size: 0,
+                loaded_accounts_data_size,
             }
         );
     }
@@ -1819,9 +1840,11 @@ mod tests {
         );
     }
 
-    // HANA fails with feature
-    #[test]
-    fn test_load_transaction_accounts_native_loader_owner() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_load_transaction_accounts_native_loader_owner(
+        formalize_loaded_transaction_data_size: bool,
+    ) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
 
@@ -1838,6 +1861,8 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
+        mock_bank.feature_set.formalize_loaded_transaction_data_size =
+            formalize_loaded_transaction_data_size;
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(native_loader::id());
         account_data.set_lamports(1);
@@ -1858,17 +1883,27 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+
+        let base_account_size = if formalize_loaded_transaction_data_size {
+            TRANSACTION_ACCOUNT_BASE_SIZE
+        } else {
+            0
+        };
+
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
+                loaded_size: base_account_size,
                 ..LoadedTransactionAccount::default()
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
+
+        let loaded_accounts_data_size = base_account_size as u32 * 2;
 
         assert_eq!(
             result.unwrap(),
@@ -1883,7 +1918,7 @@ mod tests {
                 program_indices: vec![vec![1]],
                 rent: 0,
                 rent_debits: RentDebits::default(),
-                loaded_accounts_data_size: 0,
+                loaded_accounts_data_size,
             }
         );
     }
@@ -1989,12 +2024,13 @@ mod tests {
         );
     }
 
-    // HANA fails with feature
-    #[test]
-    fn test_load_transaction_accounts_program_success_complete() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_load_transaction_accounts_program_success_complete(
+        formalize_loaded_transaction_data_size: bool,
+    ) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
-        let key3 = Keypair::new();
 
         let message = Message {
             account_keys: vec![key2.pubkey(), key1.pubkey()],
@@ -2009,10 +2045,12 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
+        mock_bank.feature_set.formalize_loaded_transaction_data_size =
+            formalize_loaded_transaction_data_size;
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(1);
         account_data.set_executable(true);
-        account_data.set_owner(key3.pubkey());
+        account_data.set_owner(bpf_loader::id());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
         let mut fee_payer_account = AccountSharedData::default();
@@ -2025,7 +2063,9 @@ mod tests {
         account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
-        mock_bank.accounts_map.insert(key3.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(bpf_loader::id(), account_data);
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -2035,17 +2075,27 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+
+        let base_account_size = if formalize_loaded_transaction_data_size {
+            TRANSACTION_ACCOUNT_BASE_SIZE
+        } else {
+            0
+        };
+
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
+                loaded_size: base_account_size,
                 ..LoadedTransactionAccount::default()
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
+
+        let loaded_accounts_data_size = base_account_size as u32 * 2;
 
         assert_eq!(
             result.unwrap(),
@@ -2060,21 +2110,22 @@ mod tests {
                 program_indices: vec![vec![1]],
                 rent: 0,
                 rent_debits: RentDebits::default(),
-                loaded_accounts_data_size: 0,
+                loaded_accounts_data_size,
             }
         );
     }
 
-    // HANA fails with feature
-    #[test]
-    fn test_load_transaction_accounts_program_builtin_saturating_add() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_load_transaction_accounts_program_builtin_saturating_add(
+        formalize_loaded_transaction_data_size: bool,
+    ) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
-        let key4 = Keypair::new();
 
         let message = Message {
-            account_keys: vec![key2.pubkey(), key1.pubkey(), key4.pubkey()],
+            account_keys: vec![key2.pubkey(), key1.pubkey(), key3.pubkey()],
             header: MessageHeader::default(),
             instructions: vec![
                 CompiledInstruction {
@@ -2093,10 +2144,12 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
+        mock_bank.feature_set.formalize_loaded_transaction_data_size =
+            formalize_loaded_transaction_data_size;
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(1);
         account_data.set_executable(true);
-        account_data.set_owner(key3.pubkey());
+        account_data.set_owner(bpf_loader::id());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
         let mut fee_payer_account = AccountSharedData::default();
@@ -2109,7 +2162,9 @@ mod tests {
         account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
-        mock_bank.accounts_map.insert(key3.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(bpf_loader::id(), account_data);
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -2119,17 +2174,27 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+
+        let base_account_size = if formalize_loaded_transaction_data_size {
+            TRANSACTION_ACCOUNT_BASE_SIZE
+        } else {
+            0
+        };
+
         let result = load_transaction_accounts(
             &mut account_loader,
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
+                loaded_size: base_account_size,
                 ..LoadedTransactionAccount::default()
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
+
+        let loaded_accounts_data_size = base_account_size as u32 * 2;
 
         let mut account_data = AccountSharedData::default();
         account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
@@ -2142,12 +2207,12 @@ mod tests {
                         key1.pubkey(),
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
-                    (key4.pubkey(), account_data),
+                    (key3.pubkey(), account_data),
                 ],
                 program_indices: vec![vec![1], vec![1]],
                 rent: 0,
                 rent_debits: RentDebits::default(),
-                loaded_accounts_data_size: 0,
+                loaded_accounts_data_size,
             }
         );
     }
@@ -2217,15 +2282,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_load_accounts_success() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_load_accounts_success(formalize_loaded_transaction_data_size: bool) {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
         let key3 = Keypair::new();
-        let key4 = Keypair::new();
 
         let message = Message {
-            account_keys: vec![key2.pubkey(), key1.pubkey(), key4.pubkey()],
+            account_keys: vec![key2.pubkey(), key1.pubkey(), key3.pubkey()],
             header: MessageHeader::default(),
             instructions: vec![
                 CompiledInstruction {
@@ -2244,10 +2309,12 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
+        mock_bank.feature_set.formalize_loaded_transaction_data_size =
+            formalize_loaded_transaction_data_size;
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(1);
         account_data.set_executable(true);
-        account_data.set_owner(key3.pubkey());
+        account_data.set_owner(bpf_loader::id());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
         let mut fee_payer_account = AccountSharedData::default();
@@ -2260,7 +2327,9 @@ mod tests {
         account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
-        mock_bank.accounts_map.insert(key3.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(bpf_loader::id(), account_data);
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -2270,9 +2339,17 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+
+        let base_account_size = if formalize_loaded_transaction_data_size {
+            TRANSACTION_ACCOUNT_BASE_SIZE
+        } else {
+            0
+        };
+
         let validation_result = Ok(ValidatedTransactionDetails {
             loaded_fee_payer_account: LoadedTransactionAccount {
                 account: fee_payer_account,
+                loaded_size: base_account_size,
                 ..LoadedTransactionAccount::default()
             },
             ..ValidatedTransactionDetails::default()
@@ -2285,6 +2362,8 @@ mod tests {
             &mut error_metrics,
             &RentCollector::default(),
         );
+
+        let loaded_accounts_data_size = base_account_size as u32 * 2;
 
         let mut account_data = AccountSharedData::default();
         account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
@@ -2304,7 +2383,7 @@ mod tests {
                         key1.pubkey(),
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
-                    (key4.pubkey(), account_data),
+                    (key3.pubkey(), account_data),
                 ],
                 program_indices: vec![vec![1], vec![1]],
                 fee_details: FeeDetails::default(),
@@ -2312,7 +2391,7 @@ mod tests {
                 compute_budget: SVMTransactionExecutionBudget::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
-                loaded_accounts_data_size: 0,
+                loaded_accounts_data_size,
             }
         );
     }
@@ -2536,12 +2615,10 @@ mod tests {
         assert_eq!(actual_inspected_accounts, expected_inspected_accounts,);
     }
 
-    // HANA fails with feature, need a new version of this
-    // our new one is much less arbitrary so probably a totally new test
-    // just generate accounts knowing what the sizes should be
     #[test]
     fn test_load_transaction_accounts_data_sizes() {
         let mut mock_bank = TestCallbacks::default();
+        mock_bank.feature_set.formalize_loaded_transaction_data_size = false;
 
         let loader_v2 = bpf_loader::id();
         let loader_v3 = bpf_loader_upgradeable::id();
@@ -2623,10 +2700,13 @@ mod tests {
         let mut program_accounts = HashMap::new();
         program_accounts.insert(program1, (&loader_v2, 0));
         program_accounts.insert(program2, (&loader_v3, 0));
-        let feature_set = SVMFeatureSet::default();
         let test_transaction_data_size = |transaction, expected_size| {
-            let mut account_loader =
-                AccountLoader::new_with_loaded_accounts_capacity(None, &mock_bank, &feature_set, 0);
+            let mut account_loader = AccountLoader::new_with_loaded_accounts_capacity(
+                None,
+                &mock_bank,
+                &mock_bank.feature_set,
+                0,
+            );
 
             let loaded_transaction_accounts = load_transaction_accounts(
                 &mut account_loader,
