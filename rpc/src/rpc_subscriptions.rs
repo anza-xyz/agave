@@ -17,11 +17,14 @@ use {
     itertools::Either,
     rayon::prelude::*,
     serde::Serialize,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_account_decoder::{
         encode_ui_account, parse_token::is_known_spl_token_id, UiAccount, UiAccountEncoding,
     },
+    solana_clock::Slot,
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path},
     solana_measure::measure::Measure,
+    solana_pubkey::Pubkey,
     solana_rpc_client_api::response::{
         ProcessedSignatureResult, ReceivedSignatureResult, Response as RpcResponse, RpcBlockUpdate,
         RpcBlockUpdateError, RpcKeyedAccount, RpcLogsResponse, RpcResponseContext,
@@ -32,14 +35,8 @@ use {
         bank_forks::BankForks,
         commitment::{BlockCommitmentCache, CommitmentSlots},
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Slot,
-        pubkey::Pubkey,
-        signature::Signature,
-        timing::timestamp,
-        transaction,
-    },
+    solana_signature::Signature,
+    solana_time_utils::timestamp,
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, EncodeError, VersionedConfirmedBlock,
     },
@@ -58,6 +55,10 @@ use {
     },
     tokio::sync::broadcast,
 };
+
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 
 const RECEIVE_DELAY_MILLIS: u64 = 100;
 
@@ -1236,7 +1237,10 @@ pub(crate) mod tests {
             rpc_pubsub_service,
         },
         serial_test::serial,
+        solana_commitment_config::CommitmentConfig,
+        solana_keypair::Keypair,
         solana_ledger::get_tmp_ledger_path_auto_delete,
+        solana_message::Message,
         solana_rpc_client_api::config::{
             RpcAccountInfoConfig, RpcBlockSubscribeConfig, RpcBlockSubscribeFilter,
             RpcProgramAccountsConfig, RpcSignatureSubscribeConfig, RpcTransactionLogsConfig,
@@ -1247,13 +1251,11 @@ pub(crate) mod tests {
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             prioritization_fee_cache::PrioritizationFeeCache,
         },
-        solana_sdk::{
-            commitment_config::CommitmentConfig,
-            message::Message,
-            signature::{Keypair, Signer},
-            stake, system_instruction, system_program, system_transaction,
-            transaction::Transaction,
-        },
+        solana_signer::Signer,
+        solana_stake_interface as stake,
+        solana_system_interface::{instruction as system_instruction, program as system_program},
+        solana_system_transaction as system_transaction,
+        solana_transaction::Transaction,
         solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
         std::{
             collections::HashSet,

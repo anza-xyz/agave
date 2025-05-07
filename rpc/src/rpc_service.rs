@@ -17,13 +17,17 @@ use {
     },
     regex::Regex,
     solana_client::connection_cache::{ConnectionCache, Protocol},
+    solana_genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         bigtable_upload::ConfirmedBlockUploadConfig,
         bigtable_upload_service::BigTableUploadService, blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
+    solana_native_token::lamports_to_sol,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
     solana_quic_definitions::NotifyKeyUpdate,
@@ -34,15 +38,12 @@ use {
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
         snapshot_utils,
     },
-    solana_sdk::{
-        exit::Exit, genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH, hash::Hash,
-        native_token::lamports_to_sol, signature::Keypair,
-    },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
         transaction_client::{ConnectionCacheClient, TpuClientNextClient, TransactionClient},
     },
     solana_storage_bigtable::CredentialType,
+    solana_validator_exit::Exit,
     std::{
         net::{SocketAddr, UdpSocket},
         path::{Path, PathBuf},
@@ -866,16 +867,14 @@ mod tests {
     use {
         super::*,
         crate::rpc::{create_validator_exit, tests::new_test_cluster_info},
+        solana_genesis_config::{ClusterType, DEFAULT_GENESIS_ARCHIVE},
         solana_ledger::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
         },
         solana_rpc_client_api::config::RpcContextConfig,
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            genesis_config::{ClusterType, DEFAULT_GENESIS_ARCHIVE},
-            signature::Signer,
-        },
+        solana_signer::Signer,
         std::{
             io::Write,
             net::{IpAddr, Ipv4Addr},
