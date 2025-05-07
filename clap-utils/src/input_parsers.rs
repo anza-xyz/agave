@@ -183,7 +183,7 @@ pub fn resolve_signer(
 /// Convert a SOL amount string to lamports.
 ///
 /// Accepts plain or decimal strings ("50", "0.03", ".5", "1.").
-/// Any digits beyond 9 are truncated.
+/// Any decimal places beyond 9 are truncated.
 pub fn lamports_of_sol(matches: &ArgMatches<'_>, name: &str) -> Option<u64> {
     matches.value_of(name).and_then(|value| {
         if value == "." {
@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(lamports_of_sol(&matches, "single"), Some(15_700_000));
         let matches = app().get_matches_from(vec!["test", "--single", "0.5025"]);
         assert_eq!(lamports_of_sol(&matches, "single"), Some(502_500_000));
-        // Truncation of extra digits
+        // Truncation of extra decimal places
         let matches = app().get_matches_from(vec!["test", "--single", "0.1234567891"]);
         assert_eq!(lamports_of_sol(&matches, "single"), Some(123_456_789));
         let matches = app().get_matches_from(vec!["test", "--single", "0.1234567899"]);
