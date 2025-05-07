@@ -2045,7 +2045,6 @@ pub(crate) fn parse_full_snapshot_archive_filename(
 pub(crate) fn parse_incremental_snapshot_archive_filename(
     archive_filename: &str,
 ) -> Result<(Slot, Slot, SnapshotHash, ArchiveFormat)> {
-    //SHOULD IT BE INSIDE THIS FN?
     static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
         Regex::new(INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap()
     });
