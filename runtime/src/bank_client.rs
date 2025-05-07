@@ -19,7 +19,7 @@ use {
     },
     std::{
         io,
-        sync::{Arc, Mutex},
+        sync::Arc,
         thread::{sleep, Builder},
         time::{Duration, Instant},
     },
@@ -29,7 +29,7 @@ use {crate::bank_forks::BankForks, solana_sdk::clock, std::sync::RwLock};
 
 pub struct BankClient {
     bank: Arc<Bank>,
-    transaction_sender: Mutex<Sender<VersionedTransaction>>,
+    transaction_sender: Sender<VersionedTransaction>,
 }
 
 impl Client for BankClient {
@@ -44,7 +44,7 @@ impl AsyncClient for BankClient {
         transaction: VersionedTransaction,
     ) -> Result<Signature> {
         let signature = transaction.signatures.first().cloned().unwrap_or_default();
-        let transaction_sender = self.transaction_sender.lock().unwrap();
+        let transaction_sender = self.transaction_sender.clone();
         transaction_sender.send(transaction).unwrap();
         Ok(signature)
     }
@@ -250,7 +250,6 @@ impl BankClient {
 
     pub fn new_shared(bank: Arc<Bank>) -> Self {
         let (transaction_sender, transaction_receiver) = unbounded();
-        let transaction_sender = Mutex::new(transaction_sender);
         let thread_bank = bank.clone();
         Builder::new()
             .name("solBankClient".to_string())
