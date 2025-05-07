@@ -75,8 +75,6 @@ solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
-spl-token = { workspace = true, features = ["no-entrypoint"] }
-spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
@@ -107,6 +105,7 @@ solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
+spl-generic-token = { workspace = true }
 spl-pod = { workspace = true }
 test-case = { workspace = true }
 

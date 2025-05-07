@@ -155,6 +155,7 @@ use {
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
+        transaction_balances::BalanceCollector,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -327,6 +328,9 @@ pub struct LoadAndExecuteTransactionsOutput {
     // Processed transaction counts used to update bank transaction counts and
     // for metrics reporting.
     pub processed_counts: ProcessedTransactionCounts,
+    // Balances accumulated for TransactionStatusSender when transaction
+    // balance recording is enabled.
+    pub balance_collector: Option<BalanceCollector>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -3290,6 +3294,7 @@ impl Bank {
                     enable_cpi_recording,
                     enable_log_recording: true,
                     enable_return_data_recording: true,
+                    enable_transaction_balance_recording: false,
                 },
             },
         );
@@ -3498,6 +3503,7 @@ impl Bank {
         LoadAndExecuteTransactionsOutput {
             processing_results: sanitized_output.processing_results,
             processed_counts,
+            balance_collector: sanitized_output.balance_collector,
         }
     }
 
@@ -4553,15 +4559,13 @@ impl Bank {
         &self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         max_age: usize,
-        collect_balances: bool,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-    ) -> (Vec<TransactionCommitResult>, TransactionBalancesSet) {
+    ) -> (Vec<TransactionCommitResult>, Option<BalanceCollector>) {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             max_age,
-            collect_balances,
             recording_config,
             timings,
             log_messages_bytes_limit,
@@ -4574,7 +4578,6 @@ impl Bank {
         &'a self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         max_age: usize,
-        collect_balances: bool,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
@@ -4582,11 +4585,10 @@ impl Bank {
             &mut ExecuteTimings,
             &[TransactionProcessingResult],
         ) -> PreCommitResult<'a>,
-    ) -> Result<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
+    ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             max_age,
-            collect_balances,
             recording_config,
             timings,
             log_messages_bytes_limit,
@@ -4598,23 +4600,17 @@ impl Bank {
         &'a self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         max_age: usize,
-        collect_balances: bool,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
         pre_commit_callback: Option<
             impl FnOnce(&mut ExecuteTimings, &[TransactionProcessingResult]) -> PreCommitResult<'a>,
         >,
-    ) -> Result<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
-        let pre_balances = if collect_balances {
-            self.collect_balances(batch)
-        } else {
-            vec![]
-        };
-
+    ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
+            balance_collector,
         } = self.load_and_execute_transactions(
             batch,
             max_age,
@@ -4645,15 +4641,7 @@ impl Bank {
             timings,
         );
         drop(freeze_lock);
-        let post_balances = if collect_balances {
-            self.collect_balances(batch)
-        } else {
-            vec![]
-        };
-        Ok((
-            commit_results,
-            TransactionBalancesSet::new(pre_balances, post_balances),
-        ))
+        Ok((commit_results, balance_collector))
     }
 
     /// Process a Transaction. This is used for unit tests and simply calls the vector
@@ -4677,11 +4665,11 @@ impl Bank {
         let (mut commit_results, ..) = self.load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
-            false, // collect_balances
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: true,
                 enable_return_data_recording: true,
+                enable_transaction_balance_recording: false,
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
@@ -4720,7 +4708,6 @@ impl Bank {
         self.load_execute_and_commit_transactions(
             batch,
             MAX_PROCESSING_AGE,
-            false,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,

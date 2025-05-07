@@ -4,6 +4,8 @@
 //! 2. multiple 'slots' squashed into a single older (ie. ancient) slot for convenience and performance
 //!
 //! Otherwise, an ancient append vec is the same as any other append vec
+#[cfg(test)]
+use crate::accounts_file::AccountsFile;
 use {
     crate::{
         account_storage::ShrinkInProgress,
@@ -12,7 +14,6 @@ use {
             AccountFromStorage, AccountStorageEntry, AccountsDb, AliveAccounts,
             GetUniqueAccountsResult, ShrinkCollect, ShrinkCollectAliveSeparatedByRefs,
         },
-        accounts_file::AccountsFile,
         active_stats::ActiveStatItem,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
     },
@@ -1073,6 +1074,9 @@ impl<'a> PackedAncientStorage<'a> {
 
 /// a set of accounts need to be stored.
 /// If there are too many to fit in 'Primary', the rest are put in 'Overflow'
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum StorageSelector {
     Primary,
@@ -1084,6 +1088,9 @@ pub enum StorageSelector {
 /// The 'store' functions need data stored in a slice of specific type.
 /// We need 1-2 of these slices constructed based on available bytes and individual account sizes.
 /// The slice arithmetic across both hashes and account data gets messy. So, this struct abstracts that.
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 pub struct AccountsToStore<'a> {
     accounts: &'a [&'a AccountFromStorage],
     /// if 'accounts' contains more items than can be contained in the primary storage, then we have to split these accounts.
@@ -1096,6 +1103,8 @@ pub struct AccountsToStore<'a> {
     bytes_overflow: usize,
 }
 
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 impl<'a> AccountsToStore<'a> {
     /// break 'stored_accounts' into primary and overflow
     /// available_bytes: how many bytes remain in the primary storage. Excess accounts will be directed to an overflow storage
@@ -1187,6 +1196,9 @@ pub const fn get_ancient_append_vec_capacity() -> u64 {
 }
 
 /// is this a max-size append vec designed to be used as an ancient append vec?
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 pub fn is_ancient(storage: &AccountsFile) -> bool {
     storage.capacity() >= get_ancient_append_vec_capacity()
 }

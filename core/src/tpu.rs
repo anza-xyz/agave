@@ -73,7 +73,7 @@ pub struct TpuSockets {
     pub transactions_forwards_quic: Vec<UdpSocket>,
     pub vote_quic: Vec<UdpSocket>,
     /// Client-side socket for the forwarding votes.
-    pub vote_forwards_client: UdpSocket,
+    pub vote_forwarding_client: UdpSocket,
     pub vortexor_receivers: Option<Vec<UdpSocket>>,
 }
 
@@ -159,7 +159,7 @@ impl Tpu {
             transactions_quic: transactions_quic_sockets,
             transactions_forwards_quic: transactions_forwards_quic_sockets,
             vote_quic: tpu_vote_quic_sockets,
-            vote_forwards_client: vote_forwards_client_socket,
+            vote_forwarding_client: vote_forwarding_client_socket,
             vortexor_receivers,
         } = sockets;
 
@@ -334,7 +334,7 @@ impl Tpu {
         let forwarding_stage = spawn_forwarding_stage(
             forward_stage_receiver,
             client,
-            vote_forwards_client_socket,
+            vote_forwarding_client_socket,
             RootBankCache::new(bank_forks.clone()),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
             DataBudget::default(),

@@ -1,9 +1,4 @@
-use {
-    crate::{accounts_file::ALIGN_BOUNDARY_OFFSET, u64_align},
-    log::*,
-    memmap2::Mmap,
-    std::io::Result as IoResult,
-};
+use {crate::u64_align, log::*, memmap2::Mmap, std::io::Result as IoResult};
 
 /// Borrows a value of type `T` from `mmap`
 ///

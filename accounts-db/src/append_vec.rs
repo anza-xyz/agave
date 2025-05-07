@@ -21,7 +21,7 @@ use {
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::{
             AccountsFileError, InternalsForArchive, MatchAccountOwnerError, Result, StorageAccess,
-            StoredAccountsInfo, ALIGN_BOUNDARY_OFFSET,
+            StoredAccountsInfo,
         },
         accounts_hash::AccountHash,
         buffered_reader::{BufferedReader, BufferedReaderStatus, Stack},
@@ -1312,6 +1312,8 @@ impl AppendVec {
         })
     }
 
+    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+    #[cfg(test)]
     pub(crate) fn can_append(&self) -> bool {
         match &self.backing {
             AppendVecFileBacking::File(_file) => false,

@@ -577,7 +577,6 @@ impl RpcClient {
     ///         })
     ///     ),
     /// ];
-
     ///
     /// let mut mocks = MocksMap::from_iter(account_balance_req_responses);
     /// mocks.insert(

@@ -358,7 +358,7 @@ reqwest = { version = "0.12.15", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
-rustls = { version = "0.23.26", features = ["std"], default-features = false }
+rustls = { version = "0.23.27", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.26"
 seqlock = "0.2.0"
@@ -609,7 +609,7 @@ thiserror = "2.0.12"
 thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
-tokio = "1.44.2"
+tokio = "1.45.0"
 tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.20.1"

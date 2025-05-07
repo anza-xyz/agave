@@ -31,7 +31,6 @@ use {
     },
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
-    lazy_static::lazy_static,
     quinn::Endpoint,
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
@@ -174,14 +173,7 @@ impl BlockVerificationMethod {
     }
 
     pub fn cli_message() -> &'static str {
-        lazy_static! {
-            static ref MESSAGE: String = format!(
-                "Switch transaction scheduling method for verifying ledger entries [default: {}]",
-                BlockVerificationMethod::default()
-            );
-        };
-
-        &MESSAGE
+        "Switch transaction scheduling method for verifying ledger entries"
     }
 }
 
@@ -199,14 +191,7 @@ impl BlockProductionMethod {
     }
 
     pub fn cli_message() -> &'static str {
-        lazy_static! {
-            static ref MESSAGE: String = format!(
-                "Switch transaction scheduling method for producing ledger entries [default: {}]",
-                BlockProductionMethod::default()
-            );
-        };
-
-        &MESSAGE
+        "Switch transaction scheduling method for producing ledger entries"
     }
 }
 
@@ -224,14 +209,7 @@ impl TransactionStructure {
     }
 
     pub fn cli_message() -> &'static str {
-        lazy_static! {
-            static ref MESSAGE: String = format!(
-                "Switch internal transaction structure/representation [default: {}]",
-                TransactionStructure::default()
-            );
-        };
-
-        &MESSAGE
+        "Switch internal transaction structure/representation"
     }
 }
 
@@ -1099,7 +1077,7 @@ impl Validator {
             let connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
                 tpu_connection_pool_size,
-                Some(node.sockets.quic_forwards_client),
+                Some(node.sockets.tpu_transaction_forwarding_client),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1604,7 +1582,7 @@ impl Validator {
                 transactions_quic: node.sockets.tpu_quic,
                 transactions_forwards_quic: node.sockets.tpu_forwards_quic,
                 vote_quic: node.sockets.tpu_vote_quic,
-                vote_forwards_client: node.sockets.tpu_vote_forwards_client,
+                vote_forwarding_client: node.sockets.tpu_vote_forwarding_client,
                 vortexor_receivers: node.sockets.vortexor_receivers,
             },
             &rpc_subscriptions,

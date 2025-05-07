@@ -513,10 +513,9 @@ impl StakeSubCommands for App<'_, '_> {
                         .value_name("AMOUNT")
                         .takes_value(true)
                         .validator(is_amount)
-                        .requires("sign_only")
                         .help(
-                            "Offline signing only: the rent-exempt amount to move into the new \
-                             stake account, in SOL",
+                            "The rent-exempt amount to move into the new \
+                             stake account, in SOL. Required for offline signing.",
                         ),
                 ),
         )
@@ -1997,7 +1996,9 @@ pub fn process_split_stake(
         split_stake_account.pubkey()
     };
 
-    let rent_exempt_reserve = if !sign_only {
+    let rent_exempt_reserve = if let Some(rent_exempt_reserve) = rent_exempt_reserve {
+        *rent_exempt_reserve
+    } else {
         let stake_minimum_delegation = rpc_client.get_stake_minimum_delegation()?;
         if lamports < stake_minimum_delegation {
             let lamports = Sol(lamports);
@@ -2041,10 +2042,6 @@ pub fn process_split_stake(
             rpc_client.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())?;
 
         rent_exempt_reserve.saturating_sub(current_balance)
-    } else {
-        rent_exempt_reserve
-            .cloned()
-            .expect("rent_exempt_reserve_sol is required with sign_only")
     };
 
     let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;

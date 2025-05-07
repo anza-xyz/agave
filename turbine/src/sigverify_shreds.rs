@@ -524,18 +524,23 @@ impl ShredSigVerifyStats {
 mod tests {
     use {
         super::*,
+        solana_entry::entry::create_ticks,
         solana_ledger::{
             genesis_utils::create_genesis_config_with_leader,
-            shred::{Shred, ShredFlags},
+            shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
         },
         solana_perf::packet::Packet,
         solana_runtime::bank::Bank,
-        solana_sdk::signature::{Keypair, Signer},
+        solana_sdk::{
+            hash::Hash,
+            signature::{Keypair, Signer},
+        },
     };
 
     #[test]
     fn test_sigverify_shreds_verify_batches() {
         let leader_keypair = Arc::new(Keypair::new());
+        let wrong_keypair = Keypair::new();
         let leader_pubkey = leader_keypair.pubkey();
         let bank = Bank::new_for_tests(
             &create_genesis_config_with_leader(100, &leader_pubkey, 10).genesis_config,
@@ -547,32 +552,36 @@ mod tests {
         batch.resize(batch_size, Packet::default());
         let mut batches = vec![batch];
 
-        let mut shred = Shred::new_from_data(
+        let entries = create_ticks(1, 1, Hash::new_unique());
+        let shredder = Shredder::new(1, 0, 1, 0).unwrap();
+        let (shreds_data, _shreds_code) = shredder.entries_to_shreds(
+            &leader_keypair,
+            &entries,
+            true,
+            Some(Hash::new_unique()),
             0,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
             0,
-            0,
-            0xc0de,
+            true,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
         );
-        shred.sign(&leader_keypair);
+        let (shreds_data_wrong, _shreds_code_wrong) = shredder.entries_to_shreds(
+            &wrong_keypair,
+            &entries,
+            true,
+            Some(Hash::new_unique()),
+            0,
+            0,
+            true,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        );
+
+        let shred = shreds_data[0].clone();
         batches[0][0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         batches[0][0].meta_mut().size = shred.payload().len();
 
-        let mut shred = Shred::new_from_data(
-            0,
-            0xbeef,
-            0xc0de,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
-        let wrong_keypair = Keypair::new();
-        shred.sign(&wrong_keypair);
+        let shred = shreds_data_wrong[0].clone();
         batches[0][1].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         batches[0][1].meta_mut().size = shred.payload().len();
 

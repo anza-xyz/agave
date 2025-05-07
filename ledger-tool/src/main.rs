@@ -982,6 +982,7 @@ fn main() {
                 .value_name("METHOD")
                 .takes_value(true)
                 .possible_values(BlockVerificationMethod::cli_names())
+                .default_value(BlockVerificationMethod::default().into())
                 .global(true)
                 .help(BlockVerificationMethod::cli_message()),
         )
@@ -1484,7 +1485,17 @@ fn main() {
                         .value_name("METHOD")
                         .takes_value(true)
                         .possible_values(BlockProductionMethod::cli_names())
+                        .default_value(BlockProductionMethod::default().into())
                         .help(BlockProductionMethod::cli_message()),
+                )
+                .arg(
+                    Arg::with_name("transaction_struct")
+                        .long("transaction-structure")
+                        .value_name("STRUCT")
+                        .takes_value(true)
+                        .possible_values(TransactionStructure::cli_names())
+                        .default_value(TransactionStructure::default().into())
+                        .help(TransactionStructure::cli_message()),
                 )
                 .arg(
                     Arg::with_name("first_simulated_slot")
@@ -2548,15 +2559,13 @@ fn main() {
                             None, // transaction status sender
                         );
 
-                    let block_production_method = value_t!(
+                    let block_production_method = value_t_or_exit!(
                         arg_matches,
                         "block_production_method",
                         BlockProductionMethod
-                    )
-                    .unwrap_or_default();
+                    );
                     let transaction_struct =
-                        value_t!(arg_matches, "transaction_struct", TransactionStructure)
-                            .unwrap_or_default();
+                        value_t_or_exit!(arg_matches, "transaction_struct", TransactionStructure);
 
                     info!("Using: block-production-method: {block_production_method} transaction-structure: {transaction_struct}");
 

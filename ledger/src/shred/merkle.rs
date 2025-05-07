@@ -13,10 +13,11 @@ use {
                 Shred as ShredTrait, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait,
             },
             CodingShredHeader, DataShredHeader, Error, ProcessShredsStats, ShredCommonHeader,
-            ShredFlags, ShredVariant, DATA_SHREDS_PER_FEC_BLOCK, SHREDS_PER_FEC_BLOCK,
-            SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_SIGNATURE,
+            ShredFlags, ShredVariant, CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
+            SHREDS_PER_FEC_BLOCK, SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS,
+            SIZE_OF_SIGNATURE,
         },
-        shredder::{self, ReedSolomonCache},
+        shredder::ReedSolomonCache,
     },
     assert_matches::debug_assert_matches,
     itertools::{Either, Itertools},
@@ -992,19 +993,16 @@ fn make_shreds_data<'a>(
         shred
     })
 }
-// Generates coding shreds for the current erasure batch.
+// Generates coding shred blanks for the current erasure batch.
 // Updates ShredCommonHeader.index for coding shreds of the next batch.
-fn make_shreds_code(
+// These have the correct headers, but none of the payloads and signatures.
+fn make_shreds_code_header_only(
     common_header: &mut ShredCommonHeader,
-    num_data_shreds: usize,
-    is_last_in_slot: bool,
 ) -> impl Iterator<Item = ShredCode> + '_ {
     debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. });
-    let erasure_batch_size = shredder::get_erasure_batch_size(num_data_shreds, is_last_in_slot);
-    let num_coding_shreds = erasure_batch_size - num_data_shreds;
     let mut coding_header = CodingShredHeader {
-        num_data_shreds: num_data_shreds as u16,
-        num_coding_shreds: num_coding_shreds as u16,
+        num_data_shreds: DATA_SHREDS_PER_FEC_BLOCK as u16,
+        num_coding_shreds: CODING_SHREDS_PER_FEC_BLOCK as u16,
         position: 0,
     };
     std::iter::repeat_with(move || {
@@ -1017,7 +1015,7 @@ fn make_shreds_code(
         coding_header.position += 1;
         shred
     })
-    .take(num_coding_shreds)
+    .take(CODING_SHREDS_PER_FEC_BLOCK)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1109,14 +1107,7 @@ pub(super) fn make_shreds_from_data(
             )
             .map(Shred::ShredData),
         );
-        shreds.extend(
-            make_shreds_code(
-                &mut common_header_code,
-                DATA_SHREDS_PER_FEC_BLOCK,          // num_data_shreds
-                is_last_in_slot && rest.is_empty(), // is_last_in_slot
-            )
-            .map(Shred::ShredCode),
-        );
+        shreds.extend(make_shreds_code_header_only(&mut common_header_code).map(Shred::ShredCode));
         data = rest;
     }
 
@@ -1149,14 +1140,7 @@ pub(super) fn make_shreds_from_data(
                 .take(DATA_SHREDS_PER_FEC_BLOCK);
             make_shreds_data(&mut common_header_data, data_header, chunks).map(Shred::ShredData)
         });
-        shreds.extend(
-            make_shreds_code(
-                &mut common_header_code,
-                DATA_SHREDS_PER_FEC_BLOCK,
-                is_last_in_slot,
-            )
-            .map(Shred::ShredCode),
-        );
+        shreds.extend(make_shreds_code_header_only(&mut common_header_code).map(Shred::ShredCode));
     }
 
     // Adjust flags for the very last data shred.

@@ -1,7 +1,7 @@
 use {
     super::{
         immutable_deserialized_packet::ImmutableDeserializedPacket,
-        latest_unprocessed_votes::VoteSource,
+        latest_validator_vote_packet::VoteSource,
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_deserializer::{PacketDeserializer, ReceivePacketResults},
         vote_storage::VoteStorage,
@@ -150,7 +150,7 @@ impl PacketReceiver {
                 .increment_newly_buffered_packets_count(deserialized_packets.len() as u64);
 
             let vote_batch_insertion_metrics =
-                vote_storage.insert_batch(vote_source, deserialized_packets);
+                vote_storage.insert_batch(vote_source, deserialized_packets.into_iter());
             slot_metrics_tracker
                 .accumulate_vote_batch_insertion_metrics(&vote_batch_insertion_metrics);
             saturating_add_assign!(

@@ -13,6 +13,7 @@ use {
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::TransactionAccountStateInfo,
+        transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
@@ -76,6 +77,9 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     /// could not be processed. Note processed transactions can still have a
     /// failure result meaning that the transaction will be rolled back.
     pub processing_results: Vec<TransactionProcessingResult>,
+    /// Balances accumulated for TransactionStatusSender when
+    /// transaction balance recording is enabled.
+    pub balance_collector: Option<BalanceCollector>,
 }
 
 /// Configuration of the recording capabilities for transaction execution
@@ -84,6 +88,7 @@ pub struct ExecutionRecordingConfig {
     pub enable_cpi_recording: bool,
     pub enable_log_recording: bool,
     pub enable_return_data_recording: bool,
+    pub enable_transaction_balance_recording: bool,
 }
 
 impl ExecutionRecordingConfig {
@@ -92,6 +97,7 @@ impl ExecutionRecordingConfig {
             enable_return_data_recording: option,
             enable_log_recording: option,
             enable_cpi_recording: option,
+            enable_transaction_balance_recording: option,
         }
     }
 }
@@ -341,6 +347,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             }
             program_accounts_map
         });
+        execute_timings
+            .saturating_add_in_place(ExecuteTimingType::FilterExecutableUs, filter_executable_us);
 
         let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
             let program_cache_for_tx_batch = self.replenish_program_cache(
@@ -358,11 +366,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     processing_results: (0..sanitized_txs.len())
                         .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
                         .collect(),
+                    // If we abort the batch and balance recording is enabled, no balances should be
+                    // collected. If this is a leader thread, no batch will be committed.
+                    balance_collector: None,
                 };
             }
 
             program_cache_for_tx_batch
         });
+        execute_timings
+            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
 
         // Determine a capacity for the internal account cache. This
         // over-allocates but avoids ever reallocating, and spares us from
@@ -377,14 +390,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             account_keys_in_batch,
         );
 
-        let (mut validate_fees_us, mut load_us, mut execution_us): (u64, u64, u64) = (0, 0, 0);
+        // Create the transaction balance collector if recording is enabled.
+        let mut balance_collector = config
+            .recording_config
+            .enable_transaction_balance_recording
+            .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
+
+        let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
 
         // Validate, execute, and collect results from each transaction in order.
         // With SIMD83, transactions must be executed in order, because transactions
         // in the same batch may modify the same accounts. Transaction order is
         // preserved within entries written to the ledger.
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
-            let (validate_result, single_validate_fees_us) =
+            let (validate_result, validate_fees_us) =
                 measure_us!(check_result.and_then(|tx_details| {
                     Self::validate_transaction_nonce_and_fee_payer(
                         &mut account_loader,
@@ -397,7 +416,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &mut error_metrics,
                     )
                 }));
-            validate_fees_us = validate_fees_us.saturating_add(single_validate_fees_us);
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
 
             let (load_result, single_load_us) = measure_us!(load_transaction(
                 &mut account_loader,
@@ -409,6 +429,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     .unwrap_or(&RentCollector::default()),
             ));
             load_us = load_us.saturating_add(single_load_us);
+
+            let ((), collect_balances_us) =
+                measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
 
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
@@ -444,6 +469,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
             execution_us = execution_us.saturating_add(single_execution_us);
 
+            let ((), collect_balances_us) =
+                measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
+
             processing_results.push(processing_result);
         }
 
@@ -468,20 +498,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             execution_us,
             sanitized_txs.len(),
         );
-
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::FilterExecutableUs, filter_executable_us);
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::ExecuteUs, execution_us);
+
+        if let Some(ref balance_collector) = balance_collector {
+            debug_assert!(balance_collector.lengths_match_expected(sanitized_txs.len()));
+        }
 
         LoadAndExecuteSanitizedTransactionsOutput {
             error_metrics,
             execute_timings,
             processing_results,
+            balance_collector,
         }
     }
 

@@ -97,6 +97,15 @@ pub enum ScanFilter {
     /// Similar to `OnlyAbnormal but also check on-disk index to verify the
     /// entry on-disk is indeed normal.
     OnlyAbnormalWithVerify,
+
+    /// Similar to `OnlyAbnormal but mark entries in memory as not found
+    /// if they are normal
+    /// This removes the possibility of any race conditions with index
+    /// flushing and simulates the system running an uncached disk index
+    /// where nothing 'normal' is ever held in the in memory index as far as
+    /// callers are concerned. This could also be a  correct/ideal future api
+    /// to similarly provide consistency and remove race condition behavior.
+    OnlyAbnormalTest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1181,11 +1190,22 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         .unwrap()
                         .get_internal(pubkey, internal_callback);
                 }
-                ScanFilter::OnlyAbnormal | ScanFilter::OnlyAbnormalWithVerify => {
+                ScanFilter::OnlyAbnormal | ScanFilter::OnlyAbnormalWithVerify | ScanFilter::OnlyAbnormalTest => {
                     let found = lock
                         .as_ref()
                         .unwrap()
-                        .get_only_in_mem(pubkey, false, |entry| {
+                        .get_only_in_mem(pubkey, false, |mut entry| {
+                            if entry.is_some() && matches!(filter, ScanFilter::OnlyAbnormalTest) {
+
+                               let local_entry = entry.unwrap();
+                                if local_entry.ref_count() == 1 && local_entry.slot_list.read().unwrap().len() == 1 {
+                                    // Account was found in memory, but is a single ref single slot account
+                                    // For testing purposes, return None as this can be treated like
+                                    // a normal account that was flushed to storage.
+                                    entry = None;
+                                }
+
+                            }
                             internal_callback(entry);
                             entry.is_some()
                         });

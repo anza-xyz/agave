@@ -157,3 +157,11 @@ jobs:
           cd "${{ matrix.programs }}"
           rm -rf target/deploy target/sbpf*
           $CARGO_TEST_SBF --arch v1 --manifest-path program/Cargo.toml
+
+      - name: Test SBPFv2
+        shell: bash
+        run: |
+          source ci/downstream-projects/common.sh
+          cd "${{ matrix.programs }}"
+          rm -rf target/deploy target/sbpf*
+          $CARGO_TEST_SBF --arch v2 --manifest-path program/Cargo.toml

@@ -6,7 +6,7 @@ use {
         accounts_file::AccountsFileProvider,
         accounts_hash::MERKLE_FANOUT,
         accounts_index::{tests::*, AccountIndex, AccountSecondaryIndexesIncludeExclude},
-        ancient_append_vecs,
+        ancient_append_vecs::{self, is_ancient},
         append_vec::{
             aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredAccountMeta,
             StoredMeta,
@@ -6056,49 +6056,6 @@ define_accounts_db_test!(test_many_unrefs, |db| {
     );
     assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
 });
-
-#[test_case(CreateAncientStorage::Append; "append")]
-#[test_case(CreateAncientStorage::Pack; "pack")]
-fn test_get_oldest_non_ancient_slot_for_hash_calc_scan(
-    create_ancient_storage: CreateAncientStorage,
-) {
-    let expected = |v| {
-        if create_ancient_storage == CreateAncientStorage::Append {
-            Some(v)
-        } else {
-            None
-        }
-    };
-
-    let mut db = AccountsDb::new_single_for_tests();
-    db.create_ancient_storage = create_ancient_storage;
-
-    let config = CalcAccountsHashConfig::default();
-    let slot = config.epoch_schedule.slots_per_epoch;
-    let slots_per_epoch = config.epoch_schedule.slots_per_epoch;
-    assert_ne!(slot, 0);
-    let offset = 10;
-    assert_eq!(
-        db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch + offset, &config),
-        expected(db.ancient_append_vec_offset.unwrap() as u64 + offset + 1)
-    );
-    // ancient append vecs enabled (but at 0 offset), so can be non-zero
-    db.ancient_append_vec_offset = Some(0);
-    // 0..=(slots_per_epoch - 1) are all non-ancient
-    assert_eq!(
-        db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch - 1, &config),
-        expected(0)
-    );
-    // 1..=slots_per_epoch are all non-ancient, so 1 is oldest non ancient
-    assert_eq!(
-        db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch, &config),
-        expected(1)
-    );
-    assert_eq!(
-        db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch + offset, &config),
-        expected(offset + 1)
-    );
-}
 
 define_accounts_db_test!(test_mark_dirty_dead_stores_empty, |db| {
     let slot = 0;

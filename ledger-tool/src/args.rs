@@ -2,7 +2,7 @@ use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
     solana_accounts_db::{
-        accounts_db::{AccountsDb, AccountsDbConfig, CreateAncientStorage},
+        accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
         utils::create_and_canonicalize_directories,
@@ -358,7 +358,6 @@ pub fn get_accounts_db_config(
         exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         test_skip_rewrites_but_include_in_bank_hash: false,
-        create_ancient_storage: CreateAncientStorage::Pack,
         storage_access,
         scan_filter_for_shrinking,
         enable_experimental_accumulator_hash: !arg_matches

@@ -28,7 +28,8 @@ pub const ALIGN_BOUNDARY_OFFSET: usize = mem::size_of::<u64>();
 #[macro_export]
 macro_rules! u64_align {
     ($addr: expr) => {
-        ($addr + (ALIGN_BOUNDARY_OFFSET - 1)) & !(ALIGN_BOUNDARY_OFFSET - 1)
+        ($addr + ($crate::accounts_file::ALIGN_BOUNDARY_OFFSET - 1))
+            & !($crate::accounts_file::ALIGN_BOUNDARY_OFFSET - 1)
     };
 }
 
@@ -88,6 +89,9 @@ impl AccountsFile {
     }
 
     /// true if this storage can possibly be appended to (independent of capacity check)
+    //
+    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+    #[cfg(test)]
     pub(crate) fn can_append(&self) -> bool {
         match self {
             Self::AppendVec(av) => av.can_append(),

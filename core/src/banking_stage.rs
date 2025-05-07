@@ -7,8 +7,7 @@ use qualifier_attr::qualifiers;
 use {
     self::{
         committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
-        latest_unprocessed_votes::LatestUnprocessedVotes, packet_receiver::PacketReceiver,
-        qos_service::QosService, vote_storage::VoteStorage,
+        packet_receiver::PacketReceiver, qos_service::QosService, vote_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -66,7 +65,7 @@ mod consume_worker;
 mod vote_worker;
 conditional_vis_mod!(decision_maker, feature = "dev-context-only-utils", pub);
 mod immutable_deserialized_packet;
-mod latest_unprocessed_votes;
+mod latest_validator_vote_packet;
 mod leader_slot_timing_metrics;
 conditional_vis_mod!(packet_deserializer, feature = "dev-context-only-utils", pub);
 mod packet_filter;
@@ -456,10 +455,9 @@ impl BankingStage {
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
         assert!(num_threads >= MIN_TOTAL_THREADS);
-        // Keeps track of extraneous vote transactions for the vote threads
-        let latest_unprocessed_votes = {
+        let vote_storage = {
             let bank = bank_forks.read().unwrap().working_bank();
-            LatestUnprocessedVotes::new(&bank)
+            VoteStorage::new(&bank)
         };
 
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
@@ -481,7 +479,7 @@ impl BankingStage {
             committer.clone(),
             transaction_recorder.clone(),
             log_messages_bytes_limit,
-            VoteStorage::new(latest_unprocessed_votes),
+            vote_storage,
         ));
 
         match transaction_struct {
