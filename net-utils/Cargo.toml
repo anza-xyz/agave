@@ -26,7 +26,7 @@ rand = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 socket2 = { workspace = true }
-solana-serde = "=2.2.1"
+solana-serde = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 
