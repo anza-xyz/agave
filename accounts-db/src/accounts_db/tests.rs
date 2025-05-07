@@ -2937,19 +2937,24 @@ fn test_shrink_candidate_slots() {
 fn test_shrink_candidate_slots_with_dead_ancient_account() {
     solana_logger::setup();
     let epoch_schedule = EpochSchedule::default();
-    let num_ancient_slots = 3;
-    // Prepare 3 append vecs to combine [medium, big, small]
-    let account_data_sizes = vec![1000, 2000, 150];
-    let (db, starting_ancient_slot) =
-        create_db_with_storages_and_index_with_customized_account_size_per_slot(
-            true,
-            num_ancient_slots,
-            account_data_sizes,
-        );
-    db.add_root(starting_ancient_slot);
-    let slots_to_combine: Vec<Slot> =
-        (starting_ancient_slot..starting_ancient_slot + num_ancient_slots as Slot).collect();
-    db.combine_ancient_slots(slots_to_combine, CAN_RANDOMLY_SHRINK_FALSE);
+    let db = AccountsDb::new_single_for_tests();
+    const ACCOUNT_DATA_SIZES: &[usize] = &[1000, 2000, 150];
+    let accounts: Vec<_> = ACCOUNT_DATA_SIZES
+        .iter()
+        .map(|data_size| {
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, *data_size, &Pubkey::default()),
+            )
+        })
+        .collect();
+    let accounts: Vec<_> = accounts
+        .iter()
+        .map(|(pubkey, account)| (pubkey, account))
+        .collect();
+    let starting_ancient_slot = 1;
+    db.store_for_tests(starting_ancient_slot, &accounts);
+    db.add_root_and_flush_write_cache(starting_ancient_slot);
     let storage = db.get_storage_for_slot(starting_ancient_slot).unwrap();
     let ancient_accounts = db.get_unique_accounts_from_storage(&storage);
     // Check that three accounts are indeed present in the combined storage.
