@@ -141,7 +141,9 @@ use {
     solana_svm::{
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
+        nonce_info::NonceInfo,
         program_loader::load_program_with_pubkey,
+        rollback_accounts::RollbackAccounts,
         transaction_balances::BalanceCollector,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -3888,20 +3890,46 @@ impl Bank {
                             post_accounts_states: loaded_accounts,
                         })
                     }
-                    ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
-                        status: Err(fees_only_tx.load_error),
-                        log_messages: None,
-                        inner_instructions: None,
-                        return_data: None,
-                        executed_units,
-                        rent_debits: RentDebits::default(),
-                        fee_details: fees_only_tx.fee_details,
-                        loaded_account_stats: TransactionLoadedAccountsStats {
-                            loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
-                            loaded_accounts_data_size,
-                        },
-                        post_accounts_states: vec![],
-                    }),
+                    ProcessedTransaction::FeesOnly(fees_only_tx) => {
+                        let loaded_accounts_count = fees_only_tx.rollback_accounts.count();
+                        let post_accounts_states = {
+                            match fees_only_tx.rollback_accounts {
+                                RollbackAccounts::FeePayerOnly {
+                                    fee_payer_account: _,
+                                } => {
+                                    //no fee_payer_account address here :C
+                                    vec![]
+                                }
+                                RollbackAccounts::SameNonceAndFeePayer { nonce } => {
+                                    //We eliminate cloning here by making NonceInfo fields public
+                                    let NonceInfo { address, account } = nonce;
+                                    vec![(address, account)]
+                                }
+                                RollbackAccounts::SeparateNonceAndFeePayer {
+                                    nonce,
+                                    fee_payer_account: _,
+                                } => {
+                                    //no fee_payer_account address here :C
+                                    let NonceInfo { address, account } = nonce;
+                                    vec![(address, account)]
+                                }
+                            }
+                        };
+                        Ok(CommittedTransaction {
+                            status: Err(fees_only_tx.load_error),
+                            log_messages: None,
+                            inner_instructions: None,
+                            return_data: None,
+                            executed_units,
+                            rent_debits: RentDebits::default(),
+                            fee_details: fees_only_tx.fee_details,
+                            loaded_account_stats: TransactionLoadedAccountsStats {
+                                loaded_accounts_count,
+                                loaded_accounts_data_size,
+                            },
+                            post_accounts_states,
+                        })
+                    }
                 }
             })
             .collect()
