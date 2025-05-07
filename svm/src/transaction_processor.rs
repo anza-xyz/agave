@@ -1147,6 +1147,7 @@ mod tests {
         }
     }
 
+    // HANA enable all by default
     #[derive(Default, Clone)]
     struct MockBankCallback {
         account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
@@ -2036,6 +2037,7 @@ mod tests {
         assert_eq!(entry, Arc::new(program));
     }
 
+    // HANA fails with feature
     #[test]
     fn test_validate_transaction_fee_payer_exact_balance() {
         let lamports_per_signature = 5000;
@@ -2130,6 +2132,7 @@ mod tests {
         );
     }
 
+    // HANA fails with feature
     #[test]
     fn test_validate_transaction_fee_payer_rent_paying() {
         let lamports_per_signature = 5000;
@@ -2381,6 +2384,7 @@ mod tests {
         assert_eq!(result, Err(TransactionError::DuplicateInstruction(1u8)));
     }
 
+    // HANA fails with feature
     #[test]
     fn test_validate_transaction_fee_payer_is_nonce() {
         let lamports_per_signature = 5000;
