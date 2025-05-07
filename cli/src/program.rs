@@ -171,6 +171,7 @@ pub enum ProgramCliCommand {
     },
     ExtendProgramChecked {
         program_pubkey: Pubkey,
+        authority_signer_index: SignerIndex,
         additional_bytes: u32,
     },
     MigrateProgram {
@@ -1009,10 +1010,14 @@ pub fn parse_program_subcommand(
             let program_pubkey = pubkey_of(matches, "program_id").unwrap();
             let additional_bytes = value_of(matches, "additional_bytes").unwrap();
 
+            let (authority_signer, authority_pubkey) =
+                signer_of(matches, "authority", wallet_manager)?;
+
             let signer_info = default_signer.generate_unique_signers(
-                vec![Some(
-                    default_signer.signer_from_path(matches, wallet_manager)?,
-                )],
+                vec![
+                    Some(default_signer.signer_from_path(matches, wallet_manager)?),
+                    authority_signer,
+                ],
                 matches,
                 wallet_manager,
             )?;
@@ -1020,6 +1025,7 @@ pub fn parse_program_subcommand(
             CliCommandInfo {
                 command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
                     program_pubkey,
+                    authority_signer_index: signer_info.index_of(authority_pubkey).unwrap(),
                     additional_bytes,
                 }),
                 signers: signer_info.signers,
@@ -1233,8 +1239,15 @@ pub fn process_program_subcommand(
         ),
         ProgramCliCommand::ExtendProgramChecked {
             program_pubkey,
+            authority_signer_index,
             additional_bytes,
-        } => process_extend_program(&rpc_client, config, *program_pubkey, *additional_bytes),
+        } => process_extend_program(
+            &rpc_client,
+            config,
+            *program_pubkey,
+            *authority_signer_index,
+            *additional_bytes,
+        ),
         ProgramCliCommand::MigrateProgram {
             program_pubkey,
             authority_signer_index,
@@ -2366,9 +2379,11 @@ fn process_extend_program(
     rpc_client: &RpcClient,
     config: &CliConfig,
     program_pubkey: Pubkey,
+    authority_signer_index: SignerIndex,
     additional_bytes: u32,
 ) -> ProcessResult {
     let payer_pubkey = config.signers[0].pubkey();
+    let authority_signer = config.signers[authority_signer_index];
 
     if additional_bytes == 0 {
         return Err("Additional bytes must be greater than zero".into());
@@ -2414,6 +2429,15 @@ fn process_extend_program(
     let upgrade_authority_address = upgrade_authority_address
         .ok_or_else(|| format!("Program {program_pubkey} is not upgradeable"))?;
 
+    if authority_signer.pubkey() != upgrade_authority_address {
+        return Err(format!(
+            "Upgrade authority {} does not match {}",
+            upgrade_authority_address,
+            authority_signer.pubkey(),
+        )
+        .into());
+    }
+
     let blockhash = rpc_client.get_latest_blockhash()?;
     let feature_set = fetch_feature_set(rpc_client)?;
 
@@ -2434,7 +2458,7 @@ fn process_extend_program(
         };
     let mut tx = Transaction::new_unsigned(Message::new(&[instruction], Some(&payer_pubkey)));
 
-    tx.try_sign(&[config.signers[0]], blockhash)?;
+    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
     let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
         &tx,
         config.commitment,
@@ -4440,6 +4464,7 @@ mod tests {
             CliCommandInfo {
                 command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
                     program_pubkey,
+                    authority_signer_index: 0,
                     additional_bytes
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
